@@ -1,0 +1,18 @@
+# Git hooks configuration
+# Install: lefthook install
+# Docs: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: false
+  commands:
+    lint:
+      run: bun run lint
+      stage_fixed: true
+    typecheck:
+      run: bun run typecheck
+
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: bun run test

@@ -9,11 +9,13 @@
     "lint:fix": "biome check --write .",
     "test": "bun run --filter '*' test",
     "test:integration": "bun test integration-tests/tests",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "^1.1.14",
+    "lefthook": "^1.11.5",
     "typescript": "^5.7.2"
   }
 }
