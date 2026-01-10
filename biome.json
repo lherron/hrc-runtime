@@ -13,7 +13,8 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "noExcessiveCognitiveComplexity": "warn"
+        "noExcessiveCognitiveComplexity": "warn",
+        "useLiteralKeys": "off"
       },
       "correctness": {
         "noUnusedImports": "error",
