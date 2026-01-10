@@ -44,6 +44,14 @@
         "typescript": "^5.0.0",
       },
     },
+    "packages/materializer": {
+      "name": "@agent-spaces/materializer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-spaces/core": "workspace:*",
+        "@agent-spaces/store": "workspace:*",
+      },
+    },
     "packages/resolver": {
       "name": "@agent-spaces/resolver",
       "version": "0.1.0",
@@ -73,6 +81,8 @@
     "@agent-spaces/core": ["@agent-spaces/core@workspace:packages/core"],
 
     "@agent-spaces/git": ["@agent-spaces/git@workspace:packages/git"],
+
+    "@agent-spaces/materializer": ["@agent-spaces/materializer@workspace:packages/materializer"],
 
     "@agent-spaces/resolver": ["@agent-spaces/resolver@workspace:packages/resolver"],
 
