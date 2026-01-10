@@ -30,6 +30,28 @@ packages/
 └── cli/          # CLI entry point
 ```
 
+## Smoke Testing the CLI
+
+Run CLI commands with `--dry-run` to verify behavior without launching Claude:
+
+```bash
+# Run CLI directly with bun (no build step needed)
+bun packages/cli/bin/asp.js <command>
+
+# Test with a local space (dev mode)
+ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
+  integration-tests/fixtures/sample-registry/spaces/base --dry-run
+
+# Test inherit flags
+bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-all
+bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-project --inherit-user
+```
+
+Test fixtures are in `integration-tests/fixtures/`:
+- `sample-registry/spaces/` - Various test spaces (base, frontend, backend, etc.)
+- `sample-project/` - Project with asp-targets.toml
+- `claude-shim/` - Mock claude binary for tests
+
 ## Codebase Patterns
 
 - TypeScript with strict mode and `exactOptionalPropertyTypes`
