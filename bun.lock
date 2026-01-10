@@ -9,6 +9,17 @@
         "typescript": "^5.7.2",
       },
     },
+    "packages/claude": {
+      "name": "@agent-spaces/claude",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-spaces/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.0.0",
+      },
+    },
     "packages/core": {
       "name": "@agent-spaces/core",
       "version": "0.1.0",
@@ -22,9 +33,24 @@
         "@types/proper-lockfile": "^4.1.4",
       },
     },
+    "packages/git": {
+      "name": "@agent-spaces/git",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-spaces/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.0.0",
+      },
+    },
   },
   "packages": {
+    "@agent-spaces/claude": ["@agent-spaces/claude@workspace:packages/claude"],
+
     "@agent-spaces/core": ["@agent-spaces/core@workspace:packages/core"],
+
+    "@agent-spaces/git": ["@agent-spaces/git@workspace:packages/git"],
 
     "@biomejs/biome": ["@biomejs/biome@1.9.4", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "1.9.4", "@biomejs/cli-darwin-x64": "1.9.4", "@biomejs/cli-linux-arm64": "1.9.4", "@biomejs/cli-linux-arm64-musl": "1.9.4", "@biomejs/cli-linux-x64": "1.9.4", "@biomejs/cli-linux-x64-musl": "1.9.4", "@biomejs/cli-win32-arm64": "1.9.4", "@biomejs/cli-win32-x64": "1.9.4" }, "bin": { "biome": "bin/biome" } }, "sha512-1rkd7G70+o9KkTn5KLmDYXihGoTaIGO9PIIN2ZB7UJxFrWw04CZHPYiMRjYsaDvVV7hP1dYNRLxSANLaBFGpog=="],
 
