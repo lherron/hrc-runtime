@@ -9,6 +9,21 @@
         "typescript": "^5.7.2",
       },
     },
+    "integration-tests": {
+      "name": "@agent-spaces/integration-tests",
+      "version": "0.0.1",
+      "dependencies": {
+        "@agent-spaces/cli": "workspace:*",
+        "@agent-spaces/core": "workspace:*",
+        "@agent-spaces/engine": "workspace:*",
+        "@agent-spaces/resolver": "workspace:*",
+        "@agent-spaces/store": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.1.14",
+        "typescript": "^5.7.2",
+      },
+    },
     "packages/claude": {
       "name": "@agent-spaces/claude",
       "version": "0.1.0",
@@ -133,6 +148,8 @@
     "@agent-spaces/engine": ["@agent-spaces/engine@workspace:packages/engine"],
 
     "@agent-spaces/git": ["@agent-spaces/git@workspace:packages/git"],
+
+    "@agent-spaces/integration-tests": ["@agent-spaces/integration-tests@workspace:integration-tests"],
 
     "@agent-spaces/lint": ["@agent-spaces/lint@workspace:packages/lint"],
 
