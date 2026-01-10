@@ -1,43 +1,39 @@
-# Ralph Agent Instructions
+## Build & Run
 
-## Overview
-
-Ralph is an autonomous AI agent loop that runs Claude Code repeatedly until all PRD items are complete. Each iteration is a fresh Claude Code instance with clean context.
-
-## Commands
+This is a Bun monorepo with packages in `packages/*`.
 
 ```bash
-# Run the flowchart dev server
-cd flowchart && npm run dev
-
-# Build the flowchart
-cd flowchart && npm run build
-
-# Run Ralph (from your project that has prd.json)
-./ralph.sh [max_iterations]
+bun install       # Install dependencies
+bun run build     # Build all packages
 ```
 
-## Key Files
+## Validation
 
-- `ralph.sh` - The bash loop that spawns fresh Claude Code instances
-- `prompt.md` - Instructions given to each Claude Code instance
-- `prd.json.example` - Example PRD format
-- `flowchart/` - Interactive React Flow diagram explaining how Ralph works
+Run these after implementing to get immediate feedback:
 
-## Flowchart
+- Tests: `bun run test`
+- Typecheck: `bun run typecheck`
+- Lint: `bun run lint` (fix with `bun run lint:fix`)
 
-The `flowchart/` directory contains an interactive visualization built with React Flow. It's designed for presentations - click through to reveal each step with animations.
+## Project Structure
 
-To run locally:
-```bash
-cd flowchart
-npm install
-npm run dev
+```
+packages/
+├── core/         # Types, schemas, config parsing, errors, locks, atomic writes
+├── git/          # Git operations (shell-out wrapper)
+├── claude/       # Claude CLI wrapper
+├── resolver/     # Resolution engine
+├── store/        # Content-addressed storage
+├── materializer/ # Plugin directory generation
+├── engine/       # Orchestration layer
+├── lint/         # Linting rules
+└── cli/          # CLI entry point
 ```
 
-## Patterns
+## Codebase Patterns
 
-- Each iteration spawns a fresh Claude Code instance with clean context
-- Memory persists via git history, `progress.txt`, and `prd.json`
-- Stories should be small enough to complete in one context window
-- Always update AGENTS.md with discovered patterns for future iterations
+- TypeScript with strict mode and `exactOptionalPropertyTypes`
+- Optional properties use `prop?: T | undefined` pattern
+- Biome for linting/formatting
+- JSON schemas in `packages/core/src/schemas/`
+- Error classes in `packages/core/src/errors.ts`
