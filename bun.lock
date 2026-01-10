@@ -20,6 +20,29 @@
         "typescript": "^5.0.0",
       },
     },
+    "packages/cli": {
+      "name": "@agent-spaces/cli",
+      "version": "0.0.1",
+      "bin": {
+        "asp": "./bin/asp.js",
+      },
+      "dependencies": {
+        "@agent-spaces/claude": "workspace:*",
+        "@agent-spaces/core": "workspace:*",
+        "@agent-spaces/engine": "workspace:*",
+        "@agent-spaces/git": "workspace:*",
+        "@agent-spaces/lint": "workspace:*",
+        "@agent-spaces/materializer": "workspace:*",
+        "@agent-spaces/resolver": "workspace:*",
+        "@agent-spaces/store": "workspace:*",
+        "chalk": "^5.3.0",
+        "commander": "^12.1.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/core": {
       "name": "@agent-spaces/core",
       "version": "0.1.0",
@@ -103,6 +126,8 @@
   "packages": {
     "@agent-spaces/claude": ["@agent-spaces/claude@workspace:packages/claude"],
 
+    "@agent-spaces/cli": ["@agent-spaces/cli@workspace:packages/cli"],
+
     "@agent-spaces/core": ["@agent-spaces/core@workspace:packages/core"],
 
     "@agent-spaces/engine": ["@agent-spaces/engine@workspace:packages/engine"],
@@ -152,6 +177,10 @@
     "ajv-formats": ["ajv-formats@3.0.1", "", { "dependencies": { "ajv": "^8.0.0" } }, "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ=="],
 
     "bun-types": ["bun-types@1.3.5", "", { "dependencies": { "@types/node": "*" } }, "sha512-inmAYe2PFLs0SUbFOWSVD24sg1jFlMPxOjOSSCYqUgn4Hsc3rDc7dFvfVYjFPNHtov6kgUeulV4SxbuIV/stPw=="],
+
+    "chalk": ["chalk@5.6.2", "", {}, "sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA=="],
+
+    "commander": ["commander@12.1.0", "", {}, "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA=="],
 
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
 
