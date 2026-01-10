@@ -33,6 +33,23 @@
         "@types/proper-lockfile": "^4.1.4",
       },
     },
+    "packages/engine": {
+      "name": "@agent-spaces/engine",
+      "version": "0.0.1",
+      "dependencies": {
+        "@agent-spaces/claude": "workspace:*",
+        "@agent-spaces/core": "workspace:*",
+        "@agent-spaces/git": "workspace:*",
+        "@agent-spaces/lint": "workspace:*",
+        "@agent-spaces/materializer": "workspace:*",
+        "@agent-spaces/resolver": "workspace:*",
+        "@agent-spaces/store": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/git": {
       "name": "@agent-spaces/git",
       "version": "0.1.0",
@@ -42,6 +59,14 @@
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.0.0",
+      },
+    },
+    "packages/lint": {
+      "name": "@agent-spaces/lint",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-spaces/core": "workspace:*",
+        "@agent-spaces/materializer": "workspace:*",
       },
     },
     "packages/materializer": {
@@ -80,7 +105,11 @@
 
     "@agent-spaces/core": ["@agent-spaces/core@workspace:packages/core"],
 
+    "@agent-spaces/engine": ["@agent-spaces/engine@workspace:packages/engine"],
+
     "@agent-spaces/git": ["@agent-spaces/git@workspace:packages/git"],
+
+    "@agent-spaces/lint": ["@agent-spaces/lint@workspace:packages/lint"],
 
     "@agent-spaces/materializer": ["@agent-spaces/materializer@workspace:packages/materializer"],
 
