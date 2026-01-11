@@ -116,6 +116,7 @@
       "dependencies": {
         "@agent-spaces/core": "workspace:*",
         "@agent-spaces/store": "workspace:*",
+        "@iarna/toml": "^2.2.5",
       },
     },
     "packages/resolver": {
