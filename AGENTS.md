@@ -32,6 +32,8 @@ packages/
 
 ## Smoke Testing the CLI
 
+**Always test `asp run` changes with `--dry-run`** to verify the generated Claude command without actually launching Claude.
+
 Run CLI commands with `--dry-run` to verify behavior without launching Claude:
 
 ```bash
@@ -45,6 +47,9 @@ ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
 # Test inherit flags
 bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-all
 bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-project --inherit-user
+
+# Test settings composition (add [settings] to a space.toml first)
+bun packages/cli/bin/asp.js run <space-path> --dry-run  # should show --settings flag
 ```
 
 Test fixtures are in `integration-tests/fixtures/`:
