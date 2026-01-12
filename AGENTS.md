@@ -11,6 +11,7 @@ bun run build     # Build all packages
 
 Run these after implementing to get immediate feedback:
 
+- Always run tests (`bun run test`) without asking.
 - Tests: `bun run test`
 - Typecheck: `bun run typecheck`
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
