@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -27,5 +32,5 @@ jobs:
         run: bun run clean && bun run build:ci
 
       - name: Publish @lherron/agent-spaces
-        run: bun publish --access public
+        run: npm publish --provenance --access public
         working-directory: packages/cli
