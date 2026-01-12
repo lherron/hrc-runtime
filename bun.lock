@@ -14,11 +14,11 @@
       "name": "@agent-spaces/integration-tests",
       "version": "0.0.1",
       "dependencies": {
-        "@agent-spaces/cli": "workspace:*",
-        "@agent-spaces/core": "workspace:*",
-        "@agent-spaces/engine": "workspace:*",
-        "@agent-spaces/resolver": "workspace:*",
-        "@agent-spaces/store": "workspace:*",
+        "@agent-spaces/core": "*",
+        "@agent-spaces/engine": "*",
+        "@agent-spaces/resolver": "*",
+        "@agent-spaces/store": "*",
+        "@lherron/agent-spaces": "*",
       },
       "devDependencies": {
         "@types/bun": "^1.1.14",
@@ -37,8 +37,8 @@
       },
     },
     "packages/cli": {
-      "name": "@agent-spaces/cli",
-      "version": "0.0.1",
+      "name": "@lherron/agent-spaces",
+      "version": "0.1.0",
       "bin": {
         "asp": "./bin/asp.js",
       },
@@ -76,7 +76,7 @@
     },
     "packages/engine": {
       "name": "@agent-spaces/engine",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@agent-spaces/claude": "workspace:*",
         "@agent-spaces/core": "workspace:*",
@@ -145,8 +145,6 @@
   "packages": {
     "@agent-spaces/claude": ["@agent-spaces/claude@workspace:packages/claude"],
 
-    "@agent-spaces/cli": ["@agent-spaces/cli@workspace:packages/cli"],
-
     "@agent-spaces/core": ["@agent-spaces/core@workspace:packages/core"],
 
     "@agent-spaces/engine": ["@agent-spaces/engine@workspace:packages/engine"],
@@ -182,6 +180,8 @@
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@1.9.4", "", { "os": "win32", "cpu": "x64" }, "sha512-8Y5wMhVIPaWe6jw2H+KlEm4wP/f7EW3810ZLmDlrEEy5KvBsb9ECEfu/kMWD484ijfQ8+nIi0giMgu9g1UAuuA=="],
 
     "@iarna/toml": ["@iarna/toml@2.2.5", "", {}, "sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg=="],
+
+    "@lherron/agent-spaces": ["@lherron/agent-spaces@workspace:packages/cli"],
 
     "@types/bun": ["@types/bun@1.3.5", "", { "dependencies": { "bun-types": "1.3.5" } }, "sha512-RnygCqNrd3srIPEWBd5LFeUYG7plCoH2Yw9WaZGyNmdTEei+gWaHqydbaIRkIkcbXwhBT94q78QljxN0Sk838w=="],
 
