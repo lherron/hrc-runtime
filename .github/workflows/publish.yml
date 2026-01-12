@@ -1,0 +1,90 @@
+name: Publish @agent-spaces packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run clean && bun run build:ci
+
+      # Publish in dependency order using bun publish
+      # 1. core (no internal deps)
+      - name: Publish @agent-spaces/core
+        run: bun publish --access public
+        working-directory: packages/core
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 2. git, claude (only depend on core)
+      - name: Publish @agent-spaces/git
+        run: bun publish --access public
+        working-directory: packages/git
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @agent-spaces/claude
+        run: bun publish --access public
+        working-directory: packages/claude
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 3. resolver (depends on core, git)
+      - name: Publish @agent-spaces/resolver
+        run: bun publish --access public
+        working-directory: packages/resolver
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 4. store (depends on core, git, resolver)
+      - name: Publish @agent-spaces/store
+        run: bun publish --access public
+        working-directory: packages/store
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 5. materializer (depends on core, store)
+      - name: Publish @agent-spaces/materializer
+        run: bun publish --access public
+        working-directory: packages/materializer
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 6. lint (depends on core, materializer)
+      - name: Publish @agent-spaces/lint
+        run: bun publish --access public
+        working-directory: packages/lint
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 7. engine (depends on many)
+      - name: Publish @agent-spaces/engine
+        run: bun publish --access public
+        working-directory: packages/engine
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 8. cli (depends on all)
+      - name: Publish @agent-spaces/cli
+        run: bun publish --access public
+        working-directory: packages/cli
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}

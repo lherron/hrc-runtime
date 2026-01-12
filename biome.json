@@ -13,7 +13,12 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "noExcessiveCognitiveComplexity": "warn",
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 85
+          }
+        },
         "useLiteralKeys": "off"
       },
       "correctness": {
