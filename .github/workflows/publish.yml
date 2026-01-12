@@ -34,6 +34,15 @@ jobs:
       - name: Build
         run: bun run clean && bun run build:ci
 
+      - name: Bundle workspace packages for npm
+        run: |
+          rm -rf node_modules/@agent-spaces
+          mkdir -p node_modules/@agent-spaces
+          for pkg in core git claude resolver store materializer engine lint; do
+            cp -r ../$pkg node_modules/@agent-spaces/$pkg
+          done
+        working-directory: packages/cli
+
       - name: Publish @lherron/agent-spaces
         run: npm publish --access public
         working-directory: packages/cli
