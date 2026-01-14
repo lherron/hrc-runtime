@@ -36,10 +36,10 @@ jobs:
 
       - name: Bundle workspace packages for npm
         run: |
-          rm -rf node_modules/@agent-spaces
-          mkdir -p node_modules/@agent-spaces
           for pkg in core git claude resolver store materializer engine lint; do
-            cp -r ../$pkg node_modules/@agent-spaces/$pkg
+            mkdir -p node_modules/spaces-$pkg
+            cp -r ../$pkg/dist node_modules/spaces-$pkg/
+            cp ../$pkg/package.json node_modules/spaces-$pkg/
           done
         working-directory: packages/cli
 

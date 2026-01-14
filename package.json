@@ -4,7 +4,7 @@
   "workspaces": ["packages/*", "integration-tests"],
   "scripts": {
     "build": "bun run --filter '*' build",
-    "build:ci": "bun run --filter '@agent-spaces/core' build && bun run --filter '@agent-spaces/git' --filter '@agent-spaces/claude' build && bun run --filter '@agent-spaces/resolver' build && bun run --filter '@agent-spaces/store' build && bun run --filter '@agent-spaces/materializer' build && bun run --filter '@agent-spaces/lint' build && bun run --filter '@agent-spaces/engine' build && bun run --filter '@lherron/agent-spaces' build",
+    "build:ci": "bun run --filter 'spaces-core' build && bun run --filter 'spaces-git' --filter 'spaces-claude' build && bun run --filter 'spaces-resolver' build && bun run --filter 'spaces-store' build && bun run --filter 'spaces-materializer' build && bun run --filter 'spaces-lint' build && bun run --filter 'spaces-engine' build && bun run --filter '@lherron/agent-spaces' build",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
