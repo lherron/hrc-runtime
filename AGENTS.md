@@ -65,3 +65,23 @@ Test fixtures are in `integration-tests/fixtures/`:
 - Biome for linting/formatting
 - JSON schemas in `packages/core/src/schemas/`
 - Error classes in `packages/core/src/errors.ts`
+
+## Error Handling
+
+`asp run` should **never** silently capture errors. It should always exit immediately when an error occurs.
+
+- Do not use try/catch blocks that swallow errors
+- Let filesystem errors propagate naturally
+- Throw explicit errors for invalid states (e.g., missing bundle)
+- Errors should be visible to the user, not hidden
+
+## Pi Harness
+
+When running with `--harness pi`:
+
+- Always set `PI_CODING_AGENT_DIR=<asp_modules target pi dir>` as an environment variable
+- This env var must appear in `--print-command` output for copy-paste compatibility
+- This env var must be set when spawning the Pi process directly
+- Add `--no-extensions` when there are no extensions to load (prevents Pi from loading defaults)
+- Always add `--no-skills` to disable default skill loading from `.claude`, `.codex`, `~/.pi/agent/skills/`
+- Materialize hooks to `hooks-scripts/` (Pi has an incompatible `hooks/` directory format)
