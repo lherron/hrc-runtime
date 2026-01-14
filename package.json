@@ -3,14 +3,16 @@
   "private": true,
   "workspaces": ["packages/*", "integration-tests"],
   "scripts": {
-    "build": "bun run --filter '*' build",
-    "build:ci": "bun run --filter 'spaces-core' build && bun run --filter 'spaces-git' --filter 'spaces-claude' build && bun run --filter 'spaces-resolver' build && bun run --filter 'spaces-store' build && bun run --filter 'spaces-materializer' build && bun run --filter 'spaces-lint' build && bun run --filter 'spaces-engine' build && bun run --filter '@lherron/agent-spaces' build",
+    "build": "bun run build:ordered",
+    "build:ordered": "bun run --filter 'spaces-core' build && bun run --filter 'spaces-git' --filter 'spaces-claude' build && bun run --filter 'spaces-resolver' build && bun run --filter 'spaces-store' build && bun run --filter 'spaces-materializer' build && bun run --filter 'spaces-lint' build && bun run --filter 'spaces-engine' build && bun run --filter '@lherron/agent-spaces' build",
+    "build:parallel": "bun run --filter '*' build",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "bun run --filter '*' test",
     "test:integration": "bun test integration-tests/tests",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
+    "rebuild": "bun run clean && bun run build",
     "prepare": "lefthook install"
   },
   "devDependencies": {
