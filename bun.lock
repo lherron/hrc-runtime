@@ -15,25 +15,12 @@
       "version": "0.0.1",
       "dependencies": {
         "@lherron/agent-spaces": "*",
-        "spaces-core": "*",
-        "spaces-engine": "*",
-        "spaces-resolver": "*",
-        "spaces-store": "*",
+        "spaces-config": "*",
+        "spaces-execution": "*",
       },
       "devDependencies": {
         "@types/bun": "^1.1.14",
         "typescript": "^5.7.2",
-      },
-    },
-    "packages/claude": {
-      "name": "spaces-claude",
-      "version": "0.1.0",
-      "dependencies": {
-        "spaces-core": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "typescript": "^5.0.0",
       },
     },
     "packages/cli": {
@@ -47,99 +34,41 @@
         "commander": "^12.1.0",
         "figures": "^6.1.0",
         "ora": "^9.0.0",
-        "spaces-claude": "*",
-        "spaces-core": "*",
-        "spaces-engine": "*",
-        "spaces-git": "*",
-        "spaces-lint": "*",
-        "spaces-materializer": "*",
-        "spaces-resolver": "*",
-        "spaces-store": "*",
+        "spaces-config": "*",
+        "spaces-execution": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.8.3",
       },
     },
-    "packages/core": {
-      "name": "spaces-core",
+    "packages/config": {
+      "name": "spaces-config",
       "version": "0.1.0",
       "dependencies": {
         "@iarna/toml": "^2.2.5",
         "ajv": "^8.17.1",
         "ajv-formats": "^3.0.1",
         "proper-lockfile": "^4.1.2",
+        "semver": "^7.7.2",
       },
       "devDependencies": {
+        "@types/bun": "latest",
         "@types/proper-lockfile": "^4.1.4",
+        "@types/semver": "^7.7.0",
+        "typescript": "^5.8.3",
       },
     },
-    "packages/engine": {
-      "name": "spaces-engine",
+    "packages/execution": {
+      "name": "spaces-execution",
       "version": "0.1.0",
       "dependencies": {
         "@mariozechner/pi-coding-agent": "^0.45.7",
-        "spaces-claude": "*",
-        "spaces-core": "*",
-        "spaces-git": "*",
-        "spaces-lint": "*",
-        "spaces-materializer": "*",
-        "spaces-resolver": "*",
-        "spaces-store": "*",
+        "spaces-config": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.8.3",
-      },
-    },
-    "packages/git": {
-      "name": "spaces-git",
-      "version": "0.1.0",
-      "dependencies": {
-        "spaces-core": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "typescript": "^5.0.0",
-      },
-    },
-    "packages/lint": {
-      "name": "spaces-lint",
-      "version": "0.1.0",
-      "dependencies": {
-        "spaces-core": "*",
-        "spaces-materializer": "*",
-      },
-    },
-    "packages/materializer": {
-      "name": "spaces-materializer",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iarna/toml": "^2.2.5",
-        "spaces-core": "*",
-        "spaces-store": "*",
-      },
-    },
-    "packages/resolver": {
-      "name": "spaces-resolver",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iarna/toml": "^2.2.5",
-        "semver": "^7.6.0",
-        "spaces-core": "*",
-        "spaces-git": "*",
-      },
-      "devDependencies": {
-        "@types/semver": "^7.5.8",
-      },
-    },
-    "packages/store": {
-      "name": "spaces-store",
-      "version": "0.1.0",
-      "dependencies": {
-        "spaces-core": "*",
-        "spaces-git": "*",
-        "spaces-resolver": "*",
       },
     },
   },
@@ -568,23 +497,11 @@
 
     "signal-exit": ["signal-exit@3.0.7", "", {}, ""],
 
-    "spaces-claude": ["spaces-claude@workspace:packages/claude"],
+    "spaces-config": ["spaces-config@workspace:packages/config"],
 
-    "spaces-core": ["spaces-core@workspace:packages/core"],
-
-    "spaces-engine": ["spaces-engine@workspace:packages/engine"],
-
-    "spaces-git": ["spaces-git@workspace:packages/git"],
+    "spaces-execution": ["spaces-execution@workspace:packages/execution"],
 
     "spaces-integration-tests": ["spaces-integration-tests@workspace:integration-tests"],
-
-    "spaces-lint": ["spaces-lint@workspace:packages/lint"],
-
-    "spaces-materializer": ["spaces-materializer@workspace:packages/materializer"],
-
-    "spaces-resolver": ["spaces-resolver@workspace:packages/resolver"],
-
-    "spaces-store": ["spaces-store@workspace:packages/store"],
 
     "std-env": ["std-env@3.10.0", "", {}, "sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg=="],
 
@@ -668,11 +585,9 @@
 
     "rimraf/glob": ["glob@10.5.0", "", { "dependencies": { "foreground-child": "^3.1.0", "jackspeak": "^3.1.2", "minimatch": "^9.0.4", "minipass": "^7.1.2", "package-json-from-dist": "^1.0.0", "path-scurry": "^1.11.1" }, "bin": { "glob": "dist/esm/bin.mjs" } }, "sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg=="],
 
-    "spaces-claude/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
+    "spaces-config/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
 
-    "spaces-engine/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
-
-    "spaces-git/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
+    "spaces-execution/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
 
     "spaces-integration-tests/@types/bun": ["@types/bun@1.3.6", "", { "dependencies": { "bun-types": "1.3.6" } }, "sha512-uWCv6FO/8LcpREhenN1d1b6fcspAB+cefwD7uti8C8VffIv0Um08TKMn98FynpTiU38+y2dUO55T11NgDt8VAA=="],
 
@@ -708,11 +623,9 @@
 
     "rimraf/glob/path-scurry": ["path-scurry@1.11.1", "", { "dependencies": { "lru-cache": "^10.2.0", "minipass": "^5.0.0 || ^6.0.2 || ^7.0.0" } }, "sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA=="],
 
-    "spaces-claude/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
+    "spaces-config/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
 
-    "spaces-engine/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
-
-    "spaces-git/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
+    "spaces-execution/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
 
     "spaces-integration-tests/@types/bun/bun-types": ["bun-types@1.3.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-OlFwHcnNV99r//9v5IIOgQ9Uk37gZqrNMCcqEaExdkVq3Avwqok1bJFmvGMCkCE0FqzdY8VMOZpfpR3lwI+CsQ=="],
 

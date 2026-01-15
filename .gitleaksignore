@@ -1,0 +1,8 @@
+# Gitleaks ignore file
+# These are false positives - cacheKey values are SHA256 hashes, not API keys
+
+# ASP cache files - cacheKey is a SHA256 hash for cache validation
+73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/dev/claude/plugins/000-defaults/.asp-cache.json:generic-api-key:5
+73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-build/claude/plugins/000-ralph-build-loop/.asp-cache.json:generic-api-key:5
+73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-plan/claude/plugins/000-ralph-plan-loop/.asp-cache.json:generic-api-key:5
+73408a1f79f0afa0c5ef98063752103c5f17cce8:asp_modules/ralph-plan/claude/plugins/001-praesidium-defaults/.asp-cache.json:generic-api-key:5
