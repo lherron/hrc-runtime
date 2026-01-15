@@ -5,6 +5,8 @@
 pre-commit:
   parallel: false
   commands:
+    gitleaks:
+      run: gitleaks protect --staged --verbose
     lint:
       run: bun run lint
       stage_fixed: true
