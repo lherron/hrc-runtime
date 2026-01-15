@@ -13,7 +13,7 @@ Run these after implementing to get immediate feedback:
 
 - Always run tests (`bun run test`) without asking.
 - Tests: `bun run test`
-- Typecheck: `bun run typecheck`
+- Typecheck: `bun run typecheck` (run `bun run build` first if workspace typings are missing)
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 
 ## Project Structure

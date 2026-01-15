@@ -1,5 +1,6 @@
 node_modules/
 dist/
+asp_modules/
 *.log
 .DS_Store
 *.tsbuildinfo
