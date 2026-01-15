@@ -15,4 +15,4 @@ pre-push:
   parallel: false
   commands:
     test:
-      run: bun run test
+      run: env -u GIT_DIR -u GIT_WORK_TREE bun run test
