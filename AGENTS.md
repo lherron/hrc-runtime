@@ -41,6 +41,9 @@ Run CLI commands with `--dry-run` to verify behavior without launching Claude:
 # Run CLI directly with bun (no build step needed)
 bun packages/cli/bin/asp.js <command>
 
+# Set ASP_HOME to a writable path (avoids EPERM creating temp dirs)
+ASP_HOME=/tmp/asp-test
+
 # Test with a local space (dev mode)
 ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
   integration-tests/fixtures/sample-registry/spaces/base --dry-run
