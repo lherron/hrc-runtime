@@ -55,3 +55,11 @@ rebuild:
 # Install dependencies
 install:
     bun install
+
+# Run control-plane interface test with rex-home target
+cp-test prompt="List skills available. Use only what is in your context, no tools.":
+    ASP_HOME=/Users/lherron/praesidium/var/spaces-repo bun scripts/cp-interface-test.ts \
+        --target default \
+        --target-dir /Users/lherron/praesidium/rex-home \
+        --model claude/sonnet \
+        "{{prompt}}"

@@ -11,7 +11,7 @@ bun run build     # Build all packages
 
 Run these after implementing to get immediate feedback:
 
-- Always run tests (`bun run test`) without asking.
+- Only run tests (`bun run test`) **after modifying files under `packages/*` AND after manually testing if possible**.
 - Tests: `bun run test`
 - Typecheck: `bun run typecheck` (run `bun run build` first if workspace typings are missing)
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
@@ -34,6 +34,7 @@ packages/
 ## Smoke Testing the CLI
 
 **Always test `asp run` changes with `--dry-run`** to verify the generated Claude command without actually launching Claude.
+**If you update something available via CLI, run the CLI to validate it.**
 
 Run CLI commands with `--dry-run` to verify behavior without launching Claude:
 
