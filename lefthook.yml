@@ -16,5 +16,7 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
+    install:
+      run: bun install
     test:
       run: env -u GIT_DIR -u GIT_WORK_TREE bun run test
