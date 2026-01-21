@@ -49,6 +49,11 @@ ASP_HOME=/tmp/asp-test
 ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
   integration-tests/fixtures/sample-registry/spaces/base --dry-run
 
+# For codex harness dry-runs without a local Codex install
+PATH=integration-tests/fixtures/codex-shim:$PATH \
+  ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
+  integration-tests/fixtures/sample-registry/spaces/base --dry-run --harness codex
+
 # Test inherit flags
 bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-all
 bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-project --inherit-user
