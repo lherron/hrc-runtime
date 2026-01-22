@@ -4,7 +4,7 @@
   "workspaces": ["packages/*", "integration-tests"],
   "scripts": {
     "build": "bun run build:ordered",
-    "build:ordered": "bun run --filter 'spaces-config' build && bun run --filter 'spaces-execution' build && bun run --filter 'agent-spaces' build && bun run --filter '@lherron/agent-spaces' build",
+    "build:ordered": "bun run --filter 'spaces-config' build && bun run --filter 'spaces-runtime' build && bun run --filter 'spaces-harness-claude' build && bun run --filter 'spaces-harness-pi' build && bun run --filter 'spaces-harness-pi-sdk' build && bun run --filter 'spaces-harness-codex' build && bun run --filter 'spaces-execution' build && bun run --filter 'agent-spaces' build && bun run --filter '@lherron/agent-spaces' build",
     "build:parallel": "bun run --filter '*' build",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
