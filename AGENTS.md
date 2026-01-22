@@ -62,6 +62,8 @@ bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-project --inher
 bun packages/cli/bin/asp.js run <space-path> --dry-run  # should show --settings flag
 ```
 
+Note: `asp run` does not accept a `--prompt` flag.
+
 Test fixtures are in `integration-tests/fixtures/`:
 - `sample-registry/spaces/` - Various test spaces (base, frontend, backend, etc.)
 - `sample-project/` - Project with asp-targets.toml
