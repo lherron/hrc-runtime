@@ -65,6 +65,6 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "*.json"]
+    "ignore": ["node_modules", "dist", "*.json", "asp-lock.json"]
   }
 }
