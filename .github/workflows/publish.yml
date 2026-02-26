@@ -32,15 +32,18 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build
-        run: bun run clean && bun run build:ci
+        run: bun run clean && bun run build
 
       - name: Bundle workspace packages for npm
         run: |
-          for pkg in core git claude resolver store materializer engine lint; do
+          for pkg in config runtime harness-claude harness-pi harness-pi-sdk harness-codex execution; do
             mkdir -p node_modules/spaces-$pkg
             cp -r ../$pkg/dist node_modules/spaces-$pkg/
             cp ../$pkg/package.json node_modules/spaces-$pkg/
           done
+          mkdir -p node_modules/agent-spaces
+          cp -r ../agent-spaces/dist node_modules/agent-spaces/
+          cp ../agent-spaces/package.json node_modules/agent-spaces/
         working-directory: packages/cli
 
       - name: Publish @lherron/agent-spaces
