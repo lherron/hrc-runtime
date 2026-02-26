@@ -47,7 +47,7 @@ jobs:
         working-directory: packages/cli
 
       - name: Publish @lherron/agent-spaces
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ""
