@@ -1,6 +1,7 @@
 node_modules/
 dist/
 asp_modules/
+asp-lock.json
 *.log
 .DS_Store
 *.tsbuildinfo
