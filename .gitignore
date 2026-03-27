@@ -6,3 +6,4 @@ asp-lock.json
 .DS_Store
 *.tsbuildinfo
 .env.local
+.agentchat/
