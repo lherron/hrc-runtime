@@ -44,6 +44,9 @@ jobs:
           mkdir -p node_modules/agent-spaces
           cp -r ../agent-spaces/dist node_modules/agent-spaces/
           cp ../agent-spaces/package.json node_modules/agent-spaces/
+          mkdir -p node_modules/agent-scope
+          cp -r ../agent-scope/dist node_modules/agent-scope/
+          cp ../agent-scope/package.json node_modules/agent-scope/
         working-directory: packages/cli
 
       - name: Publish @lherron/agent-spaces
