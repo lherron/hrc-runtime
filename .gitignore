@@ -7,3 +7,8 @@ asp-lock.json
 *.tsbuildinfo
 .env.local
 .agentchat/
+.animata/
+
+# Bun workspace self-referencing symlinks (cause recursive expansion on clone/zip)
+packages/config/config
+packages/execution/execution
