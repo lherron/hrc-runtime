@@ -20,15 +20,16 @@ Run these after implementing to get immediate feedback:
 
 ```
 packages/
-├── core/         # Types, schemas, config parsing, errors, locks, atomic writes
-├── git/          # Git operations (shell-out wrapper)
-├── claude/       # Claude CLI wrapper
-├── resolver/     # Resolution engine
-├── store/        # Content-addressed storage
-├── materializer/ # Plugin directory generation
-├── engine/       # Orchestration layer
-├── lint/         # Linting rules
-└── cli/          # CLI entry point
+├── agent-scope/      # ScopeRef/ScopeHandle/SessionRef/SessionHandle utilities
+├── config/           # spaces-config: config-time determinism, resolution, locks, materialization
+├── runtime/          # spaces-runtime: harness-agnostic runtime/session contracts
+├── execution/        # spaces-execution: run-time orchestration and harness dispatch
+├── harness-claude/   # Claude CLI + Agent SDK adapters
+├── harness-codex/    # Codex adapter
+├── harness-pi/       # Pi CLI adapter
+├── harness-pi-sdk/   # Pi SDK adapter
+├── agent-spaces/     # Public host-facing client surface
+└── cli/              # CLI entry point
 ```
 
 ## Smoke Testing the CLI
@@ -74,8 +75,8 @@ Test fixtures are in `integration-tests/fixtures/`:
 - TypeScript with strict mode and `exactOptionalPropertyTypes`
 - Optional properties use `prop?: T | undefined` pattern
 - Biome for linting/formatting
-- JSON schemas in `packages/core/src/schemas/`
-- Error classes in `packages/core/src/errors.ts`
+- JSON schemas in `packages/config/src/core/schemas/`
+- Error classes in `packages/config/src/core/errors.ts`
 
 ## Error Handling
 
