@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "hrc-core": "*",
+    "hrc-launch": "*",
     "hrc-store-sqlite": "*",
     "hrc-adapter-agent-spaces": "*"
   },
