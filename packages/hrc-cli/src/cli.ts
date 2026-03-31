@@ -73,12 +73,7 @@ function createDefaultRuntimeIntent(
 
 // -- Stub commands ------------------------------------------------------------
 
-const STUB_COMMANDS = new Set(['clear-context'])
-
-function runStub(command: string): never {
-  process.stderr.write(`hrc ${command}: not implemented yet\n`)
-  process.exit(1)
-}
+const _STUB_COMMANDS = new Set(['clear-context'])
 
 // -- Command handlers ---------------------------------------------------------
 
@@ -214,9 +209,46 @@ async function cmdRuntime(args: string[]): Promise<void> {
   }
 }
 
-async function cmdTurnSend(): Promise<never> {
-  process.stderr.write('hrc turn send: not implemented yet\n')
-  process.exit(1)
+async function cmdTurnSend(args: string[]): Promise<void> {
+  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const prompt = parseFlag(args, '--prompt')
+  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+  const followLatest = hasFlag(args, '--follow-latest')
+
+  if (!prompt) {
+    fatal('--prompt is required for turn send')
+  }
+
+  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
+    fatal('--provider must be one of: anthropic, openai')
+  }
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.dispatchTurn({
+    hostSessionId,
+    prompt,
+    runtimeIntent: createDefaultRuntimeIntent(providerRaw),
+    fences:
+      expectedHostSessionId !== undefined || expectedGeneration !== undefined || followLatest
+        ? {
+            ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+            ...(followLatest ? { followLatest: true } : {}),
+          }
+        : undefined,
+  })
+  printJson(result)
 }
 
 async function cmdTurn(args: string[]): Promise<void> {
@@ -224,12 +256,24 @@ async function cmdTurn(args: string[]): Promise<void> {
 
   switch (subcommand) {
     case 'send':
-      return cmdTurnSend()
+      return cmdTurnSend(args.slice(1))
     default:
       fatal(
         subcommand ? `unknown turn subcommand: ${subcommand}` : 'turn subcommand required (send)'
       )
   }
+}
+
+async function cmdClearContext(args: string[]): Promise<void> {
+  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const relaunch = hasFlag(args, '--relaunch')
+
+  const client = createClient()
+  const result = await client.clearContext({
+    hostSessionId,
+    ...(relaunch ? { relaunch: true } : {}),
+  })
+  printJson(result)
 }
 
 async function cmdCapture(args: string[]): Promise<void> {
@@ -277,10 +321,10 @@ Commands:
   session get <hostSessionId>         Get a session by host session ID
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
-  turn send                           (not implemented)
+  turn send <hostSessionId> --prompt <text> [--provider <provider>]
   capture <runtimeId>                 Capture tmux pane text
   attach <runtimeId>                  Print tmux attach descriptor JSON
-  clear-context <hostSessionId>       (not implemented)
+  clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
 `)
@@ -315,14 +359,13 @@ async function main(): Promise<void> {
         return await cmdCapture(rest)
       case 'attach':
         return await cmdAttach(rest)
+      case 'clear-context':
+        return await cmdClearContext(rest)
       case 'interrupt':
         return await cmdInterrupt(rest)
       case 'terminate':
         return await cmdTerminate(rest)
       default:
-        if (STUB_COMMANDS.has(command)) {
-          runStub(command)
-        }
         fatal(`unknown command: ${command}`)
     }
   } catch (error) {

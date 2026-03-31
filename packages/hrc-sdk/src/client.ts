@@ -4,6 +4,10 @@ import { HrcDomainError } from 'hrc-core'
 import type {
   AttachDescriptor,
   CaptureResponse,
+  ClearContextRequest,
+  ClearContextResponse,
+  DispatchTurnRequest,
+  DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   ResolveSessionRequest,
@@ -87,6 +91,14 @@ export class HrcClient {
 
   async ensureRuntime(request: EnsureRuntimeRequest): Promise<EnsureRuntimeResponse> {
     return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)
+  }
+
+  async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
+    return this.postJson<DispatchTurnResponse>('/v1/turns', request)
+  }
+
+  async clearContext(request: ClearContextRequest): Promise<ClearContextResponse> {
+    return this.postJson<ClearContextResponse>('/v1/clear-context', request)
   }
 
   async capture(runtimeId: string): Promise<CaptureResponse> {

@@ -1,4 +1,4 @@
-import type { HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
+import type { HrcFence, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 
 export type ResolveSessionRequest = {
   sessionRef: string
@@ -55,4 +55,30 @@ export type RuntimeActionResponse = {
   ok: true
   hostSessionId: string
   runtimeId: string
+}
+
+export type DispatchTurnRequest = {
+  hostSessionId: string
+  prompt: string
+  fences?: HrcFence | undefined
+  runtimeIntent?: HrcRuntimeIntent | undefined
+}
+
+export type DispatchTurnResponse = {
+  runId: string
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+  status: 'started'
+}
+
+export type ClearContextRequest = {
+  hostSessionId: string
+  relaunch?: boolean | undefined
+}
+
+export type ClearContextResponse = {
+  hostSessionId: string
+  generation: number
+  priorHostSessionId: string
 }

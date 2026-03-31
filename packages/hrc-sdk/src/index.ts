@@ -3,6 +3,10 @@ export { HrcClient } from './client.js'
 export type {
   AttachDescriptor,
   CaptureResponse,
+  ClearContextRequest,
+  ClearContextResponse,
+  DispatchTurnRequest,
+  DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   RestartStyle,

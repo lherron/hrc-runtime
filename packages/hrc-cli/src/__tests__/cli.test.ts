@@ -8,8 +8,8 @@
  * Pass conditions for Curly (T-00957):
  *   1. `hrc` with no args prints help text to stderr and exits 1
  *   2. `hrc unknowncmd` prints error to stderr and exits 1
- *   3. Stub commands (capture, attach, runtime ensure, turn send,
- *      clear-context, interrupt, terminate) print "not implemented yet"
+ *   3. `hrc turn send` and `hrc clear-context` validate args and dispatch
+ *      through hrc-sdk
  *      to stderr and exit 1
  *   4. `hrc server` starts the daemon (tested via createHrcServer delegation)
  *   5. `hrc session resolve --scope <scopeRef>` outputs JSON to stdout
@@ -157,19 +157,61 @@ describe('unknown command', () => {
 })
 
 // ===========================================================================
-// 3. Stub commands — exit 1 with "not implemented yet"
+// 3. turn send / clear-context
 // ===========================================================================
-describe('stub commands', () => {
-  const stubCommands = [['turn', 'send'], ['clear-context']]
+describe('turn send / clear-context', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
 
-  for (const args of stubCommands) {
-    const label = args.join(' ')
-    it(`"hrc ${label}" prints "not implemented yet" to stderr and exits 1`, async () => {
-      const result = await runCli(args)
-      expect(result.exitCode).toBe(1)
-      expect(result.stderr.toLowerCase()).toContain('not implemented')
-    })
+  async function resolveHostSessionId(scope: string): Promise<string> {
+    const result = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
+    return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
+
+  it('turn send exits 1 when hostSessionId is missing', async () => {
+    const result = await runCli(['turn', 'send'], cliEnv())
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr.toLowerCase()).toContain('missing required argument')
+  })
+
+  it('turn send outputs run JSON for a known hostSessionId', async () => {
+    const hostSessionId = await resolveHostSessionId('project:turncli')
+    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    expect(ensureResult.exitCode).toBe(0)
+
+    const result = await runCli(
+      ['turn', 'send', hostSessionId, '--prompt', 'hello from cli'],
+      cliEnv()
+    )
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.runId).toBeString()
+    expect(body.hostSessionId).toBe(hostSessionId)
+    expect(body.status).toBe('started')
+  })
+
+  it('clear-context exits 1 when hostSessionId is missing', async () => {
+    const result = await runCli(['clear-context'], cliEnv())
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr.toLowerCase()).toContain('missing required argument')
+  })
+
+  it('clear-context outputs rotation JSON for a known hostSessionId', async () => {
+    const hostSessionId = await resolveHostSessionId('project:clearctxcli')
+    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    expect(ensureResult.exitCode).toBe(0)
+
+    const result = await runCli(['clear-context', hostSessionId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.hostSessionId).toBeString()
+    expect(body.hostSessionId).not.toBe(hostSessionId)
+    expect(body.priorHostSessionId).toBe(hostSessionId)
+    expect(body.generation).toBeGreaterThan(1)
+  })
 })
 
 // ===========================================================================
