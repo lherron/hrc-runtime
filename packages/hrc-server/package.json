@@ -1,0 +1,31 @@
+{
+  "name": "hrc-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HRC daemon: Unix socket HTTP API, tmux management, runtime orchestration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hrc-core": "*",
+    "hrc-store-sqlite": "*",
+    "hrc-adapter-agent-spaces": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}
