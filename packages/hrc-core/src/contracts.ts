@@ -1,0 +1,165 @@
+import type { RuntimePlacement } from 'spaces-config'
+
+import type { HrcErrorCode } from './errors.js'
+import type { HrcSessionRef } from './selectors.js'
+
+export type HrcProvider = 'anthropic' | 'openai'
+export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-sdk'
+export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'tmux'
+export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
+
+export type HrcContinuationRef = {
+  provider: HrcProvider
+  key?: string | undefined
+}
+
+export type HrcEventEnvelope = {
+  seq: number
+  ts: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  runId?: string | undefined
+  runtimeId?: string | undefined
+  source: HrcEventSource
+  eventKind: string
+  eventJson: unknown
+}
+
+export type HrcHarnessIntent = {
+  provider: HrcProvider
+  interactive: boolean
+  fallback?: string | undefined
+  model?: string | undefined
+}
+
+export type HrcExecutionIntent = {
+  preferredMode?: HrcExecutionMode | undefined
+  autoLaunchInteractive?: boolean | undefined
+  allowFallback?: boolean | undefined
+}
+
+export type HrcLaunchEnvConfig = {
+  env?: Record<string, string> | undefined
+  unsetEnv?: string[] | undefined
+  pathPrepend?: string[] | undefined
+}
+
+export type HrcRuntimeIntent = {
+  placement: RuntimePlacement
+  harness: HrcHarnessIntent
+  execution?: HrcExecutionIntent | undefined
+  launch?: HrcLaunchEnvConfig | undefined
+}
+
+export type HrcHookBridgeConfig = {
+  kind: string
+  config?: Record<string, unknown> | undefined
+}
+
+export type HrcLaunchArtifact = {
+  launchId: string
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+  runId?: string | undefined
+  harness: HrcHarness
+  provider: HrcProvider
+  argv: string[]
+  env: Record<string, string>
+  cwd: string
+  callbackSocketPath: string
+  spoolDir: string
+  correlationEnv: Record<string, string>
+  launchEnv?: HrcLaunchEnvConfig | undefined
+  hookBridge?: HrcHookBridgeConfig | undefined
+}
+
+export type HrcContinuityRecord = {
+  sessionRef: HrcSessionRef
+  scopeRef: string
+  laneRef: string
+  activeHostSessionId: string
+  updatedAt: string
+  priorHostSessionIds: string[]
+}
+
+export type HrcSessionRecord = {
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  status: string
+  priorHostSessionId?: string | undefined
+  createdAt: string
+  updatedAt: string
+  parsedScopeJson?: Record<string, unknown> | undefined
+  ancestorScopeRefs: string[]
+  lastAppliedIntentJson?: HrcRuntimeIntent | undefined
+  continuation?: HrcContinuationRef | undefined
+}
+
+export type HrcRuntimeSnapshot = {
+  runtimeId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  launchId?: string | undefined
+  transport: string
+  harness: HrcHarness
+  provider: HrcProvider
+  status: string
+  tmuxJson?: Record<string, unknown> | undefined
+  wrapperPid?: number | undefined
+  childPid?: number | undefined
+  harnessSessionJson?: Record<string, unknown> | undefined
+  continuation?: HrcContinuationRef | undefined
+  supportsInflightInput: boolean
+  adopted: boolean
+  activeRunId?: string | undefined
+  lastActivityAt?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
+export type HrcRunRecord = {
+  runId: string
+  hostSessionId: string
+  runtimeId?: string | undefined
+  scopeRef: string
+  laneRef: string
+  generation: number
+  transport: string
+  status: string
+  acceptedAt?: string | undefined
+  startedAt?: string | undefined
+  completedAt?: string | undefined
+  updatedAt: string
+  errorCode?: HrcErrorCode | undefined
+  errorMessage?: string | undefined
+}
+
+export type HrcLaunchRecord = {
+  launchId: string
+  hostSessionId: string
+  generation: number
+  runtimeId?: string | undefined
+  harness: HrcHarness
+  provider: HrcProvider
+  launchArtifactPath: string
+  tmuxJson?: Record<string, unknown> | undefined
+  wrapperPid?: number | undefined
+  childPid?: number | undefined
+  harnessSessionJson?: Record<string, unknown> | undefined
+  continuation?: HrcContinuationRef | undefined
+  wrapperStartedAt?: string | undefined
+  childStartedAt?: string | undefined
+  exitedAt?: string | undefined
+  exitCode?: number | undefined
+  signal?: string | undefined
+  status: string
+  createdAt: string
+  updatedAt: string
+}
