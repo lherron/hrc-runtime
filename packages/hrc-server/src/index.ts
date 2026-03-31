@@ -261,6 +261,7 @@ export type { RestartStyle, TmuxManagerOptions }
 class HrcServerInstance implements HrcServer {
   private readonly followSubscribers = new Set<FollowSubscriber>()
   private readonly server: Bun.Server<undefined>
+  private readonly startedAt = new Date().toISOString()
   private stopping = false
 
   constructor(
@@ -412,6 +413,26 @@ class HrcServerInstance implements HrcServer {
 
       if (request.method === 'POST' && pathname === '/v1/internal/hooks/ingest') {
         return await this.handleHookIngest(request)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/health') {
+        return this.handleHealth()
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/status') {
+        return this.handleStatus()
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/runtimes') {
+        return this.handleListRuntimes(url)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/launches') {
+        return this.handleListLaunches(url)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/runtimes/adopt') {
+        return await this.handleAdoptRuntime(request)
       }
 
       return new Response('Not Found', { status: 404 })
@@ -1315,6 +1336,16 @@ class HrcServerInstance implements HrcServer {
   private async handleWrapperStarted(launchId: string, request: Request): Promise<Response> {
     const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'wrapper-started')
     const session = requireSession(this.db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(
+      this.db,
+      session,
+      launchId,
+      'wrapper_started'
+    )
+    if (rejection) {
+      this.notifyEvent(rejection.event)
+      throw rejection.error
+    }
     const now = body.timestamp ?? timestamp()
 
     const launch = upsertLaunch(this.db, launchId, session, {
@@ -1344,6 +1375,11 @@ class HrcServerInstance implements HrcServer {
   private async handleChildStarted(launchId: string, request: Request): Promise<Response> {
     const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'child-started')
     const session = requireSession(this.db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'child_started')
+    if (rejection) {
+      this.notifyEvent(rejection.event)
+      throw rejection.error
+    }
     const now = body.timestamp ?? timestamp()
 
     const launch = upsertLaunch(this.db, launchId, session, {
@@ -1372,6 +1408,11 @@ class HrcServerInstance implements HrcServer {
   private async handleExited(launchId: string, request: Request): Promise<Response> {
     const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'exited')
     const session = requireSession(this.db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'exited')
+    if (rejection) {
+      this.notifyEvent(rejection.event)
+      throw rejection.error
+    }
     const now = body.timestamp ?? timestamp()
 
     const launch = upsertLaunch(this.db, launchId, session, {
@@ -1389,8 +1430,8 @@ class HrcServerInstance implements HrcServer {
     })
     if (launch.runtimeId) {
       const activeRunId = this.db.runtimes.findById(launch.runtimeId)?.activeRunId
+      this.db.runtimes.updateRunId(launch.runtimeId, undefined, now)
       this.db.runtimes.update(launch.runtimeId, {
-        activeRunId: undefined,
         status: 'ready',
         updatedAt: now,
         lastActivityAt: now,
@@ -1433,6 +1474,88 @@ class HrcServerInstance implements HrcServer {
 
     this.notifyEvent(event)
     return json({ ok: true })
+  }
+
+  private handleHealth(): Response {
+    return json({ ok: true })
+  }
+
+  private handleStatus(): Response {
+    const sessions = this.db.sessions.listAll()
+    const runtimes = this.db.runtimes.listAll()
+    const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
+    return json({
+      ok: true,
+      uptime: Math.floor(uptimeMs / 1000),
+      startedAt: this.startedAt,
+      socketPath: this.options.socketPath,
+      dbPath: this.options.dbPath,
+      sessionCount: sessions.length,
+      runtimeCount: runtimes.length,
+    })
+  }
+
+  private handleListRuntimes(url: URL): Response {
+    const hostSessionId = url.searchParams.get('hostSessionId') ?? undefined
+    const runtimes = hostSessionId
+      ? this.db.runtimes.listByHostSessionId(hostSessionId)
+      : this.db.runtimes.listAll()
+    return json(runtimes)
+  }
+
+  private handleListLaunches(url: URL): Response {
+    const hostSessionId = url.searchParams.get('hostSessionId') ?? undefined
+    const runtimeId = url.searchParams.get('runtimeId') ?? undefined
+    let launches: HrcLaunchRecord[]
+    if (runtimeId) {
+      launches = this.db.launches.listByRuntimeId(runtimeId)
+    } else if (hostSessionId) {
+      launches = this.db.launches.listByHostSessionId(hostSessionId)
+    } else {
+      launches = this.db.launches.listAll()
+    }
+    return json(launches)
+  }
+
+  private async handleAdoptRuntime(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['runtimeId'] !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
+    }
+    const runtimeId = body['runtimeId'] as string
+    const runtime = this.db.runtimes.findById(runtimeId)
+    if (!runtime) {
+      throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
+    }
+    if (runtime.status !== 'dead' && runtime.status !== 'stale') {
+      throw new HrcConflictError(
+        HrcErrorCode.CONFLICT,
+        `runtime ${runtimeId} is not adoptable (status: ${runtime.status})`,
+        {
+          runtimeId,
+          status: runtime.status,
+        }
+      )
+    }
+    if (runtime.adopted) {
+      return json(runtime)
+    }
+    const updated = this.db.runtimes.update(runtimeId, {
+      adopted: true,
+      status: 'adopted',
+      updatedAt: timestamp(),
+    })
+    if (!updated) {
+      throw new HrcInternalError(`failed to adopt runtime ${runtimeId}`)
+    }
+    const session = this.db.sessions.findByHostSessionId(runtime.hostSessionId)
+    if (session) {
+      const event = this.appendEvent(session, 'runtime.adopted', {
+        runtimeId,
+      })
+      this.notifyEvent(event)
+    }
+    return json(updated)
   }
 
   private appendEvent(
@@ -1852,6 +1975,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     await tmux.initialize()
     const db = openHrcDatabase(options.dbPath)
     await replaySpool(options, db)
+    await reconcileStartupState(db, tmux)
     return new HrcServerInstance(options, db, tmux)
   } catch (error) {
     await Promise.allSettled([
@@ -1927,12 +2051,20 @@ async function replaySpool(options: HrcServerOptions, db: HrcDatabase): Promise<
     }
 
     const entries = await readSpoolEntries(options.spoolDir, launchId)
+    let hadFailure = false
     for (const entry of entries) {
-      await replaySpoolEntry(db, entry.payload)
-      await unlinkIfExists(entry.path)
+      try {
+        await replaySpoolEntry(db, entry.payload)
+        await unlinkIfExists(entry.path)
+      } catch (error) {
+        hadFailure = true
+        logStartupIssue('spool replay failed', { launchId, path: entry.path }, error)
+      }
     }
 
-    await rm(launchDir, { recursive: true, force: true })
+    if (!hadFailure) {
+      await rm(launchDir, { recursive: true, force: true })
+    }
   }
 }
 
@@ -1954,6 +2086,16 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     const launchId = endpoint.slice('/v1/internal/launches/'.length).replace('/wrapper-started', '')
     const body = parseLaunchLifecyclePayload(replayPayload, 'wrapper-started')
     const session = requireSession(db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(
+      db,
+      session,
+      launchId,
+      'wrapper_started',
+      true
+    )
+    if (rejection) {
+      return
+    }
     const now = body.timestamp ?? timestamp()
     upsertLaunch(db, launchId, session, {
       status: 'wrapper_started',
@@ -1961,6 +2103,16 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       wrapperStartedAt: now,
       updatedAt: now,
     })
+    const replayedLaunch = db.launches.findById(launchId)
+    if (replayedLaunch?.runtimeId) {
+      db.runtimes.update(replayedLaunch.runtimeId, {
+        wrapperPid: replayedLaunch.wrapperPid,
+        launchId,
+        status: 'busy',
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+    }
     db.events.append({
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
@@ -1978,6 +2130,16 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     const launchId = endpoint.slice('/v1/internal/launches/'.length).replace('/child-started', '')
     const body = parseLaunchLifecyclePayload(replayPayload, 'child-started')
     const session = requireSession(db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(
+      db,
+      session,
+      launchId,
+      'child_started',
+      true
+    )
+    if (rejection) {
+      return
+    }
     const now = body.timestamp ?? timestamp()
     upsertLaunch(db, launchId, session, {
       status: 'child_started',
@@ -1985,6 +2147,15 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       childStartedAt: now,
       updatedAt: now,
     })
+    const replayedLaunch = db.launches.findById(launchId)
+    if (replayedLaunch?.runtimeId) {
+      db.runtimes.update(replayedLaunch.runtimeId, {
+        childPid: replayedLaunch.childPid,
+        status: 'busy',
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+    }
     db.events.append({
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
@@ -2002,6 +2173,10 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     const launchId = endpoint.slice('/v1/internal/launches/'.length).replace('/exited', '')
     const body = parseLaunchLifecyclePayload(replayPayload, 'exited')
     const session = requireSession(db, body.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(db, session, launchId, 'exited', true)
+    if (rejection) {
+      return
+    }
     const now = body.timestamp ?? timestamp()
     upsertLaunch(db, launchId, session, {
       status: 'exited',
@@ -2010,6 +2185,30 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       signal: body.signal,
       updatedAt: now,
     })
+    const replayedLaunch = db.launches.findById(launchId)
+    if (replayedLaunch?.runtimeId) {
+      const runtime = db.runtimes.findById(replayedLaunch.runtimeId)
+      const activeRunId = runtime?.activeRunId
+      db.runtimes.updateRunId(replayedLaunch.runtimeId, undefined, now)
+      db.runtimes.update(replayedLaunch.runtimeId, {
+        status: 'ready',
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+      if (activeRunId) {
+        db.runs.markCompleted(activeRunId, {
+          status: body.exitCode === 0 ? 'completed' : 'failed',
+          completedAt: now,
+          updatedAt: now,
+          ...(body.exitCode === 0
+            ? {}
+            : {
+                errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+                errorMessage: `launch exited with code ${body.exitCode ?? 'unknown'}`,
+              }),
+        })
+      }
+    }
     db.events.append({
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
@@ -2049,6 +2248,207 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     `unsupported spool endpoint "${endpoint}"`,
     { endpoint }
   )
+}
+
+async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): Promise<void> {
+  for (const launch of db.launches.listAll()) {
+    if (!isOrphanableLaunchStatus(launch.status)) {
+      continue
+    }
+
+    try {
+      const trackedPid = getTrackedLaunchPid(launch)
+      if (trackedPid === undefined || isLiveProcess(trackedPid)) {
+        continue
+      }
+
+      const session = requireSession(db, launch.hostSessionId)
+      const now = timestamp()
+      db.launches.update(launch.launchId, {
+        status: 'orphaned',
+        updatedAt: now,
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: launch.runtimeId,
+        source: 'hrc',
+        eventKind: 'launch.orphaned',
+        eventJson: {
+          launchId: launch.launchId,
+          pid: trackedPid,
+          priorStatus: launch.status,
+        },
+      })
+    } catch (error) {
+      logStartupIssue('launch reconciliation failed', { launchId: launch.launchId }, error)
+    }
+  }
+
+  for (const runtime of db.runtimes.listAll()) {
+    if (
+      runtime.transport !== 'tmux' ||
+      runtime.status === 'terminated' ||
+      runtime.status === 'dead'
+    ) {
+      continue
+    }
+
+    try {
+      const runtimeLaunches = db.launches.listByRuntimeId(runtime.runtimeId)
+      const currentRuntimeLaunches = runtimeLaunches.filter(
+        (launch) =>
+          launch.hostSessionId === runtime.hostSessionId && launch.generation === runtime.generation
+      )
+      const launchBecameOrphaned =
+        currentRuntimeLaunches.length > 0 &&
+        currentRuntimeLaunches.every((launch) => launch.status === 'orphaned') &&
+        (runtime.launchId === undefined ||
+          currentRuntimeLaunches.some((launch) => launch.launchId === runtime.launchId))
+      if (launchBecameOrphaned) {
+        markRuntimeStale(db, requireSession(db, runtime.hostSessionId), runtime, {
+          runtimeId: runtime.runtimeId,
+          reason: 'launch_orphaned',
+          priorStatus: runtime.status,
+          ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
+        })
+        continue
+      }
+
+      const tmuxSessionName = getObservedTmuxSessionName(runtime)
+      if (!tmuxSessionName) {
+        continue
+      }
+
+      const inspected = await tmux.inspectSession(tmuxSessionName)
+      if (inspected) {
+        continue
+      }
+
+      markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'tmux', {
+        runtimeId: runtime.runtimeId,
+        sessionName: tmuxSessionName,
+        reason: 'tmux_session_missing',
+      })
+    } catch (error) {
+      logStartupIssue('runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
+    }
+  }
+}
+
+function isOrphanableLaunchStatus(status: string): boolean {
+  return status === 'started' || status === 'wrapper_started' || status === 'child_started'
+}
+
+function getTrackedLaunchPid(launch: HrcLaunchRecord): number | undefined {
+  if (launch.status === 'started') {
+    return launch.wrapperPid
+  }
+
+  if (launch.status === 'child_started') {
+    return launch.childPid ?? launch.wrapperPid
+  }
+
+  if (launch.status === 'wrapper_started') {
+    return launch.wrapperPid
+  }
+
+  return undefined
+}
+
+function getObservedTmuxSessionName(runtime: HrcRuntimeSnapshot): string | null {
+  const sessionName = runtime.tmuxJson?.['sessionName']
+  if (typeof sessionName === 'string' && sessionName.length > 0) {
+    return sessionName
+  }
+
+  const sessionId = runtime.tmuxJson?.['sessionId']
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    return sessionId
+  }
+
+  return null
+}
+
+function markRuntimeDead(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  source: HrcEventEnvelope['source'],
+  eventJson: Record<string, unknown>
+): void {
+  const now = timestamp()
+  if (runtime.activeRunId !== undefined) {
+    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+    db.runs.markCompleted(runtime.activeRunId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: `runtime ${runtime.runtimeId} is dead after startup reconciliation`,
+    })
+  }
+
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'dead',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+  db.events.append({
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    source,
+    eventKind: 'runtime.dead',
+    eventJson,
+  })
+}
+
+function markRuntimeStale(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  eventJson: Record<string, unknown>
+): void {
+  const now = timestamp()
+  if (runtime.activeRunId !== undefined) {
+    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+    db.runs.markCompleted(runtime.activeRunId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: `runtime ${runtime.runtimeId} is stale after startup reconciliation`,
+    })
+  }
+
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'stale',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+  db.events.append({
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    source: 'hrc',
+    eventKind: 'runtime.stale',
+    eventJson,
+  })
+}
+
+function logStartupIssue(message: string, detail: Record<string, unknown>, error: unknown): void {
+  const rendered = error instanceof Error ? error.message : String(error)
+  console.error(`[hrc-server] ${message}`, JSON.stringify(detail), rendered)
 }
 
 function parseResolveSessionRequest(input: unknown): ResolveSessionRequest {
@@ -2337,12 +2737,16 @@ function getTmuxSocketPath(options: HrcServerOptions): string {
 
 function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
   const runtime = findLatestRuntime(db, hostSessionId)
-  if (!runtime || runtime.status === 'terminated') {
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     throw new HrcRuntimeUnavailableError(`no ready runtime for host session "${hostSessionId}"`, {
       hostSessionId,
     })
   }
   return runtime
+}
+
+function isRuntimeUnavailableStatus(status: string): boolean {
+  return status === 'terminated' || status === 'dead' || status === 'stale'
 }
 
 function getTmuxSessionName(runtime: HrcRuntimeSnapshot): string {
@@ -2575,6 +2979,86 @@ function requireBridge(db: HrcDatabase, bridgeId: string): HrcLocalBridgeRecord 
   return bridge
 }
 
+function buildStaleLaunchCallbackRejection(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  launchId: string,
+  callbackKind: 'wrapper_started' | 'child_started' | 'exited',
+  replayed = false
+): { event: HrcEventEnvelope; error: HrcConflictError } | null {
+  const continuity = db.continuities.findByRef(session.scopeRef, session.laneRef)
+  const activeSession = continuity
+    ? db.sessions.findByHostSessionId(continuity.activeHostSessionId)
+    : null
+  if (activeSession && activeSession.hostSessionId !== session.hostSessionId) {
+    const activeRuntime = findLatestSessionRuntime(db, activeSession.hostSessionId)
+    const event = db.events.append({
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: activeRuntime?.runtimeId,
+      source: 'hrc',
+      eventKind: 'launch.callback_rejected',
+      eventJson: {
+        launchId,
+        callback: callbackKind,
+        reason: 'stale_generation',
+        activeHostSessionId: activeSession.hostSessionId,
+        activeGeneration: activeSession.generation,
+        ...(replayed ? { replayed: true } : {}),
+      },
+    })
+
+    return {
+      event,
+      error: new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'launch callback is stale', {
+        launchId,
+        activeHostSessionId: activeSession.hostSessionId,
+        activeGeneration: activeSession.generation,
+      }),
+    }
+  }
+
+  const existingLaunch = db.launches.findById(launchId)
+  if (!existingLaunch?.runtimeId) {
+    return null
+  }
+
+  const runtime = db.runtimes.findById(existingLaunch.runtimeId)
+  if (!runtime?.launchId || runtime.launchId === launchId) {
+    return null
+  }
+
+  const event = db.events.append({
+    ts: timestamp(),
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    source: 'hrc',
+    eventKind: 'launch.callback_rejected',
+    eventJson: {
+      launchId,
+      callback: callbackKind,
+      activeLaunchId: runtime.launchId,
+      reason: 'stale_launch',
+      ...(replayed ? { replayed: true } : {}),
+    },
+  })
+
+  return {
+    event,
+    error: new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'launch callback is stale', {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      activeLaunchId: runtime.launchId,
+    }),
+  }
+}
+
 function mergeBridgeFence(bridge: HrcLocalBridgeRecord, delivery: DeliverBridgeRequest): HrcFence {
   return {
     ...(delivery.expectedHostSessionId !== undefined
@@ -2609,8 +3093,11 @@ function requireRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot 
     })
   }
 
-  if (runtime.status === 'terminated') {
-    throw new HrcRuntimeUnavailableError(`runtime "${runtimeId}" is terminated`, { runtimeId })
+  if (isRuntimeUnavailableStatus(runtime.status)) {
+    throw new HrcRuntimeUnavailableError(`runtime "${runtimeId}" is ${runtime.status}`, {
+      runtimeId,
+      status: runtime.status,
+    })
   }
 
   return runtime

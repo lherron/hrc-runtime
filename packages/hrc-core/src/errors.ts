@@ -7,6 +7,7 @@ export const HrcErrorCode = {
   UNKNOWN_RUNTIME: 'unknown_runtime',
   UNKNOWN_SURFACE: 'unknown_surface',
   UNKNOWN_BRIDGE: 'unknown_bridge',
+  CONFLICT: 'stale_context',
   STALE_CONTEXT: 'stale_context',
   RUNTIME_BUSY: 'runtime_busy',
   RUN_MISMATCH: 'run_mismatch',
