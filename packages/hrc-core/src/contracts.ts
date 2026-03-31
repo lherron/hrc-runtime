@@ -177,3 +177,27 @@ export type HrcSurfaceBindingRecord = {
   unboundAt?: string | undefined
   reason?: string | undefined
 }
+
+export type HrcAppSessionRecord = {
+  appId: string
+  appSessionKey: string
+  hostSessionId: string
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+  createdAt: string
+  updatedAt: string
+  removedAt?: string | undefined
+}
+
+export type HrcLocalBridgeRecord = {
+  bridgeId: string
+  hostSessionId: string
+  runtimeId?: string | undefined
+  transport: string
+  target: string
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+  createdAt: string
+  closedAt?: string | undefined
+  status?: string | undefined
+}

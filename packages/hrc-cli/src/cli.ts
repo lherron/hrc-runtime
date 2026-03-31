@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { readFile } from 'node:fs/promises'
+
 import {
   resolveControlSocketPath,
   resolveDatabasePath,
@@ -137,6 +139,36 @@ async function cmdSessionGet(args: string[]): Promise<void> {
   printJson(session)
 }
 
+async function cmdSessionApply(args: string[]): Promise<void> {
+  const appIdFlag = parseFlag(args, '--app')
+  const hostSessionIdFlag = parseFlag(args, '--host-session-id')
+  const filePath = parseFlag(args, '--file')
+  const jsonPayload = parseFlag(args, '--json')
+
+  if (!filePath && !jsonPayload) {
+    fatal('session apply requires --file <path> or --json <payload>')
+  }
+
+  if (filePath && jsonPayload) {
+    fatal('session apply accepts only one of --file or --json')
+  }
+
+  const raw =
+    filePath !== undefined ? await readFile(filePath, 'utf-8') : (jsonPayload as string | undefined)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw ?? '')
+  } catch {
+    fatal('session apply payload must be valid JSON')
+  }
+
+  const request = toSessionApplyRequest(parsed, appIdFlag, hostSessionIdFlag)
+
+  const client = createClient()
+  const result = await client.applyAppSessions(request)
+  printJson(result)
+}
+
 async function cmdSession(args: string[]): Promise<void> {
   const subcommand = args[0]
   const rest = args.slice(1)
@@ -148,11 +180,13 @@ async function cmdSession(args: string[]): Promise<void> {
       return cmdSessionList(rest)
     case 'get':
       return cmdSessionGet(rest)
+    case 'apply':
+      return cmdSessionApply(rest)
     default:
       fatal(
         subcommand
           ? `unknown session subcommand: ${subcommand}`
-          : 'session subcommand required (resolve, list, get)'
+          : 'session subcommand required (resolve, list, get, apply)'
       )
   }
 }
@@ -423,6 +457,221 @@ async function cmdSurface(args: string[]): Promise<void> {
   }
 }
 
+async function cmdBridgeRegister(args: string[]): Promise<void> {
+  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const transport = parseFlag(args, '--transport')
+  const target = parseFlag(args, '--target')
+  const runtimeId = parseFlag(args, '--runtime-id')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+
+  if (!transport) {
+    fatal('--transport is required for bridge register')
+  }
+  if (!target) {
+    fatal('--target is required for bridge register')
+  }
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.registerBridgeTarget({
+    hostSessionId,
+    ...(runtimeId ? { runtimeId } : {}),
+    transport,
+    target,
+    ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+    ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdBridgeDeliver(args: string[]): Promise<void> {
+  const bridgeId = requireArg(args, 0, '<bridgeId>')
+  const text = parseFlag(args, '--text')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+
+  if (!text) {
+    fatal('--text is required for bridge deliver')
+  }
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.deliverBridge({
+    bridgeId,
+    text,
+    ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+    ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdBridgeList(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.listBridges({ runtimeId })
+  printJson(result)
+}
+
+async function cmdBridgeClose(args: string[]): Promise<void> {
+  const bridgeId = requireArg(args, 0, '<bridgeId>')
+  const client = createClient()
+  const result = await client.closeBridge({ bridgeId })
+  printJson(result)
+}
+
+async function cmdBridge(args: string[]): Promise<void> {
+  const subcommand = args[0]
+
+  switch (subcommand) {
+    case 'register':
+      return cmdBridgeRegister(args.slice(1))
+    case 'deliver':
+      return cmdBridgeDeliver(args.slice(1))
+    case 'list':
+      return cmdBridgeList(args.slice(1))
+    case 'close':
+      return cmdBridgeClose(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown bridge subcommand: ${subcommand}`
+          : 'bridge subcommand required (register, deliver, list, close)'
+      )
+  }
+}
+
+function toSessionApplyRequest(
+  parsed: unknown,
+  appIdFlag: string | undefined,
+  hostSessionIdFlag: string | undefined
+): {
+  appId: string
+  hostSessionId: string
+  sessions: Array<{
+    appSessionKey: string
+    label?: string | undefined
+    metadata?: Record<string, unknown> | undefined
+  }>
+} {
+  if (Array.isArray(parsed)) {
+    if (!appIdFlag) {
+      fatal('session apply requires --app when the payload is an array')
+    }
+    if (!hostSessionIdFlag) {
+      fatal('session apply requires --host-session-id when the payload is an array')
+    }
+
+    return {
+      appId: appIdFlag,
+      hostSessionId: hostSessionIdFlag,
+      sessions: parsed.map((entry, index) => parseCliAppSession(entry, index)),
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    fatal('session apply payload must be a JSON object or array')
+  }
+
+  const appIdValue =
+    typeof (parsed as Record<string, unknown>)['appId'] === 'string'
+      ? ((parsed as Record<string, unknown>)['appId'] as string).trim()
+      : appIdFlag
+  const hostSessionIdValue =
+    typeof (parsed as Record<string, unknown>)['hostSessionId'] === 'string'
+      ? ((parsed as Record<string, unknown>)['hostSessionId'] as string).trim()
+      : hostSessionIdFlag
+  const sessions = (parsed as Record<string, unknown>)['sessions']
+
+  if (!appIdValue) {
+    fatal('session apply requires appId in the payload or via --app')
+  }
+  if (!hostSessionIdValue) {
+    fatal('session apply requires hostSessionId in the payload or via --host-session-id')
+  }
+  if (!Array.isArray(sessions)) {
+    fatal('session apply payload object must include a sessions array')
+  }
+
+  return {
+    appId: appIdValue,
+    hostSessionId: hostSessionIdValue,
+    sessions: sessions.map((entry, index) => parseCliAppSession(entry, index)),
+  }
+}
+
+function parseCliAppSession(
+  value: unknown,
+  index: number
+): {
+  appSessionKey: string
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+} {
+  if (!value || typeof value !== 'object') {
+    fatal(`session apply entry ${index} must be an object`)
+  }
+
+  const record = value as Record<string, unknown>
+  const appSessionKey = requireCliString(record, 'appSessionKey', index)
+  const label = optionalCliString(record, 'label', index)
+  const metadata = record['metadata']
+  if (
+    metadata !== undefined &&
+    (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+  ) {
+    fatal(`session apply entry ${index} metadata must be an object`)
+  }
+
+  return {
+    appSessionKey,
+    ...(label ? { label } : {}),
+    ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
+  }
+}
+
+function requireCliString(record: Record<string, unknown>, field: string, index: number): string {
+  const value = record[field]
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    fatal(`session apply entry ${index} requires ${field}`)
+  }
+
+  return value.trim()
+}
+
+function optionalCliString(
+  record: Record<string, unknown>,
+  field: string,
+  index: number
+): string | undefined {
+  const value = record[field]
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'string') {
+    fatal(`session apply entry ${index} field ${field} must be a string`)
+  }
+
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
 // -- Usage --------------------------------------------------------------------
 
 function printUsage(): void {
@@ -435,6 +684,7 @@ Commands:
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
+  session apply --app <appId> --host-session-id <hostSessionId> (--file <path> | --json <payload>)
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
@@ -444,6 +694,10 @@ Commands:
   surface bind <runtimeId> --kind <kind> --id <surfaceId>
   surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
   surface list <runtimeId>            List active surface bindings for a runtime
+  bridge register <hostSessionId> --transport <name> --target <value>
+  bridge deliver <bridgeId> --text <text>
+  bridge list <runtimeId>             List active local bridges for a runtime
+  bridge close <bridgeId>             Close a local bridge
   clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
@@ -483,6 +737,8 @@ async function main(): Promise<void> {
         return await cmdAttach(rest)
       case 'surface':
         return await cmdSurface(rest)
+      case 'bridge':
+        return await cmdBridge(rest)
       case 'clear-context':
         return await cmdClearContext(rest)
       case 'interrupt':

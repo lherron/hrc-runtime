@@ -9,9 +9,11 @@ export {
 export type { HrcMigration } from './migrations.js'
 
 export {
+  AppSessionRepository,
   ContinuityRepository,
   EventRepository,
   LaunchRepository,
+  LocalBridgeRepository,
   RunRepository,
   RuntimeBufferRepository,
   RuntimeRepository,
@@ -19,9 +21,12 @@ export {
   SurfaceBindingRepository,
 } from './repositories.js'
 export type {
+  AppSessionApplyInput,
+  AppSessionBulkApplyResult,
   ContinuityUpsertInput,
   EventQueryFilters,
   HrcRuntimeBufferRecord,
+  LocalBridgeStatus,
   LaunchUpdatePatch,
   RunUpdatePatch,
   RuntimeUpdatePatch,

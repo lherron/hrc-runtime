@@ -2,15 +2,24 @@ import type { HrcEventEnvelope, HrcHttpError, HrcSessionRecord } from 'hrc-core'
 import { HrcDomainError } from 'hrc-core'
 
 import type {
+  ApplyAppSessionsRequest,
+  ApplyAppSessionsResponse,
   AttachDescriptor,
   BindSurfaceRequest,
+  BridgeListFilter,
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
+  CloseBridgeRequest,
+  DeliverBridgeRequest,
+  DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  LocalBridgeRecord,
+  RegisterBridgeTargetRequest,
+  RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
@@ -95,6 +104,10 @@ export class HrcClient {
     )
   }
 
+  async applyAppSessions(request: ApplyAppSessionsRequest): Promise<ApplyAppSessionsResponse> {
+    return this.postJson<ApplyAppSessionsResponse>('/v1/sessions/apply', request)
+  }
+
   async ensureRuntime(request: EnsureRuntimeRequest): Promise<EnsureRuntimeResponse> {
     return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)
   }
@@ -144,6 +157,26 @@ export class HrcClient {
   async listSurfaces(filter: SurfaceListFilter): Promise<SurfaceBindingRecord[]> {
     return this.getJson<SurfaceBindingRecord[]>(
       `/v1/surfaces?runtimeId=${encodeURIComponent(filter.runtimeId)}`
+    )
+  }
+
+  async registerBridgeTarget(
+    request: RegisterBridgeTargetRequest
+  ): Promise<RegisterBridgeTargetResponse> {
+    return this.postJson<RegisterBridgeTargetResponse>('/v1/bridges/local-target', request)
+  }
+
+  async deliverBridge(request: DeliverBridgeRequest): Promise<DeliverBridgeResponse> {
+    return this.postJson<DeliverBridgeResponse>('/v1/bridges/deliver', request)
+  }
+
+  async closeBridge(request: CloseBridgeRequest): Promise<LocalBridgeRecord> {
+    return this.postJson<LocalBridgeRecord>('/v1/bridges/close', request)
+  }
+
+  async listBridges(filter: BridgeListFilter): Promise<LocalBridgeRecord[]> {
+    return this.getJson<LocalBridgeRecord[]>(
+      `/v1/bridges?runtimeId=${encodeURIComponent(filter.runtimeId)}`
     )
   }
 

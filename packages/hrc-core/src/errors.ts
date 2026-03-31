@@ -6,6 +6,7 @@ export const HrcErrorCode = {
   UNKNOWN_HOST_SESSION: 'unknown_host_session',
   UNKNOWN_RUNTIME: 'unknown_runtime',
   UNKNOWN_SURFACE: 'unknown_surface',
+  UNKNOWN_BRIDGE: 'unknown_bridge',
   STALE_CONTEXT: 'stale_context',
   RUNTIME_BUSY: 'runtime_busy',
   RUN_MISMATCH: 'run_mismatch',
@@ -36,6 +37,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.UNKNOWN_HOST_SESSION]: 404,
   [HrcErrorCode.UNKNOWN_RUNTIME]: 404,
   [HrcErrorCode.UNKNOWN_SURFACE]: 404,
+  [HrcErrorCode.UNKNOWN_BRIDGE]: 404,
   [HrcErrorCode.STALE_CONTEXT]: 409,
   [HrcErrorCode.RUNTIME_BUSY]: 409,
   [HrcErrorCode.RUN_MISMATCH]: 409,
@@ -97,7 +99,11 @@ export class HrcNotFoundError extends HrcDomainError {
   constructor(
     code: Extract<
       HrcErrorCode,
-      'unknown_session' | 'unknown_host_session' | 'unknown_runtime' | 'unknown_surface'
+      | 'unknown_session'
+      | 'unknown_host_session'
+      | 'unknown_runtime'
+      | 'unknown_surface'
+      | 'unknown_bridge'
     >,
     message: string,
     detail: Record<string, unknown> = {}

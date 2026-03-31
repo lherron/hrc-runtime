@@ -1,10 +1,12 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
+  type HrcAppSessionRecord,
   type HrcContinuationRef,
   type HrcContinuityRecord,
   type HrcErrorCodeValue,
   type HrcEventEnvelope,
   type HrcLaunchRecord,
+  type HrcLocalBridgeRecord,
   type HrcRunRecord,
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
@@ -40,14 +42,28 @@ export type SurfaceBindingBindInput = Omit<
   boundAt: string
 }
 
+export type AppSessionApplyInput = {
+  appSessionKey: string
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+}
+
+export type AppSessionBulkApplyResult = {
+  inserted: number
+  updated: number
+  removed: number
+}
+
+export type LocalBridgeStatus = 'active' | 'closed'
+
 type SessionListFilters = {
   scopeRef: string
   laneRef?: string | undefined
 }
 
-type RuntimeUpdatePatch = Partial<Omit<HrcRuntimeSnapshot, 'runtimeId'>>
-type RunUpdatePatch = Partial<Omit<HrcRunRecord, 'runId'>>
-type LaunchUpdatePatch = Partial<Omit<HrcLaunchRecord, 'launchId'>>
+export type RuntimeUpdatePatch = Partial<Omit<HrcRuntimeSnapshot, 'runtimeId'>>
+export type RunUpdatePatch = Partial<Omit<HrcRunRecord, 'runId'>>
+export type LaunchUpdatePatch = Partial<Omit<HrcLaunchRecord, 'launchId'>>
 
 type ContinuityRow = {
   scope_ref: string
@@ -176,6 +192,30 @@ type SurfaceBindingRow = {
   reason: string | null
 }
 
+type AppSessionRow = {
+  app_id: string
+  app_session_key: string
+  host_session_id: string
+  label: string | null
+  metadata_json: string | null
+  created_at: string
+  updated_at: string
+  removed_at: string | null
+}
+
+type LocalBridgeRow = {
+  bridge_id: string
+  host_session_id: string
+  runtime_id: string | null
+  transport: string
+  target: string
+  expected_host_session_id: string | null
+  expected_generation: number | null
+  status: LocalBridgeStatus
+  created_at: string
+  closed_at: string | null
+}
+
 function serializeJson(value: unknown): string | null {
   if (value === undefined) {
     return null
@@ -301,6 +341,34 @@ function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingRecord {
     boundAt: row.bound_at,
     unboundAt: row.unbound_at ?? undefined,
     reason: row.reason ?? undefined,
+  }
+}
+
+function mapAppSessionRow(row: AppSessionRow): HrcAppSessionRecord {
+  return {
+    appId: row.app_id,
+    appSessionKey: row.app_session_key,
+    hostSessionId: row.host_session_id,
+    label: row.label ?? undefined,
+    metadata: parseJson<Record<string, unknown>>(row.metadata_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    removedAt: row.removed_at ?? undefined,
+  }
+}
+
+function mapLocalBridgeRow(row: LocalBridgeRow): HrcLocalBridgeRecord {
+  return {
+    bridgeId: row.bridge_id,
+    hostSessionId: row.host_session_id,
+    runtimeId: row.runtime_id ?? undefined,
+    transport: row.transport,
+    target: row.target,
+    expectedHostSessionId: row.expected_host_session_id ?? undefined,
+    expectedGeneration: row.expected_generation ?? undefined,
+    createdAt: row.created_at,
+    closedAt: row.closed_at ?? undefined,
+    status: row.status,
   }
 }
 
@@ -644,6 +712,218 @@ export class SessionRepository {
       .all(filters.scopeRef)
 
     return rows.map(mapSessionRow)
+  }
+}
+
+export class AppSessionRepository {
+  constructor(private readonly db: Database) {}
+
+  create(record: HrcAppSessionRecord): HrcAppSessionRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO app_sessions (
+          app_id,
+          app_session_key,
+          host_session_id,
+          label,
+          metadata_json,
+          created_at,
+          updated_at,
+          removed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.appId,
+      record.appSessionKey,
+      record.hostSessionId,
+      record.label ?? null,
+      serializeJson(record.metadata),
+      record.createdAt,
+      record.updatedAt,
+      record.removedAt ?? null
+    )
+
+    return requireRecord(
+      this.findByKey(record.appId, record.appSessionKey),
+      `failed to reload app session ${record.appId}/${record.appSessionKey}`
+    )
+  }
+
+  findByKey(appId: string, appSessionKey: string): HrcAppSessionRecord | null {
+    const row = this.db
+      .query<AppSessionRow, [string, string]>(
+        `
+          SELECT
+            app_id,
+            app_session_key,
+            host_session_id,
+            label,
+            metadata_json,
+            created_at,
+            updated_at,
+            removed_at
+          FROM app_sessions
+          WHERE app_id = ? AND app_session_key = ?
+        `
+      )
+      .get(appId, appSessionKey)
+
+    return row ? mapAppSessionRow(row) : null
+  }
+
+  findByApp(appId: string): HrcAppSessionRecord[] {
+    const rows = this.db
+      .query<AppSessionRow, [string]>(
+        `
+          SELECT
+            app_id,
+            app_session_key,
+            host_session_id,
+            label,
+            metadata_json,
+            created_at,
+            updated_at,
+            removed_at
+          FROM app_sessions
+          WHERE app_id = ?
+          ORDER BY app_session_key ASC
+        `
+      )
+      .all(appId)
+
+    return rows.map(mapAppSessionRow)
+  }
+
+  findByHostSession(hostSessionId: string): HrcAppSessionRecord[] {
+    const rows = this.db
+      .query<AppSessionRow, [string]>(
+        `
+          SELECT
+            app_id,
+            app_session_key,
+            host_session_id,
+            label,
+            metadata_json,
+            created_at,
+            updated_at,
+            removed_at
+          FROM app_sessions
+          WHERE host_session_id = ?
+          ORDER BY app_id ASC, app_session_key ASC
+        `
+      )
+      .all(hostSessionId)
+
+    return rows.map(mapAppSessionRow)
+  }
+
+  update(
+    appId: string,
+    appSessionKey: string,
+    patch: {
+      hostSessionId?: string | undefined
+      label?: string | undefined
+      metadata?: Record<string, unknown> | undefined
+      removedAt?: string | null | undefined
+      updatedAt: string
+    }
+  ): HrcAppSessionRecord | null {
+    const entries: Array<[column: string, value: string | number | null]> = []
+
+    if (patch.hostSessionId !== undefined) {
+      entries.push(['host_session_id', patch.hostSessionId])
+    }
+    if (patch.label !== undefined) {
+      entries.push(['label', patch.label])
+    }
+    if (patch.metadata !== undefined) {
+      entries.push(['metadata_json', serializeJson(patch.metadata)])
+    }
+    if (Object.hasOwn(patch, 'removedAt')) {
+      entries.push(['removed_at', patch.removedAt ?? null])
+    }
+    entries.push(['updated_at', patch.updatedAt])
+
+    const { clause, values } = buildSetClause(entries)
+    execute(
+      this.db,
+      `UPDATE app_sessions SET ${clause} WHERE app_id = ? AND app_session_key = ?`,
+      ...values,
+      appId,
+      appSessionKey
+    )
+
+    return this.findByKey(appId, appSessionKey)
+  }
+
+  bulkApply(
+    appId: string,
+    hostSessionId: string,
+    sessions: AppSessionApplyInput[]
+  ): AppSessionBulkApplyResult {
+    const applyBulk = this.db.transaction(
+      (
+        requestedAppId: string,
+        requestedHostSessionId: string,
+        requestedSessions: AppSessionApplyInput[]
+      ) => {
+        const now = new Date().toISOString()
+        let inserted = 0
+        let updated = 0
+        let removed = 0
+
+        for (const session of requestedSessions) {
+          const existing = this.findByKey(requestedAppId, session.appSessionKey)
+
+          if (existing) {
+            this.update(requestedAppId, session.appSessionKey, {
+              hostSessionId: requestedHostSessionId,
+              ...(session.label !== undefined ? { label: session.label } : {}),
+              ...(session.metadata !== undefined ? { metadata: session.metadata } : {}),
+              removedAt: null,
+              updatedAt: now,
+            })
+            updated += 1
+          } else {
+            this.create({
+              appId: requestedAppId,
+              appSessionKey: session.appSessionKey,
+              hostSessionId: requestedHostSessionId,
+              ...(session.label !== undefined ? { label: session.label } : {}),
+              ...(session.metadata !== undefined ? { metadata: session.metadata } : {}),
+              createdAt: now,
+              updatedAt: now,
+            })
+            inserted += 1
+          }
+        }
+
+        const incomingKeys = new Set(requestedSessions.map((session) => session.appSessionKey))
+        const existingForAppHost = this.findByHostSession(requestedHostSessionId).filter(
+          (record) => record.appId === requestedAppId && record.removedAt === undefined
+        )
+
+        for (const record of existingForAppHost) {
+          if (incomingKeys.has(record.appSessionKey)) {
+            continue
+          }
+
+          this.update(requestedAppId, record.appSessionKey, {
+            removedAt: now,
+            updatedAt: now,
+          })
+          removed += 1
+        }
+
+        return {
+          inserted,
+          updated,
+          removed,
+        } satisfies AppSessionBulkApplyResult
+      }
+    )
+
+    return applyBulk.immediate(appId, hostSessionId, sessions)
   }
 }
 
@@ -1508,6 +1788,135 @@ export class EventRepository {
   }
 }
 
+export class LocalBridgeRepository {
+  constructor(private readonly db: Database) {}
+
+  create(record: HrcLocalBridgeRecord): HrcLocalBridgeRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO local_bridges (
+          bridge_id,
+          host_session_id,
+          runtime_id,
+          transport,
+          target,
+          expected_host_session_id,
+          expected_generation,
+          status,
+          created_at,
+          closed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.bridgeId,
+      record.hostSessionId,
+      record.runtimeId ?? null,
+      record.transport,
+      record.target,
+      record.expectedHostSessionId ?? null,
+      record.expectedGeneration ?? null,
+      record.status ?? 'active',
+      record.createdAt,
+      record.closedAt ?? null
+    )
+
+    return requireRecord(
+      this.findById(record.bridgeId),
+      `failed to reload local bridge ${record.bridgeId}`
+    )
+  }
+
+  findByTarget(transport: string, target: string): HrcLocalBridgeRecord | null {
+    const row = this.db
+      .query<LocalBridgeRow, [string, string]>(
+        `
+          SELECT
+            bridge_id,
+            host_session_id,
+            runtime_id,
+            transport,
+            target,
+            expected_host_session_id,
+            expected_generation,
+            status,
+            created_at,
+            closed_at
+          FROM local_bridges
+          WHERE transport = ? AND target = ?
+          ORDER BY created_at ASC
+          LIMIT 1
+        `
+      )
+      .get(transport, target)
+
+    return row ? mapLocalBridgeRow(row) : null
+  }
+
+  findById(bridgeId: string): HrcLocalBridgeRecord | null {
+    const row = this.db
+      .query<LocalBridgeRow, [string]>(
+        `
+          SELECT
+            bridge_id,
+            host_session_id,
+            runtime_id,
+            transport,
+            target,
+            expected_host_session_id,
+            expected_generation,
+            status,
+            created_at,
+            closed_at
+          FROM local_bridges
+          WHERE bridge_id = ?
+        `
+      )
+      .get(bridgeId)
+
+    return row ? mapLocalBridgeRow(row) : null
+  }
+
+  listActive(): HrcLocalBridgeRecord[] {
+    const rows = this.db
+      .query<LocalBridgeRow, []>(
+        `
+          SELECT
+            bridge_id,
+            host_session_id,
+            runtime_id,
+            transport,
+            target,
+            expected_host_session_id,
+            expected_generation,
+            status,
+            created_at,
+            closed_at
+          FROM local_bridges
+          WHERE closed_at IS NULL
+          ORDER BY created_at ASC, bridge_id ASC
+        `
+      )
+      .all()
+
+    return rows.map(mapLocalBridgeRow)
+  }
+
+  close(bridgeId: string, closedAt: string): HrcLocalBridgeRecord | null {
+    execute(
+      this.db,
+      `
+        UPDATE local_bridges
+        SET status = 'closed', closed_at = ?
+        WHERE bridge_id = ?
+      `,
+      closedAt,
+      bridgeId
+    )
+
+    return this.findById(bridgeId)
+  }
+}
+
 export class SurfaceBindingRepository {
   constructor(private readonly db: Database) {}
 
@@ -1715,4 +2124,4 @@ export class RuntimeBufferRepository {
   }
 }
 
-export type { LaunchUpdatePatch, RunUpdatePatch, RuntimeUpdatePatch, SessionListFilters }
+export type { SessionListFilters }

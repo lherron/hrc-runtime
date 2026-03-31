@@ -191,9 +191,54 @@ const phase4SurfaceBindingsMigration: HrcMigration = {
   },
 }
 
+const phase5WorkbenchSessionsAndLocalBridgesMigration: HrcMigration = {
+  id: '0003_phase5_app_sessions_and_bridges',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_sessions (
+        app_id TEXT NOT NULL,
+        app_session_key TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        label TEXT,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        removed_at TEXT,
+        PRIMARY KEY (app_id, app_session_key),
+        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_sessions_host_session_id
+        ON app_sessions(host_session_id);
+
+      CREATE TABLE IF NOT EXISTS local_bridges (
+        bridge_id TEXT PRIMARY KEY,
+        host_session_id TEXT NOT NULL,
+        runtime_id TEXT,
+        transport TEXT NOT NULL,
+        target TEXT NOT NULL,
+        expected_host_session_id TEXT,
+        expected_generation INTEGER,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        closed_at TEXT,
+        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id),
+        FOREIGN KEY (runtime_id) REFERENCES runtimes(runtime_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_local_bridges_host_session_id
+        ON local_bridges(host_session_id);
+
+      CREATE INDEX IF NOT EXISTS idx_local_bridges_status
+        ON local_bridges(status);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
+  phase5WorkbenchSessionsAndLocalBridgesMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

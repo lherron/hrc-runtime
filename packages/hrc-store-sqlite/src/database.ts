@@ -4,9 +4,11 @@ import { dirname } from 'node:path'
 
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
+  AppSessionRepository,
   ContinuityRepository,
   EventRepository,
   LaunchRepository,
+  LocalBridgeRepository,
   RunRepository,
   RuntimeBufferRepository,
   RuntimeRepository,
@@ -22,10 +24,12 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
+  appSessions: AppSessionRepository
   runtimes: RuntimeRepository
   runs: RunRepository
   launches: LaunchRepository
   events: EventRepository
+  localBridges: LocalBridgeRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
 }
@@ -60,10 +64,12 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
+    appSessions: new AppSessionRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite),
     runs: new RunRepository(sqlite),
     launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
+    localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
   }

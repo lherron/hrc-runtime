@@ -1,5 +1,7 @@
 import type {
+  HrcAppSessionRecord,
   HrcFence,
+  HrcLocalBridgeRecord,
   HrcRuntimeIntent,
   HrcSessionRecord,
   HrcSurfaceBindingRecord,
@@ -20,6 +22,24 @@ export type ResolveSessionResponse = {
 export type SessionFilter = {
   scopeRef?: string | undefined
   laneRef?: string | undefined
+}
+
+export type ApplyAppSessionInput = {
+  appSessionKey: string
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+}
+
+export type ApplyAppSessionsRequest = {
+  appId: string
+  hostSessionId: string
+  sessions: ApplyAppSessionInput[]
+}
+
+export type ApplyAppSessionsResponse = {
+  inserted: number
+  updated: number
+  removed: number
 }
 
 export type WatchOptions = {
@@ -136,3 +156,36 @@ export type SurfaceListFilter = {
 }
 
 export type SurfaceBindingRecord = HrcSurfaceBindingRecord
+export type AppSessionRecord = HrcAppSessionRecord
+export type LocalBridgeRecord = HrcLocalBridgeRecord
+
+export type RegisterBridgeTargetRequest = {
+  hostSessionId: string
+  runtimeId?: string | undefined
+  transport: string
+  target: string
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
+export type RegisterBridgeTargetResponse = HrcLocalBridgeRecord
+
+export type DeliverBridgeRequest = {
+  bridgeId: string
+  text: string
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
+export type DeliverBridgeResponse = {
+  delivered: true
+  bridgeId: string
+}
+
+export type BridgeListFilter = {
+  runtimeId: string
+}
+
+export type CloseBridgeRequest = {
+  bridgeId: string
+}

@@ -51,6 +51,7 @@ export {
 } from './paths.js'
 
 export type {
+  HrcAppSessionRecord,
   HrcContinuityRecord,
   HrcContinuationRef,
   HrcEventEnvelope,
@@ -63,6 +64,7 @@ export type {
   HrcLaunchArtifact,
   HrcLaunchEnvConfig,
   HrcLaunchRecord,
+  HrcLocalBridgeRecord,
   HrcProvider,
   HrcRunRecord,
   HrcSurfaceBindingRecord,
