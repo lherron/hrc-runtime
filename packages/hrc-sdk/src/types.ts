@@ -189,3 +189,30 @@ export type BridgeListFilter = {
 export type CloseBridgeRequest = {
   bridgeId: string
 }
+
+export type HealthResponse = {
+  ok: true
+}
+
+export type StatusResponse = {
+  ok: true
+  uptime: number
+  startedAt: string
+  socketPath: string
+  dbPath: string
+  sessionCount: number
+  runtimeCount: number
+}
+
+export type RuntimeListFilter = {
+  hostSessionId?: string | undefined
+}
+
+export type LaunchListFilter = {
+  hostSessionId?: string | undefined
+  runtimeId?: string | undefined
+}
+
+export type AdoptRuntimeRequest = {
+  runtimeId: string
+}
