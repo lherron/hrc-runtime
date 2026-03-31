@@ -206,6 +206,45 @@ async function cmdWatch(args: string[]): Promise<void> {
   }
 }
 
+async function cmdHealth(): Promise<void> {
+  const client = createClient()
+  const result = await client.getHealth()
+  printJson(result)
+}
+
+async function cmdStatus(): Promise<void> {
+  const client = createClient()
+  const result = await client.getStatus()
+  printJson(result)
+}
+
+async function cmdRuntimeList(args: string[]): Promise<void> {
+  const hostSessionId = parseFlag(args, '--host-session-id')
+  const client = createClient()
+  const runtimes = await client.listRuntimes(
+    hostSessionId ? { hostSessionId } : undefined
+  )
+  printJson(runtimes)
+}
+
+async function cmdLaunchList(args: string[]): Promise<void> {
+  const hostSessionId = parseFlag(args, '--host-session-id')
+  const runtimeId = parseFlag(args, '--runtime-id')
+  const client = createClient()
+  const launches = await client.listLaunches({
+    ...(hostSessionId ? { hostSessionId } : {}),
+    ...(runtimeId ? { runtimeId } : {}),
+  })
+  printJson(launches)
+}
+
+async function cmdAdopt(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.adoptRuntime(runtimeId)
+  printJson(result)
+}
+
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
@@ -234,11 +273,13 @@ async function cmdRuntime(args: string[]): Promise<void> {
   switch (subcommand) {
     case 'ensure':
       return cmdRuntimeEnsure(args.slice(1))
+    case 'list':
+      return cmdRuntimeList(args.slice(1))
     default:
       fatal(
         subcommand
           ? `unknown runtime subcommand: ${subcommand}`
-          : 'runtime subcommand required (ensure)'
+          : 'runtime subcommand required (ensure, list)'
       )
   }
 }
@@ -294,6 +335,21 @@ async function cmdTurn(args: string[]): Promise<void> {
     default:
       fatal(
         subcommand ? `unknown turn subcommand: ${subcommand}` : 'turn subcommand required (send)'
+      )
+  }
+}
+
+async function cmdLaunch(args: string[]): Promise<void> {
+  const subcommand = args[0]
+
+  switch (subcommand) {
+    case 'list':
+      return cmdLaunchList(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown launch subcommand: ${subcommand}`
+          : 'launch subcommand required (list)'
       )
   }
 }
@@ -686,7 +742,12 @@ Commands:
   session get <hostSessionId>         Get a session by host session ID
   session apply --app <appId> --host-session-id <hostSessionId> (--file <path> | --json <payload>)
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
+  health                              Check server health
+  status                              Show server status (uptime, counts)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
+  runtime list [--host-session-id <id>]  List runtimes
+  launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
+  adopt <runtimeId>                   Adopt a dead/stale runtime
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -725,8 +786,16 @@ async function main(): Promise<void> {
         return await cmdSession(rest)
       case 'watch':
         return await cmdWatch(rest)
+      case 'health':
+        return await cmdHealth()
+      case 'status':
+        return await cmdStatus()
       case 'runtime':
         return await cmdRuntime(rest)
+      case 'launch':
+        return await cmdLaunch(rest)
+      case 'adopt':
+        return await cmdAdopt(rest)
       case 'turn':
         return await cmdTurn(rest)
       case 'inflight':

@@ -2,6 +2,7 @@ import type { HrcEventEnvelope, HrcHttpError, HrcSessionRecord } from 'hrc-core'
 import { HrcDomainError } from 'hrc-core'
 
 import type {
+  AdoptRuntimeRequest,
   ApplyAppSessionsRequest,
   ApplyAppSessionsResponse,
   AttachDescriptor,
@@ -17,15 +18,21 @@ import type {
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HealthResponse,
+  LaunchListFilter,
+  LaunchRecord,
   LocalBridgeRecord,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
+  RuntimeListFilter,
+  RuntimeRecord,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
+  StatusResponse,
   SurfaceBindingRecord,
   SurfaceListFilter,
   UnbindSurfaceRequest,
@@ -178,6 +185,37 @@ export class HrcClient {
     return this.getJson<LocalBridgeRecord[]>(
       `/v1/bridges?runtimeId=${encodeURIComponent(filter.runtimeId)}`
     )
+  }
+
+  // -- Phase 6 diagnostics ----------------------------------------------------
+
+  async getHealth(): Promise<HealthResponse> {
+    return this.getJson<HealthResponse>('/v1/health')
+  }
+
+  async getStatus(): Promise<StatusResponse> {
+    return this.getJson<StatusResponse>('/v1/status')
+  }
+
+  async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
+    const params = new URLSearchParams()
+    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
+    const qs = params.toString()
+    const path = qs ? `/v1/runtimes?${qs}` : '/v1/runtimes'
+    return this.getJson<RuntimeRecord[]>(path)
+  }
+
+  async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {
+    const params = new URLSearchParams()
+    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
+    if (filter?.runtimeId) params.set('runtimeId', filter.runtimeId)
+    const qs = params.toString()
+    const path = qs ? `/v1/launches?${qs}` : '/v1/launches'
+    return this.getJson<LaunchRecord[]>(path)
+  }
+
+  async adoptRuntime(runtimeId: string): Promise<RuntimeRecord> {
+    return this.postJson<RuntimeRecord>('/v1/runtimes/adopt', { runtimeId })
   }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcEventEnvelope> {

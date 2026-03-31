@@ -590,7 +590,270 @@ describe('SDK → server round-trip', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 5. Export surface validation
+// 5. Phase 6 diagnostics round-trip (T-00973 / T-00974)
+//
+// RED GATE: These tests call SDK methods that do not exist yet:
+//   getHealth(), getStatus(), listRuntimes(), listLaunches(), adoptRuntime()
+//
+// Pass conditions for Curly (T-00973):
+//   1. getHealth() → GET /v1/health → { ok: true }
+//   2. getStatus() → GET /v1/status → { ok, uptime (number), startedAt, socketPath, dbPath, sessionCount, runtimeCount }
+//   3. listRuntimes() → GET /v1/runtimes → HrcRuntimeSnapshot[] (empty when none)
+//   4. listRuntimes({ hostSessionId }) → GET /v1/runtimes?hostSessionId=... → filtered array
+//   5. listLaunches() → GET /v1/launches → HrcLaunchRecord[] (empty when none)
+//   6. listLaunches({ hostSessionId }) → filtered by hostSessionId
+//   7. listLaunches({ runtimeId }) → filtered by runtimeId
+//   8. adoptRuntime(runtimeId) on dead runtime → POST /v1/runtimes/adopt → { status: 'adopted', adopted: true }
+//   9. adoptRuntime(runtimeId) on active runtime → throws HrcDomainError(CONFLICT/409)
+//  10. adoptRuntime(unknownId) → throws HrcDomainError(UNKNOWN_RUNTIME/404)
+// ---------------------------------------------------------------------------
+describe('Phase 6 diagnostics round-trip', () => {
+  let tmpDir: string
+  let runtimeRoot: string
+  let stateRoot: string
+  let socketPath: string
+  let dbPath: string
+  let tmuxSocketPath: string
+  let server: { stop(): Promise<void> } | undefined
+
+  beforeAll(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-diag-'))
+    runtimeRoot = join(tmpDir, 'runtime')
+    stateRoot = join(tmpDir, 'state')
+    socketPath = join(runtimeRoot, 'hrc.sock')
+    dbPath = join(stateRoot, 'state.sqlite')
+    tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
+
+    await mkdir(runtimeRoot, { recursive: true })
+    await mkdir(stateRoot, { recursive: true })
+    await mkdir(join(runtimeRoot, 'spool'), { recursive: true })
+
+    const { createHrcServer } = await import('hrc-server')
+    server = await createHrcServer({
+      runtimeRoot,
+      stateRoot,
+      socketPath,
+      lockPath: join(runtimeRoot, 'server.lock'),
+      spoolDir: join(runtimeRoot, 'spool'),
+      dbPath,
+      tmuxSocketPath,
+    })
+  })
+
+  afterAll(async () => {
+    if (server) await server.stop()
+    try {
+      const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      await exited
+    } catch {
+      // fine when no tmux server was created
+    }
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('getHealth returns { ok: true }', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    // RED: getHealth does not exist on HrcClient
+    const result = await (client as any).getHealth()
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('getStatus returns server status with uptime', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    // RED: getStatus does not exist on HrcClient
+    const result = await (client as any).getStatus()
+    expect(result.ok).toBe(true)
+    expect(typeof result.uptime).toBe('number')
+    expect(result.uptime).toBeGreaterThanOrEqual(0)
+    expect(typeof result.startedAt).toBe('string')
+    expect(typeof result.socketPath).toBe('string')
+    expect(typeof result.dbPath).toBe('string')
+    expect(typeof result.sessionCount).toBe('number')
+    expect(typeof result.runtimeCount).toBe('number')
+  })
+
+  it('listRuntimes returns empty array when none exist', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    // RED: listRuntimes does not exist on HrcClient
+    const result = await (client as any).listRuntimes()
+    expect(Array.isArray(result)).toBe(true)
+    expect(result.length).toBe(0)
+  })
+
+  it('listRuntimes with hostSessionId filter returns filtered results', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+
+    // Create a session + runtime to filter on
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:diag-rt-filter/lane:default',
+    })
+    await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: tmpDir,
+          projectRoot: tmpDir,
+          cwd: tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+    })
+
+    // RED: listRuntimes does not exist on HrcClient
+    const all = await (client as any).listRuntimes()
+    expect(all.length).toBeGreaterThanOrEqual(1)
+
+    const filtered = await (client as any).listRuntimes({ hostSessionId: resolved.hostSessionId })
+    expect(filtered.length).toBe(1)
+    expect(filtered[0].hostSessionId).toBe(resolved.hostSessionId)
+  })
+
+  it('listLaunches returns empty array when none exist', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    // RED: listLaunches does not exist on HrcClient
+    const result = await (client as any).listLaunches()
+    expect(Array.isArray(result)).toBe(true)
+  })
+
+  it('listLaunches with runtimeId filter returns filtered results', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:diag-launch-filter/lane:default',
+    })
+    const runtime = await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: tmpDir,
+          projectRoot: tmpDir,
+          cwd: tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+    })
+
+    // RED: listLaunches does not exist on HrcClient
+    const filtered = await (client as any).listLaunches({ runtimeId: runtime.runtimeId })
+    expect(Array.isArray(filtered)).toBe(true)
+    for (const launch of filtered) {
+      expect(launch.runtimeId).toBe(runtime.runtimeId)
+    }
+  })
+
+  it('adoptRuntime on dead runtime returns adopted status', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+
+    // Seed a dead runtime directly in the DB
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:diag-adopt-dead/lane:default',
+    })
+    const runtimeId = `rt-adopt-dead-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.create({
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: 'project:diag-adopt-dead',
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'dead',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: `hrc-adopt-dead`,
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // RED: adoptRuntime does not exist on HrcClient
+    const result = await (client as any).adoptRuntime(runtimeId)
+    expect(result.status).toBe('adopted')
+    expect(result.adopted).toBe(true)
+    expect(result.runtimeId).toBe(runtimeId)
+  })
+
+  it('adoptRuntime on active runtime throws CONFLICT', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:diag-adopt-active/lane:default',
+    })
+    const runtime = await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: tmpDir,
+          projectRoot: tmpDir,
+          cwd: tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+    })
+
+    // RED: adoptRuntime does not exist on HrcClient
+    try {
+      await (client as any).adoptRuntime(runtime.runtimeId)
+      expect.unreachable('should have thrown CONFLICT')
+    } catch (err) {
+      expect(err).toBeInstanceOf(HrcDomainError)
+      const domainErr = err as InstanceType<typeof HrcDomainError>
+      expect(domainErr.code).toBe(HrcErrorCode.CONFLICT)
+      expect(domainErr.status).toBe(409)
+    }
+  })
+
+  it('adoptRuntime on unknown runtime throws UNKNOWN_RUNTIME', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+
+    // RED: adoptRuntime does not exist on HrcClient
+    try {
+      await (client as any).adoptRuntime('nonexistent-runtime-id')
+      expect.unreachable('should have thrown UNKNOWN_RUNTIME')
+    } catch (err) {
+      expect(err).toBeInstanceOf(HrcDomainError)
+      const domainErr = err as InstanceType<typeof HrcDomainError>
+      expect(domainErr.code).toBe(HrcErrorCode.UNKNOWN_RUNTIME)
+      expect(domainErr.status).toBe(404)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Export surface validation
 // ---------------------------------------------------------------------------
 describe('export surface', () => {
   it('exports discoverSocket function', () => {

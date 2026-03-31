@@ -1,8 +1,10 @@
 import type {
   HrcAppSessionRecord,
   HrcFence,
+  HrcLaunchRecord,
   HrcLocalBridgeRecord,
   HrcRuntimeIntent,
+  HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcSurfaceBindingRecord,
 } from 'hrc-core'
@@ -189,3 +191,35 @@ export type BridgeListFilter = {
 export type CloseBridgeRequest = {
   bridgeId: string
 }
+
+// -- Phase 6 diagnostics types -----------------------------------------------
+
+export type HealthResponse = {
+  ok: true
+}
+
+export type StatusResponse = {
+  ok: true
+  uptime: number
+  startedAt: string
+  socketPath: string
+  dbPath: string
+  sessionCount: number
+  runtimeCount: number
+}
+
+export type RuntimeListFilter = {
+  hostSessionId?: string | undefined
+}
+
+export type LaunchListFilter = {
+  hostSessionId?: string | undefined
+  runtimeId?: string | undefined
+}
+
+export type AdoptRuntimeRequest = {
+  runtimeId: string
+}
+
+export type RuntimeRecord = HrcRuntimeSnapshot
+export type LaunchRecord = HrcLaunchRecord

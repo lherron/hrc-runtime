@@ -541,7 +541,178 @@ describe('hrc watch', () => {
 })
 
 // ===========================================================================
-// 9. Error output format
+// 9. Phase 6 diagnostics CLI commands (T-00973 / T-00974)
+//
+// RED GATE: These tests call CLI commands that do not exist yet:
+//   hrc health, hrc status, hrc runtime list, hrc launch list, hrc adopt
+//
+// Pass conditions for Curly (T-00973):
+//   1. `hrc health` → exit 0, stdout JSON with { ok: true }
+//   2. `hrc status` → exit 0, stdout JSON with uptime (number), startedAt, socketPath, dbPath
+//   3. `hrc runtime list` → exit 0, stdout JSON array
+//   4. `hrc runtime list --host-session-id <id>` → exit 0, filtered JSON array
+//   5. `hrc launch list` → exit 0, stdout JSON array
+//   6. `hrc launch list --runtime-id <id>` → exit 0, filtered JSON array
+//   7. `hrc adopt <runtimeId>` on dead runtime → exit 0, stdout JSON with status='adopted'
+//   8. `hrc adopt <runtimeId>` on active runtime → exit 1 (CONFLICT)
+//   9. `hrc adopt <unknownId>` → exit 1 (UNKNOWN_RUNTIME)
+// ===========================================================================
+describe('Phase 6 diagnostics CLI', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  it('hrc health prints { ok: true } and exits 0', async () => {
+    // RED: 'health' command does not exist in CLI dispatch
+    const result = await runCli(['health'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body).toEqual({ ok: true })
+  })
+
+  it('hrc status prints status JSON with uptime and exits 0', async () => {
+    // RED: 'status' command does not exist in CLI dispatch
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.ok).toBe(true)
+    expect(typeof body.uptime).toBe('number')
+    expect(body.uptime).toBeGreaterThanOrEqual(0)
+    expect(typeof body.startedAt).toBe('string')
+    expect(typeof body.socketPath).toBe('string')
+    expect(typeof body.dbPath).toBe('string')
+    expect(typeof body.sessionCount).toBe('number')
+    expect(typeof body.runtimeCount).toBe('number')
+  })
+
+  it('hrc runtime list prints empty JSON array and exits 0', async () => {
+    // RED: 'runtime list' subcommand does not exist in CLI dispatch
+    const result = await runCli(['runtime', 'list'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(Array.isArray(body)).toBe(true)
+  })
+
+  it('hrc runtime list with --host-session-id filter', async () => {
+    // Seed a session + runtime
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', 'project:diag-rt-list'],
+      cliEnv()
+    )
+    const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
+    await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+
+    // RED: 'runtime list' subcommand does not exist
+    const result = await runCli(
+      ['runtime', 'list', '--host-session-id', hostSessionId],
+      cliEnv()
+    )
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(Array.isArray(body)).toBe(true)
+    expect(body.length).toBe(1)
+    expect(body[0].hostSessionId).toBe(hostSessionId)
+  })
+
+  it('hrc launch list prints JSON array and exits 0', async () => {
+    // RED: 'launch' command does not exist in CLI dispatch
+    const result = await runCli(['launch', 'list'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(Array.isArray(body)).toBe(true)
+  })
+
+  it('hrc launch list with --runtime-id filter', async () => {
+    // Seed a runtime to get launches
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', 'project:diag-launch-list'],
+      cliEnv()
+    )
+    const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
+    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
+
+    // RED: 'launch list' command does not exist
+    const result = await runCli(
+      ['launch', 'list', '--runtime-id', runtimeId],
+      cliEnv()
+    )
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(Array.isArray(body)).toBe(true)
+    for (const launch of body) {
+      expect(launch.runtimeId).toBe(runtimeId)
+    }
+  })
+
+  it('hrc adopt on dead runtime prints adopted JSON and exits 0', async () => {
+    // Seed a dead runtime
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', 'project:diag-adopt-cli'],
+      cliEnv()
+    )
+    const resolved = JSON.parse(resolveResult.stdout.trim())
+    const runtimeId = `rt-adopt-cli-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.create({
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: 'project:diag-adopt-cli',
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'dead',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: 'hrc-adopt-cli',
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // RED: 'adopt' command does not exist in CLI dispatch
+    const result = await runCli(['adopt', runtimeId], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.status).toBe('adopted')
+    expect(body.adopted).toBe(true)
+    expect(body.runtimeId).toBe(runtimeId)
+  })
+
+  it('hrc adopt on active runtime exits 1', async () => {
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', 'project:diag-adopt-active-cli'],
+      cliEnv()
+    )
+    const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
+    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
+
+    // RED: 'adopt' command does not exist in CLI dispatch
+    const result = await runCli(['adopt', runtimeId], cliEnv())
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr.length).toBeGreaterThan(0)
+  })
+
+  it('hrc adopt on unknown runtime exits 1', async () => {
+    // RED: 'adopt' command does not exist in CLI dispatch
+    const result = await runCli(['adopt', 'nonexistent-runtime-id'], cliEnv())
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr.length).toBeGreaterThan(0)
+  })
+})
+
+// ===========================================================================
+// 10. Error output format
 // ===========================================================================
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {

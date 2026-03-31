@@ -1481,7 +1481,7 @@ class HrcServerInstance implements HrcServer {
   }
 
   private handleStatus(): Response {
-    const sessions = this.db.sessions.listAll()
+    const sessions = this.listAllSessions()
     const runtimes = this.db.runtimes.listAll()
     const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
     return json({

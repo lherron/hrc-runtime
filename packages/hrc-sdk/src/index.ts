@@ -1,6 +1,7 @@
 export { discoverSocket } from './discover.js'
 export { HrcClient } from './client.js'
 export type {
+  AdoptRuntimeRequest,
   ApplyAppSessionInput,
   ApplyAppSessionsRequest,
   ApplyAppSessionsResponse,
@@ -18,6 +19,9 @@ export type {
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HealthResponse,
+  LaunchListFilter,
+  LaunchRecord,
   LocalBridgeRecord,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
@@ -25,9 +29,12 @@ export type {
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
+  RuntimeListFilter,
+  RuntimeRecord,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
+  StatusResponse,
   SurfaceBindingRecord,
   SurfaceListFilter,
   UnbindSurfaceRequest,
