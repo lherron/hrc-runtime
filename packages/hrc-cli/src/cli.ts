@@ -5,7 +5,9 @@ import {
   resolveRuntimeRoot,
   resolveSpoolDir,
   resolveStateRoot,
+  resolveTmuxSocketPath,
 } from 'hrc-core'
+import type { HrcRuntimeIntent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
 // -- Helpers ------------------------------------------------------------------
@@ -46,9 +48,32 @@ function createClient(): HrcClient {
   return new HrcClient(socketPath)
 }
 
+function createDefaultRuntimeIntent(
+  provider: 'anthropic' | 'openai',
+  cwd = process.cwd()
+): HrcRuntimeIntent {
+  return {
+    placement: {
+      agentRoot: cwd,
+      projectRoot: cwd,
+      cwd,
+      runMode: 'task',
+      bundle: { kind: 'agent-default' },
+      dryRun: true,
+    },
+    harness: {
+      provider,
+      interactive: true,
+    },
+    execution: {
+      preferredMode: 'interactive',
+    },
+  }
+}
+
 // -- Stub commands ------------------------------------------------------------
 
-const STUB_COMMANDS = new Set(['capture', 'attach', 'clear-context', 'interrupt', 'terminate'])
+const STUB_COMMANDS = new Set(['clear-context'])
 
 function runStub(command: string): never {
   process.stderr.write(`hrc ${command}: not implemented yet\n`)
@@ -70,6 +95,7 @@ async function cmdServer(): Promise<void> {
     lockPath: `${runtimeRoot}/server.lock`,
     spoolDir: resolveSpoolDir(),
     dbPath: resolveDatabasePath(),
+    tmuxSocketPath: resolveTmuxSocketPath(),
   })
 
   process.stderr.write(`hrc: server listening on ${resolveControlSocketPath()}\n`)
@@ -151,9 +177,26 @@ async function cmdWatch(args: string[]): Promise<void> {
   }
 }
 
-async function cmdRuntimeEnsure(): Promise<never> {
-  process.stderr.write('hrc runtime ensure: not implemented yet\n')
-  process.exit(1)
+async function cmdRuntimeEnsure(args: string[]): Promise<void> {
+  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
+  const restartStyle = parseFlag(args, '--restart-style')
+
+  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
+    fatal('--provider must be one of: anthropic, openai')
+  }
+
+  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
+    fatal('--restart-style must be one of: reuse_pty, fresh_pty')
+  }
+
+  const client = createClient()
+  const result = await client.ensureRuntime({
+    hostSessionId,
+    intent: createDefaultRuntimeIntent(providerRaw),
+    ...(restartStyle ? { restartStyle } : {}),
+  })
+  printJson(result)
 }
 
 async function cmdRuntime(args: string[]): Promise<void> {
@@ -161,7 +204,7 @@ async function cmdRuntime(args: string[]): Promise<void> {
 
   switch (subcommand) {
     case 'ensure':
-      return cmdRuntimeEnsure()
+      return cmdRuntimeEnsure(args.slice(1))
     default:
       fatal(
         subcommand
@@ -189,6 +232,37 @@ async function cmdTurn(args: string[]): Promise<void> {
   }
 }
 
+async function cmdCapture(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.capture(runtimeId)
+  process.stdout.write(result.text)
+  if (!result.text.endsWith('\n')) {
+    process.stdout.write('\n')
+  }
+}
+
+async function cmdAttach(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const descriptor = await client.getAttachDescriptor(runtimeId)
+  printJson(descriptor)
+}
+
+async function cmdInterrupt(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.interrupt(runtimeId)
+  printJson(result)
+}
+
+async function cmdTerminate(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.terminate(runtimeId)
+  printJson(result)
+}
+
 // -- Usage --------------------------------------------------------------------
 
 function printUsage(): void {
@@ -202,13 +276,13 @@ Commands:
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
-  runtime ensure                      (not implemented)
+  runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   turn send                           (not implemented)
-  capture <hostSessionId>             (not implemented)
-  attach <hostSessionId>              (not implemented)
+  capture <runtimeId>                 Capture tmux pane text
+  attach <runtimeId>                  Print tmux attach descriptor JSON
   clear-context <hostSessionId>       (not implemented)
-  interrupt <hostSessionId>           (not implemented)
-  terminate <hostSessionId>           (not implemented)
+  interrupt <runtimeId>               Send Ctrl-C to a runtime pane
+  terminate <runtimeId>               Terminate a runtime session
 `)
 }
 
@@ -237,6 +311,14 @@ async function main(): Promise<void> {
         return await cmdRuntime(rest)
       case 'turn':
         return await cmdTurn(rest)
+      case 'capture':
+        return await cmdCapture(rest)
+      case 'attach':
+        return await cmdAttach(rest)
+      case 'interrupt':
+        return await cmdInterrupt(rest)
+      case 'terminate':
+        return await cmdTerminate(rest)
       default:
         if (STUB_COMMANDS.has(command)) {
           runStub(command)

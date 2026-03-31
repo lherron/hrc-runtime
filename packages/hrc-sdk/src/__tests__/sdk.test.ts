@@ -38,7 +38,7 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
 import { HrcClient, discoverSocket } from '../index'
-import type { ResolveSessionRequest, ResolveSessionResponse } from '../index'
+import type { EnsureRuntimeResponse, ResolveSessionRequest, ResolveSessionResponse } from '../index'
 
 // ---------------------------------------------------------------------------
 // 1. discoverSocket() — socket discovery
@@ -340,6 +340,7 @@ describe('SDK → server round-trip', () => {
   let runtimeRoot: string
   let stateRoot: string
   let socketPath: string
+  let tmuxSocketPath: string
   let server: { stop(): Promise<void> } | undefined
 
   beforeAll(async () => {
@@ -347,6 +348,7 @@ describe('SDK → server round-trip', () => {
     runtimeRoot = join(tmpDir, 'runtime')
     stateRoot = join(tmpDir, 'state')
     socketPath = join(runtimeRoot, 'hrc.sock')
+    tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
 
     await mkdir(runtimeRoot, { recursive: true })
     await mkdir(stateRoot, { recursive: true })
@@ -362,6 +364,7 @@ describe('SDK → server round-trip', () => {
         lockPath: join(runtimeRoot, 'server.lock'),
         spoolDir: join(runtimeRoot, 'spool'),
         dbPath: join(stateRoot, 'state.sqlite'),
+        tmuxSocketPath,
       })
     } catch {
       // Expected to fail in RED phase — server not implemented yet
@@ -370,6 +373,15 @@ describe('SDK → server round-trip', () => {
 
   afterAll(async () => {
     if (server) await server.stop()
+    try {
+      const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      await exited
+    } catch {
+      // fine when no tmux server was created
+    }
     await rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -445,6 +457,74 @@ describe('SDK → server round-trip', () => {
 
     expect(events.length).toBeGreaterThanOrEqual(1)
     expect(events[0]!.seq).toBeGreaterThanOrEqual(1)
+  })
+
+  it('ensureRuntime round-trip returns tmux runtime metadata', async () => {
+    if (!server) return
+
+    const client = new HrcClient(socketPath)
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:runtime-roundtrip/lane:default',
+    })
+
+    const runtime: EnsureRuntimeResponse = await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: tmpDir,
+          projectRoot: tmpDir,
+          cwd: tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'anthropic',
+          interactive: true,
+        },
+        execution: {
+          preferredMode: 'interactive',
+        },
+      },
+    })
+
+    expect(runtime.hostSessionId).toBe(resolved.hostSessionId)
+    expect(runtime.transport).toBe('tmux')
+    expect(runtime.status).toBe('ready')
+    expect(runtime.tmux.paneId).toBeString()
+  })
+
+  it('capture and attach round-trip return runtime data', async () => {
+    if (!server) return
+
+    const client = new HrcClient(socketPath)
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:capture-roundtrip/lane:default',
+    })
+    const runtime = await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: tmpDir,
+          projectRoot: tmpDir,
+          cwd: tmpDir,
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'anthropic',
+          interactive: true,
+        },
+      },
+    })
+
+    const capture = await client.capture(runtime.runtimeId)
+    const attach = await client.getAttachDescriptor(runtime.runtimeId)
+
+    expect(typeof capture.text).toBe('string')
+    expect(attach.transport).toBe('tmux')
+    expect(attach.argv).toContain('attach-session')
   })
 })
 

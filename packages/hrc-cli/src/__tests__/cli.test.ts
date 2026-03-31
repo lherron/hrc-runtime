@@ -77,10 +77,11 @@ let socketPath: string
 let lockPath: string
 let spoolDir: string
 let dbPath: string
+let tmuxSocketPath: string
 let server: HrcServer | null = null
 
 function serverOpts(): HrcServerOptions {
-  return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath }
+  return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath, tmuxSocketPath }
 }
 
 /** Env vars that point the CLI's discoverSocket at our test server */
@@ -99,6 +100,7 @@ beforeEach(async () => {
   lockPath = join(runtimeRoot, 'server.lock')
   spoolDir = join(runtimeRoot, 'spool')
   dbPath = join(stateRoot, 'state.sqlite')
+  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
 
   await mkdir(runtimeRoot, { recursive: true })
   await mkdir(stateRoot, { recursive: true })
@@ -109,6 +111,15 @@ afterEach(async () => {
   if (server) {
     await server.stop()
     server = null
+  }
+  try {
+    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+    await exited
+  } catch {
+    // fine when no tmux server was created
   }
   await rm(tmpDir, { recursive: true, force: true })
 })
@@ -149,15 +160,7 @@ describe('unknown command', () => {
 // 3. Stub commands — exit 1 with "not implemented yet"
 // ===========================================================================
 describe('stub commands', () => {
-  const stubCommands = [
-    ['capture'],
-    ['attach'],
-    ['runtime', 'ensure'],
-    ['turn', 'send'],
-    ['clear-context'],
-    ['interrupt'],
-    ['terminate'],
-  ]
+  const stubCommands = [['turn', 'send'], ['clear-context']]
 
   for (const args of stubCommands) {
     const label = args.join(' ')
@@ -170,7 +173,78 @@ describe('stub commands', () => {
 })
 
 // ===========================================================================
-// 4. hrc session resolve — JSON output
+// 4. hrc runtime ensure / capture / attach / interrupt / terminate
+// ===========================================================================
+describe('runtime lifecycle commands', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  async function resolveHostSessionId(scope: string): Promise<string> {
+    const result = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
+    return JSON.parse(result.stdout.trim()).hostSessionId as string
+  }
+
+  async function ensureRuntime(scope: string): Promise<string> {
+    const hostSessionId = await resolveHostSessionId(scope)
+    const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    expect(result.exitCode).toBe(0)
+    return JSON.parse(result.stdout.trim()).runtimeId as string
+  }
+
+  it('runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
+    const hostSessionId = await resolveHostSessionId('project:runtimecli')
+    const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.hostSessionId).toBe(hostSessionId)
+    expect(body.transport).toBe('tmux')
+    expect(body.status).toBe('ready')
+    expect(body.runtimeId).toBeString()
+  })
+
+  it('capture prints pane text for a runtimeId', async () => {
+    const runtimeId = await ensureRuntime('project:capturecli')
+    const result = await runCli(['capture', runtimeId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    expect(typeof result.stdout).toBe('string')
+  })
+
+  it('attach prints descriptor JSON for a runtimeId', async () => {
+    const runtimeId = await ensureRuntime('project:attachcli')
+    const result = await runCli(['attach', runtimeId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.transport).toBe('tmux')
+    expect(body.argv).toContain('attach-session')
+  })
+
+  it('interrupt prints JSON for a runtimeId', async () => {
+    const runtimeId = await ensureRuntime('project:interruptcli')
+    const result = await runCli(['interrupt', runtimeId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.ok).toBe(true)
+    expect(body.runtimeId).toBe(runtimeId)
+  })
+
+  it('terminate prints JSON for a runtimeId', async () => {
+    const runtimeId = await ensureRuntime('project:terminatecli')
+    const result = await runCli(['terminate', runtimeId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.ok).toBe(true)
+    expect(body.runtimeId).toBe(runtimeId)
+  })
+})
+
+// ===========================================================================
+// 5. hrc session resolve — JSON output
 // ===========================================================================
 describe('hrc session resolve', () => {
   beforeEach(async () => {
@@ -207,7 +281,7 @@ describe('hrc session resolve', () => {
 })
 
 // ===========================================================================
-// 5. hrc session list — JSON array output
+// 6. hrc session list — JSON array output
 // ===========================================================================
 describe('hrc session list', () => {
   beforeEach(async () => {
@@ -248,7 +322,7 @@ describe('hrc session list', () => {
 })
 
 // ===========================================================================
-// 6. hrc session get — JSON output
+// 7. hrc session get — JSON output
 // ===========================================================================
 describe('hrc session get', () => {
   beforeEach(async () => {
@@ -281,7 +355,7 @@ describe('hrc session get', () => {
 })
 
 // ===========================================================================
-// 7. hrc watch — NDJSON output
+// 8. hrc watch — NDJSON output
 // ===========================================================================
 describe('hrc watch', () => {
   beforeEach(async () => {
@@ -342,7 +416,7 @@ describe('hrc watch', () => {
 })
 
 // ===========================================================================
-// 8. Error output format
+// 9. Error output format
 // ===========================================================================
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {

@@ -1,0 +1,684 @@
+/**
+ * RED/GREEN tests for hrc-server Slice 1A (T-00956 / T-00954)
+ *
+ * Tests the hrc-server foundation surface:
+ *   - Server startup: binds Unix socket, opens DB, serves HTTP
+ *   - Single-instance lock: prevents duplicate daemons, cleans stale locks
+ *   - Session resolve: POST /v1/sessions/resolve create + reuse continuity
+ *   - Session list/get: GET /v1/sessions, GET /v1/sessions/by-host/:id
+ *   - Internal launch callbacks: wrapper-started, child-started, exited
+ *   - Event watch: GET /v1/events NDJSON replay/follow with monotonic seq
+ *   - HTTP error shape/status mapping for domain errors
+ *   - Clean shutdown on SIGTERM
+ *
+ * Pass conditions for Larry (T-00954):
+ *   1. createHrcServer(opts) returns a server that binds to a Unix socket
+ *   2. Server acquires server.lock; a second instance fails with clear error
+ *   3. Stale lock (dead PID) + stale socket are cleaned up on startup
+ *   4. POST /v1/sessions/resolve creates continuity + session on first call
+ *   5. POST /v1/sessions/resolve reuses continuity on second call (same sessionRef)
+ *   6. GET /v1/sessions returns session list (filterable by scopeRef/laneRef)
+ *   7. GET /v1/sessions/by-host/:hostSessionId returns a single session or 404
+ *   8. POST /v1/internal/launches/:launchId/wrapper-started updates launch record
+ *   9. POST /v1/internal/launches/:launchId/child-started updates launch record
+ *  10. POST /v1/internal/launches/:launchId/exited updates launch record + appends event
+ *  11. POST /v1/internal/hooks/ingest appends hook event
+ *  12. GET /v1/events returns NDJSON with monotonic seq
+ *  13. GET /v1/events?follow=true streams new events as NDJSON
+ *  14. Domain errors return { error: { code, message, detail } } with correct HTTP status
+ *  15. Server shuts down cleanly (stop() resolves, socket removed)
+ *  16. Spool replay processes spooled callbacks on startup
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import type { HrcHttpError, HrcSessionRecord } from 'hrc-core'
+import { HrcErrorCode } from 'hrc-core'
+
+// RED GATE: These imports will fail until Larry implements the server module
+import { createHrcServer } from '../index'
+import type { HrcServer, HrcServerOptions } from '../index'
+
+let tmpDir: string
+let runtimeRoot: string
+let stateRoot: string
+let socketPath: string
+let lockPath: string
+let spoolDir: string
+let dbPath: string
+let tmuxSocketPath: string
+
+function ts(): string {
+  return new Date().toISOString()
+}
+
+/** Helper: make a fetch against the Unix socket */
+async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`http://localhost${path}`, {
+    ...init,
+    // @ts-expect-error -- Bun supports unix option on fetch
+    unix: socketPath,
+  })
+}
+
+/** Helper: POST JSON to the server */
+async function postJson(path: string, body: unknown): Promise<Response> {
+  return fetchSocket(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-server-test-'))
+  runtimeRoot = join(tmpDir, 'runtime')
+  stateRoot = join(tmpDir, 'state')
+  socketPath = join(runtimeRoot, 'hrc.sock')
+  lockPath = join(runtimeRoot, 'server.lock')
+  spoolDir = join(runtimeRoot, 'spool')
+  dbPath = join(stateRoot, 'state.sqlite')
+  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
+
+  await mkdir(runtimeRoot, { recursive: true })
+  await mkdir(stateRoot, { recursive: true })
+  await mkdir(spoolDir, { recursive: true })
+})
+
+afterEach(async () => {
+  try {
+    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+    await exited
+  } catch {
+    // fine when no tmux server exists
+  }
+  await rm(tmpDir, { recursive: true, force: true })
+})
+
+function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions {
+  return {
+    runtimeRoot,
+    stateRoot,
+    socketPath,
+    lockPath,
+    spoolDir,
+    dbPath,
+    tmuxSocketPath,
+    ...overrides,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 1. Server startup and socket binding
+// ---------------------------------------------------------------------------
+describe('server startup', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('starts and binds to a Unix socket', async () => {
+    server = await createHrcServer(serverOpts())
+    // Socket file should exist after startup
+    const s = await stat(socketPath).catch(() => null)
+    expect(s).not.toBeNull()
+    expect(s!.isSocket()).toBe(true)
+  })
+
+  it('creates the lock file on startup', async () => {
+    server = await createHrcServer(serverOpts())
+    const lockContent = await readFile(lockPath, 'utf-8')
+    // Lock file should contain the current PID
+    expect(lockContent.trim()).toMatch(/^\d+$/)
+    expect(Number(lockContent.trim())).toBe(process.pid)
+  })
+
+  it('opens the database and runs migrations on startup', async () => {
+    server = await createHrcServer(serverOpts())
+    // A basic health check — the server should respond to requests
+    const res = await fetchSocket('/v1/sessions')
+    expect(res.status).toBe(200)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2. Single-instance lock
+// ---------------------------------------------------------------------------
+describe('single-instance lock', () => {
+  let server1: HrcServer
+
+  afterEach(async () => {
+    if (server1) await server1.stop()
+  })
+
+  it('rejects a second instance when lock is held by a live process', async () => {
+    server1 = await createHrcServer(serverOpts())
+
+    // A second server with the same paths should fail
+    await expect(createHrcServer(serverOpts())).rejects.toThrow(/already running|lock/i)
+  })
+
+  it('cleans up stale lock and socket from a dead process', async () => {
+    // Write a lock file with a PID that does not exist
+    const deadPid = 2147483647 // Unlikely to be a real PID
+    await writeFile(lockPath, String(deadPid), 'utf-8')
+    // Create a stale socket file (just a regular file to simulate)
+    await writeFile(socketPath, '', 'utf-8')
+
+    // Server should detect the stale lock and start successfully
+    server1 = await createHrcServer(serverOpts())
+    const s = await stat(socketPath).catch(() => null)
+    expect(s).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3. Session resolve — POST /v1/sessions/resolve
+// ---------------------------------------------------------------------------
+describe('POST /v1/sessions/resolve', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('creates a new continuity and session on first resolve', async () => {
+    const res = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:myapp/lane:default',
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.hostSessionId).toBeString()
+    expect(body.generation).toBe(1)
+    expect(body.created).toBe(true)
+    expect(body.session).toBeDefined()
+    expect(body.session.scopeRef).toBe('project:myapp')
+    expect(body.session.laneRef).toBe('default')
+  })
+
+  it('reuses existing continuity on second resolve with same sessionRef', async () => {
+    const sessionRef = 'project:myapp/lane:default'
+
+    const res1 = await postJson('/v1/sessions/resolve', { sessionRef })
+    const body1 = await res1.json()
+    expect(body1.created).toBe(true)
+    const hostSessionId = body1.hostSessionId
+
+    const res2 = await postJson('/v1/sessions/resolve', { sessionRef })
+    const body2 = await res2.json()
+    expect(body2.created).toBe(false)
+    expect(body2.hostSessionId).toBe(hostSessionId)
+    expect(body2.generation).toBe(body1.generation)
+  })
+
+  it('returns 400 for malformed sessionRef', async () => {
+    const res = await postJson('/v1/sessions/resolve', {
+      sessionRef: '', // invalid
+    })
+
+    expect(res.status).toBe(400)
+    const body: HrcHttpError = await res.json()
+    expect(body.error.code).toBe(HrcErrorCode.MALFORMED_REQUEST)
+    expect(body.error.message).toBeString()
+  })
+
+  it('returns 400 for missing body', async () => {
+    const res = await fetchSocket('/v1/sessions/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+
+    expect(res.status).toBe(400)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. Session list — GET /v1/sessions
+// ---------------------------------------------------------------------------
+describe('GET /v1/sessions', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('returns empty array when no sessions exist', async () => {
+    const res = await fetchSocket('/v1/sessions')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual([])
+  })
+
+  it('returns sessions after resolve', async () => {
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:a/lane:default',
+    })
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:b/lane:default',
+    })
+
+    const res = await fetchSocket('/v1/sessions')
+    expect(res.status).toBe(200)
+    const body: HrcSessionRecord[] = await res.json()
+    expect(body.length).toBe(2)
+  })
+
+  it('filters by scopeRef query param', async () => {
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:a/lane:default',
+    })
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:b/lane:default',
+    })
+
+    const res = await fetchSocket('/v1/sessions?scopeRef=project:a')
+    expect(res.status).toBe(200)
+    const body: HrcSessionRecord[] = await res.json()
+    expect(body.length).toBe(1)
+    expect(body[0]!.scopeRef).toBe('project:a')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. Session get by host — GET /v1/sessions/by-host/:hostSessionId
+// ---------------------------------------------------------------------------
+describe('GET /v1/sessions/by-host/:hostSessionId', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('returns the session for a known hostSessionId', async () => {
+    const resolveRes = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:x/lane:main',
+    })
+    const { hostSessionId } = await resolveRes.json()
+
+    const res = await fetchSocket(`/v1/sessions/by-host/${hostSessionId}`)
+    expect(res.status).toBe(200)
+    const session: HrcSessionRecord = await res.json()
+    expect(session.hostSessionId).toBe(hostSessionId)
+    expect(session.scopeRef).toBe('project:x')
+    expect(session.laneRef).toBe('main')
+  })
+
+  it('returns 404 for unknown hostSessionId', async () => {
+    const res = await fetchSocket('/v1/sessions/by-host/nonexistent-id')
+    expect(res.status).toBe(404)
+    const body: HrcHttpError = await res.json()
+    expect(body.error.code).toBe(HrcErrorCode.UNKNOWN_HOST_SESSION)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Internal launch callbacks
+// ---------------------------------------------------------------------------
+describe('internal launch callbacks', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  /**
+   * Helper: seed a session and a launch record so callbacks have something to update.
+   * Returns { hostSessionId, launchId }.
+   */
+  async function seedLaunch(): Promise<{ hostSessionId: string; launchId: string }> {
+    const resolveRes = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:test/lane:default',
+    })
+    const { hostSessionId } = await resolveRes.json()
+
+    // Seed a launch record directly through the DB (server exposes db for test hooks,
+    // or we insert via an internal test endpoint). For now we assume the server
+    // handles the case where the launch record was pre-created by the spool/launch system.
+    // The internal callback endpoints should create a minimal launch record if one
+    // doesn't exist, or the test setup should pre-seed one.
+    const launchId = `launch-${Date.now()}`
+
+    // Insert a minimal launch record via the server's internal seeding (if available)
+    // or assume wrapper-started creates it. Either way, we test the callback flow.
+    return { hostSessionId, launchId }
+  }
+
+  it('POST /v1/internal/launches/:launchId/wrapper-started accepts callback', async () => {
+    const { hostSessionId, launchId } = await seedLaunch()
+
+    const res = await postJson(`/v1/internal/launches/${launchId}/wrapper-started`, {
+      hostSessionId,
+      wrapperPid: 12345,
+      timestamp: ts(),
+    })
+
+    // Should accept the callback (200 or 201)
+    expect(res.status).toBeGreaterThanOrEqual(200)
+    expect(res.status).toBeLessThan(300)
+  })
+
+  it('POST /v1/internal/launches/:launchId/child-started accepts callback', async () => {
+    const { hostSessionId, launchId } = await seedLaunch()
+
+    // First wrapper-started
+    await postJson(`/v1/internal/launches/${launchId}/wrapper-started`, {
+      hostSessionId,
+      wrapperPid: 12345,
+      timestamp: ts(),
+    })
+
+    const res = await postJson(`/v1/internal/launches/${launchId}/child-started`, {
+      hostSessionId,
+      childPid: 12346,
+      timestamp: ts(),
+    })
+
+    expect(res.status).toBeGreaterThanOrEqual(200)
+    expect(res.status).toBeLessThan(300)
+  })
+
+  it('POST /v1/internal/launches/:launchId/exited updates status and appends event', async () => {
+    const { hostSessionId, launchId } = await seedLaunch()
+
+    await postJson(`/v1/internal/launches/${launchId}/wrapper-started`, {
+      hostSessionId,
+      wrapperPid: 12345,
+      timestamp: ts(),
+    })
+
+    const res = await postJson(`/v1/internal/launches/${launchId}/exited`, {
+      hostSessionId,
+      exitCode: 0,
+      timestamp: ts(),
+    })
+
+    expect(res.status).toBeGreaterThanOrEqual(200)
+    expect(res.status).toBeLessThan(300)
+
+    // Verify an event was appended
+    const eventsRes = await fetchSocket('/v1/events')
+    expect(eventsRes.status).toBe(200)
+    const eventsText = await eventsRes.text()
+    const events = eventsText
+      .trim()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+    expect(events.length).toBeGreaterThanOrEqual(1)
+    // At least one event should be launch-related
+    const launchEvents = events.filter(
+      (e: { eventKind: string }) => e.eventKind.includes('launch') || e.eventKind.includes('exited')
+    )
+    expect(launchEvents.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('POST /v1/internal/hooks/ingest accepts hook envelope', async () => {
+    const { hostSessionId } = await seedLaunch()
+
+    const res = await postJson('/v1/internal/hooks/ingest', {
+      launchId: `launch-hook-${Date.now()}`,
+      hostSessionId,
+      generation: 1,
+      hookData: { type: 'test_hook', payload: { foo: 'bar' } },
+    })
+
+    expect(res.status).toBeGreaterThanOrEqual(200)
+    expect(res.status).toBeLessThan(300)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. Event NDJSON replay — GET /v1/events
+// ---------------------------------------------------------------------------
+describe('GET /v1/events', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('returns empty NDJSON when no events exist', async () => {
+    const res = await fetchSocket('/v1/events')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson')
+    const text = await res.text()
+    expect(text.trim()).toBe('')
+  })
+
+  it('returns events with monotonic seq after resolve creates events', async () => {
+    // Resolve two sessions to generate events
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:a/lane:default',
+    })
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:b/lane:default',
+    })
+
+    const res = await fetchSocket('/v1/events')
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    const lines = text
+      .trim()
+      .split('\n')
+      .filter((l) => l.length > 0)
+    expect(lines.length).toBeGreaterThanOrEqual(1)
+
+    // Verify monotonic seq
+    const events = lines.map((l) => JSON.parse(l))
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].seq).toBeGreaterThan(events[i - 1].seq)
+    }
+  })
+
+  it('supports fromSeq query param for replay', async () => {
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:a/lane:default',
+    })
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:b/lane:default',
+    })
+
+    // Get all events first
+    const allRes = await fetchSocket('/v1/events')
+    const allText = await allRes.text()
+    const allEvents = allText
+      .trim()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+
+    if (allEvents.length >= 2) {
+      // Request from the second event's seq
+      const fromSeq = allEvents[1].seq
+      const res = await fetchSocket(`/v1/events?fromSeq=${fromSeq}`)
+      expect(res.status).toBe(200)
+      const text = await res.text()
+      const filtered = text
+        .trim()
+        .split('\n')
+        .filter((l) => l.length > 0)
+        .map((l) => JSON.parse(l))
+
+      // All returned events should have seq >= fromSeq
+      for (const e of filtered) {
+        expect(e.seq).toBeGreaterThanOrEqual(fromSeq)
+      }
+    }
+  })
+
+  it('supports follow mode with streaming', async () => {
+    // Start follow request
+    const controller = new AbortController()
+    const followPromise = fetchSocket('/v1/events?follow=true', {
+      signal: controller.signal,
+    })
+
+    // Give the server a moment to start streaming
+    await new Promise((r) => setTimeout(r, 100))
+
+    // Create a session to generate an event while following
+    await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:follow-test/lane:default',
+    })
+
+    // Give the event time to propagate
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Abort the follow request
+    controller.abort()
+
+    // The follow request should have received data before abort
+    try {
+      const res = await followPromise
+      const text = await res.text()
+      const lines = text
+        .trim()
+        .split('\n')
+        .filter((l) => l.length > 0)
+      expect(lines.length).toBeGreaterThanOrEqual(1)
+    } catch (err: unknown) {
+      // AbortError is expected; the key assertion is that the
+      // connection was accepted and streaming started
+      if (err instanceof Error && err.name !== 'AbortError') throw err
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. HTTP error model
+// ---------------------------------------------------------------------------
+describe('HTTP error model', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('returns { error: { code, message, detail } } shape for 400', async () => {
+    const res = await postJson('/v1/sessions/resolve', {})
+    expect(res.status).toBe(400)
+    const body: HrcHttpError = await res.json()
+    expect(body.error).toBeDefined()
+    expect(typeof body.error.code).toBe('string')
+    expect(typeof body.error.message).toBe('string')
+    expect(typeof body.error.detail).toBe('object')
+  })
+
+  it('returns 404 with correct error shape for unknown resources', async () => {
+    const res = await fetchSocket('/v1/sessions/by-host/does-not-exist')
+    expect(res.status).toBe(404)
+    const body: HrcHttpError = await res.json()
+    expect(body.error.code).toBe(HrcErrorCode.UNKNOWN_HOST_SESSION)
+  })
+
+  it('returns 404 for completely unknown routes', async () => {
+    const res = await fetchSocket('/v1/nonexistent-endpoint')
+    expect(res.status).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. Spool replay on startup
+// ---------------------------------------------------------------------------
+describe('spool replay', () => {
+  it('replays spooled callbacks on startup', async () => {
+    // Pre-seed a session and launch via a temporary server
+    const tmpServer = await createHrcServer(serverOpts())
+    const resolveRes = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:spool/lane:default',
+    })
+    const { hostSessionId } = await resolveRes.json()
+    await tmpServer.stop()
+
+    // Create spool entries manually (simulating hrc-launch spooling)
+    const launchId = `spool-launch-${Date.now()}`
+    const launchSpoolDir = join(spoolDir, launchId)
+    await mkdir(launchSpoolDir, { recursive: true })
+
+    await writeFile(
+      join(launchSpoolDir, '000001.json'),
+      JSON.stringify({
+        endpoint: `/v1/internal/launches/${launchId}/wrapper-started`,
+        payload: { hostSessionId, wrapperPid: 99999, timestamp: ts() },
+      }),
+      'utf-8'
+    )
+
+    // Start a new server — it should replay the spool
+    const server = await createHrcServer(serverOpts())
+
+    // After startup, events should include the replayed callback
+    const res = await fetchSocket('/v1/events')
+    const text = await res.text()
+    const events = text
+      .trim()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+
+    // We expect at least the session.created event from resolve,
+    // plus potentially a launch event from the spool replay
+    expect(events.length).toBeGreaterThanOrEqual(1)
+
+    await server.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. Clean shutdown
+// ---------------------------------------------------------------------------
+describe('clean shutdown', () => {
+  it('stops accepting requests after stop()', async () => {
+    const server = await createHrcServer(serverOpts())
+
+    // Verify server is responding
+    const res1 = await fetchSocket('/v1/sessions')
+    expect(res1.status).toBe(200)
+
+    // Stop the server
+    await server.stop()
+
+    // After stop, fetch should fail
+    await expect(fetchSocket('/v1/sessions')).rejects.toThrow()
+  })
+
+  it('removes the lock file on clean shutdown', async () => {
+    const server = await createHrcServer(serverOpts())
+    await server.stop()
+
+    const lockExists = await stat(lockPath).catch(() => null)
+    expect(lockExists).toBeNull()
+  })
+})

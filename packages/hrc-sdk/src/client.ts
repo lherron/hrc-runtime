@@ -2,8 +2,13 @@ import type { HrcEventEnvelope, HrcHttpError, HrcSessionRecord } from 'hrc-core'
 import { HrcDomainError } from 'hrc-core'
 
 import type {
+  AttachDescriptor,
+  CaptureResponse,
+  EnsureRuntimeRequest,
+  EnsureRuntimeResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  RuntimeActionResponse,
   SessionFilter,
   WatchOptions,
 } from './types.js'
@@ -78,6 +83,26 @@ export class HrcClient {
     return this.getJson<HrcSessionRecord>(
       `/v1/sessions/by-host/${encodeURIComponent(hostSessionId)}`
     )
+  }
+
+  async ensureRuntime(request: EnsureRuntimeRequest): Promise<EnsureRuntimeResponse> {
+    return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)
+  }
+
+  async capture(runtimeId: string): Promise<CaptureResponse> {
+    return this.getJson<CaptureResponse>(`/v1/capture?runtimeId=${encodeURIComponent(runtimeId)}`)
+  }
+
+  async getAttachDescriptor(runtimeId: string): Promise<AttachDescriptor> {
+    return this.getJson<AttachDescriptor>(`/v1/attach?runtimeId=${encodeURIComponent(runtimeId)}`)
+  }
+
+  async interrupt(runtimeId: string): Promise<RuntimeActionResponse> {
+    return this.postJson<RuntimeActionResponse>('/v1/interrupt', { runtimeId })
+  }
+
+  async terminate(runtimeId: string): Promise<RuntimeActionResponse> {
+    return this.postJson<RuntimeActionResponse>('/v1/terminate', { runtimeId })
   }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcEventEnvelope> {
