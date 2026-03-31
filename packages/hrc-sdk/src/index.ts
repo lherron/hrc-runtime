@@ -1,2 +1,8 @@
-// hrc-sdk: typed client for the HRC daemon over Unix socket
-export {}
+export { discoverSocket } from './discover.js'
+export { HrcClient } from './client.js'
+export type {
+  ResolveSessionRequest,
+  ResolveSessionResponse,
+  SessionFilter,
+  WatchOptions,
+} from './types.js'
