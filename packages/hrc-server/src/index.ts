@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { buildCliInvocation } from 'hrc-adapter-agent-spaces'
+import { buildCliInvocation, runSdkTurn } from 'hrc-adapter-agent-spaces'
 import {
   HrcBadRequestError,
   HrcConflictError,
@@ -21,6 +21,7 @@ import type {
   HrcFence,
   HrcHttpError,
   HrcLaunchRecord,
+  HrcProvider,
   HrcRunRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -79,7 +80,8 @@ type DispatchTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  status: 'started'
+  transport: 'sdk' | 'tmux'
+  status: 'completed' | 'started'
 }
 
 type ClearContextRequest = {
@@ -434,18 +436,22 @@ class HrcServerInstance implements HrcServer {
     }
 
     const session = requireSession(this.db, fence.resolvedHostSessionId)
-    const runtime = requireLatestRuntime(this.db, session.hostSessionId)
-    assertRuntimeNotBusy(this.db, runtime)
-
     const runId = `run-${randomUUID()}`
-    const launchId = `launch-${randomUUID()}`
-    const now = timestamp()
     const intent = normalizeDispatchIntent(
       body.runtimeIntent ?? session.lastAppliedIntentJson,
       session,
       runId
     )
 
+    if (shouldUseSdkTransport(intent)) {
+      return await this.handleSdkDispatchTurn(session, intent, body.prompt, runId)
+    }
+
+    const runtime = requireLatestRuntime(this.db, session.hostSessionId)
+    assertRuntimeNotBusy(this.db, runtime)
+
+    const launchId = `launch-${randomUUID()}`
+    const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const cliInvocation = await buildDispatchInvocation(intent)
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
@@ -550,6 +556,7 @@ class HrcServerInstance implements HrcServer {
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
+      transport: 'tmux',
       status: 'started',
     } satisfies DispatchTurnResponse)
   }
@@ -642,8 +649,13 @@ class HrcServerInstance implements HrcServer {
   private async handleCapture(url: URL): Promise<Response> {
     const runtimeId = parseRuntimeIdQuery(url)
     const runtime = requireRuntime(this.db, runtimeId)
-    const tmux = requireTmuxPane(runtime)
-    const text = await this.tmux.capture(tmux.paneId)
+    const text =
+      runtime.transport === 'sdk'
+        ? this.db.runtimeBuffers
+            .listByRuntimeId(runtime.runtimeId)
+            .map((chunk) => chunk.text)
+            .join('')
+        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
 
     this.db.runtimes.updateActivity(runtime.runtimeId, timestamp(), timestamp())
 
@@ -655,6 +667,12 @@ class HrcServerInstance implements HrcServer {
   private handleAttach(url: URL): Response {
     const runtimeId = parseRuntimeIdQuery(url)
     const runtime = requireRuntime(this.db, runtimeId)
+    if (runtime.transport === 'sdk') {
+      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
+        runtimeId,
+        transport: runtime.transport,
+      })
+    }
     const tmux = requireTmuxPane(runtime)
 
     return json({
@@ -975,7 +993,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     const now = timestamp()
-    const harness = deriveHarness(intent)
+    const harness = deriveInteractiveHarness(intent.harness.provider)
     const tmuxJson = toTmuxJson(tmuxPane)
 
     this.db.sessions.updateIntent(session.hostSessionId, intent, now)
@@ -1019,6 +1037,208 @@ class HrcServerInstance implements HrcServer {
     this.notifyEvent(event)
 
     return runtime
+  }
+
+  private async handleSdkDispatchTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string
+  ): Promise<Response> {
+    const existingProvider =
+      findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
+      session.continuation?.provider
+    const runtimeId = `rt-${randomUUID()}`
+    const now = timestamp()
+
+    this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+
+    const runtime = this.db.runtimes.create({
+      runtimeId,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'sdk',
+      harness: deriveSdkHarness(intent.harness.provider),
+      provider: intent.harness.provider,
+      status: 'busy',
+      continuation: session.continuation,
+      supportsInflightInput: false,
+      adopted: false,
+      activeRunId: runId,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const run = this.db.runs.create({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'sdk',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+    })
+
+    const runtimeCreatedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'runtime.created',
+      eventJson: {
+        transport: 'sdk',
+        harness: runtime.harness,
+      },
+    })
+    this.notifyEvent(runtimeCreatedEvent)
+
+    const acceptedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.accepted',
+      eventJson: {
+        promptLength: prompt.length,
+        transport: 'sdk',
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    const startedAt = timestamp()
+    this.db.runs.update(run.runId, {
+      status: 'started',
+      startedAt,
+      updatedAt: startedAt,
+    })
+    this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
+
+    const startedEvent = this.db.events.append({
+      ts: startedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.started',
+      eventJson: {
+        transport: 'sdk',
+      },
+    })
+    this.notifyEvent(startedEvent)
+
+    let chunkSeq = 1
+    const result = await runSdkTurn({
+      intent,
+      hostSessionId: session.hostSessionId,
+      runId,
+      runtimeId: runtime.runtimeId,
+      prompt,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      existingProvider,
+      continuation: session.continuation,
+      onHrcEvent: (event) => {
+        const appended = this.db.events.append(event)
+        this.notifyEvent(appended)
+        this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+      },
+      onBuffer: (text) => {
+        this.db.runtimeBuffers.append({
+          runtimeId: runtime.runtimeId,
+          chunkSeq,
+          text,
+          createdAt: timestamp(),
+        })
+        chunkSeq += 1
+      },
+    })
+
+    const completedAt = timestamp()
+    this.db.runs.markCompleted(run.runId, {
+      status: result.result.success ? 'completed' : 'failed',
+      completedAt,
+      updatedAt: completedAt,
+      ...(!result.result.success
+        ? {
+            errorCode:
+              result.result.error?.code === 'provider_mismatch'
+                ? HrcErrorCode.PROVIDER_MISMATCH
+                : HrcErrorCode.RUNTIME_UNAVAILABLE,
+            errorMessage: result.result.error?.message ?? 'sdk turn failed',
+          }
+        : {}),
+    })
+
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'ready',
+      lastActivityAt: completedAt,
+      updatedAt: completedAt,
+      harnessSessionJson: result.harnessSessionJson,
+      continuation: result.continuation,
+    })
+    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+
+    if (result.continuation) {
+      this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
+    }
+
+    const completedEvent = this.db.events.append({
+      ts: completedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.completed',
+      eventJson: {
+        success: result.result.success,
+        transport: 'sdk',
+      },
+    })
+    this.notifyEvent(completedEvent)
+
+    if (!result.result.success) {
+      if (result.result.error?.code === 'provider_mismatch') {
+        throw new HrcUnprocessableEntityError(
+          HrcErrorCode.PROVIDER_MISMATCH,
+          result.result.error.message,
+          result.result.error.details ?? {}
+        )
+      }
+
+      throw new HrcRuntimeUnavailableError(result.result.error?.message ?? 'sdk turn failed', {
+        runtimeId: runtime.runtimeId,
+        runId,
+      })
+    }
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'sdk',
+      status: 'started',
+    } satisfies DispatchTurnResponse)
   }
 }
 
@@ -1350,8 +1570,18 @@ function validateEnsureRuntimeIntent(intent: HrcRuntimeIntent): void {
   }
 }
 
-function deriveHarness(intent: HrcRuntimeIntent): HrcRuntimeSnapshot['harness'] {
-  return intent.harness.provider === 'openai' ? 'codex-cli' : 'claude-code'
+function deriveInteractiveHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
+  return provider === 'openai' ? 'codex-cli' : 'claude-code'
+}
+
+function deriveSdkHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
+  return provider === 'openai' ? 'pi-sdk' : 'agent-sdk'
+}
+
+function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
+  return (
+    intent.harness.interactive === false || intent.execution?.preferredMode === 'nonInteractive'
+  )
 }
 
 function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
@@ -1397,6 +1627,13 @@ function findLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSn
     .listByHostSessionId(hostSessionId)
     .filter((runtime) => runtime.transport === 'tmux')
   return runtimes.at(-1) ?? null
+}
+
+function findLatestSessionRuntime(
+  db: HrcDatabase,
+  hostSessionId: string
+): HrcRuntimeSnapshot | null {
+  return db.runtimes.listByHostSessionId(hostSessionId).at(-1) ?? null
 }
 
 function getTmuxSocketPath(options: HrcServerOptions): string {

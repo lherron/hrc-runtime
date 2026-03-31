@@ -69,7 +69,8 @@ export type DispatchTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  status: 'started'
+  transport: 'sdk' | 'tmux'
+  status: 'completed' | 'started'
 }
 
 export type ClearContextRequest = {
