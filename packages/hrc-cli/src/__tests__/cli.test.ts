@@ -22,6 +22,7 @@
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,6 +31,7 @@ import { join } from 'node:path'
 // This import will fail until Curly implements the CLI module
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 
@@ -85,10 +87,11 @@ function serverOpts(): HrcServerOptions {
 }
 
 /** Env vars that point the CLI's discoverSocket at our test server */
-function cliEnv(): Record<string, string> {
+function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
   return {
     HRC_RUNTIME_DIR: runtimeRoot,
     HRC_STATE_DIR: stateRoot,
+    ...extra,
   }
 }
 
@@ -234,6 +237,40 @@ describe('runtime lifecycle commands', () => {
     return JSON.parse(result.stdout.trim()).runtimeId as string
   }
 
+  async function seedAttachableRuntime(scope: string): Promise<string> {
+    const hostSessionId = await resolveHostSessionId(scope)
+    const session = JSON.parse(
+      (await runCli(['session', 'get', hostSessionId], cliEnv())).stdout.trim()
+    ) as { generation: number; scopeRef: string; laneRef: string }
+    const runtimeId = `rt-test-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.create({
+      runtimeId,
+      hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: `hrc-${hostSessionId.slice(0, 12)}`,
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return runtimeId
+  }
+
   it('runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
     const hostSessionId = await resolveHostSessionId('project:runtimecli')
     const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
@@ -264,6 +301,22 @@ describe('runtime lifecycle commands', () => {
     expect(body.argv).toContain('attach-session')
   })
 
+  it('attach auto-binds Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
+    const runtimeId = await seedAttachableRuntime('project:attach-ghostty-cli')
+    const result = await runCli(
+      ['attach', runtimeId],
+      cliEnv({ GHOSTTY_SURFACE_UUID: 'ghostty-cli-attach-1' })
+    )
+
+    expect(result.exitCode).toBe(0)
+
+    const listResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    expect(listResult.exitCode).toBe(0)
+    const listed = JSON.parse(listResult.stdout.trim())
+    expect(listed).toHaveLength(1)
+    expect(listed[0].surfaceId).toBe('ghostty-cli-attach-1')
+  })
+
   it('interrupt prints JSON for a runtimeId', async () => {
     const runtimeId = await ensureRuntime('project:interruptcli')
     const result = await runCli(['interrupt', runtimeId], cliEnv())
@@ -282,6 +335,36 @@ describe('runtime lifecycle commands', () => {
     const body = JSON.parse(result.stdout.trim())
     expect(body.ok).toBe(true)
     expect(body.runtimeId).toBe(runtimeId)
+  })
+
+  it('surface bind/list/unbind commands manage runtime bindings', async () => {
+    const runtimeId = await seedAttachableRuntime('project:surfacecli')
+
+    const bindResult = await runCli(
+      ['surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
+      cliEnv()
+    )
+    expect(bindResult.exitCode).toBe(0)
+    const bound = JSON.parse(bindResult.stdout.trim())
+    expect(bound.surfaceId).toBe('ghostty-cli-2')
+
+    const listResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    expect(listResult.exitCode).toBe(0)
+    const listed = JSON.parse(listResult.stdout.trim())
+    expect(listed).toHaveLength(1)
+    expect(listed[0].surfaceId).toBe('ghostty-cli-2')
+
+    const unbindResult = await runCli(
+      ['surface', 'unbind', '--kind', 'ghostty', '--id', 'ghostty-cli-2', '--reason', 'done'],
+      cliEnv()
+    )
+    expect(unbindResult.exitCode).toBe(0)
+    const unbound = JSON.parse(unbindResult.stdout.trim())
+    expect(unbound.reason).toBe('done')
+
+    const emptyListResult = await runCli(['surface', 'list', runtimeId], cliEnv())
+    expect(emptyListResult.exitCode).toBe(0)
+    expect(JSON.parse(emptyListResult.stdout.trim())).toEqual([])
   })
 })
 

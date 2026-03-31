@@ -123,12 +123,37 @@ type CaptureResponse = {
 type AttachDescriptorResponse = {
   transport: 'tmux'
   argv: string[]
+  bindingFence: {
+    hostSessionId: string
+    runtimeId: string
+    generation: number
+    windowId?: string | undefined
+    tabId?: string | undefined
+    paneId?: string | undefined
+  }
 }
 
 type RuntimeActionResponse = {
   ok: true
   hostSessionId: string
   runtimeId: string
+}
+
+type BindSurfaceRequest = {
+  surfaceKind: string
+  surfaceId: string
+  runtimeId: string
+  hostSessionId: string
+  generation: number
+  windowId?: string | undefined
+  tabId?: string | undefined
+  paneId?: string | undefined
+}
+
+type UnbindSurfaceRequest = {
+  surfaceKind: string
+  surfaceId: string
+  reason?: string | undefined
 }
 
 type FollowSubscriber = (event: HrcEventEnvelope) => void
@@ -258,6 +283,18 @@ class HrcServerInstance implements HrcServer {
 
       if (request.method === 'GET' && pathname === '/v1/attach') {
         return this.handleAttach(url)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/surfaces/bind') {
+        return await this.handleBindSurface(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/surfaces/unbind') {
+        return await this.handleUnbindSurface(request)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/surfaces') {
+        return this.handleListSurfaces(url)
       }
 
       if (request.method === 'POST' && pathname === '/v1/interrupt') {
@@ -796,7 +833,148 @@ class HrcServerInstance implements HrcServer {
     return json({
       transport: 'tmux',
       argv: this.tmux.getAttachDescriptor(tmux.sessionName).argv,
+      bindingFence: {
+        hostSessionId: runtime.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        generation: runtime.generation,
+        windowId: tmux.windowId,
+        paneId: tmux.paneId,
+      },
     } satisfies AttachDescriptorResponse)
+  }
+
+  private async handleBindSurface(request: Request): Promise<Response> {
+    const body = parseBindSurfaceRequest(await parseJsonBody(request))
+    const runtime = requireRuntime(this.db, body.runtimeId)
+    if (runtime.hostSessionId !== body.hostSessionId || runtime.generation !== body.generation) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        'surface bind fence no longer matches runtime state',
+        {
+          runtimeId: runtime.runtimeId,
+          expectedHostSessionId: body.hostSessionId,
+          actualHostSessionId: runtime.hostSessionId,
+          expectedGeneration: body.generation,
+          actualGeneration: runtime.generation,
+        }
+      )
+    }
+
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const existing = this.db.surfaceBindings.findBySurface(body.surfaceKind, body.surfaceId)
+    if (existing && existing.unboundAt === undefined && existing.runtimeId === runtime.runtimeId) {
+      return json(existing)
+    }
+
+    const tmuxPane = runtime.transport === 'tmux' ? requireTmuxPane(runtime) : null
+    const now = timestamp()
+    const binding = this.db.surfaceBindings.bind({
+      surfaceKind: body.surfaceKind,
+      surfaceId: body.surfaceId,
+      hostSessionId: runtime.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      generation: runtime.generation,
+      windowId: body.windowId ?? tmuxPane?.windowId,
+      tabId: body.tabId,
+      paneId: body.paneId ?? tmuxPane?.paneId,
+      boundAt: now,
+    })
+
+    const eventKind =
+      existing && existing.unboundAt === undefined ? 'surface.rebound' : 'surface.bound'
+    const eventJson: Record<string, unknown> = {
+      surfaceKind: binding.surfaceKind,
+      surfaceId: binding.surfaceId,
+      hostSessionId: binding.hostSessionId,
+      runtimeId: binding.runtimeId,
+      generation: binding.generation,
+      boundAt: binding.boundAt,
+      ...(binding.windowId ? { windowId: binding.windowId } : {}),
+      ...(binding.tabId ? { tabId: binding.tabId } : {}),
+      ...(binding.paneId ? { paneId: binding.paneId } : {}),
+    }
+
+    if (eventKind === 'surface.rebound' && existing) {
+      eventJson['previousHostSessionId'] = existing.hostSessionId
+      eventJson['previousRuntimeId'] = existing.runtimeId
+      eventJson['previousGeneration'] = existing.generation
+    }
+
+    const event = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind,
+      eventJson,
+    })
+    this.notifyEvent(event)
+
+    return json(binding)
+  }
+
+  private async handleUnbindSurface(request: Request): Promise<Response> {
+    const body = parseUnbindSurfaceRequest(await parseJsonBody(request))
+    const existing = this.db.surfaceBindings.findBySurface(body.surfaceKind, body.surfaceId)
+    if (!existing) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_SURFACE,
+        `unknown surface binding "${body.surfaceKind}:${body.surfaceId}"`,
+        {
+          surfaceKind: body.surfaceKind,
+          surfaceId: body.surfaceId,
+        }
+      )
+    }
+
+    if (existing.unboundAt !== undefined) {
+      return json(existing)
+    }
+
+    const session = requireSession(this.db, existing.hostSessionId)
+    const now = timestamp()
+    const binding = this.db.surfaceBindings.unbind(
+      body.surfaceKind,
+      body.surfaceId,
+      now,
+      body.reason
+    )
+    if (!binding) {
+      throw new HrcInternalError('surface binding disappeared during unbind', {
+        surfaceKind: body.surfaceKind,
+        surfaceId: body.surfaceId,
+      })
+    }
+
+    const event = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: binding.runtimeId,
+      source: 'hrc',
+      eventKind: 'surface.unbound',
+      eventJson: {
+        surfaceKind: binding.surfaceKind,
+        surfaceId: binding.surfaceId,
+        runtimeId: binding.runtimeId,
+        unboundAt: binding.unboundAt,
+        ...(binding.reason ? { reason: binding.reason } : {}),
+      },
+    })
+    this.notifyEvent(event)
+
+    return json(binding)
+  }
+
+  private handleListSurfaces(url: URL): Response {
+    const runtimeId = parseRuntimeIdQuery(url)
+    requireRuntime(this.db, runtimeId)
+    return json(this.db.surfaceBindings.findByRuntime(runtimeId))
   }
 
   private async handleInterrupt(request: Request): Promise<Response> {
@@ -1873,6 +2051,75 @@ function parseRuntimeActionBody(input: unknown): { runtimeId: string } {
   return {
     runtimeId: runtimeId.trim(),
   }
+}
+
+function parseBindSurfaceRequest(input: unknown): BindSurfaceRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const surfaceKind = requireTrimmedStringField(input, 'surfaceKind')
+  const surfaceId = requireTrimmedStringField(input, 'surfaceId')
+  const runtimeId = requireTrimmedStringField(input, 'runtimeId')
+  const hostSessionId = requireTrimmedStringField(input, 'hostSessionId')
+  const generation = input['generation']
+  if (typeof generation !== 'number' || !Number.isInteger(generation) || generation < 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'generation is required', {
+      field: 'generation',
+    })
+  }
+
+  return {
+    surfaceKind,
+    surfaceId,
+    runtimeId,
+    hostSessionId,
+    generation,
+    ...readOptionalStringField(input, 'windowId'),
+    ...readOptionalStringField(input, 'tabId'),
+    ...readOptionalStringField(input, 'paneId'),
+  }
+}
+
+function parseUnbindSurfaceRequest(input: unknown): UnbindSurfaceRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  return {
+    surfaceKind: requireTrimmedStringField(input, 'surfaceKind'),
+    surfaceId: requireTrimmedStringField(input, 'surfaceId'),
+    ...readOptionalStringField(input, 'reason'),
+  }
+}
+
+function requireTrimmedStringField(input: Record<string, unknown>, field: string): string {
+  const value = input[field]
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} is required`, {
+      field,
+    })
+  }
+
+  return value.trim()
+}
+
+function readOptionalStringField(
+  input: Record<string, unknown>,
+  field: string
+): Record<string, string> {
+  const value = input[field]
+  if (value === undefined) {
+    return {}
+  }
+  if (typeof value !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
+      field,
+    })
+  }
+
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? { [field]: trimmed } : {}
 }
 
 function parseSessionRef(sessionRef: string): { scopeRef: string; laneRef: string } {

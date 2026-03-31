@@ -65,6 +65,7 @@ export type {
   HrcLaunchRecord,
   HrcProvider,
   HrcRunRecord,
+  HrcSurfaceBindingRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,

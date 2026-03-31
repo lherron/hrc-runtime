@@ -3,6 +3,7 @@ import { HrcDomainError } from 'hrc-core'
 
 import type {
   AttachDescriptor,
+  BindSurfaceRequest,
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
@@ -16,6 +17,9 @@ import type {
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
+  SurfaceBindingRecord,
+  SurfaceListFilter,
+  UnbindSurfaceRequest,
   WatchOptions,
 } from './types.js'
 
@@ -127,6 +131,20 @@ export class HrcClient {
 
   async terminate(runtimeId: string): Promise<RuntimeActionResponse> {
     return this.postJson<RuntimeActionResponse>('/v1/terminate', { runtimeId })
+  }
+
+  async bindSurface(request: BindSurfaceRequest): Promise<SurfaceBindingRecord> {
+    return this.postJson<SurfaceBindingRecord>('/v1/surfaces/bind', request)
+  }
+
+  async unbindSurface(request: UnbindSurfaceRequest): Promise<SurfaceBindingRecord> {
+    return this.postJson<SurfaceBindingRecord>('/v1/surfaces/unbind', request)
+  }
+
+  async listSurfaces(filter: SurfaceListFilter): Promise<SurfaceBindingRecord[]> {
+    return this.getJson<SurfaceBindingRecord[]>(
+      `/v1/surfaces?runtimeId=${encodeURIComponent(filter.runtimeId)}`
+    )
   }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcEventEnvelope> {

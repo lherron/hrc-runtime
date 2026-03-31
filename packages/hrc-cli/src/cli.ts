@@ -329,6 +329,14 @@ async function cmdAttach(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
   const descriptor = await client.getAttachDescriptor(runtimeId)
+  const ghosttySurfaceId = process.env['GHOSTTY_SURFACE_UUID']?.trim()
+  if (ghosttySurfaceId) {
+    await client.bindSurface({
+      surfaceKind: 'ghostty',
+      surfaceId: ghosttySurfaceId,
+      ...descriptor.bindingFence,
+    })
+  }
   printJson(descriptor)
 }
 
@@ -344,6 +352,75 @@ async function cmdTerminate(args: string[]): Promise<void> {
   const client = createClient()
   const result = await client.terminate(runtimeId)
   printJson(result)
+}
+
+async function cmdSurfaceBind(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const surfaceKind = parseFlag(args, '--kind')
+  const surfaceId = parseFlag(args, '--id')
+
+  if (!surfaceKind) {
+    fatal('--kind is required for surface bind')
+  }
+  if (!surfaceId) {
+    fatal('--id is required for surface bind')
+  }
+
+  const client = createClient()
+  const descriptor = await client.getAttachDescriptor(runtimeId)
+  const result = await client.bindSurface({
+    surfaceKind,
+    surfaceId,
+    ...descriptor.bindingFence,
+  })
+  printJson(result)
+}
+
+async function cmdSurfaceUnbind(args: string[]): Promise<void> {
+  const surfaceKind = parseFlag(args, '--kind')
+  const surfaceId = parseFlag(args, '--id')
+  const reason = parseFlag(args, '--reason')
+
+  if (!surfaceKind) {
+    fatal('--kind is required for surface unbind')
+  }
+  if (!surfaceId) {
+    fatal('--id is required for surface unbind')
+  }
+
+  const client = createClient()
+  const result = await client.unbindSurface({
+    surfaceKind,
+    surfaceId,
+    ...(reason ? { reason } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdSurfaceList(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const client = createClient()
+  const result = await client.listSurfaces({ runtimeId })
+  printJson(result)
+}
+
+async function cmdSurface(args: string[]): Promise<void> {
+  const subcommand = args[0]
+
+  switch (subcommand) {
+    case 'bind':
+      return cmdSurfaceBind(args.slice(1))
+    case 'unbind':
+      return cmdSurfaceUnbind(args.slice(1))
+    case 'list':
+      return cmdSurfaceList(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown surface subcommand: ${subcommand}`
+          : 'surface subcommand required (bind, unbind, list)'
+      )
+  }
 }
 
 // -- Usage --------------------------------------------------------------------
@@ -364,6 +441,9 @@ Commands:
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
   attach <runtimeId>                  Print tmux attach descriptor JSON
+  surface bind <runtimeId> --kind <kind> --id <surfaceId>
+  surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
+  surface list <runtimeId>            List active surface bindings for a runtime
   clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
@@ -401,6 +481,8 @@ async function main(): Promise<void> {
         return await cmdCapture(rest)
       case 'attach':
         return await cmdAttach(rest)
+      case 'surface':
+        return await cmdSurface(rest)
       case 'clear-context':
         return await cmdClearContext(rest)
       case 'interrupt':

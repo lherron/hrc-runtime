@@ -1,4 +1,9 @@
-import type { HrcFence, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
+import type {
+  HrcFence,
+  HrcRuntimeIntent,
+  HrcSessionRecord,
+  HrcSurfaceBindingRecord,
+} from 'hrc-core'
 
 export type ResolveSessionRequest = {
   sessionRef: string
@@ -50,6 +55,14 @@ export type CaptureResponse = {
 export type AttachDescriptor = {
   transport: 'tmux'
   argv: string[]
+  bindingFence: {
+    hostSessionId: string
+    runtimeId: string
+    generation: number
+    windowId?: string | undefined
+    tabId?: string | undefined
+    paneId?: string | undefined
+  }
 }
 
 export type RuntimeActionResponse = {
@@ -100,3 +113,26 @@ export type SendInFlightInputResponse = {
   runId: string
   pendingTurns?: number | undefined
 }
+
+export type BindSurfaceRequest = {
+  surfaceKind: string
+  surfaceId: string
+  runtimeId: string
+  hostSessionId: string
+  generation: number
+  windowId?: string | undefined
+  tabId?: string | undefined
+  paneId?: string | undefined
+}
+
+export type UnbindSurfaceRequest = {
+  surfaceKind: string
+  surfaceId: string
+  reason?: string | undefined
+}
+
+export type SurfaceListFilter = {
+  runtimeId: string
+}
+
+export type SurfaceBindingRecord = HrcSurfaceBindingRecord

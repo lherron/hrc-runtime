@@ -30,12 +30,14 @@
  *  16. Spool replay processes spooled callbacks on startup
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcHttpError, HrcSessionRecord } from 'hrc-core'
 import { HrcErrorCode } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 // RED GATE: These imports will fail until Larry implements the server module
 import { createHrcServer } from '../index'
@@ -70,6 +72,45 @@ async function postJson(path: string, body: unknown): Promise<Response> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+}
+
+async function ensureRuntime(scopeRef: string): Promise<{
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+}> {
+  const resolveRes = await postJson('/v1/sessions/resolve', {
+    sessionRef: `${scopeRef}/lane:default`,
+  })
+  const resolved = (await resolveRes.json()) as {
+    hostSessionId: string
+    generation: number
+  }
+
+  const runtimeId = `rt-test-${randomUUID()}`
+  const now = ts()
+  const db = openHrcDatabase(dbPath)
+  db.runtimes.create({
+    runtimeId,
+    hostSessionId: resolved.hostSessionId,
+    scopeRef,
+    laneRef: 'default',
+    generation: resolved.generation,
+    transport: 'sdk',
+    harness: 'agent-sdk',
+    provider: 'anthropic',
+    status: 'ready',
+    supportsInflightInput: false,
+    adopted: false,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return {
+    hostSessionId: resolved.hostSessionId,
+    generation: resolved.generation,
+    runtimeId,
+  }
 }
 
 beforeEach(async () => {
@@ -573,7 +614,216 @@ describe('GET /v1/events', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 8. HTTP error model
+// 8. Surface binding APIs
+// ---------------------------------------------------------------------------
+describe('surface binding APIs', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('POST /v1/surfaces/bind creates a new binding and emits surface.bound', async () => {
+    const runtime = await ensureRuntime('project:surface-bind')
+
+    const res = await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-1',
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      paneId: 'pane-1',
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.surfaceKind).toBe('ghostty')
+    expect(body.surfaceId).toBe('ghostty-surface-1')
+    expect(body.runtimeId).toBe(runtime.runtimeId)
+    expect(body.boundAt).toBeString()
+    expect(body.unboundAt).toBeUndefined()
+
+    const eventsRes = await fetchSocket('/v1/events')
+    const events = (await eventsRes.text())
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
+      .filter((event: { eventKind: string }) => event.eventKind === 'surface.bound')
+    expect(events).toHaveLength(1)
+    expect(events[0].eventJson.surfaceId).toBe('ghostty-surface-1')
+  })
+
+  it('POST /v1/surfaces/bind is a no-op for the same active runtime', async () => {
+    const runtime = await ensureRuntime('project:surface-bind-noop')
+    const request = {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-2',
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+    }
+
+    const first = await postJson('/v1/surfaces/bind', request)
+    const firstBody = await first.json()
+    const second = await postJson('/v1/surfaces/bind', request)
+    const secondBody = await second.json()
+
+    expect(second.status).toBe(200)
+    expect(secondBody.boundAt).toBe(firstBody.boundAt)
+
+    const listed = await fetchSocket(
+      `/v1/surfaces?runtimeId=${encodeURIComponent(runtime.runtimeId)}`
+    )
+    const bindings = await listed.json()
+    expect(bindings).toHaveLength(1)
+
+    const eventsRes = await fetchSocket('/v1/events')
+    const boundEvents = (await eventsRes.text())
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
+      .filter((event: { eventKind: string }) => event.eventKind === 'surface.bound')
+    expect(boundEvents).toHaveLength(1)
+  })
+
+  it('POST /v1/surfaces/bind rebinds to a different runtime and emits surface.rebound', async () => {
+    const first = await ensureRuntime('project:surface-bind-rebind-a')
+    const second = await ensureRuntime('project:surface-bind-rebind-b')
+
+    await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-3',
+      runtimeId: first.runtimeId,
+      hostSessionId: first.hostSessionId,
+      generation: first.generation,
+    })
+    const rebound = await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-3',
+      runtimeId: second.runtimeId,
+      hostSessionId: second.hostSessionId,
+      generation: second.generation,
+    })
+
+    expect(rebound.status).toBe(200)
+    const body = await rebound.json()
+    expect(body.runtimeId).toBe(second.runtimeId)
+
+    const firstList = await fetchSocket(
+      `/v1/surfaces?runtimeId=${encodeURIComponent(first.runtimeId)}`
+    )
+    expect(await firstList.json()).toEqual([])
+
+    const secondList = await fetchSocket(
+      `/v1/surfaces?runtimeId=${encodeURIComponent(second.runtimeId)}`
+    )
+    const secondBindings = await secondList.json()
+    expect(secondBindings).toHaveLength(1)
+    expect(secondBindings[0].surfaceId).toBe('ghostty-surface-3')
+
+    const eventsRes = await fetchSocket('/v1/events')
+    const reboundEvents = (await eventsRes.text())
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
+      .filter((event: { eventKind: string }) => event.eventKind === 'surface.rebound')
+    expect(reboundEvents).toHaveLength(1)
+    expect(reboundEvents[0].eventJson.previousRuntimeId).toBe(first.runtimeId)
+  })
+
+  it('POST /v1/surfaces/unbind marks the binding inactive and emits surface.unbound', async () => {
+    const runtime = await ensureRuntime('project:surface-unbind')
+    await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-4',
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+    })
+
+    const res = await postJson('/v1/surfaces/unbind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-4',
+      reason: 'user-detached',
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.unboundAt).toBeString()
+    expect(body.reason).toBe('user-detached')
+
+    const listed = await fetchSocket(
+      `/v1/surfaces?runtimeId=${encodeURIComponent(runtime.runtimeId)}`
+    )
+    expect(await listed.json()).toEqual([])
+
+    const eventsRes = await fetchSocket('/v1/events')
+    const unboundEvents = (await eventsRes.text())
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
+      .filter((event: { eventKind: string }) => event.eventKind === 'surface.unbound')
+    expect(unboundEvents).toHaveLength(1)
+    expect(unboundEvents[0].eventJson.reason).toBe('user-detached')
+  })
+
+  it('GET /v1/surfaces lists active bindings for the requested runtime only', async () => {
+    const first = await ensureRuntime('project:surface-list-a')
+    const second = await ensureRuntime('project:surface-list-b')
+
+    await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-5a',
+      runtimeId: first.runtimeId,
+      hostSessionId: first.hostSessionId,
+      generation: first.generation,
+    })
+    await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-5b',
+      runtimeId: second.runtimeId,
+      hostSessionId: second.hostSessionId,
+      generation: second.generation,
+    })
+
+    const res = await fetchSocket(`/v1/surfaces?runtimeId=${encodeURIComponent(first.runtimeId)}`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(1)
+    expect(body[0].surfaceId).toBe('ghostty-surface-5a')
+  })
+
+  it('surface bindings survive server restart', async () => {
+    const runtime = await ensureRuntime('project:surface-restart')
+    await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-surface-6',
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+    })
+
+    await server.stop()
+    server = await createHrcServer(serverOpts())
+
+    const res = await fetchSocket(`/v1/surfaces?runtimeId=${encodeURIComponent(runtime.runtimeId)}`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveLength(1)
+    expect(body[0].surfaceId).toBe('ghostty-surface-6')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. HTTP error model
 // ---------------------------------------------------------------------------
 describe('HTTP error model', () => {
   let server: HrcServer
@@ -610,7 +860,7 @@ describe('HTTP error model', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 9. Spool replay on startup
+// 10. Spool replay on startup
 // ---------------------------------------------------------------------------
 describe('spool replay', () => {
   it('replays spooled callbacks on startup', async () => {
@@ -657,7 +907,7 @@ describe('spool replay', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 10. Clean shutdown
+// 11. Clean shutdown
 // ---------------------------------------------------------------------------
 describe('clean shutdown', () => {
   it('stops accepting requests after stop()', async () => {

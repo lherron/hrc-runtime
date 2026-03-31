@@ -16,6 +16,7 @@ export {
   RuntimeBufferRepository,
   RuntimeRepository,
   SessionRepository,
+  SurfaceBindingRepository,
 } from './repositories.js'
 export type {
   ContinuityUpsertInput,
@@ -24,4 +25,5 @@ export type {
   LaunchUpdatePatch,
   RunUpdatePatch,
   RuntimeUpdatePatch,
+  SurfaceBindingBindInput,
 } from './repositories.js'

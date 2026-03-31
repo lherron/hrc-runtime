@@ -161,7 +161,40 @@ const phase1SchemaMigration: HrcMigration = {
   },
 }
 
-export const phase1Migrations: readonly HrcMigration[] = [phase1SchemaMigration]
+const phase4SurfaceBindingsMigration: HrcMigration = {
+  id: '0002_phase4_surface_bindings',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS surface_bindings (
+        surface_kind TEXT NOT NULL,
+        surface_id TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        window_id TEXT,
+        tab_id TEXT,
+        pane_id TEXT,
+        bound_at TEXT NOT NULL,
+        unbound_at TEXT,
+        reason TEXT,
+        PRIMARY KEY (surface_kind, surface_id),
+        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id),
+        FOREIGN KEY (runtime_id) REFERENCES runtimes(runtime_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_surface_bindings_runtime_id
+        ON surface_bindings(runtime_id);
+
+      CREATE INDEX IF NOT EXISTS idx_surface_bindings_active_runtime
+        ON surface_bindings(runtime_id, unbound_at);
+    `)
+  },
+}
+
+export const phase1Migrations: readonly HrcMigration[] = [
+  phase1SchemaMigration,
+  phase4SurfaceBindingsMigration,
+]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
   db.prepare<never, SQLQueryBindings[]>(sql).run(...params)

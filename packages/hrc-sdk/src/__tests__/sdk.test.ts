@@ -29,12 +29,14 @@
  *   - Error parsing tests use a minimal Bun.serve stub that returns known error shapes
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { HrcEventEnvelope, HrcSessionRecord } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
 import { HrcClient, discoverSocket } from '../index'
@@ -340,6 +342,7 @@ describe('SDK → server round-trip', () => {
   let runtimeRoot: string
   let stateRoot: string
   let socketPath: string
+  let dbPath: string
   let tmuxSocketPath: string
   let server: { stop(): Promise<void> } | undefined
 
@@ -348,6 +351,7 @@ describe('SDK → server round-trip', () => {
     runtimeRoot = join(tmpDir, 'runtime')
     stateRoot = join(tmpDir, 'state')
     socketPath = join(runtimeRoot, 'hrc.sock')
+    dbPath = join(stateRoot, 'state.sqlite')
     tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
 
     await mkdir(runtimeRoot, { recursive: true })
@@ -363,7 +367,7 @@ describe('SDK → server round-trip', () => {
         socketPath,
         lockPath: join(runtimeRoot, 'server.lock'),
         spoolDir: join(runtimeRoot, 'spool'),
-        dbPath: join(stateRoot, 'state.sqlite'),
+        dbPath,
         tmuxSocketPath,
       })
     } catch {
@@ -525,6 +529,63 @@ describe('SDK → server round-trip', () => {
     expect(typeof capture.text).toBe('string')
     expect(attach.transport).toBe('tmux')
     expect(attach.argv).toContain('attach-session')
+  })
+
+  it('surface bind/list/unbind round-trip returns binding data', async () => {
+    if (!server) return
+
+    const client = new HrcClient(socketPath)
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:surface-roundtrip/lane:default',
+    })
+    const runtimeId = `rt-test-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.create({
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: 'project:surface-roundtrip',
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: `hrc-${resolved.hostSessionId.slice(0, 12)}`,
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const attach = await client.getAttachDescriptor(runtimeId)
+    const binding = await client.bindSurface({
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-sdk-1',
+      ...attach.bindingFence,
+    })
+    expect(binding.surfaceId).toBe('ghostty-sdk-1')
+
+    const listed = await client.listSurfaces({ runtimeId })
+    expect(listed).toHaveLength(1)
+    expect(listed[0]?.surfaceId).toBe('ghostty-sdk-1')
+
+    const unbound = await client.unbindSurface({
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-sdk-1',
+      reason: 'done',
+    })
+    expect(unbound.reason).toBe('done')
+
+    const after = await client.listSurfaces({ runtimeId })
+    expect(after).toEqual([])
   })
 })
 

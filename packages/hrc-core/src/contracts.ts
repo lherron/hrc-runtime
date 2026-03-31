@@ -163,3 +163,17 @@ export type HrcLaunchRecord = {
   createdAt: string
   updatedAt: string
 }
+
+export type HrcSurfaceBindingRecord = {
+  surfaceKind: string
+  surfaceId: string
+  hostSessionId: string
+  runtimeId: string
+  generation: number
+  windowId?: string | undefined
+  tabId?: string | undefined
+  paneId?: string | undefined
+  boundAt: string
+  unboundAt?: string | undefined
+  reason?: string | undefined
+}

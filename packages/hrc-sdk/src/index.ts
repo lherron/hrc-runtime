@@ -2,6 +2,7 @@ export { discoverSocket } from './discover.js'
 export { HrcClient } from './client.js'
 export type {
   AttachDescriptor,
+  BindSurfaceRequest,
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
@@ -16,5 +17,8 @@ export type {
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
+  SurfaceBindingRecord,
+  SurfaceListFilter,
+  UnbindSurfaceRequest,
   WatchOptions,
 } from './types.js'

@@ -9,6 +9,7 @@ import {
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
   type HrcSessionRecord,
+  type HrcSurfaceBindingRecord,
   normalizeSessionRef,
 } from 'hrc-core'
 
@@ -30,6 +31,13 @@ export type EventQueryFilters = {
   runId?: string | undefined
   fromSeq?: number | undefined
   limit?: number | undefined
+}
+
+export type SurfaceBindingBindInput = Omit<
+  HrcSurfaceBindingRecord,
+  'boundAt' | 'reason' | 'unboundAt'
+> & {
+  boundAt: string
 }
 
 type SessionListFilters = {
@@ -154,6 +162,20 @@ type RuntimeBufferRow = {
   created_at: string
 }
 
+type SurfaceBindingRow = {
+  surface_kind: string
+  surface_id: string
+  host_session_id: string
+  runtime_id: string
+  generation: number
+  window_id: string | null
+  tab_id: string | null
+  pane_id: string | null
+  bound_at: string
+  unbound_at: string | null
+  reason: string | null
+}
+
 function serializeJson(value: unknown): string | null {
   if (value === undefined) {
     return null
@@ -263,6 +285,22 @@ function mapRunRow(row: RunRow): HrcRunRecord {
     updatedAt: row.updated_at,
     errorCode: row.error_code ?? undefined,
     errorMessage: row.error_message ?? undefined,
+  }
+}
+
+function mapSurfaceBindingRow(row: SurfaceBindingRow): HrcSurfaceBindingRecord {
+  return {
+    surfaceKind: row.surface_kind,
+    surfaceId: row.surface_id,
+    hostSessionId: row.host_session_id,
+    runtimeId: row.runtime_id,
+    generation: row.generation,
+    windowId: row.window_id ?? undefined,
+    tabId: row.tab_id ?? undefined,
+    paneId: row.pane_id ?? undefined,
+    boundAt: row.bound_at,
+    unboundAt: row.unbound_at ?? undefined,
+    reason: row.reason ?? undefined,
   }
 }
 
@@ -1467,6 +1505,154 @@ export class EventRepository {
       .get(...values)
 
     return row?.count ?? 0
+  }
+}
+
+export class SurfaceBindingRepository {
+  constructor(private readonly db: Database) {}
+
+  bind(record: SurfaceBindingBindInput): HrcSurfaceBindingRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO surface_bindings (
+          surface_kind,
+          surface_id,
+          host_session_id,
+          runtime_id,
+          generation,
+          window_id,
+          tab_id,
+          pane_id,
+          bound_at,
+          unbound_at,
+          reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        ON CONFLICT(surface_kind, surface_id) DO UPDATE SET
+          host_session_id = excluded.host_session_id,
+          runtime_id = excluded.runtime_id,
+          generation = excluded.generation,
+          window_id = excluded.window_id,
+          tab_id = excluded.tab_id,
+          pane_id = excluded.pane_id,
+          bound_at = excluded.bound_at,
+          unbound_at = NULL,
+          reason = NULL
+      `,
+      record.surfaceKind,
+      record.surfaceId,
+      record.hostSessionId,
+      record.runtimeId,
+      record.generation,
+      record.windowId ?? null,
+      record.tabId ?? null,
+      record.paneId ?? null,
+      record.boundAt
+    )
+
+    return requireRecord(
+      this.findBySurface(record.surfaceKind, record.surfaceId),
+      `failed to reload surface binding ${record.surfaceKind}:${record.surfaceId}`
+    )
+  }
+
+  unbind(
+    surfaceKind: string,
+    surfaceId: string,
+    unboundAt: string,
+    reason?: string | undefined
+  ): HrcSurfaceBindingRecord | null {
+    execute(
+      this.db,
+      `
+        UPDATE surface_bindings
+        SET unbound_at = ?, reason = ?
+        WHERE surface_kind = ? AND surface_id = ?
+      `,
+      unboundAt,
+      reason ?? null,
+      surfaceKind,
+      surfaceId
+    )
+
+    return this.findBySurface(surfaceKind, surfaceId)
+  }
+
+  findBySurface(surfaceKind: string, surfaceId: string): HrcSurfaceBindingRecord | null {
+    const row = this.db
+      .query<SurfaceBindingRow, [string, string]>(
+        `
+          SELECT
+            surface_kind,
+            surface_id,
+            host_session_id,
+            runtime_id,
+            generation,
+            window_id,
+            tab_id,
+            pane_id,
+            bound_at,
+            unbound_at,
+            reason
+          FROM surface_bindings
+          WHERE surface_kind = ? AND surface_id = ?
+        `
+      )
+      .get(surfaceKind, surfaceId)
+
+    return row ? mapSurfaceBindingRow(row) : null
+  }
+
+  findByRuntime(runtimeId: string): HrcSurfaceBindingRecord[] {
+    const rows = this.db
+      .query<SurfaceBindingRow, [string]>(
+        `
+          SELECT
+            surface_kind,
+            surface_id,
+            host_session_id,
+            runtime_id,
+            generation,
+            window_id,
+            tab_id,
+            pane_id,
+            bound_at,
+            unbound_at,
+            reason
+          FROM surface_bindings
+          WHERE runtime_id = ? AND unbound_at IS NULL
+          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC
+        `
+      )
+      .all(runtimeId)
+
+    return rows.map(mapSurfaceBindingRow)
+  }
+
+  listActive(): HrcSurfaceBindingRecord[] {
+    const rows = this.db
+      .query<SurfaceBindingRow, []>(
+        `
+          SELECT
+            surface_kind,
+            surface_id,
+            host_session_id,
+            runtime_id,
+            generation,
+            window_id,
+            tab_id,
+            pane_id,
+            bound_at,
+            unbound_at,
+            reason
+          FROM surface_bindings
+          WHERE unbound_at IS NULL
+          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC
+        `
+      )
+      .all()
+
+    return rows.map(mapSurfaceBindingRow)
   }
 }
 

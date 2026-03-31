@@ -3,7 +3,7 @@
  *
  * Tests the public surface of openHrcDatabase():
  *   - Fresh migration applies Phase 1 schema
- *   - CRUD for each repository (continuities, sessions, runtimes, runs, launches, events, runtime_buffers)
+ *   - CRUD for each repository (continuities, sessions, runtimes, runs, launches, events, surface_bindings, runtime_buffers)
  *   - Monotonic event seq ordering
  *   - JSON round-trip for intent/continuation/tmux_json
  *   - Concurrent read safety with WAL mode
@@ -58,13 +58,14 @@ describe('openHrcDatabase', () => {
     try {
       expect(db).toBeDefined()
       expect(db.migrations.applied.length).toBeGreaterThan(0)
-      // All 7 repos must be present
+      // All repositories must be present
       expect(db.continuities).toBeDefined()
       expect(db.sessions).toBeDefined()
       expect(db.runtimes).toBeDefined()
       expect(db.runs).toBeDefined()
       expect(db.launches).toBeDefined()
       expect(db.events).toBeDefined()
+      expect(db.surfaceBindings).toBeDefined()
       expect(db.runtimeBuffers).toBeDefined()
     } finally {
       db.close()
@@ -837,7 +838,199 @@ describe('EventRepository', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 8. RuntimeBufferRepository
+// 8. SurfaceBindingRepository
+// ---------------------------------------------------------------------------
+describe('SurfaceBindingRepository', () => {
+  it('binds and finds a surface by surface key', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const now = ts()
+      db.sessions.create({
+        hostSessionId: 'hsid-surface-1',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.create({
+        runtimeId: 'rt-surface-1',
+        hostSessionId: 'hsid-surface-1',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      const binding = db.surfaceBindings.bind({
+        surfaceKind: 'ghostty',
+        surfaceId: 'ghostty-1',
+        hostSessionId: 'hsid-surface-1',
+        runtimeId: 'rt-surface-1',
+        generation: 1,
+        windowId: 'window-1',
+        paneId: 'pane-1',
+        boundAt: now,
+      })
+
+      expect(binding.surfaceKind).toBe('ghostty')
+      expect(binding.surfaceId).toBe('ghostty-1')
+      expect(binding.runtimeId).toBe('rt-surface-1')
+      expect(binding.unboundAt).toBeUndefined()
+
+      const found = db.surfaceBindings.findBySurface('ghostty', 'ghostty-1')
+      expect(found).not.toBeNull()
+      expect(found?.hostSessionId).toBe('hsid-surface-1')
+      expect(found?.paneId).toBe('pane-1')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rebinds an existing surface to a newer runtime and keeps active queries current', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const now = ts()
+      db.sessions.create({
+        hostSessionId: 'hsid-surface-2',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.sessions.create({
+        hostSessionId: 'hsid-surface-3',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 2,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.create({
+        runtimeId: 'rt-surface-2',
+        hostSessionId: 'hsid-surface-2',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+      db.runtimes.create({
+        runtimeId: 'rt-surface-3',
+        hostSessionId: 'hsid-surface-3',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 2,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      db.surfaceBindings.bind({
+        surfaceKind: 'ghostty',
+        surfaceId: 'ghostty-2',
+        hostSessionId: 'hsid-surface-2',
+        runtimeId: 'rt-surface-2',
+        generation: 1,
+        boundAt: now,
+      })
+      const rebound = db.surfaceBindings.bind({
+        surfaceKind: 'ghostty',
+        surfaceId: 'ghostty-2',
+        hostSessionId: 'hsid-surface-3',
+        runtimeId: 'rt-surface-3',
+        generation: 2,
+        boundAt: ts(),
+      })
+
+      expect(rebound.hostSessionId).toBe('hsid-surface-3')
+      expect(rebound.runtimeId).toBe('rt-surface-3')
+      expect(db.surfaceBindings.findByRuntime('rt-surface-2')).toEqual([])
+      expect(db.surfaceBindings.findByRuntime('rt-surface-3')).toHaveLength(1)
+      expect(db.surfaceBindings.listActive()).toHaveLength(1)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('unbinds a surface and removes it from active listings', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const now = ts()
+      db.sessions.create({
+        hostSessionId: 'hsid-surface-4',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.create({
+        runtimeId: 'rt-surface-4',
+        hostSessionId: 'hsid-surface-4',
+        scopeRef: 'scope-surface',
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      db.surfaceBindings.bind({
+        surfaceKind: 'ghostty',
+        surfaceId: 'ghostty-4',
+        hostSessionId: 'hsid-surface-4',
+        runtimeId: 'rt-surface-4',
+        generation: 1,
+        boundAt: now,
+      })
+      const unbound = db.surfaceBindings.unbind('ghostty', 'ghostty-4', ts(), 'user-detached')
+
+      expect(unbound).not.toBeNull()
+      expect(unbound?.unboundAt).toBeString()
+      expect(unbound?.reason).toBe('user-detached')
+      expect(db.surfaceBindings.findByRuntime('rt-surface-4')).toEqual([])
+      expect(db.surfaceBindings.listActive()).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. RuntimeBufferRepository
 // ---------------------------------------------------------------------------
 describe('RuntimeBufferRepository', () => {
   it('appends and queries buffer chunks by runtime', () => {
@@ -896,7 +1089,7 @@ describe('RuntimeBufferRepository', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 9. Concurrent read safety with WAL
+// 10. Concurrent read safety with WAL
 // ---------------------------------------------------------------------------
 describe('WAL concurrent reads', () => {
   it('allows concurrent readers while writer has open transaction', () => {

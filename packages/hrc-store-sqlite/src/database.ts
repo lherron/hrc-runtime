@@ -11,6 +11,7 @@ import {
   RuntimeBufferRepository,
   RuntimeRepository,
   SessionRepository,
+  SurfaceBindingRepository,
 } from './repositories.js'
 
 export type HrcDatabase = {
@@ -25,6 +26,7 @@ export type HrcDatabase = {
   runs: RunRepository
   launches: LaunchRepository
   events: EventRepository
+  surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
 }
 
@@ -62,6 +64,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     runs: new RunRepository(sqlite),
     launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
+    surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
   }
 }
