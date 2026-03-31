@@ -713,32 +713,6 @@ export class SessionRepository {
 
     return rows.map(mapSessionRow)
   }
-
-  listAll(): HrcSessionRecord[] {
-    const rows = this.db
-      .query<SessionRow, []>(
-        `
-          SELECT
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            status,
-            prior_host_session_id,
-            created_at,
-            updated_at,
-            parsed_scope_json,
-            ancestor_scope_refs_json,
-            last_applied_intent_json,
-            continuation_json
-          FROM sessions
-          ORDER BY created_at ASC, host_session_id ASC
-        `
-      )
-      .all()
-
-    return rows.map(mapSessionRow)
-  }
 }
 
 export class AppSessionRepository {
@@ -1094,41 +1068,6 @@ export class RuntimeRepository {
 
   findByHostSession(hostSessionId: string): HrcRuntimeSnapshot[] {
     return this.listByHostSessionId(hostSessionId)
-  }
-
-  listAll(): HrcRuntimeSnapshot[] {
-    const rows = this.db
-      .query<RuntimeRow, []>(
-        `
-          SELECT
-            runtime_id,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            launch_id,
-            transport,
-            harness,
-            provider,
-            status,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            supports_inflight_input,
-            adopted,
-            active_run_id,
-            last_activity_at,
-            created_at,
-            updated_at
-          FROM runtimes
-          ORDER BY created_at ASC, runtime_id ASC
-        `
-      )
-      .all()
-
-    return rows.map(mapRuntimeRow)
   }
 
   update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null {
@@ -1697,110 +1636,6 @@ export class LaunchRepository {
     )
 
     return this.getByLaunchId(launchId)
-  }
-
-  listAll(): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, []>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
-          ORDER BY created_at ASC, launch_id ASC
-        `
-      )
-      .all()
-
-    return rows.map(mapLaunchRow)
-  }
-
-  listByHostSessionId(hostSessionId: string): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, [string]>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
-          WHERE host_session_id = ?
-          ORDER BY created_at ASC, launch_id ASC
-        `
-      )
-      .all(hostSessionId)
-
-    return rows.map(mapLaunchRow)
-  }
-
-  listByRuntimeId(runtimeId: string): HrcLaunchRecord[] {
-    const rows = this.db
-      .query<LaunchRow, [string]>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
-          WHERE runtime_id = ?
-          ORDER BY created_at ASC, launch_id ASC
-        `
-      )
-      .all(runtimeId)
-
-    return rows.map(mapLaunchRow)
   }
 }
 

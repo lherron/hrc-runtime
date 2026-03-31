@@ -228,29 +228,17 @@ async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   printJson(result)
 }
 
-async function cmdRuntimeList(args: string[]): Promise<void> {
-  const hostSessionId = parseFlag(args, '--host-session-id')
-
-  const client = createClient()
-  const runtimes = await client.listRuntimes({
-    ...(hostSessionId ? { hostSessionId } : {}),
-  })
-  printJson(runtimes)
-}
-
 async function cmdRuntime(args: string[]): Promise<void> {
   const subcommand = args[0]
 
   switch (subcommand) {
     case 'ensure':
       return cmdRuntimeEnsure(args.slice(1))
-    case 'list':
-      return cmdRuntimeList(args.slice(1))
     default:
       fatal(
         subcommand
           ? `unknown runtime subcommand: ${subcommand}`
-          : 'runtime subcommand required (ensure, list)'
+          : 'runtime subcommand required (ensure)'
       )
   }
 }
@@ -684,52 +672,6 @@ function optionalCliString(
   return normalized.length > 0 ? normalized : undefined
 }
 
-async function cmdLaunchList(args: string[]): Promise<void> {
-  const hostSessionId = parseFlag(args, '--host-session-id')
-  const runtimeId = parseFlag(args, '--runtime-id')
-
-  const client = createClient()
-  const launches = await client.listLaunches({
-    ...(hostSessionId ? { hostSessionId } : {}),
-    ...(runtimeId ? { runtimeId } : {}),
-  })
-  printJson(launches)
-}
-
-async function cmdLaunch(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'list':
-      return cmdLaunchList(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown launch subcommand: ${subcommand}`
-          : 'launch subcommand required (list)'
-      )
-  }
-}
-
-async function cmdStatus(): Promise<void> {
-  const client = createClient()
-  const status = await client.getStatus()
-  printJson(status)
-}
-
-async function cmdHealth(): Promise<void> {
-  const client = createClient()
-  const health = await client.getHealth()
-  printJson(health)
-}
-
-async function cmdAdopt(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
-  const client = createClient()
-  const result = await client.adoptRuntime(runtimeId)
-  printJson(result)
-}
-
 // -- Usage --------------------------------------------------------------------
 
 function printUsage(): void {
@@ -739,15 +681,12 @@ Usage: hrc <command> [options]
 
 Commands:
   server                              Start the HRC daemon
-  status                              Print daemon status JSON
-  health                              Print daemon health JSON
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
   session apply --app <appId> --host-session-id <hostSessionId> (--file <path> | --json <payload>)
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
-  runtime list [--host-session-id <id>]  List runtimes
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -759,8 +698,6 @@ Commands:
   bridge deliver <bridgeId> --text <text>
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
-  launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
-  adopt <runtimeId>                   Adopt an orphaned runtime
   clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
@@ -784,10 +721,6 @@ async function main(): Promise<void> {
     switch (command) {
       case 'server':
         return await cmdServer()
-      case 'status':
-        return await cmdStatus()
-      case 'health':
-        return await cmdHealth()
       case 'session':
         return await cmdSession(rest)
       case 'watch':
@@ -806,10 +739,6 @@ async function main(): Promise<void> {
         return await cmdSurface(rest)
       case 'bridge':
         return await cmdBridge(rest)
-      case 'launch':
-        return await cmdLaunch(rest)
-      case 'adopt':
-        return await cmdAdopt(rest)
       case 'clear-context':
         return await cmdClearContext(rest)
       case 'interrupt':
