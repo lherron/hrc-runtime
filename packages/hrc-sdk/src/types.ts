@@ -35,6 +35,7 @@ export type EnsureRuntimeResponse = {
   hostSessionId: string
   transport: 'tmux'
   status: string
+  supportsInFlightInput: boolean
   tmux: {
     sessionId: string
     windowId: string
@@ -71,6 +72,7 @@ export type DispatchTurnResponse = {
   runtimeId: string
   transport: 'sdk' | 'tmux'
   status: 'completed' | 'started'
+  supportsInFlightInput: boolean
 }
 
 export type ClearContextRequest = {
@@ -82,4 +84,19 @@ export type ClearContextResponse = {
   hostSessionId: string
   generation: number
   priorHostSessionId: string
+}
+
+export type SendInFlightInputRequest = {
+  runtimeId: string
+  runId: string
+  input?: string | undefined
+  prompt?: string | undefined
+  inputType?: string | undefined
+}
+
+export type SendInFlightInputResponse = {
+  accepted: boolean
+  runtimeId: string
+  runId: string
+  pendingTurns?: number | undefined
 }

@@ -13,6 +13,8 @@ export type {
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
+  SendInFlightInputRequest,
+  SendInFlightInputResponse,
   SessionFilter,
   WatchOptions,
 } from './types.js'

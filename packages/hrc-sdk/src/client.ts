@@ -13,6 +13,8 @@ import type {
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
+  SendInFlightInputRequest,
+  SendInFlightInputResponse,
   SessionFilter,
   WatchOptions,
 } from './types.js'
@@ -95,6 +97,16 @@ export class HrcClient {
 
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
     return this.postJson<DispatchTurnResponse>('/v1/turns', request)
+  }
+
+  async sendInFlightInput(request: SendInFlightInputRequest): Promise<SendInFlightInputResponse> {
+    return this.postJson<SendInFlightInputResponse>('/v1/in-flight-input', {
+      runtimeId: request.runtimeId,
+      runId: request.runId,
+      ...(request.input !== undefined ? { input: request.input } : {}),
+      ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+      ...(request.inputType !== undefined ? { inputType: request.inputType } : {}),
+    })
   }
 
   async clearContext(request: ClearContextRequest): Promise<ClearContextResponse> {

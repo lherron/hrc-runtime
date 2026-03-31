@@ -264,6 +264,45 @@ async function cmdTurn(args: string[]): Promise<void> {
   }
 }
 
+async function cmdInflightSend(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runId = parseFlag(args, '--run-id')
+  const input = parseFlag(args, '--input')
+  const inputType = parseFlag(args, '--input-type')
+
+  if (!runId) {
+    fatal('--run-id is required for inflight send')
+  }
+
+  if (!input) {
+    fatal('--input is required for inflight send')
+  }
+
+  const client = createClient()
+  const result = await client.sendInFlightInput({
+    runtimeId,
+    runId,
+    input,
+    ...(inputType ? { inputType } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdInflight(args: string[]): Promise<void> {
+  const subcommand = args[0]
+
+  switch (subcommand) {
+    case 'send':
+      return cmdInflightSend(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown inflight subcommand: ${subcommand}`
+          : 'inflight subcommand required (send)'
+      )
+  }
+}
+
 async function cmdClearContext(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const relaunch = hasFlag(args, '--relaunch')
@@ -322,6 +361,7 @@ Commands:
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
+  inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
   attach <runtimeId>                  Print tmux attach descriptor JSON
   clear-context <hostSessionId> [--relaunch]
@@ -355,6 +395,8 @@ async function main(): Promise<void> {
         return await cmdRuntime(rest)
       case 'turn':
         return await cmdTurn(rest)
+      case 'inflight':
+        return await cmdInflight(rest)
       case 'capture':
         return await cmdCapture(rest)
       case 'attach':

@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { buildCliInvocation, runSdkTurn } from 'hrc-adapter-agent-spaces'
+import {
+  buildCliInvocation,
+  deliverSdkInflightInput,
+  getSdkInflightCapability,
+  runSdkTurn,
+} from 'hrc-adapter-agent-spaces'
 import {
   HrcBadRequestError,
   HrcConflictError,
@@ -61,6 +66,7 @@ type EnsureRuntimeResponse = {
   hostSessionId: string
   transport: 'tmux'
   status: string
+  supportsInFlightInput: boolean
   tmux: {
     sessionId: string
     windowId: string
@@ -82,6 +88,21 @@ type DispatchTurnResponse = {
   runtimeId: string
   transport: 'sdk' | 'tmux'
   status: 'completed' | 'started'
+  supportsInFlightInput: boolean
+}
+
+type InFlightInputRequest = {
+  runtimeId: string
+  runId: string
+  prompt: string
+  inputType?: string | undefined
+}
+
+type InFlightInputResponse = {
+  accepted: boolean
+  runtimeId: string
+  runId: string
+  pendingTurns?: number | undefined
 }
 
 type ClearContextRequest = {
@@ -225,6 +246,10 @@ class HrcServerInstance implements HrcServer {
 
       if (request.method === 'POST' && pathname === '/v1/turns') {
         return await this.handleDispatchTurn(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/in-flight-input') {
+        return await this.handleInFlightInput(request)
       }
 
       if (request.method === 'GET' && pathname === '/v1/capture') {
@@ -558,7 +583,100 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
       status: 'started',
+      supportsInFlightInput: false,
     } satisfies DispatchTurnResponse)
+  }
+
+  private async handleInFlightInput(request: Request): Promise<Response> {
+    const body = parseInFlightInputRequest(await parseJsonBody(request))
+    const runtime = requireRuntime(this.db, body.runtimeId)
+    const session = requireSession(this.db, runtime.hostSessionId)
+
+    if (runtime.transport !== 'sdk' || runtime.supportsInflightInput !== true) {
+      throw this.appendInflightRejected(
+        session,
+        runtime.runtimeId,
+        body.runId,
+        'semantic in-flight input is unsupported for this runtime',
+        body.prompt,
+        body.inputType,
+        new HrcUnprocessableEntityError(
+          HrcErrorCode.INFLIGHT_UNSUPPORTED,
+          'semantic in-flight input is unsupported for this runtime',
+          {
+            runtimeId: runtime.runtimeId,
+            transport: runtime.transport,
+            supportsInflightInput: runtime.supportsInflightInput,
+          }
+        )
+      )
+    }
+
+    const activeRun =
+      runtime.activeRunId !== undefined ? this.db.runs.findById(runtime.activeRunId) : null
+    const latestRun = findLatestRunForRuntime(this.db, runtime.runtimeId)
+    const expectedRunId = activeRun?.runId ?? latestRun?.runId
+
+    if (!expectedRunId || expectedRunId !== body.runId) {
+      throw this.appendInflightRejected(
+        session,
+        runtime.runtimeId,
+        body.runId,
+        'run mismatch for semantic in-flight input',
+        body.prompt,
+        body.inputType,
+        new HrcConflictError(
+          HrcErrorCode.RUN_MISMATCH,
+          'run mismatch for semantic in-flight input',
+          {
+            runtimeId: runtime.runtimeId,
+            expectedRunId,
+            actualRunId: body.runId,
+          }
+        )
+      )
+    }
+
+    const delivered =
+      activeRun && isRunActive(activeRun)
+        ? await deliverSdkInflightInput({
+            hostSessionId: runtime.hostSessionId,
+            runId: body.runId,
+            runtimeId: runtime.runtimeId,
+            prompt: body.prompt,
+            scopeRef: runtime.scopeRef,
+            laneRef: runtime.laneRef,
+            generation: runtime.generation,
+          })
+        : { accepted: true, pendingTurns: 0 }
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+
+    const acceptedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId: body.runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'inflight.accepted',
+      eventJson: {
+        prompt: body.prompt,
+        ...(body.inputType ? { inputType: body.inputType } : {}),
+        ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    return json({
+      accepted: delivered.accepted,
+      runtimeId: runtime.runtimeId,
+      runId: body.runId,
+      ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
+    } satisfies InFlightInputResponse)
   }
 
   private async handleClearContext(request: Request): Promise<Response> {
@@ -885,6 +1003,37 @@ class HrcServerInstance implements HrcServer {
     })
   }
 
+  private appendInflightRejected(
+    session: HrcSessionRecord,
+    runtimeId: string,
+    runId: string,
+    reason: string,
+    prompt: string,
+    inputType: string | undefined,
+    error: HrcDomainError
+  ): HrcDomainError {
+    const knownRun = this.db.runs.findById(runId)
+    const event = this.db.events.append({
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      ...(knownRun ? { runId } : {}),
+      runtimeId,
+      source: 'hrc',
+      eventKind: 'inflight.rejected',
+      eventJson: {
+        reason,
+        requestedRunId: runId,
+        prompt,
+        ...(inputType ? { inputType } : {}),
+      },
+    })
+    this.notifyEvent(event)
+    return error
+  }
+
   private notifyEvent(event: HrcEventEnvelope): void {
     for (const subscriber of this.followSubscribers) {
       subscriber(event)
@@ -1064,7 +1213,7 @@ class HrcServerInstance implements HrcServer {
       provider: intent.harness.provider,
       status: 'busy',
       continuation: session.continuation,
-      supportsInflightInput: false,
+      supportsInflightInput: getSdkInflightCapability(intent.harness.provider),
       adopted: false,
       activeRunId: runId,
       lastActivityAt: now,
@@ -1238,6 +1387,7 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       transport: 'sdk',
       status: 'started',
+      supportsInFlightInput: runtime.supportsInflightInput,
     } satisfies DispatchTurnResponse)
   }
 }
@@ -1531,6 +1681,47 @@ function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   }
 }
 
+function parseInFlightInputRequest(input: unknown): InFlightInputRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const runtimeId = input['runtimeId']
+  const runId = input['runId']
+  const promptValue = typeof input['prompt'] === 'string' ? input['prompt'] : input['input']
+  const inputType = input['inputType']
+
+  if (typeof runtimeId !== 'string' || runtimeId.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required', {
+      field: 'runtimeId',
+    })
+  }
+  if (typeof runId !== 'string' || runId.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runId is required', {
+      field: 'runId',
+    })
+  }
+  if (typeof promptValue !== 'string' || promptValue.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
+      field: 'prompt',
+    })
+  }
+  if (inputType !== undefined && typeof inputType !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'inputType must be a string', {
+      field: 'inputType',
+    })
+  }
+
+  return {
+    runtimeId: runtimeId.trim(),
+    runId: runId.trim(),
+    prompt: promptValue.trim(),
+    ...(typeof inputType === 'string' && inputType.trim().length > 0
+      ? { inputType: inputType.trim() }
+      : {}),
+  }
+}
+
 function parseClearContextRequest(input: unknown): ClearContextRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -1614,6 +1805,7 @@ function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResp
     hostSessionId: runtime.hostSessionId,
     transport: 'tmux',
     status: runtime.status,
+    supportsInFlightInput: runtime.supportsInflightInput,
     tmux: {
       sessionId: tmux.sessionId,
       windowId: tmux.windowId,
@@ -1634,6 +1826,10 @@ function findLatestSessionRuntime(
   hostSessionId: string
 ): HrcRuntimeSnapshot | null {
   return db.runtimes.listByHostSessionId(hostSessionId).at(-1) ?? null
+}
+
+function findLatestRunForRuntime(db: HrcDatabase, runtimeId: string): HrcRunRecord | null {
+  return db.runs.listByRuntimeId(runtimeId).at(-1) ?? null
 }
 
 function getTmuxSocketPath(options: HrcServerOptions): string {
