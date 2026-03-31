@@ -13,6 +13,9 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "hrc": "./src/cli.ts"
+  },
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
@@ -21,7 +24,8 @@
   },
   "dependencies": {
     "hrc-core": "*",
-    "hrc-sdk": "*"
+    "hrc-sdk": "*",
+    "hrc-server": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",

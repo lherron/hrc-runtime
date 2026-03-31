@@ -175,9 +175,13 @@
     "packages/hrc-cli": {
       "name": "hrc-cli",
       "version": "0.1.0",
+      "bin": {
+        "hrc": "./src/cli.ts",
+      },
       "dependencies": {
         "hrc-core": "*",
         "hrc-sdk": "*",
+        "hrc-server": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -224,6 +228,7 @@
       "dependencies": {
         "hrc-adapter-agent-spaces": "*",
         "hrc-core": "*",
+        "hrc-launch": "*",
         "hrc-store-sqlite": "*",
       },
       "devDependencies": {
