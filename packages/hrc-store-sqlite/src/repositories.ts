@@ -224,12 +224,20 @@ function serializeJson(value: unknown): string | null {
   return JSON.stringify(value)
 }
 
-function parseJson<T>(value: string | null): T | undefined {
+function parseJson<T>(value: string | null, column?: string): T | undefined {
   if (value === null) {
     return undefined
   }
 
-  return JSON.parse(value) as T
+  try {
+    return JSON.parse(value) as T
+  } catch (err) {
+    const snippet = value.length > 80 ? `${value.slice(0, 80)}…` : value
+    console.error(
+      `[hrc-store-sqlite] Corrupt JSON in column ${column ?? 'unknown'}: ${err instanceof Error ? err.message : err} — raw: ${snippet}`
+    )
+    return undefined
+  }
 }
 
 function toSqliteBoolean(value: boolean): number {
@@ -276,10 +284,14 @@ function mapSessionRow(row: SessionRow): HrcSessionRecord {
     priorHostSessionId: row.prior_host_session_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    parsedScopeJson: parseJson<Record<string, unknown>>(row.parsed_scope_json),
-    ancestorScopeRefs: parseJson<string[]>(row.ancestor_scope_refs_json) ?? [],
-    lastAppliedIntentJson: parseJson<HrcRuntimeIntent>(row.last_applied_intent_json),
-    continuation: parseJson<HrcContinuationRef>(row.continuation_json),
+    parsedScopeJson: parseJson<Record<string, unknown>>(row.parsed_scope_json, 'parsed_scope_json'),
+    ancestorScopeRefs:
+      parseJson<string[]>(row.ancestor_scope_refs_json, 'ancestor_scope_refs_json') ?? [],
+    lastAppliedIntentJson: parseJson<HrcRuntimeIntent>(
+      row.last_applied_intent_json,
+      'last_applied_intent_json'
+    ),
+    continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
   }
 }
 
@@ -295,11 +307,14 @@ function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
     harness: row.harness,
     provider: row.provider,
     status: row.status,
-    tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json),
+    tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
     wrapperPid: row.wrapper_pid ?? undefined,
     childPid: row.child_pid ?? undefined,
-    harnessSessionJson: parseJson<Record<string, unknown>>(row.harness_session_json),
-    continuation: parseJson<HrcContinuationRef>(row.continuation_json),
+    harnessSessionJson: parseJson<Record<string, unknown>>(
+      row.harness_session_json,
+      'harness_session_json'
+    ),
+    continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
     supportsInflightInput: fromSqliteBoolean(row.supports_inflight_input),
     adopted: fromSqliteBoolean(row.adopted),
     activeRunId: row.active_run_id ?? undefined,
@@ -350,7 +365,7 @@ function mapAppSessionRow(row: AppSessionRow): HrcAppSessionRecord {
     appSessionKey: row.app_session_key,
     hostSessionId: row.host_session_id,
     label: row.label ?? undefined,
-    metadata: parseJson<Record<string, unknown>>(row.metadata_json),
+    metadata: parseJson<Record<string, unknown>>(row.metadata_json, 'metadata_json'),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     removedAt: row.removed_at ?? undefined,
@@ -381,11 +396,14 @@ function mapLaunchRow(row: LaunchRow): HrcLaunchRecord {
     harness: row.harness,
     provider: row.provider,
     launchArtifactPath: row.launch_artifact_path,
-    tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json),
+    tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
     wrapperPid: row.wrapper_pid ?? undefined,
     childPid: row.child_pid ?? undefined,
-    harnessSessionJson: parseJson<Record<string, unknown>>(row.harness_session_json),
-    continuation: parseJson<HrcContinuationRef>(row.continuation_json),
+    harnessSessionJson: parseJson<Record<string, unknown>>(
+      row.harness_session_json,
+      'harness_session_json'
+    ),
+    continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
     wrapperStartedAt: row.wrapper_started_at ?? undefined,
     childStartedAt: row.child_started_at ?? undefined,
     exitedAt: row.exited_at ?? undefined,
@@ -409,7 +427,7 @@ function mapEventRow(row: EventRow): HrcEventEnvelope {
     runtimeId: row.runtime_id ?? undefined,
     source: row.source,
     eventKind: row.event_kind,
-    eventJson: parseJson<unknown>(row.event_json),
+    eventJson: parseJson<unknown>(row.event_json, 'event_json'),
   }
 }
 
