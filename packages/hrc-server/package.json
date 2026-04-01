@@ -20,10 +20,11 @@
     "test": "bun test"
   },
   "dependencies": {
+    "agent-spaces": "*",
     "hrc-core": "*",
-    "hrc-launch": "*",
     "hrc-store-sqlite": "*",
-    "hrc-adapter-agent-spaces": "*"
+    "spaces-execution": "*",
+    "spaces-runtime": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",

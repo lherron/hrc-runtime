@@ -5,12 +5,6 @@ import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
-  buildCliInvocation,
-  deliverSdkInflightInput,
-  getSdkInflightCapability,
-  runSdkTurn,
-} from 'hrc-adapter-agent-spaces'
-import {
   HrcBadRequestError,
   HrcConflictError,
   HrcDomainError,
@@ -35,9 +29,15 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-import { readSpoolEntries, writeLaunchArtifact } from 'hrc-launch'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import {
+  buildCliInvocation,
+  deliverSdkInflightInput,
+  getSdkInflightCapability,
+  runSdkTurn,
+} from './agent-spaces-adapter/index.js'
+import { readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
 
 import {
   type RestartStyle,
@@ -3700,7 +3700,7 @@ async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
 }
 
 function buildLaunchCommand(launchArtifactPath: string): string {
-  return `bun run ${shellQuote(join(process.cwd(), 'packages/hrc-launch/src/exec.ts'))} --launch-file ${shellQuote(launchArtifactPath)}`
+  return `bun run ${shellQuote(join(process.cwd(), 'packages/hrc-server/src/launch/exec.ts'))} --launch-file ${shellQuote(launchArtifactPath)}`
 }
 
 function shellQuote(value: string): string {
