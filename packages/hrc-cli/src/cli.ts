@@ -81,10 +81,6 @@ function createDefaultRuntimeIntent(
   }
 }
 
-// -- Stub commands ------------------------------------------------------------
-
-const _STUB_COMMANDS = new Set(['clear-context'])
-
 // -- Command handlers ---------------------------------------------------------
 
 async function cmdServer(): Promise<void> {
@@ -379,6 +375,7 @@ async function cmdInflightSend(args: string[]): Promise<void> {
     runtimeId,
     runId,
     input,
+    prompt: input,
     ...(inputType ? { inputType } : {}),
   })
   printJson(result)

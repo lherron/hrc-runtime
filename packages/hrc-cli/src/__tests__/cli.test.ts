@@ -603,10 +603,7 @@ describe('Phase 6 diagnostics CLI', () => {
     await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
 
     // RED: 'runtime list' subcommand does not exist
-    const result = await runCli(
-      ['runtime', 'list', '--host-session-id', hostSessionId],
-      cliEnv()
-    )
+    const result = await runCli(['runtime', 'list', '--host-session-id', hostSessionId], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(Array.isArray(body)).toBe(true)
@@ -633,10 +630,7 @@ describe('Phase 6 diagnostics CLI', () => {
     const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
 
     // RED: 'launch list' command does not exist
-    const result = await runCli(
-      ['launch', 'list', '--runtime-id', runtimeId],
-      cliEnv()
-    )
+    const result = await runCli(['launch', 'list', '--runtime-id', runtimeId], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(Array.isArray(body)).toBe(true)
