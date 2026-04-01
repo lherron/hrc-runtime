@@ -781,7 +781,7 @@ describe('Phase 6 diagnostics round-trip', () => {
       status: 'dead',
       tmuxJson: {
         socketPath: tmuxSocketPath,
-        sessionName: `hrc-adopt-dead`,
+        sessionName: 'hrc-adopt-dead',
         windowName: 'main',
         sessionId: '$1',
         windowId: '@1',
@@ -853,7 +853,202 @@ describe('Phase 6 diagnostics round-trip', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 6. Export surface validation
+// 6. Step 4 red-gate tests (T-00981): M-10, m-19, m-20, m-22
+//
+// RED GATE: These tests exercise error/edge paths that do NOT exist yet:
+//   - M-10: watch() must survive malformed NDJSON without crashing the generator
+//   - m-19: SendInFlightInputRequest.prompt must be required (type-level; runtime covered)
+//   - m-20: watch() must accept AbortSignal in WatchOptions and terminate on abort
+//   - m-22: throwTypedError must include body text excerpt for non-JSON error responses
+//
+// Pass conditions for Curly (T-00981):
+//   1. watch() skips malformed NDJSON lines and still yields valid events (M-10)
+//   2. watch() terminates cleanly when AbortSignal fires after first event (m-20)
+//   3. throwTypedError includes response body excerpt for non-JSON 502 responses (m-22)
+//   4. sendInFlightInput works when prompt is provided as required field (m-19)
+// ---------------------------------------------------------------------------
+describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
+  let tmpDir: string
+  let stubSocketPath: string
+  let stubServer: ReturnType<typeof Bun.serve> | undefined
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-step4-'))
+    stubSocketPath = join(tmpDir, 'step4.sock')
+  })
+
+  afterEach(async () => {
+    if (stubServer) {
+      stubServer.stop(true)
+      stubServer = undefined
+    }
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  // -- M-10: watch() crashes on malformed NDJSON --
+  // Current code: JSON.parse(trimmed) at client.ts:251 with no try-catch.
+  // One malformed line kills the async generator with SyntaxError.
+  // Expected: generator skips/yields-error for the bad line and yields remaining valid events.
+  it('M-10: watch() survives malformed NDJSON and yields valid events', async () => {
+    const validEvent1: HrcEventEnvelope = {
+      seq: 1,
+      ts: '2026-04-01T00:00:00Z',
+      hostSessionId: 'hsid-m10',
+      scopeRef: 'project:m10',
+      laneRef: 'default',
+      generation: 1,
+      source: 'hrc' as const,
+      eventKind: 'session.created',
+      eventJson: {},
+    }
+    const validEvent2: HrcEventEnvelope = {
+      seq: 3,
+      ts: '2026-04-01T00:00:02Z',
+      hostSessionId: 'hsid-m10',
+      scopeRef: 'project:m10',
+      laneRef: 'default',
+      generation: 1,
+      source: 'hrc' as const,
+      eventKind: 'session.resolved',
+      eventJson: {},
+    }
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch() {
+        // Line 2 is malformed JSON — should not crash the generator
+        const ndjson = `${[
+          JSON.stringify(validEvent1),
+          '{broken json <<< THIS IS NOT VALID',
+          JSON.stringify(validEvent2),
+        ].join('\n')}\n`
+        return new Response(ndjson, {
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const collected: HrcEventEnvelope[] = []
+
+    // This should NOT throw — the generator must handle malformed lines gracefully
+    for await (const event of client.watch()) {
+      collected.push(event)
+    }
+
+    // Both valid events should be yielded; the malformed line should be skipped
+    expect(collected.length).toBe(2)
+    expect(collected[0]!.seq).toBe(1)
+    expect(collected[1]!.seq).toBe(3)
+  })
+
+  // -- m-20: watch() has no AbortSignal/cancellation --
+  // Current code: WatchOptions only has fromSeq and follow — no signal field.
+  // Expected: WatchOptions accepts optional `signal: AbortSignal` and terminates
+  // iteration when aborted.
+  it('m-20: watch() terminates on AbortSignal after first event', async () => {
+    const events: HrcEventEnvelope[] = Array.from({ length: 5 }, (_, i) => ({
+      seq: i + 1,
+      ts: `2026-04-01T00:00:0${i}Z`,
+      hostSessionId: 'hsid-m20',
+      scopeRef: 'project:m20',
+      laneRef: 'default',
+      generation: 1,
+      source: 'hrc' as const,
+      eventKind: 'session.created',
+      eventJson: {},
+    }))
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch() {
+        // Send 5 events as separate NDJSON lines
+        const ndjson = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`
+        return new Response(ndjson, {
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const controller = new AbortController()
+    const collected: HrcEventEnvelope[] = []
+
+    // Pass signal in WatchOptions — this field does not exist yet (RED)
+    for await (const event of client.watch({ signal: controller.signal } as any)) {
+      collected.push(event)
+      if (collected.length === 1) {
+        controller.abort()
+      }
+    }
+
+    // Should stop after first event — not consume all 5
+    expect(collected.length).toBe(1)
+    expect(collected[0]!.seq).toBe(1)
+  })
+
+  // -- m-22: throwTypedError discards non-JSON response bodies --
+  // Current code: catch block in throwTypedError (client.ts:83-84) throws
+  // "HRC request failed with status 502" — no body excerpt.
+  // Expected: error message includes an excerpt of the actual response body text.
+  it('m-22: throwTypedError includes body excerpt for non-JSON 502', async () => {
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch() {
+        return new Response('Bad Gateway: upstream service unavailable', {
+          status: 502,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    try {
+      await client.getSession('any-id')
+      expect.unreachable('should have thrown')
+    } catch (err) {
+      const msg = (err as Error).message
+      // Current behavior: generic "HRC request failed with status 502"
+      // Required: message must include excerpt from the response body
+      expect(msg).toContain('502')
+      expect(msg).toMatch(/Bad Gateway/i)
+    }
+  })
+
+  // -- m-19: SendInFlightInputRequest.prompt should be required --
+  // Current type: prompt is optional. Server requires it.
+  // This test validates runtime behavior: sendInFlightInput with prompt provided
+  // should send the prompt field. The type change (making prompt required) is
+  // validated at compile time by Curly's implementation.
+  it('m-19: sendInFlightInput sends prompt field to server', async () => {
+    let capturedBody: any
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname === '/v1/in-flight-input') {
+          capturedBody = await req.json()
+          return Response.json({ accepted: true, runtimeId: 'rt-1', runId: 'run-1' })
+        }
+        return new Response('Not found', { status: 404 })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    // prompt is currently optional in the type — after fix it should be required
+    await client.sendInFlightInput({
+      runtimeId: 'rt-1',
+      runId: 'run-1',
+      prompt: 'Continue with analysis',
+    })
+
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.prompt).toBe('Continue with analysis')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. Export surface validation
 // ---------------------------------------------------------------------------
 describe('export surface', () => {
   it('exports discoverSocket function', () => {

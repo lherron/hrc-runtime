@@ -47,6 +47,7 @@ export type ApplyAppSessionsResponse = {
 export type WatchOptions = {
   fromSeq?: number | undefined
   follow?: boolean | undefined
+  signal?: AbortSignal | undefined
 }
 
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
@@ -124,8 +125,9 @@ export type ClearContextResponse = {
 export type SendInFlightInputRequest = {
   runtimeId: string
   runId: string
+  /** @deprecated Use `prompt` instead */
   input?: string | undefined
-  prompt?: string | undefined
+  prompt: string
   inputType?: string | undefined
 }
 

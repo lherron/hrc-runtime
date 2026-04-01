@@ -2,7 +2,6 @@ import type { HrcEventEnvelope, HrcHttpError, HrcSessionRecord } from 'hrc-core'
 import { HrcDomainError } from 'hrc-core'
 
 import type {
-  AdoptRuntimeRequest,
   ApplyAppSessionsRequest,
   ApplyAppSessionsResponse,
   AttachDescriptor,
@@ -77,11 +76,20 @@ export class HrcClient {
   }
 
   private async throwTypedError(res: Response): Promise<never> {
+    const cloned = res.clone()
     let body: HrcHttpError | undefined
     try {
       body = (await res.json()) as HrcHttpError
     } catch {
-      throw new Error(`HRC request failed with status ${res.status}`)
+      let excerpt = ''
+      try {
+        const text = await cloned.text()
+        excerpt = text.length > 200 ? `${text.slice(0, 200)}…` : text
+      } catch {
+        // ignore text extraction failure
+      }
+      const suffix = excerpt ? `: ${excerpt}` : ''
+      throw new Error(`HRC request failed with status ${res.status}${suffix}`)
     }
 
     if (body?.error) {
@@ -228,6 +236,7 @@ export class HrcClient {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'GET',
       unix: this.socketPath,
+      ...(options?.signal ? { signal: options.signal } : {}),
     } as RequestInit)
 
     if (!res.ok) {
@@ -241,6 +250,7 @@ export class HrcClient {
     let buffer = ''
 
     for await (const chunk of body) {
+      if (options?.signal?.aborted) return
       buffer += decoder.decode(chunk, { stream: true })
       const lines = buffer.split('\n')
       // Keep the last (possibly incomplete) line in the buffer
@@ -248,14 +258,24 @@ export class HrcClient {
       for (const line of lines) {
         const trimmed = line.trim()
         if (trimmed.length === 0) continue
-        yield JSON.parse(trimmed) as HrcEventEnvelope
+        try {
+          yield JSON.parse(trimmed) as HrcEventEnvelope
+        } catch {
+          // M-10: skip malformed NDJSON lines instead of crashing the generator
+          continue
+        }
+        if (options?.signal?.aborted) return
       }
     }
 
     // Flush any remaining content
     const remaining = buffer.trim()
     if (remaining.length > 0) {
-      yield JSON.parse(remaining) as HrcEventEnvelope
+      try {
+        yield JSON.parse(remaining) as HrcEventEnvelope
+      } catch {
+        // M-10: skip malformed trailing content
+      }
     }
   }
 }
