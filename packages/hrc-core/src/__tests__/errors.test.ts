@@ -20,7 +20,18 @@
 
 import { describe, expect, test } from 'bun:test'
 
-import { HrcErrorCode, createHrcError, httpStatusForErrorCode } from '../errors.js'
+import {
+  HrcBadRequestError,
+  HrcConflictError,
+  HrcDomainError,
+  HrcErrorCode,
+  HrcInternalError,
+  HrcNotFoundError,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+  createHrcError,
+  httpStatusForErrorCode,
+} from '../errors.js'
 
 // ===================================================================
 // Error code enum completeness
@@ -168,5 +179,166 @@ describe('createHrcError (T-00949)', () => {
     const err = createHrcError(HrcErrorCode.RUNTIME_BUSY, 'busy')
     // The serialized code must equal the enum value exactly
     expect(err.error.code).toBe(HrcErrorCode.RUNTIME_BUSY)
+  })
+})
+
+// ===================================================================
+// n-31: Error subclass constructor coverage (T-00985)
+// ===================================================================
+
+describe('HrcDomainError base class (n-31 / T-00985)', () => {
+  test('sets name, code, status, message, and detail', () => {
+    const err = new HrcDomainError(HrcErrorCode.STALE_CONTEXT, 'stale', { gen: 5 })
+    expect(err.name).toBe('HrcDomainError')
+    expect(err.code).toBe('stale_context')
+    expect(err.status).toBe(409)
+    expect(err.message).toBe('stale')
+    expect(err.detail).toEqual({ gen: 5 })
+  })
+
+  test('defaults detail to empty object', () => {
+    const err = new HrcDomainError(HrcErrorCode.INTERNAL_ERROR, 'boom')
+    expect(err.detail).toEqual({})
+  })
+
+  test('is an instance of Error', () => {
+    const err = new HrcDomainError(HrcErrorCode.INTERNAL_ERROR, 'boom')
+    expect(err).toBeInstanceOf(Error)
+  })
+
+  test('toResponse() returns correct HrcHttpError shape', () => {
+    const err = new HrcDomainError(HrcErrorCode.RUNTIME_BUSY, 'busy', { runtimeId: 'rt-1' })
+    const resp = err.toResponse()
+    expect(resp).toEqual({
+      error: {
+        code: 'runtime_busy',
+        message: 'busy',
+        detail: { runtimeId: 'rt-1' },
+      },
+    })
+  })
+
+  test('toResponse() preserves empty detail', () => {
+    const err = new HrcDomainError(HrcErrorCode.INTERNAL_ERROR, 'oops')
+    const resp = err.toResponse()
+    expect(resp.error.detail).toEqual({})
+  })
+})
+
+describe('HrcBadRequestError (n-31 / T-00985)', () => {
+  test('sets name to HrcBadRequestError and status to 400', () => {
+    const err = new HrcBadRequestError('malformed_request', 'bad body', { field: 'x' })
+    expect(err.name).toBe('HrcBadRequestError')
+    expect(err.status).toBe(400)
+    expect(err.code).toBe('malformed_request')
+    expect(err.message).toBe('bad body')
+    expect(err.detail).toEqual({ field: 'x' })
+  })
+
+  test('works with invalid_selector code', () => {
+    const err = new HrcBadRequestError('invalid_selector', 'bad selector')
+    expect(err.status).toBe(400)
+    expect(err.code).toBe('invalid_selector')
+  })
+
+  test('works with invalid_fence code', () => {
+    const err = new HrcBadRequestError('invalid_fence', 'bad fence')
+    expect(err.status).toBe(400)
+    expect(err.code).toBe('invalid_fence')
+  })
+
+  test('toResponse() roundtrips correctly', () => {
+    const err = new HrcBadRequestError('malformed_request', 'oops', { key: 'val' })
+    const resp = err.toResponse()
+    expect(resp.error.code).toBe('malformed_request')
+    expect(resp.error.message).toBe('oops')
+    expect(resp.error.detail).toEqual({ key: 'val' })
+  })
+
+  test('is instanceof HrcDomainError and Error', () => {
+    const err = new HrcBadRequestError('malformed_request', 'test')
+    expect(err).toBeInstanceOf(HrcDomainError)
+    expect(err).toBeInstanceOf(Error)
+  })
+})
+
+describe('HrcNotFoundError (n-31 / T-00985)', () => {
+  test('sets name and status 404 for each code', () => {
+    const codes = [
+      'unknown_session',
+      'unknown_host_session',
+      'unknown_runtime',
+      'unknown_surface',
+      'unknown_bridge',
+    ] as const
+
+    for (const code of codes) {
+      const err = new HrcNotFoundError(code, `${code} not found`)
+      expect(err.name).toBe('HrcNotFoundError')
+      expect(err.status).toBe(404)
+      expect(err.code).toBe(code)
+    }
+  })
+
+  test('toResponse() preserves detail', () => {
+    const err = new HrcNotFoundError('unknown_runtime', 'gone', { runtimeId: 'rt-999' })
+    const resp = err.toResponse()
+    expect(resp.error.detail).toEqual({ runtimeId: 'rt-999' })
+  })
+})
+
+describe('HrcConflictError (n-31 / T-00985)', () => {
+  test('sets name and status 409 for each code', () => {
+    const codes = ['stale_context', 'runtime_busy', 'run_mismatch'] as const
+    for (const code of codes) {
+      const err = new HrcConflictError(code, `${code} conflict`)
+      expect(err.name).toBe('HrcConflictError')
+      expect(err.status).toBe(409)
+      expect(err.code).toBe(code)
+    }
+  })
+})
+
+describe('HrcUnprocessableEntityError (n-31 / T-00985)', () => {
+  test('sets name and status 422 for each code', () => {
+    const codes = ['missing_runtime_intent', 'provider_mismatch', 'inflight_unsupported'] as const
+    for (const code of codes) {
+      const err = new HrcUnprocessableEntityError(code, `${code} invalid`)
+      expect(err.name).toBe('HrcUnprocessableEntityError')
+      expect(err.status).toBe(422)
+      expect(err.code).toBe(code)
+    }
+  })
+})
+
+describe('HrcRuntimeUnavailableError (n-31 / T-00985)', () => {
+  test('hardcodes code to runtime_unavailable and status to 503', () => {
+    const err = new HrcRuntimeUnavailableError('not ready', { retry: true })
+    expect(err.name).toBe('HrcRuntimeUnavailableError')
+    expect(err.code).toBe('runtime_unavailable')
+    expect(err.status).toBe(503)
+    expect(err.message).toBe('not ready')
+    expect(err.detail).toEqual({ retry: true })
+  })
+
+  test('toResponse() includes hardcoded code', () => {
+    const err = new HrcRuntimeUnavailableError('unavailable')
+    expect(err.toResponse().error.code).toBe('runtime_unavailable')
+  })
+})
+
+describe('HrcInternalError (n-31 / T-00985)', () => {
+  test('hardcodes code to internal_error and status to 500', () => {
+    const err = new HrcInternalError('unexpected', { stack: 'trace' })
+    expect(err.name).toBe('HrcInternalError')
+    expect(err.code).toBe('internal_error')
+    expect(err.status).toBe(500)
+    expect(err.message).toBe('unexpected')
+    expect(err.detail).toEqual({ stack: 'trace' })
+  })
+
+  test('toResponse() includes hardcoded code', () => {
+    const err = new HrcInternalError('crash')
+    expect(err.toResponse().error.code).toBe('internal_error')
   })
 })
