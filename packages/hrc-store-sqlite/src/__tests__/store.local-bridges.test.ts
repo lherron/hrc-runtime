@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // RED GATE: imports will fail until LocalBridgeRepository and Phase 5 migration are wired
-import { openHrcDatabase } from '../index'
+import { createHrcDatabase, openHrcDatabase, phase1Migrations } from '../index'
 import type { HrcDatabase } from '../index'
 
 let tmpDir: string
@@ -97,6 +97,18 @@ function seedSessionAndRuntime(
   })
 }
 
+function getTableIndexColumns(db: HrcDatabase, tableName: string, indexName: string): string[] {
+  const indexes = db.sqlite.query<{ name: string }, []>(`PRAGMA index_list(${tableName})`).all()
+
+  const index = indexes.find((candidate) => candidate.name === indexName)
+  expect(index).toBeDefined()
+
+  return db.sqlite
+    .query<{ name: string }, []>(`PRAGMA index_info(${indexName})`)
+    .all()
+    .map((column) => column.name)
+}
+
 // ---------------------------------------------------------------------------
 // 1. Migration and database wiring
 // ---------------------------------------------------------------------------
@@ -114,6 +126,48 @@ describe('Phase 5 migration — local_bridges', () => {
     const db = openHrcDatabase(dbPath)
     try {
       expect(db.localBridges).toBeDefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('creates the runtime_id lookup index for local_bridges', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      expect(getTableIndexColumns(db, 'local_bridges', 'idx_local_bridges_runtime_id')).toEqual([
+        'runtime_id',
+      ])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('backfills the runtime_id lookup index for databases already at phase 5', () => {
+    const sqlite = createHrcDatabase(dbPath)
+    try {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS hrc_migrations (
+          id TEXT PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        );
+      `)
+
+      for (const migration of phase1Migrations.slice(0, 3)) {
+        migration.apply(sqlite)
+        sqlite
+          .prepare('INSERT INTO hrc_migrations (id, applied_at) VALUES (?, ?)')
+          .run(migration.id, ts())
+      }
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      expect(db.migrations.applied).toContain('0004_phase6_local_bridges_runtime_id_index')
+      expect(getTableIndexColumns(db, 'local_bridges', 'idx_local_bridges_runtime_id')).toEqual([
+        'runtime_id',
+      ])
     } finally {
       db.close()
     }

@@ -235,10 +235,21 @@ const phase5WorkbenchSessionsAndLocalBridgesMigration: HrcMigration = {
   },
 }
 
+const phase6LocalBridgesRuntimeIdIndexMigration: HrcMigration = {
+  id: '0004_phase6_local_bridges_runtime_id_index',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_local_bridges_runtime_id
+        ON local_bridges(runtime_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
   phase5WorkbenchSessionsAndLocalBridgesMigration,
+  phase6LocalBridgesRuntimeIdIndexMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
