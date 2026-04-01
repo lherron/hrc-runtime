@@ -409,7 +409,10 @@ class HrcServerInstance implements HrcServer {
         return await this.handleTerminate(request)
       }
 
-      if (request.method === 'POST' && pathname === '/v1/clear-context') {
+      if (
+        request.method === 'POST' &&
+        (pathname === '/v1/clear-context' || pathname === '/v1/sessions/clear-context')
+      ) {
         return await this.handleClearContext(request)
       }
 
@@ -589,40 +592,66 @@ class HrcServerInstance implements HrcServer {
   private handleEvents(url: URL, request: Request): Response {
     const fromSeq = parseFromSeq(url.searchParams.get('fromSeq'))
     const follow = url.searchParams.get('follow') === 'true'
-    const events = this.db.events.listFromSeq(fromSeq)
 
     if (!follow) {
+      const events = this.db.events.listFromSeq(fromSeq)
       return new Response(events.map(serializeEvent).join(''), {
         status: 200,
         headers: NDJSON_HEADERS,
       })
     }
 
+    const bufferedEvents: HrcEventEnvelope[] = []
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null
+    let replayHighWater = fromSeq - 1
+    const subscriber: FollowSubscriber = (event) => {
+      if (event.seq < fromSeq) {
+        return
+      }
+
+      if (controllerRef) {
+        if (event.seq > replayHighWater) {
+          controllerRef.enqueue(encodeNdjson(event))
+        }
+        return
+      }
+
+      bufferedEvents.push(event)
+    }
+
+    this.followSubscribers.add(subscriber)
+    const close = () => {
+      this.followSubscribers.delete(subscriber)
+      bufferedEvents.length = 0
+      try {
+        controllerRef?.close()
+      } catch {
+        // Stream may already be closed by Bun on disconnect.
+      } finally {
+        controllerRef = null
+      }
+    }
+
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
-        for (const event of events) {
+        const replayEvents = this.db.events.listFromSeq(fromSeq)
+        replayHighWater = replayEvents.at(-1)?.seq ?? replayHighWater
+        controllerRef = controller
+        controller.enqueue(new TextEncoder().encode('\n'))
+
+        for (const event of replayEvents) {
           controller.enqueue(encodeNdjson(event))
         }
 
-        const subscriber: FollowSubscriber = (event) => {
-          if (event.seq >= fromSeq) {
+        for (const event of bufferedEvents) {
+          if (event.seq > replayHighWater) {
             controller.enqueue(encodeNdjson(event))
-          }
-        }
-
-        this.followSubscribers.add(subscriber)
-        const close = () => {
-          this.followSubscribers.delete(subscriber)
-          try {
-            controller.close()
-          } catch {
-            // Stream may already be closed by Bun on disconnect.
           }
         }
 
         request.signal.addEventListener('abort', close, { once: true })
       },
-      cancel: () => undefined,
+      cancel: () => close(),
     })
 
     return new Response(stream, {
@@ -692,6 +721,8 @@ class HrcServerInstance implements HrcServer {
       correlationEnv: extractCorrelationEnv(cliInvocation.env),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
+    await writeLaunchArtifact(launchArtifact, launchesDir)
+
     const run = this.db.runs.create({
       runId,
       hostSessionId: session.hostSessionId,
@@ -704,29 +735,42 @@ class HrcServerInstance implements HrcServer {
       acceptedAt: now,
       updatedAt: now,
     })
-    this.db.runtimes.update(runtime.runtimeId, {
-      activeRunId: run.runId,
-      launchId,
-      status: 'busy',
-      lastActivityAt: now,
-      updatedAt: now,
-    })
+    let launchCreated = false
+    try {
+      this.db.runtimes.update(runtime.runtimeId, {
+        activeRunId: run.runId,
+        launchId,
+        status: 'busy',
+        lastActivityAt: now,
+        updatedAt: now,
+      })
 
-    await writeLaunchArtifact(launchArtifact, launchesDir)
+      this.db.launches.create({
+        launchId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        harness: runtime.harness,
+        provider: runtime.provider,
+        launchArtifactPath,
+        tmuxJson: runtime.tmuxJson,
+        status: 'accepted',
+        createdAt: now,
+        updatedAt: now,
+      })
+      launchCreated = true
 
-    this.db.launches.create({
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      launchArtifactPath,
-      tmuxJson: runtime.tmuxJson,
-      status: 'accepted',
-      createdAt: now,
-      updatedAt: now,
-    })
+      const tmuxPane = requireTmuxPane(runtime)
+      await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+    } catch (error) {
+      rollbackFailedTmuxDispatch(this.db, runtime, run.runId, launchCreated ? launchId : undefined)
+      throw new HrcInternalError('tmux dispatch failed before launch start', {
+        runtimeId: runtime.runtimeId,
+        runId: run.runId,
+        launchId,
+        cause: error instanceof Error ? error.message : String(error),
+      })
+    }
 
     const acceptedEvent = this.db.events.append({
       ts: now,
@@ -744,9 +788,6 @@ class HrcServerInstance implements HrcServer {
       },
     })
     this.notifyEvent(acceptedEvent)
-
-    const tmuxPane = requireTmuxPane(runtime)
-    await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
 
     const startedAt = timestamp()
     this.db.runs.update(runId, {
@@ -1168,9 +1209,15 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
-    const existing = this.db.localBridges.findByTarget(body.transport, body.target)
-    if (existing && existing.closedAt === undefined) {
-      return json(existing)
+    const now = timestamp()
+    const matchingBridges = findActiveBridgesByTarget(this.db, body.transport, body.target)
+    const reusable = matchingBridges.find((bridge) => matchesBridgeBinding(bridge, body))
+    if (reusable) {
+      return json(reusable)
+    }
+
+    for (const bridge of matchingBridges) {
+      this.db.localBridges.close(bridge.bridgeId, now)
     }
 
     const bridge = this.db.localBridges.create({
@@ -1185,7 +1232,7 @@ class HrcServerInstance implements HrcServer {
       ...(body.expectedGeneration !== undefined
         ? { expectedGeneration: body.expectedGeneration }
         : {}),
-      createdAt: timestamp(),
+      createdAt: now,
     })
 
     return json(bridge satisfies RegisterBridgeTargetResponse)
@@ -1340,10 +1387,13 @@ class HrcServerInstance implements HrcServer {
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
-    await this.tmux.terminate(tmux.sessionName)
-
     const now = timestamp()
-    this.db.runtimes.updateStatus(runtime.runtimeId, 'terminated', now)
+    const inspected = await this.tmux.inspectSession(tmux.sessionName)
+    if (inspected) {
+      await this.tmux.terminate(tmux.sessionName)
+    }
+
+    finalizeRuntimeTermination(this.db, runtime, now)
     const event = this.db.events.append({
       ts: now,
       hostSessionId: session.hostSessionId,
@@ -3295,6 +3345,40 @@ function buildStaleLaunchCallbackRejection(
   }
 
   const runtime = db.runtimes.findById(existingLaunch.runtimeId)
+  if (
+    existingLaunch.status === 'failed' ||
+    existingLaunch.status === 'terminated' ||
+    runtime?.status === 'terminated'
+  ) {
+    const event = db.events.append({
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime?.runtimeId ?? existingLaunch.runtimeId,
+      source: 'hrc',
+      eventKind: 'launch.callback_rejected',
+      eventJson: {
+        launchId,
+        callback: callbackKind,
+        reason: runtime?.status === 'terminated' ? 'terminated_runtime' : 'terminated_launch',
+        launchStatus: existingLaunch.status,
+        ...(runtime ? { runtimeStatus: runtime.status } : {}),
+        ...(replayed ? { replayed: true } : {}),
+      },
+    })
+
+    return {
+      event,
+      error: new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'launch callback is stale', {
+        launchId,
+        ...(runtime ? { runtimeId: runtime.runtimeId, runtimeStatus: runtime.status } : {}),
+        launchStatus: existingLaunch.status,
+      }),
+    }
+  }
+
   if (!runtime?.launchId || runtime.launchId === launchId) {
     return null
   }
@@ -3325,6 +3409,89 @@ function buildStaleLaunchCallbackRejection(
       activeLaunchId: runtime.launchId,
     }),
   }
+}
+
+function rollbackFailedTmuxDispatch(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  runId: string,
+  launchId?: string | undefined
+): void {
+  const now = timestamp()
+  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'ready',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+  db.runs.markCompleted(runId, {
+    status: 'failed',
+    completedAt: now,
+    updatedAt: now,
+    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+    errorMessage: `tmux dispatch failed before launch start for runtime ${runtime.runtimeId}`,
+  })
+
+  if (launchId) {
+    db.launches.update(launchId, {
+      status: 'failed',
+      updatedAt: now,
+    })
+  }
+}
+
+function finalizeRuntimeTermination(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  now: string
+): void {
+  if (runtime.activeRunId !== undefined) {
+    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+    db.runs.markCompleted(runtime.activeRunId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage: `runtime ${runtime.runtimeId} was terminated`,
+    })
+  }
+
+  if (runtime.launchId !== undefined) {
+    db.launches.update(runtime.launchId, {
+      status: 'terminated',
+      exitedAt: now,
+      signal: 'SIGTERM',
+      updatedAt: now,
+    })
+  }
+
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'terminated',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+}
+
+function findActiveBridgesByTarget(
+  db: HrcDatabase,
+  transport: string,
+  target: string
+): HrcLocalBridgeRecord[] {
+  return db.localBridges
+    .listActive()
+    .filter((bridge) => bridge.transport === transport && bridge.target === target)
+}
+
+function matchesBridgeBinding(
+  bridge: HrcLocalBridgeRecord,
+  request: RegisterBridgeTargetRequest
+): boolean {
+  return (
+    bridge.hostSessionId === request.hostSessionId &&
+    bridge.runtimeId === request.runtimeId &&
+    bridge.expectedHostSessionId === request.expectedHostSessionId &&
+    bridge.expectedGeneration === request.expectedGeneration
+  )
 }
 
 function mergeBridgeFence(bridge: HrcLocalBridgeRecord, delivery: DeliverBridgeRequest): HrcFence {
