@@ -69,7 +69,7 @@ describe('C-2: parseJson crash guard', () => {
       )
 
       // This should NOT throw — currently it does (RED)
-      const session = db.sessions.findByHostSessionId('hsid-corrupt-1')
+      const session = db.sessions.getByHostSessionId('hsid-corrupt-1')
       expect(session).not.toBeNull()
       expect(session!.hostSessionId).toBe('hsid-corrupt-1')
       // Corrupted JSON field should fall back to undefined, not crash
@@ -89,7 +89,7 @@ describe('C-2: parseJson crash guard', () => {
         ['hsid-corrupt-2']
       )
 
-      const session = db.sessions.findByHostSessionId('hsid-corrupt-2')
+      const session = db.sessions.getByHostSessionId('hsid-corrupt-2')
       expect(session).not.toBeNull()
       expect(session!.continuation).toBeUndefined()
     } finally {
@@ -124,7 +124,7 @@ describe('C-2: parseJson crash guard', () => {
       ])
 
       // Should not throw
-      const runtime = db.runtimes.findById('rt-corrupt-1')
+      const runtime = db.runtimes.getByRuntimeId('rt-corrupt-1')
       expect(runtime).not.toBeNull()
       expect(runtime!.runtimeId).toBe('rt-corrupt-1')
       expect(runtime!.tmuxJson).toBeUndefined()

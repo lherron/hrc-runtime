@@ -224,6 +224,12 @@ function serializeJson(value: unknown): string | null {
   return JSON.stringify(value)
 }
 
+/**
+ * Parse a JSON column value from SQLite. The `as T` cast is intentionally
+ * unchecked — the trust boundary is the hrc-server write path which validates
+ * all inbound payloads before they reach the store. Consumers of repository
+ * records should treat the returned shape as pre-validated.
+ */
 function parseJson<T>(value: string | null, column?: string): T | undefined {
   if (value === null) {
     return undefined
@@ -498,10 +504,6 @@ export class ContinuityRepository {
     }
   }
 
-  findByRef(scopeRef: string, laneRef: string): HrcContinuityRecord | null {
-    return this.getByKey(scopeRef, laneRef)
-  }
-
   private derivePriorHostSessionIds(
     scopeRef: string,
     laneRef: string,
@@ -614,16 +616,8 @@ export class SessionRepository {
     return row ? mapSessionRow(row) : null
   }
 
-  findByHostSessionId(hostSessionId: string): HrcSessionRecord | null {
-    return this.getByHostSessionId(hostSessionId)
-  }
-
   listByScopeRef(scopeRef: string, laneRef?: string | undefined): HrcSessionRecord[] {
     return this.listByFilters({ scopeRef, laneRef })
-  }
-
-  findByRef(scopeRef: string, laneRef: string): HrcSessionRecord[] {
-    return this.listByScopeRef(scopeRef, laneRef)
   }
 
   updateStatus(hostSessionId: string, status: string, updatedAt: string): HrcSessionRecord | null {
@@ -1044,10 +1038,6 @@ export class RuntimeRepository {
     return row ? mapRuntimeRow(row) : null
   }
 
-  findById(runtimeId: string): HrcRuntimeSnapshot | null {
-    return this.getByRuntimeId(runtimeId)
-  }
-
   listByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot[] {
     const rows = this.db
       .query<RuntimeRow, [string]>(
@@ -1331,10 +1321,6 @@ export class RunRepository {
     return row ? mapRunRow(row) : null
   }
 
-  findById(runId: string): HrcRunRecord | null {
-    return this.getByRunId(runId)
-  }
-
   listByRuntimeId(runtimeId: string): HrcRunRecord[] {
     const rows = this.db
       .query<RunRow, [string]>(
@@ -1552,10 +1538,6 @@ export class LaunchRepository {
       .get(launchId)
 
     return row ? mapLaunchRow(row) : null
-  }
-
-  findById(launchId: string): HrcLaunchRecord | null {
-    return this.getByLaunchId(launchId)
   }
 
   update(launchId: string, patch: LaunchUpdatePatch): HrcLaunchRecord | null {
@@ -1797,48 +1779,14 @@ export class LaunchRepository {
 }
 
 export class EventRepository {
-  constructor(private readonly db: Database) {}
+  private readonly appendInTransaction: (event: Omit<HrcEventEnvelope, 'seq'>) => HrcEventEnvelope
 
-  append(event: Omit<HrcEventEnvelope, 'seq'>): HrcEventEnvelope {
-    execute(
-      this.db,
-      `
-        INSERT INTO events (
-          ts,
-          host_session_id,
-          scope_ref,
-          lane_ref,
-          generation,
-          run_id,
-          runtime_id,
-          source,
-          event_kind,
-          event_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      event.ts,
-      event.hostSessionId,
-      event.scopeRef,
-      event.laneRef,
-      event.generation,
-      event.runId ?? null,
-      event.runtimeId ?? null,
-      event.source,
-      event.eventKind,
-      JSON.stringify(event.eventJson)
-    )
-
-    const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
-
-    if (!inserted) {
-      throw new Error('failed to read inserted event sequence')
-    }
-
-    const stored = this.db
-      .query<EventRow, [number]>(
+  constructor(private readonly db: Database) {
+    this.appendInTransaction = db.transaction((event: Omit<HrcEventEnvelope, 'seq'>) => {
+      execute(
+        this.db,
         `
-          SELECT
-            seq,
+          INSERT INTO events (
             ts,
             host_session_id,
             scope_ref,
@@ -1849,17 +1797,57 @@ export class EventRepository {
             source,
             event_kind,
             event_json
-          FROM events
-          WHERE seq = ?
-        `
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        event.ts,
+        event.hostSessionId,
+        event.scopeRef,
+        event.laneRef,
+        event.generation,
+        event.runId ?? null,
+        event.runtimeId ?? null,
+        event.source,
+        event.eventKind,
+        JSON.stringify(event.eventJson)
       )
-      .get(inserted.seq)
 
-    if (!stored) {
-      throw new Error(`failed to reload event ${inserted.seq}`)
-    }
+      const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
 
-    return mapEventRow(stored)
+      if (!inserted) {
+        throw new Error('failed to read inserted event sequence')
+      }
+
+      const stored = this.db
+        .query<EventRow, [number]>(
+          `
+            SELECT
+              seq,
+              ts,
+              host_session_id,
+              scope_ref,
+              lane_ref,
+              generation,
+              run_id,
+              runtime_id,
+              source,
+              event_kind,
+              event_json
+            FROM events
+            WHERE seq = ?
+          `
+        )
+        .get(inserted.seq)
+
+      if (!stored) {
+        throw new Error(`failed to reload event ${inserted.seq}`)
+      }
+
+      return mapEventRow(stored)
+    })
+  }
+
+  append(event: Omit<HrcEventEnvelope, 'seq'>): HrcEventEnvelope {
+    return this.appendInTransaction(event)
   }
 
   listFromSeq(fromSeq = 1, filters: Omit<EventQueryFilters, 'fromSeq'> = {}): HrcEventEnvelope[] {

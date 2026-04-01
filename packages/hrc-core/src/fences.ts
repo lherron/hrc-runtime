@@ -1,4 +1,10 @@
-import { HrcConflictError, HrcErrorCode, type HrcHttpError, createHrcError } from './errors.js'
+import {
+  HrcBadRequestError,
+  HrcConflictError,
+  HrcErrorCode,
+  type HrcHttpError,
+  createHrcError,
+} from './errors.js'
 
 export { HrcErrorCode } from './errors.js'
 
@@ -28,15 +34,19 @@ export type HrcFenceValidationFailure = {
 
 export type HrcFenceValidationResult = HrcFenceValidationSuccess | HrcFenceValidationFailure
 
+function invalidFence(message: string, detail: Record<string, unknown> = {}): HrcBadRequestError {
+  return new HrcBadRequestError(HrcErrorCode.INVALID_FENCE, message, detail)
+}
+
 function parseExpectedHostSessionId(value: unknown): string | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'string') {
-    throw new TypeError('expectedHostSessionId must be a string when provided')
+    throw invalidFence('expectedHostSessionId must be a string when provided')
   }
 
   const normalized = value.trim()
   if (normalized.length === 0) {
-    throw new TypeError('expectedHostSessionId must not be empty')
+    throw invalidFence('expectedHostSessionId must not be empty')
   }
 
   return normalized
@@ -45,10 +55,10 @@ function parseExpectedHostSessionId(value: unknown): string | undefined {
 function parseExpectedGeneration(value: unknown): number | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'number' || !Number.isInteger(value)) {
-    throw new TypeError('expectedGeneration must be an integer when provided')
+    throw invalidFence('expectedGeneration must be an integer when provided')
   }
   if (value < 0) {
-    throw new RangeError('expectedGeneration must be zero or greater')
+    throw invalidFence('expectedGeneration must be zero or greater')
   }
   return value
 }
@@ -56,7 +66,7 @@ function parseExpectedGeneration(value: unknown): number | undefined {
 function parseFollowLatest(value: unknown): boolean | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') {
-    throw new TypeError('followLatest must be a boolean when provided')
+    throw invalidFence('followLatest must be a boolean when provided')
   }
   return value
 }
@@ -66,7 +76,7 @@ export function parseFence(input?: HrcFence | undefined): HrcFence {
     return {}
   }
   if (typeof input !== 'object' || input === null) {
-    throw new TypeError('fence must be an object when provided')
+    throw invalidFence('fence must be an object when provided')
   }
 
   const expectedHostSessionId = parseExpectedHostSessionId(input.expectedHostSessionId)
@@ -74,7 +84,7 @@ export function parseFence(input?: HrcFence | undefined): HrcFence {
   const followLatest = parseFollowLatest(input.followLatest)
 
   if (expectedHostSessionId !== undefined && followLatest === true) {
-    throw new TypeError('expectedHostSessionId and followLatest cannot be combined')
+    throw invalidFence('expectedHostSessionId and followLatest cannot be combined')
   }
 
   return {

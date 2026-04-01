@@ -542,7 +542,7 @@ class HrcServerInstance implements HrcServer {
   }
 
   private handleGetSessionByHost(hostSessionId: string): Response {
-    const session = this.db.sessions.findByHostSessionId(hostSessionId)
+    const session = this.db.sessions.getByHostSessionId(hostSessionId)
     if (!session) {
       throw new HrcNotFoundError(
         HrcErrorCode.UNKNOWN_HOST_SESSION,
@@ -850,7 +850,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     const activeRun =
-      runtime.activeRunId !== undefined ? this.db.runs.findById(runtime.activeRunId) : null
+      runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
     const latestRun = findLatestRunForRuntime(this.db, runtime.runtimeId)
     const expectedRunId = activeRun?.runId ?? latestRun?.runId
 
@@ -1268,7 +1268,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     if (bridge.runtimeId !== undefined) {
-      const runtime = this.db.runtimes.findById(bridge.runtimeId)
+      const runtime = this.db.runtimes.getByRuntimeId(bridge.runtimeId)
       if (
         !runtime ||
         runtime.hostSessionId !== bridge.hostSessionId ||
@@ -1512,7 +1512,7 @@ class HrcServerInstance implements HrcServer {
       signal: body.signal,
     })
     if (launch.runtimeId) {
-      const activeRunId = this.db.runtimes.findById(launch.runtimeId)?.activeRunId
+      const activeRunId = this.db.runtimes.getByRuntimeId(launch.runtimeId)?.activeRunId
       this.db.runtimes.updateRunId(launch.runtimeId, undefined, now)
       this.db.runtimes.update(launch.runtimeId, {
         status: 'ready',
@@ -1606,7 +1606,7 @@ class HrcServerInstance implements HrcServer {
       throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
     }
     const runtimeId = body['runtimeId'] as string
-    const runtime = this.db.runtimes.findById(runtimeId)
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
     if (!runtime) {
       throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
     }
@@ -1631,7 +1631,7 @@ class HrcServerInstance implements HrcServer {
     if (!updated) {
       throw new HrcInternalError(`failed to adopt runtime ${runtimeId}`)
     }
-    const session = this.db.sessions.findByHostSessionId(runtime.hostSessionId)
+    const session = this.db.sessions.getByHostSessionId(runtime.hostSessionId)
     if (session) {
       const event = this.appendEvent(session, 'runtime.adopted', {
         runtimeId,
@@ -1667,7 +1667,7 @@ class HrcServerInstance implements HrcServer {
     inputType: string | undefined,
     error: HrcDomainError
   ): HrcDomainError {
-    const knownRun = this.db.runs.findById(runId)
+    const knownRun = this.db.runs.getByRunId(runId)
     const event = this.db.events.append({
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
@@ -2421,7 +2421,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       wrapperStartedAt: now,
       updatedAt: now,
     })
-    const replayedLaunch = db.launches.findById(launchId)
+    const replayedLaunch = db.launches.getByLaunchId(launchId)
     if (replayedLaunch?.runtimeId) {
       db.runtimes.update(replayedLaunch.runtimeId, {
         wrapperPid: replayedLaunch.wrapperPid,
@@ -2465,7 +2465,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       childStartedAt: now,
       updatedAt: now,
     })
-    const replayedLaunch = db.launches.findById(launchId)
+    const replayedLaunch = db.launches.getByLaunchId(launchId)
     if (replayedLaunch?.runtimeId) {
       db.runtimes.update(replayedLaunch.runtimeId, {
         childPid: replayedLaunch.childPid,
@@ -2503,9 +2503,9 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       signal: body.signal,
       updatedAt: now,
     })
-    const replayedLaunch = db.launches.findById(launchId)
+    const replayedLaunch = db.launches.getByLaunchId(launchId)
     if (replayedLaunch?.runtimeId) {
-      const runtime = db.runtimes.findById(replayedLaunch.runtimeId)
+      const runtime = db.runtimes.getByRuntimeId(replayedLaunch.runtimeId)
       const activeRunId = runtime?.activeRunId
       db.runtimes.updateRunId(replayedLaunch.runtimeId, undefined, now)
       db.runtimes.update(replayedLaunch.runtimeId, {
@@ -3250,16 +3250,16 @@ function parseSessionRef(sessionRef: string): { scopeRef: string; laneRef: strin
 
 function findContinuitySession(db: HrcDatabase, sessionRef: string): HrcSessionRecord | null {
   const { scopeRef, laneRef } = parseSessionRef(sessionRef)
-  const continuity = db.continuities.findByRef(scopeRef, laneRef)
+  const continuity = db.continuities.getByKey(scopeRef, laneRef)
   if (!continuity) {
     return null
   }
 
-  return db.sessions.findByHostSessionId(continuity.activeHostSessionId)
+  return db.sessions.getByHostSessionId(continuity.activeHostSessionId)
 }
 
 function requireSession(db: HrcDatabase, hostSessionId: string): HrcSessionRecord {
-  const session = db.sessions.findByHostSessionId(hostSessionId)
+  const session = db.sessions.getByHostSessionId(hostSessionId)
   if (!session) {
     throw new HrcNotFoundError(
       HrcErrorCode.UNKNOWN_HOST_SESSION,
@@ -3272,7 +3272,7 @@ function requireSession(db: HrcDatabase, hostSessionId: string): HrcSessionRecor
 }
 
 function requireContinuity(db: HrcDatabase, session: HrcSessionRecord) {
-  const continuity = db.continuities.findByRef(session.scopeRef, session.laneRef)
+  const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
   if (!continuity) {
     throw new HrcNotFoundError(
       HrcErrorCode.UNKNOWN_SESSION,
@@ -3304,9 +3304,9 @@ function buildStaleLaunchCallbackRejection(
   callbackKind: 'wrapper_started' | 'child_started' | 'exited',
   replayed = false
 ): { event: HrcEventEnvelope; error: HrcConflictError } | null {
-  const continuity = db.continuities.findByRef(session.scopeRef, session.laneRef)
+  const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
   const activeSession = continuity
-    ? db.sessions.findByHostSessionId(continuity.activeHostSessionId)
+    ? db.sessions.getByHostSessionId(continuity.activeHostSessionId)
     : null
   if (activeSession && activeSession.hostSessionId !== session.hostSessionId) {
     const activeRuntime = findLatestSessionRuntime(db, activeSession.hostSessionId)
@@ -3339,12 +3339,12 @@ function buildStaleLaunchCallbackRejection(
     }
   }
 
-  const existingLaunch = db.launches.findById(launchId)
+  const existingLaunch = db.launches.getByLaunchId(launchId)
   if (!existingLaunch?.runtimeId) {
     return null
   }
 
-  const runtime = db.runtimes.findById(existingLaunch.runtimeId)
+  const runtime = db.runtimes.getByRuntimeId(existingLaunch.runtimeId)
   if (
     existingLaunch.status === 'failed' ||
     existingLaunch.status === 'terminated' ||
@@ -3521,7 +3521,7 @@ function validateBridgeFence(fence: HrcFence | undefined, activeSession: HrcSess
 }
 
 function requireRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot {
-  const runtime = db.runtimes.findById(runtimeId)
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime "${runtimeId}"`, {
       runtimeId,
@@ -3573,7 +3573,7 @@ function upsertLaunch(
   session: HrcSessionRecord,
   patch: Partial<HrcLaunchRecord> & { updatedAt: string; status: string }
 ): HrcLaunchRecord {
-  const existing = db.launches.findById(launchId)
+  const existing = db.launches.getByLaunchId(launchId)
   if (existing) {
     return db.launches.update(launchId, patch) ?? existing
   }
@@ -3755,7 +3755,7 @@ function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapshot): voi
     return
   }
 
-  const run = db.runs.findById(runtime.activeRunId)
+  const run = db.runs.getByRunId(runtime.activeRunId)
   if (!run || isRunActive(run)) {
     throw new HrcConflictError(HrcErrorCode.RUNTIME_BUSY, 'runtime already has an active run', {
       runtimeId: runtime.runtimeId,

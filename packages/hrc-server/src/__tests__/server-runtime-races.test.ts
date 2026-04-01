@@ -391,7 +391,7 @@ describe('M-5: failed tmux dispatch rollback', () => {
 
     // RED GATE: After the failure, runtime must NOT be stuck as "busy".
     // Current bug: runtime stays busy, accepted run is never cleaned up.
-    const runtime = db.runtimes.findById(seed.runtimeId)
+    const runtime = db.runtimes.getByRuntimeId(seed.runtimeId)
     expect(runtime).not.toBeNull()
     expect(runtime!.status).toBe('ready') // RED: currently stays 'busy'
   })
@@ -496,7 +496,7 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
     expect(res.status).toBe(200)
 
     // RED GATE: The active run must be finalized — not left as "accepted"
-    const run = db.runs.findById(seed.runId)
+    const run = db.runs.getByRunId(seed.runId)
     expect(run).not.toBeNull()
     expect(run!.status).not.toBe('accepted') // RED: currently stays 'accepted'
     expect(run!.status).toMatch(/cancelled|terminated|failed/)
@@ -510,7 +510,7 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
     await postJson('/v1/terminate', { runtimeId: seed.runtimeId })
 
     // RED GATE: activeRunId must be cleared after terminate
-    const runtime = db.runtimes.findById(seed.runtimeId)
+    const runtime = db.runtimes.getByRuntimeId(seed.runtimeId)
     expect(runtime).not.toBeNull()
     expect(runtime!.activeRunId).toBeUndefined() // RED: currently still set
   })
@@ -530,7 +530,7 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
     })
 
     // The exited callback should be rejected or accepted without resurrection
-    const runtime = db.runtimes.findById(seed.runtimeId)
+    const runtime = db.runtimes.getByRuntimeId(seed.runtimeId)
     expect(runtime).not.toBeNull()
 
     // RED GATE: Runtime must stay "terminated", NOT flip back to "ready"

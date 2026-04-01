@@ -135,7 +135,7 @@ describe('ContinuityRepository', () => {
       expect(record.laneRef).toBe('default')
       expect(record.activeHostSessionId).toBe('hsid-001')
 
-      const found = db.continuities.findByRef('test-scope', 'default')
+      const found = db.continuities.getByKey('test-scope', 'default')
       expect(found).not.toBeNull()
       expect(found!.activeHostSessionId).toBe('hsid-001')
     } finally {
@@ -160,7 +160,7 @@ describe('ContinuityRepository', () => {
         activeHostSessionId: 'hsid-002',
         updatedAt: ts(),
       })
-      const found = db.continuities.findByRef('test-scope', 'default')
+      const found = db.continuities.getByKey('test-scope', 'default')
       expect(found!.activeHostSessionId).toBe('hsid-002')
     } finally {
       db.close()
@@ -170,7 +170,7 @@ describe('ContinuityRepository', () => {
   it('returns null for unknown ref', () => {
     const db = openHrcDatabase(dbPath)
     try {
-      const found = db.continuities.findByRef('nonexistent', 'nope')
+      const found = db.continuities.getByKey('nonexistent', 'nope')
       expect(found).toBeNull()
     } finally {
       db.close()
@@ -199,7 +199,7 @@ describe('SessionRepository', () => {
       const created = db.sessions.create(session)
       expect(created.hostSessionId).toBe('hsid-100')
 
-      const found = db.sessions.findByHostSessionId('hsid-100')
+      const found = db.sessions.getByHostSessionId('hsid-100')
       expect(found).not.toBeNull()
       expect(found!.generation).toBe(1)
       expect(found!.status).toBe('active')
@@ -233,7 +233,7 @@ describe('SessionRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      const list = db.sessions.findByRef('scope-b', 'default')
+      const list = db.sessions.listByScopeRef('scope-b', 'default')
       expect(list.length).toBe(2)
     } finally {
       db.close()
@@ -366,7 +366,7 @@ describe('RuntimeRepository', () => {
       const created = db.runtimes.create(runtime)
       expect(created.runtimeId).toBe('rt-001')
 
-      const found = db.runtimes.findById('rt-001')
+      const found = db.runtimes.getByRuntimeId('rt-001')
       expect(found).not.toBeNull()
       expect(found!.harness).toBe('claude-code')
     } finally {
@@ -489,7 +489,7 @@ describe('RuntimeRepository', () => {
       })
       expect(created.tmuxJson).toEqual(tmuxJson)
 
-      const found = db.runtimes.findById('rt-tmux-1')
+      const found = db.runtimes.getByRuntimeId('rt-tmux-1')
       expect(found!.tmuxJson).toEqual(tmuxJson)
     } finally {
       db.close()
@@ -530,7 +530,7 @@ describe('RunRepository', () => {
       const created = db.runs.create(run)
       expect(created.runId).toBe('run-001')
 
-      const found = db.runs.findById('run-001')
+      const found = db.runs.getByRunId('run-001')
       expect(found).not.toBeNull()
       expect(found!.status).toBe('accepted')
     } finally {
@@ -613,7 +613,7 @@ describe('LaunchRepository', () => {
       const created = db.launches.create(launch)
       expect(created.launchId).toBe('launch-001')
 
-      const found = db.launches.findById('launch-001')
+      const found = db.launches.getByLaunchId('launch-001')
       expect(found).not.toBeNull()
       expect(found!.status).toBe('pending')
     } finally {
@@ -1123,7 +1123,7 @@ describe('WAL concurrent reads', () => {
         })
 
         // Reader should be able to query without blocking
-        const session = db2.sessions.findByHostSessionId('hsid-wal-1')
+        const session = db2.sessions.getByHostSessionId('hsid-wal-1')
         expect(session).not.toBeNull()
       } finally {
         db2.close()

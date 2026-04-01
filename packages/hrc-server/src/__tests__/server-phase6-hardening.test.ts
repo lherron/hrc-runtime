@@ -52,7 +52,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
-import type { HrcServer, HrcServerOptions } from '../index'
+import type { HrcServerOptions } from '../index'
 
 let tmpDir: string
 let runtimeRoot: string

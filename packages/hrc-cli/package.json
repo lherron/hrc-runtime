@@ -24,11 +24,11 @@
   },
   "dependencies": {
     "hrc-core": "*",
-    "hrc-sdk": "*",
-    "hrc-server": "*"
+    "hrc-sdk": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "hrc-server": "*",
     "typescript": "^5.8.3"
   }
 }

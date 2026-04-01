@@ -25,20 +25,28 @@ function printJson(value: unknown): void {
 
 function requireArg(args: string[], index: number, name: string): string {
   const value = args[index]
-  if (value === undefined || value.startsWith('-')) {
+  if (value === undefined) {
     fatal(`missing required argument: ${name}`)
   }
   return value
 }
 
 function parseFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag)
-  if (idx === -1) return undefined
-  const value = args[idx + 1]
-  if (value === undefined || value.startsWith('-')) {
-    fatal(`${flag} requires a value`)
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === flag) {
+      const value = args[i + 1]
+      if (value === undefined) {
+        fatal(`${flag} requires a value`)
+      }
+      return value
+    }
+    // Support --flag=value syntax
+    if (arg?.startsWith(`${flag}=`)) {
+      return arg.slice(flag.length + 1)
+    }
   }
-  return value
+  return undefined
 }
 
 function hasFlag(args: string[], flag: string): boolean {
@@ -221,9 +229,7 @@ async function cmdStatus(): Promise<void> {
 async function cmdRuntimeList(args: string[]): Promise<void> {
   const hostSessionId = parseFlag(args, '--host-session-id')
   const client = createClient()
-  const runtimes = await client.listRuntimes(
-    hostSessionId ? { hostSessionId } : undefined
-  )
+  const runtimes = await client.listRuntimes(hostSessionId ? { hostSessionId } : undefined)
   printJson(runtimes)
 }
 

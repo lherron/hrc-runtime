@@ -64,7 +64,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
       logged.push(args.map(String).join(' '))
     })
     try {
-      const session = db.sessions.findByHostSessionId('hsid-corrupt-1')
+      const session = db.sessions.getByHostSessionId('hsid-corrupt-1')
       expect(session).not.toBeNull()
       expect(session!.parsedScopeJson).toBeUndefined()
       // Should have logged the corruption
@@ -81,7 +81,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const session = db.sessions.findByHostSessionId('hsid-corrupt-2')
+      const session = db.sessions.getByHostSessionId('hsid-corrupt-2')
       expect(session).not.toBeNull()
       expect(session!.lastAppliedIntentJson).toBeUndefined()
       expect(errorSpy).toHaveBeenCalled()
@@ -96,7 +96,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const session = db.sessions.findByHostSessionId('hsid-corrupt-3')
+      const session = db.sessions.getByHostSessionId('hsid-corrupt-3')
       expect(session).not.toBeNull()
       expect(session!.continuation).toBeUndefined()
       expect(errorSpy).toHaveBeenCalled()
@@ -186,7 +186,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
       logged.push(args.map(String).join(' '))
     })
     try {
-      db.sessions.findByHostSessionId('hsid-log-ctx')
+      db.sessions.getByHostSessionId('hsid-log-ctx')
       expect(logged.length).toBeGreaterThan(0)
       // Must contain column name
       expect(logged[0]).toContain('parsed_scope_json')
@@ -222,7 +222,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const sessions = db.sessions.findByRef('scope-corrupt', 'default')
+      const sessions = db.sessions.listByScopeRef('scope-corrupt', 'default')
       expect(sessions.length).toBe(2)
       // One has undefined parsedScopeJson, the other doesn't
       const corrupted = sessions.find((s) => s.hostSessionId === 'hsid-ok-1')

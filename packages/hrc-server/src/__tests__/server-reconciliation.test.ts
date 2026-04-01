@@ -205,8 +205,8 @@ describe('startup reconciliation', () => {
     server = await createHrcServer(serverOpts())
 
     const reloaded = openHrcDatabase(dbPath)
-    const launch = reloaded.launches.findById(launchId)
-    const runtime = reloaded.runtimes.findById(runtimeId)
+    const launch = reloaded.launches.getByLaunchId(launchId)
+    const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
     reloaded.close()
 
@@ -229,7 +229,7 @@ describe('startup reconciliation', () => {
     server = await createHrcServer(serverOpts())
 
     const reloaded = openHrcDatabase(dbPath)
-    const runtime = reloaded.runtimes.findById(runtimeId)
+    const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
     reloaded.close()
 
@@ -341,8 +341,8 @@ describe('stale callback rejection', () => {
     expect(body.error.code).toBe(HrcErrorCode.STALE_CONTEXT)
 
     const reloaded = openHrcDatabase(dbPath)
-    const runtime = reloaded.runtimes.findById(runtimeId)
-    const oldLaunch = reloaded.launches.findById(oldLaunchId)
+    const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
+    const oldLaunch = reloaded.launches.getByLaunchId(oldLaunchId)
     const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
     reloaded.close()
 

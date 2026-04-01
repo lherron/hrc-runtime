@@ -5,8 +5,9 @@ export const HrcErrorCode = {
   UNKNOWN_SESSION: 'unknown_session',
   UNKNOWN_HOST_SESSION: 'unknown_host_session',
   UNKNOWN_RUNTIME: 'unknown_runtime',
-  UNKNOWN_SURFACE: 'unknown_surface',
-  UNKNOWN_BRIDGE: 'unknown_bridge',
+  UNKNOWN_SURFACE: 'unknown_surface', // Phase 4 forward declaration — surfaces are resolved in phase 4
+  UNKNOWN_BRIDGE: 'unknown_bridge', // Phase 5 forward declaration — bridges are resolved in phase 5
+  /** @deprecated Use STALE_CONTEXT instead. Alias retained for backward compatibility with existing server/SDK references. */
   CONFLICT: 'stale_context',
   STALE_CONTEXT: 'stale_context',
   RUNTIME_BUSY: 'runtime_busy',

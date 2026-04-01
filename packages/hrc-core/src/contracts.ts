@@ -55,6 +55,10 @@ export type HrcRuntimeIntent = {
 
 export type HrcHookBridgeConfig = {
   kind: string
+  /**
+   * Opaque JSON config for the hook bridge. Validated by the bridge
+   * implementation at registration time, not by hrc-core.
+   */
   config?: Record<string, unknown> | undefined
 }
 
@@ -94,6 +98,7 @@ export type HrcSessionRecord = {
   priorHostSessionId?: string | undefined
   createdAt: string
   updatedAt: string
+  /** Opaque JSON from scope resolution. Validated at session creation by the server, not by consumers. */
   parsedScopeJson?: Record<string, unknown> | undefined
   ancestorScopeRefs: string[]
   lastAppliedIntentJson?: HrcRuntimeIntent | undefined
@@ -111,9 +116,11 @@ export type HrcRuntimeSnapshot = {
   harness: HrcHarness
   provider: HrcProvider
   status: string
+  /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
   wrapperPid?: number | undefined
   childPid?: number | undefined
+  /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
   harnessSessionJson?: Record<string, unknown> | undefined
   continuation?: HrcContinuationRef | undefined
   supportsInflightInput: boolean
@@ -149,9 +156,11 @@ export type HrcLaunchRecord = {
   harness: HrcHarness
   provider: HrcProvider
   launchArtifactPath: string
+  /** Opaque tmux session metadata. Validated by hrc-server at launch creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
   wrapperPid?: number | undefined
   childPid?: number | undefined
+  /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
   harnessSessionJson?: Record<string, unknown> | undefined
   continuation?: HrcContinuationRef | undefined
   wrapperStartedAt?: string | undefined
@@ -183,6 +192,7 @@ export type HrcAppSessionRecord = {
   appSessionKey: string
   hostSessionId: string
   label?: string | undefined
+  /** Opaque app-defined metadata. Validated by the app at apply time, not by hrc-core. */
   metadata?: Record<string, unknown> | undefined
   createdAt: string
   updatedAt: string

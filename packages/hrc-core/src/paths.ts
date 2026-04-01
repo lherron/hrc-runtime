@@ -41,7 +41,10 @@ export function resolveStateRoot(): string {
     return join(xdgStateHome, 'hrc')
   }
 
-  const homeDir = readEnv('HOME') ?? '.'
+  const homeDir = readEnv('HOME')
+  if (homeDir === undefined) {
+    throw new Error('Cannot resolve HRC state directory: HOME environment variable is not set')
+  }
   return join(homeDir, '.local', 'state', 'hrc')
 }
 
