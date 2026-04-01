@@ -185,7 +185,7 @@ async function seedReadyTmuxRuntime(
     updatedAt: now,
   })
 
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef,
     laneRef: 'default',
@@ -196,7 +196,7 @@ async function seedReadyTmuxRuntime(
     updatedAt: now,
   })
 
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId,
     hostSessionId,
     scopeRef,
@@ -279,7 +279,7 @@ async function seedBusyRuntime(
     updatedAt: now,
   })
 
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef,
     laneRef: 'default',
@@ -290,7 +290,7 @@ async function seedBusyRuntime(
     updatedAt: now,
   })
 
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId,
     hostSessionId,
     scopeRef,
@@ -315,7 +315,7 @@ async function seedBusyRuntime(
     updatedAt: now,
   })
 
-  db.runs.create({
+  db.runs.insert({
     runId,
     hostSessionId,
     runtimeId,
@@ -328,7 +328,7 @@ async function seedBusyRuntime(
     updatedAt: now,
   })
 
-  db.launches.create({
+  db.launches.insert({
     launchId,
     hostSessionId,
     generation: 1,
@@ -419,7 +419,7 @@ describe('M-5: failed tmux dispatch rollback', () => {
     })
 
     // RED GATE: The run that was created as "accepted" must be finalized as "failed"
-    const runs = db.runs.findByRuntime(seed.runtimeId)
+    const runs = db.runs.listByRuntimeId(seed.runtimeId)
     const acceptedRuns = runs.filter((r) => r.status === 'accepted')
     const failedRuns = runs.filter((r) => r.status === 'failed')
 
@@ -552,7 +552,7 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
     })
 
     // RED GATE: There should be no "ready" runtime after terminate + exited
-    const runtimes = db.runtimes.findByHostSession(seed.hostSessionId)
+    const runtimes = db.runtimes.listByHostSessionId(seed.hostSessionId)
     const readyRuntimes = runtimes.filter((r) => r.status === 'ready')
     expect(readyRuntimes.length).toBe(0) // RED: exited flips terminated → ready
   })
@@ -623,7 +623,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
     const rt1 = `rt-${randomUUID()}`
     const rt2 = `rt-${randomUUID()}`
 
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: rt1,
       hostSessionId: session.hostSessionId,
       scopeRef: 'project:bridge-rt-test',
@@ -639,7 +639,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
       updatedAt: now,
     })
 
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: rt2,
       hostSessionId: session.hostSessionId,
       scopeRef: 'project:bridge-rt-test',

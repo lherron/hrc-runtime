@@ -41,7 +41,7 @@ afterEach(async () => {
 // Helper: insert a valid session with all required fields
 function insertSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: string) {
   const now = ts()
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef: `scope://${hostSessionId}`,
     laneRef: 'default',
@@ -102,7 +102,7 @@ describe('C-2: parseJson crash guard', () => {
     try {
       insertSession(db, 'hsid-rt-corrupt')
 
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-corrupt-1',
         hostSessionId: 'hsid-rt-corrupt',
         scopeRef: 'scope://hsid-rt-corrupt',
@@ -156,7 +156,7 @@ describe('C-2: parseJson crash guard', () => {
       )
 
       // Should not throw
-      const events = db.events.query({ hostSessionId: 'hsid-evt-corrupt' })
+      const events = db.events.listFromSeq(1, { hostSessionId: 'hsid-evt-corrupt' })
       expect(events.length).toBe(1)
       expect(events[0].eventKind).toBe('test.event')
       expect(events[0].eventJson).toBeUndefined()

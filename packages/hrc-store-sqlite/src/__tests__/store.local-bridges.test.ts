@@ -69,7 +69,7 @@ function seedSessionAndRuntime(
   const laneRef = opts.laneRef ?? 'default'
   const generation = opts.generation ?? 1
 
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId: opts.hostSessionId,
     scopeRef,
     laneRef,
@@ -80,7 +80,7 @@ function seedSessionAndRuntime(
     ancestorScopeRefs: [],
   })
 
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId: opts.runtimeId,
     hostSessionId: opts.hostSessionId,
     scopeRef,

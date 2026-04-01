@@ -196,7 +196,7 @@ describe('SessionRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       }
-      const created = db.sessions.create(session)
+      const created = db.sessions.insert(session)
       expect(created.hostSessionId).toBe('hsid-100')
 
       const found = db.sessions.getByHostSessionId('hsid-100')
@@ -212,7 +212,7 @@ describe('SessionRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-200',
         scopeRef: 'scope-b',
         laneRef: 'default',
@@ -222,7 +222,7 @@ describe('SessionRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-201',
         scopeRef: 'scope-b',
         laneRef: 'default',
@@ -244,7 +244,7 @@ describe('SessionRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-300',
         scopeRef: 'scope-c',
         laneRef: 'default',
@@ -267,7 +267,7 @@ describe('SessionRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-json-1',
         scopeRef: 'scope-json',
         laneRef: 'default',
@@ -303,7 +303,7 @@ describe('SessionRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-json-2',
         scopeRef: 'scope-json',
         laneRef: 'default',
@@ -337,7 +337,7 @@ describe('RuntimeRepository', () => {
     try {
       const now = ts()
       // Need a session first for the FK
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-rt-1',
         scopeRef: 'scope-rt',
         laneRef: 'default',
@@ -363,7 +363,7 @@ describe('RuntimeRepository', () => {
         createdAt: now,
         updatedAt: now,
       }
-      const created = db.runtimes.create(runtime)
+      const created = db.runtimes.insert(runtime)
       expect(created.runtimeId).toBe('rt-001')
 
       const found = db.runtimes.getByRuntimeId('rt-001')
@@ -378,7 +378,7 @@ describe('RuntimeRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-rt-2',
         scopeRef: 'scope-rt2',
         laneRef: 'default',
@@ -388,7 +388,7 @@ describe('RuntimeRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-002',
         hostSessionId: 'hsid-rt-2',
         scopeRef: 'scope-rt2',
@@ -416,7 +416,7 @@ describe('RuntimeRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-rt-3',
         scopeRef: 'scope-rt3',
         laneRef: 'default',
@@ -426,7 +426,7 @@ describe('RuntimeRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-003',
         hostSessionId: 'hsid-rt-3',
         scopeRef: 'scope-rt3',
@@ -460,7 +460,7 @@ describe('RuntimeRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-rt-tmux',
         scopeRef: 'scope-rt-tmux',
         laneRef: 'default',
@@ -471,7 +471,7 @@ describe('RuntimeRepository', () => {
         ancestorScopeRefs: [],
       })
       const tmuxJson = { sessionId: '%1', windowId: '@0', paneId: '%0' }
-      const created = db.runtimes.create({
+      const created = db.runtimes.insert({
         runtimeId: 'rt-tmux-1',
         hostSessionId: 'hsid-rt-tmux',
         scopeRef: 'scope-rt-tmux',
@@ -505,7 +505,7 @@ describe('RunRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-run-1',
         scopeRef: 'scope-run',
         laneRef: 'default',
@@ -527,7 +527,7 @@ describe('RunRepository', () => {
         updatedAt: now,
         acceptedAt: now,
       }
-      const created = db.runs.create(run)
+      const created = db.runs.insert(run)
       expect(created.runId).toBe('run-001')
 
       const found = db.runs.getByRunId('run-001')
@@ -542,7 +542,7 @@ describe('RunRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-run-2',
         scopeRef: 'scope-run2',
         laneRef: 'default',
@@ -552,7 +552,7 @@ describe('RunRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runs.create({
+      db.runs.insert({
         runId: 'run-002',
         hostSessionId: 'hsid-run-2',
         scopeRef: 'scope-run2',
@@ -588,7 +588,7 @@ describe('LaunchRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-launch-1',
         scopeRef: 'scope-launch',
         laneRef: 'default',
@@ -610,7 +610,7 @@ describe('LaunchRepository', () => {
         createdAt: now,
         updatedAt: now,
       }
-      const created = db.launches.create(launch)
+      const created = db.launches.insert(launch)
       expect(created.launchId).toBe('launch-001')
 
       const found = db.launches.getByLaunchId('launch-001')
@@ -625,7 +625,7 @@ describe('LaunchRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-launch-2',
         scopeRef: 'scope-launch2',
         laneRef: 'default',
@@ -635,7 +635,7 @@ describe('LaunchRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.launches.create({
+      db.launches.insert({
         launchId: 'launch-002',
         hostSessionId: 'hsid-launch-2',
         generation: 1,
@@ -687,7 +687,7 @@ describe('EventRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-evt-1',
         scopeRef: 'scope-evt',
         laneRef: 'default',
@@ -725,7 +725,7 @@ describe('EventRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-evt-2',
         scopeRef: 'scope-evt2',
         laneRef: 'default',
@@ -751,7 +751,7 @@ describe('EventRepository', () => {
       db.events.append(base)
       db.events.append(base)
 
-      const fromE2 = db.events.query({ hostSessionId: 'hsid-evt-2', fromSeq: e1.seq + 1 })
+      const fromE2 = db.events.listFromSeq(e1.seq + 1, { hostSessionId: 'hsid-evt-2' })
       expect(fromE2.length).toBe(2)
     } finally {
       db.close()
@@ -762,7 +762,7 @@ describe('EventRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-evt-3',
         scopeRef: 'scope-evt3',
         laneRef: 'default',
@@ -800,7 +800,7 @@ describe('EventRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-evt-json',
         scopeRef: 'scope-evt-json',
         laneRef: 'default',
@@ -828,7 +828,7 @@ describe('EventRepository', () => {
         eventJson: complexPayload,
       })
 
-      const queried = db.events.query({ hostSessionId: 'hsid-evt-json' })
+      const queried = db.events.listFromSeq(1, { hostSessionId: 'hsid-evt-json' })
       expect(queried.length).toBe(1)
       expect(queried[0].eventJson).toEqual(complexPayload)
     } finally {
@@ -845,7 +845,7 @@ describe('SurfaceBindingRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-surface-1',
         scopeRef: 'scope-surface',
         laneRef: 'default',
@@ -855,7 +855,7 @@ describe('SurfaceBindingRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-surface-1',
         hostSessionId: 'hsid-surface-1',
         scopeRef: 'scope-surface',
@@ -900,7 +900,7 @@ describe('SurfaceBindingRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-surface-2',
         scopeRef: 'scope-surface',
         laneRef: 'default',
@@ -910,7 +910,7 @@ describe('SurfaceBindingRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-surface-3',
         scopeRef: 'scope-surface',
         laneRef: 'default',
@@ -920,7 +920,7 @@ describe('SurfaceBindingRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-surface-2',
         hostSessionId: 'hsid-surface-2',
         scopeRef: 'scope-surface',
@@ -935,7 +935,7 @@ describe('SurfaceBindingRepository', () => {
         createdAt: now,
         updatedAt: now,
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-surface-3',
         hostSessionId: 'hsid-surface-3',
         scopeRef: 'scope-surface',
@@ -982,7 +982,7 @@ describe('SurfaceBindingRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-surface-4',
         scopeRef: 'scope-surface',
         laneRef: 'default',
@@ -992,7 +992,7 @@ describe('SurfaceBindingRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-surface-4',
         hostSessionId: 'hsid-surface-4',
         scopeRef: 'scope-surface',
@@ -1037,7 +1037,7 @@ describe('RuntimeBufferRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-buf-1',
         scopeRef: 'scope-buf',
         laneRef: 'default',
@@ -1047,7 +1047,7 @@ describe('RuntimeBufferRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      db.runtimes.create({
+      db.runtimes.insert({
         runtimeId: 'rt-buf-1',
         hostSessionId: 'hsid-buf-1',
         scopeRef: 'scope-buf',
@@ -1076,7 +1076,7 @@ describe('RuntimeBufferRepository', () => {
         createdAt: now,
       })
 
-      const chunks = db.runtimeBuffers.queryByRuntime('rt-buf-1')
+      const chunks = db.runtimeBuffers.listByRuntimeId('rt-buf-1')
       expect(chunks.length).toBe(2)
       expect(chunks[0].chunkSeq).toBe(1)
       expect(chunks[1].chunkSeq).toBe(2)
@@ -1096,7 +1096,7 @@ describe('WAL concurrent reads', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const now = ts()
-      db.sessions.create({
+      db.sessions.insert({
         hostSessionId: 'hsid-wal-1',
         scopeRef: 'scope-wal',
         laneRef: 'default',

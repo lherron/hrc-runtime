@@ -541,7 +541,7 @@ describe('SDK → server round-trip', () => {
     const runtimeId = `rt-test-${randomUUID()}`
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId: resolved.hostSessionId,
       scopeRef: 'project:surface-roundtrip',
@@ -769,7 +769,7 @@ describe('Phase 6 diagnostics round-trip', () => {
     const runtimeId = `rt-adopt-dead-${randomUUID()}`
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId: resolved.hostSessionId,
       scopeRef: 'project:diag-adopt-dead',

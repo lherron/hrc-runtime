@@ -166,7 +166,7 @@ function seedOrphanedLaunch(
     updatedAt: now,
   })
 
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef,
     laneRef: 'default',
@@ -177,7 +177,7 @@ function seedOrphanedLaunch(
     updatedAt: now,
   })
 
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId,
     hostSessionId,
     scopeRef,
@@ -204,7 +204,7 @@ function seedOrphanedLaunch(
   })
 
   // Launch with orphanable status and dead PID (2147483647 unlikely to be alive)
-  db.launches.create({
+  db.launches.insert({
     launchId,
     hostSessionId,
     generation,
@@ -325,7 +325,7 @@ describe('orphaned launch reconciliation on startup', () => {
       activeHostSessionId: hostSessionId,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId,
       scopeRef,
       laneRef: 'default',
@@ -335,7 +335,7 @@ describe('orphaned launch reconciliation on startup', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef,
@@ -360,7 +360,7 @@ describe('orphaned launch reconciliation on startup', () => {
     })
 
     for (const launchId of [launchId1, launchId2]) {
-      db.launches.create({
+      db.launches.insert({
         launchId,
         hostSessionId,
         generation: 1,
@@ -412,7 +412,7 @@ describe('stale launch callback rejection', () => {
       activeHostSessionId: hostSessionId2,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId1,
       scopeRef: 'project:stale-cb',
       laneRef: 'default',
@@ -422,7 +422,7 @@ describe('stale launch callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId2,
       scopeRef: 'project:stale-cb',
       laneRef: 'default',
@@ -433,7 +433,7 @@ describe('stale launch callback rejection', () => {
       updatedAt: now,
     })
     // Active runtime on gen 2 — SDK transport so tmux reconciliation won't touch it
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId: hostSessionId2,
       scopeRef: 'project:stale-cb',
@@ -448,7 +448,7 @@ describe('stale launch callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.launches.create({
+    db.launches.insert({
       launchId: staleLaunchId,
       hostSessionId: hostSessionId1,
       generation: 1,
@@ -502,7 +502,7 @@ describe('stale launch callback rejection', () => {
       activeHostSessionId: hostSessionId2,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId1,
       scopeRef: 'project:stale-exit',
       laneRef: 'default',
@@ -512,7 +512,7 @@ describe('stale launch callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId2,
       scopeRef: 'project:stale-exit',
       laneRef: 'default',
@@ -524,7 +524,7 @@ describe('stale launch callback rejection', () => {
     })
     // Active gen-2 runtime — SDK transport so tmux reconciliation won't touch it
     const activeRunId = `run-${randomUUID()}`
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: activeRuntimeId,
       hostSessionId: hostSessionId2,
       scopeRef: 'project:stale-exit',
@@ -542,7 +542,7 @@ describe('stale launch callback rejection', () => {
     })
     // Stale launch from gen-1 (points to old runtime, not the active one)
     const oldRuntimeId = `rt-old-exit-${randomUUID()}`
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: oldRuntimeId,
       hostSessionId: hostSessionId1,
       scopeRef: 'project:stale-exit',
@@ -557,7 +557,7 @@ describe('stale launch callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.launches.create({
+    db.launches.insert({
       launchId: staleLaunchId,
       hostSessionId: hostSessionId1,
       generation: 1,
@@ -616,7 +616,7 @@ describe('dead runtime detection', () => {
       activeHostSessionId: hostSessionId,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId,
       scopeRef: 'project:dead-tmux',
       laneRef: 'default',
@@ -626,7 +626,7 @@ describe('dead runtime detection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef: 'project:dead-tmux',
@@ -695,7 +695,7 @@ describe('runtime adoption', () => {
       activeHostSessionId: hostSessionId,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId,
       scopeRef: 'project:adopt',
       laneRef: 'default',
@@ -705,7 +705,7 @@ describe('runtime adoption', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef: 'project:adopt',
@@ -780,7 +780,7 @@ describe('runtime adoption', () => {
       activeHostSessionId: hostSessionId,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId,
       scopeRef: 'project:adopt-conflict',
       laneRef: 'default',
@@ -790,7 +790,7 @@ describe('runtime adoption', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef: 'project:adopt-conflict',
@@ -891,7 +891,7 @@ describe('spool replay stale callback safety', () => {
       activeHostSessionId: hostSessionId2,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId1,
       scopeRef: 'project:spool-stale',
       laneRef: 'default',
@@ -901,7 +901,7 @@ describe('spool replay stale callback safety', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: hostSessionId2,
       scopeRef: 'project:spool-stale',
       laneRef: 'default',
@@ -912,7 +912,7 @@ describe('spool replay stale callback safety', () => {
       updatedAt: now,
     })
     // Active gen-2 runtime (SDK transport, no tmux reconciliation)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: activeRuntimeId,
       hostSessionId: hostSessionId2,
       scopeRef: 'project:spool-stale',
@@ -928,7 +928,7 @@ describe('spool replay stale callback safety', () => {
       updatedAt: now,
     })
     // Old gen-1 runtime (already terminated)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId: oldRuntimeId,
       hostSessionId: hostSessionId1,
       scopeRef: 'project:spool-stale',
@@ -944,7 +944,7 @@ describe('spool replay stale callback safety', () => {
       updatedAt: now,
     })
     // Stale launch from gen-1, pointing to old runtime
-    db.launches.create({
+    db.launches.insert({
       launchId: staleLaunchId,
       hostSessionId: hostSessionId1,
       generation: 1,

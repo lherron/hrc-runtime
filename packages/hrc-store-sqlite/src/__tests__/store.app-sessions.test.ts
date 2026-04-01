@@ -63,7 +63,7 @@ function seedSession(
   }
 ) {
   const now = ts()
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId: opts.hostSessionId,
     scopeRef: opts.scopeRef ?? 'test-scope',
     laneRef: opts.laneRef ?? 'default',

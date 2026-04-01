@@ -245,7 +245,7 @@ describe('runtime lifecycle commands', () => {
     const runtimeId = `rt-test-${randomUUID()}`
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef: session.scopeRef,
@@ -649,7 +649,7 @@ describe('Phase 6 diagnostics CLI', () => {
     const runtimeId = `rt-adopt-cli-${randomUUID()}`
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId: resolved.hostSessionId,
       scopeRef: 'project:diag-adopt-cli',

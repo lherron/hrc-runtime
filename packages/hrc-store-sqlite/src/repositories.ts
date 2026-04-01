@@ -258,6 +258,140 @@ function toSessionRef(scopeRef: string, laneRef: string): string {
   return normalizeSessionRef(`${scopeRef}/lane:${laneRef}`)
 }
 
+// ── Canonical SQL column lists ──────────────────────────────────────────
+// Each constant enumerates the columns for a given row shape exactly once.
+// Every SELECT in the repository layer references these constants so that
+// column additions/removals are a single-site change.
+
+const SESSION_COLUMNS = `
+  host_session_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  status,
+  prior_host_session_id,
+  created_at,
+  updated_at,
+  parsed_scope_json,
+  ancestor_scope_refs_json,
+  last_applied_intent_json,
+  continuation_json`
+
+const RUNTIME_COLUMNS = `
+  runtime_id,
+  host_session_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  launch_id,
+  transport,
+  harness,
+  provider,
+  status,
+  tmux_json,
+  wrapper_pid,
+  child_pid,
+  harness_session_json,
+  continuation_json,
+  supports_inflight_input,
+  adopted,
+  active_run_id,
+  last_activity_at,
+  created_at,
+  updated_at`
+
+const RUN_COLUMNS = `
+  run_id,
+  host_session_id,
+  runtime_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  transport,
+  status,
+  accepted_at,
+  started_at,
+  completed_at,
+  updated_at,
+  error_code,
+  error_message`
+
+const LAUNCH_COLUMNS = `
+  launch_id,
+  host_session_id,
+  generation,
+  runtime_id,
+  harness,
+  provider,
+  launch_artifact_path,
+  tmux_json,
+  wrapper_pid,
+  child_pid,
+  harness_session_json,
+  continuation_json,
+  wrapper_started_at,
+  child_started_at,
+  exited_at,
+  exit_code,
+  signal,
+  status,
+  created_at,
+  updated_at`
+
+const EVENT_COLUMNS = `
+  seq,
+  ts,
+  host_session_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  run_id,
+  runtime_id,
+  source,
+  event_kind,
+  event_json`
+
+const APP_SESSION_COLUMNS = `
+  app_id,
+  app_session_key,
+  host_session_id,
+  label,
+  metadata_json,
+  created_at,
+  updated_at,
+  removed_at`
+
+const LOCAL_BRIDGE_COLUMNS = `
+  bridge_id,
+  host_session_id,
+  runtime_id,
+  transport,
+  target,
+  expected_host_session_id,
+  expected_generation,
+  status,
+  created_at,
+  closed_at`
+
+const SURFACE_BINDING_COLUMNS = `
+  surface_kind,
+  surface_id,
+  host_session_id,
+  runtime_id,
+  generation,
+  window_id,
+  tab_id,
+  pane_id,
+  bound_at,
+  unbound_at,
+  reason`
+
+const RUNTIME_BUFFER_COLUMNS = `
+  runtime_id,
+  chunk_seq,
+  text,
+  created_at`
+
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
   db.prepare<never, SQLQueryBindings[]>(sql).run(...params)
 }
@@ -586,30 +720,10 @@ export class SessionRepository {
     )
   }
 
-  create(record: HrcSessionRecord): HrcSessionRecord {
-    return this.insert(record)
-  }
-
   getByHostSessionId(hostSessionId: string): HrcSessionRecord | null {
     const row = this.db
       .query<SessionRow, [string]>(
-        `
-          SELECT
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            status,
-            prior_host_session_id,
-            created_at,
-            updated_at,
-            parsed_scope_json,
-            ancestor_scope_refs_json,
-            last_applied_intent_json,
-            continuation_json
-          FROM sessions
-          WHERE host_session_id = ?
-        `
+        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE host_session_id = ?`
       )
       .get(hostSessionId)
 
@@ -676,24 +790,9 @@ export class SessionRepository {
     if (filters.laneRef) {
       const rows = this.db
         .query<SessionRow, [string, string]>(
-          `
-            SELECT
-              host_session_id,
-              scope_ref,
-              lane_ref,
-              generation,
-              status,
-              prior_host_session_id,
-              created_at,
-              updated_at,
-              parsed_scope_json,
-              ancestor_scope_refs_json,
-              last_applied_intent_json,
-              continuation_json
-            FROM sessions
+          `SELECT ${SESSION_COLUMNS} FROM sessions
             WHERE scope_ref = ? AND lane_ref = ?
-            ORDER BY generation ASC
-          `
+            ORDER BY generation ASC`
         )
         .all(filters.scopeRef, filters.laneRef)
 
@@ -702,24 +801,9 @@ export class SessionRepository {
 
     const rows = this.db
       .query<SessionRow, [string]>(
-        `
-          SELECT
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            status,
-            prior_host_session_id,
-            created_at,
-            updated_at,
-            parsed_scope_json,
-            ancestor_scope_refs_json,
-            last_applied_intent_json,
-            continuation_json
-          FROM sessions
+        `SELECT ${SESSION_COLUMNS} FROM sessions
           WHERE scope_ref = ?
-          ORDER BY lane_ref ASC, generation ASC
-        `
+          ORDER BY lane_ref ASC, generation ASC`
       )
       .all(filters.scopeRef)
 
@@ -764,19 +848,8 @@ export class AppSessionRepository {
   findByKey(appId: string, appSessionKey: string): HrcAppSessionRecord | null {
     const row = this.db
       .query<AppSessionRow, [string, string]>(
-        `
-          SELECT
-            app_id,
-            app_session_key,
-            host_session_id,
-            label,
-            metadata_json,
-            created_at,
-            updated_at,
-            removed_at
-          FROM app_sessions
-          WHERE app_id = ? AND app_session_key = ?
-        `
+        `SELECT ${APP_SESSION_COLUMNS} FROM app_sessions
+          WHERE app_id = ? AND app_session_key = ?`
       )
       .get(appId, appSessionKey)
 
@@ -786,20 +859,9 @@ export class AppSessionRepository {
   findByApp(appId: string): HrcAppSessionRecord[] {
     const rows = this.db
       .query<AppSessionRow, [string]>(
-        `
-          SELECT
-            app_id,
-            app_session_key,
-            host_session_id,
-            label,
-            metadata_json,
-            created_at,
-            updated_at,
-            removed_at
-          FROM app_sessions
+        `SELECT ${APP_SESSION_COLUMNS} FROM app_sessions
           WHERE app_id = ?
-          ORDER BY app_session_key ASC
-        `
+          ORDER BY app_session_key ASC`
       )
       .all(appId)
 
@@ -809,20 +871,9 @@ export class AppSessionRepository {
   findByHostSession(hostSessionId: string): HrcAppSessionRecord[] {
     const rows = this.db
       .query<AppSessionRow, [string]>(
-        `
-          SELECT
-            app_id,
-            app_session_key,
-            host_session_id,
-            label,
-            metadata_json,
-            created_at,
-            updated_at,
-            removed_at
-          FROM app_sessions
+        `SELECT ${APP_SESSION_COLUMNS} FROM app_sessions
           WHERE host_session_id = ?
-          ORDER BY app_id ASC, app_session_key ASC
-        `
+          ORDER BY app_id ASC, app_session_key ASC`
       )
       .all(hostSessionId)
 
@@ -999,40 +1050,9 @@ export class RuntimeRepository {
     )
   }
 
-  create(record: HrcRuntimeSnapshot): HrcRuntimeSnapshot {
-    return this.insert(record)
-  }
-
   getByRuntimeId(runtimeId: string): HrcRuntimeSnapshot | null {
     const row = this.db
-      .query<RuntimeRow, [string]>(
-        `
-          SELECT
-            runtime_id,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            launch_id,
-            transport,
-            harness,
-            provider,
-            status,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            supports_inflight_input,
-            adopted,
-            active_run_id,
-            last_activity_at,
-            created_at,
-            updated_at
-          FROM runtimes
-          WHERE runtime_id = ?
-        `
-      )
+      .query<RuntimeRow, [string]>(`SELECT ${RUNTIME_COLUMNS} FROM runtimes WHERE runtime_id = ?`)
       .get(runtimeId)
 
     return row ? mapRuntimeRow(row) : null
@@ -1041,72 +1061,20 @@ export class RuntimeRepository {
   listByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot[] {
     const rows = this.db
       .query<RuntimeRow, [string]>(
-        `
-          SELECT
-            runtime_id,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            launch_id,
-            transport,
-            harness,
-            provider,
-            status,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            supports_inflight_input,
-            adopted,
-            active_run_id,
-            last_activity_at,
-            created_at,
-            updated_at
-          FROM runtimes
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
           WHERE host_session_id = ?
-          ORDER BY created_at ASC, runtime_id ASC
-        `
+          ORDER BY created_at ASC, runtime_id ASC`
       )
       .all(hostSessionId)
 
     return rows.map(mapRuntimeRow)
   }
 
-  findByHostSession(hostSessionId: string): HrcRuntimeSnapshot[] {
-    return this.listByHostSessionId(hostSessionId)
-  }
-
   listAll(): HrcRuntimeSnapshot[] {
     const rows = this.db
       .query<RuntimeRow, []>(
-        `
-          SELECT
-            runtime_id,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            launch_id,
-            transport,
-            harness,
-            provider,
-            status,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            supports_inflight_input,
-            adopted,
-            active_run_id,
-            last_activity_at,
-            created_at,
-            updated_at
-          FROM runtimes
-          ORDER BY created_at ASC, runtime_id ASC
-        `
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
+          ORDER BY created_at ASC, runtime_id ASC`
       )
       .all()
 
@@ -1289,33 +1257,9 @@ export class RunRepository {
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
   }
 
-  create(record: HrcRunRecord): HrcRunRecord {
-    return this.insert(record)
-  }
-
   getByRunId(runId: string): HrcRunRecord | null {
     const row = this.db
-      .query<RunRow, [string]>(
-        `
-          SELECT
-            run_id,
-            host_session_id,
-            runtime_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            transport,
-            status,
-            accepted_at,
-            started_at,
-            completed_at,
-            updated_at,
-            error_code,
-            error_message
-          FROM runs
-          WHERE run_id = ?
-        `
-      )
+      .query<RunRow, [string]>(`SELECT ${RUN_COLUMNS} FROM runs WHERE run_id = ?`)
       .get(runId)
 
     return row ? mapRunRow(row) : null
@@ -1324,34 +1268,13 @@ export class RunRepository {
   listByRuntimeId(runtimeId: string): HrcRunRecord[] {
     const rows = this.db
       .query<RunRow, [string]>(
-        `
-          SELECT
-            run_id,
-            host_session_id,
-            runtime_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            transport,
-            status,
-            accepted_at,
-            started_at,
-            completed_at,
-            updated_at,
-            error_code,
-            error_message
-          FROM runs
+        `SELECT ${RUN_COLUMNS} FROM runs
           WHERE runtime_id = ?
-          ORDER BY accepted_at ASC, run_id ASC
-        `
+          ORDER BY accepted_at ASC, run_id ASC`
       )
       .all(runtimeId)
 
     return rows.map(mapRunRow)
-  }
-
-  findByRuntime(runtimeId: string): HrcRunRecord[] {
-    return this.listByRuntimeId(runtimeId)
   }
 
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {
@@ -1502,39 +1425,9 @@ export class LaunchRepository {
     )
   }
 
-  create(record: HrcLaunchRecord): HrcLaunchRecord {
-    return this.insert(record)
-  }
-
   getByLaunchId(launchId: string): HrcLaunchRecord | null {
     const row = this.db
-      .query<LaunchRow, [string]>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
-          WHERE launch_id = ?
-        `
-      )
+      .query<LaunchRow, [string]>(`SELECT ${LAUNCH_COLUMNS} FROM launches WHERE launch_id = ?`)
       .get(launchId)
 
     return row ? mapLaunchRow(row) : null
@@ -1676,31 +1569,8 @@ export class LaunchRepository {
   listAll(): HrcLaunchRecord[] {
     const rows = this.db
       .query<LaunchRow, []>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
-          ORDER BY created_at ASC, launch_id ASC
-        `
+        `SELECT ${LAUNCH_COLUMNS} FROM launches
+          ORDER BY created_at ASC, launch_id ASC`
       )
       .all()
 
@@ -1710,32 +1580,9 @@ export class LaunchRepository {
   listByHostSessionId(hostSessionId: string): HrcLaunchRecord[] {
     const rows = this.db
       .query<LaunchRow, [string]>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
+        `SELECT ${LAUNCH_COLUMNS} FROM launches
           WHERE host_session_id = ?
-          ORDER BY created_at ASC, launch_id ASC
-        `
+          ORDER BY created_at ASC, launch_id ASC`
       )
       .all(hostSessionId)
 
@@ -1745,32 +1592,9 @@ export class LaunchRepository {
   listByRuntimeId(runtimeId: string): HrcLaunchRecord[] {
     const rows = this.db
       .query<LaunchRow, [string]>(
-        `
-          SELECT
-            launch_id,
-            host_session_id,
-            generation,
-            runtime_id,
-            harness,
-            provider,
-            launch_artifact_path,
-            tmux_json,
-            wrapper_pid,
-            child_pid,
-            harness_session_json,
-            continuation_json,
-            wrapper_started_at,
-            child_started_at,
-            exited_at,
-            exit_code,
-            signal,
-            status,
-            created_at,
-            updated_at
-          FROM launches
+        `SELECT ${LAUNCH_COLUMNS} FROM launches
           WHERE runtime_id = ?
-          ORDER BY created_at ASC, launch_id ASC
-        `
+          ORDER BY created_at ASC, launch_id ASC`
       )
       .all(runtimeId)
 
@@ -1818,24 +1642,7 @@ export class EventRepository {
       }
 
       const stored = this.db
-        .query<EventRow, [number]>(
-          `
-            SELECT
-              seq,
-              ts,
-              host_session_id,
-              scope_ref,
-              lane_ref,
-              generation,
-              run_id,
-              runtime_id,
-              source,
-              event_kind,
-              event_json
-            FROM events
-            WHERE seq = ?
-          `
-        )
+        .query<EventRow, [number]>(`SELECT ${EVENT_COLUMNS} FROM events WHERE seq = ?`)
         .get(inserted.seq)
 
       if (!stored) {
@@ -1874,31 +1681,13 @@ export class EventRepository {
 
     const rows = this.db
       .query<EventRow, Array<string | number>>(
-        `
-          SELECT
-            seq,
-            ts,
-            host_session_id,
-            scope_ref,
-            lane_ref,
-            generation,
-            run_id,
-            runtime_id,
-            source,
-            event_kind,
-            event_json
-          FROM events
+        `SELECT ${EVENT_COLUMNS} FROM events
           WHERE ${where.join(' AND ')}
-          ORDER BY seq ASC${limitClause}
-        `
+          ORDER BY seq ASC${limitClause}`
       )
       .all(...values)
 
     return rows.map(mapEventRow)
-  }
-
-  query(filters: EventQueryFilters = {}): HrcEventEnvelope[] {
-    return this.listFromSeq(filters.fromSeq ?? 1, filters)
   }
 
   count(filters: Omit<EventQueryFilters, 'limit'> = {}): number {
@@ -1974,23 +1763,10 @@ export class LocalBridgeRepository {
   findByTarget(transport: string, target: string): HrcLocalBridgeRecord | null {
     const row = this.db
       .query<LocalBridgeRow, [string, string]>(
-        `
-          SELECT
-            bridge_id,
-            host_session_id,
-            runtime_id,
-            transport,
-            target,
-            expected_host_session_id,
-            expected_generation,
-            status,
-            created_at,
-            closed_at
-          FROM local_bridges
+        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges
           WHERE transport = ? AND target = ?
           ORDER BY created_at ASC
-          LIMIT 1
-        `
+          LIMIT 1`
       )
       .get(transport, target)
 
@@ -2000,21 +1776,7 @@ export class LocalBridgeRepository {
   findById(bridgeId: string): HrcLocalBridgeRecord | null {
     const row = this.db
       .query<LocalBridgeRow, [string]>(
-        `
-          SELECT
-            bridge_id,
-            host_session_id,
-            runtime_id,
-            transport,
-            target,
-            expected_host_session_id,
-            expected_generation,
-            status,
-            created_at,
-            closed_at
-          FROM local_bridges
-          WHERE bridge_id = ?
-        `
+        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges WHERE bridge_id = ?`
       )
       .get(bridgeId)
 
@@ -2024,22 +1786,9 @@ export class LocalBridgeRepository {
   listActive(): HrcLocalBridgeRecord[] {
     const rows = this.db
       .query<LocalBridgeRow, []>(
-        `
-          SELECT
-            bridge_id,
-            host_session_id,
-            runtime_id,
-            transport,
-            target,
-            expected_host_session_id,
-            expected_generation,
-            status,
-            created_at,
-            closed_at
-          FROM local_bridges
+        `SELECT ${LOCAL_BRIDGE_COLUMNS} FROM local_bridges
           WHERE closed_at IS NULL
-          ORDER BY created_at ASC, bridge_id ASC
-        `
+          ORDER BY created_at ASC, bridge_id ASC`
       )
       .all()
 
@@ -2135,22 +1884,8 @@ export class SurfaceBindingRepository {
   findBySurface(surfaceKind: string, surfaceId: string): HrcSurfaceBindingRecord | null {
     const row = this.db
       .query<SurfaceBindingRow, [string, string]>(
-        `
-          SELECT
-            surface_kind,
-            surface_id,
-            host_session_id,
-            runtime_id,
-            generation,
-            window_id,
-            tab_id,
-            pane_id,
-            bound_at,
-            unbound_at,
-            reason
-          FROM surface_bindings
-          WHERE surface_kind = ? AND surface_id = ?
-        `
+        `SELECT ${SURFACE_BINDING_COLUMNS} FROM surface_bindings
+          WHERE surface_kind = ? AND surface_id = ?`
       )
       .get(surfaceKind, surfaceId)
 
@@ -2160,23 +1895,9 @@ export class SurfaceBindingRepository {
   findByRuntime(runtimeId: string): HrcSurfaceBindingRecord[] {
     const rows = this.db
       .query<SurfaceBindingRow, [string]>(
-        `
-          SELECT
-            surface_kind,
-            surface_id,
-            host_session_id,
-            runtime_id,
-            generation,
-            window_id,
-            tab_id,
-            pane_id,
-            bound_at,
-            unbound_at,
-            reason
-          FROM surface_bindings
+        `SELECT ${SURFACE_BINDING_COLUMNS} FROM surface_bindings
           WHERE runtime_id = ? AND unbound_at IS NULL
-          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC
-        `
+          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC`
       )
       .all(runtimeId)
 
@@ -2186,23 +1907,9 @@ export class SurfaceBindingRepository {
   listActive(): HrcSurfaceBindingRecord[] {
     const rows = this.db
       .query<SurfaceBindingRow, []>(
-        `
-          SELECT
-            surface_kind,
-            surface_id,
-            host_session_id,
-            runtime_id,
-            generation,
-            window_id,
-            tab_id,
-            pane_id,
-            bound_at,
-            unbound_at,
-            reason
-          FROM surface_bindings
+        `SELECT ${SURFACE_BINDING_COLUMNS} FROM surface_bindings
           WHERE unbound_at IS NULL
-          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC
-        `
+          ORDER BY bound_at ASC, surface_kind ASC, surface_id ASC`
       )
       .all()
 
@@ -2232,11 +1939,8 @@ export class RuntimeBufferRepository {
 
     const row = this.db
       .query<RuntimeBufferRow, [string, number]>(
-        `
-          SELECT runtime_id, chunk_seq, text, created_at
-          FROM runtime_buffers
-          WHERE runtime_id = ? AND chunk_seq = ?
-        `
+        `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
+          WHERE runtime_id = ? AND chunk_seq = ?`
       )
       .get(entry.runtimeId, entry.chunkSeq)
 
@@ -2252,20 +1956,13 @@ export class RuntimeBufferRepository {
   listByRuntimeId(runtimeId: string): HrcRuntimeBufferRecord[] {
     const rows = this.db
       .query<RuntimeBufferRow, [string]>(
-        `
-          SELECT runtime_id, chunk_seq, text, created_at
-          FROM runtime_buffers
+        `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
           WHERE runtime_id = ?
-          ORDER BY chunk_seq ASC
-        `
+          ORDER BY chunk_seq ASC`
       )
       .all(runtimeId)
 
     return rows.map(mapRuntimeBufferRow)
-  }
-
-  queryByRuntime(runtimeId: string): HrcRuntimeBufferRecord[] {
-    return this.listByRuntimeId(runtimeId)
   }
 }
 

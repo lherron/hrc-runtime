@@ -102,7 +102,7 @@ async function ensureRuntime(scopeRef: string): Promise<{
   const runtimeId = `rt-test-${randomUUID()}`
   const now = ts()
   const db = openHrcDatabase(dbPath)
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId,
     hostSessionId: resolved.hostSessionId,
     scopeRef,

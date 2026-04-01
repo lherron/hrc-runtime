@@ -55,7 +55,7 @@ function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions
 function seedSession(hostSessionId: string, scopeRef: string) {
   const db = openHrcDatabase(dbPath)
   const now = ts()
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef,
     laneRef: 'default',
@@ -81,7 +81,7 @@ function seedTmuxRuntime(
 ) {
   const db = openHrcDatabase(dbPath)
   const now = ts()
-  db.runtimes.create({
+  db.runtimes.insert({
     runtimeId,
     hostSessionId,
     scopeRef,
@@ -165,7 +165,7 @@ describe('startup reconciliation', () => {
 
     const db = openHrcDatabase(dbPath)
     const now = ts()
-    db.runs.create({
+    db.runs.insert({
       runId,
       hostSessionId,
       runtimeId,
@@ -178,7 +178,7 @@ describe('startup reconciliation', () => {
       startedAt: now,
       updatedAt: now,
     })
-    db.launches.create({
+    db.launches.insert({
       launchId,
       hostSessionId,
       generation: 1,
@@ -207,7 +207,7 @@ describe('startup reconciliation', () => {
     const reloaded = openHrcDatabase(dbPath)
     const launch = reloaded.launches.getByLaunchId(launchId)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
-    const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
+    const events = reloaded.events.listFromSeq(1, { hostSessionId })
     reloaded.close()
 
     expect(launch?.status).toBe('orphaned')
@@ -230,7 +230,7 @@ describe('startup reconciliation', () => {
 
     const reloaded = openHrcDatabase(dbPath)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
-    const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
+    const events = reloaded.events.listFromSeq(1, { hostSessionId })
     reloaded.close()
 
     expect(runtime?.status).toBe('dead')
@@ -279,7 +279,7 @@ describe('stale callback rejection', () => {
 
     const db = openHrcDatabase(dbPath)
     const now = ts()
-    db.runtimes.create({
+    db.runtimes.insert({
       runtimeId,
       hostSessionId,
       scopeRef,
@@ -304,7 +304,7 @@ describe('stale callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.launches.create({
+    db.launches.insert({
       launchId: oldLaunchId,
       hostSessionId,
       generation: 1,
@@ -316,7 +316,7 @@ describe('stale callback rejection', () => {
       createdAt: now,
       updatedAt: now,
     })
-    db.launches.create({
+    db.launches.insert({
       launchId: newLaunchId,
       hostSessionId,
       generation: 1,
@@ -343,7 +343,7 @@ describe('stale callback rejection', () => {
     const reloaded = openHrcDatabase(dbPath)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const oldLaunch = reloaded.launches.getByLaunchId(oldLaunchId)
-    const events = reloaded.events.query({ hostSessionId, fromSeq: 1 })
+    const events = reloaded.events.listFromSeq(1, { hostSessionId })
     reloaded.close()
 
     expect(runtime?.launchId).toBe(newLaunchId)

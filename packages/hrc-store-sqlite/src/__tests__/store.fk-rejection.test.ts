@@ -77,13 +77,13 @@ afterEach(async () => {
 describe('M-14: FK rejection on real relations (T-00985)', () => {
   it('rejects runtime with non-existent host_session_id', () => {
     expect(() => {
-      db.runtimes.create(makeRuntime('rt-orphan', 'hsid-does-not-exist'))
+      db.runtimes.insert(makeRuntime('rt-orphan', 'hsid-does-not-exist'))
     }).toThrow()
   })
 
   it('rejects run with non-existent host_session_id', () => {
     expect(() => {
-      db.runs.create({
+      db.runs.insert({
         runId: 'run-orphan',
         hostSessionId: 'hsid-does-not-exist',
         scopeRef: 'scope:test',
@@ -97,9 +97,9 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
   })
 
   it('rejects run with non-existent runtime_id', () => {
-    const session = db.sessions.create(makeSession('hsid-run-fk'))
+    const session = db.sessions.insert(makeSession('hsid-run-fk'))
     expect(() => {
-      db.runs.create({
+      db.runs.insert({
         runId: 'run-bad-rt',
         hostSessionId: session.hostSessionId,
         runtimeId: 'rt-does-not-exist',
@@ -115,7 +115,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
 
   it('rejects launch with non-existent host_session_id', () => {
     expect(() => {
-      db.launches.create({
+      db.launches.insert({
         launchId: 'launch-orphan',
         hostSessionId: 'hsid-does-not-exist',
         generation: 1,
@@ -146,8 +146,8 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
   })
 
   it('rejects event with non-existent run_id', () => {
-    const session = db.sessions.create(makeSession('hsid-evt-run'))
-    const runtime = db.runtimes.create(makeRuntime('rt-evt-run', session.hostSessionId))
+    const session = db.sessions.insert(makeSession('hsid-evt-run'))
+    const runtime = db.runtimes.insert(makeRuntime('rt-evt-run', session.hostSessionId))
     expect(() => {
       db.events.append({
         seq: 0,
@@ -166,7 +166,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
   })
 
   it('rejects event with non-existent runtime_id', () => {
-    const session = db.sessions.create(makeSession('hsid-evt-rt'))
+    const session = db.sessions.insert(makeSession('hsid-evt-rt'))
     expect(() => {
       db.events.append({
         seq: 0,
@@ -197,7 +197,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
   })
 
   it('rejects surface_binding with non-existent runtime_id', () => {
-    const session = db.sessions.create(makeSession('hsid-sb-rt'))
+    const session = db.sessions.insert(makeSession('hsid-sb-rt'))
     expect(() => {
       db.surfaceBindings.bind({
         surfaceKind: 'terminal',
@@ -237,7 +237,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
   })
 
   it('rejects local_bridge with non-existent runtime_id', () => {
-    const session = db.sessions.create(makeSession('hsid-lb-rt'))
+    const session = db.sessions.insert(makeSession('hsid-lb-rt'))
     expect(() => {
       db.localBridges.create({
         bridgeId: 'bridge-bad-rt',
@@ -253,9 +253,9 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
 
   // Positive control: valid FK chain succeeds
   it('accepts valid FK chain session→runtime→run→event', () => {
-    const session = db.sessions.create(makeSession('hsid-valid'))
-    const runtime = db.runtimes.create(makeRuntime('rt-valid', session.hostSessionId))
-    const run = db.runs.create({
+    const session = db.sessions.insert(makeSession('hsid-valid'))
+    const runtime = db.runtimes.insert(makeRuntime('rt-valid', session.hostSessionId))
+    const run = db.runs.insert({
       runId: 'run-valid',
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,

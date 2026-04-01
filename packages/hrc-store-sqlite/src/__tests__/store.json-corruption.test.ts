@@ -35,7 +35,7 @@ afterEach(async () => {
 // Helper: insert a valid session row then corrupt a JSON column via raw SQL
 function insertSession(hostSessionId: string): void {
   const now = ts()
-  db.sessions.create({
+  db.sessions.insert({
     hostSessionId,
     scopeRef: 'scope-corrupt',
     laneRef: 'default',
@@ -165,7 +165,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const events = db.events.query({ hostSessionId: 'hsid-ev-corrupt' })
+      const events = db.events.listFromSeq(1, { hostSessionId: 'hsid-ev-corrupt' })
       expect(events.length).toBeGreaterThan(0)
       expect(events[0].eventJson).toBeUndefined()
       expect(errorSpy).toHaveBeenCalled()
@@ -205,7 +205,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     // Insert a second session
     const now = ts()
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: 'hsid-ok-2',
       scopeRef: 'scope-corrupt',
       laneRef: 'default',

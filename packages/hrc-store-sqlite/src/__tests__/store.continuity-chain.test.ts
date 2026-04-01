@@ -60,7 +60,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 describe('M-15: continuity chain derivation (T-00985)', () => {
   it('returns empty array for single session with no prior', () => {
-    db.sessions.create(makeSession('hsid-solo', 1))
+    db.sessions.insert(makeSession('hsid-solo', 1))
     db.continuities.upsert({
       scopeRef: 'scope:chain-test',
       laneRef: 'default',
@@ -75,9 +75,9 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
 
   it('returns chain in oldest-to-newest order for linear A→B→C', () => {
     // Create sessions: A (gen 1), B (gen 2, prior=A), C (gen 3, prior=B)
-    db.sessions.create(makeSession('hsid-A', 1))
-    db.sessions.create(makeSession('hsid-B', 2, 'hsid-A'))
-    db.sessions.create(makeSession('hsid-C', 3, 'hsid-B'))
+    db.sessions.insert(makeSession('hsid-A', 1))
+    db.sessions.insert(makeSession('hsid-B', 2, 'hsid-A'))
+    db.sessions.insert(makeSession('hsid-C', 3, 'hsid-B'))
 
     db.continuities.upsert({
       scopeRef: 'scope:chain-test',
@@ -93,11 +93,11 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
   })
 
   it('returns chain in oldest-to-newest for longer chain A→B→C→D→E', () => {
-    db.sessions.create(makeSession('hsid-1', 1))
-    db.sessions.create(makeSession('hsid-2', 2, 'hsid-1'))
-    db.sessions.create(makeSession('hsid-3', 3, 'hsid-2'))
-    db.sessions.create(makeSession('hsid-4', 4, 'hsid-3'))
-    db.sessions.create(makeSession('hsid-5', 5, 'hsid-4'))
+    db.sessions.insert(makeSession('hsid-1', 1))
+    db.sessions.insert(makeSession('hsid-2', 2, 'hsid-1'))
+    db.sessions.insert(makeSession('hsid-3', 3, 'hsid-2'))
+    db.sessions.insert(makeSession('hsid-4', 4, 'hsid-3'))
+    db.sessions.insert(makeSession('hsid-5', 5, 'hsid-4'))
 
     db.continuities.upsert({
       scopeRef: 'scope:chain-test',
@@ -116,8 +116,8 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     // on prior_host_session_id would normally prevent B from pointing to A
     // before A exists, but we insert A first without a prior, then B pointing
     // to A, then update A to point to B.
-    db.sessions.create(makeSession('hsid-cycle-A', 1))
-    db.sessions.create(makeSession('hsid-cycle-B', 2, 'hsid-cycle-A'))
+    db.sessions.insert(makeSession('hsid-cycle-A', 1))
+    db.sessions.insert(makeSession('hsid-cycle-B', 2, 'hsid-cycle-A'))
 
     // Force a cycle by updating A's prior to point to B
     db.sqlite.run(
@@ -144,7 +144,7 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
 
   it('handles broken chain with prior in different scope', () => {
     // Create a session in a different scope — FK is satisfied but chain walk won't find it
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: 'hsid-other-scope',
       scopeRef: 'scope:other',
       laneRef: 'default',
@@ -156,7 +156,7 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     })
 
     // Session B points to other-scope session
-    db.sessions.create(makeSession('hsid-cross-B', 1, 'hsid-other-scope'))
+    db.sessions.insert(makeSession('hsid-cross-B', 1, 'hsid-other-scope'))
 
     db.continuities.upsert({
       scopeRef: 'scope:chain-test',
@@ -181,7 +181,7 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
 
   it('only includes sessions from the same scope and lane', () => {
     // Different lane should not interfere
-    db.sessions.create({
+    db.sessions.insert({
       hostSessionId: 'hsid-lane-other',
       scopeRef: 'scope:chain-test',
       laneRef: 'other-lane',
@@ -192,8 +192,8 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
       ancestorScopeRefs: [],
     })
 
-    db.sessions.create(makeSession('hsid-lane-A', 1))
-    db.sessions.create(makeSession('hsid-lane-B', 2, 'hsid-lane-A'))
+    db.sessions.insert(makeSession('hsid-lane-A', 1))
+    db.sessions.insert(makeSession('hsid-lane-B', 2, 'hsid-lane-A'))
 
     db.continuities.upsert({
       scopeRef: 'scope:chain-test',

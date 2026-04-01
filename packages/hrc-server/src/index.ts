@@ -509,7 +509,7 @@ class HrcServerInstance implements HrcServer {
       ancestorScopeRefs: [],
     }
 
-    const createdSession = this.db.sessions.create(session)
+    const createdSession = this.db.sessions.insert(session)
     this.db.continuities.upsert({
       scopeRef,
       laneRef,
@@ -723,7 +723,7 @@ class HrcServerInstance implements HrcServer {
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
 
-    const run = this.db.runs.create({
+    const run = this.db.runs.insert({
       runId,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
@@ -745,7 +745,7 @@ class HrcServerInstance implements HrcServer {
         updatedAt: now,
       })
 
-      this.db.launches.create({
+      this.db.launches.insert({
         launchId,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
@@ -945,7 +945,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
-    this.db.sessions.create(nextSession)
+    this.db.sessions.insert(nextSession)
     this.db.continuities.upsert({
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -1806,7 +1806,7 @@ class HrcServerInstance implements HrcServer {
       this.db.runtimes.updateStatus(existingRuntime.runtimeId, 'terminated', now)
     }
 
-    runtime = this.db.runtimes.create({
+    runtime = this.db.runtimes.insert({
       runtimeId: `rt-${randomUUID()}`,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1857,7 +1857,7 @@ class HrcServerInstance implements HrcServer {
 
     this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
-    const runtime = this.db.runtimes.create({
+    const runtime = this.db.runtimes.insert({
       runtimeId,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1876,7 +1876,7 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const run = this.db.runs.create({
+    const run = this.db.runs.insert({
       runId,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
@@ -3579,7 +3579,7 @@ function upsertLaunch(
   }
 
   const now = patch.updatedAt
-  const created = db.launches.create({
+  const created = db.launches.insert({
     launchId,
     hostSessionId: session.hostSessionId,
     generation: session.generation,
