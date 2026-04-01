@@ -32,44 +32,19 @@
  * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 3
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
-let tmpDir: string
-let runtimeRoot: string
-let stateRoot: string
-let socketPath: string
-let lockPath: string
-let spoolDir: string
-let dbPath: string
-let tmuxSocketPath: string
+let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
-
-async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`http://localhost${path}`, {
-    ...init,
-    // @ts-expect-error -- Bun supports unix option on fetch
-    unix: socketPath,
-  })
-}
-
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetchSocket(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
 
 /** Resolve a session and return the hostSessionId */
 async function resolveSession(scope: string): Promise<string> {
-  const res = await postJson('/v1/sessions/resolve', { sessionRef: `${scope}/lane:default` })
-  const data = (await res.json()) as any
-  return data.hostSessionId
+  const resolved = await fixture.resolveSession(scope)
+  return resolved.hostSessionId
 }
 
 /** Build a non-interactive (SDK) runtime intent */
@@ -98,7 +73,7 @@ async function dispatchSdkTurn(
   hsid: string,
   provider: 'anthropic' | 'openai' = 'anthropic'
 ): Promise<{ runtimeId: string; runId: string }> {
-  const res = await postJson('/v1/turns', {
+  const res = await fixture.postJson('/v1/turns', {
     hostSessionId: hsid,
     prompt: 'In-flight base turn',
     runtimeIntent: sdkIntent(provider),
@@ -112,7 +87,7 @@ async function dispatchSdkTurn(
 /** Dispatch a second SDK turn that will be in-flight (busy) for testing */
 async function _dispatchBusySdkTurn(hsid: string, _runtimeId: string): Promise<{ runId: string }> {
   // Dispatch another turn — the server should create a new run on the existing runtime
-  const res = await postJson('/v1/turns', {
+  const res = await fixture.postJson('/v1/turns', {
     hostSessionId: hsid,
     prompt: 'Busy turn for in-flight test',
     runtimeIntent: sdkIntent('anthropic'),
@@ -123,7 +98,7 @@ async function _dispatchBusySdkTurn(hsid: string, _runtimeId: string): Promise<{
 
 /** Get all events from the server */
 async function getAllEvents(): Promise<any[]> {
-  const eventsRes = await fetchSocket('/v1/events?fromSeq=1')
+  const eventsRes = await fixture.fetchSocket('/v1/events?fromSeq=1')
   const text = await eventsRes.text()
   return text
     .trim()
@@ -133,28 +108,8 @@ async function getAllEvents(): Promise<any[]> {
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-inflight-test-'))
-  runtimeRoot = join(tmpDir, 'runtime')
-  stateRoot = join(tmpDir, 'state')
-  socketPath = join(runtimeRoot, 'hrc.sock')
-  lockPath = join(runtimeRoot, 'server.lock')
-  spoolDir = join(runtimeRoot, 'spool')
-  dbPath = join(stateRoot, 'state.sqlite')
-  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
-
-  await mkdir(runtimeRoot, { recursive: true })
-  await mkdir(stateRoot, { recursive: true })
-  await mkdir(spoolDir, { recursive: true })
-
-  server = await createHrcServer({
-    runtimeRoot,
-    stateRoot,
-    socketPath,
-    lockPath,
-    spoolDir,
-    dbPath,
-    tmuxSocketPath,
-  })
+  fixture = await createHrcTestFixture('hrc-inflight-test-')
+  server = await createHrcServer(fixture.serverOpts())
 })
 
 afterEach(async () => {
@@ -162,16 +117,7 @@ afterEach(async () => {
     await server.stop()
     server = undefined
   }
-  try {
-    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    })
-    await exited
-  } catch {
-    // ok
-  }
-  await rm(tmpDir, { recursive: true, force: true })
+  await fixture.cleanup()
 })
 
 // ---------------------------------------------------------------------------
@@ -187,7 +133,7 @@ describe('POST /v1/in-flight-input — valid request', () => {
     // For this test, we'll send in-flight input referencing a completed run
     // to test the endpoint exists and handles supported runtimes.
     // RED GATE: POST /v1/in-flight-input does not exist yet
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId,
       prompt: 'Additional context from the user',
@@ -204,7 +150,7 @@ describe('POST /v1/in-flight-input — valid request', () => {
 // ---------------------------------------------------------------------------
 describe('POST /v1/in-flight-input — unknown runtime', () => {
   it('returns 404 with code unknown_runtime for nonexistent runtimeId', async () => {
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId: 'rt-does-not-exist',
       runId: 'run-doesnt-matter',
       prompt: 'Input for missing runtime',
@@ -226,7 +172,7 @@ describe('POST /v1/in-flight-input — run mismatch', () => {
     const { runtimeId } = await dispatchSdkTurn(hsid, 'anthropic')
 
     // Send in-flight input with a wrong runId
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId: 'run-wrong-id-that-does-not-match',
       prompt: 'Input with wrong run',
@@ -247,7 +193,7 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
     const hsid = await resolveSession('inflight-tmux-1')
 
     // Ensure a tmux runtime (interactive harness)
-    const ensureRes = await postJson('/v1/runtimes/ensure', {
+    const ensureRes = await fixture.postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
       intent: {
         placement: {
@@ -267,7 +213,7 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
     const ensureData = (await ensureRes.json()) as any
     const tmuxRuntimeId = ensureData.runtimeId
 
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId: tmuxRuntimeId,
       runId: 'run-doesnt-matter',
       prompt: 'Input to tmux runtime',
@@ -289,7 +235,7 @@ describe('POST /v1/in-flight-input — unsupported SDK provider', () => {
     // Dispatch an openai SDK turn — adapter should declare supportsInflightInput=false
     const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'openai')
 
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId,
       prompt: 'Input to unsupported SDK',
@@ -310,7 +256,7 @@ describe('POST /v1/in-flight-input — accepted event', () => {
     const hsid = await resolveSession('inflight-event-accept-1')
     const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'anthropic')
 
-    await postJson('/v1/in-flight-input', {
+    await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId,
       prompt: 'Additional user context',
@@ -336,7 +282,7 @@ describe('POST /v1/in-flight-input — rejected event', () => {
     // Use openai which should have supportsInflightInput=false
     const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'openai')
 
-    await postJson('/v1/in-flight-input', {
+    await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId,
       prompt: 'Rejected input',
@@ -366,7 +312,7 @@ describe('POST /v1/in-flight-input — activity tracking', () => {
     // Small delay to ensure timestamp differs
     await new Promise((r) => setTimeout(r, 50))
 
-    const res = await postJson('/v1/in-flight-input', {
+    const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId,
       runId,
       prompt: 'Activity tracking test',

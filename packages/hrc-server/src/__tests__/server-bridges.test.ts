@@ -23,105 +23,20 @@
  *  11. GET /v1/bridges returns 400 when runtimeId is missing
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import type { HrcHttpError } from 'hrc-core'
 import { HrcErrorCode } from 'hrc-core'
-import { openHrcDatabase } from 'hrc-store-sqlite'
 
 // RED GATE: server must handle bridge endpoints
 import { createHrcServer } from '../index'
-import type { HrcServer, HrcServerOptions } from '../index'
+import type { HrcServer } from '../index'
+import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 // RED GATE: this type does not exist yet in hrc-core
 import type { HrcLocalBridgeRecord } from 'hrc-core'
 
-let tmpDir: string
-let runtimeRoot: string
-let stateRoot: string
-let socketPath: string
-let lockPath: string
-let spoolDir: string
-let dbPath: string
-let tmuxSocketPath: string
-
-function ts(): string {
-  return new Date().toISOString()
-}
-
-async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`http://localhost${path}`, {
-    ...init,
-    // @ts-expect-error -- Bun supports unix option on fetch
-    unix: socketPath,
-  })
-}
-
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetchSocket(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions {
-  return {
-    runtimeRoot,
-    stateRoot,
-    socketPath,
-    lockPath,
-    spoolDir,
-    dbPath,
-    tmuxSocketPath,
-    ...overrides,
-  }
-}
-
-/**
- * Helper: resolve a session + seed a runtime for bridge operations.
- */
-async function ensureRuntime(scopeRef: string): Promise<{
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-}> {
-  const resolveRes = await postJson('/v1/sessions/resolve', {
-    sessionRef: `${scopeRef}/lane:default`,
-  })
-  const resolved = (await resolveRes.json()) as {
-    hostSessionId: string
-    generation: number
-  }
-
-  const runtimeId = `rt-test-${randomUUID()}`
-  const now = ts()
-  const db = openHrcDatabase(dbPath)
-  db.runtimes.insert({
-    runtimeId,
-    hostSessionId: resolved.hostSessionId,
-    scopeRef,
-    laneRef: 'default',
-    generation: resolved.generation,
-    transport: 'sdk',
-    harness: 'agent-sdk',
-    provider: 'anthropic',
-    status: 'ready',
-    supportsInflightInput: false,
-    adopted: false,
-    createdAt: now,
-    updatedAt: now,
-  })
-
-  return {
-    hostSessionId: resolved.hostSessionId,
-    generation: resolved.generation,
-    runtimeId,
-  }
-}
+let fixture: HrcServerTestFixture
 
 /**
  * Helper: fetch all events and return parsed envelopes.
@@ -129,7 +44,7 @@ async function ensureRuntime(scopeRef: string): Promise<{
 async function fetchEvents(): Promise<
   Array<{ seq: number; eventKind: string; eventJson: unknown; runtimeId?: string }>
 > {
-  const res = await fetchSocket('/v1/events')
+  const res = await fixture.fetchSocket('/v1/events')
   const text = await res.text()
   return text
     .trim()
@@ -139,31 +54,11 @@ async function fetchEvents(): Promise<
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-server-bridges-test-'))
-  runtimeRoot = join(tmpDir, 'runtime')
-  stateRoot = join(tmpDir, 'state')
-  socketPath = join(runtimeRoot, 'hrc.sock')
-  lockPath = join(runtimeRoot, 'server.lock')
-  spoolDir = join(runtimeRoot, 'spool')
-  dbPath = join(stateRoot, 'state.sqlite')
-  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
-
-  await mkdir(runtimeRoot, { recursive: true })
-  await mkdir(stateRoot, { recursive: true })
-  await mkdir(spoolDir, { recursive: true })
+  fixture = await createHrcTestFixture('hrc-server-bridges-test-')
 })
 
 afterEach(async () => {
-  try {
-    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    })
-    await exited
-  } catch {
-    // fine when no tmux server exists
-  }
-  await rm(tmpDir, { recursive: true, force: true })
+  await fixture.cleanup()
 })
 
 // ---------------------------------------------------------------------------
@@ -177,10 +72,11 @@ describe('POST /v1/bridges/local-target', () => {
   })
 
   it('registers a new local bridge and returns the record', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-register-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-register-test')
 
-    const res = await postJson('/v1/bridges/local-target', {
+    const res = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'smokey@agent-spaces',
       hostSessionId,
@@ -200,8 +96,9 @@ describe('POST /v1/bridges/local-target', () => {
   })
 
   it('returns existing bridge when same transport+target already registered', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-dedup-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-dedup-test')
 
     const body = {
       transport: 'legacy-agentchat',
@@ -212,10 +109,10 @@ describe('POST /v1/bridges/local-target', () => {
       expectedGeneration: generation,
     }
 
-    const res1 = await postJson('/v1/bridges/local-target', body)
+    const res1 = await fixture.postJson('/v1/bridges/local-target', body)
     const bridge1 = (await res1.json()) as HrcLocalBridgeRecord
 
-    const res2 = await postJson('/v1/bridges/local-target', body)
+    const res2 = await fixture.postJson('/v1/bridges/local-target', body)
     const bridge2 = (await res2.json()) as HrcLocalBridgeRecord
 
     expect(bridge2.bridgeId).toBe(bridge1.bridgeId)
@@ -233,11 +130,12 @@ describe('POST /v1/bridges/deliver', () => {
   })
 
   it('delivers text through a valid bridge', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-deliver-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-deliver-test')
 
     // Register bridge
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'deliver-target@spaces',
       hostSessionId,
@@ -248,7 +146,7 @@ describe('POST /v1/bridges/deliver', () => {
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
     // Deliver text
-    const res = await postJson('/v1/bridges/deliver', {
+    const res = await fixture.postJson('/v1/bridges/deliver', {
       bridgeId: bridge.bridgeId,
       text: 'Hello from smoke test',
       expectedHostSessionId: hostSessionId,
@@ -261,10 +159,11 @@ describe('POST /v1/bridges/deliver', () => {
   })
 
   it('emits bridge.delivered event', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-event-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-event-test')
 
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'event-target@spaces',
       hostSessionId,
@@ -274,7 +173,7 @@ describe('POST /v1/bridges/deliver', () => {
     })
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
-    await postJson('/v1/bridges/deliver', {
+    await fixture.postJson('/v1/bridges/deliver', {
       bridgeId: bridge.bridgeId,
       text: 'Event test payload',
       expectedHostSessionId: hostSessionId,
@@ -290,10 +189,11 @@ describe('POST /v1/bridges/deliver', () => {
   })
 
   it('rejects delivery with stale expectedHostSessionId (409)', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-stale-hsid')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-stale-hsid')
 
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'stale-hsid@spaces',
       hostSessionId,
@@ -303,7 +203,7 @@ describe('POST /v1/bridges/deliver', () => {
     })
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
-    const res = await postJson('/v1/bridges/deliver', {
+    const res = await fixture.postJson('/v1/bridges/deliver', {
       bridgeId: bridge.bridgeId,
       text: 'Should fail',
       expectedHostSessionId: 'wrong-hsid',
@@ -316,10 +216,10 @@ describe('POST /v1/bridges/deliver', () => {
   })
 
   it('rejects delivery with stale expectedGeneration (409)', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-stale-gen')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } = await fixture.ensureRuntime('bridge-stale-gen')
 
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'stale-gen@spaces',
       hostSessionId,
@@ -329,7 +229,7 @@ describe('POST /v1/bridges/deliver', () => {
     })
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
-    const res = await postJson('/v1/bridges/deliver', {
+    const res = await fixture.postJson('/v1/bridges/deliver', {
       bridgeId: bridge.bridgeId,
       text: 'Should fail',
       expectedHostSessionId: hostSessionId,
@@ -342,10 +242,11 @@ describe('POST /v1/bridges/deliver', () => {
   })
 
   it('returns 404 when delivering to a closed bridge', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-closed-deliver')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-closed-deliver')
 
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'closed-deliver@spaces',
       hostSessionId,
@@ -356,10 +257,10 @@ describe('POST /v1/bridges/deliver', () => {
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
     // Close the bridge
-    await postJson('/v1/bridges/close', { bridgeId: bridge.bridgeId })
+    await fixture.postJson('/v1/bridges/close', { bridgeId: bridge.bridgeId })
 
     // Try to deliver
-    const res = await postJson('/v1/bridges/deliver', {
+    const res = await fixture.postJson('/v1/bridges/deliver', {
       bridgeId: bridge.bridgeId,
       text: 'Should fail',
       expectedHostSessionId: hostSessionId,
@@ -381,10 +282,10 @@ describe('GET /v1/bridges', () => {
   })
 
   it('returns active bridges for the given runtimeId', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-list-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } = await fixture.ensureRuntime('bridge-list-test')
 
-    await postJson('/v1/bridges/local-target', {
+    await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'list-a@spaces',
       hostSessionId,
@@ -392,7 +293,7 @@ describe('GET /v1/bridges', () => {
       expectedHostSessionId: hostSessionId,
       expectedGeneration: generation,
     })
-    await postJson('/v1/bridges/local-target', {
+    await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'list-b@spaces',
       hostSessionId,
@@ -401,7 +302,7 @@ describe('GET /v1/bridges', () => {
       expectedGeneration: generation,
     })
 
-    const res = await fetchSocket(`/v1/bridges?runtimeId=${runtimeId}`)
+    const res = await fixture.fetchSocket(`/v1/bridges?runtimeId=${runtimeId}`)
     expect(res.status).toBe(200)
     const bridges = (await res.json()) as HrcLocalBridgeRecord[]
     expect(bridges.length).toBe(2)
@@ -409,10 +310,11 @@ describe('GET /v1/bridges', () => {
   })
 
   it('excludes closed bridges', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-list-exclude')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-list-exclude')
 
-    const reg1 = await postJson('/v1/bridges/local-target', {
+    const reg1 = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'still-open@spaces',
       hostSessionId,
@@ -422,7 +324,7 @@ describe('GET /v1/bridges', () => {
     })
     await reg1.json()
 
-    const reg2 = await postJson('/v1/bridges/local-target', {
+    const reg2 = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'now-closed@spaces',
       hostSessionId,
@@ -432,18 +334,18 @@ describe('GET /v1/bridges', () => {
     })
     const bridge2 = (await reg2.json()) as HrcLocalBridgeRecord
 
-    await postJson('/v1/bridges/close', { bridgeId: bridge2.bridgeId })
+    await fixture.postJson('/v1/bridges/close', { bridgeId: bridge2.bridgeId })
 
-    const res = await fetchSocket(`/v1/bridges?runtimeId=${runtimeId}`)
+    const res = await fixture.fetchSocket(`/v1/bridges?runtimeId=${runtimeId}`)
     const bridges = (await res.json()) as HrcLocalBridgeRecord[]
     expect(bridges.length).toBe(1)
     expect(bridges[0].target).toBe('still-open@spaces')
   })
 
   it('returns 400 when runtimeId is missing', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
-    const res = await fetchSocket('/v1/bridges')
+    const res = await fixture.fetchSocket('/v1/bridges')
     expect(res.status).toBe(400)
   })
 })
@@ -459,10 +361,11 @@ describe('POST /v1/bridges/close', () => {
   })
 
   it('closes a bridge and returns the record with closedAt', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('bridge-close-test')
+    server = await createHrcServer(fixture.serverOpts())
+    const { hostSessionId, generation, runtimeId } =
+      await fixture.ensureRuntime('bridge-close-test')
 
-    const regRes = await postJson('/v1/bridges/local-target', {
+    const regRes = await fixture.postJson('/v1/bridges/local-target', {
       transport: 'legacy-agentchat',
       target: 'close-me@spaces',
       hostSessionId,
@@ -472,7 +375,7 @@ describe('POST /v1/bridges/close', () => {
     })
     const bridge = (await regRes.json()) as HrcLocalBridgeRecord
 
-    const res = await postJson('/v1/bridges/close', { bridgeId: bridge.bridgeId })
+    const res = await fixture.postJson('/v1/bridges/close', { bridgeId: bridge.bridgeId })
     expect(res.status).toBe(200)
     const closed = (await res.json()) as HrcLocalBridgeRecord
     expect(closed.closedAt).toBeDefined()
@@ -480,9 +383,9 @@ describe('POST /v1/bridges/close', () => {
   })
 
   it('returns 404 for unknown bridgeId', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
-    const res = await postJson('/v1/bridges/close', { bridgeId: 'nonexistent' })
+    const res = await fixture.postJson('/v1/bridges/close', { bridgeId: 'nonexistent' })
     expect(res.status).toBe(404)
   })
 })

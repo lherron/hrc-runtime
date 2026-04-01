@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { HrcHttpError } from 'hrc-core'
@@ -8,134 +7,18 @@ import { HrcErrorCode } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
-import type { HrcServer, HrcServerOptions } from '../index'
+import type { HrcServer } from '../index'
+import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
-let tmpDir: string
-let runtimeRoot: string
-let stateRoot: string
-let socketPath: string
-let lockPath: string
-let spoolDir: string
-let dbPath: string
-let tmuxSocketPath: string
-
-function ts(): string {
-  return new Date().toISOString()
-}
-
-async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`http://localhost${path}`, {
-    ...init,
-    // @ts-expect-error -- Bun supports unix option on fetch
-    unix: socketPath,
-  })
-}
-
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetchSocket(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions {
-  return {
-    runtimeRoot,
-    stateRoot,
-    socketPath,
-    lockPath,
-    spoolDir,
-    dbPath,
-    tmuxSocketPath,
-    ...overrides,
-  }
-}
-
-function seedSession(hostSessionId: string, scopeRef: string) {
-  const db = openHrcDatabase(dbPath)
-  const now = ts()
-  db.sessions.insert({
-    hostSessionId,
-    scopeRef,
-    laneRef: 'default',
-    generation: 1,
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-    ancestorScopeRefs: [],
-  })
-  db.close()
-}
-
-function seedTmuxRuntime(
-  hostSessionId: string,
-  scopeRef: string,
-  runtimeId: string,
-  patch: {
-    status: string
-    launchId?: string | undefined
-    activeRunId?: string | undefined
-    adopted?: boolean | undefined
-  }
-) {
-  const db = openHrcDatabase(dbPath)
-  const now = ts()
-  db.runtimes.insert({
-    runtimeId,
-    hostSessionId,
-    scopeRef,
-    laneRef: 'default',
-    generation: 1,
-    transport: 'tmux',
-    harness: 'claude-code',
-    provider: 'anthropic',
-    status: patch.status,
-    tmuxJson: {
-      socketPath: tmuxSocketPath,
-      sessionName: 'hrc-missing-session',
-      windowName: 'main',
-      sessionId: '$dead',
-      windowId: '@dead',
-      paneId: '%dead',
-    },
-    supportsInflightInput: false,
-    adopted: patch.adopted ?? false,
-    ...(patch.launchId ? { launchId: patch.launchId } : {}),
-    ...(patch.activeRunId ? { activeRunId: patch.activeRunId } : {}),
-    lastActivityAt: now,
-    createdAt: now,
-    updatedAt: now,
-  })
-  db.close()
-}
+let fixture: HrcServerTestFixture
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-server-reconcile-test-'))
-  runtimeRoot = join(tmpDir, 'runtime')
-  stateRoot = join(tmpDir, 'state')
-  socketPath = join(runtimeRoot, 'hrc.sock')
-  lockPath = join(runtimeRoot, 'server.lock')
-  spoolDir = join(runtimeRoot, 'spool')
-  dbPath = join(stateRoot, 'state.sqlite')
-  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
-
-  await mkdir(runtimeRoot, { recursive: true })
-  await mkdir(stateRoot, { recursive: true })
-  await mkdir(spoolDir, { recursive: true })
+  fixture = await createHrcTestFixture('hrc-server-reconcile-test-')
 })
 
 afterEach(async () => {
-  try {
-    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    })
-    await exited
-  } catch {
-    // fine when no tmux server exists
-  }
-  await rm(tmpDir, { recursive: true, force: true })
+  await fixture.cleanup()
 })
 
 describe('startup reconciliation', () => {
@@ -156,15 +39,15 @@ describe('startup reconciliation', () => {
     const runId = 'run-orphan-startup'
     const deadPid = 2147483001
 
-    seedSession(hostSessionId, scopeRef)
-    seedTmuxRuntime(hostSessionId, scopeRef, runtimeId, {
+    fixture.seedSession(hostSessionId, scopeRef)
+    fixture.seedTmuxRuntime(hostSessionId, scopeRef, runtimeId, {
       status: 'busy',
       launchId,
       activeRunId: runId,
     })
 
-    const db = openHrcDatabase(dbPath)
-    const now = ts()
+    const db = openHrcDatabase(fixture.dbPath)
+    const now = fixture.now()
     db.runs.insert({
       runId,
       hostSessionId,
@@ -185,9 +68,9 @@ describe('startup reconciliation', () => {
       runtimeId,
       harness: 'claude-code',
       provider: 'anthropic',
-      launchArtifactPath: join(runtimeRoot, 'launches', `${launchId}.json`),
+      launchArtifactPath: join(fixture.runtimeRoot, 'launches', `${launchId}.json`),
       tmuxJson: {
-        socketPath: tmuxSocketPath,
+        socketPath: fixture.tmuxSocketPath,
         sessionName: 'hrc-missing-session',
         windowName: 'main',
         sessionId: '$dead',
@@ -202,9 +85,9 @@ describe('startup reconciliation', () => {
     })
     db.close()
 
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
-    const reloaded = openHrcDatabase(dbPath)
+    const reloaded = openHrcDatabase(fixture.dbPath)
     const launch = reloaded.launches.getByLaunchId(launchId)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const events = reloaded.events.listFromSeq(1, { hostSessionId })
@@ -221,14 +104,14 @@ describe('startup reconciliation', () => {
     const scopeRef = 'project:phase6-dead'
     const runtimeId = 'rt-dead-runtime'
 
-    seedSession(hostSessionId, scopeRef)
-    seedTmuxRuntime(hostSessionId, scopeRef, runtimeId, {
+    fixture.seedSession(hostSessionId, scopeRef)
+    fixture.seedTmuxRuntime(hostSessionId, scopeRef, runtimeId, {
       status: 'ready',
     })
 
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
-    const reloaded = openHrcDatabase(dbPath)
+    const reloaded = openHrcDatabase(fixture.dbPath)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const events = reloaded.events.listFromSeq(1, { hostSessionId })
     reloaded.close()
@@ -238,7 +121,7 @@ describe('startup reconciliation', () => {
   })
 
   it('continues startup when a spooled callback cannot be replayed', async () => {
-    const launchSpoolDir = join(spoolDir, 'launch-bad-entry')
+    const launchSpoolDir = join(fixture.spoolDir, 'launch-bad-entry')
     await mkdir(launchSpoolDir, { recursive: true })
     await writeFile(
       join(launchSpoolDir, '000001.json'),
@@ -249,9 +132,9 @@ describe('startup reconciliation', () => {
       'utf-8'
     )
 
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
-    const res = await fetchSocket('/v1/sessions')
+    const res = await fixture.fetchSocket('/v1/sessions')
     expect(res.status).toBe(200)
   })
 })
@@ -267,7 +150,7 @@ describe('stale callback rejection', () => {
   })
 
   it('rejects a stale launch callback without mutating the active runtime', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
     const hostSessionId = 'hsid-stale-callback'
     const scopeRef = 'project:phase6-callback'
@@ -275,10 +158,10 @@ describe('stale callback rejection', () => {
     const oldLaunchId = 'launch-old'
     const newLaunchId = 'launch-new'
 
-    seedSession(hostSessionId, scopeRef)
+    fixture.seedSession(hostSessionId, scopeRef)
 
-    const db = openHrcDatabase(dbPath)
-    const now = ts()
+    const db = openHrcDatabase(fixture.dbPath)
+    const now = fixture.now()
     db.runtimes.insert({
       runtimeId,
       hostSessionId,
@@ -291,7 +174,7 @@ describe('stale callback rejection', () => {
       provider: 'anthropic',
       status: 'ready',
       tmuxJson: {
-        socketPath: tmuxSocketPath,
+        socketPath: fixture.tmuxSocketPath,
         sessionName: 'hrc-active-session',
         windowName: 'main',
         sessionId: '$live',
@@ -311,7 +194,7 @@ describe('stale callback rejection', () => {
       runtimeId,
       harness: 'claude-code',
       provider: 'anthropic',
-      launchArtifactPath: join(runtimeRoot, 'launches', `${oldLaunchId}.json`),
+      launchArtifactPath: join(fixture.runtimeRoot, 'launches', `${oldLaunchId}.json`),
       status: 'accepted',
       createdAt: now,
       updatedAt: now,
@@ -323,24 +206,24 @@ describe('stale callback rejection', () => {
       runtimeId,
       harness: 'claude-code',
       provider: 'anthropic',
-      launchArtifactPath: join(runtimeRoot, 'launches', `${newLaunchId}.json`),
+      launchArtifactPath: join(fixture.runtimeRoot, 'launches', `${newLaunchId}.json`),
       status: 'accepted',
       createdAt: now,
       updatedAt: now,
     })
     db.close()
 
-    const res = await postJson(`/v1/internal/launches/${oldLaunchId}/wrapper-started`, {
+    const res = await fixture.postJson(`/v1/internal/launches/${oldLaunchId}/wrapper-started`, {
       hostSessionId,
       wrapperPid: 12345,
-      timestamp: ts(),
+      timestamp: fixture.now(),
     })
 
     expect(res.status).toBe(409)
     const body = (await res.json()) as HrcHttpError
     expect(body.error.code).toBe(HrcErrorCode.STALE_CONTEXT)
 
-    const reloaded = openHrcDatabase(dbPath)
+    const reloaded = openHrcDatabase(fixture.dbPath)
     const runtime = reloaded.runtimes.getByRuntimeId(runtimeId)
     const oldLaunch = reloaded.launches.getByLaunchId(oldLaunchId)
     const events = reloaded.events.listFromSeq(1, { hostSessionId })

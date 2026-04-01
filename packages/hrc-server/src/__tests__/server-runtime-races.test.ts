@@ -41,45 +41,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import type { HrcHttpError } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
-import type { HrcServer, HrcServerOptions } from '../index'
+import type { HrcServer } from '../index'
+import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
-let tmpDir: string
-let runtimeRoot: string
-let stateRoot: string
-let socketPath: string
-let lockPath: string
-let spoolDir: string
-let dbPath: string
-let tmuxSocketPath: string
-
-function ts(): string {
-  return new Date().toISOString()
-}
-
-async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`http://localhost${path}`, {
-    ...init,
-    // @ts-expect-error -- Bun supports unix option on fetch
-    unix: socketPath,
-  })
-}
-
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetchSocket(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
+let fixture: HrcServerTestFixture
 
 function parseNdjson(text: string): Array<Record<string, unknown>> {
   return text
@@ -115,45 +87,12 @@ async function collectFollowStream(responsePromise: Promise<Response>): Promise<
 }
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(join(tmpdir(), 'hrc-runtime-races-'))
-  runtimeRoot = join(tmpDir, 'runtime')
-  stateRoot = join(tmpDir, 'state')
-  socketPath = join(runtimeRoot, 'hrc.sock')
-  lockPath = join(runtimeRoot, 'server.lock')
-  spoolDir = join(runtimeRoot, 'spool')
-  dbPath = join(stateRoot, 'state.sqlite')
-  tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
-
-  await mkdir(runtimeRoot, { recursive: true })
-  await mkdir(stateRoot, { recursive: true })
-  await mkdir(spoolDir, { recursive: true })
+  fixture = await createHrcTestFixture('hrc-runtime-races-')
 })
 
 afterEach(async () => {
-  try {
-    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    })
-    await exited
-  } catch {
-    // fine when no tmux server exists
-  }
-  await rm(tmpDir, { recursive: true, force: true })
+  await fixture.cleanup()
 })
-
-function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions {
-  return {
-    runtimeRoot,
-    stateRoot,
-    socketPath,
-    lockPath,
-    spoolDir,
-    dbPath,
-    tmuxSocketPath,
-    ...overrides,
-  }
-}
 
 /**
  * Seed a session + tmux runtime that is in "ready" state with a real tmux pane.
@@ -170,7 +109,7 @@ async function seedReadyTmuxRuntime(
   launchId: string
   tmuxSessionName: string
 }> {
-  const now = ts()
+  const now = fixture.now()
   const scopeRef = opts?.scopeRef ?? `project:race-${randomUUID().slice(0, 8)}`
   const hostSessionId = `hsid-${randomUUID()}`
   const runtimeId = `rt-${randomUUID()}`
@@ -210,7 +149,7 @@ async function seedReadyTmuxRuntime(
     supportsInflightInput: false,
     adopted: false,
     tmuxJson: {
-      socketPath: tmuxSocketPath,
+      socketPath: fixture.tmuxSocketPath,
       sessionName: tmuxSessionName,
       sessionId: '$99',
       windowId: '@0',
@@ -239,7 +178,7 @@ async function seedBusyRuntime(
   scopeRef: string
   tmuxSessionName: string
 }> {
-  const now = ts()
+  const now = fixture.now()
   const scopeRef = opts?.scopeRef ?? `project:busy-${randomUUID().slice(0, 8)}`
   const hostSessionId = `hsid-${randomUUID()}`
   const runtimeId = `rt-${randomUUID()}`
@@ -249,7 +188,7 @@ async function seedBusyRuntime(
 
   // Create a real tmux session so terminate handler can kill it
   const tmuxProc = Bun.spawn(
-    ['tmux', '-S', tmuxSocketPath, 'new-session', '-d', '-s', tmuxSessionName],
+    ['tmux', '-S', fixture.tmuxSocketPath, 'new-session', '-d', '-s', tmuxSessionName],
     { stdout: 'ignore', stderr: 'ignore' }
   )
   await tmuxProc.exited
@@ -259,7 +198,7 @@ async function seedBusyRuntime(
     [
       'tmux',
       '-S',
-      tmuxSocketPath,
+      fixture.tmuxSocketPath,
       'list-panes',
       '-t',
       tmuxSessionName,
@@ -305,7 +244,7 @@ async function seedBusyRuntime(
     supportsInflightInput: false,
     adopted: false,
     tmuxJson: {
-      socketPath: tmuxSocketPath,
+      socketPath: fixture.tmuxSocketPath,
       sessionName: tmuxSessionName,
       sessionId: sessionId || '$99',
       windowId: windowId || '@0',
@@ -337,7 +276,7 @@ async function seedBusyRuntime(
     provider: 'anthropic',
     launchArtifactPath: '/tmp/fake.json',
     tmuxJson: {
-      socketPath: tmuxSocketPath,
+      socketPath: fixture.tmuxSocketPath,
       sessionName: tmuxSessionName,
       sessionId: sessionId || '$99',
       windowId: windowId || '@0',
@@ -364,12 +303,12 @@ describe('M-5: failed tmux dispatch rollback', () => {
   it('rolls back runtime to ready when dispatch fails mid-flight', async () => {
     // Start server with a tmux socket that does NOT have a real tmux server —
     // tmux.sendKeys will fail because no tmux session exists for the pane.
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedReadyTmuxRuntime(db)
 
     // Attempt a dispatch turn — this should fail because tmux pane %0 doesn't exist
-    const res = await postJson('/v1/turns', {
+    const res = await fixture.postJson('/v1/turns', {
       hostSessionId: seed.hostSessionId,
       prompt: 'test dispatch that will fail',
       runtimeIntent: {
@@ -397,11 +336,11 @@ describe('M-5: failed tmux dispatch rollback', () => {
   })
 
   it('finalizes the accepted run as failed when dispatch errors', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedReadyTmuxRuntime(db)
 
-    await postJson('/v1/turns', {
+    await fixture.postJson('/v1/turns', {
       hostSessionId: seed.hostSessionId,
       prompt: 'test dispatch that will fail',
       runtimeIntent: {
@@ -428,12 +367,12 @@ describe('M-5: failed tmux dispatch rollback', () => {
   })
 
   it('allows a subsequent dispatch after a failed one', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedReadyTmuxRuntime(db)
 
     // First dispatch fails
-    await postJson('/v1/turns', {
+    await fixture.postJson('/v1/turns', {
       hostSessionId: seed.hostSessionId,
       prompt: 'first dispatch fails',
       runtimeIntent: {
@@ -452,7 +391,7 @@ describe('M-5: failed tmux dispatch rollback', () => {
 
     // RED GATE: Second dispatch to same runtime should NOT get RUNTIME_BUSY
     // because the first dispatch was rolled back.
-    const res2 = await postJson('/v1/turns', {
+    const res2 = await fixture.postJson('/v1/turns', {
       hostSessionId: seed.hostSessionId,
       prompt: 'second dispatch should not be blocked',
       runtimeIntent: {
@@ -488,11 +427,11 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
   })
 
   it('terminate finalizes the active run', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedBusyRuntime(db)
 
-    const res = await postJson('/v1/terminate', { runtimeId: seed.runtimeId })
+    const res = await fixture.postJson('/v1/terminate', { runtimeId: seed.runtimeId })
     expect(res.status).toBe(200)
 
     // RED GATE: The active run must be finalized — not left as "accepted"
@@ -503,11 +442,11 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
   })
 
   it('terminate clears activeRunId on the runtime', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedBusyRuntime(db)
 
-    await postJson('/v1/terminate', { runtimeId: seed.runtimeId })
+    await fixture.postJson('/v1/terminate', { runtimeId: seed.runtimeId })
 
     // RED GATE: activeRunId must be cleared after terminate
     const runtime = db.runtimes.getByRuntimeId(seed.runtimeId)
@@ -516,15 +455,15 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
   })
 
   it('exited callback does NOT resurrect a terminated runtime', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedBusyRuntime(db)
 
     // Terminate the runtime
-    await postJson('/v1/terminate', { runtimeId: seed.runtimeId })
+    await fixture.postJson('/v1/terminate', { runtimeId: seed.runtimeId })
 
     // Simulate the exited callback arriving after terminate
-    const _exitedRes = await postJson(`/v1/internal/launches/${seed.launchId}/exited`, {
+    const _exitedRes = await fixture.postJson(`/v1/internal/launches/${seed.launchId}/exited`, {
       hostSessionId: seed.hostSessionId,
       exitCode: 0,
     })
@@ -538,15 +477,15 @@ describe('M-6: terminate finalizes run, exited ignores terminated', () => {
   })
 
   it('exited callback for terminated launch does not create a new ready runtime', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
     const seed = await seedBusyRuntime(db)
 
     // Terminate
-    await postJson('/v1/terminate', { runtimeId: seed.runtimeId })
+    await fixture.postJson('/v1/terminate', { runtimeId: seed.runtimeId })
 
     // Exited arrives late
-    await postJson(`/v1/internal/launches/${seed.launchId}/exited`, {
+    await fixture.postJson(`/v1/internal/launches/${seed.launchId}/exited`, {
       hostSessionId: seed.hostSessionId,
       exitCode: 0,
     })
@@ -569,16 +508,16 @@ describe('M-7: bridge registration stale binding reuse', () => {
   })
 
   it('does not return stale bridge when hostSessionId has changed', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
     // Create first session
-    const res1 = await postJson('/v1/sessions/resolve', {
+    const res1 = await fixture.postJson('/v1/sessions/resolve', {
       sessionRef: 'project:bridge-test/lane:default',
     })
     const session1 = (await res1.json()) as { hostSessionId: string; generation: number }
 
     // Register a bridge for session 1
-    const bridgeRes1 = await postJson('/v1/bridges/local-target', {
+    const bridgeRes1 = await fixture.postJson('/v1/bridges/local-target', {
       hostSessionId: session1.hostSessionId,
       transport: 'agentchat',
       target: 'agent@project',
@@ -588,7 +527,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
     expect(bridge1.hostSessionId).toBe(session1.hostSessionId)
 
     // Rotate session via clear-context
-    const clearRes = await postJson('/v1/clear-context', {
+    const clearRes = await fixture.postJson('/v1/clear-context', {
       hostSessionId: session1.hostSessionId,
     })
     expect(clearRes.status).toBe(200)
@@ -596,7 +535,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
     const newHostSessionId = cleared.hostSessionId
 
     // Register a bridge with the SAME (transport, target) but new session
-    const bridgeRes2 = await postJson('/v1/bridges/local-target', {
+    const bridgeRes2 = await fixture.postJson('/v1/bridges/local-target', {
       hostSessionId: newHostSessionId,
       transport: 'agentchat',
       target: 'agent@project',
@@ -610,16 +549,16 @@ describe('M-7: bridge registration stale binding reuse', () => {
   })
 
   it('does not return stale bridge when runtimeId has changed', async () => {
-    server = await createHrcServer(serverOpts())
-    const db = openHrcDatabase(dbPath)
+    server = await createHrcServer(fixture.serverOpts())
+    const db = openHrcDatabase(fixture.dbPath)
 
     // Create session with two runtimes
-    const res1 = await postJson('/v1/sessions/resolve', {
+    const res1 = await fixture.postJson('/v1/sessions/resolve', {
       sessionRef: 'project:bridge-rt-test/lane:default',
     })
     const session = (await res1.json()) as { hostSessionId: string; generation: number }
 
-    const now = ts()
+    const now = fixture.now()
     const rt1 = `rt-${randomUUID()}`
     const rt2 = `rt-${randomUUID()}`
 
@@ -656,7 +595,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
     })
 
     // Register bridge with runtime 1
-    const bridgeRes1 = await postJson('/v1/bridges/local-target', {
+    const bridgeRes1 = await fixture.postJson('/v1/bridges/local-target', {
       hostSessionId: session.hostSessionId,
       runtimeId: rt1,
       transport: 'agentchat',
@@ -666,7 +605,7 @@ describe('M-7: bridge registration stale binding reuse', () => {
     const _bridge1 = (await bridgeRes1.json()) as { bridgeId: string; runtimeId?: string }
 
     // Register same (transport, target) but with a DIFFERENT runtimeId
-    const bridgeRes2 = await postJson('/v1/bridges/local-target', {
+    const bridgeRes2 = await fixture.postJson('/v1/bridges/local-target', {
       hostSessionId: session.hostSessionId,
       runtimeId: rt2,
       transport: 'agentchat',
@@ -691,23 +630,23 @@ describe('M-8: watch follow event loss during handoff', () => {
   })
 
   it('does not lose events appended between snapshot and subscriber registration', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
     // Create a session so we can generate events
-    const resolveRes = await postJson('/v1/sessions/resolve', {
+    const resolveRes = await fixture.postJson('/v1/sessions/resolve', {
       sessionRef: 'project:watch-race/lane:default',
     })
     const session = (await resolveRes.json()) as { hostSessionId: string; generation: number }
 
     // Get current seq from non-follow query
-    const baseRes = await fetchSocket('/v1/events')
+    const baseRes = await fixture.fetchSocket('/v1/events')
     const baseText = await baseRes.text()
     const baseEvents = baseText.trim().length > 0 ? parseNdjson(baseText) : []
     const baseSeq = baseEvents.length > 0 ? Number(baseEvents[baseEvents.length - 1].seq) : 0
 
     // Start a follow stream from the current seq
     const controller = new AbortController()
-    const followPromise = fetchSocket(`/v1/events?follow=true&fromSeq=${baseSeq + 1}`, {
+    const followPromise = fixture.fetchSocket(`/v1/events?follow=true&fromSeq=${baseSeq + 1}`, {
       signal: controller.signal,
     })
 
@@ -722,7 +661,7 @@ describe('M-8: watch follow event loss during handoff', () => {
       if (!injected) {
         injected = true
         const event = internals.db.events.append({
-          ts: ts(),
+          ts: fixture.now(),
           hostSessionId: session.hostSessionId,
           scopeRef: 'project:watch-race',
           laneRef: 'default',
@@ -751,7 +690,7 @@ describe('M-8: watch follow event loss during handoff', () => {
     const followEvents = followText.trim().length > 0 ? parseNdjson(followText) : []
 
     // Get the authoritative list of events from a non-follow query
-    const authRes = await fetchSocket(`/v1/events?fromSeq=${baseSeq + 1}`)
+    const authRes = await fixture.fetchSocket(`/v1/events?fromSeq=${baseSeq + 1}`)
     const authText = await authRes.text()
     const authEvents = authText.trim().length > 0 ? parseNdjson(authText) : []
 
@@ -764,25 +703,25 @@ describe('M-8: watch follow event loss during handoff', () => {
   })
 
   it('delivers events in monotonic seq order without duplicates', async () => {
-    server = await createHrcServer(serverOpts())
+    server = await createHrcServer(fixture.serverOpts())
 
     // Seed some events
     for (let i = 0; i < 3; i++) {
-      await postJson('/v1/sessions/resolve', {
+      await fixture.postJson('/v1/sessions/resolve', {
         sessionRef: `project:mono-${i}/lane:default`,
       })
     }
 
     // Start follow from seq 1
     const controller = new AbortController()
-    const followPromise = fetchSocket('/v1/events?follow=true&fromSeq=1', {
+    const followPromise = fixture.fetchSocket('/v1/events?follow=true&fromSeq=1', {
       signal: controller.signal,
     })
     const followCapture = collectFollowStream(followPromise)
 
     // Add more events during follow
     for (let i = 0; i < 3; i++) {
-      await postJson('/v1/sessions/resolve', {
+      await fixture.postJson('/v1/sessions/resolve', {
         sessionRef: `project:mono-extra-${i}/lane:default`,
       })
     }
