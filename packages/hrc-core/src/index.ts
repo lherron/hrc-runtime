@@ -67,3 +67,27 @@ export type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from './contracts.js'
+
+export type {
+  ApplyAppSessionInput,
+  ApplyAppSessionsRequest,
+  ApplyAppSessionsResponse,
+  BindSurfaceRequest,
+  CaptureResponse,
+  ClearContextRequest,
+  ClearContextResponse,
+  CloseBridgeRequest,
+  DeliverBridgeRequest,
+  DeliverBridgeResponse,
+  DispatchTurnRequest,
+  DispatchTurnResponse,
+  EnsureRuntimeRequest,
+  EnsureRuntimeResponse,
+  RegisterBridgeTargetRequest,
+  RegisterBridgeTargetResponse,
+  ResolveSessionRequest,
+  ResolveSessionResponse,
+  RestartStyle,
+  RuntimeActionResponse,
+  UnbindSurfaceRequest,
+} from './http-contracts.js'

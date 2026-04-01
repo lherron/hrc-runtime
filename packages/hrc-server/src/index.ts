@@ -18,6 +18,20 @@ import {
   validateFence,
 } from 'hrc-core'
 import type {
+  ApplyAppSessionInput,
+  ApplyAppSessionsRequest,
+  ApplyAppSessionsResponse,
+  BindSurfaceRequest,
+  CaptureResponse,
+  ClearContextRequest,
+  ClearContextResponse,
+  CloseBridgeRequest,
+  DeliverBridgeRequest,
+  DeliverBridgeResponse,
+  DispatchTurnRequest,
+  DispatchTurnResponse,
+  EnsureRuntimeRequest,
+  EnsureRuntimeResponse,
   HrcEventEnvelope,
   HrcFence,
   HrcHttpError,
@@ -28,6 +42,13 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  RegisterBridgeTargetRequest,
+  RegisterBridgeTargetResponse,
+  ResolveSessionRequest,
+  ResolveSessionResponse,
+  RestartStyle,
+  RuntimeActionResponse,
+  UnbindSurfaceRequest,
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
@@ -40,77 +61,11 @@ import {
 import { readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
 
 import {
-  type RestartStyle,
   type TmuxManager as ServerTmuxManager,
   type TmuxManagerOptions,
   type TmuxPaneState,
   createTmuxManager,
 } from './tmux.js'
-
-type ResolveSessionRequest = {
-  sessionRef: string
-}
-
-type ResolveSessionResponse = {
-  hostSessionId: string
-  generation: number
-  created: boolean
-  session: HrcSessionRecord
-}
-
-type ApplyAppSessionInput = {
-  appSessionKey: string
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-}
-
-type ApplyAppSessionsRequest = {
-  appId: string
-  hostSessionId: string
-  sessions: ApplyAppSessionInput[]
-}
-
-type ApplyAppSessionsResponse = {
-  inserted: number
-  updated: number
-  removed: number
-}
-
-type EnsureRuntimeRequest = {
-  hostSessionId: string
-  intent: HrcRuntimeIntent
-  restartStyle?: RestartStyle | undefined
-}
-
-type EnsureRuntimeResponse = {
-  runtimeId: string
-  hostSessionId: string
-  transport: 'tmux'
-  status: string
-  supportsInFlightInput: boolean
-  tmux: {
-    sessionId: string
-    windowId: string
-    paneId: string
-  }
-}
-
-type DispatchTurnRequest = {
-  hostSessionId: string
-  prompt: string
-  fences?: HrcFence | undefined
-  runtimeIntent?: HrcRuntimeIntent | undefined
-}
-
-type DispatchTurnResponse = {
-  runId: string
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-  transport: 'sdk' | 'tmux'
-  status: 'completed' | 'started'
-  supportsInFlightInput: boolean
-}
 
 type InFlightInputRequest = {
   runtimeId: string
@@ -126,21 +81,6 @@ type InFlightInputResponse = {
   pendingTurns?: number | undefined
 }
 
-type ClearContextRequest = {
-  hostSessionId: string
-  relaunch?: boolean | undefined
-}
-
-type ClearContextResponse = {
-  hostSessionId: string
-  generation: number
-  priorHostSessionId: string
-}
-
-type CaptureResponse = {
-  text: string
-}
-
 type AttachDescriptorResponse = {
   transport: 'tmux'
   argv: string[]
@@ -152,56 +92,6 @@ type AttachDescriptorResponse = {
     tabId?: string | undefined
     paneId?: string | undefined
   }
-}
-
-type RuntimeActionResponse = {
-  ok: true
-  hostSessionId: string
-  runtimeId: string
-}
-
-type BindSurfaceRequest = {
-  surfaceKind: string
-  surfaceId: string
-  runtimeId: string
-  hostSessionId: string
-  generation: number
-  windowId?: string | undefined
-  tabId?: string | undefined
-  paneId?: string | undefined
-}
-
-type UnbindSurfaceRequest = {
-  surfaceKind: string
-  surfaceId: string
-  reason?: string | undefined
-}
-
-type RegisterBridgeTargetRequest = {
-  hostSessionId: string
-  runtimeId?: string | undefined
-  transport: string
-  target: string
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-type RegisterBridgeTargetResponse = HrcLocalBridgeRecord
-
-type DeliverBridgeRequest = {
-  bridgeId: string
-  text: string
-  expectedHostSessionId?: string | undefined
-  expectedGeneration?: number | undefined
-}
-
-type DeliverBridgeResponse = {
-  delivered: true
-  bridgeId: string
-}
-
-type CloseBridgeRequest = {
-  bridgeId: string
 }
 
 type FollowSubscriber = (event: HrcEventEnvelope) => void

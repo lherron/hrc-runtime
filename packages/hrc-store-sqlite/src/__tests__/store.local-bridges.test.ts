@@ -32,8 +32,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // RED GATE: imports will fail until LocalBridgeRepository and Phase 5 migration are wired
-import { createHrcDatabase, openHrcDatabase, phase1Migrations } from '../index'
+import { createHrcDatabase } from '../database.js'
+import { openHrcDatabase } from '../index'
 import type { HrcDatabase } from '../index'
+import { phase1Migrations } from '../migrations.js'
 
 let tmpDir: string
 let dbPath: string
