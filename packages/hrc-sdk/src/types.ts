@@ -1,13 +1,4 @@
-import type {
-  HrcAppSessionRecord,
-  HrcFence,
-  HrcLaunchRecord,
-  HrcLocalBridgeRecord,
-  HrcRuntimeIntent,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-  HrcSurfaceBindingRecord,
-} from 'hrc-core'
+import type { HrcFence, HrcLocalBridgeRecord, HrcRuntimeIntent, HrcSessionRecord } from 'hrc-core'
 
 export type ResolveSessionRequest = {
   sessionRef: string
@@ -159,10 +150,6 @@ export type SurfaceListFilter = {
   runtimeId: string
 }
 
-export type SurfaceBindingRecord = HrcSurfaceBindingRecord
-export type AppSessionRecord = HrcAppSessionRecord
-export type LocalBridgeRecord = HrcLocalBridgeRecord
-
 export type RegisterBridgeTargetRequest = {
   hostSessionId: string
   runtimeId?: string | undefined
@@ -222,6 +209,3 @@ export type LaunchListFilter = {
 export type AdoptRuntimeRequest = {
   runtimeId: string
 }
-
-export type RuntimeRecord = HrcRuntimeSnapshot
-export type LaunchRecord = HrcLaunchRecord

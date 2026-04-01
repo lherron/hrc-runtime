@@ -1,12 +1,4 @@
-import {
-  HrcBadRequestError,
-  HrcConflictError,
-  HrcErrorCode,
-  type HrcHttpError,
-  createHrcError,
-} from './errors.js'
-
-export { HrcErrorCode } from './errors.js'
+import { HrcBadRequestError, HrcConflictError, HrcErrorCode, type HrcHttpError } from './errors.js'
 
 export type HrcFence = {
   expectedHostSessionId?: string | undefined
@@ -147,11 +139,4 @@ export function validateFence(
     resolvedHostSessionId: currentState.activeHostSessionId,
     resolvedGeneration: currentState.generation,
   }
-}
-
-export function createInvalidFenceError(
-  message: string,
-  detail: Record<string, unknown> = {}
-): HrcHttpError {
-  return createHrcError(HrcErrorCode.INVALID_FENCE, message, detail)
 }

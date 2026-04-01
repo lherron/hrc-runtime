@@ -3,7 +3,7 @@ import {
   type HrcAppSessionRecord,
   type HrcContinuationRef,
   type HrcContinuityRecord,
-  type HrcErrorCodeValue,
+  type HrcErrorCode,
   type HrcEventEnvelope,
   type HrcLaunchRecord,
   type HrcLocalBridgeRecord,
@@ -130,7 +130,7 @@ type RunRow = {
   started_at: string | null
   completed_at: string | null
   updated_at: string
-  error_code: HrcErrorCodeValue | null
+  error_code: HrcErrorCode | null
   error_message: string | null
 }
 
@@ -1416,7 +1416,7 @@ export class RunRepository {
       status: string
       completedAt: string
       updatedAt: string
-      errorCode?: HrcErrorCodeValue | undefined
+      errorCode?: HrcErrorCode | undefined
       errorMessage?: string | undefined
     }
   ): HrcRunRecord | null {

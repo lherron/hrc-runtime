@@ -10,7 +10,7 @@ export {
   createHrcError,
   httpStatusForErrorCode,
 } from './errors.js'
-export type { HrcErrorCode as HrcErrorCodeValue, HrcHttpError, HrcHttpStatus } from './errors.js'
+export type { HrcHttpError, HrcHttpStatus } from './errors.js'
 
 export {
   isConcreteSelector,
@@ -25,12 +25,7 @@ export type {
   HrcStableSelector,
 } from './selectors.js'
 
-export {
-  HrcErrorCode as HrcFenceErrorCode,
-  createInvalidFenceError,
-  parseFence,
-  validateFence,
-} from './fences.js'
+export { parseFence, validateFence } from './fences.js'
 export type {
   HrcActiveSessionState,
   HrcFence,

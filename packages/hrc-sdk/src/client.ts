@@ -1,4 +1,12 @@
-import type { HrcEventEnvelope, HrcHttpError, HrcSessionRecord } from 'hrc-core'
+import type {
+  HrcEventEnvelope,
+  HrcHttpError,
+  HrcSessionRecord,
+  HrcLaunchRecord as LaunchRecord,
+  HrcLocalBridgeRecord as LocalBridgeRecord,
+  HrcRuntimeSnapshot as RuntimeRecord,
+  HrcSurfaceBindingRecord as SurfaceBindingRecord,
+} from 'hrc-core'
 import { HrcDomainError } from 'hrc-core'
 
 import type {
@@ -19,20 +27,16 @@ import type {
   EnsureRuntimeResponse,
   HealthResponse,
   LaunchListFilter,
-  LaunchRecord,
-  LocalBridgeRecord,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
   RuntimeListFilter,
-  RuntimeRecord,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
   StatusResponse,
-  SurfaceBindingRecord,
   SurfaceListFilter,
   UnbindSurfaceRequest,
   WatchOptions,
