@@ -175,9 +175,9 @@ describe('server startup', () => {
   it('creates the lock file on startup', async () => {
     server = await createHrcServer(serverOpts())
     const lockContent = await readFile(lockPath, 'utf-8')
-    // Lock file should contain the current PID
-    expect(lockContent.trim()).toMatch(/^\d+$/)
-    expect(Number(lockContent.trim())).toBe(process.pid)
+    const lockMeta = JSON.parse(lockContent)
+    expect(lockMeta.pid).toBe(process.pid)
+    expect(typeof lockMeta.createdAt).toBe('string')
   })
 
   it('opens the database and runs migrations on startup', async () => {
@@ -193,9 +193,15 @@ describe('server startup', () => {
 // ---------------------------------------------------------------------------
 describe('single-instance lock', () => {
   let server1: HrcServer
+  // C-1 race test may produce a second server that also needs cleanup
+  let raceServers: HrcServer[]
 
   afterEach(async () => {
     if (server1) await server1.stop()
+    if (raceServers) {
+      await Promise.allSettled(raceServers.map((s) => s.stop()))
+      raceServers = []
+    }
   })
 
   it('rejects a second instance when lock is held by a live process', async () => {
@@ -216,6 +222,83 @@ describe('single-instance lock', () => {
     server1 = await createHrcServer(serverOpts())
     const s = await stat(socketPath).catch(() => null)
     expect(s).not.toBeNull()
+  })
+
+  // -------------------------------------------------------------------------
+  // C-1 remediation tests (T-00979) — RED until atomic lock is implemented
+  // -------------------------------------------------------------------------
+
+  // C-1 RED TEST 1: Lock file must persist structured metadata (PID + timestamp)
+  // Current code writes bare PID (`String(pid)`). After remediation the lock
+  // must be JSON with { pid, createdAt } so stale-lock decisions can consider age.
+  it('lock file persists JSON metadata with pid and createdAt', async () => {
+    server1 = await createHrcServer(serverOpts())
+    const raw = await readFile(lockPath, 'utf-8')
+    // Must be valid JSON, not a bare number
+    const meta = JSON.parse(raw)
+    expect(meta).toBeObject()
+    expect(meta.pid).toBe(process.pid)
+    expect(typeof meta.createdAt).toBe('string')
+    // Timestamp must be recent (within 5 seconds of now)
+    const lockTime = new Date(meta.createdAt).getTime()
+    expect(Date.now() - lockTime).toBeLessThan(5000)
+  })
+
+  // C-1 RED TEST 2: Concurrent startup race — exactly one instance wins
+  // Current code has a TOCTOU gap between readLockPid and writeFile.
+  // Two simultaneous startups can both observe "no lock" and both proceed.
+  // After remediation with atomic exclusive-create, exactly one must win.
+  it('concurrent startup race — exactly one instance succeeds', async () => {
+    const results = await Promise.allSettled([
+      createHrcServer(serverOpts()),
+      createHrcServer(serverOpts()),
+    ])
+
+    const fulfilled = results.filter(
+      (r): r is PromiseFulfilledResult<HrcServer> => r.status === 'fulfilled'
+    )
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+
+    // Clean up all servers that started (current bug: both may succeed)
+    raceServers = fulfilled.map((r) => r.value)
+
+    // Exactly one must succeed, one must fail
+    expect(fulfilled.length).toBe(1)
+    expect(rejected.length).toBe(1)
+    expect(rejected[0]!.reason.message).toMatch(/already running|lock/i)
+  })
+
+  // C-1 RED TEST 3: Active socket must be probed before clearing stale lock
+  // When the lock file references a dead PID but the socket is still actively
+  // serving (e.g., lock was manually deleted and rewritten), the server must
+  // probe the socket and refuse to start rather than blindly unlinking it.
+  // Current code unconditionally unlinks socket on dead-PID lock (line 2011).
+  it('refuses startup when lock PID is dead but socket is still responsive', async () => {
+    // Start a real server — socket is live and serving
+    server1 = await createHrcServer(serverOpts())
+
+    // Verify socket is responsive before we corrupt the lock
+    const healthCheck = await fetchSocket('/v1/sessions')
+    expect(healthCheck.status).toBe(200)
+
+    // Corrupt the lock file with a dead PID while socket stays active
+    const deadPid = 2147483647
+    await writeFile(lockPath, String(deadPid), 'utf-8')
+
+    // A second startup should probe the socket, find it alive, and refuse.
+    // Current code sees dead PID → unlinks socket → creates split-brain.
+    let splitBrainServer: HrcServer | undefined
+    try {
+      splitBrainServer = await createHrcServer(serverOpts())
+      // If we get here, the test fails — split-brain was created
+    } catch {
+      // Expected: startup should refuse when socket is responsive
+    }
+    // Clean up split-brain server if the bug let it through
+    if (splitBrainServer) {
+      raceServers = [splitBrainServer]
+    }
+    expect(splitBrainServer).toBeUndefined()
   })
 })
 
