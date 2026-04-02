@@ -1,4 +1,5 @@
 import { HrcBadRequestError, HrcConflictError, HrcErrorCode, type HrcHttpError } from './errors.js'
+export { HrcErrorCode } from './errors.js'
 
 export type HrcFence = {
   expectedHostSessionId?: string | undefined

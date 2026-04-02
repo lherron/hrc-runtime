@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { connect } from 'node:net'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+
+/** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
+const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
 import {
   HrcBadRequestError,
@@ -3590,7 +3593,7 @@ async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
 }
 
 function buildLaunchCommand(launchArtifactPath: string): string {
-  return `bun run ${shellQuote(join(process.cwd(), 'packages/hrc-server/src/launch/exec.ts'))} --launch-file ${shellQuote(launchArtifactPath)}`
+  return `bun run ${shellQuote(join(WORKSPACE_ROOT, 'packages/hrc-server/src/launch/exec.ts'))} --launch-file ${shellQuote(launchArtifactPath)}`
 }
 
 function shellQuote(value: string): string {
@@ -3626,8 +3629,8 @@ async function isLaunchCommandAvailable(command: string | undefined): Promise<bo
 
 async function findHarnessShimPath(): Promise<string | null> {
   const candidates = [
-    join(process.cwd(), 'integration-tests/fixtures/hrc-shim/hrc-harness-shim.sh'),
-    join(process.cwd(), 'integration-tests/fixtures/hrc-shim/harness'),
+    join(WORKSPACE_ROOT, 'integration-tests/fixtures/hrc-shim/hrc-harness-shim.sh'),
+    join(WORKSPACE_ROOT, 'integration-tests/fixtures/hrc-shim/harness'),
   ]
 
   for (const candidate of candidates) {
