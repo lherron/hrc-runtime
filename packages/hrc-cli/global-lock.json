@@ -1,0 +1,23 @@
+{
+  "lockfileVersion": 1,
+  "resolverVersion": 1,
+  "generatedAt": "2026-04-01T15:53:52.409Z",
+  "registry": {
+    "type": "git",
+    "url": "repo"
+  },
+  "spaces": {},
+  "targets": {
+    "placement-empty": {
+      "compose": [],
+      "roots": [],
+      "loadOrder": [],
+      "envHash": "sha256:c490df03272bb8f1b5b667e3606a39ea4aaa21cca70be726b09f2cf124f9a40f",
+      "harnesses": {
+        "claude": {
+          "envHash": "sha256:f153d2c5343488e4d6722e989559069088a0c3bfd86ce3126a0c57709b0c41c8"
+        }
+      }
+    }
+  }
+}
