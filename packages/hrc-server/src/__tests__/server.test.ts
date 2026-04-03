@@ -206,7 +206,7 @@ describe('server startup', () => {
     })
     expect(body.capabilities.platform).toEqual({
       appOwnedSessions: true,
-      appHarnessSessions: false,
+      appHarnessSessions: true,
       commandSessions: true,
       literalInput: true,
       surfaceBindings: true,
@@ -1091,7 +1091,7 @@ describe('/v1/status capability reporting (T-00998)', () => {
     const res = await fetchSocket('/v1/status')
     const body = (await res.json()) as StatusResponse
     expect(body.capabilities.platform.appOwnedSessions).toBe(true)
-    expect(body.capabilities.platform.appHarnessSessions).toBe(false)
+    expect(body.capabilities.platform.appHarnessSessions).toBe(true)
     expect(body.capabilities.platform.commandSessions).toBe(true)
     expect(body.capabilities.platform.literalInput).toBe(true)
     expect(body.capabilities.platform.surfaceBindings).toBe(true)
