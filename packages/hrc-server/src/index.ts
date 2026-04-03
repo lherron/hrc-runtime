@@ -22,6 +22,7 @@ import {
   validateFence,
 } from 'hrc-core'
 import type {
+  AppSessionFreshnessFence,
   ApplyAppManagedSessionsRequest,
   ApplyAppManagedSessionsResponse,
   ApplyAppSessionInput,
@@ -40,9 +41,12 @@ import type {
   EnsureAppSessionResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcCommandLaunchSpec,
   HrcEventEnvelope,
   HrcFence,
+  HrcHarness,
   HrcHttpError,
   HrcLaunchRecord,
   HrcLocalBridgeRecord,
@@ -52,6 +56,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  InterruptAppSessionRequest,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   RemoveAppSessionResponse,
@@ -59,6 +64,9 @@ import type {
   ResolveSessionResponse,
   RestartStyle,
   RuntimeActionResponse,
+  SendLiteralInputRequest,
+  SendLiteralInputResponse,
+  TerminateAppSessionRequest,
   UnbindSurfaceRequest,
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -200,6 +208,8 @@ const MIN_SUPPORTED_TMUX_VERSION = {
   major: 3,
   minor: 2,
 }
+const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
+const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
 
 class HrcServerInstance implements HrcServer {
   private readonly followSubscribers = new Set<FollowSubscriber>()
@@ -423,6 +433,16 @@ class HrcServerInstance implements HrcServer {
       if (request.method === 'POST' && pathname === '/v1/app-sessions/apply') {
         return await this.handleApplyManagedAppSessions(request)
       }
+      {
+        const appSessionResponse = await this.handleAppSessionOperationRequest(
+          request,
+          pathname,
+          url
+        )
+        if (appSessionResponse) {
+          return appSessionResponse
+        }
+      }
 
       return new Response('Not Found', { status: 404 })
     } catch (error) {
@@ -579,20 +599,43 @@ class HrcServerInstance implements HrcServer {
       let runtimeId: string | undefined
       let restarted = false
 
-      if (
-        body.forceRestart === true &&
-        spec.kind === 'harness' &&
-        spec.runtimeIntent.harness.interactive
-      ) {
+      if (spec.kind === 'harness') {
+        if (body.forceRestart === true && spec.runtimeIntent.harness.interactive) {
+          const session = requireSession(this.db, existing.activeHostSessionId)
+          const restartStyle = body.restartStyle ?? 'fresh_pty'
+          const runtime = await this.ensureRuntimeForSession(
+            session,
+            spec.runtimeIntent,
+            restartStyle
+          )
+          runtimeId = runtime.runtimeId
+          restarted = true
+        }
+      } else {
         const session = requireSession(this.db, existing.activeHostSessionId)
-        const restartStyle = body.restartStyle ?? 'fresh_pty'
-        const runtime = await this.ensureRuntimeForSession(
-          session,
-          spec.runtimeIntent,
-          restartStyle
-        )
-        runtimeId = runtime.runtimeId
-        restarted = true
+        const currentRuntime = findLatestRuntime(this.db, session.hostSessionId)
+        const shouldLaunch =
+          body.forceRestart === true ||
+          !currentRuntime ||
+          isRuntimeUnavailableStatus(currentRuntime.status)
+
+        if (shouldLaunch) {
+          const runtime = await this.ensureCommandRuntimeForSession(
+            session,
+            spec.command,
+            body.restartStyle ?? (body.forceRestart === true ? 'fresh_pty' : 'reuse_pty'),
+            body.forceRestart === true
+          )
+          runtimeId = runtime.runtimeId
+          restarted = body.forceRestart === true
+        } else {
+          this.db.runtimes.update(currentRuntime.runtimeId, {
+            runtimeKind: 'command',
+            commandSpec: spec.command,
+            updatedAt: now,
+          })
+          runtimeId = currentRuntime.runtimeId
+        }
       }
 
       const refreshed = this.db.appManagedSessions.findByKey(appId, appSessionKey)
@@ -654,6 +697,16 @@ class HrcServerInstance implements HrcServer {
     if (spec.kind === 'harness' && spec.runtimeIntent.harness.interactive) {
       const restartStyle = body.restartStyle ?? 'reuse_pty'
       const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
+      runtimeId = runtime.runtimeId
+    }
+
+    if (spec.kind === 'command') {
+      const runtime = await this.ensureCommandRuntimeForSession(
+        session,
+        spec.command,
+        body.restartStyle ?? 'reuse_pty',
+        false
+      )
       runtimeId = runtime.runtimeId
     }
 
@@ -892,6 +945,111 @@ class HrcServerInstance implements HrcServer {
       removed,
       results,
     } satisfies ApplyAppManagedSessionsResponse)
+  }
+
+  private async handleAppSessionOperationRequest(
+    request: Request,
+    pathname: string,
+    url: URL
+  ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/literal-input') {
+      return await this.handleAppSessionLiteralInput(request)
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/app-sessions/capture') {
+      return await this.handleAppSessionCapture(url)
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/app-sessions/attach') {
+      return this.handleAppSessionAttach(url)
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/interrupt') {
+      return await this.handleAppSessionInterrupt(request)
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/terminate') {
+      return await this.handleAppSessionTerminate(request)
+    }
+
+    return null
+  }
+
+  private async handleAppSessionLiteralInput(request: Request): Promise<Response> {
+    const body = parseSendLiteralInputRequest(await parseJsonBody(request))
+    const managed = requireManagedAppSession(this.db, body.selector)
+    const session = requireSession(this.db, managed.activeHostSessionId)
+
+    if (managed.kind !== 'command') {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.SESSION_KIND_MISMATCH,
+        `app session "${managed.appId}/${managed.appSessionKey}" is kind "${managed.kind}", cannot accept literal input`,
+        {
+          appId: managed.appId,
+          appSessionKey: managed.appSessionKey,
+          existingKind: managed.kind,
+          requestedOperation: 'literal-input',
+        }
+      )
+    }
+
+    validateAppSessionFence(body.fence, session)
+    const runtime = requireLatestRuntime(this.db, session.hostSessionId)
+
+    const paneId = requireTmuxPane(runtime).paneId
+    await this.tmux.sendLiteral(paneId, body.text)
+    if (body.enter === true) {
+      await this.tmux.sendEnter(paneId)
+    }
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    const event = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'app-session.literal-input',
+      eventJson: {
+        appId: managed.appId,
+        appSessionKey: managed.appSessionKey,
+        payloadLength: body.text.length,
+        enter: body.enter === true,
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      delivered: true,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+    } satisfies SendLiteralInputResponse)
+  }
+
+  private async handleAppSessionCapture(url: URL): Promise<Response> {
+    const { runtime } = this.resolveManagedSessionRuntime(parseAppSessionSelectorFromQuery(url))
+    return await this.captureRuntime(runtime)
+  }
+
+  private handleAppSessionAttach(url: URL): Response {
+    const { runtime } = this.resolveManagedSessionRuntime(parseAppSessionSelectorFromQuery(url))
+    return this.attachRuntime(runtime)
+  }
+
+  private async handleAppSessionInterrupt(request: Request): Promise<Response> {
+    const body = parseInterruptAppSessionRequest(await parseJsonBody(request))
+    const { runtime } = this.resolveManagedSessionRuntime(body.selector)
+    return await this.interruptRuntime(runtime, body.hard === true)
+  }
+
+  private async handleAppSessionTerminate(request: Request): Promise<Response> {
+    const body = parseTerminateAppSessionRequest(await parseJsonBody(request))
+    const { runtime } = this.resolveManagedSessionRuntime(body.selector)
+    return await this.terminateRuntime(runtime)
   }
 
   private handleEvents(url: URL, request: Request): Response {
@@ -1309,43 +1467,13 @@ class HrcServerInstance implements HrcServer {
   private async handleCapture(url: URL): Promise<Response> {
     const runtimeId = parseRuntimeIdQuery(url)
     const runtime = requireRuntime(this.db, runtimeId)
-    const text =
-      runtime.transport === 'sdk'
-        ? this.db.runtimeBuffers
-            .listByRuntimeId(runtime.runtimeId)
-            .map((chunk) => chunk.text)
-            .join('')
-        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
-
-    this.db.runtimes.updateActivity(runtime.runtimeId, timestamp(), timestamp())
-
-    return json({
-      text,
-    } satisfies CaptureResponse)
+    return await this.captureRuntime(runtime)
   }
 
   private handleAttach(url: URL): Response {
     const runtimeId = parseRuntimeIdQuery(url)
     const runtime = requireRuntime(this.db, runtimeId)
-    if (runtime.transport === 'sdk') {
-      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
-        runtimeId,
-        transport: runtime.transport,
-      })
-    }
-    const tmux = requireTmuxPane(runtime)
-
-    return json({
-      transport: 'tmux',
-      argv: this.tmux.getAttachDescriptor(tmux.sessionName).argv,
-      bindingFence: {
-        hostSessionId: runtime.hostSessionId,
-        runtimeId: runtime.runtimeId,
-        generation: runtime.generation,
-        windowId: tmux.windowId,
-        paneId: tmux.paneId,
-      },
-    } satisfies AttachDescriptorResponse)
+    return this.attachRuntime(runtime)
   }
 
   private async handleBindSurface(request: Request): Promise<Response> {
@@ -1732,6 +1860,59 @@ class HrcServerInstance implements HrcServer {
   private async handleInterrupt(request: Request): Promise<Response> {
     const body = parseRuntimeActionBody(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
+    return await this.interruptRuntime(runtime, false)
+  }
+
+  private async handleTerminate(request: Request): Promise<Response> {
+    const body = parseRuntimeActionBody(await parseJsonBody(request))
+    const runtime = requireRuntime(this.db, body.runtimeId)
+    return await this.terminateRuntime(runtime)
+  }
+
+  private async captureRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
+    const text =
+      runtime.transport === 'sdk'
+        ? this.db.runtimeBuffers
+            .listByRuntimeId(runtime.runtimeId)
+            .map((chunk) => chunk.text)
+            .join('')
+        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+
+    return json({
+      text,
+    } satisfies CaptureResponse)
+  }
+
+  private attachRuntime(runtime: HrcRuntimeSnapshot): Response {
+    if (runtime.transport === 'sdk') {
+      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
+        runtimeId: runtime.runtimeId,
+        transport: runtime.transport,
+      })
+    }
+    const tmux = requireTmuxPane(runtime)
+
+    return json({
+      transport: 'tmux',
+      argv: this.tmux.getAttachDescriptor(tmux.sessionName).argv,
+      bindingFence: {
+        hostSessionId: runtime.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        generation: runtime.generation,
+        windowId: tmux.windowId,
+        paneId: tmux.paneId,
+      },
+    } satisfies AttachDescriptorResponse)
+  }
+
+  private async interruptRuntime(runtime: HrcRuntimeSnapshot, hard: boolean): Promise<Response> {
+    if (hard) {
+      return await this.terminateRuntime(runtime)
+    }
+
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
@@ -1761,9 +1942,7 @@ class HrcServerInstance implements HrcServer {
     } satisfies RuntimeActionResponse)
   }
 
-  private async handleTerminate(request: Request): Promise<Response> {
-    const body = parseRuntimeActionBody(await parseJsonBody(request))
-    const runtime = requireRuntime(this.db, body.runtimeId)
+  private async terminateRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
@@ -1794,6 +1973,138 @@ class HrcServerInstance implements HrcServer {
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
     } satisfies RuntimeActionResponse)
+  }
+
+  private async ensureCommandRuntimeForSession(
+    session: HrcSessionRecord,
+    spec: HrcCommandLaunchSpec,
+    restartStyle: RestartStyle,
+    forceRestart: boolean
+  ): Promise<HrcRuntimeSnapshot> {
+    const existingRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    let tmuxPane: TmuxPaneState
+
+    if (restartStyle === 'reuse_pty' && existingRuntime?.tmuxJson) {
+      const inspected = await this.tmux.inspectSession(getTmuxSessionName(existingRuntime))
+      if (inspected) {
+        tmuxPane = inspected
+        if (forceRestart) {
+          await this.tmux.interrupt(tmuxPane.paneId).catch(() => undefined)
+          await delay(50)
+        }
+      } else {
+        tmuxPane = await this.tmux.ensurePane(session.hostSessionId, restartStyle)
+      }
+    } else {
+      tmuxPane = await this.tmux.ensurePane(session.hostSessionId, restartStyle)
+    }
+
+    await this.launchCommandSpecInPane(tmuxPane.paneId, spec)
+
+    const now = timestamp()
+    if (existingRuntime) {
+      this.db.runtimes.updateStatus(existingRuntime.runtimeId, 'terminated', now)
+    }
+
+    const runtime = this.db.runtimes.insert({
+      runtimeId: `rt-${randomUUID()}`,
+      runtimeKind: 'command',
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: COMMAND_RUNTIME_COMPAT_HARNESS,
+      provider: COMMAND_RUNTIME_COMPAT_PROVIDER,
+      status: 'ready',
+      tmuxJson: toTmuxJson(tmuxPane),
+      commandSpec: spec,
+      supportsInflightInput: false,
+      adopted: false,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const event = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: forceRestart ? 'runtime.restarted' : 'runtime.created',
+      eventJson: {
+        runtimeKind: 'command',
+        restartStyle,
+        tmux: simplifyTmuxJson(runtime.tmuxJson),
+      },
+    })
+    this.notifyEvent(event)
+
+    return runtime
+  }
+
+  private async launchCommandSpecInPane(paneId: string, spec: HrcCommandLaunchSpec): Promise<void> {
+    const commands: string[] = []
+    const pathPrepend = spec.pathPrepend
+    const argv = spec.argv
+
+    if (spec.cwd) {
+      commands.push(`cd ${shellQuote(spec.cwd)}`)
+    }
+
+    for (const variable of spec.unsetEnv ?? []) {
+      commands.push(`unset ${shellIdentifier(variable)}`)
+    }
+
+    for (const [key, value] of Object.entries(spec.env ?? {})) {
+      commands.push(`export ${shellIdentifier(key)}=${shellQuote(value)}`)
+    }
+
+    if (pathPrepend && pathPrepend.length > 0) {
+      commands.push(`export PATH=${shellQuote(`${pathPrepend.join(':')}:`)}$PATH`)
+    }
+
+    if (spec.launchMode === 'shell') {
+      if (spec.shell?.executable) {
+        const shellArgv = [spec.shell.executable]
+        if (spec.shell.login) {
+          shellArgv.push('-l')
+        }
+        if (spec.shell.interactive !== false) {
+          shellArgv.push('-i')
+        }
+        commands.push(
+          argv && argv.length > 0
+            ? joinShellCommand(shellArgv)
+            : `exec ${joinShellCommand(shellArgv)}`
+        )
+      }
+      if (argv && argv.length > 0) {
+        commands.push(joinShellCommand(argv))
+      }
+    } else if (argv && argv.length > 0) {
+      commands.push(joinShellCommand(argv))
+    }
+
+    for (const command of commands) {
+      await this.tmux.sendLiteral(paneId, command)
+      await this.tmux.sendEnter(paneId)
+      await delay(25)
+    }
+  }
+
+  private resolveManagedSessionRuntime(selector: HrcAppSessionRef): {
+    managed: AppManagedSessionRecord
+    session: HrcSessionRecord
+    runtime: HrcRuntimeSnapshot
+  } {
+    const managed = requireManagedAppSession(this.db, selector)
+    const session = requireSession(this.db, managed.activeHostSessionId)
+    const runtime = requireLatestRuntime(this.db, session.hostSessionId)
+    return { managed, session, runtime }
   }
 
   private async handleWrapperStarted(launchId: string, request: Request): Promise<Response> {
@@ -1970,8 +2281,8 @@ class HrcServerInstance implements HrcServer {
         platform: {
           appOwnedSessions: true,
           appHarnessSessions: false,
-          commandSessions: false,
-          literalInput: false,
+          commandSessions: true,
+          literalInput: true,
           surfaceBindings: true,
           legacyLocalBridges: ['legacy-agentchat'],
         },
@@ -2177,6 +2488,7 @@ class HrcServerInstance implements HrcServer {
         const now = timestamp()
         runtime =
           this.db.runtimes.update(existingRuntime.runtimeId, {
+            runtimeKind: 'harness',
             status: 'ready',
             tmuxJson: toTmuxJson(tmuxPane),
             updatedAt: now,
@@ -2218,6 +2530,7 @@ class HrcServerInstance implements HrcServer {
 
     runtime = this.db.runtimes.insert({
       runtimeId: `rt-${randomUUID()}`,
+      runtimeKind: 'harness',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -2269,6 +2582,7 @@ class HrcServerInstance implements HrcServer {
 
     const runtime = this.db.runtimes.insert({
       runtimeId,
+      runtimeKind: 'harness',
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -3290,15 +3604,102 @@ function parseAppSessionSpec(input: unknown): HrcAppSessionSpec {
   }
 
   const command = input['command']
-  if (command !== undefined && !isRecord(command)) {
+  return {
+    kind: 'command',
+    command: parseCommandLaunchSpec(command),
+  }
+}
+
+function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
+  if (input !== undefined && !isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spec.command must be an object', {
       field: 'spec.command',
     })
   }
 
+  const command = (input ?? {}) as Record<string, unknown>
+  const launchMode = command['launchMode']
+  if (launchMode !== undefined && launchMode !== 'shell' && launchMode !== 'exec') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.command.launchMode must be "shell" or "exec"',
+      { field: 'spec.command.launchMode' }
+    )
+  }
+
+  const argvRaw = command['argv']
+  if (argvRaw !== undefined && !Array.isArray(argvRaw)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.command.argv must be an array',
+      {
+        field: 'spec.command.argv',
+      }
+    )
+  }
+  const argv = argvRaw?.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `spec.command.argv[${index}] must be a non-empty string`,
+        { field: `spec.command.argv[${index}]` }
+      )
+    }
+    return entry
+  })
+
+  const effectiveLaunchMode = (launchMode ?? 'exec') as 'shell' | 'exec'
+  if (effectiveLaunchMode === 'exec' && (!argv || argv.length === 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.command.argv is required when launchMode is "exec"',
+      { field: 'spec.command.argv' }
+    )
+  }
+
+  const env = command['env']
+  if (env !== undefined && !isStringRecord(env)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.command.env must be an object',
+      {
+        field: 'spec.command.env',
+      }
+    )
+  }
+
+  const unsetEnv = parseOptionalStringArray(command['unsetEnv'], 'spec.command.unsetEnv')
+  const pathPrepend = parseOptionalStringArray(command['pathPrepend'], 'spec.command.pathPrepend')
+
+  const shell = command['shell']
+  if (shell !== undefined && !isRecord(shell)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.command.shell must be an object',
+      {
+        field: 'spec.command.shell',
+      }
+    )
+  }
+
   return {
-    kind: 'command',
-    command: (command ?? {}) as import('hrc-core').HrcCommandLaunchSpec,
+    launchMode: effectiveLaunchMode,
+    ...(argv ? { argv } : {}),
+    ...readOptionalStringField(command, 'cwd'),
+    ...(env !== undefined ? { env: env as Record<string, string> } : {}),
+    ...(unsetEnv ? { unsetEnv } : {}),
+    ...(pathPrepend ? { pathPrepend } : {}),
+    ...(shell !== undefined
+      ? {
+          shell: {
+            ...readOptionalStringField(shell, 'executable'),
+            ...(typeof shell['login'] === 'boolean' ? { login: shell['login'] } : {}),
+            ...(typeof shell['interactive'] === 'boolean'
+              ? { interactive: shell['interactive'] }
+              : {}),
+          },
+        }
+      : {}),
   }
 }
 
@@ -3410,6 +3811,70 @@ function parseRemoveAppSessionRequest(input: unknown): {
     selector: parseAppSessionSelector(selectorRaw),
     ...(typeof input['terminateRuntime'] === 'boolean'
       ? { terminateRuntime: input['terminateRuntime'] }
+      : {}),
+  }
+}
+
+function parseSendLiteralInputRequest(input: unknown): SendLiteralInputRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+
+  if (typeof input['text'] !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'text must be a string', {
+      field: 'text',
+    })
+  }
+
+  return {
+    selector: parseAppSessionSelector(selectorRaw),
+    text: input['text'],
+    ...(typeof input['enter'] === 'boolean' ? { enter: input['enter'] } : {}),
+    ...(Object.hasOwn(input, 'fence') ? { fence: parseAppSessionFence(input['fence']) } : {}),
+  }
+}
+
+function parseInterruptAppSessionRequest(input: unknown): InterruptAppSessionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  return {
+    selector: parseAppSessionSelector(input['selector']),
+    ...(typeof input['hard'] === 'boolean' ? { hard: input['hard'] } : {}),
+  }
+}
+
+function parseTerminateAppSessionRequest(input: unknown): TerminateAppSessionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  return {
+    selector: parseAppSessionSelector(input['selector']),
+  }
+}
+
+function parseAppSessionFence(input: unknown): AppSessionFreshnessFence {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'fence must be an object', {
+      field: 'fence',
+    })
+  }
+
+  return {
+    ...(typeof input['expectedHostSessionId'] === 'string'
+      ? { expectedHostSessionId: input['expectedHostSessionId'].trim() }
+      : {}),
+    ...(typeof input['expectedGeneration'] === 'number'
+      ? { expectedGeneration: input['expectedGeneration'] }
       : {}),
   }
 }
@@ -3956,6 +4421,56 @@ function readOptionalStringField(
   return trimmed.length > 0 ? { [field]: trimmed } : {}
 }
 
+function parseOptionalStringArray(input: unknown, field: string): string[] | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+
+  if (!Array.isArray(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be an array`, {
+      field,
+    })
+  }
+
+  return input.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `${field}[${index}] must be a non-empty string`,
+        {
+          field: `${field}[${index}]`,
+        }
+      )
+    }
+
+    return entry
+  })
+}
+
+function isStringRecord(input: unknown): input is Record<string, string> {
+  if (!isRecord(input)) {
+    return false
+  }
+
+  return Object.values(input).every((value) => typeof value === 'string')
+}
+
+function shellIdentifier(value: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `invalid shell identifier "${value}"`,
+      { value }
+    )
+  }
+
+  return value
+}
+
+function joinShellCommand(argv: string[]): string {
+  return argv.map(shellQuote).join(' ')
+}
+
 function parseBridgeSelector(input: unknown): BridgeSelector {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.INVALID_SELECTOR, 'selector must be an object')
@@ -3996,6 +4511,25 @@ function parseBridgeSelector(input: unknown): BridgeSelector {
       appSessionKey: requireTrimmedStringField(appSession, 'appSessionKey'),
     },
   }
+}
+
+function parseAppSessionSelectorFromQuery(url: URL): HrcAppSessionRef {
+  const appId = normalizeOptionalQuery(url.searchParams.get('appId'))
+  const appSessionKey = normalizeOptionalQuery(url.searchParams.get('appSessionKey'))
+
+  if (!appId) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'appId is required', {
+      field: 'appId',
+    })
+  }
+
+  if (!appSessionKey) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'appSessionKey is required', {
+      field: 'appSessionKey',
+    })
+  }
+
+  return { appId, appSessionKey }
 }
 
 function parseSessionRef(sessionRef: string): { scopeRef: string; laneRef: string } {
@@ -4093,6 +4627,64 @@ function requireSession(db: HrcDatabase, hostSessionId: string): HrcSessionRecor
   }
 
   return session
+}
+
+function requireManagedAppSession(
+  db: HrcDatabase,
+  selector: HrcAppSessionRef
+): AppManagedSessionRecord {
+  const managed = db.appManagedSessions.findByKey(selector.appId, selector.appSessionKey)
+  if (!managed) {
+    throw new HrcNotFoundError(
+      HrcErrorCode.UNKNOWN_APP_SESSION,
+      `unknown app session "${selector.appId}/${selector.appSessionKey}"`,
+      selector
+    )
+  }
+
+  if (managed.status === 'removed') {
+    throw new HrcConflictError(
+      HrcErrorCode.APP_SESSION_REMOVED,
+      `app session "${selector.appId}/${selector.appSessionKey}" has been removed`,
+      selector
+    )
+  }
+
+  return managed
+}
+
+function validateAppSessionFence(
+  fence: AppSessionFreshnessFence | undefined,
+  session: HrcSessionRecord
+): void {
+  if (!fence) {
+    return
+  }
+
+  if (
+    fence.expectedHostSessionId !== undefined &&
+    fence.expectedHostSessionId !== session.hostSessionId
+  ) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'app session fence no longer matches host session',
+      {
+        expectedHostSessionId: fence.expectedHostSessionId,
+        actualHostSessionId: session.hostSessionId,
+      }
+    )
+  }
+
+  if (fence.expectedGeneration !== undefined && fence.expectedGeneration !== session.generation) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'app session fence no longer matches generation',
+      {
+        expectedGeneration: fence.expectedGeneration,
+        actualGeneration: session.generation,
+      }
+    )
+  }
 }
 
 function requireContinuity(db: HrcDatabase, session: HrcSessionRecord) {

@@ -59,6 +59,7 @@ export type HrcAppSessionRef = {
 }
 
 export type HrcManagedSessionKind = 'harness' | 'command'
+export type HrcRuntimeKind = 'harness' | 'command'
 
 export type HrcCommandLaunchSpec = {
   launchMode?: 'shell' | 'exec' | undefined
@@ -156,6 +157,7 @@ export type HrcSessionRecord = {
 
 export type HrcRuntimeSnapshot = {
   runtimeId: string
+  runtimeKind?: HrcRuntimeKind | undefined
   hostSessionId: string
   scopeRef: string
   laneRef: string
@@ -171,6 +173,8 @@ export type HrcRuntimeSnapshot = {
   childPid?: number | undefined
   /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
   harnessSessionJson?: Record<string, unknown> | undefined
+  /** Opaque command launch spec persisted for command runtimes. Validated at the hrc-server boundary. */
+  commandSpec?: HrcCommandLaunchSpec | undefined
   continuation?: HrcContinuationRef | undefined
   supportsInflightInput: boolean
   adopted: boolean

@@ -207,8 +207,8 @@ describe('server startup', () => {
     expect(body.capabilities.platform).toEqual({
       appOwnedSessions: true,
       appHarnessSessions: false,
-      commandSessions: false,
-      literalInput: false,
+      commandSessions: true,
+      literalInput: true,
       surfaceBindings: true,
       legacyLocalBridges: ['legacy-agentchat'],
     })
@@ -1086,14 +1086,14 @@ describe('/v1/status capability reporting (T-00998)', () => {
     await server.stop()
   })
 
-  it('reports unimplemented platform capabilities as false', async () => {
+  it('reports current platform capabilities accurately', async () => {
     const server = await createHrcServer(serverOpts())
     const res = await fetchSocket('/v1/status')
     const body = (await res.json()) as StatusResponse
     expect(body.capabilities.platform.appOwnedSessions).toBe(true)
     expect(body.capabilities.platform.appHarnessSessions).toBe(false)
-    expect(body.capabilities.platform.commandSessions).toBe(false)
-    expect(body.capabilities.platform.literalInput).toBe(false)
+    expect(body.capabilities.platform.commandSessions).toBe(true)
+    expect(body.capabilities.platform.literalInput).toBe(true)
     expect(body.capabilities.platform.surfaceBindings).toBe(true)
     expect(body.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
     await server.stop()

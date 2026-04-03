@@ -104,6 +104,17 @@ export type CaptureResponse = {
   text: string
 }
 
+export type HrcAttachDescriptor = {
+  kind: 'exec'
+  argv: string[]
+  env?: Record<string, string> | undefined
+  fence: {
+    hostSessionId: string
+    generation: number
+    runtimeId?: string | undefined
+  }
+}
+
 export type RuntimeActionResponse = {
   ok: true
   hostSessionId: string
@@ -248,4 +259,32 @@ export type ApplyAppManagedSessionsResponse = {
   ensured: number
   removed: number
   results: EnsureAppSessionResponse[]
+}
+
+export type AppSessionFreshnessFence = {
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
+export type SendLiteralInputRequest = {
+  selector: HrcAppSessionRef
+  text: string
+  enter?: boolean | undefined
+  fence?: AppSessionFreshnessFence | undefined
+}
+
+export type SendLiteralInputResponse = {
+  delivered: true
+  hostSessionId: string
+  generation: number
+  runtimeId?: string | undefined
+}
+
+export type InterruptAppSessionRequest = {
+  selector: HrcAppSessionRef
+  hard?: boolean | undefined
+}
+
+export type TerminateAppSessionRequest = {
+  selector: HrcAppSessionRef
 }

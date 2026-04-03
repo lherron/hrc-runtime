@@ -278,12 +278,48 @@ const phase7ManagedAppSessionsMigration: HrcMigration = {
   },
 }
 
+const phase8CommandRuntimeFieldsMigration: HrcMigration = {
+  id: '0006_command_runtime_fields',
+  apply(db) {
+    const runtimeColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(runtimes)')
+      .all()
+      .map((row) => row.name)
+    const existing = new Set(runtimeColumns)
+
+    if (!existing.has('runtime_kind')) {
+      db.exec(`
+        ALTER TABLE runtimes
+        ADD COLUMN runtime_kind TEXT
+      `)
+    }
+
+    if (!existing.has('command_spec_json')) {
+      db.exec(`
+        ALTER TABLE runtimes
+        ADD COLUMN command_spec_json TEXT
+      `)
+    }
+
+    db.exec(`
+      UPDATE runtimes
+      SET runtime_kind = COALESCE(runtime_kind, 'harness')
+    `)
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtimes_runtime_kind
+        ON runtimes(runtime_kind);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
   phase5WorkbenchSessionsAndLocalBridgesMigration,
   phase6LocalBridgesRuntimeIdIndexMigration,
   phase7ManagedAppSessionsMigration,
+  phase8CommandRuntimeFieldsMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

@@ -2,6 +2,7 @@ import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
   type HrcAppSessionRecord,
   type HrcAppSessionSpec,
+  type HrcCommandLaunchSpec,
   type HrcContinuationRef,
   type HrcContinuityRecord,
   type HrcErrorCode,
@@ -106,6 +107,7 @@ type SessionRow = {
 
 type RuntimeRow = {
   runtime_id: string
+  runtime_kind: HrcRuntimeSnapshot['runtimeKind'] | null
   host_session_id: string
   scope_ref: string
   lane_ref: string
@@ -119,6 +121,7 @@ type RuntimeRow = {
   wrapper_pid: number | null
   child_pid: number | null
   harness_session_json: string | null
+  command_spec_json: string | null
   continuation_json: string | null
   supports_inflight_input: number
   adopted: number
@@ -305,6 +308,7 @@ const SESSION_COLUMNS = `
 
 const RUNTIME_COLUMNS = `
   runtime_id,
+  runtime_kind,
   host_session_id,
   scope_ref,
   lane_ref,
@@ -318,6 +322,7 @@ const RUNTIME_COLUMNS = `
   wrapper_pid,
   child_pid,
   harness_session_json,
+  command_spec_json,
   continuation_json,
   supports_inflight_input,
   adopted,
@@ -478,6 +483,7 @@ function mapSessionRow(row: SessionRow): HrcSessionRecord {
 function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
   return {
     runtimeId: row.runtime_id,
+    runtimeKind: row.runtime_kind ?? 'harness',
     hostSessionId: row.host_session_id,
     scopeRef: row.scope_ref,
     laneRef: row.lane_ref,
@@ -494,6 +500,7 @@ function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
       row.harness_session_json,
       'harness_session_json'
     ),
+    commandSpec: parseJson<HrcCommandLaunchSpec>(row.command_spec_json, 'command_spec_json'),
     continuation: parseJson<HrcContinuationRef>(row.continuation_json, 'continuation_json'),
     supportsInflightInput: fromSqliteBoolean(row.supports_inflight_input),
     adopted: fromSqliteBoolean(row.adopted),
@@ -1187,6 +1194,7 @@ export class RuntimeRepository {
       `
         INSERT INTO runtimes (
           runtime_id,
+          runtime_kind,
           host_session_id,
           scope_ref,
           lane_ref,
@@ -1200,6 +1208,7 @@ export class RuntimeRepository {
           wrapper_pid,
           child_pid,
           harness_session_json,
+          command_spec_json,
           continuation_json,
           supports_inflight_input,
           adopted,
@@ -1207,9 +1216,10 @@ export class RuntimeRepository {
           last_activity_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
+      record.runtimeKind ?? 'harness',
       record.hostSessionId,
       record.scopeRef,
       record.laneRef,
@@ -1223,6 +1233,7 @@ export class RuntimeRepository {
       record.wrapperPid ?? null,
       record.childPid ?? null,
       serializeJson(record.harnessSessionJson),
+      serializeJson(record.commandSpec),
       serializeJson(record.continuation),
       toSqliteBoolean(record.supportsInflightInput),
       toSqliteBoolean(record.adopted),
@@ -1275,6 +1286,9 @@ export class RuntimeRepository {
     if (patch.hostSessionId !== undefined) {
       entries.push(['host_session_id', patch.hostSessionId])
     }
+    if (patch.runtimeKind !== undefined) {
+      entries.push(['runtime_kind', patch.runtimeKind])
+    }
     if (patch.scopeRef !== undefined) {
       entries.push(['scope_ref', patch.scopeRef])
     }
@@ -1310,6 +1324,9 @@ export class RuntimeRepository {
     }
     if (patch.harnessSessionJson !== undefined) {
       entries.push(['harness_session_json', serializeJson(patch.harnessSessionJson)])
+    }
+    if (patch.commandSpec !== undefined) {
+      entries.push(['command_spec_json', serializeJson(patch.commandSpec)])
     }
     if (patch.continuation !== undefined) {
       entries.push(['continuation_json', serializeJson(patch.continuation)])
