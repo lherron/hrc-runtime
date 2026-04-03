@@ -205,7 +205,7 @@ describe('server startup', () => {
       clearContext: true,
     })
     expect(body.capabilities.platform).toEqual({
-      appOwnedSessions: false,
+      appOwnedSessions: true,
       appHarnessSessions: false,
       commandSessions: false,
       literalInput: false,
@@ -1090,7 +1090,7 @@ describe('/v1/status capability reporting (T-00998)', () => {
     const server = await createHrcServer(serverOpts())
     const res = await fetchSocket('/v1/status')
     const body = (await res.json()) as StatusResponse
-    expect(body.capabilities.platform.appOwnedSessions).toBe(false)
+    expect(body.capabilities.platform.appOwnedSessions).toBe(true)
     expect(body.capabilities.platform.appHarnessSessions).toBe(false)
     expect(body.capabilities.platform.commandSessions).toBe(false)
     expect(body.capabilities.platform.literalInput).toBe(false)

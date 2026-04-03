@@ -22,6 +22,8 @@ import {
   validateFence,
 } from 'hrc-core'
 import type {
+  ApplyAppManagedSessionsRequest,
+  ApplyAppManagedSessionsResponse,
   ApplyAppSessionInput,
   ApplyAppSessionsRequest,
   ApplyAppSessionsResponse,
@@ -34,13 +36,17 @@ import type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  EnsureAppSessionRequest,
+  EnsureAppSessionResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HrcAppSessionSpec,
   HrcEventEnvelope,
   HrcFence,
   HrcHttpError,
   HrcLaunchRecord,
   HrcLocalBridgeRecord,
+  HrcManagedSessionRecord,
   HrcProvider,
   HrcRunRecord,
   HrcRuntimeIntent,
@@ -48,6 +54,7 @@ import type {
   HrcSessionRecord,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
+  RemoveAppSessionResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
@@ -55,7 +62,7 @@ import type {
   UnbindSurfaceRequest,
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import {
   buildCliInvocation,
   deliverSdkInflightInput,
@@ -396,6 +403,27 @@ class HrcServerInstance implements HrcServer {
         return await this.handleAdoptRuntime(request)
       }
 
+      // -- Managed app-session registry (Phase 3) ---
+      if (request.method === 'POST' && pathname === '/v1/app-sessions/ensure') {
+        return await this.handleEnsureAppSession(request)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/app-sessions') {
+        return this.handleListManagedAppSessions(url)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/app-sessions/by-key') {
+        return this.handleGetManagedAppSessionByKey(url)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/app-sessions/remove') {
+        return await this.handleRemoveAppSession(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/app-sessions/apply') {
+        return await this.handleApplyManagedAppSessions(request)
+      }
+
       return new Response('Not Found', { status: 404 })
     } catch (error) {
       return errorResponse(error)
@@ -512,6 +540,358 @@ class HrcServerInstance implements HrcServer {
         .findByHostSession(hostSessionId)
         .filter((record) => record.appId === appId)
     )
+  }
+
+  // -- Managed app-session registry (Phase 3) ---------------------------------
+
+  private async handleEnsureAppSession(request: Request): Promise<Response> {
+    const body = parseEnsureAppSessionRequest(await parseJsonBody(request))
+    const { appId, appSessionKey } = body.selector
+    const spec = body.spec
+    const now = timestamp()
+
+    const existing = this.db.appManagedSessions.findByKey(appId, appSessionKey)
+
+    if (existing) {
+      if (existing.status === 'removed') {
+        throw new HrcConflictError(
+          HrcErrorCode.APP_SESSION_REMOVED,
+          `app session "${appId}/${appSessionKey}" has been removed`,
+          { appId, appSessionKey }
+        )
+      }
+      if (existing.kind !== spec.kind) {
+        throw new HrcUnprocessableEntityError(
+          HrcErrorCode.SESSION_KIND_MISMATCH,
+          `app session "${appId}/${appSessionKey}" is kind "${existing.kind}", cannot ensure as "${spec.kind}"`,
+          { appId, appSessionKey, existingKind: existing.kind, requestedKind: spec.kind }
+        )
+      }
+
+      // Update spec/label/metadata if provided
+      this.db.appManagedSessions.update(appId, appSessionKey, {
+        ...(body.label !== undefined ? { label: body.label } : {}),
+        ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
+        lastAppliedSpec: spec,
+        updatedAt: now,
+      })
+
+      let runtimeId: string | undefined
+      let restarted = false
+
+      if (
+        body.forceRestart === true &&
+        spec.kind === 'harness' &&
+        spec.runtimeIntent.harness.interactive
+      ) {
+        const session = requireSession(this.db, existing.activeHostSessionId)
+        const restartStyle = body.restartStyle ?? 'fresh_pty'
+        const runtime = await this.ensureRuntimeForSession(
+          session,
+          spec.runtimeIntent,
+          restartStyle
+        )
+        runtimeId = runtime.runtimeId
+        restarted = true
+      }
+
+      const refreshed = this.db.appManagedSessions.findByKey(appId, appSessionKey)
+      if (!refreshed) {
+        throw new HrcInternalError('managed session disappeared during update', {
+          appId,
+          appSessionKey,
+        })
+      }
+      return json({
+        session: toManagedSessionRecord(refreshed),
+        created: false,
+        restarted,
+        status: restarted ? 'restarted' : 'ensured',
+        ...(runtimeId !== undefined ? { runtimeId } : {}),
+      } satisfies EnsureAppSessionResponse)
+    }
+
+    // Create new managed session with a dedicated host session
+    const scopeRef = `app:${appId}`
+    const laneRef = appSessionKey
+    const hostSessionId = createHostSessionId()
+
+    const session: HrcSessionRecord = {
+      hostSessionId,
+      scopeRef,
+      laneRef,
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: [],
+    }
+
+    this.db.sessions.insert(session)
+    this.db.continuities.upsert({
+      scopeRef,
+      laneRef,
+      activeHostSessionId: hostSessionId,
+      updatedAt: now,
+    })
+
+    const managed = this.db.appManagedSessions.create({
+      appId,
+      appSessionKey,
+      kind: spec.kind,
+      label: body.label,
+      metadata: body.metadata,
+      activeHostSessionId: hostSessionId,
+      generation: 1,
+      status: 'active',
+      lastAppliedSpec: spec,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    let runtimeId: string | undefined
+
+    if (spec.kind === 'harness' && spec.runtimeIntent.harness.interactive) {
+      const restartStyle = body.restartStyle ?? 'reuse_pty'
+      const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
+      runtimeId = runtime.runtimeId
+    }
+
+    this.appendEvent(session, 'app-session.created', {
+      appId,
+      appSessionKey,
+      kind: spec.kind,
+    })
+
+    return json({
+      session: toManagedSessionRecord(managed),
+      created: true,
+      restarted: false,
+      status: 'created',
+      ...(runtimeId !== undefined ? { runtimeId } : {}),
+    } satisfies EnsureAppSessionResponse)
+  }
+
+  private handleListManagedAppSessions(url: URL): Response {
+    const appId = normalizeOptionalQuery(url.searchParams.get('appId'))
+    if (!appId) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'appId is required', {
+        field: 'appId',
+      })
+    }
+
+    const kind = normalizeOptionalQuery(url.searchParams.get('kind')) as
+      | 'harness'
+      | 'command'
+      | undefined
+    const status = normalizeOptionalQuery(url.searchParams.get('status')) as
+      | 'active'
+      | 'removed'
+      | undefined
+    const includeRemoved = status === 'removed' || url.searchParams.get('includeRemoved') === 'true'
+
+    let sessions = this.db.appManagedSessions.findByApp(appId, {
+      kind,
+      includeRemoved,
+    })
+
+    if (status !== undefined) {
+      sessions = sessions.filter((s) => s.status === status)
+    }
+
+    return json(sessions.map(toManagedSessionRecord))
+  }
+
+  private handleGetManagedAppSessionByKey(url: URL): Response {
+    const appId = normalizeOptionalQuery(url.searchParams.get('appId'))
+    const appSessionKey = normalizeOptionalQuery(url.searchParams.get('appSessionKey'))
+
+    if (!appId) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'appId is required', {
+        field: 'appId',
+      })
+    }
+    if (!appSessionKey) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'appSessionKey is required', {
+        field: 'appSessionKey',
+      })
+    }
+
+    const managed = this.db.appManagedSessions.findByKey(appId, appSessionKey)
+    if (!managed) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_APP_SESSION,
+        `unknown app session "${appId}/${appSessionKey}"`,
+        { appId, appSessionKey }
+      )
+    }
+
+    return json(toManagedSessionRecord(managed))
+  }
+
+  private async handleRemoveAppSession(request: Request): Promise<Response> {
+    const body = parseRemoveAppSessionRequest(await parseJsonBody(request))
+    const { appId, appSessionKey } = body.selector
+    const now = timestamp()
+
+    const managed = this.db.appManagedSessions.findByKey(appId, appSessionKey)
+    if (!managed) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_APP_SESSION,
+        `unknown app session "${appId}/${appSessionKey}"`,
+        { appId, appSessionKey }
+      )
+    }
+
+    if (managed.status === 'removed') {
+      return json({
+        removed: true,
+        runtimeTerminated: false,
+        bridgesClosed: 0,
+        surfacesUnbound: 0,
+      } satisfies RemoveAppSessionResponse)
+    }
+
+    // Mark session as removed
+    this.db.appManagedSessions.update(appId, appSessionKey, {
+      status: 'removed',
+      removedAt: now,
+      updatedAt: now,
+    })
+
+    let runtimeTerminated = false
+    let bridgesClosed = 0
+    let surfacesUnbound = 0
+    const hostSessionId = managed.activeHostSessionId
+
+    // Terminate runtime if requested (default: true for harness sessions)
+    const shouldTerminate = body.terminateRuntime !== false
+    if (shouldTerminate) {
+      const runtimes = this.db.runtimes.listByHostSessionId(hostSessionId)
+      for (const runtime of runtimes) {
+        if (!isRuntimeUnavailableStatus(runtime.status)) {
+          if (runtime.transport === 'tmux' && runtime.tmuxJson) {
+            const tmuxPane = requireTmuxPane(runtime)
+            const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)
+            if (inspected) {
+              await this.tmux.terminate(tmuxPane.sessionName)
+            }
+          }
+          finalizeRuntimeTermination(this.db, runtime, now)
+          runtimeTerminated = true
+        }
+      }
+    }
+
+    // Close active bridges for the host session
+    const activeBridges = this.db.localBridges.listActive()
+    for (const bridge of activeBridges) {
+      if (bridge.hostSessionId === hostSessionId) {
+        this.db.localBridges.close(bridge.bridgeId, now)
+        bridgesClosed += 1
+      }
+    }
+
+    // Unbind active surfaces for the host session
+    const activeSurfaces = this.db.surfaceBindings.listActive()
+    for (const surface of activeSurfaces) {
+      if (surface.hostSessionId === hostSessionId) {
+        this.db.surfaceBindings.unbind(
+          surface.surfaceKind,
+          surface.surfaceId,
+          now,
+          'app-session-removed'
+        )
+        surfacesUnbound += 1
+      }
+    }
+
+    // Archive the host session
+    this.db.sessions.updateStatus(hostSessionId, 'archived', now)
+
+    const session = this.db.sessions.getByHostSessionId(hostSessionId)
+    if (session) {
+      this.appendEvent(session, 'app-session.removed', {
+        appId,
+        appSessionKey,
+        runtimeTerminated,
+        bridgesClosed,
+        surfacesUnbound,
+      })
+    }
+
+    return json({
+      removed: true,
+      runtimeTerminated,
+      bridgesClosed,
+      surfacesUnbound,
+    } satisfies RemoveAppSessionResponse)
+  }
+
+  private async handleApplyManagedAppSessions(request: Request): Promise<Response> {
+    const body = parseApplyManagedAppSessionsRequest(await parseJsonBody(request))
+    const results: EnsureAppSessionResponse[] = []
+    let ensured = 0
+    let removed = 0
+
+    // Ensure each session in the payload
+    for (const entry of body.sessions) {
+      const ensureBody: EnsureAppSessionRequest = {
+        selector: { appId: body.appId, appSessionKey: entry.appSessionKey },
+        spec: entry.spec,
+        ...(entry.label !== undefined ? { label: entry.label } : {}),
+        ...(entry.metadata !== undefined ? { metadata: entry.metadata } : {}),
+      }
+
+      const existing = this.db.appManagedSessions.findByKey(body.appId, entry.appSessionKey)
+
+      // For apply, re-create removed sessions by updating status back to active
+      if (existing?.status === 'removed') {
+        const now = timestamp()
+        this.db.appManagedSessions.update(body.appId, entry.appSessionKey, {
+          status: 'active',
+          removedAt: null,
+          lastAppliedSpec: entry.spec,
+          updatedAt: now,
+        })
+      }
+
+      // Use internal ensure logic
+      const ensureRequest = new Request('http://localhost/v1/app-sessions/ensure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ensureBody),
+      })
+      const ensureResponse = await this.handleEnsureAppSession(ensureRequest)
+      const result = (await ensureResponse.json()) as EnsureAppSessionResponse
+      results.push(result)
+      ensured += 1
+    }
+
+    // Prune missing sessions if requested
+    if (body.pruneMissing === true) {
+      const incomingKeys = new Set(body.sessions.map((s) => s.appSessionKey))
+      const allActive = this.db.appManagedSessions.findByApp(body.appId, { includeRemoved: false })
+      for (const session of allActive) {
+        if (!incomingKeys.has(session.appSessionKey)) {
+          const removeRequest = new Request('http://localhost/v1/app-sessions/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              selector: { appId: body.appId, appSessionKey: session.appSessionKey },
+            }),
+          })
+          await this.handleRemoveAppSession(removeRequest)
+          removed += 1
+        }
+      }
+    }
+
+    return json({
+      ensured,
+      removed,
+      results,
+    } satisfies ApplyAppManagedSessionsResponse)
   }
 
   private handleEvents(url: URL, request: Request): Response {
@@ -1588,7 +1968,7 @@ class HrcServerInstance implements HrcServer {
           clearContext: true,
         },
         platform: {
-          appOwnedSessions: false,
+          appOwnedSessions: true,
           appHarnessSessions: false,
           commandSessions: false,
           literalInput: false,
@@ -2862,6 +3242,241 @@ function parseApplyAppSessionInput(input: unknown, index: number): ApplyAppSessi
     appSessionKey: requireTrimmedStringField(input, 'appSessionKey'),
     ...readOptionalStringField(input, 'label'),
     ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
+  }
+}
+
+// -- Managed app-session request parsers (Phase 3) ---------------------------
+
+function parseAppSessionSelector(input: unknown): { appId: string; appSessionKey: string } {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector must be an object', {
+      field: 'selector',
+    })
+  }
+  return {
+    appId: requireTrimmedStringField(input, 'appId'),
+    appSessionKey: requireTrimmedStringField(input, 'appSessionKey'),
+  }
+}
+
+function parseAppSessionSpec(input: unknown): HrcAppSessionSpec {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spec must be an object', {
+      field: 'spec',
+    })
+  }
+  const kind = requireTrimmedStringField(input, 'kind')
+  if (kind !== 'harness' && kind !== 'command') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'spec.kind must be "harness" or "command"',
+      { field: 'spec.kind' }
+    )
+  }
+
+  if (kind === 'harness') {
+    const runtimeIntent = input['runtimeIntent']
+    if (!isRecord(runtimeIntent)) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'spec.runtimeIntent is required for harness sessions',
+        { field: 'spec.runtimeIntent' }
+      )
+    }
+    return {
+      kind: 'harness',
+      runtimeIntent: parseRuntimeIntent(runtimeIntent),
+    }
+  }
+
+  const command = input['command']
+  if (command !== undefined && !isRecord(command)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spec.command must be an object', {
+      field: 'spec.command',
+    })
+  }
+
+  return {
+    kind: 'command',
+    command: (command ?? {}) as import('hrc-core').HrcCommandLaunchSpec,
+  }
+}
+
+function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
+  const harness = input['harness']
+  if (!isRecord(harness)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent.harness is required',
+      { field: 'runtimeIntent.harness' }
+    )
+  }
+
+  const provider = requireTrimmedStringField(harness, 'provider')
+  if (provider !== 'anthropic' && provider !== 'openai') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'harness.provider must be "anthropic" or "openai"',
+      { field: 'harness.provider' }
+    )
+  }
+
+  const interactive = harness['interactive']
+  if (typeof interactive !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'harness.interactive must be a boolean',
+      { field: 'harness.interactive' }
+    )
+  }
+
+  const placement = input['placement'] ?? 'workspace'
+  const execution = input['execution']
+
+  return {
+    placement: placement as import('spaces-config').RuntimePlacement,
+    harness: {
+      provider: provider as HrcProvider,
+      interactive,
+      ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
+    },
+    ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
+  }
+}
+
+function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+  const selector = parseAppSessionSelector(selectorRaw)
+
+  const specRaw = input['spec']
+  if (specRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spec is required', {
+      field: 'spec',
+    })
+  }
+  const spec = parseAppSessionSpec(specRaw)
+
+  const metadata = input['metadata']
+  if (metadata !== undefined && !isRecord(metadata)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'metadata must be an object', {
+      field: 'metadata',
+    })
+  }
+
+  const restartStyle = input['restartStyle']
+  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'restartStyle must be "reuse_pty" or "fresh_pty"',
+      { field: 'restartStyle' }
+    )
+  }
+
+  return {
+    selector,
+    spec,
+    ...(typeof input['label'] === 'string' ? { label: input['label'] } : {}),
+    ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
+    ...(restartStyle !== undefined ? { restartStyle: restartStyle as RestartStyle } : {}),
+    ...(typeof input['forceRestart'] === 'boolean' ? { forceRestart: input['forceRestart'] } : {}),
+  }
+}
+
+function parseRemoveAppSessionRequest(input: unknown): {
+  selector: { appId: string; appSessionKey: string }
+  terminateRuntime?: boolean
+} {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+
+  return {
+    selector: parseAppSessionSelector(selectorRaw),
+    ...(typeof input['terminateRuntime'] === 'boolean'
+      ? { terminateRuntime: input['terminateRuntime'] }
+      : {}),
+  }
+}
+
+function parseApplyManagedAppSessionsRequest(input: unknown): ApplyAppManagedSessionsRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const appId = requireTrimmedStringField(input, 'appId')
+  const sessions = input['sessions']
+  if (!Array.isArray(sessions)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessions must be an array', {
+      field: 'sessions',
+    })
+  }
+
+  return {
+    appId,
+    ...(typeof input['pruneMissing'] === 'boolean' ? { pruneMissing: input['pruneMissing'] } : {}),
+    sessions: sessions.map((session, index) => {
+      if (!isRecord(session)) {
+        throw new HrcBadRequestError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          `sessions[${index}] must be an object`,
+          { field: `sessions[${index}]` }
+        )
+      }
+      const specRaw = session['spec']
+      if (specRaw === undefined) {
+        throw new HrcBadRequestError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          `sessions[${index}].spec is required`,
+          { field: `sessions[${index}].spec` }
+        )
+      }
+      const metadata = session['metadata']
+      if (metadata !== undefined && !isRecord(metadata)) {
+        throw new HrcBadRequestError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          `sessions[${index}].metadata must be an object`,
+          { field: `sessions[${index}].metadata` }
+        )
+      }
+      return {
+        appSessionKey: requireTrimmedStringField(session, 'appSessionKey'),
+        spec: parseAppSessionSpec(specRaw),
+        ...(typeof session['label'] === 'string' ? { label: session['label'] } : {}),
+        ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
+      }
+    }),
+  }
+}
+
+function toManagedSessionRecord(record: AppManagedSessionRecord): HrcManagedSessionRecord {
+  return {
+    appId: record.appId,
+    appSessionKey: record.appSessionKey,
+    kind: record.kind,
+    label: record.label,
+    metadata: record.metadata,
+    activeHostSessionId: record.activeHostSessionId,
+    generation: record.generation,
+    status: record.status,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    removedAt: record.removedAt,
   }
 }
 
