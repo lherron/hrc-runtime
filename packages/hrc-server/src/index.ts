@@ -156,8 +156,14 @@ type BridgeSelector =
   | { hostSessionId: string }
   | { appSession: { appId: string; appSessionKey: string } }
 
-type BridgeTargetRequest = Omit<RegisterBridgeTargetRequest, 'hostSessionId'> & {
+type BridgeTargetRequest = {
   hostSessionId?: string | undefined
+  bridge?: string | undefined
+  transport?: string | undefined
+  target?: string | undefined
+  runtimeId?: string | undefined
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
   selector?: BridgeSelector | undefined
 }
 
@@ -1705,28 +1711,19 @@ class HrcServerInstance implements HrcServer {
       activeSession
     )
 
-    if (body.runtimeId !== undefined) {
-      const runtime = requireRuntime(this.db, body.runtimeId)
-      if (runtime.hostSessionId !== session.hostSessionId) {
-        throw new HrcBadRequestError(
-          HrcErrorCode.MALFORMED_REQUEST,
-          'runtimeId must belong to hostSessionId',
-          {
-            runtimeId: runtime.runtimeId,
-            hostSessionId: session.hostSessionId,
-            runtimeHostSessionId: runtime.hostSessionId,
-          }
-        )
-      }
-    }
+    const resolvedBinding = await this.resolveBridgeTargetBinding(body, session, activeSession)
 
     const now = timestamp()
-    const matchingBridges = findActiveBridgesByTarget(this.db, body.transport, body.target)
+    const matchingBridges = findActiveBridgesByTarget(
+      this.db,
+      resolvedBinding.transport,
+      resolvedBinding.target
+    )
     const bindingRequest: RegisterBridgeTargetRequest = {
-      hostSessionId: session.hostSessionId,
-      transport: body.transport,
-      target: body.target,
-      ...(body.runtimeId !== undefined ? { runtimeId: body.runtimeId } : {}),
+      hostSessionId: resolvedBinding.hostSessionId,
+      transport: resolvedBinding.transport,
+      target: resolvedBinding.target,
+      ...(resolvedBinding.runtimeId !== undefined ? { runtimeId: resolvedBinding.runtimeId } : {}),
       ...(body.expectedHostSessionId !== undefined
         ? { expectedHostSessionId: body.expectedHostSessionId }
         : {}),
@@ -1736,7 +1733,7 @@ class HrcServerInstance implements HrcServer {
     }
     const reusable = matchingBridges.find((bridge) => matchesBridgeBinding(bridge, bindingRequest))
     if (reusable) {
-      return json(reusable)
+      return json(this.toBridgeTargetResponse(reusable, resolvedBinding))
     }
 
     for (const bridge of matchingBridges) {
@@ -1745,10 +1742,10 @@ class HrcServerInstance implements HrcServer {
 
     const bridge = this.db.localBridges.create({
       bridgeId: `bridge-${randomUUID()}`,
-      hostSessionId: session.hostSessionId,
-      ...(body.runtimeId !== undefined ? { runtimeId: body.runtimeId } : {}),
-      transport: body.transport,
-      target: body.target,
+      hostSessionId: resolvedBinding.hostSessionId,
+      ...(resolvedBinding.runtimeId !== undefined ? { runtimeId: resolvedBinding.runtimeId } : {}),
+      transport: resolvedBinding.transport,
+      target: resolvedBinding.target,
       ...(body.expectedHostSessionId !== undefined
         ? { expectedHostSessionId: body.expectedHostSessionId }
         : {}),
@@ -1758,7 +1755,7 @@ class HrcServerInstance implements HrcServer {
       createdAt: now,
     })
 
-    return json(bridge satisfies RegisterBridgeTargetResponse)
+    return json(this.toBridgeTargetResponse(bridge, resolvedBinding))
   }
 
   private async handleDeliverBridge(request: Request): Promise<Response> {
@@ -1884,7 +1881,7 @@ class HrcServerInstance implements HrcServer {
     bridge: HrcLocalBridgeRecord,
     runtime: HrcRuntimeSnapshot | null | undefined
   ): Promise<string> {
-    if (bridge.transport === 'tmux') {
+    if (bridge.transport === 'tmux' || bridge.target.startsWith('%')) {
       try {
         await this.tmux.capture(bridge.target)
         return bridge.target
@@ -1907,6 +1904,82 @@ class HrcServerInstance implements HrcServer {
 
     const pane = await this.tmux.ensurePane(bridge.hostSessionId, 'reuse_pty')
     return pane.paneId
+  }
+
+  private async resolveBridgeTargetBinding(
+    body: BridgeTargetRequest,
+    session: HrcSessionRecord,
+    activeSession: HrcSessionRecord
+  ): Promise<{
+    hostSessionId: string
+    generation: number
+    bridge?: string | undefined
+    runtimeId?: string | undefined
+    transport: string
+    target: string
+  }> {
+    if (body.transport !== undefined && body.target !== undefined) {
+      if (body.runtimeId !== undefined) {
+        const runtime = requireRuntime(this.db, body.runtimeId)
+        if (runtime.hostSessionId !== session.hostSessionId) {
+          throw new HrcBadRequestError(
+            HrcErrorCode.MALFORMED_REQUEST,
+            'runtimeId must belong to hostSessionId',
+            {
+              runtimeId: runtime.runtimeId,
+              hostSessionId: session.hostSessionId,
+              runtimeHostSessionId: runtime.hostSessionId,
+            }
+          )
+        }
+      }
+
+      return {
+        hostSessionId: session.hostSessionId,
+        generation: activeSession.generation,
+        ...(body.bridge !== undefined ? { bridge: body.bridge } : {}),
+        ...(body.runtimeId !== undefined ? { runtimeId: body.runtimeId } : {}),
+        transport: body.transport,
+        target: body.target,
+      }
+    }
+
+    const runtime =
+      body.runtimeId !== undefined
+        ? requireRuntime(this.db, body.runtimeId)
+        : requireLatestRuntime(this.db, activeSession.hostSessionId)
+    if (runtime.hostSessionId !== activeSession.hostSessionId) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'runtimeId must belong to activeHostSessionId',
+        {
+          runtimeId: runtime.runtimeId,
+          activeHostSessionId: activeSession.hostSessionId,
+          runtimeHostSessionId: runtime.hostSessionId,
+        }
+      )
+    }
+
+    const pane = await this.tmux.ensurePane(activeSession.hostSessionId, 'reuse_pty')
+    return {
+      hostSessionId: activeSession.hostSessionId,
+      generation: activeSession.generation,
+      ...(body.bridge !== undefined ? { bridge: body.bridge } : {}),
+      runtimeId: runtime.runtimeId,
+      transport: body.bridge as string,
+      target: pane.paneId,
+    }
+  }
+
+  private toBridgeTargetResponse(
+    bridge: HrcLocalBridgeRecord,
+    resolvedBinding: { bridge?: string | undefined; generation: number }
+  ): RegisterBridgeTargetResponse & { bridge?: string | undefined; generation: number } {
+    return {
+      ...bridge,
+      ...(resolvedBinding.bridge !== undefined ? { bridge: resolvedBinding.bridge } : {}),
+      generation: resolvedBinding.generation,
+    }
   }
 
   private handleListBridges(url: URL): Response {
@@ -4708,18 +4781,36 @@ function parseBridgeTargetRequest(input: unknown): BridgeTargetRequest {
   }
 
   const expectedGeneration = parseOptionalNonNegativeInteger(input['expectedGeneration'])
+  const hostSessionId = readOptionalNonEmptyStringField(input, 'hostSessionId')
+  const bridge = readOptionalNonEmptyStringField(input, 'bridge')
+  const transport = readOptionalNonEmptyStringField(input, 'transport')
+  const target = readOptionalNonEmptyStringField(input, 'target')
+  const selector = Object.hasOwn(input, 'selector')
+    ? parseBridgeSelector(input['selector'])
+    : undefined
+  const hasExplicitBinding = transport !== undefined || target !== undefined
+
+  if (hasExplicitBinding && (transport === undefined || target === undefined)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'transport and target must be provided together'
+    )
+  }
+  if (!hasExplicitBinding && (selector === undefined || bridge === undefined)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'transport and target are required unless selector and bridge are provided'
+    )
+  }
 
   return {
-    ...(typeof input['hostSessionId'] === 'string' && input['hostSessionId'].trim().length > 0
-      ? { hostSessionId: input['hostSessionId'].trim() }
-      : {}),
-    transport: requireTrimmedStringField(input, 'transport'),
-    target: requireTrimmedStringField(input, 'target'),
+    ...(hostSessionId !== undefined ? { hostSessionId } : {}),
+    ...(bridge !== undefined ? { bridge } : {}),
+    ...(transport !== undefined ? { transport } : {}),
+    ...(target !== undefined ? { target } : {}),
     ...readOptionalStringField(input, 'runtimeId'),
     ...readOptionalStringField(input, 'expectedHostSessionId'),
-    ...(Object.hasOwn(input, 'selector')
-      ? { selector: parseBridgeSelector(input['selector']) }
-      : {}),
+    ...(selector !== undefined ? { selector } : {}),
     ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
   }
 }
