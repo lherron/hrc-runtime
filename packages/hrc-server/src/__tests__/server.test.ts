@@ -213,9 +213,9 @@ describe('server startup', () => {
       legacyLocalBridges: ['legacy-agentchat'],
     })
     expect(body.capabilities.bridgeDelivery).toEqual({
-      actualPtyInjection: false,
-      enter: false,
-      oobSuffix: false,
+      actualPtyInjection: true,
+      enter: true,
+      oobSuffix: true,
       freshnessFence: true,
     })
     expect(typeof body.capabilities.backend.tmux.available).toBe('boolean')
@@ -1069,9 +1069,9 @@ describe('/v1/status capability reporting (T-00998)', () => {
       clearContext: true,
     })
     expect(body.capabilities.bridgeDelivery).toEqual({
-      actualPtyInjection: false,
-      enter: false,
-      oobSuffix: false,
+      actualPtyInjection: true,
+      enter: true,
+      oobSuffix: true,
       freshnessFence: true,
     })
     await server.stop()

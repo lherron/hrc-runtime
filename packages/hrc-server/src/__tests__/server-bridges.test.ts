@@ -185,7 +185,10 @@ describe('POST /v1/bridges/deliver', () => {
     expect(deliveredEvent).toBeDefined()
     const ej = deliveredEvent!.eventJson as Record<string, unknown>
     expect(ej['bridgeId']).toBe(bridge.bridgeId)
-    expect(ej['text']).toBe('Event test payload')
+    expect(ej['payloadLength']).toBe('Event test payload'.length)
+    expect(ej['enter']).toBe(true)
+    expect(ej['oobSuffixLength']).toBe(0)
+    expect(ej['text']).toBeUndefined()
   })
 
   it('rejects delivery with stale expectedHostSessionId (409)', async () => {

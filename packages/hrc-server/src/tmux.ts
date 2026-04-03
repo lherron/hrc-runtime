@@ -165,8 +165,21 @@ export class TmuxManager {
     await this.killSession(sessionName)
   }
 
+  async sendLiteral(paneId: string, text: string): Promise<void> {
+    if (text.length === 0) {
+      return
+    }
+
+    await this.exec(['send-keys', '-l', '-t', paneId, text])
+  }
+
+  async sendEnter(paneId: string): Promise<void> {
+    await this.exec(['send-keys', '-t', paneId, 'Enter'])
+  }
+
   async sendKeys(paneId: string, keys: string): Promise<void> {
-    await this.exec(['send-keys', '-t', paneId, keys, 'Enter'])
+    await this.sendLiteral(paneId, keys)
+    await this.sendEnter(paneId)
   }
 
   async inspectSession(sessionName: string): Promise<TmuxPaneState | null> {

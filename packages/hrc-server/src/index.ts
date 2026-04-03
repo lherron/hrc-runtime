@@ -117,6 +117,25 @@ type HookEnvelope = {
   hookData: unknown
 }
 
+type BridgeSelector =
+  | { sessionRef: string }
+  | { hostSessionId: string }
+  | { appSession: { appId: string; appSessionKey: string } }
+
+type BridgeTargetRequest = Omit<RegisterBridgeTargetRequest, 'hostSessionId'> & {
+  hostSessionId?: string | undefined
+  selector?: BridgeSelector | undefined
+}
+
+type DeliverTextRequest = {
+  bridgeId: string
+  text: string
+  enter: boolean
+  oobSuffix?: string | undefined
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
 type SessionRow = {
   host_session_id: string
   scope_ref: string
@@ -287,8 +306,16 @@ class HrcServerInstance implements HrcServer {
         return await this.handleRegisterBridgeTarget(request)
       }
 
+      if (request.method === 'POST' && pathname === '/v1/bridges/target') {
+        return await this.handleRegisterBridgeTarget(request)
+      }
+
       if (request.method === 'POST' && pathname === '/v1/bridges/deliver') {
         return await this.handleDeliverBridge(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/bridges/deliver-text') {
+        return await this.handleDeliverBridgeText(request)
       }
 
       if (request.method === 'POST' && pathname === '/v1/bridges/close') {
@@ -1076,8 +1103,8 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async handleRegisterBridgeTarget(request: Request): Promise<Response> {
-    const body = parseRegisterBridgeTargetRequest(await parseJsonBody(request))
-    const session = requireSession(this.db, body.hostSessionId)
+    const body = parseBridgeTargetRequest(await parseJsonBody(request))
+    const session = resolveBridgeTargetSession(this.db, body)
     const continuity = requireContinuity(this.db, session)
     const activeSession = requireSession(this.db, continuity.activeHostSessionId)
     validateBridgeFence(
@@ -1109,7 +1136,19 @@ class HrcServerInstance implements HrcServer {
 
     const now = timestamp()
     const matchingBridges = findActiveBridgesByTarget(this.db, body.transport, body.target)
-    const reusable = matchingBridges.find((bridge) => matchesBridgeBinding(bridge, body))
+    const bindingRequest: RegisterBridgeTargetRequest = {
+      hostSessionId: session.hostSessionId,
+      transport: body.transport,
+      target: body.target,
+      ...(body.runtimeId !== undefined ? { runtimeId: body.runtimeId } : {}),
+      ...(body.expectedHostSessionId !== undefined
+        ? { expectedHostSessionId: body.expectedHostSessionId }
+        : {}),
+      ...(body.expectedGeneration !== undefined
+        ? { expectedGeneration: body.expectedGeneration }
+        : {}),
+    }
+    const reusable = matchingBridges.find((bridge) => matchesBridgeBinding(bridge, bindingRequest))
     if (reusable) {
       return json(reusable)
     }
@@ -1138,7 +1177,29 @@ class HrcServerInstance implements HrcServer {
 
   private async handleDeliverBridge(request: Request): Promise<Response> {
     const body = parseDeliverBridgeRequest(await parseJsonBody(request))
-    const bridge = requireBridge(this.db, body.bridgeId)
+    return this.deliverBridgeText(
+      requireBridge(this.db, body.bridgeId),
+      {
+        bridgeId: body.bridgeId,
+        text: body.text,
+        enter: true,
+        expectedHostSessionId: body.expectedHostSessionId,
+        expectedGeneration: body.expectedGeneration,
+      },
+      true
+    )
+  }
+
+  private async handleDeliverBridgeText(request: Request): Promise<Response> {
+    const body = parseDeliverTextRequest(await parseJsonBody(request))
+    return this.deliverBridgeText(requireBridge(this.db, body.bridgeId), body, false)
+  }
+
+  private async deliverBridgeText(
+    bridge: HrcLocalBridgeRecord,
+    delivery: DeliverTextRequest,
+    compatibilityAlias: boolean
+  ): Promise<Response> {
     if (bridge.closedAt !== undefined) {
       throw new HrcNotFoundError(
         HrcErrorCode.UNKNOWN_BRIDGE,
@@ -1186,15 +1247,23 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
-    const effectiveFence = mergeBridgeFence(bridge, body)
+    const effectiveFence = mergeBridgeFence(bridge, delivery)
     validateBridgeFence(effectiveFence, activeSession)
+
+    const runtime =
+      bridge.runtimeId !== undefined ? this.db.runtimes.getByRuntimeId(bridge.runtimeId) : undefined
+    const paneId = await this.resolveBridgePaneId(bridge, runtime)
+    await this.tmux.sendLiteral(paneId, delivery.text + (delivery.oobSuffix ?? ''))
+    if (delivery.enter) {
+      await this.tmux.sendEnter(paneId)
+    }
 
     const event = this.db.events.append({
       ts: timestamp(),
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
+      hostSessionId: activeSession.hostSessionId,
+      scopeRef: activeSession.scopeRef,
+      laneRef: activeSession.laneRef,
+      generation: activeSession.generation,
       runtimeId: bridge.runtimeId,
       source: 'hrc',
       eventKind: 'bridge.delivered',
@@ -1204,7 +1273,11 @@ class HrcServerInstance implements HrcServer {
         ...(bridge.runtimeId !== undefined ? { runtimeId: bridge.runtimeId } : {}),
         transport: bridge.transport,
         target: bridge.target,
-        text: body.text,
+        payloadLength: delivery.text.length,
+        enter: delivery.enter,
+        oobSuffixLength: delivery.oobSuffix?.length ?? 0,
+        generation: activeSession.generation,
+        ...(compatibilityAlias ? { compatibilityAlias: true } : {}),
         ...(effectiveFence.expectedHostSessionId !== undefined
           ? { expectedHostSessionId: effectiveFence.expectedHostSessionId }
           : {}),
@@ -1219,6 +1292,35 @@ class HrcServerInstance implements HrcServer {
       delivered: true,
       bridgeId: bridge.bridgeId,
     } satisfies DeliverBridgeResponse)
+  }
+
+  private async resolveBridgePaneId(
+    bridge: HrcLocalBridgeRecord,
+    runtime: HrcRuntimeSnapshot | null | undefined
+  ): Promise<string> {
+    if (bridge.transport === 'tmux') {
+      try {
+        await this.tmux.capture(bridge.target)
+        return bridge.target
+      } catch {
+        // Fall back to the runtime binding or a reused pane below.
+      }
+    }
+
+    const fallbackPaneId = (() => {
+      if (runtime?.transport === 'tmux') {
+        return requireTmuxPane(runtime).paneId
+      }
+
+      return undefined
+    })()
+
+    if (fallbackPaneId) {
+      return fallbackPaneId
+    }
+
+    const pane = await this.tmux.ensurePane(bridge.hostSessionId, 'reuse_pty')
+    return pane.paneId
   }
 
   private handleListBridges(url: URL): Response {
@@ -1494,9 +1596,9 @@ class HrcServerInstance implements HrcServer {
           legacyLocalBridges: ['legacy-agentchat'],
         },
         bridgeDelivery: {
-          actualPtyInjection: false,
-          enter: false,
-          oobSuffix: false,
+          actualPtyInjection: true,
+          enter: true,
+          oobSuffix: true,
           freshnessFence: true,
         },
         backend: {
@@ -3107,7 +3209,7 @@ function parseUnbindSurfaceRequest(input: unknown): UnbindSurfaceRequest {
   }
 }
 
-function parseRegisterBridgeTargetRequest(input: unknown): RegisterBridgeTargetRequest {
+function parseBridgeTargetRequest(input: unknown): BridgeTargetRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
@@ -3115,11 +3217,16 @@ function parseRegisterBridgeTargetRequest(input: unknown): RegisterBridgeTargetR
   const expectedGeneration = parseOptionalNonNegativeInteger(input['expectedGeneration'])
 
   return {
-    hostSessionId: requireTrimmedStringField(input, 'hostSessionId'),
+    ...(typeof input['hostSessionId'] === 'string' && input['hostSessionId'].trim().length > 0
+      ? { hostSessionId: input['hostSessionId'].trim() }
+      : {}),
     transport: requireTrimmedStringField(input, 'transport'),
     target: requireTrimmedStringField(input, 'target'),
     ...readOptionalStringField(input, 'runtimeId'),
     ...readOptionalStringField(input, 'expectedHostSessionId'),
+    ...(Object.hasOwn(input, 'selector')
+      ? { selector: parseBridgeSelector(input['selector']) }
+      : {}),
     ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
   }
 }
@@ -3133,7 +3240,24 @@ function parseDeliverBridgeRequest(input: unknown): DeliverBridgeRequest {
 
   return {
     bridgeId: requireTrimmedStringField(input, 'bridgeId'),
-    text: requireTrimmedStringField(input, 'text'),
+    text: requireStringField(input, 'text'),
+    ...readOptionalStringField(input, 'expectedHostSessionId'),
+    ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+  }
+}
+
+function parseDeliverTextRequest(input: unknown): DeliverTextRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const expectedGeneration = parseOptionalNonNegativeInteger(input['expectedGeneration'])
+
+  return {
+    bridgeId: requireTrimmedStringField(input, 'bridgeId'),
+    text: requireStringField(input, 'text'),
+    enter: readBooleanField(input, 'enter'),
+    ...(typeof input['oobSuffix'] === 'string' ? { oobSuffix: input['oobSuffix'] } : {}),
     ...readOptionalStringField(input, 'expectedHostSessionId'),
     ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
   }
@@ -3177,6 +3301,28 @@ function requireTrimmedStringField(input: Record<string, unknown>, field: string
   return value.trim()
 }
 
+function requireStringField(input: Record<string, unknown>, field: string): string {
+  const value = input[field]
+  if (typeof value !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} is required`, {
+      field,
+    })
+  }
+
+  return value
+}
+
+function readBooleanField(input: Record<string, unknown>, field: string): boolean {
+  const value = input[field]
+  if (typeof value !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a boolean`, {
+      field,
+    })
+  }
+
+  return value
+}
+
 function readOptionalStringField(
   input: Record<string, unknown>,
   field: string
@@ -3193,6 +3339,48 @@ function readOptionalStringField(
 
   const trimmed = value.trim()
   return trimmed.length > 0 ? { [field]: trimmed } : {}
+}
+
+function parseBridgeSelector(input: unknown): BridgeSelector {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.INVALID_SELECTOR, 'selector must be an object')
+  }
+
+  const hasSessionRef = Object.hasOwn(input, 'sessionRef')
+  const hasHostSessionId = Object.hasOwn(input, 'hostSessionId')
+  const hasAppSession = Object.hasOwn(input, 'appSession')
+  const variantCount = Number(hasSessionRef) + Number(hasHostSessionId) + Number(hasAppSession)
+
+  if (variantCount !== 1) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.INVALID_SELECTOR,
+      'selector must include exactly one of sessionRef, hostSessionId, or appSession'
+    )
+  }
+
+  if (hasSessionRef) {
+    return {
+      sessionRef: requireTrimmedStringField(input, 'sessionRef'),
+    }
+  }
+
+  if (hasHostSessionId) {
+    return {
+      hostSessionId: requireTrimmedStringField(input, 'hostSessionId'),
+    }
+  }
+
+  const appSession = input['appSession']
+  if (!isRecord(appSession)) {
+    throw new HrcBadRequestError(HrcErrorCode.INVALID_SELECTOR, 'appSession must be an object')
+  }
+
+  return {
+    appSession: {
+      appId: requireTrimmedStringField(appSession, 'appId'),
+      appSessionKey: requireTrimmedStringField(appSession, 'appSessionKey'),
+    },
+  }
 }
 
 function parseSessionRef(sessionRef: string): { scopeRef: string; laneRef: string } {
@@ -3227,6 +3415,56 @@ function findContinuitySession(db: HrcDatabase, sessionRef: string): HrcSessionR
   }
 
   return db.sessions.getByHostSessionId(continuity.activeHostSessionId)
+}
+
+function resolveBridgeTargetSession(
+  db: HrcDatabase,
+  request: BridgeTargetRequest
+): HrcSessionRecord {
+  if (request.hostSessionId !== undefined) {
+    return requireSession(db, request.hostSessionId)
+  }
+
+  if (request.selector === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'hostSessionId or selector is required'
+    )
+  }
+
+  if ('hostSessionId' in request.selector) {
+    return requireSession(db, request.selector.hostSessionId)
+  }
+
+  if ('sessionRef' in request.selector) {
+    const session = findContinuitySession(db, request.selector.sessionRef)
+    if (!session) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_SESSION,
+        `unknown session "${request.selector.sessionRef}"`,
+        {
+          sessionRef: request.selector.sessionRef,
+        }
+      )
+    }
+
+    return session
+  }
+
+  const appSession = db.appSessions.findByKey(
+    request.selector.appSession.appId,
+    request.selector.appSession.appSessionKey
+  )
+  if (!appSession || appSession.removedAt !== undefined) {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, 'unknown app session', {
+      appId: request.selector.appSession.appId,
+      appSessionKey: request.selector.appSession.appSessionKey,
+    })
+  }
+
+  const session = requireSession(db, appSession.hostSessionId)
+  const continuity = requireContinuity(db, session)
+  return requireSession(db, continuity.activeHostSessionId)
 }
 
 function requireSession(db: HrcDatabase, hostSessionId: string): HrcSessionRecord {
@@ -3465,7 +3703,10 @@ function matchesBridgeBinding(
   )
 }
 
-function mergeBridgeFence(bridge: HrcLocalBridgeRecord, delivery: DeliverBridgeRequest): HrcFence {
+function mergeBridgeFence(
+  bridge: HrcLocalBridgeRecord,
+  delivery: Pick<DeliverTextRequest, 'expectedHostSessionId' | 'expectedGeneration'>
+): HrcFence {
   return {
     ...(delivery.expectedHostSessionId !== undefined
       ? { expectedHostSessionId: delivery.expectedHostSessionId }
