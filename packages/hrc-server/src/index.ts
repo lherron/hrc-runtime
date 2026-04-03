@@ -30,11 +30,14 @@ import type {
   ApplyAppSessionsResponse,
   BindSurfaceRequest,
   CaptureResponse,
+  ClearAppSessionContextRequest,
+  ClearAppSessionContextResponse,
   ClearContextRequest,
   ClearContextResponse,
   CloseBridgeRequest,
   DeliverBridgeRequest,
   DeliverBridgeResponse,
+  DispatchAppHarnessTurnRequest,
   DispatchTurnRequest,
   DispatchTurnResponse,
   EnsureAppSessionRequest,
@@ -64,6 +67,8 @@ import type {
   ResolveSessionResponse,
   RestartStyle,
   RuntimeActionResponse,
+  SendAppHarnessInFlightInputRequest,
+  SendAppHarnessInFlightInputResponse,
   SendLiteralInputRequest,
   SendLiteralInputResponse,
   TerminateAppSessionRequest,
@@ -98,6 +103,15 @@ type InFlightInputResponse = {
   runtimeId: string
   runId: string
   pendingTurns?: number | undefined
+}
+
+type ParsedDispatchAppHarnessTurnRequest = DispatchAppHarnessTurnRequest & {
+  runtimeIntent?: HrcRuntimeIntent | undefined
+}
+
+type ParsedClearAppSessionContextRequest = ClearAppSessionContextRequest & {
+  reason?: string | undefined
+  spec?: HrcAppSessionSpec | undefined
 }
 
 type AttachDescriptorResponse = {
@@ -952,6 +966,18 @@ class HrcServerInstance implements HrcServer {
     pathname: string,
     url: URL
   ): Promise<Response | null> {
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/turns') {
+      return await this.handleAppSessionDispatchTurn(request)
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/in-flight-input') {
+      return await this.handleAppSessionInFlightInput(request)
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/app-sessions/clear-context') {
+      return await this.handleAppSessionClearContext(request)
+    }
+
     if (request.method === 'POST' && pathname === '/v1/app-sessions/literal-input') {
       return await this.handleAppSessionLiteralInput(request)
     }
@@ -973,6 +999,93 @@ class HrcServerInstance implements HrcServer {
     }
 
     return null
+  }
+
+  private async handleAppSessionDispatchTurn(request: Request): Promise<Response> {
+    const body = parseDispatchAppHarnessTurnRequest(await parseJsonBody(request))
+    const managed = requireManagedAppSession(this.db, body.selector)
+    if (managed.kind !== 'harness') {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.SESSION_KIND_MISMATCH,
+        `app session "${managed.appId}/${managed.appSessionKey}" is kind "${managed.kind}", cannot dispatch turns`,
+        {
+          appId: managed.appId,
+          appSessionKey: managed.appSessionKey,
+          existingKind: managed.kind,
+          requestedOperation: 'dispatch-turn',
+        }
+      )
+    }
+
+    const requestedSession = requireSession(this.db, managed.activeHostSessionId)
+    const continuity = requireContinuity(this.db, requestedSession)
+    const activeSession = requireSession(this.db, continuity.activeHostSessionId)
+    const fence = validateFence(body.fences, {
+      activeHostSessionId: activeSession.hostSessionId,
+      generation: activeSession.generation,
+    })
+
+    if (!fence.ok) {
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, fence.message, fence.detail)
+    }
+
+    const session = requireSession(this.db, fence.resolvedHostSessionId)
+    const runId = `run-${randomUUID()}`
+    const intent = normalizeDispatchIntent(
+      body.runtimeIntent ?? resolveManagedHarnessIntent(managed, session),
+      session,
+      runId
+    )
+
+    return await this.dispatchTurnForSession(session, intent, body.prompt, {
+      runId,
+      ensureInteractiveRuntime: true,
+    })
+  }
+
+  private async handleAppSessionInFlightInput(request: Request): Promise<Response> {
+    const body = parseAppHarnessInFlightInputRequest(await parseJsonBody(request))
+    const managed = requireManagedAppSession(this.db, body.selector)
+    if (managed.kind !== 'harness') {
+      throw new HrcUnprocessableEntityError(
+        HrcErrorCode.SESSION_KIND_MISMATCH,
+        `app session "${managed.appId}/${managed.appSessionKey}" is kind "${managed.kind}", cannot accept semantic in-flight input`,
+        {
+          appId: managed.appId,
+          appSessionKey: managed.appSessionKey,
+          existingKind: managed.kind,
+          requestedOperation: 'in-flight-input',
+        }
+      )
+    }
+
+    const session = requireSession(this.db, managed.activeHostSessionId)
+    const runtime = requireLatestSessionRuntime(this.db, session.hostSessionId)
+    const result = await this.deliverInFlightInputToRuntime(session, runtime, {
+      runtimeId: runtime.runtimeId,
+      runId: body.runId,
+      prompt: body.prompt,
+      ...(body.inputType ? { inputType: body.inputType } : {}),
+    })
+
+    return json({
+      ...result,
+      hostSessionId: session.hostSessionId,
+    } satisfies SendAppHarnessInFlightInputResponse)
+  }
+
+  private async handleAppSessionClearContext(request: Request): Promise<Response> {
+    const body = parseClearAppSessionContextRequest(await parseJsonBody(request))
+    const managed = requireManagedAppSession(this.db, body.selector)
+    const session = requireSession(this.db, managed.activeHostSessionId)
+    return json(
+      (await this.rotateSessionContext(session, {
+        relaunch: body.relaunch === true,
+        managed,
+        ...(body.reason ? { reason: body.reason } : {}),
+        ...(body.spec ? { relaunchSpec: body.spec } : {}),
+      })) satisfies ClearAppSessionContextResponse
+    )
   }
 
   private async handleAppSessionLiteralInput(request: Request): Promise<Response> {
@@ -1156,11 +1269,32 @@ class HrcServerInstance implements HrcServer {
       runId
     )
 
+    return await this.dispatchTurnForSession(session, intent, body.prompt, {
+      runId,
+    })
+  }
+
+  private async dispatchTurnForSession(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    options: {
+      runId?: string | undefined
+      ensureInteractiveRuntime?: boolean | undefined
+    } = {}
+  ): Promise<Response> {
+    const runId = options.runId ?? `run-${randomUUID()}`
+
     if (shouldUseSdkTransport(intent)) {
-      return await this.handleSdkDispatchTurn(session, intent, body.prompt, runId)
+      return await this.handleSdkDispatchTurn(session, intent, prompt, runId)
     }
 
-    const runtime = requireLatestRuntime(this.db, session.hostSessionId)
+    const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    const runtime =
+      options.ensureInteractiveRuntime === true &&
+      (!latestRuntime || isRuntimeUnavailableStatus(latestRuntime.status))
+        ? await this.ensureRuntimeForSession(session, intent, 'reuse_pty')
+        : requireLatestRuntime(this.db, session.hostSessionId)
     assertRuntimeNotBusy(this.db, runtime)
 
     const launchId = `launch-${randomUUID()}`
@@ -1247,7 +1381,7 @@ class HrcServerInstance implements HrcServer {
       eventKind: 'turn.accepted',
       eventJson: {
         launchId,
-        promptLength: body.prompt.length,
+        promptLength: prompt.length,
       },
     })
     this.notifyEvent(acceptedEvent)
@@ -1291,7 +1425,14 @@ class HrcServerInstance implements HrcServer {
     const body = parseInFlightInputRequest(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
     const session = requireSession(this.db, runtime.hostSessionId)
+    return json(await this.deliverInFlightInputToRuntime(session, runtime, body))
+  }
 
+  private async deliverInFlightInputToRuntime(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    body: InFlightInputRequest
+  ): Promise<InFlightInputResponse> {
     if (runtime.transport !== 'sdk' || runtime.supportsInflightInput !== true) {
       throw this.appendInflightRejected(
         session,
@@ -1371,97 +1512,24 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(acceptedEvent)
 
-    return json({
+    return {
       accepted: delivered.accepted,
       runtimeId: runtime.runtimeId,
       runId: body.runId,
       ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
-    } satisfies InFlightInputResponse)
+    } satisfies InFlightInputResponse
   }
 
   private async handleClearContext(request: Request): Promise<Response> {
     const body = parseClearContextRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
-    const continuity = requireContinuity(this.db, session)
-    if (continuity.activeHostSessionId !== session.hostSessionId) {
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'host session is no longer active', {
-        expectedHostSessionId: session.hostSessionId,
-        activeHostSessionId: continuity.activeHostSessionId,
-      })
-    }
-
-    const now = timestamp()
-    const nextSession: HrcSessionRecord = {
-      hostSessionId: createHostSessionId(),
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation + 1,
-      status: 'active',
-      priorHostSessionId: session.hostSessionId,
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: session.ancestorScopeRefs,
-      ...(session.lastAppliedIntentJson
-        ? { lastAppliedIntentJson: session.lastAppliedIntentJson }
-        : {}),
-      ...(session.continuation ? { continuation: session.continuation } : {}),
-    }
-
-    this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
-    this.db.sessions.insert(nextSession)
-    this.db.continuities.upsert({
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      activeHostSessionId: nextSession.hostSessionId,
-      updatedAt: now,
-    })
-
-    const clearedEvent = this.db.events.append({
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      source: 'hrc',
-      eventKind: 'context.cleared',
-      eventJson: {
-        nextHostSessionId: nextSession.hostSessionId,
+    const managed = findManagedAppSessionForSession(this.db, session)
+    return json(
+      await this.rotateSessionContext(session, {
         relaunch: body.relaunch === true,
-      },
-    })
-    this.notifyEvent(clearedEvent)
-
-    const createdEvent = this.db.events.append({
-      ts: now,
-      hostSessionId: nextSession.hostSessionId,
-      scopeRef: nextSession.scopeRef,
-      laneRef: nextSession.laneRef,
-      generation: nextSession.generation,
-      source: 'hrc',
-      eventKind: 'session.created',
-      eventJson: {
-        created: true,
-        priorHostSessionId: session.hostSessionId,
-      },
-    })
-    this.notifyEvent(createdEvent)
-
-    if (body.relaunch === true) {
-      const relaunchIntent = nextSession.lastAppliedIntentJson
-      if (!relaunchIntent) {
-        throw new HrcUnprocessableEntityError(
-          HrcErrorCode.MISSING_RUNTIME_INTENT,
-          'cannot relaunch without a prior runtime intent'
-        )
-      }
-      await this.ensureRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
-    }
-
-    return json({
-      hostSessionId: nextSession.hostSessionId,
-      generation: nextSession.generation,
-      priorHostSessionId: session.hostSessionId,
-    } satisfies ClearContextResponse)
+        ...(managed ? { managed } : {}),
+      })
+    )
   }
 
   private async handleCapture(url: URL): Promise<Response> {
@@ -1606,7 +1674,10 @@ class HrcServerInstance implements HrcServer {
 
   private handleListSurfaces(url: URL): Response {
     const runtimeId = parseRuntimeIdQuery(url)
-    requireRuntime(this.db, runtimeId)
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+      return json([])
+    }
     return json(this.db.surfaceBindings.findByRuntime(runtimeId))
   }
 
@@ -2107,6 +2178,198 @@ class HrcServerInstance implements HrcServer {
     return { managed, session, runtime }
   }
 
+  private async rotateSessionContext(
+    session: HrcSessionRecord,
+    options: {
+      relaunch: boolean
+      managed?: AppManagedSessionRecord | undefined
+      relaunchSpec?: HrcAppSessionSpec | undefined
+      reason?: string | undefined
+    }
+  ): Promise<ClearContextResponse> {
+    const continuity = requireContinuity(this.db, session)
+    if (continuity.activeHostSessionId !== session.hostSessionId) {
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'host session is no longer active', {
+        expectedHostSessionId: session.hostSessionId,
+        activeHostSessionId: continuity.activeHostSessionId,
+      })
+    }
+
+    const effectiveSpec = resolveClearContextSpec(
+      options.managed,
+      options.relaunchSpec,
+      options.relaunch
+    )
+    const reason = options.reason ?? 'clear-context'
+    const now = timestamp()
+    const nextSession: HrcSessionRecord = {
+      hostSessionId: createHostSessionId(),
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation + 1,
+      status: 'active',
+      priorHostSessionId: session.hostSessionId,
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: session.ancestorScopeRefs,
+      ...(session.lastAppliedIntentJson
+        ? { lastAppliedIntentJson: session.lastAppliedIntentJson }
+        : {}),
+      ...(session.continuation ? { continuation: session.continuation } : {}),
+    }
+
+    const invalidated = await this.invalidateHostContext(session.hostSessionId, reason)
+    this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
+    this.db.sessions.insert(nextSession)
+    this.db.continuities.upsert({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      activeHostSessionId: nextSession.hostSessionId,
+      updatedAt: now,
+    })
+
+    if (options.managed) {
+      this.db.appManagedSessions.update(options.managed.appId, options.managed.appSessionKey, {
+        activeHostSessionId: nextSession.hostSessionId,
+        generation: nextSession.generation,
+        ...(effectiveSpec ? { lastAppliedSpec: effectiveSpec } : {}),
+        updatedAt: now,
+      })
+    }
+
+    const clearedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      source: 'hrc',
+      eventKind: 'context.cleared',
+      eventJson: {
+        nextHostSessionId: nextSession.hostSessionId,
+        relaunch: options.relaunch,
+        bridgesClosed: invalidated.bridgesClosed,
+        surfacesUnbound: invalidated.surfacesUnbound,
+        runtimesTerminated: invalidated.runtimesTerminated,
+        ...(options.managed
+          ? {
+              appId: options.managed.appId,
+              appSessionKey: options.managed.appSessionKey,
+            }
+          : {}),
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    })
+    this.notifyEvent(clearedEvent)
+
+    const createdEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: nextSession.hostSessionId,
+      scopeRef: nextSession.scopeRef,
+      laneRef: nextSession.laneRef,
+      generation: nextSession.generation,
+      source: 'hrc',
+      eventKind: 'session.created',
+      eventJson: {
+        created: true,
+        priorHostSessionId: session.hostSessionId,
+      },
+    })
+    this.notifyEvent(createdEvent)
+
+    if (options.relaunch) {
+      if (effectiveSpec) {
+        if (effectiveSpec.kind === 'harness') {
+          if (effectiveSpec.runtimeIntent.harness.interactive) {
+            await this.ensureRuntimeForSession(
+              nextSession,
+              effectiveSpec.runtimeIntent,
+              'fresh_pty'
+            )
+          } else {
+            this.db.sessions.updateIntent(
+              nextSession.hostSessionId,
+              effectiveSpec.runtimeIntent,
+              timestamp()
+            )
+          }
+        } else {
+          await this.ensureCommandRuntimeForSession(
+            nextSession,
+            effectiveSpec.command,
+            'fresh_pty',
+            true
+          )
+        }
+      } else {
+        const relaunchIntent = nextSession.lastAppliedIntentJson
+        if (!relaunchIntent) {
+          throw new HrcUnprocessableEntityError(
+            HrcErrorCode.MISSING_RUNTIME_INTENT,
+            'cannot relaunch without a prior runtime intent'
+          )
+        }
+        await this.ensureRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
+      }
+    }
+
+    return {
+      hostSessionId: nextSession.hostSessionId,
+      generation: nextSession.generation,
+      priorHostSessionId: session.hostSessionId,
+    } satisfies ClearContextResponse
+  }
+
+  private async invalidateHostContext(
+    hostSessionId: string,
+    reason: string
+  ): Promise<{
+    bridgesClosed: number
+    surfacesUnbound: number
+    runtimesTerminated: number
+  }> {
+    const now = timestamp()
+    let runtimesTerminated = 0
+    for (const runtime of this.db.runtimes.listByHostSessionId(hostSessionId)) {
+      if (isRuntimeUnavailableStatus(runtime.status)) {
+        continue
+      }
+
+      if (runtime.transport === 'tmux' && runtime.tmuxJson) {
+        const tmuxPane = requireTmuxPane(runtime)
+        const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)
+        if (inspected) {
+          await this.tmux.terminate(tmuxPane.sessionName)
+        }
+      }
+
+      finalizeRuntimeTermination(this.db, runtime, now)
+      runtimesTerminated += 1
+    }
+
+    let bridgesClosed = 0
+    for (const bridge of this.db.localBridges.listActive()) {
+      if (bridge.hostSessionId === hostSessionId) {
+        this.db.localBridges.close(bridge.bridgeId, now)
+        bridgesClosed += 1
+      }
+    }
+
+    let surfacesUnbound = 0
+    for (const surface of this.db.surfaceBindings.listActive()) {
+      if (surface.hostSessionId === hostSessionId) {
+        this.db.surfaceBindings.unbind(surface.surfaceKind, surface.surfaceId, now, reason)
+        surfacesUnbound += 1
+      }
+    }
+
+    return {
+      bridgesClosed,
+      surfacesUnbound,
+      runtimesTerminated,
+    }
+  }
+
   private async handleWrapperStarted(launchId: string, request: Request): Promise<Response> {
     const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'wrapper-started')
     const session = requireSession(this.db, body.hostSessionId)
@@ -2280,7 +2543,7 @@ class HrcServerInstance implements HrcServer {
         },
         platform: {
           appOwnedSessions: true,
-          appHarnessSessions: false,
+          appHarnessSessions: true,
           commandSessions: true,
           literalInput: true,
           surfaceBindings: true,
@@ -3792,6 +4055,107 @@ function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRequest {
   }
 }
 
+function parseDispatchAppHarnessTurnRequest(input: unknown): ParsedDispatchAppHarnessTurnRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+
+  const prompt = input['prompt']
+  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
+      field: 'prompt',
+    })
+  }
+
+  const runtimeIntent = input['runtimeIntent']
+
+  return {
+    selector: parseAppSessionSelector(selectorRaw),
+    prompt: prompt.trim(),
+    ...(Object.hasOwn(input, 'fences') ? { fences: parseFenceInput(input['fences']) } : {}),
+    ...(isRecord(runtimeIntent) ? { runtimeIntent: runtimeIntent as HrcRuntimeIntent } : {}),
+  }
+}
+
+function parseAppHarnessInFlightInputRequest(input: unknown): SendAppHarnessInFlightInputRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+
+  const runId = input['runId']
+  const prompt = input['prompt']
+  if (typeof runId !== 'string' || runId.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runId is required', {
+      field: 'runId',
+    })
+  }
+  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
+      field: 'prompt',
+    })
+  }
+  if (input['inputType'] !== undefined && typeof input['inputType'] !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'inputType must be a string', {
+      field: 'inputType',
+    })
+  }
+
+  return {
+    selector: parseAppSessionSelector(selectorRaw),
+    runId: runId.trim(),
+    prompt: prompt.trim(),
+    ...(typeof input['inputType'] === 'string' && input['inputType'].trim().length > 0
+      ? { inputType: input['inputType'].trim() }
+      : {}),
+  }
+}
+
+function parseClearAppSessionContextRequest(input: unknown): ParsedClearAppSessionContextRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+  if (input['relaunch'] !== undefined && typeof input['relaunch'] !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'relaunch must be a boolean', {
+      field: 'relaunch',
+    })
+  }
+  if (input['reason'] !== undefined && typeof input['reason'] !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'reason must be a string', {
+      field: 'reason',
+    })
+  }
+
+  return {
+    selector: parseAppSessionSelector(selectorRaw),
+    ...(typeof input['relaunch'] === 'boolean' ? { relaunch: input['relaunch'] } : {}),
+    ...(typeof input['reason'] === 'string' && input['reason'].trim().length > 0
+      ? { reason: input['reason'].trim() }
+      : {}),
+    ...(Object.hasOwn(input, 'spec') ? { spec: parseAppSessionSpec(input['spec']) } : {}),
+  }
+}
+
 function parseRemoveAppSessionRequest(input: unknown): {
   selector: { appId: string; appSessionKey: string }
   terminateRuntime?: boolean
@@ -4208,6 +4572,16 @@ function parseTmuxVersion(
 
 function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
   const runtime = findLatestRuntime(db, hostSessionId)
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+    throw new HrcRuntimeUnavailableError(`no ready runtime for host session "${hostSessionId}"`, {
+      hostSessionId,
+    })
+  }
+  return runtime
+}
+
+function requireLatestSessionRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
+  const runtime = findLatestSessionRuntime(db, hostSessionId)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     throw new HrcRuntimeUnavailableError(`no ready runtime for host session "${hostSessionId}"`, {
       hostSessionId,
@@ -4651,6 +5025,78 @@ function requireManagedAppSession(
   }
 
   return managed
+}
+
+function findManagedAppSessionForSession(
+  db: HrcDatabase,
+  session: HrcSessionRecord
+): AppManagedSessionRecord | null {
+  if (!session.scopeRef.startsWith('app:')) {
+    return null
+  }
+
+  return db.appManagedSessions.findByKey(session.scopeRef.slice('app:'.length), session.laneRef)
+}
+
+function resolveManagedHarnessIntent(
+  managed: AppManagedSessionRecord,
+  session: HrcSessionRecord
+): HrcRuntimeIntent | undefined {
+  if (session.lastAppliedIntentJson) {
+    return session.lastAppliedIntentJson
+  }
+
+  if (managed.lastAppliedSpec?.kind === 'harness') {
+    return managed.lastAppliedSpec.runtimeIntent
+  }
+
+  return undefined
+}
+
+function resolveClearContextSpec(
+  managed: AppManagedSessionRecord | undefined,
+  relaunchSpec: HrcAppSessionSpec | undefined,
+  relaunch: boolean
+): HrcAppSessionSpec | undefined {
+  if (!managed) {
+    return undefined
+  }
+
+  if (relaunchSpec && relaunchSpec.kind !== managed.kind) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.SESSION_KIND_MISMATCH,
+      `app session "${managed.appId}/${managed.appSessionKey}" is kind "${managed.kind}", cannot relaunch as "${relaunchSpec.kind}"`,
+      {
+        appId: managed.appId,
+        appSessionKey: managed.appSessionKey,
+        existingKind: managed.kind,
+        requestedKind: relaunchSpec.kind,
+      }
+    )
+  }
+
+  if (!relaunch) {
+    return relaunchSpec
+  }
+
+  const effectiveSpec = relaunchSpec ?? managed.lastAppliedSpec
+  if (effectiveSpec) {
+    return effectiveSpec
+  }
+
+  throw new HrcUnprocessableEntityError(
+    managed.kind === 'command'
+      ? HrcErrorCode.MISSING_SESSION_SPEC
+      : HrcErrorCode.MISSING_RUNTIME_INTENT,
+    managed.kind === 'command'
+      ? 'cannot relaunch without a prior session spec'
+      : 'cannot relaunch without a prior runtime intent',
+    {
+      appId: managed.appId,
+      appSessionKey: managed.appSessionKey,
+      kind: managed.kind,
+    }
+  )
 }
 
 function validateAppSessionFence(
