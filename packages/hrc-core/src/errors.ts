@@ -17,6 +17,11 @@ export const HrcErrorCode = {
   INFLIGHT_UNSUPPORTED: 'inflight_unsupported',
   RUNTIME_UNAVAILABLE: 'runtime_unavailable',
   INTERNAL_ERROR: 'internal_error',
+  UNKNOWN_APP_SESSION: 'unknown_app_session',
+  APP_SESSION_REMOVED: 'app_session_removed',
+  SESSION_KIND_MISMATCH: 'session_kind_mismatch',
+  UNSUPPORTED_CAPABILITY: 'unsupported_capability',
+  MISSING_SESSION_SPEC: 'missing_session_spec',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -48,6 +53,11 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.INFLIGHT_UNSUPPORTED]: 422,
   [HrcErrorCode.RUNTIME_UNAVAILABLE]: 503,
   [HrcErrorCode.INTERNAL_ERROR]: 500,
+  [HrcErrorCode.UNKNOWN_APP_SESSION]: 404,
+  [HrcErrorCode.APP_SESSION_REMOVED]: 409,
+  [HrcErrorCode.SESSION_KIND_MISMATCH]: 422,
+  [HrcErrorCode.UNSUPPORTED_CAPABILITY]: 422,
+  [HrcErrorCode.MISSING_SESSION_SPEC]: 422,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {
@@ -106,6 +116,7 @@ export class HrcNotFoundError extends HrcDomainError {
       | 'unknown_runtime'
       | 'unknown_surface'
       | 'unknown_bridge'
+      | 'unknown_app_session'
     >,
     message: string,
     detail: Record<string, unknown> = {}
@@ -117,7 +128,10 @@ export class HrcNotFoundError extends HrcDomainError {
 
 export class HrcConflictError extends HrcDomainError {
   constructor(
-    code: Extract<HrcErrorCode, 'stale_context' | 'runtime_busy' | 'run_mismatch'>,
+    code: Extract<
+      HrcErrorCode,
+      'stale_context' | 'runtime_busy' | 'run_mismatch' | 'app_session_removed'
+    >,
     message: string,
     detail: Record<string, unknown> = {}
   ) {
@@ -130,7 +144,12 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
   constructor(
     code: Extract<
       HrcErrorCode,
-      'missing_runtime_intent' | 'provider_mismatch' | 'inflight_unsupported'
+      | 'missing_runtime_intent'
+      | 'provider_mismatch'
+      | 'inflight_unsupported'
+      | 'session_kind_mismatch'
+      | 'unsupported_capability'
+      | 'missing_session_spec'
     >,
     message: string,
     detail: Record<string, unknown> = {}

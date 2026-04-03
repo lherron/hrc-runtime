@@ -53,6 +53,55 @@ export type HrcRuntimeIntent = {
   launch?: HrcLaunchEnvConfig | undefined
 }
 
+export type HrcAppSessionRef = {
+  appId: string
+  appSessionKey: string
+}
+
+export type HrcManagedSessionKind = 'harness' | 'command'
+
+export type HrcCommandLaunchSpec = {
+  launchMode?: 'shell' | 'exec' | undefined
+  argv?: string[] | undefined
+  cwd?: string | undefined
+  env?: Record<string, string> | undefined
+  unsetEnv?: string[] | undefined
+  pathPrepend?: string[] | undefined
+  shell?:
+    | {
+        executable?: string | undefined
+        login?: boolean | undefined
+        interactive?: boolean | undefined
+      }
+    | undefined
+}
+
+export type HrcAppHarnessSessionSpec = {
+  kind: 'harness'
+  runtimeIntent: HrcRuntimeIntent
+}
+
+export type HrcAppCommandSessionSpec = {
+  kind: 'command'
+  command: HrcCommandLaunchSpec
+}
+
+export type HrcAppSessionSpec = HrcAppHarnessSessionSpec | HrcAppCommandSessionSpec
+
+export type HrcManagedSessionRecord = {
+  appId: string
+  appSessionKey: string
+  kind: HrcManagedSessionKind
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+  activeHostSessionId: string
+  generation: number
+  status: 'active' | 'removed'
+  createdAt: string
+  updatedAt: string
+  removedAt?: string | undefined
+}
+
 export type HrcHookBridgeConfig = {
   kind: string
   /**

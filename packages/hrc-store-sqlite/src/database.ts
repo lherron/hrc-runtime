@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
+  AppManagedSessionRepository,
   AppSessionRepository,
   ContinuityRepository,
   EventRepository,
@@ -24,6 +25,7 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
+  appManagedSessions: AppManagedSessionRepository
   appSessions: AppSessionRepository
   runtimes: RuntimeRepository
   runs: RunRepository
@@ -64,6 +66,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
+    appManagedSessions: new AppManagedSessionRepository(sqlite),
     appSessions: new AppSessionRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite),
     runs: new RunRepository(sqlite),

@@ -245,11 +245,45 @@ const phase6LocalBridgesRuntimeIdIndexMigration: HrcMigration = {
   },
 }
 
+const phase7ManagedAppSessionsMigration: HrcMigration = {
+  id: '0005_app_managed_sessions',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_managed_sessions (
+        app_id TEXT NOT NULL,
+        app_session_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        label TEXT,
+        metadata_json TEXT,
+        active_host_session_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        last_applied_spec_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        removed_at TEXT,
+        PRIMARY KEY (app_id, app_session_key),
+        FOREIGN KEY (active_host_session_id) REFERENCES sessions(host_session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_managed_sessions_active_host_session_id
+        ON app_managed_sessions(active_host_session_id);
+
+      CREATE INDEX IF NOT EXISTS idx_app_managed_sessions_status
+        ON app_managed_sessions(status);
+
+      CREATE INDEX IF NOT EXISTS idx_app_managed_sessions_kind
+        ON app_managed_sessions(kind);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
   phase5WorkbenchSessionsAndLocalBridgesMigration,
   phase6LocalBridgesRuntimeIdIndexMigration,
+  phase7ManagedAppSessionsMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

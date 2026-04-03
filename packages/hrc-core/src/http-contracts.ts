@@ -3,8 +3,11 @@
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
+  HrcAppSessionRef,
+  HrcAppSessionSpec,
   HrcCapabilityStatus,
   HrcLocalBridgeRecord,
+  HrcManagedSessionRecord,
   HrcRuntimeIntent,
   HrcSessionRecord,
 } from './contracts.js'
@@ -186,4 +189,63 @@ export type HrcBridgeDeliverTextRequest = {
 export type HrcBridgeDeliverTextResponse = {
   delivered: true
   bridgeId: string
+}
+
+// -- Managed app-session registry (Phase 3) -----------------------------------
+
+export type EnsureAppSessionRequest = {
+  selector: HrcAppSessionRef
+  spec: HrcAppSessionSpec
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+  restartStyle?: RestartStyle | undefined
+  forceRestart?: boolean | undefined
+}
+
+export type EnsureAppSessionResponse = {
+  session: HrcManagedSessionRecord
+  created: boolean
+  restarted: boolean
+  status: 'created' | 'ensured' | 'restarted'
+  runtimeId?: string | undefined
+  runtime?: EnsureRuntimeResponse | undefined
+}
+
+export type ListAppSessionsRequest = {
+  appId: string
+  kind?: 'harness' | 'command' | undefined
+  includeRemoved?: boolean | undefined
+}
+
+export type HrcAppSessionFilter = ListAppSessionsRequest
+
+export type RemoveAppSessionRequest = {
+  selector: HrcAppSessionRef
+  terminateRuntime?: boolean | undefined
+}
+
+export type RemoveAppSessionResponse = {
+  removed: boolean
+  runtimeTerminated: boolean
+  bridgesClosed: number
+  surfacesUnbound: number
+}
+
+export type ApplyAppManagedSessionInput = {
+  appSessionKey: string
+  spec: HrcAppSessionSpec
+  label?: string | undefined
+  metadata?: Record<string, unknown> | undefined
+}
+
+export type ApplyAppManagedSessionsRequest = {
+  appId: string
+  pruneMissing?: boolean | undefined
+  sessions: ApplyAppManagedSessionInput[]
+}
+
+export type ApplyAppManagedSessionsResponse = {
+  ensured: number
+  removed: number
+  results: EnsureAppSessionResponse[]
 }

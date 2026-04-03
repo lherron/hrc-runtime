@@ -1,12 +1,14 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
   type HrcAppSessionRecord,
+  type HrcAppSessionSpec,
   type HrcContinuationRef,
   type HrcContinuityRecord,
   type HrcErrorCode,
   type HrcEventEnvelope,
   type HrcLaunchRecord,
   type HrcLocalBridgeRecord,
+  type HrcManagedSessionRecord,
   type HrcRunRecord,
   type HrcRuntimeIntent,
   type HrcRuntimeSnapshot,
@@ -52,6 +54,15 @@ export type AppSessionBulkApplyResult = {
   inserted: number
   updated: number
   removed: number
+}
+
+export type AppManagedSessionRecord = HrcManagedSessionRecord & {
+  lastAppliedSpec?: HrcAppSessionSpec | undefined
+}
+
+export type AppManagedSessionFindOptions = {
+  includeRemoved?: boolean | undefined
+  kind?: HrcManagedSessionRecord['kind'] | undefined
 }
 
 export type LocalBridgeStatus = 'active' | 'closed'
@@ -198,6 +209,21 @@ type AppSessionRow = {
   host_session_id: string
   label: string | null
   metadata_json: string | null
+  created_at: string
+  updated_at: string
+  removed_at: string | null
+}
+
+type AppManagedSessionRow = {
+  app_id: string
+  app_session_key: string
+  kind: HrcManagedSessionRecord['kind']
+  label: string | null
+  metadata_json: string | null
+  active_host_session_id: string
+  generation: number
+  status: HrcManagedSessionRecord['status']
+  last_applied_spec_json: string | null
   created_at: string
   updated_at: string
   removed_at: string | null
@@ -361,6 +387,20 @@ const APP_SESSION_COLUMNS = `
   updated_at,
   removed_at`
 
+const APP_MANAGED_SESSION_COLUMNS = `
+  app_id,
+  app_session_key,
+  kind,
+  label,
+  metadata_json,
+  active_host_session_id,
+  generation,
+  status,
+  last_applied_spec_json,
+  created_at,
+  updated_at,
+  removed_at`
+
 const LOCAL_BRIDGE_COLUMNS = `
   bridge_id,
   host_session_id,
@@ -506,6 +546,26 @@ function mapAppSessionRow(row: AppSessionRow): HrcAppSessionRecord {
     hostSessionId: row.host_session_id,
     label: row.label ?? undefined,
     metadata: parseJson<Record<string, unknown>>(row.metadata_json, 'metadata_json'),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    removedAt: row.removed_at ?? undefined,
+  }
+}
+
+function mapAppManagedSessionRow(row: AppManagedSessionRow): AppManagedSessionRecord {
+  return {
+    appId: row.app_id,
+    appSessionKey: row.app_session_key,
+    kind: row.kind,
+    label: row.label ?? undefined,
+    metadata: parseJson<Record<string, unknown>>(row.metadata_json, 'metadata_json'),
+    activeHostSessionId: row.active_host_session_id,
+    generation: row.generation,
+    status: row.status,
+    lastAppliedSpec: parseJson<HrcAppSessionSpec>(
+      row.last_applied_spec_json,
+      'last_applied_spec_json'
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     removedAt: row.removed_at ?? undefined,
@@ -987,6 +1047,134 @@ export class AppSessionRepository {
     )
 
     return applyBulk.immediate(appId, hostSessionId, sessions)
+  }
+}
+
+export class AppManagedSessionRepository {
+  constructor(private readonly db: Database) {}
+
+  create(record: AppManagedSessionRecord): AppManagedSessionRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO app_managed_sessions (
+          app_id,
+          app_session_key,
+          kind,
+          label,
+          metadata_json,
+          active_host_session_id,
+          generation,
+          status,
+          last_applied_spec_json,
+          created_at,
+          updated_at,
+          removed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.appId,
+      record.appSessionKey,
+      record.kind,
+      record.label ?? null,
+      serializeJson(record.metadata),
+      record.activeHostSessionId,
+      record.generation,
+      record.status,
+      serializeJson(record.lastAppliedSpec),
+      record.createdAt,
+      record.updatedAt,
+      record.removedAt ?? null
+    )
+
+    return requireRecord(
+      this.findByKey(record.appId, record.appSessionKey),
+      `failed to reload app managed session ${record.appId}/${record.appSessionKey}`
+    )
+  }
+
+  findByKey(appId: string, appSessionKey: string): AppManagedSessionRecord | null {
+    const row = this.db
+      .query<AppManagedSessionRow, [string, string]>(
+        `SELECT ${APP_MANAGED_SESSION_COLUMNS} FROM app_managed_sessions
+          WHERE app_id = ? AND app_session_key = ?`
+      )
+      .get(appId, appSessionKey)
+
+    return row ? mapAppManagedSessionRow(row) : null
+  }
+
+  findByApp(appId: string, options: AppManagedSessionFindOptions = {}): AppManagedSessionRecord[] {
+    const clauses = ['app_id = ?']
+    const values: Array<string | number | null> = [appId]
+
+    if (options.kind !== undefined) {
+      clauses.push('kind = ?')
+      values.push(options.kind)
+    }
+    if (options.includeRemoved !== true) {
+      clauses.push("status != 'removed'")
+    }
+
+    const rows = this.db
+      .query<AppManagedSessionRow, SQLQueryBindings[]>(
+        `SELECT ${APP_MANAGED_SESSION_COLUMNS} FROM app_managed_sessions
+          WHERE ${clauses.join(' AND ')}
+          ORDER BY app_session_key ASC`
+      )
+      .all(...values)
+
+    return rows.map(mapAppManagedSessionRow)
+  }
+
+  update(
+    appId: string,
+    appSessionKey: string,
+    patch: {
+      activeHostSessionId?: string | undefined
+      generation?: number | undefined
+      status?: HrcManagedSessionRecord['status'] | undefined
+      label?: string | null | undefined
+      metadata?: Record<string, unknown> | null | undefined
+      removedAt?: string | null | undefined
+      lastAppliedSpec?: HrcAppSessionSpec | null | undefined
+      updatedAt: string
+    }
+  ): AppManagedSessionRecord | null {
+    const entries: Array<[column: string, value: string | number | null]> = []
+
+    if (patch.activeHostSessionId !== undefined) {
+      entries.push(['active_host_session_id', patch.activeHostSessionId])
+    }
+    if (patch.generation !== undefined) {
+      entries.push(['generation', patch.generation])
+    }
+    if (patch.status !== undefined) {
+      entries.push(['status', patch.status])
+    }
+    if (Object.hasOwn(patch, 'label')) {
+      entries.push(['label', patch.label ?? null])
+    }
+    if (Object.hasOwn(patch, 'metadata')) {
+      entries.push(['metadata_json', serializeJson(patch.metadata ?? undefined)])
+    }
+    if (Object.hasOwn(patch, 'removedAt')) {
+      entries.push(['removed_at', patch.removedAt ?? null])
+    }
+    if (Object.hasOwn(patch, 'lastAppliedSpec')) {
+      entries.push(['last_applied_spec_json', serializeJson(patch.lastAppliedSpec ?? undefined)])
+    }
+    entries.push(['updated_at', patch.updatedAt])
+
+    const { clause, values } = buildSetClause(entries)
+    execute(
+      this.db,
+      `UPDATE app_managed_sessions SET ${clause} WHERE app_id = ? AND app_session_key = ?`,
+      ...values,
+      appId,
+      appSessionKey
+    )
+
+    return this.findByKey(appId, appSessionKey)
   }
 }
 
