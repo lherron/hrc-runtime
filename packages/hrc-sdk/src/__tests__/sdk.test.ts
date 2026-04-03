@@ -686,7 +686,7 @@ describe('Phase 6 diagnostics round-trip', () => {
       clearContext: true,
     })
     expect(result.capabilities.platform).toEqual({
-      appOwnedSessions: false,
+      appOwnedSessions: true,
       appHarnessSessions: false,
       commandSessions: false,
       literalInput: false,
@@ -743,7 +743,7 @@ describe('Phase 6 diagnostics round-trip', () => {
     if (!server) return
     const client = new HrcClient(socketPath)
     const result = await client.getStatus()
-    expect(result.capabilities.platform.appOwnedSessions).toBe(false)
+    expect(result.capabilities.platform.appOwnedSessions).toBe(true)
     expect(result.capabilities.platform.appHarnessSessions).toBe(false)
     expect(result.capabilities.platform.commandSessions).toBe(false)
     expect(result.capabilities.platform.literalInput).toBe(false)
