@@ -106,7 +106,12 @@ type InFlightInputResponse = {
 }
 
 type ParsedDispatchAppHarnessTurnRequest = DispatchAppHarnessTurnRequest & {
+  prompt: string
   runtimeIntent?: HrcRuntimeIntent | undefined
+}
+
+type ParsedAppHarnessInFlightInputRequest = SendAppHarnessInFlightInputRequest & {
+  prompt: string
 }
 
 type ParsedClearAppSessionContextRequest = ClearAppSessionContextRequest & {
@@ -1030,7 +1035,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     const session = requireSession(this.db, fence.resolvedHostSessionId)
-    const runId = `run-${randomUUID()}`
+    const runId = body.runId ?? `run-${randomUUID()}`
     const intent = normalizeDispatchIntent(
       body.runtimeIntent ?? resolveManagedHarnessIntent(managed, session),
       session,
@@ -1060,10 +1065,12 @@ class HrcServerInstance implements HrcServer {
     }
 
     const session = requireSession(this.db, managed.activeHostSessionId)
+    validateAppSessionFence(body.fence, session)
     const runtime = requireLatestSessionRuntime(this.db, session.hostSessionId)
+    const runId = body.runId ?? resolveActiveRunId(this.db, runtime)
     const result = await this.deliverInFlightInputToRuntime(session, runtime, {
       runtimeId: runtime.runtimeId,
-      runId: body.runId,
+      runId,
       prompt: body.prompt,
       ...(body.inputType ? { inputType: body.inputType } : {}),
     })
@@ -1918,11 +1925,26 @@ class HrcServerInstance implements HrcServer {
 
   private async handleCloseBridge(request: Request): Promise<Response> {
     const body = parseCloseBridgeRequest(await parseJsonBody(request))
+    const existing = requireBridge(this.db, body.bridgeId)
+    if (existing.closedAt !== undefined) {
+      return json(existing)
+    }
+
     const bridge = this.db.localBridges.close(body.bridgeId, timestamp())
     if (!bridge) {
       throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_BRIDGE, `unknown bridge "${body.bridgeId}"`, {
         bridgeId: body.bridgeId,
       })
+    }
+
+    const session = this.db.sessions.getByHostSessionId(bridge.hostSessionId)
+    if (session) {
+      const event = this.appendEvent(session, 'bridge.closed', {
+        bridgeId: bridge.bridgeId,
+        transport: bridge.transport,
+        target: bridge.target,
+      })
+      this.notifyEvent(event)
     }
 
     return json(bridge)
@@ -4067,24 +4089,32 @@ function parseDispatchAppHarnessTurnRequest(input: unknown): ParsedDispatchAppHa
     })
   }
 
-  const prompt = input['prompt']
-  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
-      field: 'prompt',
-    })
-  }
-
+  const prompt = parsePromptPayload(input)
   const runtimeIntent = input['runtimeIntent']
+  const runId = readOptionalNonEmptyStringField(input, 'runId')
+  const canonicalFence =
+    Object.hasOwn(input, 'fence') && input['fence'] !== undefined
+      ? parseFenceInput(input['fence'])
+      : undefined
+  const legacyFences =
+    Object.hasOwn(input, 'fences') && input['fences'] !== undefined
+      ? parseFenceInput(input['fences'])
+      : undefined
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
-    prompt: prompt.trim(),
-    ...(Object.hasOwn(input, 'fences') ? { fences: parseFenceInput(input['fences']) } : {}),
+    prompt,
+    ...(runId !== undefined ? { runId } : {}),
+    ...(canonicalFence !== undefined
+      ? { fence: canonicalFence, fences: canonicalFence }
+      : legacyFences !== undefined
+        ? { fences: legacyFences }
+        : {}),
     ...(isRecord(runtimeIntent) ? { runtimeIntent: runtimeIntent as HrcRuntimeIntent } : {}),
   }
 }
 
-function parseAppHarnessInFlightInputRequest(input: unknown): SendAppHarnessInFlightInputRequest {
+function parseAppHarnessInFlightInputRequest(input: unknown): ParsedAppHarnessInFlightInputRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
@@ -4096,18 +4126,8 @@ function parseAppHarnessInFlightInputRequest(input: unknown): SendAppHarnessInFl
     })
   }
 
-  const runId = input['runId']
-  const prompt = input['prompt']
-  if (typeof runId !== 'string' || runId.trim().length === 0) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runId is required', {
-      field: 'runId',
-    })
-  }
-  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
-      field: 'prompt',
-    })
-  }
+  const runId = readOptionalNonEmptyStringField(input, 'runId')
+  const prompt = parsePromptPayload(input)
   if (input['inputType'] !== undefined && typeof input['inputType'] !== 'string') {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'inputType must be a string', {
       field: 'inputType',
@@ -4116,11 +4136,12 @@ function parseAppHarnessInFlightInputRequest(input: unknown): SendAppHarnessInFl
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
-    runId: runId.trim(),
-    prompt: prompt.trim(),
+    prompt,
+    ...(runId !== undefined ? { runId } : {}),
     ...(typeof input['inputType'] === 'string' && input['inputType'].trim().length > 0
       ? { inputType: input['inputType'].trim() }
       : {}),
+    ...(Object.hasOwn(input, 'fence') ? { fence: parseAppSessionFence(input['fence']) } : {}),
   }
 }
 
@@ -4523,6 +4544,24 @@ function findLatestRunForRuntime(db: HrcDatabase, runtimeId: string): HrcRunReco
   return db.runs.listByRuntimeId(runtimeId).at(-1) ?? null
 }
 
+function resolveActiveRunId(db: HrcDatabase, runtime: HrcRuntimeSnapshot): string {
+  const activeRun =
+    runtime.activeRunId !== undefined ? db.runs.getByRunId(runtime.activeRunId) : null
+  const latestRun = findLatestRunForRuntime(db, runtime.runtimeId)
+  const runId = activeRun?.runId ?? latestRun?.runId
+  if (!runId) {
+    throw new HrcConflictError(
+      HrcErrorCode.RUN_MISMATCH,
+      'no active run available for semantic in-flight input',
+      {
+        runtimeId: runtime.runtimeId,
+      }
+    )
+  }
+
+  return runId
+}
+
 function getTmuxSocketPath(options: HrcServerOptions): string {
   return options.tmuxSocketPath ?? join(options.runtimeRoot, 'tmux.sock')
 }
@@ -4795,6 +4834,42 @@ function readOptionalStringField(
   return trimmed.length > 0 ? { [field]: trimmed } : {}
 }
 
+function readOptionalNonEmptyStringField(
+  input: Record<string, unknown>,
+  field: string
+): string | undefined {
+  const value = input[field]
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
+      field,
+    })
+  }
+
+  return value.trim()
+}
+
+function parsePromptPayload(input: Record<string, unknown>): string {
+  const prompt = input['prompt']
+  if (typeof prompt === 'string' && prompt.trim().length > 0) {
+    return prompt.trim()
+  }
+
+  const nestedInput = input['input']
+  if (isRecord(nestedInput)) {
+    const text = nestedInput['text']
+    if (typeof text === 'string' && text.trim().length > 0) {
+      return text.trim()
+    }
+  }
+
+  throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
+    field: 'prompt',
+  })
+}
+
 function parseOptionalStringArray(input: unknown, field: string): string[] | undefined {
   if (input === undefined) {
     return undefined
@@ -4974,18 +5049,18 @@ function resolveBridgeTargetSession(
     return session
   }
 
-  const appSession = db.appSessions.findByKey(
+  const appSession = db.appManagedSessions.findByKey(
     request.selector.appSession.appId,
     request.selector.appSession.appSessionKey
   )
-  if (!appSession || appSession.removedAt !== undefined) {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, 'unknown app session', {
+  if (!appSession || appSession.status === 'removed') {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_APP_SESSION, 'unknown app session', {
       appId: request.selector.appSession.appId,
       appSessionKey: request.selector.appSession.appSessionKey,
     })
   }
 
-  const session = requireSession(db, appSession.hostSessionId)
+  const session = requireSession(db, appSession.activeHostSessionId)
   const continuity = requireContinuity(db, session)
   return requireSession(db, continuity.activeHostSessionId)
 }

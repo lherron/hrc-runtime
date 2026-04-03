@@ -9,7 +9,7 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type { HrcCapabilityStatus, HrcRuntimeIntent } from 'hrc-core'
+import type { HrcAppSessionSpec, HrcCapabilityStatus, HrcRuntimeIntent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
 // -- Helpers ------------------------------------------------------------------
@@ -678,6 +678,8 @@ async function cmdBridgeClose(args: string[]): Promise<void> {
 async function cmdBridgeTarget(args: string[]): Promise<void> {
   const bridge = parseFlag(args, '--bridge')
   const hostSession = parseFlag(args, '--host-session')
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
   const transport = parseFlag(args, '--transport')
   const target = parseFlag(args, '--target')
   const runtimeId = parseFlag(args, '--runtime-id')
@@ -694,8 +696,13 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
   if (!effectiveTarget) {
     fatal('--target (or --bridge) is required for bridge target')
   }
-  if (!hostSession) {
-    fatal('--host-session is required for bridge target')
+
+  // Selector: --app/--key or --host-session (exactly one required)
+  if (!hostSession && !(appId && appSessionKey)) {
+    fatal('bridge target requires --host-session or --app/--key selector')
+  }
+  if (hostSession && appId) {
+    fatal('bridge target accepts --host-session or --app/--key, not both')
   }
 
   const expectedGeneration =
@@ -707,9 +714,14 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
     fatal('--expected-generation must be a non-negative integer')
   }
 
+  const selector: import('hrc-core').HrcBridgeTargetSelector =
+    appId && appSessionKey
+      ? { appSession: { appId, appSessionKey } }
+      : { hostSessionId: hostSession as string }
+
   const client = createClient()
   const result = await client.acquireBridgeTarget({
-    hostSessionId: hostSession,
+    selector,
     transport: effectiveTransport,
     target: effectiveTarget,
     ...(runtimeId ? { runtimeId } : {}),
@@ -895,6 +907,362 @@ function optionalCliString(
   return normalized.length > 0 ? normalized : undefined
 }
 
+// -- App-session commands (Phase 4) -------------------------------------------
+
+async function cmdAppSessionEnsure(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const kind = parseFlag(args, '--kind')
+  const label = parseFlag(args, '--label')
+  const specJson = parseFlag(args, '--spec')
+  const restartStyle = parseFlag(args, '--restart-style')
+  const forceRestart = hasFlag(args, '--force-restart')
+  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
+
+  if (!appId) fatal('--app is required for app-session ensure')
+  if (!appSessionKey) fatal('--key is required for app-session ensure')
+
+  const effectiveKind = kind ?? 'harness'
+  if (effectiveKind !== 'harness' && effectiveKind !== 'command') {
+    fatal('--kind must be one of: harness, command')
+  }
+
+  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
+    fatal('--restart-style must be one of: reuse_pty, fresh_pty')
+  }
+
+  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
+    fatal('--provider must be one of: anthropic, openai')
+  }
+
+  let spec: HrcAppSessionSpec
+  if (specJson) {
+    try {
+      spec = JSON.parse(specJson) as HrcAppSessionSpec
+    } catch {
+      fatal('--spec must be valid JSON')
+    }
+  } else if (effectiveKind === 'command') {
+    spec = { kind: 'command', command: {} }
+  } else {
+    spec = {
+      kind: 'harness',
+      runtimeIntent: createDefaultRuntimeIntent(providerRaw),
+    }
+  }
+
+  const client = createClient()
+  const result = await client.ensureAppSession({
+    selector: { appId, appSessionKey },
+    spec,
+    ...(label ? { label } : {}),
+    ...(restartStyle ? { restartStyle } : {}),
+    ...(forceRestart ? { forceRestart: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionList(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const kind = parseFlag(args, '--kind')
+  const includeRemoved = hasFlag(args, '--include-removed')
+
+  if (kind !== undefined && kind !== 'harness' && kind !== 'command') {
+    fatal('--kind must be one of: harness, command')
+  }
+
+  const client = createClient()
+  const result = await client.listAppSessions({
+    ...(appId ? { appId } : {}),
+    ...(kind ? { kind: kind as 'harness' | 'command' } : {}),
+    ...(includeRemoved ? { includeRemoved: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionGet(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+
+  if (!appId) fatal('--app is required for app-session get')
+  if (!appSessionKey) fatal('--key is required for app-session get')
+
+  const client = createClient()
+  const result = await client.getAppSessionByKey(appId, appSessionKey)
+  printJson(result)
+}
+
+async function cmdAppSessionRemove(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const keepRuntime = hasFlag(args, '--keep-runtime')
+
+  if (!appId) fatal('--app is required for app-session remove')
+  if (!appSessionKey) fatal('--key is required for app-session remove')
+
+  const client = createClient()
+  const result = await client.removeAppSession({
+    selector: { appId, appSessionKey },
+    ...(keepRuntime ? { terminateRuntime: false } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionApply(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const filePath = parseFlag(args, '--file')
+  const jsonPayload = parseFlag(args, '--json')
+  const pruneMissing = hasFlag(args, '--prune-missing')
+
+  if (!appId) fatal('--app is required for app-session apply')
+  if (!filePath && !jsonPayload)
+    fatal('app-session apply requires --file <path> or --json <payload>')
+  if (filePath && jsonPayload) fatal('app-session apply accepts only one of --file or --json')
+
+  const raw = filePath !== undefined ? await readFile(filePath, 'utf-8') : (jsonPayload as string)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    fatal('app-session apply payload must be valid JSON')
+  }
+
+  if (!Array.isArray(parsed)) {
+    fatal('app-session apply payload must be a JSON array of session entries')
+  }
+
+  const client = createClient()
+  const result = await client.applyManagedAppSessions({
+    appId,
+    sessions: parsed as Array<{
+      appSessionKey: string
+      spec: HrcAppSessionSpec
+      label?: string
+      metadata?: Record<string, unknown>
+    }>,
+    ...(pruneMissing ? { pruneMissing: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionCapture(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+
+  if (!appId) fatal('--app is required for app-session capture')
+  if (!appSessionKey) fatal('--key is required for app-session capture')
+
+  const client = createClient()
+  const result = await client.captureAppSession({ appId, appSessionKey })
+  process.stdout.write(result.text)
+  if (!result.text.endsWith('\n')) {
+    process.stdout.write('\n')
+  }
+}
+
+async function cmdAppSessionAttach(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+
+  if (!appId) fatal('--app is required for app-session attach')
+  if (!appSessionKey) fatal('--key is required for app-session attach')
+
+  const client = createClient()
+  const descriptor = await client.attachAppSession({ appId, appSessionKey })
+  printJson(descriptor)
+}
+
+async function cmdAppSessionLiteralInput(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const text = parseFlag(args, '--text')
+  const enter = hasFlag(args, '--enter')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+
+  if (!appId) fatal('--app is required for app-session literal-input')
+  if (!appSessionKey) fatal('--key is required for app-session literal-input')
+  if (!text) fatal('--text is required for app-session literal-input')
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.sendLiteralInput({
+    selector: { appId, appSessionKey },
+    text,
+    enter,
+    ...(expectedHostSessionId || expectedGeneration !== undefined
+      ? {
+          fence: {
+            ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+          },
+        }
+      : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionInterrupt(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const hard = hasFlag(args, '--hard')
+
+  if (!appId) fatal('--app is required for app-session interrupt')
+  if (!appSessionKey) fatal('--key is required for app-session interrupt')
+
+  const client = createClient()
+  const result = await client.interruptAppSession({
+    selector: { appId, appSessionKey },
+    ...(hard ? { hard: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionTerminate(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const hard = hasFlag(args, '--hard')
+
+  if (!appId) fatal('--app is required for app-session terminate')
+  if (!appSessionKey) fatal('--key is required for app-session terminate')
+
+  const client = createClient()
+  const result = await client.terminateAppSession({
+    selector: { appId, appSessionKey },
+    ...(hard ? { hard: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionTurn(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const text = parseFlag(args, '--text')
+  const runId = parseFlag(args, '--run-id')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+  const followLatest = hasFlag(args, '--follow-latest')
+
+  if (!appId) fatal('--app is required for app-session turn')
+  if (!appSessionKey) fatal('--key is required for app-session turn')
+  if (!text) fatal('--text is required for app-session turn')
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const fenceValue =
+    expectedHostSessionId !== undefined || expectedGeneration !== undefined || followLatest
+      ? {
+          ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+          ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+          ...(followLatest ? { followLatest: true } : {}),
+        }
+      : undefined
+
+  const client = createClient()
+  const result = await client.dispatchAppHarnessTurn({
+    selector: { appId, appSessionKey },
+    prompt: text,
+    input: { text },
+    ...(runId ? { runId } : {}),
+    fence: fenceValue,
+    fences: fenceValue,
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionInflight(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const runId = parseFlag(args, '--run-id')
+  const text = parseFlag(args, '--text')
+  const inputType = parseFlag(args, '--input-type')
+
+  if (!appId) fatal('--app is required for app-session inflight')
+  if (!appSessionKey) fatal('--key is required for app-session inflight')
+  if (!text) fatal('--text is required for app-session inflight')
+
+  const client = createClient()
+  const result = await client.sendAppHarnessInFlightInput({
+    selector: { appId, appSessionKey },
+    prompt: text,
+    input: { text },
+    ...(runId ? { runId } : {}),
+    ...(inputType ? { inputType } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSessionClearContext(args: string[]): Promise<void> {
+  const appId = parseFlag(args, '--app')
+  const appSessionKey = parseFlag(args, '--key')
+  const relaunch = hasFlag(args, '--relaunch')
+
+  if (!appId) fatal('--app is required for app-session clear-context')
+  if (!appSessionKey) fatal('--key is required for app-session clear-context')
+
+  const client = createClient()
+  const result = await client.clearAppSessionContext({
+    selector: { appId, appSessionKey },
+    ...(relaunch ? { relaunch: true } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdAppSession(args: string[]): Promise<void> {
+  const subcommand = args[0]
+  const rest = args.slice(1)
+
+  switch (subcommand) {
+    case 'ensure':
+      return cmdAppSessionEnsure(rest)
+    case 'list':
+      return cmdAppSessionList(rest)
+    case 'get':
+      return cmdAppSessionGet(rest)
+    case 'remove':
+      return cmdAppSessionRemove(rest)
+    case 'apply':
+      return cmdAppSessionApply(rest)
+    case 'capture':
+      return cmdAppSessionCapture(rest)
+    case 'attach':
+      return cmdAppSessionAttach(rest)
+    case 'literal-input':
+      return cmdAppSessionLiteralInput(rest)
+    case 'interrupt':
+      return cmdAppSessionInterrupt(rest)
+    case 'terminate':
+      return cmdAppSessionTerminate(rest)
+    case 'turn':
+      return cmdAppSessionTurn(rest)
+    case 'inflight':
+      return cmdAppSessionInflight(rest)
+    case 'clear-context':
+      return cmdAppSessionClearContext(rest)
+    default:
+      fatal(
+        subcommand
+          ? `unknown app-session subcommand: ${subcommand}`
+          : 'app-session subcommand required (ensure, list, get, remove, apply, capture, attach, literal-input, interrupt, terminate, turn, inflight, clear-context)'
+      )
+  }
+}
+
 // -- Usage --------------------------------------------------------------------
 
 function printUsage(): void {
@@ -922,12 +1290,25 @@ Commands:
   surface bind <runtimeId> --kind <kind> --id <surfaceId>
   surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
   surface list <runtimeId>            List active surface bindings for a runtime
-  bridge target --bridge <bridge> --host-session <id> [--transport <t>] [--target <tgt>]
+  bridge target --bridge <bridge> (--host-session <id> | --app <appId> --key <appSessionKey>) [--transport <t>] [--target <tgt>]
   bridge deliver-text --bridge <bridgeId> --text <text> [--enter] [--oob-suffix <s>]
   bridge register <hostSessionId> --transport <name> --target <value>  (compat)
   bridge deliver <bridgeId> --text <text>                              (compat)
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
+  app-session ensure --app <appId> --key <key> [--kind harness|command] [--spec <json>]
+  app-session list [--app <appId>] [--kind harness|command] [--include-removed]
+  app-session get --app <appId> --key <key>
+  app-session remove --app <appId> --key <key> [--keep-runtime]
+  app-session apply --app <appId> (--file <path> | --json <payload>) [--prune-missing]
+  app-session capture --app <appId> --key <key>
+  app-session attach --app <appId> --key <key>
+  app-session literal-input --app <appId> --key <key> --text <text> [--enter]
+  app-session interrupt --app <appId> --key <key> [--hard]
+  app-session terminate --app <appId> --key <key> [--hard]
+  app-session turn --app <appId> --key <key> --text <text> [--run-id <runId>] [--expected-host-session-id <id>] [--expected-generation <n>] [--follow-latest]
+  app-session inflight --app <appId> --key <key> --text <text> [--run-id <runId>] [--input-type <type>]
+  app-session clear-context --app <appId> --key <key> [--relaunch]
   clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
@@ -977,6 +1358,8 @@ async function main(): Promise<void> {
         return await cmdSurface(rest)
       case 'bridge':
         return await cmdBridge(rest)
+      case 'app-session':
+        return await cmdAppSession(rest)
       case 'clear-context':
         return await cmdClearContext(rest)
       case 'interrupt':

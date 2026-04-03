@@ -177,13 +177,17 @@ export type CloseBridgeRequest = {
 
 // -- Canonical bridge DTOs (Phase 2) ------------------------------------------
 
+export type HrcBridgeTargetSelector = { hostSessionId: string } | { appSession: HrcAppSessionRef }
+
 export type HrcBridgeTargetRequest = {
+  selector: HrcBridgeTargetSelector
   transport: string
   target: string
-  hostSessionId: string
   runtimeId?: string | undefined
   expectedHostSessionId?: string | undefined
   expectedGeneration?: number | undefined
+  /** @deprecated Use selector.hostSessionId instead */
+  hostSessionId?: string | undefined
 }
 
 export type HrcBridgeTargetResponse = HrcLocalBridgeRecord
@@ -223,7 +227,7 @@ export type EnsureAppSessionResponse = {
 }
 
 export type ListAppSessionsRequest = {
-  appId: string
+  appId?: string | undefined
   kind?: 'harness' | 'command' | undefined
   includeRemoved?: boolean | undefined
 }
@@ -287,4 +291,62 @@ export type InterruptAppSessionRequest = {
 
 export type TerminateAppSessionRequest = {
   selector: HrcAppSessionRef
+  hard?: boolean | undefined
+}
+
+// -- App-session harness dispatch (Phase 5) -----------------------------------
+
+export type DispatchAppHarnessTurnRequest = {
+  selector: HrcAppSessionRef
+  prompt?: string | undefined
+  input?:
+    | {
+        text: string
+      }
+    | undefined
+  runId?: string | undefined
+  fence?: HrcFence | undefined
+  fences?: HrcFence | undefined
+}
+
+export type DispatchAppHarnessTurnResponse = {
+  runId: string
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+  transport: 'sdk' | 'tmux'
+  status: 'completed' | 'started'
+  supportsInFlightInput: boolean
+}
+
+export type SendAppHarnessInFlightInputRequest = {
+  selector: HrcAppSessionRef
+  prompt?: string | undefined
+  input?:
+    | {
+        text: string
+      }
+    | undefined
+  runId?: string | undefined
+  inputType?: string | undefined
+  fence?: AppSessionFreshnessFence | undefined
+}
+
+export type SendAppHarnessInFlightInputResponse = {
+  accepted: boolean
+  hostSessionId: string
+  runtimeId: string
+  runId: string
+  pendingTurns?: number | undefined
+}
+
+export type ClearAppSessionContextRequest = {
+  selector: HrcAppSessionRef
+  relaunch?: boolean | undefined
+}
+
+export type ClearAppSessionContextResponse = {
+  hostSessionId: string
+  generation: number
+  priorHostSessionId: string
 }

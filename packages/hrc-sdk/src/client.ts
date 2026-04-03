@@ -1,6 +1,7 @@
 import type {
   HrcEventEnvelope,
   HrcHttpError,
+  HrcManagedSessionRecord,
   HrcSessionRecord,
   HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
@@ -10,38 +11,57 @@ import type {
 import { HrcDomainError } from 'hrc-core'
 
 import type {
+  ApplyAppManagedSessionsRequest,
+  ApplyAppManagedSessionsResponse,
   ApplyAppSessionsRequest,
   ApplyAppSessionsResponse,
+  AttachAppSessionRequest,
   AttachDescriptor,
   BindSurfaceRequest,
   BridgeListFilter,
+  CaptureAppSessionRequest,
   CaptureResponse,
+  ClearAppSessionContextRequest,
+  ClearAppSessionContextResponse,
   ClearContextRequest,
   ClearContextResponse,
   CloseBridgeRequest,
   DeliverBridgeRequest,
   DeliverBridgeResponse,
+  DispatchAppHarnessTurnRequest,
+  DispatchAppHarnessTurnResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  EnsureAppSessionRequest,
+  EnsureAppSessionResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  HrcAppSessionFilter,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
+  InterruptAppSessionRequest,
   LaunchListFilter,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
+  RemoveAppSessionRequest,
+  RemoveAppSessionResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
   RuntimeListFilter,
+  SendAppHarnessInFlightInputRequest,
+  SendAppHarnessInFlightInputResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
+  SendLiteralInputBySelectorRequest,
+  SendLiteralInputResponse,
   SessionFilter,
   StatusResponse,
   SurfaceListFilter,
+  TerminateAppSessionRequest,
   UnbindSurfaceRequest,
   WatchOptions,
 } from './types.js'
@@ -130,6 +150,94 @@ export class HrcClient {
   async applyAppSessions(request: ApplyAppSessionsRequest): Promise<ApplyAppSessionsResponse> {
     return this.postJson<ApplyAppSessionsResponse>('/v1/sessions/apply', request)
   }
+
+  // -- Managed app-session registry (Phase 4) ----------------------------------
+
+  async ensureAppSession(request: EnsureAppSessionRequest): Promise<EnsureAppSessionResponse> {
+    return this.postJson<EnsureAppSessionResponse>('/v1/app-sessions/ensure', request)
+  }
+
+  async listAppSessions(filter?: HrcAppSessionFilter): Promise<HrcManagedSessionRecord[]> {
+    const params = new URLSearchParams()
+    if (filter?.appId) params.set('appId', filter.appId)
+    if (filter?.kind) params.set('kind', filter.kind)
+    if (filter?.includeRemoved) params.set('includeRemoved', 'true')
+    const qs = params.toString()
+    const path = qs ? `/v1/app-sessions?${qs}` : '/v1/app-sessions'
+    return this.getJson<HrcManagedSessionRecord[]>(path)
+  }
+
+  async getAppSessionByKey(appId: string, appSessionKey: string): Promise<HrcManagedSessionRecord> {
+    const params = new URLSearchParams({ appId, appSessionKey })
+    return this.getJson<HrcManagedSessionRecord>(`/v1/app-sessions/by-key?${params}`)
+  }
+
+  async removeAppSession(request: RemoveAppSessionRequest): Promise<RemoveAppSessionResponse> {
+    return this.postJson<RemoveAppSessionResponse>('/v1/app-sessions/remove', request)
+  }
+
+  async applyManagedAppSessions(
+    request: ApplyAppManagedSessionsRequest
+  ): Promise<ApplyAppManagedSessionsResponse> {
+    return this.postJson<ApplyAppManagedSessionsResponse>('/v1/app-sessions/apply', request)
+  }
+
+  // -- App-session selector-based operations (Phase 4) -------------------------
+
+  async sendLiteralInput(
+    request: SendLiteralInputBySelectorRequest
+  ): Promise<SendLiteralInputResponse> {
+    return this.postJson<SendLiteralInputResponse>('/v1/app-sessions/literal-input', request)
+  }
+
+  async captureAppSession(request: CaptureAppSessionRequest): Promise<CaptureResponse> {
+    const params = new URLSearchParams({
+      appId: request.appId,
+      appSessionKey: request.appSessionKey,
+    })
+    return this.getJson<CaptureResponse>(`/v1/app-sessions/capture?${params}`)
+  }
+
+  async attachAppSession(request: AttachAppSessionRequest): Promise<AttachDescriptor> {
+    const params = new URLSearchParams({
+      appId: request.appId,
+      appSessionKey: request.appSessionKey,
+    })
+    return this.getJson<AttachDescriptor>(`/v1/app-sessions/attach?${params}`)
+  }
+
+  async interruptAppSession(request: InterruptAppSessionRequest): Promise<RuntimeActionResponse> {
+    return this.postJson<RuntimeActionResponse>('/v1/app-sessions/interrupt', request)
+  }
+
+  async terminateAppSession(request: TerminateAppSessionRequest): Promise<RuntimeActionResponse> {
+    return this.postJson<RuntimeActionResponse>('/v1/app-sessions/terminate', request)
+  }
+
+  // -- App-session harness dispatch (Phase 5) ---------------------------------
+
+  async dispatchAppHarnessTurn(
+    request: DispatchAppHarnessTurnRequest
+  ): Promise<DispatchAppHarnessTurnResponse> {
+    return this.postJson<DispatchAppHarnessTurnResponse>('/v1/app-sessions/turns', request)
+  }
+
+  async sendAppHarnessInFlightInput(
+    request: SendAppHarnessInFlightInputRequest
+  ): Promise<SendAppHarnessInFlightInputResponse> {
+    return this.postJson<SendAppHarnessInFlightInputResponse>(
+      '/v1/app-sessions/in-flight-input',
+      request
+    )
+  }
+
+  async clearAppSessionContext(
+    request: ClearAppSessionContextRequest
+  ): Promise<ClearAppSessionContextResponse> {
+    return this.postJson<ClearAppSessionContextResponse>('/v1/app-sessions/clear-context', request)
+  }
+
+  // -- Semantic runtime core ---------------------------------------------------
 
   async ensureRuntime(request: EnsureRuntimeRequest): Promise<EnsureRuntimeResponse> {
     return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)

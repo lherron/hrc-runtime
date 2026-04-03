@@ -107,6 +107,7 @@ export type {
   HrcAttachDescriptor,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
+  HrcBridgeTargetSelector,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   InterruptAppSessionRequest,
@@ -124,4 +125,10 @@ export type {
   TerminateAppSessionRequest,
   RuntimeActionResponse,
   UnbindSurfaceRequest,
+  DispatchAppHarnessTurnRequest,
+  DispatchAppHarnessTurnResponse,
+  SendAppHarnessInFlightInputRequest,
+  SendAppHarnessInFlightInputResponse,
+  ClearAppSessionContextRequest,
+  ClearAppSessionContextResponse,
 } from './http-contracts.js'

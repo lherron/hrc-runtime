@@ -687,9 +687,9 @@ describe('Phase 6 diagnostics round-trip', () => {
     })
     expect(result.capabilities.platform).toEqual({
       appOwnedSessions: true,
-      appHarnessSessions: false,
-      commandSessions: false,
-      literalInput: false,
+      appHarnessSessions: true,
+      commandSessions: true,
+      literalInput: true,
       surfaceBindings: true,
       legacyLocalBridges: ['legacy-agentchat'],
     })
@@ -744,9 +744,9 @@ describe('Phase 6 diagnostics round-trip', () => {
     const client = new HrcClient(socketPath)
     const result = await client.getStatus()
     expect(result.capabilities.platform.appOwnedSessions).toBe(true)
-    expect(result.capabilities.platform.appHarnessSessions).toBe(false)
-    expect(result.capabilities.platform.commandSessions).toBe(false)
-    expect(result.capabilities.platform.literalInput).toBe(false)
+    expect(result.capabilities.platform.appHarnessSessions).toBe(true)
+    expect(result.capabilities.platform.commandSessions).toBe(true)
+    expect(result.capabilities.platform.literalInput).toBe(true)
     expect(result.capabilities.platform.surfaceBindings).toBe(true)
     expect(result.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
   })
