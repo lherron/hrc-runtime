@@ -34,8 +34,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcEventEnvelope, HrcSessionRecord } from 'hrc-core'
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import type { HrcEventEnvelope, HrcSessionRecord, StatusResponse } from 'hrc-core'
+import { HRC_API_VERSION, HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
@@ -597,7 +597,7 @@ describe('SDK → server round-trip', () => {
 //
 // Pass conditions for Curly (T-00973):
 //   1. getHealth() → GET /v1/health → { ok: true }
-//   2. getStatus() → GET /v1/status → { ok, uptime (number), startedAt, socketPath, dbPath, sessionCount, runtimeCount }
+//   2. getStatus() → GET /v1/status → capability-discovery status payload
 //   3. listRuntimes() → GET /v1/runtimes → HrcRuntimeSnapshot[] (empty when none)
 //   4. listRuntimes({ hostSessionId }) → GET /v1/runtimes?hostSessionId=... → filtered array
 //   5. listLaunches() → GET /v1/launches → HrcLaunchRecord[] (empty when none)
@@ -666,7 +666,7 @@ describe('Phase 6 diagnostics round-trip', () => {
     if (!server) return
     const client = new HrcClient(socketPath)
     // RED: getStatus does not exist on HrcClient
-    const result = await (client as any).getStatus()
+    const result = (await (client as any).getStatus()) as StatusResponse
     expect(result.ok).toBe(true)
     expect(typeof result.uptime).toBe('number')
     expect(result.uptime).toBeGreaterThanOrEqual(0)
@@ -675,6 +675,80 @@ describe('Phase 6 diagnostics round-trip', () => {
     expect(typeof result.dbPath).toBe('string')
     expect(typeof result.sessionCount).toBe('number')
     expect(typeof result.runtimeCount).toBe('number')
+    expect(result.apiVersion).toBe(HRC_API_VERSION)
+    expect(result.capabilities.semanticCore).toEqual({
+      sessions: true,
+      ensureRuntime: true,
+      dispatchTurn: true,
+      inFlightInput: true,
+      capture: true,
+      attach: true,
+      clearContext: true,
+    })
+    expect(result.capabilities.platform).toEqual({
+      appOwnedSessions: false,
+      appHarnessSessions: false,
+      commandSessions: false,
+      literalInput: false,
+      surfaceBindings: true,
+      legacyLocalBridges: ['legacy-agentchat'],
+    })
+    expect(result.capabilities.bridgeDelivery).toEqual({
+      actualPtyInjection: false,
+      enter: false,
+      oobSuffix: false,
+      freshnessFence: true,
+    })
+    expect(typeof result.capabilities.backend.tmux.available).toBe('boolean')
+    if (result.capabilities.backend.tmux.available) {
+      expect(typeof result.capabilities.backend.tmux.version).toBe('string')
+    } else {
+      expect(result.capabilities.backend.tmux.version).toBeUndefined()
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // T-00998: getStatus() capability reporting
+  //
+  // RED GATE: These assertions will fail until:
+  //   - Larry lands HrcCapabilityStatus in hrc-core
+  //   - Server handleStatus() is expanded with capabilities + apiVersion
+  //   - SDK StatusResponse type is updated to include new fields
+  //
+  // Pass conditions:
+  //   1. getStatus() result includes `apiVersion` string
+  //   2. getStatus() result includes typed `capabilities` object
+  //   3. capabilities.backend.tmux.available is true (tmux present in CI/dev)
+  //   4. Unimplemented platform capabilities report false
+  // -------------------------------------------------------------------------
+
+  it('getStatus returns capabilities object with apiVersion (T-00998)', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    const result = await client.getStatus()
+    expect(result.apiVersion).toBe(HRC_API_VERSION)
+  })
+
+  it('getStatus returns typed capabilities with backend.tmux (T-00998)', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    const result = await client.getStatus()
+    expect(result.capabilities).toBeDefined()
+    expect(typeof result.capabilities).toBe('object')
+    expect(result.capabilities.backend.tmux.available).toBe(true)
+    expect(typeof result.capabilities.backend.tmux.version).toBe('string')
+  })
+
+  it('getStatus reports unimplemented platform capabilities as false (T-00998)', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    const result = await client.getStatus()
+    expect(result.capabilities.platform.appOwnedSessions).toBe(false)
+    expect(result.capabilities.platform.appHarnessSessions).toBe(false)
+    expect(result.capabilities.platform.commandSessions).toBe(false)
+    expect(result.capabilities.platform.literalInput).toBe(false)
+    expect(result.capabilities.platform.surfaceBindings).toBe(true)
+    expect(result.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
   })
 
   it('listRuntimes returns empty array when none exist', async () => {

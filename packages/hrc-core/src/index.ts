@@ -1,3 +1,7 @@
+import packageJson from '../package.json' with { type: 'json' }
+
+export const HRC_API_VERSION = packageJson.version
+
 export {
   HrcBadRequestError,
   HrcConflictError,
@@ -47,6 +51,7 @@ export {
 
 export type {
   HrcAppSessionRecord,
+  HrcCapabilityStatus,
   HrcContinuityRecord,
   HrcContinuationRef,
   HrcEventEnvelope,
@@ -83,11 +88,13 @@ export type {
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HealthResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
+  StatusResponse,
   RuntimeActionResponse,
   UnbindSurfaceRequest,
 } from './http-contracts.js'

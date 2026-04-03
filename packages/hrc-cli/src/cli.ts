@@ -9,7 +9,7 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type { HrcRuntimeIntent } from 'hrc-core'
+import type { HrcCapabilityStatus, HrcRuntimeIntent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
 // -- Helpers ------------------------------------------------------------------
@@ -216,10 +216,90 @@ async function cmdHealth(): Promise<void> {
   printJson(result)
 }
 
-async function cmdStatus(): Promise<void> {
+// -- Status capability display (T-00998) ---------------------------------------
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  if (m < 60) return `${m}m ${s}s`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return `${h}h ${rm}m ${s}s`
+}
+
+function formatCapabilityValue(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'yes' : 'no'
+  if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '(none)'
+  return String(value)
+}
+
+function printCapabilityGroup(
+  lines: string[],
+  title: string,
+  entries: Record<string, unknown>
+): void {
+  lines.push('')
+  lines.push(`Capabilities: ${title}`)
+  for (const [key, val] of Object.entries(entries)) {
+    lines.push(`  ${key}: ${formatCapabilityValue(val)}`)
+  }
+}
+
+function printStatusHuman(status: HrcCapabilityStatus): void {
+  const lines: string[] = []
+
+  lines.push('HRC Server Status')
+  lines.push(`  uptime:     ${formatUptime(status.uptime)}`)
+  lines.push(`  started:    ${status.startedAt}`)
+  if (status.apiVersion) {
+    lines.push(`  apiVersion: ${status.apiVersion}`)
+  }
+  lines.push(`  socket:     ${status.socketPath}`)
+  lines.push(`  database:   ${status.dbPath}`)
+  lines.push(`  sessions:   ${status.sessionCount}`)
+  lines.push(`  runtimes:   ${status.runtimeCount}`)
+
+  if (status.capabilities) {
+    const caps = status.capabilities
+
+    if (caps.semanticCore) {
+      printCapabilityGroup(lines, 'Semantic Core', caps.semanticCore)
+    }
+
+    if (caps.platform) {
+      printCapabilityGroup(lines, 'Platform', caps.platform)
+    }
+
+    if (caps.bridgeDelivery) {
+      printCapabilityGroup(lines, 'Bridge Delivery', caps.bridgeDelivery)
+    }
+
+    lines.push('')
+    lines.push('Capabilities: Backend')
+    if (caps.backend?.tmux) {
+      const tmux = caps.backend.tmux
+      const ver = tmux.version ? ` (${tmux.version})` : ''
+      lines.push(`  tmux: ${tmux.available ? 'available' : 'unavailable'}${ver}`)
+    } else {
+      lines.push('  tmux: unavailable')
+    }
+  }
+
+  lines.push('')
+  process.stdout.write(lines.join('\n'))
+}
+
+async function cmdStatus(args: string[]): Promise<void> {
+  const jsonFlag = hasFlag(args, '--json')
   const client = createClient()
   const result = await client.getStatus()
-  printJson(result)
+
+  if (jsonFlag) {
+    printJson(result)
+  } else {
+    printStatusHuman(result as HrcCapabilityStatus)
+  }
 }
 
 async function cmdRuntimeList(args: string[]): Promise<void> {
@@ -746,7 +826,7 @@ Commands:
   session apply --app <appId> --host-session-id <hostSessionId> (--file <path> | --json <payload>)
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   health                              Check server health
-  status                              Show server status (uptime, counts)
+  status [--json]                     Show server status and capabilities
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
@@ -792,7 +872,7 @@ async function main(): Promise<void> {
       case 'health':
         return await cmdHealth()
       case 'status':
-        return await cmdStatus()
+        return await cmdStatus(rest)
       case 'runtime':
         return await cmdRuntime(rest)
       case 'launch':

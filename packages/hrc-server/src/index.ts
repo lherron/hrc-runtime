@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
 import {
+  HRC_API_VERSION,
   HrcBadRequestError,
   HrcConflictError,
   HrcDomainError,
@@ -169,6 +170,10 @@ export type { RestartStyle, TmuxManagerOptions }
 
 const STALE_LOCK_RETRY_DELAY_MS = 25
 const SOCKET_PROBE_TIMEOUT_MS = 200
+const MIN_SUPPORTED_TMUX_VERSION = {
+  major: 3,
+  minor: 2,
+}
 
 class HrcServerInstance implements HrcServer {
   private readonly followSubscribers = new Set<FollowSubscriber>()
@@ -349,7 +354,7 @@ class HrcServerInstance implements HrcServer {
       }
 
       if (request.method === 'GET' && pathname === '/v1/status') {
-        return this.handleStatus()
+        return await this.handleStatus()
       }
 
       if (request.method === 'GET' && pathname === '/v1/runtimes') {
@@ -1456,10 +1461,11 @@ class HrcServerInstance implements HrcServer {
     return json({ ok: true })
   }
 
-  private handleStatus(): Response {
+  private async handleStatus(): Promise<Response> {
     const sessions = this.listAllSessions()
     const runtimes = this.db.runtimes.listAll()
     const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
+    const tmuxStatus = await detectTmuxBackend()
     return json({
       ok: true,
       uptime: Math.floor(uptimeMs / 1000),
@@ -1468,6 +1474,35 @@ class HrcServerInstance implements HrcServer {
       dbPath: this.options.dbPath,
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
+      apiVersion: HRC_API_VERSION,
+      capabilities: {
+        semanticCore: {
+          sessions: true,
+          ensureRuntime: true,
+          dispatchTurn: true,
+          inFlightInput: true,
+          capture: true,
+          attach: true,
+          clearContext: true,
+        },
+        platform: {
+          appOwnedSessions: false,
+          appHarnessSessions: false,
+          commandSessions: false,
+          literalInput: false,
+          surfaceBindings: true,
+          legacyLocalBridges: ['legacy-agentchat'],
+        },
+        bridgeDelivery: {
+          actualPtyInjection: false,
+          enter: false,
+          oobSuffix: false,
+          freshnessFence: true,
+        },
+        backend: {
+          tmux: tmuxStatus,
+        },
+      },
     })
   }
 
@@ -2944,6 +2979,49 @@ function findLatestRunForRuntime(db: HrcDatabase, runtimeId: string): HrcRunReco
 
 function getTmuxSocketPath(options: HrcServerOptions): string {
   return options.tmuxSocketPath ?? join(options.runtimeRoot, 'tmux.sock')
+}
+
+async function detectTmuxBackend(): Promise<{ available: boolean; version?: string | undefined }> {
+  try {
+    const proc = Bun.spawn(['tmux', '-V'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    const version = parseTmuxVersion(stdout, stderr)
+    const available =
+      exitCode === 0 &&
+      (version.major > MIN_SUPPORTED_TMUX_VERSION.major ||
+        (version.major === MIN_SUPPORTED_TMUX_VERSION.major &&
+          version.minor >= MIN_SUPPORTED_TMUX_VERSION.minor))
+    return {
+      available,
+      version: version.raw,
+    }
+  } catch {
+    return { available: false }
+  }
+}
+
+function parseTmuxVersion(
+  stdout: string,
+  stderr: string
+): { major: number; minor: number; raw: string } {
+  const source = `${stdout}\n${stderr}`.trim()
+  const match = source.match(/tmux\s+(\d+)\.(\d+(?:[a-z])?)/i)
+  if (!match) {
+    throw new Error(`unable to parse tmux version from output: ${source || '<empty>'}`)
+  }
+
+  return {
+    major: Number.parseInt(match[1] ?? '0', 10),
+    minor: Number.parseInt((match[2] ?? '0').replace(/[^0-9].*$/, ''), 10),
+    raw: `${match[1]}.${match[2]}`,
+  }
 }
 
 function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {

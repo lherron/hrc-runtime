@@ -211,3 +211,45 @@ export type HrcLocalBridgeRecord = {
   closedAt?: string | undefined
   status?: string | undefined
 }
+
+export type HrcCapabilityStatus = {
+  ok: true
+  uptime: number
+  startedAt: string
+  socketPath: string
+  dbPath: string
+  sessionCount: number
+  runtimeCount: number
+  apiVersion: string
+  capabilities: {
+    semanticCore: {
+      sessions: boolean
+      ensureRuntime: boolean
+      dispatchTurn: boolean
+      inFlightInput: boolean
+      capture: boolean
+      attach: boolean
+      clearContext: boolean
+    }
+    platform: {
+      appOwnedSessions: boolean
+      appHarnessSessions: boolean
+      commandSessions: boolean
+      literalInput: boolean
+      surfaceBindings: boolean
+      legacyLocalBridges: string[]
+    }
+    bridgeDelivery: {
+      actualPtyInjection: boolean
+      enter: boolean
+      oobSuffix: boolean
+      freshnessFence: boolean
+    }
+    backend: {
+      tmux: {
+        available: boolean
+        version?: string | undefined
+      }
+    }
+  }
+}

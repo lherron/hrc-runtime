@@ -14,12 +14,14 @@ export type {
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  HealthResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
   RuntimeActionResponse,
+  StatusResponse,
   UnbindSurfaceRequest,
 } from 'hrc-core'
 
@@ -71,22 +73,6 @@ export type SurfaceListFilter = {
 
 export type BridgeListFilter = {
   runtimeId: string
-}
-
-// -- Phase 6 diagnostics types -----------------------------------------------
-
-export type HealthResponse = {
-  ok: true
-}
-
-export type StatusResponse = {
-  ok: true
-  uptime: number
-  startedAt: string
-  socketPath: string
-  dbPath: string
-  sessionCount: number
-  runtimeCount: number
 }
 
 export type RuntimeListFilter = {

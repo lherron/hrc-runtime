@@ -2,7 +2,12 @@
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
  * Canonical source for R-3 deduplication (T-00990).
  */
-import type { HrcLocalBridgeRecord, HrcRuntimeIntent, HrcSessionRecord } from './contracts.js'
+import type {
+  HrcCapabilityStatus,
+  HrcLocalBridgeRecord,
+  HrcRuntimeIntent,
+  HrcSessionRecord,
+} from './contracts.js'
 import type { HrcFence } from './fences.js'
 
 // -- Restart style (shared between server tmux manager and SDK) ---------------
@@ -101,6 +106,12 @@ export type RuntimeActionResponse = {
   hostSessionId: string
   runtimeId: string
 }
+
+export type HealthResponse = {
+  ok: true
+}
+
+export type StatusResponse = HrcCapabilityStatus
 
 // -- Surface binding ----------------------------------------------------------
 

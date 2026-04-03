@@ -570,9 +570,9 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(body).toEqual({ ok: true })
   })
 
-  it('hrc status prints status JSON with uptime and exits 0', async () => {
-    // RED: 'status' command does not exist in CLI dispatch
-    const result = await runCli(['status'], cliEnv())
+  it('hrc status --json prints status JSON with uptime and exits 0', async () => {
+    // Updated for T-00998: default output is now human-readable; --json for raw JSON
+    const result = await runCli(['status', '--json'], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body.ok).toBe(true)
@@ -706,7 +706,86 @@ describe('Phase 6 diagnostics CLI', () => {
 })
 
 // ===========================================================================
-// 10. Error output format
+// 10. Status capability display (T-00998)
+//
+// RED GATE: These tests will fail until:
+//   - Larry lands HrcCapabilityStatus in hrc-core and server returns capabilities
+//   - Curly updates cmdStatus() to render a human-readable capabilities section
+//   - CLI adds --json flag for raw JSON backwards compatibility
+//
+// Pass conditions:
+//   1. `hrc status` exits 0 and stdout includes a "Capabilities" section
+//   2. Capabilities section lists backend.tmux with available status
+//   3. Unimplemented capabilities (appOwnedSessions, etc.) show as unavailable
+//   4. `hrc status --json` outputs raw JSON with capabilities object (backwards compat)
+//   5. JSON output includes apiVersion field
+// ===========================================================================
+describe('status capability display (T-00998)', () => {
+  it('hrc status displays human-readable Capabilities section', async () => {
+    server = await createHrcServer(serverOpts())
+    // RED: cmdStatus() currently just calls printJson(result) — no capability display
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    // Output must include a "Capabilities" header/section (not just raw JSON)
+    expect(result.stdout).toMatch(/[Cc]apabilit/i)
+  })
+
+  it('hrc status shows tmux backend as available', async () => {
+    server = await createHrcServer(serverOpts())
+    // RED: no capability rendering in CLI
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    // Should display tmux availability in the capabilities section
+    expect(result.stdout).toMatch(/tmux/i)
+    // Should indicate it's available (not "unavailable" or "false")
+    expect(result.stdout).toMatch(/tmux.*(?:available|true|yes|✓)/i)
+  })
+
+  it('hrc status shows unimplemented capabilities as unavailable', async () => {
+    server = await createHrcServer(serverOpts())
+    // RED: no capability rendering in CLI
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    // Phase 1 canonical capabilities — all unimplemented, should appear in output
+    expect(result.stdout).toMatch(
+      /appOwnedSessions|appHarnessSessions|commandSessions|literalInput|surfaceBindings|legacyLocalBridges/i
+    )
+  })
+
+  it('hrc status --json outputs raw JSON with capabilities object', async () => {
+    server = await createHrcServer(serverOpts())
+    // RED: --json flag does not exist on status command yet
+    const result = await runCli(['status', '--json'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.ok).toBe(true)
+    expect(body.capabilities).toBeDefined()
+    expect(typeof body.capabilities).toBe('object')
+    expect(typeof body.apiVersion).toBe('string')
+  })
+
+  it('hrc status --json preserves all existing fields for backwards compat', async () => {
+    server = await createHrcServer(serverOpts())
+    // RED: --json flag does not exist on status command yet
+    const result = await runCli(['status', '--json'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    // All pre-existing fields must still be present
+    expect(body.ok).toBe(true)
+    expect(typeof body.uptime).toBe('number')
+    expect(typeof body.startedAt).toBe('string')
+    expect(typeof body.socketPath).toBe('string')
+    expect(typeof body.dbPath).toBe('string')
+    expect(typeof body.sessionCount).toBe('number')
+    expect(typeof body.runtimeCount).toBe('number')
+    // Plus new capability fields
+    expect(body.apiVersion).toBeDefined()
+    expect(body.capabilities).toBeDefined()
+  })
+})
+
+// ===========================================================================
+// 11. Error output format
 // ===========================================================================
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {

@@ -35,8 +35,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcHttpError, HrcSessionRecord } from 'hrc-core'
-import { HrcErrorCode } from 'hrc-core'
+import type { HrcHttpError, HrcSessionRecord, StatusResponse } from 'hrc-core'
+import { HRC_API_VERSION, HrcErrorCode } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 // RED GATE: These imports will fail until Larry implements the server module
@@ -185,6 +185,45 @@ describe('server startup', () => {
     // A basic health check — the server should respond to requests
     const res = await fetchSocket('/v1/sessions')
     expect(res.status).toBe(200)
+  })
+
+  it('reports capability discovery status from /v1/status', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const res = await fetchSocket('/v1/status')
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as StatusResponse
+    expect(body.apiVersion).toBe(HRC_API_VERSION)
+    expect(body.capabilities.semanticCore).toEqual({
+      sessions: true,
+      ensureRuntime: true,
+      dispatchTurn: true,
+      inFlightInput: true,
+      capture: true,
+      attach: true,
+      clearContext: true,
+    })
+    expect(body.capabilities.platform).toEqual({
+      appOwnedSessions: false,
+      appHarnessSessions: false,
+      commandSessions: false,
+      literalInput: false,
+      surfaceBindings: true,
+      legacyLocalBridges: ['legacy-agentchat'],
+    })
+    expect(body.capabilities.bridgeDelivery).toEqual({
+      actualPtyInjection: false,
+      enter: false,
+      oobSuffix: false,
+      freshnessFence: true,
+    })
+    expect(typeof body.capabilities.backend.tmux.available).toBe('boolean')
+    if (body.capabilities.backend.tmux.available) {
+      expect(typeof body.capabilities.backend.tmux.version).toBe('string')
+    } else {
+      expect(body.capabilities.backend.tmux.version).toBeUndefined()
+    }
   })
 })
 
@@ -990,7 +1029,97 @@ describe('spool replay', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 11. Clean shutdown
+// 11. /v1/status capability reporting (T-00998)
+//
+// RED GATE: These tests will fail until Larry lands the HrcCapabilityStatus
+// contract in hrc-core and the server expands handleStatus() to include
+// capabilities, apiVersion, and tmux detection.
+//
+// Pass conditions:
+//   1. /v1/status returns `apiVersion` string field
+//   2. /v1/status returns the nested capability matrix
+//   3. `capabilities.backend.tmux.available` is true when tmux binary exists
+//   4. Unimplemented platform capabilities report false
+//   5. All existing fields (ok, uptime, startedAt, etc.) still present
+// ---------------------------------------------------------------------------
+describe('/v1/status capability reporting (T-00998)', () => {
+  it('returns apiVersion in status response', async () => {
+    const server = await createHrcServer(serverOpts())
+    const res = await fetchSocket('/v1/status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as StatusResponse
+    expect(body.apiVersion).toBe(HRC_API_VERSION)
+    await server.stop()
+  })
+
+  it('returns capabilities object in status response', async () => {
+    const server = await createHrcServer(serverOpts())
+    const res = await fetchSocket('/v1/status')
+    const body = (await res.json()) as StatusResponse
+    expect(body.capabilities).toBeDefined()
+    expect(typeof body.capabilities).toBe('object')
+    expect(body.capabilities).not.toBeNull()
+    expect(body.capabilities.semanticCore).toEqual({
+      sessions: true,
+      ensureRuntime: true,
+      dispatchTurn: true,
+      inFlightInput: true,
+      capture: true,
+      attach: true,
+      clearContext: true,
+    })
+    expect(body.capabilities.bridgeDelivery).toEqual({
+      actualPtyInjection: false,
+      enter: false,
+      oobSuffix: false,
+      freshnessFence: true,
+    })
+    await server.stop()
+  })
+
+  it('reports backend.tmux.available as true when tmux is present', async () => {
+    const server = await createHrcServer(serverOpts())
+    const res = await fetchSocket('/v1/status')
+    const body = (await res.json()) as StatusResponse
+    expect(body.capabilities.backend.tmux.available).toBe(true)
+    expect(typeof body.capabilities.backend.tmux.version).toBe('string')
+    await server.stop()
+  })
+
+  it('reports unimplemented platform capabilities as false', async () => {
+    const server = await createHrcServer(serverOpts())
+    const res = await fetchSocket('/v1/status')
+    const body = (await res.json()) as StatusResponse
+    expect(body.capabilities.platform.appOwnedSessions).toBe(false)
+    expect(body.capabilities.platform.appHarnessSessions).toBe(false)
+    expect(body.capabilities.platform.commandSessions).toBe(false)
+    expect(body.capabilities.platform.literalInput).toBe(false)
+    expect(body.capabilities.platform.surfaceBindings).toBe(true)
+    expect(body.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
+    await server.stop()
+  })
+
+  it('preserves existing status fields alongside new capability fields', async () => {
+    const server = await createHrcServer(serverOpts())
+    const res = await fetchSocket('/v1/status')
+    const body = (await res.json()) as StatusResponse
+    // Existing fields must still be present
+    expect(body.ok).toBe(true)
+    expect(typeof body.uptime).toBe('number')
+    expect(typeof body.startedAt).toBe('string')
+    expect(typeof body.socketPath).toBe('string')
+    expect(typeof body.dbPath).toBe('string')
+    expect(typeof body.sessionCount).toBe('number')
+    expect(typeof body.runtimeCount).toBe('number')
+    // AND new fields
+    expect(body.apiVersion).toBeDefined()
+    expect(body.capabilities).toBeDefined()
+    await server.stop()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 12. Clean shutdown
 // ---------------------------------------------------------------------------
 describe('clean shutdown', () => {
   it('stops accepting requests after stop()', async () => {
