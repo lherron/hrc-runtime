@@ -694,9 +694,9 @@ describe('Phase 6 diagnostics round-trip', () => {
       legacyLocalBridges: ['legacy-agentchat'],
     })
     expect(result.capabilities.bridgeDelivery).toEqual({
-      actualPtyInjection: false,
-      enter: false,
-      oobSuffix: false,
+      actualPtyInjection: true,
+      enter: true,
+      oobSuffix: true,
       freshnessFence: true,
     })
     expect(typeof result.capabilities.backend.tmux.available).toBe('boolean')

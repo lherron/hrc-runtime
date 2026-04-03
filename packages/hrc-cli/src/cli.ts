@@ -675,10 +675,94 @@ async function cmdBridgeClose(args: string[]): Promise<void> {
   printJson(result)
 }
 
+async function cmdBridgeTarget(args: string[]): Promise<void> {
+  const bridge = parseFlag(args, '--bridge')
+  const hostSession = parseFlag(args, '--host-session')
+  const transport = parseFlag(args, '--transport')
+  const target = parseFlag(args, '--target')
+  const runtimeId = parseFlag(args, '--runtime-id')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+
+  // --bridge is a convenience alias for --transport tmux --target <value>
+  const effectiveTransport = transport ?? (bridge ? 'tmux' : undefined)
+  const effectiveTarget = target ?? bridge
+
+  if (!effectiveTransport) {
+    fatal('--transport (or --bridge) is required for bridge target')
+  }
+  if (!effectiveTarget) {
+    fatal('--target (or --bridge) is required for bridge target')
+  }
+  if (!hostSession) {
+    fatal('--host-session is required for bridge target')
+  }
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.acquireBridgeTarget({
+    hostSessionId: hostSession,
+    transport: effectiveTransport,
+    target: effectiveTarget,
+    ...(runtimeId ? { runtimeId } : {}),
+    ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+    ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+  })
+  printJson(result)
+}
+
+async function cmdBridgeDeliverText(args: string[]): Promise<void> {
+  const bridge = parseFlag(args, '--bridge')
+  const text = parseFlag(args, '--text')
+  const enter = hasFlag(args, '--enter')
+  const oobSuffix = parseFlag(args, '--oob-suffix')
+  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
+  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
+
+  if (!bridge) {
+    fatal('--bridge is required for bridge deliver-text')
+  }
+  if (!text) {
+    fatal('--text is required for bridge deliver-text')
+  }
+
+  const expectedGeneration =
+    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
+  if (
+    expectedGenerationRaw !== undefined &&
+    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
+  ) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+
+  const client = createClient()
+  const result = await client.deliverBridgeText({
+    bridgeId: bridge,
+    text,
+    enter,
+    ...(oobSuffix ? { oobSuffix } : {}),
+    ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
+    ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
+  })
+  printJson(result)
+}
+
 async function cmdBridge(args: string[]): Promise<void> {
   const subcommand = args[0]
 
   switch (subcommand) {
+    case 'target':
+      return cmdBridgeTarget(args.slice(1))
+    case 'deliver-text':
+      return cmdBridgeDeliverText(args.slice(1))
     case 'register':
       return cmdBridgeRegister(args.slice(1))
     case 'deliver':
@@ -691,7 +775,7 @@ async function cmdBridge(args: string[]): Promise<void> {
       fatal(
         subcommand
           ? `unknown bridge subcommand: ${subcommand}`
-          : 'bridge subcommand required (register, deliver, list, close)'
+          : 'bridge subcommand required (target, deliver-text, register, deliver, list, close)'
       )
   }
 }
@@ -838,8 +922,10 @@ Commands:
   surface bind <runtimeId> --kind <kind> --id <surfaceId>
   surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
   surface list <runtimeId>            List active surface bindings for a runtime
-  bridge register <hostSessionId> --transport <name> --target <value>
-  bridge deliver <bridgeId> --text <text>
+  bridge target --bridge <bridge> --host-session <id> [--transport <t>] [--target <tgt>]
+  bridge deliver-text --bridge <bridgeId> --text <text> [--enter] [--oob-suffix <s>]
+  bridge register <hostSessionId> --transport <name> --target <value>  (compat)
+  bridge deliver <bridgeId> --text <text>                              (compat)
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
   clear-context <hostSessionId> [--relaunch]

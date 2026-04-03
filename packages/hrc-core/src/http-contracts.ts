@@ -160,3 +160,30 @@ export type DeliverBridgeResponse = {
 export type CloseBridgeRequest = {
   bridgeId: string
 }
+
+// -- Canonical bridge DTOs (Phase 2) ------------------------------------------
+
+export type HrcBridgeTargetRequest = {
+  transport: string
+  target: string
+  hostSessionId: string
+  runtimeId?: string | undefined
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
+export type HrcBridgeTargetResponse = HrcLocalBridgeRecord
+
+export type HrcBridgeDeliverTextRequest = {
+  bridgeId: string
+  text: string
+  enter: boolean
+  oobSuffix?: string | undefined
+  expectedHostSessionId?: string | undefined
+  expectedGeneration?: number | undefined
+}
+
+export type HrcBridgeDeliverTextResponse = {
+  delivered: true
+  bridgeId: string
+}

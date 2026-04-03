@@ -26,6 +26,10 @@ import type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  HrcBridgeDeliverTextRequest,
+  HrcBridgeDeliverTextResponse,
+  HrcBridgeTargetRequest,
+  HrcBridgeTargetResponse,
   LaunchListFilter,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
@@ -178,6 +182,20 @@ export class HrcClient {
       `/v1/surfaces?runtimeId=${encodeURIComponent(filter.runtimeId)}`
     )
   }
+
+  // -- Canonical bridge methods (Phase 2) ------------------------------------
+
+  async acquireBridgeTarget(request: HrcBridgeTargetRequest): Promise<HrcBridgeTargetResponse> {
+    return this.postJson<HrcBridgeTargetResponse>('/v1/bridges/target', request)
+  }
+
+  async deliverBridgeText(
+    request: HrcBridgeDeliverTextRequest
+  ): Promise<HrcBridgeDeliverTextResponse> {
+    return this.postJson<HrcBridgeDeliverTextResponse>('/v1/bridges/deliver-text', request)
+  }
+
+  // -- Compatibility wrappers (legacy endpoints) ----------------------------
 
   async registerBridgeTarget(
     request: RegisterBridgeTargetRequest
