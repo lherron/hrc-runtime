@@ -14,8 +14,10 @@
     "test": "bun test"
   },
   "dependencies": {
+    "agent-scope": "*",
     "hrc-core": "*",
-    "hrc-sdk": "*"
+    "hrc-sdk": "*",
+    "spaces-config": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",

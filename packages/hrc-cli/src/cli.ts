@@ -1,5 +1,16 @@
 #!/usr/bin/env bun
-import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+import {
+  formatScopeRef,
+  parseScopeHandle,
+  parseScopeRef,
+  parseSessionHandle,
+  validateScopeHandle,
+  validateScopeRef,
+} from 'agent-scope'
 
 import {
   resolveControlSocketPath,
@@ -11,6 +22,8 @@ import {
 } from 'hrc-core'
 import type { HrcAppSessionSpec, HrcCapabilityStatus, HrcRuntimeIntent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
+import type { AttachDescriptor } from 'hrc-sdk'
+import { getAgentsRoot, getProjectsRoot } from 'spaces-config'
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -81,13 +94,182 @@ function createDefaultRuntimeIntent(
   }
 }
 
+function resolveRunScopeInput(input: string): {
+  parsed: ReturnType<typeof parseScopeRef>
+  scopeRef: string
+  laneRef: 'main' | `lane:${string}`
+} {
+  if (input.includes('~')) {
+    const session = parseSessionHandle(input)
+    return {
+      parsed: parseScopeRef(session.scopeRef),
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+    }
+  }
+
+  const handleResult = validateScopeHandle(input)
+  if (handleResult.ok) {
+    const parsed = parseScopeHandle(input)
+    return {
+      parsed: parseScopeRef(parsed.scopeRef),
+      scopeRef: formatScopeRef(parsed),
+      laneRef: 'main',
+    }
+  }
+
+  const refResult = validateScopeRef(input)
+  if (refResult.ok) {
+    return {
+      parsed: parseScopeRef(input),
+      scopeRef: input,
+      laneRef: 'main',
+    }
+  }
+
+  throw new Error(
+    `Invalid scope input "${input}": not a valid ScopeHandle, SessionHandle, or ScopeRef`
+  )
+}
+
+function buildRunBundle(
+  agentRoot: string,
+  agentName: string,
+  projectRoot?: string
+): { kind: 'agent-default' } | { kind: 'agent-project'; agentName: string; projectRoot?: string } {
+  const profilePath = join(agentRoot, 'agent-profile.toml')
+  if (existsSync(profilePath)) {
+    return {
+      kind: 'agent-project',
+      agentName,
+      ...(projectRoot ? { projectRoot } : {}),
+    }
+  }
+  return { kind: 'agent-default' }
+}
+
+function encodeManagedAppSessionKey(publicAppSessionKey: string): string {
+  return encodeURIComponent(publicAppSessionKey)
+}
+
+function withPublicAppSessionKey<T extends { session: { appSessionKey: string } }>(
+  result: T,
+  publicAppSessionKey: string
+): T {
+  return {
+    ...result,
+    session: {
+      ...result.session,
+      appSessionKey: publicAppSessionKey,
+    },
+  }
+}
+
+function parseRunPrompt(args: string[]): string | undefined {
+  let prompt: string | undefined
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]
+    if (!arg) continue
+
+    if (arg === '--label') {
+      if (args[i + 1] === undefined) {
+        fatal('--label requires a value')
+      }
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--label=')) {
+      continue
+    }
+
+    if (arg === '--force-restart' || arg === '--no-attach') {
+      continue
+    }
+
+    if (arg.startsWith('-')) {
+      fatal(`unknown run option: ${arg}`)
+    }
+
+    if (prompt !== undefined) {
+      fatal('run accepts at most one positional prompt')
+    }
+    prompt = arg
+  }
+
+  return prompt
+}
+
+async function bindGhosttySurfaceIfPresent(
+  client: HrcClient,
+  descriptor: AttachDescriptor
+): Promise<void> {
+  const ghosttySurfaceId = process.env['GHOSTTY_SURFACE_UUID']?.trim()
+  if (!ghosttySurfaceId) {
+    return
+  }
+
+  await client.bindSurface({
+    surfaceKind: 'ghostty',
+    surfaceId: ghosttySurfaceId,
+    ...descriptor.bindingFence,
+  })
+}
+
+async function attachDescriptor(client: HrcClient, descriptor: AttachDescriptor): Promise<void> {
+  await bindGhosttySurfaceIfPresent(client, descriptor)
+
+  const attached = Bun.spawnSync(descriptor.argv, {
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+
+  if (attached.exitCode !== 0) {
+    fatal(`attach command exited with code ${attached.exitCode}`)
+  }
+}
+
 // -- Command handlers ---------------------------------------------------------
 
-async function cmdServer(): Promise<void> {
+async function cmdServer(args: string[]): Promise<void> {
+  const daemon = hasFlag(args, '--daemon') || hasFlag(args, '-d') || hasFlag(args, '--background')
+
+  if (daemon) {
+    return daemonize()
+  }
+
+  return serverForeground()
+}
+
+async function daemonize(): Promise<void> {
+  const runtimeRoot = resolveRuntimeRoot()
+  await mkdir(runtimeRoot, { recursive: true })
+
+  const logPath = `${runtimeRoot}/server.log`
+  const pidPath = `${runtimeRoot}/server.pid`
+
+  const proc = Bun.spawn(['bun', process.argv[1] ?? import.meta.path, 'server'], {
+    stdout: Bun.file(logPath),
+    stderr: Bun.file(logPath),
+    stdin: 'ignore',
+    env: { ...process.env },
+  })
+
+  // Detach so the parent can exit without killing the child
+  proc.unref()
+
+  await writeFile(pidPath, `${proc.pid}\n`)
+  process.stderr.write(`hrc: daemon started (pid ${proc.pid}), log at ${logPath}\n`)
+}
+
+async function serverForeground(): Promise<void> {
   const { createHrcServer } = await import('hrc-server')
 
   const runtimeRoot = resolveRuntimeRoot()
   const stateRoot = resolveStateRoot()
+  const pidPath = `${runtimeRoot}/server.pid`
 
   const server = await createHrcServer({
     runtimeRoot,
@@ -99,11 +281,19 @@ async function cmdServer(): Promise<void> {
     tmuxSocketPath: resolveTmuxSocketPath(),
   })
 
+  // Write PID file for foreground too (used by status/stop)
+  await mkdir(runtimeRoot, { recursive: true })
+  await writeFile(pidPath, `${process.pid}\n`)
+
   process.stderr.write(`hrc: server listening on ${resolveControlSocketPath()}\n`)
 
   const shutdown = async () => {
     process.stderr.write('hrc: shutting down...\n')
     await server.stop()
+    // Clean up PID file
+    try {
+      await unlink(pidPath)
+    } catch {}
     process.exit(0)
   }
 
@@ -327,6 +517,76 @@ async function cmdAdopt(args: string[]): Promise<void> {
   printJson(result)
 }
 
+async function cmdRun(args: string[]): Promise<void> {
+  const scopeInput = requireArg(args, 0, '<scope>')
+  const label = parseFlag(args, '--label')
+  const forceRestart = hasFlag(args, '--force-restart')
+  const noAttach = hasFlag(args, '--no-attach')
+  const prompt = parseRunPrompt(args)
+
+  const { parsed, scopeRef, laneRef } = resolveRunScopeInput(scopeInput)
+  const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
+  const publicAppSessionKey = `${scopeRef}/lane:${laneId}`
+  const appSessionKey = encodeManagedAppSessionKey(publicAppSessionKey)
+
+  const agentsRoot = getAgentsRoot()
+  if (!agentsRoot) {
+    fatal('run requires an agents root; set ASP_AGENTS_ROOT or configure agents-root')
+  }
+
+  const agentRoot = join(agentsRoot, parsed.agentId)
+  const projectsRoot = getProjectsRoot()
+  const projectRoot =
+    parsed.projectId && projectsRoot ? join(projectsRoot, parsed.projectId) : undefined
+  const cwd = projectRoot ?? agentRoot
+  const bundle = buildRunBundle(agentRoot, parsed.agentId, projectRoot)
+
+  const intent = {
+    placement: {
+      agentRoot,
+      ...(projectRoot ? { projectRoot } : {}),
+      cwd,
+      runMode: 'task' as const,
+      bundle,
+    },
+    harness: {
+      provider: 'anthropic' as const,
+      interactive: true,
+    },
+    execution: {
+      preferredMode: 'interactive' as const,
+    },
+    ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
+  }
+
+  const client = createClient()
+  const result = await client.ensureAppSession({
+    selector: {
+      appId: 'hrc-cli',
+      appSessionKey,
+    },
+    spec: {
+      kind: 'harness',
+      runtimeIntent: intent,
+    },
+    label: label ?? scopeInput,
+    restartStyle: 'fresh_pty',
+    ...(forceRestart ? { forceRestart: true } : {}),
+    ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
+  })
+
+  if (noAttach) {
+    printJson(withPublicAppSessionKey(result, publicAppSessionKey))
+    return
+  }
+
+  const descriptor = await client.attachAppSession({
+    appId: 'hrc-cli',
+    appSessionKey,
+  })
+  await attachDescriptor(client, descriptor)
+}
+
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
@@ -502,14 +762,7 @@ async function cmdAttach(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
   const descriptor = await client.getAttachDescriptor(runtimeId)
-  const ghosttySurfaceId = process.env['GHOSTTY_SURFACE_UUID']?.trim()
-  if (ghosttySurfaceId) {
-    await client.bindSurface({
-      surfaceKind: 'ghostty',
-      surfaceId: ghosttySurfaceId,
-      ...descriptor.bindingFence,
-    })
-  }
+  await bindGhosttySurfaceIfPresent(client, descriptor)
   printJson(descriptor)
 }
 
@@ -1271,7 +1524,7 @@ function printUsage(): void {
 Usage: hrc <command> [options]
 
 Commands:
-  server                              Start the HRC daemon
+  server [-d|--daemon|--background]   Start the HRC server (foreground by default)
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
@@ -1283,6 +1536,7 @@ Commands:
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   adopt <runtimeId>                   Adopt a dead/stale runtime
+  run <scope> [prompt] [--label <text>] [--force-restart] [--no-attach]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -1331,7 +1585,7 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case 'server':
-        return await cmdServer()
+        return await cmdServer(rest)
       case 'session':
         return await cmdSession(rest)
       case 'watch':
@@ -1346,6 +1600,8 @@ async function main(): Promise<void> {
         return await cmdLaunch(rest)
       case 'adopt':
         return await cmdAdopt(rest)
+      case 'run':
+        return await cmdRun(rest)
       case 'turn':
         return await cmdTurn(rest)
       case 'inflight':

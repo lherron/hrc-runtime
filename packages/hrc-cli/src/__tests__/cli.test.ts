@@ -23,7 +23,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,6 +81,12 @@ let spoolDir: string
 let dbPath: string
 let tmuxSocketPath: string
 let server: HrcServer | null = null
+let agentsRoot: string
+let projectsRoot: string
+let originalPath: string | undefined
+
+const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
+const CLAUDE_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'claude-shim')
 
 function serverOpts(): HrcServerOptions {
   return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath, tmuxSocketPath }
@@ -99,6 +105,8 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-cli-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
+  agentsRoot = join(tmpDir, 'agents')
+  projectsRoot = join(tmpDir, 'projects')
   socketPath = join(runtimeRoot, 'hrc.sock')
   lockPath = join(runtimeRoot, 'server.lock')
   spoolDir = join(runtimeRoot, 'spool')
@@ -108,6 +116,11 @@ beforeEach(async () => {
   await mkdir(runtimeRoot, { recursive: true })
   await mkdir(stateRoot, { recursive: true })
   await mkdir(spoolDir, { recursive: true })
+  await mkdir(agentsRoot, { recursive: true })
+  await mkdir(projectsRoot, { recursive: true })
+
+  originalPath = process.env.PATH
+  process.env.PATH = `${CLAUDE_SHIM_DIR}:${originalPath ?? ''}`
 })
 
 afterEach(async () => {
@@ -124,8 +137,33 @@ afterEach(async () => {
   } catch {
     // fine when no tmux server was created
   }
+  process.env.PATH = originalPath
   await rm(tmpDir, { recursive: true, force: true })
 })
+
+async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
+  await mkdir(join(agentsRoot, agentId), { recursive: true })
+  await mkdir(join(projectsRoot, projectId), { recursive: true })
+}
+
+async function createTmuxAttachShim(): Promise<string> {
+  const shimDir = join(tmpDir, 'tmux-attach-shim')
+  const shimPath = join(shimDir, 'tmux')
+  const logPath = join(shimDir, 'tmux-attach.json')
+
+  await mkdir(shimDir, { recursive: true })
+  await writeFile(
+    shimPath,
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" > "${logPath}"
+exit 0
+`,
+    { mode: 0o755 }
+  )
+
+  return shimDir
+}
 
 // ===========================================================================
 // 1. No args / help
@@ -365,6 +403,102 @@ describe('runtime lifecycle commands', () => {
     const emptyListResult = await runCli(['surface', 'list', runtimeId], cliEnv())
     expect(emptyListResult.exitCode).toBe(0)
     expect(JSON.parse(emptyListResult.stdout.trim())).toEqual([])
+  })
+})
+
+// ===========================================================================
+// 5. hrc run convenience command (T-01019)
+// ===========================================================================
+describe('hrc run', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+    await seedRunRoots('rex', 'agent-spaces')
+  })
+
+  it('creates a managed harness session from a shorthand scope handle with --no-attach', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.session.appId).toBe('hrc-cli')
+    expect(body.session.appSessionKey).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
+    expect(body.session.label).toBe('rex@agent-spaces:T-00123')
+    expect(body.session.kind).toBe('harness')
+    expect(body.created).toBe(true)
+    expect(body.status).toBe('created')
+  })
+
+  it('accepts canonical ScopeRef input and preserves a prompt on the managed session spec', async () => {
+    const prompt = 'Fix the bug'
+    const result = await runCli(
+      ['run', 'agent:rex:project:agent-spaces:task:T-00123', prompt, '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.session.appSessionKey).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
+    expect(body.session.label).toBe('agent:rex:project:agent-spaces:task:T-00123')
+    expect(body.status).toBe('created')
+  })
+
+  it('maps ~lane handles onto distinct app-session keys and forwards --force-restart', async () => {
+    const first = await runCli(
+      ['run', 'rex@agent-spaces:T-00123~repair', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(first.exitCode).toBe(0)
+    const firstBody = JSON.parse(first.stdout.trim())
+    expect(firstBody.session.appSessionKey).toBe(
+      'agent:rex:project:agent-spaces:task:T-00123/lane:repair'
+    )
+
+    const second = await runCli(
+      ['run', 'rex@agent-spaces:T-00123~repair', '--force-restart', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(second.exitCode).toBe(0)
+    const secondBody = JSON.parse(second.stdout.trim())
+    expect(secondBody.session.appSessionKey).toBe(
+      'agent:rex:project:agent-spaces:task:T-00123/lane:repair'
+    )
+    expect(secondBody.restarted).toBe(true)
+    expect(secondBody.status).toBe('restarted')
+  })
+
+  it('attaches by default instead of printing JSON when --no-attach is omitted', async () => {
+    const tmuxShimDir = await createTmuxAttachShim()
+    const result = await runCli(
+      ['run', 'rex@agent-spaces:T-00123'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+        PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.trim()).toBe('')
+    expect(result.stderr.trim()).toBe('')
+
+    const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
+    expect(loggedArgs).toContain('attach-session')
   })
 })
 
