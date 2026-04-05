@@ -102,6 +102,27 @@ function interactiveHarnessIntent(targetDir: string): object {
   }
 }
 
+const DEAD_PID = 2147483001
+
+async function markLatestLaunchStarted(hostSessionId: string, pid: number): Promise<void> {
+  let launchId: string | undefined
+  const db = openHrcDatabase(dbPath)
+  try {
+    const launches = db.launches.listByHostSessionId(hostSessionId)
+    const latestLaunch = launches.at(-1)
+    expect(latestLaunch).toBeDefined()
+    launchId = latestLaunch!.launchId
+  } finally {
+    db.close()
+  }
+
+  const res = await postJson(`/v1/internal/launches/${launchId}/wrapper-started`, {
+    hostSessionId,
+    wrapperPid: pid,
+  })
+  expect(res.status).toBe(200)
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-ms-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
@@ -484,6 +505,118 @@ describe('POST /v1/app-sessions/ensure', () => {
     const body = (await res.json()) as EnsureAppSessionResponse
     expect(body.session.appSessionKey).toBe('restart-test')
     expect(body.session.status).toBe('active')
+  })
+
+  it('reuses the same interactive runtime when the tracked launch process is still live', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01026 RED gate:
+     * re-ensuring an existing interactive managed harness session should
+     * preserve the current runtime when the tracked launch process is still
+     * alive. A live process should not be treated like an implicit restart.
+     */
+    const ensurePayload = {
+      selector: { appId: 'workbench', appSessionKey: 'reattach-live-runtime' },
+      spec: {
+        kind: 'harness' as const,
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    }
+
+    const firstRes = await postJson('/v1/app-sessions/ensure', ensurePayload)
+    expect(firstRes.status).toBe(200)
+    const firstBody = (await firstRes.json()) as EnsureAppSessionResponse
+    expect(firstBody.runtimeId).toBeDefined()
+
+    await markLatestLaunchStarted(firstBody.session.activeHostSessionId, process.pid)
+
+    const secondRes = await postJson('/v1/app-sessions/ensure', ensurePayload)
+    expect(secondRes.status).toBe(200)
+    const secondBody = (await secondRes.json()) as EnsureAppSessionResponse
+
+    expect(secondBody.runtimeId).toBe(firstBody.runtimeId)
+    expect(secondBody.restarted).toBe(false)
+    expect(secondBody.status).toBe('ensured')
+
+    const runtimesRes = await fetchSocket(
+      `/v1/runtimes?hostSessionId=${encodeURIComponent(firstBody.session.activeHostSessionId)}`
+    )
+    expect(runtimesRes.status).toBe(200)
+    const runtimes = (await runtimesRes.json()) as Array<{ runtimeId: string }>
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0]?.runtimeId).toBe(firstBody.runtimeId)
+  })
+
+  it('replaces the interactive runtime when the tracked launch process is dead', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01026 RED gate:
+     * if the launch-tracked process is dead, re-ensure must create a fresh
+     * runtime even when the tmux session metadata is still present.
+     */
+    const ensurePayload = {
+      selector: { appId: 'workbench', appSessionKey: 'reattach-dead-runtime' },
+      spec: {
+        kind: 'harness' as const,
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    }
+
+    const firstRes = await postJson('/v1/app-sessions/ensure', ensurePayload)
+    expect(firstRes.status).toBe(200)
+    const firstBody = (await firstRes.json()) as EnsureAppSessionResponse
+    expect(firstBody.runtimeId).toBeDefined()
+
+    await markLatestLaunchStarted(firstBody.session.activeHostSessionId, DEAD_PID)
+
+    const secondRes = await postJson('/v1/app-sessions/ensure', ensurePayload)
+    expect(secondRes.status).toBe(200)
+    const secondBody = (await secondRes.json()) as EnsureAppSessionResponse
+
+    expect(secondBody.runtimeId).toBeDefined()
+    expect(secondBody.runtimeId).not.toBe(firstBody.runtimeId)
+    expect(secondBody.restarted).toBe(false)
+    expect(secondBody.status).toBe('ensured')
+  })
+
+  it('forceRestart still replaces the interactive runtime even when the tracked process is live', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01026 guard:
+     * forceRestart must continue to replace the runtime explicitly, even when
+     * the current tracked process is live and otherwise reusable.
+     */
+    const firstRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'reattach-force-restart' },
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+    expect(firstRes.status).toBe(200)
+    const firstBody = (await firstRes.json()) as EnsureAppSessionResponse
+    expect(firstBody.runtimeId).toBeDefined()
+
+    await markLatestLaunchStarted(firstBody.session.activeHostSessionId, process.pid)
+
+    const secondRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'reattach-force-restart' },
+      forceRestart: true,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+
+    expect(secondRes.status).toBe(200)
+    const secondBody = (await secondRes.json()) as EnsureAppSessionResponse
+    expect(secondBody.runtimeId).toBeDefined()
+    expect(secondBody.runtimeId).not.toBe(firstBody.runtimeId)
+    expect(secondBody.restarted).toBe(true)
+    expect(secondBody.status).toBe('restarted')
   })
 })
 

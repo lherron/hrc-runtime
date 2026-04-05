@@ -648,25 +648,56 @@ class HrcServerInstance implements HrcServer {
         if (spec.runtimeIntent.harness.interactive) {
           const session = requireSession(this.db, existing.activeHostSessionId)
           const priorRuntime = findLatestRuntime(this.db, session.hostSessionId)
-          const restartStyle =
-            body.restartStyle ?? (body.forceRestart === true ? 'fresh_pty' : 'reuse_pty')
-          const runtime = await this.ensureRuntimeForSession(
-            session,
-            spec.runtimeIntent,
-            restartStyle
-          )
-          runtimeId = runtime.runtimeId
-          restarted = body.forceRestart === true
 
-          // Auto-dispatch harness turn when the runtime was freshly created
-          // or when an explicit prompt is provided (T-01021 / T-01024).
-          // Skip dispatch when re-ensuring an already-running runtime to
-          // avoid RUNTIME_BUSY conflicts on idempotent re-ensure.
-          const runtimeIsNew = !priorRuntime || priorRuntime.runtimeId !== runtime.runtimeId
-          if (runtimeIsNew || body.initialPrompt) {
-            const runId = `run-${randomUUID()}`
-            const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
-            await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', { runId })
+          // Liveness gate (T-01026): when not force-restarting, check if the
+          // existing runtime is still alive (tmux pane exists + tracked process
+          // running).  If so, skip re-ensure and return the live runtime as-is.
+          const runtimeLive = await isInteractiveRuntimeLive(
+            priorRuntime,
+            body.forceRestart === true,
+            this.tmux
+          )
+
+          if (runtimeLive && priorRuntime) {
+            // Live runtime — reuse as-is without calling ensureRuntimeForSession
+            runtimeId = priorRuntime.runtimeId
+
+            // Still honour an explicit initialPrompt even on reattach
+            if (body.initialPrompt) {
+              const runId = `run-${randomUUID()}`
+              const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
+              await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
+            }
+          } else {
+            // No live runtime, unavailable, or forceRestart — proceed with re-ensure.
+            // When a prior runtime exists but failed liveness (dead process / tmux
+            // gone), force fresh_pty so ensureRuntimeForSession creates a new
+            // runtime instead of updating the dead one in-place (T-01026).
+            const deadRuntimeNeedsReplace =
+              priorRuntime !== null && !isRuntimeUnavailableStatus(priorRuntime.status)
+            const restartStyle =
+              body.restartStyle ??
+              (body.forceRestart === true || deadRuntimeNeedsReplace ? 'fresh_pty' : 'reuse_pty')
+            const runtime = await this.ensureRuntimeForSession(
+              session,
+              spec.runtimeIntent,
+              restartStyle
+            )
+            runtimeId = runtime.runtimeId
+            restarted = body.forceRestart === true
+
+            // Auto-dispatch harness turn when the runtime was freshly created
+            // or when an explicit prompt is provided (T-01021 / T-01024).
+            // Skip dispatch when re-ensuring an already-running runtime to
+            // avoid RUNTIME_BUSY conflicts on idempotent re-ensure.
+            const runtimeIsNew = !priorRuntime || priorRuntime.runtimeId !== runtime.runtimeId
+            if (runtimeIsNew || body.initialPrompt) {
+              const runId = `run-${randomUUID()}`
+              const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
+              await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', {
+                runId,
+              })
+            }
           }
         }
       } else {
@@ -4795,6 +4826,37 @@ function requireLatestSessionRuntime(db: HrcDatabase, hostSessionId: string): Hr
 
 function isRuntimeUnavailableStatus(status: string): boolean {
   return status === 'terminated' || status === 'dead' || status === 'stale'
+}
+
+/**
+ * Liveness gate for interactive harness re-ensure (T-01026).
+ *
+ * Returns `true` when the existing runtime can be reused as-is:
+ *   - forceRestart is NOT requested
+ *   - a prior runtime exists and is not in an unavailable state
+ *   - its tmux session/pane is still present
+ *   - the tracked process (childPid ?? wrapperPid) is still alive
+ *     (if no pid is tracked yet we assume alive when tmux is alive)
+ */
+async function isInteractiveRuntimeLive(
+  priorRuntime: HrcRuntimeSnapshot | null,
+  forceRestart: boolean,
+  tmux: ServerTmuxManager
+): Promise<boolean> {
+  if (forceRestart) return false
+  if (!priorRuntime) return false
+  if (isRuntimeUnavailableStatus(priorRuntime.status)) return false
+
+  const tmuxSessionName = getObservedTmuxSessionName(priorRuntime)
+  if (!tmuxSessionName) return false
+
+  const inspected = await tmux.inspectSession(tmuxSessionName)
+  if (!inspected) return false
+
+  const trackedPid = priorRuntime.childPid ?? priorRuntime.wrapperPid
+  if (trackedPid !== undefined && !isLiveProcess(trackedPid)) return false
+
+  return true
 }
 
 function getTmuxSessionName(runtime: HrcRuntimeSnapshot): string {
