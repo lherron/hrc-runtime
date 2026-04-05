@@ -87,6 +87,21 @@ function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions
   }
 }
 
+function interactiveHarnessIntent(targetDir: string): object {
+  return {
+    placement: {
+      agentRoot: '/tmp/agent',
+      runMode: 'task',
+      bundle: { kind: 'agent-default' },
+      targetDir,
+    },
+    harness: {
+      provider: 'anthropic',
+      interactive: true,
+    },
+  }
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-ms-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
@@ -198,6 +213,197 @@ describe('POST /v1/app-sessions/ensure', () => {
     const body = (await res.json()) as EnsureAppSessionResponse
     expect(body.session.kind).toBe('command')
     expect(body.session.status).toBe('active')
+  })
+
+  it('accepts initialPrompt on ensure and persists it into the harness runtime intent', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-seed' },
+      initialPrompt: 'Investigate the failing smoke test',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EnsureAppSessionResponse
+    expect(body.session.appId).toBe('workbench')
+    expect(body.session.appSessionKey).toBe('prompt-seed')
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const record = db.appManagedSessions.findByKey('workbench', 'prompt-seed')
+      expect(record).not.toBeNull()
+      expect(record!.lastAppliedSpec).toBeDefined()
+      expect(record!.lastAppliedSpec!.kind).toBe('harness')
+      const runtimeIntent = (
+        record!.lastAppliedSpec as {
+          kind: 'harness'
+          runtimeIntent: { initialPrompt?: string | undefined }
+        }
+      ).runtimeIntent
+      expect(runtimeIntent.initialPrompt).toBe('Investigate the failing smoke test')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('does not synthesize initialPrompt when ensure omits it', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-absent' },
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const record = db.appManagedSessions.findByKey('workbench', 'prompt-absent')
+      expect(record).not.toBeNull()
+      expect(record!.lastAppliedSpec).toBeDefined()
+      expect(record!.lastAppliedSpec!.kind).toBe('harness')
+      const runtimeIntent = (
+        record!.lastAppliedSpec as {
+          kind: 'harness'
+          runtimeIntent: { initialPrompt?: string | undefined }
+        }
+      ).runtimeIntent
+      expect(runtimeIntent.initialPrompt).toBeUndefined()
+      expect(Object.hasOwn(runtimeIntent, 'initialPrompt')).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('auto-dispatches the first harness turn when ensure includes initialPrompt', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01021 RED gate:
+     * ensureAppSession currently persists initialPrompt and creates the tmux
+     * runtime, but it returns before dispatching the first harness turn.
+     *
+     * Pass condition for GREEN:
+     *   - ensure returns 200 for an interactive harness session
+     *   - one runtime exists for the managed host session
+     *   - exactly one launch record exists for that host session
+     */
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-autostart' },
+      initialPrompt: 'Investigate the failing smoke test',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EnsureAppSessionResponse
+
+    const runtimesRes = await fetchSocket(
+      `/v1/runtimes?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(runtimesRes.status).toBe(200)
+    const runtimes = (await runtimesRes.json()) as Array<{ runtimeId: string }>
+    expect(runtimes).toHaveLength(1)
+
+    const launchesRes = await fetchSocket(
+      `/v1/launches?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(launchesRes.status).toBe(200)
+    const launches = (await launchesRes.json()) as Array<{ runtimeId: string }>
+    expect(launches).toHaveLength(1)
+    expect(launches[0]?.runtimeId).toBe(runtimes[0]?.runtimeId)
+  })
+
+  it('does not auto-dispatch when ensure omits initialPrompt on an interactive harness session', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01021 regression guard:
+     * interactive ensure without initialPrompt should keep the existing
+     * behavior: create the pane/runtime only, with no launch entries.
+     */
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-no-autostart' },
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EnsureAppSessionResponse
+
+    const runtimesRes = await fetchSocket(
+      `/v1/runtimes?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(runtimesRes.status).toBe(200)
+    const runtimes = (await runtimesRes.json()) as Array<{ runtimeId: string }>
+    expect(runtimes).toHaveLength(1)
+
+    const launchesRes = await fetchSocket(
+      `/v1/launches?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(launchesRes.status).toBe(200)
+    const launches = (await launchesRes.json()) as Array<unknown>
+    expect(launches).toHaveLength(0)
+  })
+
+  it('auto-dispatches after forceRestart when an existing harness session is re-ensured with initialPrompt', async () => {
+    server = await createHrcServer(serverOpts())
+
+    /**
+     * T-01021 restart-path guard:
+     * existing managed harness sessions must also dispatch the first turn when
+     * forceRestart creates a fresh runtime and initialPrompt is supplied.
+     */
+    const firstRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-restart-autostart' },
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+    expect(firstRes.status).toBe(200)
+    const firstBody = (await firstRes.json()) as EnsureAppSessionResponse
+
+    const secondRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-restart-autostart' },
+      initialPrompt: 'Re-dispatch after restart',
+      forceRestart: true,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+
+    expect(secondRes.status).toBe(200)
+    const secondBody = (await secondRes.json()) as EnsureAppSessionResponse
+    expect(secondBody.restarted).toBe(true)
+    expect(secondBody.status).toBe('restarted')
+    expect(secondBody.session.activeHostSessionId).toBe(firstBody.session.activeHostSessionId)
+
+    const launchesRes = await fetchSocket(
+      `/v1/launches?hostSessionId=${encodeURIComponent(secondBody.session.activeHostSessionId)}`
+    )
+    expect(launchesRes.status).toBe(200)
+    const launches = (await launchesRes.json()) as Array<{ runtimeId: string }>
+    expect(launches).toHaveLength(1)
+    expect(launches[0]?.runtimeId).toBe(secondBody.runtimeId)
   })
 
   it('with forceRestart=true restarts the runtime', async () => {

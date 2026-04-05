@@ -265,6 +265,17 @@ class HrcServerInstance implements HrcServer {
     this.db.close()
     let cleanupError: unknown
 
+    // Kill the tmux server that owns our runtimes — prevents orphaned PTYs
+    try {
+      const tmuxSocket = getTmuxSocketPath(this.options)
+      Bun.spawnSync(['tmux', '-S', tmuxSocket, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+    } catch {
+      // no server running — fine
+    }
+
     try {
       await unlinkIfExists(this.options.socketPath)
     } catch (error) {
@@ -595,6 +606,11 @@ class HrcServerInstance implements HrcServer {
     const spec = body.spec
     const now = timestamp()
 
+    // Merge request-level initialPrompt into the harness runtime intent
+    if (body.initialPrompt !== undefined && spec.kind === 'harness') {
+      spec.runtimeIntent = { ...spec.runtimeIntent, initialPrompt: body.initialPrompt }
+    }
+
     const existing = this.db.appManagedSessions.findByKey(appId, appSessionKey)
 
     if (existing) {
@@ -635,6 +651,13 @@ class HrcServerInstance implements HrcServer {
           )
           runtimeId = runtime.runtimeId
           restarted = true
+
+          // Auto-dispatch first turn when initialPrompt is provided (T-01021)
+          if (body.initialPrompt) {
+            const runId = `run-${randomUUID()}`
+            const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
+            await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
+          }
         }
       } else {
         const session = requireSession(this.db, existing.activeHostSessionId)
@@ -723,6 +746,13 @@ class HrcServerInstance implements HrcServer {
       const restartStyle = body.restartStyle ?? 'reuse_pty'
       const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
       runtimeId = runtime.runtimeId
+
+      // Auto-dispatch first turn when initialPrompt is provided (T-01021)
+      if (body.initialPrompt) {
+        const runId = `run-${randomUUID()}`
+        const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
+        await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
+      }
     }
 
     if (spec.kind === 'command') {
@@ -4147,6 +4177,9 @@ function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRequest {
     ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
     ...(restartStyle !== undefined ? { restartStyle: restartStyle as RestartStyle } : {}),
     ...(typeof input['forceRestart'] === 'boolean' ? { forceRestart: input['forceRestart'] } : {}),
+    ...(typeof input['initialPrompt'] === 'string'
+      ? { initialPrompt: input['initialPrompt'] }
+      : {}),
   }
 }
 
