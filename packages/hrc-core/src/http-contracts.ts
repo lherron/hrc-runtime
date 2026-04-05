@@ -215,6 +215,7 @@ export type EnsureAppSessionRequest = {
   metadata?: Record<string, unknown> | undefined
   restartStyle?: RestartStyle | undefined
   forceRestart?: boolean | undefined
+  initialPrompt?: string | undefined
 }
 
 export type EnsureAppSessionResponse = {

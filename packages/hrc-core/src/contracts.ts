@@ -51,6 +51,7 @@ export type HrcRuntimeIntent = {
   harness: HrcHarnessIntent
   execution?: HrcExecutionIntent | undefined
   launch?: HrcLaunchEnvConfig | undefined
+  initialPrompt?: string | undefined
 }
 
 export type HrcAppSessionRef = {
