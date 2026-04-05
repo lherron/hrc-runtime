@@ -253,6 +253,32 @@ describe('POST /v1/app-sessions/ensure', () => {
     }
   })
 
+  it('does not auto-dispatch a non-interactive harness ensure even when initialPrompt is provided', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'prompt-seed-noninteractive' },
+      initialPrompt: 'Investigate the failing smoke test',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EnsureAppSessionResponse
+
+    const launchesRes = await fetchSocket(
+      `/v1/launches?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(launchesRes.status).toBe(200)
+    const launches = (await launchesRes.json()) as Array<unknown>
+    expect(launches).toHaveLength(0)
+  })
+
   it('does not synthesize initialPrompt when ensure omits it', async () => {
     server = await createHrcServer(serverOpts())
 
@@ -329,13 +355,14 @@ describe('POST /v1/app-sessions/ensure', () => {
     expect(launches[0]?.runtimeId).toBe(runtimes[0]?.runtimeId)
   })
 
-  it('does not auto-dispatch when ensure omits initialPrompt on an interactive harness session', async () => {
+  it('auto-dispatches the first harness turn even when ensure omits initialPrompt', async () => {
     server = await createHrcServer(serverOpts())
 
     /**
-     * T-01021 regression guard:
-     * interactive ensure without initialPrompt should keep the existing
-     * behavior: create the pane/runtime only, with no launch entries.
+     * T-01023 RED gate:
+     * interactive ensure should launch the harness even without a prompt so
+     * attach works immediately, but the persisted intent must still omit
+     * initialPrompt.
      */
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-no-autostart' },
@@ -359,8 +386,25 @@ describe('POST /v1/app-sessions/ensure', () => {
       `/v1/launches?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
     )
     expect(launchesRes.status).toBe(200)
-    const launches = (await launchesRes.json()) as Array<unknown>
-    expect(launches).toHaveLength(0)
+    const launches = (await launchesRes.json()) as Array<{ runtimeId: string }>
+    expect(launches).toHaveLength(1)
+    expect(launches[0]?.runtimeId).toBe(runtimes[0]?.runtimeId)
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const record = db.appManagedSessions.findByKey('workbench', 'prompt-no-autostart')
+      expect(record).not.toBeNull()
+      const runtimeIntent = (
+        record!.lastAppliedSpec as {
+          kind: 'harness'
+          runtimeIntent: { initialPrompt?: string | undefined }
+        }
+      ).runtimeIntent
+      expect(runtimeIntent.initialPrompt).toBeUndefined()
+      expect(Object.hasOwn(runtimeIntent, 'initialPrompt')).toBe(false)
+    } finally {
+      db.close()
+    }
   })
 
   it('auto-dispatches after forceRestart when an existing harness session is re-ensured with initialPrompt', async () => {
@@ -402,8 +446,10 @@ describe('POST /v1/app-sessions/ensure', () => {
     )
     expect(launchesRes.status).toBe(200)
     const launches = (await launchesRes.json()) as Array<{ runtimeId: string }>
-    expect(launches).toHaveLength(1)
-    expect(launches[0]?.runtimeId).toBe(secondBody.runtimeId)
+    // T-01024: first ensure now auto-dispatches even without initialPrompt,
+    // so there are 2 launches total (one per ensure)
+    expect(launches).toHaveLength(2)
+    expect(launches[1]?.runtimeId).toBe(secondBody.runtimeId)
   })
 
   it('with forceRestart=true restarts the runtime', async () => {

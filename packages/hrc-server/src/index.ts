@@ -641,22 +641,28 @@ class HrcServerInstance implements HrcServer {
       let restarted = false
 
       if (spec.kind === 'harness') {
-        if (body.forceRestart === true && spec.runtimeIntent.harness.interactive) {
+        if (spec.runtimeIntent.harness.interactive) {
           const session = requireSession(this.db, existing.activeHostSessionId)
-          const restartStyle = body.restartStyle ?? 'fresh_pty'
+          const priorRuntime = findLatestRuntime(this.db, session.hostSessionId)
+          const restartStyle =
+            body.restartStyle ?? (body.forceRestart === true ? 'fresh_pty' : 'reuse_pty')
           const runtime = await this.ensureRuntimeForSession(
             session,
             spec.runtimeIntent,
             restartStyle
           )
           runtimeId = runtime.runtimeId
-          restarted = true
+          restarted = body.forceRestart === true
 
-          // Auto-dispatch first turn when initialPrompt is provided (T-01021)
-          if (body.initialPrompt) {
+          // Auto-dispatch harness turn when the runtime was freshly created
+          // or when an explicit prompt is provided (T-01021 / T-01024).
+          // Skip dispatch when re-ensuring an already-running runtime to
+          // avoid RUNTIME_BUSY conflicts on idempotent re-ensure.
+          const runtimeIsNew = !priorRuntime || priorRuntime.runtimeId !== runtime.runtimeId
+          if (runtimeIsNew || body.initialPrompt) {
             const runId = `run-${randomUUID()}`
             const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
-            await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
+            await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', { runId })
           }
         }
       } else {
@@ -747,12 +753,10 @@ class HrcServerInstance implements HrcServer {
       const runtime = await this.ensureRuntimeForSession(session, spec.runtimeIntent, restartStyle)
       runtimeId = runtime.runtimeId
 
-      // Auto-dispatch first turn when initialPrompt is provided (T-01021)
-      if (body.initialPrompt) {
-        const runId = `run-${randomUUID()}`
-        const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
-        await this.dispatchTurnForSession(session, intent, body.initialPrompt, { runId })
-      }
+      // Auto-dispatch harness turn — with or without prompt (T-01021 / T-01024)
+      const runId = `run-${randomUUID()}`
+      const intent = normalizeDispatchIntent(spec.runtimeIntent, session, runId)
+      await this.dispatchTurnForSession(session, intent, body.initialPrompt ?? '', { runId })
     }
 
     if (spec.kind === 'command') {

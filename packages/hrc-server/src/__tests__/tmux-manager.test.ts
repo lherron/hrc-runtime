@@ -423,6 +423,56 @@ describe('POST /v1/runtimes/ensure', () => {
     expect(body2.tmux.paneId).toBe(body1.tmux.paneId)
   })
 
+  it('does not reuse a ready runtime when its tmux session has disappeared', async () => {
+    // T-01023: reproduce stale runtime reuse when the tmux server/session is gone
+    // but the DB still points at a ready tmux runtime.
+    const resolveRes = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:reuse-stale-test/lane:default',
+    })
+    const { hostSessionId } = await resolveRes.json()
+
+    const res1 = await postJson('/v1/runtimes/ensure', {
+      hostSessionId,
+      intent: {
+        placement: { targetName: 'dev', targetDir: tmpDir },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+      restartStyle: 'reuse_pty',
+    })
+    const body1 = await res1.json()
+
+    const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+    await exited
+
+    const res2 = await postJson('/v1/runtimes/ensure', {
+      hostSessionId,
+      intent: {
+        placement: { targetName: 'dev', targetDir: tmpDir },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+      restartStyle: 'reuse_pty',
+    })
+    const body2 = await res2.json()
+
+    expect(body2.runtimeId).not.toBe(body1.runtimeId)
+
+    const runtimesRes = await fetchSocket(
+      `/v1/runtimes?hostSessionId=${encodeURIComponent(hostSessionId)}`
+    )
+    expect(runtimesRes.status).toBe(200)
+    const runtimes = (await runtimesRes.json()) as Array<{ runtimeId: string; status: string }>
+    expect(runtimes).toHaveLength(2)
+    expect(runtimes.find((runtime) => runtime.runtimeId === body1.runtimeId)?.status).toBe(
+      'terminated'
+    )
+    expect(runtimes.find((runtime) => runtime.runtimeId === body2.runtimeId)?.status).toBe('ready')
+  })
+
   it('creates a new tmux session for fresh_pty restart style', async () => {
     const resolveRes = await postJson('/v1/sessions/resolve', {
       sessionRef: 'project:fresh-test/lane:default',
