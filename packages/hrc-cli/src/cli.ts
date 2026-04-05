@@ -20,7 +20,12 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type { HrcAppSessionSpec, HrcCapabilityStatus, HrcRuntimeIntent } from 'hrc-core'
+import type {
+  HrcAppSessionSpec,
+  HrcRuntimeIntent,
+  HrcStatusResponse,
+  HrcStatusSessionView,
+} from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { getAgentsRoot, getProjectsRoot } from 'spaces-config'
@@ -408,6 +413,51 @@ async function cmdHealth(): Promise<void> {
 
 // -- Status capability display (T-00998) ---------------------------------------
 
+// -- Session-centric status helpers (T-01025) ---------------------------------
+
+/**
+ * Format tmux identifiers: "sessionName / paneId" or "(none)".
+ */
+function formatTmuxRef(sessionName?: string, paneId?: string): string {
+  if (!sessionName && !paneId) return '(none)'
+  const parts: string[] = []
+  if (sessionName) parts.push(sessionName)
+  if (paneId) parts.push(paneId)
+  return parts.join(' / ')
+}
+
+/**
+ * Render one session entry from the unified status response into lines.
+ */
+function pushSessionBlock(lines: string[], entry: HrcStatusSessionView): void {
+  const s = entry.session
+  const label = s.scopeRef || s.hostSessionId
+  lines.push(`  ${label} [${s.hostSessionId}] (${s.status})`)
+
+  const ar = entry.activeRuntime
+  if (!ar) {
+    lines.push('    runtime:  (no active runtime)')
+    lines.push('    surfaces: (no active surfaces)')
+    return
+  }
+
+  const rt = ar.runtime
+  const rtParts = [rt.runtimeId, rt.harness, rt.transport].filter(Boolean)
+  if (rt.status) rtParts.push(rt.status)
+  lines.push(`    runtime:  ${rtParts.join(' / ')}`)
+
+  if (ar.tmux) {
+    lines.push(`    tmux:     ${formatTmuxRef(ar.tmux.sessionName, ar.tmux.paneId)}`)
+  }
+
+  if (ar.surfaceBindings.length > 0) {
+    const surfStr = ar.surfaceBindings.map((b) => `${b.surfaceKind}:${b.surfaceId}`).join(', ')
+    lines.push(`    surfaces: ${surfStr}`)
+  } else {
+    lines.push('    surfaces: (no active surfaces)')
+  }
+}
+
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
   const m = Math.floor(seconds / 60)
@@ -436,7 +486,7 @@ function printCapabilityGroup(
   }
 }
 
-function printStatusHuman(status: HrcCapabilityStatus): void {
+function printStatusHuman(status: HrcStatusResponse): void {
   const lines: string[] = []
 
   lines.push('HRC Server Status')
@@ -447,9 +497,20 @@ function printStatusHuman(status: HrcCapabilityStatus): void {
   }
   lines.push(`  socket:     ${status.socketPath}`)
   lines.push(`  database:   ${status.dbPath}`)
-  lines.push(`  sessions:   ${status.sessionCount}`)
-  lines.push(`  runtimes:   ${status.runtimeCount}`)
 
+  // -- Per-session view (T-01025) -------------------------------------------
+  if (status.sessions && status.sessions.length > 0) {
+    lines.push('')
+    lines.push(`Sessions: (${status.sessions.length})`)
+    for (const entry of status.sessions) {
+      pushSessionBlock(lines, entry)
+    }
+  } else {
+    lines.push(`  sessions:   ${status.sessionCount}`)
+    lines.push(`  runtimes:   ${status.runtimeCount}`)
+  }
+
+  // -- Capabilities ---------------------------------------------------------
   if (status.capabilities) {
     const caps = status.capabilities
 
@@ -488,7 +549,7 @@ async function cmdStatus(args: string[]): Promise<void> {
   if (jsonFlag) {
     printJson(result)
   } else {
-    printStatusHuman(result as HrcCapabilityStatus)
+    printStatusHuman(result as HrcStatusResponse)
   }
 }
 
