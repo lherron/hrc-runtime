@@ -52,6 +52,37 @@ let spoolDir: string
 let dbPath: string
 let tmuxSocketPath: string
 
+type UnifiedStatusSessionView = {
+  session: {
+    hostSessionId: string
+    scopeRef: string
+    laneRef: string
+    generation: number
+    status: string
+  }
+  activeRuntime?: {
+    runtime: {
+      runtimeId: string
+      transport: string
+      status: string
+    }
+    tmux?: {
+      sessionName?: string
+      sessionId?: string
+      windowId?: string
+      paneId?: string
+    }
+    surfaceBindings: Array<{
+      surfaceKind: string
+      surfaceId: string
+    }>
+  }
+}
+
+type UnifiedStatusResponse = StatusResponse & {
+  sessions: UnifiedStatusSessionView[]
+}
+
 function ts(): string {
   return new Date().toISOString()
 }
@@ -100,6 +131,53 @@ async function ensureRuntime(scopeRef: string): Promise<{
     harness: 'agent-sdk',
     provider: 'anthropic',
     status: 'ready',
+    supportsInflightInput: false,
+    adopted: false,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return {
+    hostSessionId: resolved.hostSessionId,
+    generation: resolved.generation,
+    runtimeId,
+  }
+}
+
+async function ensureTmuxRuntime(scopeRef: string): Promise<{
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+}> {
+  const resolveRes = await postJson('/v1/sessions/resolve', {
+    sessionRef: `${scopeRef}/lane:default`,
+  })
+  const resolved = (await resolveRes.json()) as {
+    hostSessionId: string
+    generation: number
+  }
+
+  const runtimeId = `rt-tmux-${randomUUID()}`
+  const now = ts()
+  const db = openHrcDatabase(dbPath)
+  db.runtimes.insert({
+    runtimeId,
+    hostSessionId: resolved.hostSessionId,
+    scopeRef,
+    laneRef: 'default',
+    generation: resolved.generation,
+    transport: 'tmux',
+    harness: 'claude-code',
+    provider: 'anthropic',
+    status: 'ready',
+    tmuxJson: {
+      socketPath: tmuxSocketPath,
+      sessionName: `hrc-${resolved.hostSessionId.slice(0, 12)}`,
+      windowName: 'main',
+      sessionId: '$1',
+      windowId: '@1',
+      paneId: '%1',
+    },
     supportsInflightInput: false,
     adopted: false,
     createdAt: now,
@@ -1119,7 +1197,138 @@ describe('/v1/status capability reporting (T-00998)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 12. Clean shutdown
+// 12. /v1/status unified session/runtime/surface view (T-01025)
+//
+// RED GATE for wrkq T-01025:
+//   `/v1/status` still returns aggregate server metrics only. These tests lock
+//   the next contract to a joined per-session view so CLI rendering can remain
+//   thin and machine-readable JSON stays authoritative.
+//
+// Pass conditions:
+//   1. Status payload includes `sessions[]`
+//   2. Each entry is `{ session, activeRuntime? }`
+//   3. `activeRuntime` joins `{ runtime, tmux?, surfaceBindings }`
+//   4. Sessions with no active runtime omit `activeRuntime`
+//   5. Active runtimes with no active surfaces return `surfaceBindings: []`
+//   6. Latest terminated/dead/stale runtime omits `activeRuntime`
+// ---------------------------------------------------------------------------
+describe('/v1/status unified session/runtime/surface view (T-01025)', () => {
+  let server: HrcServer
+
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  it('returns joined per-session status entries with runtime tmux and active surfaces', async () => {
+    const runtime = await ensureTmuxRuntime('project:status-server-joined')
+    const bindRes = await postJson('/v1/surfaces/bind', {
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-status-server-1',
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      paneId: 'pane-status-1',
+    })
+    expect(bindRes.status).toBe(200)
+
+    const res = await fetchSocket('/v1/status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as UnifiedStatusResponse
+    expect(Array.isArray(body.sessions)).toBe(true)
+
+    const joined = body.sessions.find(
+      (session) => session.session.hostSessionId === runtime.hostSessionId
+    )
+    expect(joined).toBeDefined()
+    expect(joined?.session.scopeRef).toBe('project:status-server-joined')
+    expect(joined?.session.laneRef).toBe('default')
+    expect(joined?.session.status).toBe('active')
+    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(runtime.runtimeId)
+    expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
+    expect(joined?.activeRuntime?.runtime.status).toBe('ready')
+    expect(joined?.activeRuntime?.tmux?.sessionName).toStartWith('hrc-')
+    expect(joined?.activeRuntime?.tmux?.sessionId).toBe('$1')
+    expect(joined?.activeRuntime?.tmux?.windowId).toBe('@1')
+    expect(joined?.activeRuntime?.tmux?.paneId).toBe('%1')
+    expect(joined?.activeRuntime?.surfaceBindings).toHaveLength(1)
+    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceKind).toBe('ghostty')
+    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceId).toBe('ghostty-status-server-1')
+  })
+
+  it('omits activeRuntime when a session has no active runtime and returns [] when a runtime has no active surfaces', async () => {
+    const noRuntimeRes = await postJson('/v1/sessions/resolve', {
+      sessionRef: 'project:status-server-no-runtime/lane:default',
+    })
+    expect(noRuntimeRes.status).toBe(200)
+
+    const runtimeNoSurface = await ensureTmuxRuntime('project:status-server-no-surfaces')
+
+    const res = await fetchSocket('/v1/status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as UnifiedStatusResponse
+    expect(Array.isArray(body.sessions)).toBe(true)
+
+    const noRuntimeSession = body.sessions.find(
+      (session) => session.session.scopeRef === 'project:status-server-no-runtime'
+    )
+    expect(noRuntimeSession).toBeDefined()
+    expect(noRuntimeSession?.activeRuntime).toBeUndefined()
+
+    const noSurfaceSession = body.sessions.find(
+      (session) => session.session.hostSessionId === runtimeNoSurface.hostSessionId
+    )
+    expect(noSurfaceSession).toBeDefined()
+    expect(noSurfaceSession?.activeRuntime?.runtime.runtimeId).toBe(runtimeNoSurface.runtimeId)
+    expect(Array.isArray(noSurfaceSession?.activeRuntime?.surfaceBindings)).toBe(true)
+    expect(noSurfaceSession?.activeRuntime?.surfaceBindings).toEqual([])
+  })
+
+  it('omits activeRuntime when the latest runtime for a session is unavailable', async () => {
+    const runtime = await ensureTmuxRuntime('project:status-server-unavailable-runtime')
+    const now = new Date(Date.now() + 1_000).toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.insert({
+      runtimeId: `rt-dead-${randomUUID()}`,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: 'project:status-server-unavailable-runtime',
+      laneRef: 'default',
+      generation: runtime.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'dead',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: 'hrc-dead-status',
+        windowName: 'main',
+        sessionId: '$9',
+        windowId: '@9',
+        paneId: '%9',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const res = await fetchSocket('/v1/status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as UnifiedStatusResponse
+
+    const statusSession = body.sessions.find(
+      (session) => session.session.hostSessionId === runtime.hostSessionId
+    )
+    expect(statusSession).toBeDefined()
+    expect(statusSession?.activeRuntime).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 13. Clean shutdown
 // ---------------------------------------------------------------------------
 describe('clean shutdown', () => {
   it('stops accepting requests after stop()', async () => {

@@ -59,6 +59,10 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcStatusActiveRuntimeView,
+  HrcStatusResponse,
+  HrcStatusSessionView,
+  HrcStatusTmuxView,
   InterruptAppSessionRequest,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
@@ -2688,7 +2692,8 @@ class HrcServerInstance implements HrcServer {
           tmux: tmuxStatus,
         },
       },
-    })
+      sessions: sessions.map((session) => toStatusSessionView(this.db, session)),
+    } satisfies HrcStatusResponse)
   }
 
   private handleListRuntimes(url: URL): Response {
@@ -4617,6 +4622,55 @@ function simplifyTmuxJson(tmuxJson: Record<string, unknown> | undefined): Record
     sessionId: tmuxJson['sessionId'],
     windowId: tmuxJson['windowId'],
     paneId: tmuxJson['paneId'],
+  }
+}
+
+function toStatusTmuxView(
+  tmuxJson: Record<string, unknown> | undefined
+): HrcStatusTmuxView | undefined {
+  if (!tmuxJson) {
+    return undefined
+  }
+
+  const tmux: HrcStatusTmuxView = {}
+  const socketPath = tmuxJson['socketPath']
+  const sessionName = tmuxJson['sessionName']
+  const sessionId = tmuxJson['sessionId']
+  const windowId = tmuxJson['windowId']
+  const paneId = tmuxJson['paneId']
+
+  if (typeof socketPath === 'string') tmux.socketPath = socketPath
+  if (typeof sessionName === 'string') tmux.sessionName = sessionName
+  if (typeof sessionId === 'string') tmux.sessionId = sessionId
+  if (typeof windowId === 'string') tmux.windowId = windowId
+  if (typeof paneId === 'string') tmux.paneId = paneId
+
+  return Object.keys(tmux).length > 0 ? tmux : undefined
+}
+
+function toStatusActiveRuntimeView(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot
+): HrcStatusActiveRuntimeView {
+  const tmux = runtime.transport === 'tmux' ? toStatusTmuxView(runtime.tmuxJson) : undefined
+
+  return {
+    runtime,
+    surfaceBindings: db.surfaceBindings.findByRuntime(runtime.runtimeId),
+    ...(tmux !== undefined ? { tmux } : {}),
+  }
+}
+
+function toStatusSessionView(db: HrcDatabase, session: HrcSessionRecord): HrcStatusSessionView {
+  const latestRuntime = findLatestSessionRuntime(db, session.hostSessionId)
+
+  if (!latestRuntime || isRuntimeUnavailableStatus(latestRuntime.status)) {
+    return { session }
+  }
+
+  return {
+    session,
+    activeRuntime: toStatusActiveRuntimeView(db, latestRuntime),
   }
 }
 

@@ -751,6 +751,65 @@ describe('Phase 6 diagnostics round-trip', () => {
     expect(result.capabilities.platform.legacyLocalBridges).toEqual(['legacy-agentchat'])
   })
 
+  it('getStatus returns joined session runtime tmux and surface binding views (T-01025)', async () => {
+    if (!server) return
+
+    const client = new HrcClient(socketPath)
+    const resolved = await client.resolveSession({
+      sessionRef: 'project:status-sdk/lane:default',
+    })
+    const now = new Date().toISOString()
+    const runtimeId = `rt-status-${randomUUID()}`
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: 'project:status-sdk',
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: `hrc-${resolved.hostSessionId.slice(0, 12)}`,
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.surfaceBindings.bind({
+      surfaceKind: 'ghostty',
+      surfaceId: 'ghostty-sdk-status-1',
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      generation: resolved.generation,
+      paneId: 'pane-sdk-status-1',
+      boundAt: now,
+    })
+
+    const status = await client.getStatus()
+    const joined = status.sessions.find(
+      (sessionStatus) => sessionStatus.session.hostSessionId === resolved.hostSessionId
+    )
+
+    expect(joined).toBeDefined()
+    expect(joined?.session.scopeRef).toBe('project:status-sdk')
+    expect(joined?.session.status).toBe('active')
+    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(runtimeId)
+    expect(joined?.activeRuntime?.runtime.status).toBe('ready')
+    expect(joined?.activeRuntime?.tmux?.sessionName).toStartWith('hrc-')
+    expect(joined?.activeRuntime?.tmux?.paneId).toBe('%1')
+    expect(joined?.activeRuntime?.surfaceBindings).toHaveLength(1)
+    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceId).toBe('ghostty-sdk-status-1')
+  })
+
   it('listRuntimes returns empty array when none exist', async () => {
     if (!server) return
     const client = new HrcClient(socketPath)

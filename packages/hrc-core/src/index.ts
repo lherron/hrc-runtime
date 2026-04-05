@@ -79,6 +79,10 @@ export type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcStatusActiveRuntimeView,
+  HrcStatusResponse,
+  HrcStatusSessionView,
+  HrcStatusTmuxView,
 } from './contracts.js'
 
 export type {

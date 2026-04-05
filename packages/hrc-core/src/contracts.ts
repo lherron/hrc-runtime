@@ -306,3 +306,26 @@ export type HrcCapabilityStatus = {
     }
   }
 }
+
+export type HrcStatusTmuxView = {
+  socketPath?: string | undefined
+  sessionName?: string | undefined
+  sessionId?: string | undefined
+  windowId?: string | undefined
+  paneId?: string | undefined
+}
+
+export type HrcStatusActiveRuntimeView = {
+  runtime: HrcRuntimeSnapshot
+  tmux?: HrcStatusTmuxView | undefined
+  surfaceBindings: HrcSurfaceBindingRecord[]
+}
+
+export type HrcStatusSessionView = {
+  session: HrcSessionRecord
+  activeRuntime?: HrcStatusActiveRuntimeView | undefined
+}
+
+export type HrcStatusResponse = HrcCapabilityStatus & {
+  sessions: HrcStatusSessionView[]
+}

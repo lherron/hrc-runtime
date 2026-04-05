@@ -5,11 +5,11 @@
 import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
-  HrcCapabilityStatus,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
   HrcRuntimeIntent,
   HrcSessionRecord,
+  HrcStatusResponse,
 } from './contracts.js'
 import type { HrcFence } from './fences.js'
 
@@ -125,7 +125,7 @@ export type HealthResponse = {
   ok: true
 }
 
-export type StatusResponse = HrcCapabilityStatus
+export type StatusResponse = HrcStatusResponse
 
 // -- Surface binding ----------------------------------------------------------
 
