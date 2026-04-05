@@ -68,6 +68,7 @@ function makeIntent(
     provider?: 'anthropic' | 'openai'
     interactive?: boolean
     model?: string
+    initialPrompt?: string
     targetDir?: string
     env?: Record<string, string>
     unsetEnv?: string[]
@@ -96,6 +97,7 @@ function makeIntent(
       interactive: overrides.interactive ?? true,
       model: overrides.model,
     },
+    ...(overrides.initialPrompt !== undefined ? { initialPrompt: overrides.initialPrompt } : {}),
     launch:
       overrides.env || overrides.unsetEnv || overrides.pathPrepend
         ? {
@@ -262,6 +264,62 @@ describe('buildCliInvocation for claude-code', () => {
     for (const arg of result.argv) {
       expect(typeof arg).toBe('string')
     }
+  })
+
+  it('passes intent.initialPrompt through as placementReq.prompt', async () => {
+    let capturedPrompt: string | undefined
+    const intent = makeIntent({ initialPrompt: 'Fix the bug' })
+
+    await buildCliInvocation(intent, {
+      specBuilder: async (req) => {
+        capturedPrompt = req.prompt
+        return stubSpecBuilder(req)
+      },
+    })
+
+    expect(capturedPrompt).toBe('Fix the bug')
+  })
+
+  it('omits placementReq.prompt when intent.initialPrompt is undefined', async () => {
+    let sawPrompt = false
+    const intent = makeIntent()
+
+    await buildCliInvocation(intent, {
+      specBuilder: async (req) => {
+        sawPrompt = Object.hasOwn(req, 'prompt')
+        return stubSpecBuilder(req)
+      },
+    })
+
+    expect(sawPrompt).toBe(false)
+  })
+
+  it('resolves placementReq.aspHome from ASP_HOME instead of sending empty string', async () => {
+    // T-01022 RED/GREEN guard: placement-based invocation must still pass a real
+    // aspHome through the public client contract because empty string is preserved
+    // by the client and breaks materialization in future sessions.
+    const originalAspHome = process.env.ASP_HOME
+    const sentinelAspHome = '/tmp/hrc-cli-adapter-asp-home-sentinel'
+    let capturedAspHome: string | undefined
+
+    process.env.ASP_HOME = sentinelAspHome
+
+    try {
+      await buildCliInvocation(makeIntent(), {
+        specBuilder: async (req) => {
+          capturedAspHome = req.aspHome
+          return stubSpecBuilder(req)
+        },
+      })
+    } finally {
+      if (originalAspHome === undefined) {
+        process.env.ASP_HOME = undefined
+      } else {
+        process.env.ASP_HOME = originalAspHome
+      }
+    }
+
+    expect(capturedAspHome).toBe(sentinelAspHome)
   })
 })
 

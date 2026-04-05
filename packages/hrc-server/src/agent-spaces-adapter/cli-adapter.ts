@@ -13,7 +13,7 @@ import {
   createAgentSpacesClient,
 } from 'agent-spaces'
 import type { HrcHarness, HrcLaunchEnvConfig, HrcProvider, HrcRuntimeIntent } from 'hrc-core'
-import type { ResolvedRuntimeBundle } from 'spaces-config'
+import { type ResolvedRuntimeBundle, getAspHome } from 'spaces-config'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -197,8 +197,9 @@ export async function buildCliInvocation(
     model: intent.harness.model,
     interactionMode: 'interactive',
     ioMode: 'pty',
+    ...(intent.initialPrompt !== undefined ? { prompt: intent.initialPrompt } : {}),
     // Required by the type but ignored when placement is set
-    aspHome: '',
+    aspHome: getAspHome(),
     spec: { spaces: [] },
     cwd: '/',
   }
