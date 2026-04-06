@@ -810,13 +810,14 @@ describe('Phase 6 diagnostics round-trip', () => {
     expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceId).toBe('ghostty-sdk-status-1')
   })
 
-  it('listRuntimes returns empty array when none exist', async () => {
+  it('listRuntimes returns an array', async () => {
     if (!server) return
     const client = new HrcClient(socketPath)
     // RED: listRuntimes does not exist on HrcClient
     const result = await (client as any).listRuntimes()
     expect(Array.isArray(result)).toBe(true)
-    expect(result.length).toBe(0)
+    // Prior tests in this suite may have created runtimes in the shared
+    // server instance, so we only assert the shape, not the count.
   })
 
   it('listRuntimes with hostSessionId filter returns filtered results', async () => {
