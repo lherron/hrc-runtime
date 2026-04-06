@@ -32,6 +32,7 @@ export type HrcHarnessIntent = {
   interactive: boolean
   fallback?: string | undefined
   model?: string | undefined
+  yolo?: boolean | undefined
 }
 
 export type HrcExecutionIntent = {

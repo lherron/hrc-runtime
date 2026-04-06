@@ -40,6 +40,7 @@ import type {
   DispatchAppHarnessTurnRequest,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  EnsureAppSessionDryRunPlan,
   EnsureAppSessionRequest,
   EnsureAppSessionResponse,
   EnsureRuntimeRequest,
@@ -608,12 +609,18 @@ class HrcServerInstance implements HrcServer {
     const body = parseEnsureAppSessionRequest(await parseJsonBody(request))
     const { appId, appSessionKey } = body.selector
     const spec = body.spec
-    const now = timestamp()
 
     // Merge request-level initialPrompt into the harness runtime intent
     if (body.initialPrompt !== undefined && spec.kind === 'harness') {
       spec.runtimeIntent = { ...spec.runtimeIntent, initialPrompt: body.initialPrompt }
     }
+
+    // ---- Dry-run mode: compute the plan without mutating anything -----------
+    if (body.dryRun === true) {
+      return await this.handleEnsureAppSessionDryRun(body, spec)
+    }
+
+    const now = timestamp()
 
     const existing = this.db.appManagedSessions.findByKey(appId, appSessionKey)
 
@@ -817,6 +824,91 @@ class HrcServerInstance implements HrcServer {
       status: 'created',
       ...(runtimeId !== undefined ? { runtimeId } : {}),
     } satisfies EnsureAppSessionResponse)
+  }
+
+  private async handleEnsureAppSessionDryRun(
+    body: EnsureAppSessionRequest,
+    spec: HrcAppSessionSpec
+  ): Promise<Response> {
+    const { appId, appSessionKey } = body.selector
+    const existing = this.db.appManagedSessions.findByKey(appId, appSessionKey)
+
+    if (!existing || existing.status === 'removed') {
+      // No existing session — would create a new one
+      const plan: EnsureAppSessionDryRunPlan = {
+        action: 'create',
+        sessionExists: false,
+      }
+
+      // Build the invocation that would be used
+      if (spec.kind === 'harness' && spec.runtimeIntent.harness.interactive) {
+        try {
+          const invocation = await buildDispatchInvocation(spec.runtimeIntent)
+          plan.invocation = invocation
+        } catch {
+          // Invocation build failed — still report the plan without it
+        }
+      }
+
+      return json({ dryRun: plan })
+    }
+
+    // Session exists — check runtime liveness
+    if (spec.kind === 'harness' && spec.runtimeIntent.harness.interactive) {
+      const session = requireSession(this.db, existing.activeHostSessionId)
+      const priorRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      const runtimeLive = await isInteractiveRuntimeLive(
+        priorRuntime,
+        body.forceRestart === true,
+        this.tmux
+      )
+
+      if (runtimeLive && priorRuntime) {
+        const tmuxSessionName = priorRuntime.tmuxJson
+          ? getObservedTmuxSessionName(priorRuntime)
+          : undefined
+
+        return json({
+          dryRun: {
+            action: 'reattach',
+            sessionExists: true,
+            runtimeId: priorRuntime.runtimeId,
+            runtimeStatus: priorRuntime.status,
+            runtimePid: priorRuntime.childPid ?? priorRuntime.wrapperPid,
+            ...(tmuxSessionName ? { tmuxSession: tmuxSessionName } : {}),
+          } satisfies EnsureAppSessionDryRunPlan,
+        })
+      }
+
+      // Would create a new runtime
+      const plan: EnsureAppSessionDryRunPlan = {
+        action: 'create',
+        sessionExists: true,
+        ...(priorRuntime
+          ? {
+              runtimeId: priorRuntime.runtimeId,
+              runtimeStatus: priorRuntime.status,
+            }
+          : {}),
+      }
+
+      try {
+        const invocation = await buildDispatchInvocation(spec.runtimeIntent)
+        plan.invocation = invocation
+      } catch {
+        // Invocation build failed — still report the plan without it
+      }
+
+      return json({ dryRun: plan })
+    }
+
+    // Non-interactive or command session — just report existence
+    return json({
+      dryRun: {
+        action: 'create',
+        sessionExists: true,
+      } satisfies EnsureAppSessionDryRunPlan,
+    })
   }
 
   private handleListManagedAppSessions(url: URL): Response {
@@ -4168,6 +4260,7 @@ function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
       provider: provider as HrcProvider,
       interactive,
       ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
+      ...(harness['yolo'] === true ? { yolo: true } : {}),
     },
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
   }
@@ -4220,6 +4313,7 @@ function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRequest {
     ...(typeof input['initialPrompt'] === 'string'
       ? { initialPrompt: input['initialPrompt'] }
       : {}),
+    ...(input['dryRun'] === true ? { dryRun: true } : {}),
   }
 }
 

@@ -197,6 +197,7 @@ export async function buildCliInvocation(
     model: intent.harness.model,
     interactionMode: 'interactive',
     ioMode: 'pty',
+    ...(intent.harness.yolo ? { yolo: true } : {}),
     ...(intent.initialPrompt !== undefined ? { prompt: intent.initialPrompt } : {}),
     // Required by the type but ignored when placement is set
     aspHome: getAspHome(),
