@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StatusResponse } from 'hrc-core'
 
 // RED GATE: cli.ts must exist as the bin entry point
 // This import will fail until Curly implements the CLI module
@@ -43,6 +44,35 @@ type CliResult = {
   stdout: string
   stderr: string
   exitCode: number
+}
+
+type UnifiedStatusSessionView = {
+  session: {
+    hostSessionId: string
+    scopeRef: string
+    laneRef: string
+    generation: number
+  }
+  activeRuntime?: {
+    runtime: {
+      runtimeId: string
+      transport: string
+      status: string
+    }
+    tmux?: {
+      sessionId?: string
+      windowId?: string
+      paneId?: string
+    }
+    surfaceBindings: Array<{
+      surfaceKind: string
+      surfaceId: string
+    }>
+  }
+}
+
+type UnifiedStatusResponse = StatusResponse & {
+  sessions: UnifiedStatusSessionView[]
 }
 
 /**
@@ -66,6 +96,10 @@ async function runCli(args: string[], env?: Record<string, string>): Promise<Cli
 
   const exitCode = await proc.exited
   return { stdout, stderr, exitCode }
+}
+
+function testProjectScope(projectId: string): string {
+  return `agent:test:project:${projectId}`
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +251,7 @@ describe('turn send / clear-context', () => {
   })
 
   it('turn send outputs run JSON for a known hostSessionId', async () => {
-    const hostSessionId = await resolveHostSessionId('project:turncli')
+    const hostSessionId = await resolveHostSessionId(testProjectScope('turncli'))
     const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
     expect(ensureResult.exitCode).toBe(0)
 
@@ -240,7 +274,7 @@ describe('turn send / clear-context', () => {
   })
 
   it('clear-context outputs rotation JSON for a known hostSessionId', async () => {
-    const hostSessionId = await resolveHostSessionId('project:clearctxcli')
+    const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
     const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
     expect(ensureResult.exitCode).toBe(0)
 
@@ -310,7 +344,7 @@ describe('runtime lifecycle commands', () => {
   }
 
   it('runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
-    const hostSessionId = await resolveHostSessionId('project:runtimecli')
+    const hostSessionId = await resolveHostSessionId(testProjectScope('runtimecli'))
     const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -322,7 +356,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('capture prints pane text for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime('project:capturecli')
+    const runtimeId = await ensureRuntime(testProjectScope('capturecli'))
     const result = await runCli(['capture', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -330,7 +364,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('attach prints descriptor JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime('project:attachcli')
+    const runtimeId = await ensureRuntime(testProjectScope('attachcli'))
     const result = await runCli(['attach', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -340,7 +374,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('attach auto-binds Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
-    const runtimeId = await seedAttachableRuntime('project:attach-ghostty-cli')
+    const runtimeId = await seedAttachableRuntime(testProjectScope('attach-ghostty-cli'))
     const result = await runCli(
       ['attach', runtimeId],
       cliEnv({ GHOSTTY_SURFACE_UUID: 'ghostty-cli-attach-1' })
@@ -356,7 +390,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('interrupt prints JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime('project:interruptcli')
+    const runtimeId = await ensureRuntime(testProjectScope('interruptcli'))
     const result = await runCli(['interrupt', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -366,7 +400,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('terminate prints JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime('project:terminatecli')
+    const runtimeId = await ensureRuntime(testProjectScope('terminatecli'))
     const result = await runCli(['terminate', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
@@ -376,7 +410,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('surface bind/list/unbind commands manage runtime bindings', async () => {
-    const runtimeId = await seedAttachableRuntime('project:surfacecli')
+    const runtimeId = await seedAttachableRuntime(testProjectScope('surfacecli'))
 
     const bindResult = await runCli(
       ['surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
@@ -415,7 +449,7 @@ describe('hrc run', () => {
     await seedRunRoots('rex', 'agent-spaces')
   })
 
-  it('creates a managed harness session from a shorthand scope handle with --no-attach', async () => {
+  it('creates a canonical harness session from a shorthand scope handle with --no-attach', async () => {
     const result = await runCli(
       ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
       cliEnv({
@@ -426,15 +460,14 @@ describe('hrc run', () => {
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
-    expect(body.session.appId).toBe('hrc-cli')
-    expect(body.session.appSessionKey).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
-    expect(body.session.label).toBe('rex@agent-spaces:T-00123')
-    expect(body.session.kind).toBe('harness')
+    expect(body.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
+    expect(body.hostSessionId).toBeDefined()
     expect(body.created).toBe(true)
-    expect(body.status).toBe('created')
+    expect(body.runtime.runtimeId).toBeDefined()
+    expect(body.runtime.transport).toBe('tmux')
   })
 
-  it('accepts canonical ScopeRef input and preserves a prompt on the managed session spec', async () => {
+  it('accepts canonical ScopeRef input and dispatches a prompt', async () => {
     const prompt = 'Fix the bug'
     const result = await runCli(
       ['run', 'agent:rex:project:agent-spaces:task:T-00123', prompt, '--no-attach'],
@@ -446,12 +479,12 @@ describe('hrc run', () => {
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
-    expect(body.session.appSessionKey).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
-    expect(body.session.label).toBe('agent:rex:project:agent-spaces:task:T-00123')
-    expect(body.status).toBe('created')
+    expect(body.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
+    expect(body.created).toBe(true)
+    expect(body.runtime.runtimeId).toBeDefined()
   })
 
-  it('maps ~lane handles onto distinct app-session keys and forwards --force-restart', async () => {
+  it('maps ~lane handles onto distinct sessionRefs and replaces the runtime on --force-restart', async () => {
     const first = await runCli(
       ['run', 'rex@agent-spaces:T-00123~repair', '--no-attach'],
       cliEnv({
@@ -461,9 +494,8 @@ describe('hrc run', () => {
     )
     expect(first.exitCode).toBe(0)
     const firstBody = JSON.parse(first.stdout.trim())
-    expect(firstBody.session.appSessionKey).toBe(
-      'agent:rex:project:agent-spaces:task:T-00123/lane:repair'
-    )
+    expect(firstBody.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:repair')
+    const firstRuntimeId = firstBody.runtime.runtimeId
 
     const second = await runCli(
       ['run', 'rex@agent-spaces:T-00123~repair', '--force-restart', '--no-attach'],
@@ -475,11 +507,40 @@ describe('hrc run', () => {
 
     expect(second.exitCode).toBe(0)
     const secondBody = JSON.parse(second.stdout.trim())
-    expect(secondBody.session.appSessionKey).toBe(
-      'agent:rex:project:agent-spaces:task:T-00123/lane:repair'
+    expect(secondBody.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:repair')
+    // Same session, but fresh_pty replaces the runtime.
+    expect(secondBody.hostSessionId).toBe(firstBody.hostSessionId)
+    expect(secondBody.runtime.runtimeId).not.toBe(firstRuntimeId)
+    expect(secondBody.created).toBe(false)
+  })
+
+  // hrc run must pass canonical sessionRef when resolving the session. The
+  // resulting host session row must carry the canonical scopeRef/laneRef,
+  // not a synthetic app-session identifier.
+  it('passes canonical sessionRef on the resolveSession request', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
     )
-    expect(secondBody.restarted).toBe(true)
-    expect(secondBody.status).toBe('restarted')
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+
+    const hostSessionId = body.hostSessionId
+    expect(hostSessionId).toBeDefined()
+
+    const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
+    try {
+      const session = db.sessions.findByHostSessionId(hostSessionId)
+      expect(session).toBeDefined()
+      expect(session!.scopeRef).toBe('agent:rex:project:agent-spaces:task:T-00123')
+      expect(session!.laneRef).toBe('main')
+    } finally {
+      db.close()
+    }
   })
 
   it('attaches by default instead of printing JSON when --no-attach is omitted', async () => {
@@ -503,7 +564,103 @@ describe('hrc run', () => {
 })
 
 // ===========================================================================
-// 5. hrc session resolve — JSON output
+// 5a. hrc run --dry-run
+// ===========================================================================
+describe('hrc run --dry-run', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+    await seedRunRoots('rex', 'agent-spaces')
+  })
+
+  it('prints a local plan preview with sessionRef and default restartStyle', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain('sessionRef:   agent:rex:project:agent-spaces/lane:main')
+    expect(result.stdout).toContain('restartStyle: reuse_pty')
+    expect(result.stdout).toContain('provider:     anthropic')
+  })
+
+  it('reflects --force-restart as restartStyle fresh_pty in the preview', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run', '--force-restart'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('restartStyle: fresh_pty')
+  })
+
+  it('does not mutate server state', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('local plan preview')
+
+    // Confirm no session was persisted — dry-run is client-side only.
+    const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
+    try {
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      expect(sessions.length).toBe(0)
+    } finally {
+      db.close()
+    }
+
+    const result2 = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(result2.exitCode).toBe(0)
+    expect(result2.stdout).toContain('local plan preview')
+  })
+
+  it('accepts -p <text> as an initial prompt source', async () => {
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run', '-p', 'hello from flag'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('initialPrompt: 15 chars')
+  })
+
+  it('accepts --prompt-file <path> as an initial prompt source', async () => {
+    const promptPath = join(tmpDir, 'prompt.txt')
+    await writeFile(promptPath, 'hello from file', 'utf-8')
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run', '--prompt-file', promptPath],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('initialPrompt: 15 chars')
+  })
+})
+
+// ===========================================================================
+// 6. hrc session resolve — JSON output
 // ===========================================================================
 describe('hrc session resolve', () => {
   beforeEach(async () => {
@@ -512,7 +669,7 @@ describe('hrc session resolve', () => {
 
   it('outputs JSON with hostSessionId, generation, created to stdout', async () => {
     const result = await runCli(
-      ['session', 'resolve', '--scope', 'project:clitest', '--lane', 'default'],
+      ['session', 'resolve', '--scope', testProjectScope('clitest'), '--lane', 'default'],
       cliEnv()
     )
 
@@ -525,7 +682,10 @@ describe('hrc session resolve', () => {
   })
 
   it('uses lane "default" when --lane is omitted', async () => {
-    const result = await runCli(['session', 'resolve', '--scope', 'project:nolane'], cliEnv())
+    const result = await runCli(
+      ['session', 'resolve', '--scope', testProjectScope('nolane')],
+      cliEnv()
+    )
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
@@ -557,7 +717,7 @@ describe('hrc session list', () => {
   it('outputs sessions after resolve', async () => {
     // First create a session via CLI
     await runCli(
-      ['session', 'resolve', '--scope', 'project:listcli', '--lane', 'default'],
+      ['session', 'resolve', '--scope', testProjectScope('listcli'), '--lane', 'default'],
       cliEnv()
     )
 
@@ -565,18 +725,21 @@ describe('hrc session list', () => {
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body.length).toBe(1)
-    expect(body[0].scopeRef).toBe('project:listcli')
+    expect(body[0].scopeRef).toBe(testProjectScope('listcli'))
   })
 
   it('supports --scope filter', async () => {
-    await runCli(['session', 'resolve', '--scope', 'project:filterA'], cliEnv())
-    await runCli(['session', 'resolve', '--scope', 'project:filterB'], cliEnv())
+    await runCli(['session', 'resolve', '--scope', testProjectScope('filterA')], cliEnv())
+    await runCli(['session', 'resolve', '--scope', testProjectScope('filterB')], cliEnv())
 
-    const result = await runCli(['session', 'list', '--scope', 'project:filterA'], cliEnv())
+    const result = await runCli(
+      ['session', 'list', '--scope', testProjectScope('filterA')],
+      cliEnv()
+    )
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body.length).toBe(1)
-    expect(body[0].scopeRef).toBe('project:filterA')
+    expect(body[0].scopeRef).toBe(testProjectScope('filterA'))
   })
 })
 
@@ -590,7 +753,7 @@ describe('hrc session get', () => {
 
   it('outputs session JSON for a known hostSessionId', async () => {
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', 'project:getcli'],
+      ['session', 'resolve', '--scope', testProjectScope('getcli')],
       cliEnv()
     )
     const resolved = JSON.parse(resolveResult.stdout.trim())
@@ -623,7 +786,7 @@ describe('hrc watch', () => {
 
   it('outputs NDJSON events to stdout (non-follow mode)', async () => {
     // Create events first
-    await runCli(['session', 'resolve', '--scope', 'project:watchcli'], cliEnv())
+    await runCli(['session', 'resolve', '--scope', testProjectScope('watchcli')], cliEnv())
 
     // Watch without follow — should return events and exit
     const result = await runCli(['watch'], cliEnv())
@@ -645,8 +808,8 @@ describe('hrc watch', () => {
 
   it('supports --from-seq flag', async () => {
     // Create multiple events
-    await runCli(['session', 'resolve', '--scope', 'project:fromseqcli1'], cliEnv())
-    await runCli(['session', 'resolve', '--scope', 'project:fromseqcli2'], cliEnv())
+    await runCli(['session', 'resolve', '--scope', testProjectScope('fromseqcli1')], cliEnv())
+    await runCli(['session', 'resolve', '--scope', testProjectScope('fromseqcli2')], cliEnv())
 
     // Get all events
     const allResult = await runCli(['watch'], cliEnv())
@@ -730,7 +893,7 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc runtime list with --host-session-id filter', async () => {
     // Seed a session + runtime
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', 'project:diag-rt-list'],
+      ['session', 'resolve', '--scope', testProjectScope('diag-rt-list')],
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
@@ -756,7 +919,7 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc launch list with --runtime-id filter', async () => {
     // Seed a runtime to get launches
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', 'project:diag-launch-list'],
+      ['session', 'resolve', '--scope', testProjectScope('diag-launch-list')],
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
@@ -776,7 +939,7 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc adopt on dead runtime prints adopted JSON and exits 0', async () => {
     // Seed a dead runtime
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', 'project:diag-adopt-cli'],
+      ['session', 'resolve', '--scope', testProjectScope('diag-adopt-cli')],
       cliEnv()
     )
     const resolved = JSON.parse(resolveResult.stdout.trim())
@@ -786,7 +949,7 @@ describe('Phase 6 diagnostics CLI', () => {
     db.runtimes.insert({
       runtimeId,
       hostSessionId: resolved.hostSessionId,
-      scopeRef: 'project:diag-adopt-cli',
+      scopeRef: testProjectScope('diag-adopt-cli'),
       laneRef: 'default',
       generation: resolved.generation,
       transport: 'tmux',
@@ -818,7 +981,7 @@ describe('Phase 6 diagnostics CLI', () => {
 
   it('hrc adopt on active runtime exits 1', async () => {
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', 'project:diag-adopt-active-cli'],
+      ['session', 'resolve', '--scope', testProjectScope('diag-adopt-active-cli')],
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
@@ -919,7 +1082,143 @@ describe('status capability display (T-00998)', () => {
 })
 
 // ===========================================================================
-// 11. Error output format
+// 11. Unified status session/runtime/surface view (T-01025)
+//
+// RED GATE for wrkq T-01025:
+//   `hrc status` still renders aggregate server state only, and `/v1/status`
+//   still returns counts/capabilities without a joined per-session view.
+//
+// Pass conditions:
+//   1. Default `hrc status` renders session-centric blocks, not counts only
+//   2. Session blocks join session -> active runtime -> tmux -> active surfaces
+//   3. `hrc status --json` exposes a machine-readable `sessions[]` joined view
+//   4. Sessions with no active runtime render explicitly
+//   5. Active runtimes with no active surfaces render explicitly
+// ===========================================================================
+describe('unified status session/runtime/surface view (T-01025)', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  async function resolveSession(scope: string): Promise<{
+    hostSessionId: string
+    generation: number
+    scopeRef: string
+    laneRef: string
+  }> {
+    const resolveResult = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
+    expect(resolveResult.exitCode).toBe(0)
+    const { hostSessionId } = JSON.parse(resolveResult.stdout.trim()) as { hostSessionId: string }
+    const sessionResult = await runCli(['session', 'get', hostSessionId], cliEnv())
+    expect(sessionResult.exitCode).toBe(0)
+    const session = JSON.parse(sessionResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+      scopeRef: string
+      laneRef: string
+    }
+    return {
+      hostSessionId,
+      generation: session.generation,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+    }
+  }
+
+  async function seedTmuxRuntime(scope: string): Promise<{
+    hostSessionId: string
+    runtimeId: string
+  }> {
+    const session = await resolveSession(scope)
+    const runtimeId = `rt-status-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: {
+        socketPath: tmuxSocketPath,
+        sessionName: `hrc-${session.hostSessionId.slice(0, 12)}`,
+        windowName: 'main',
+        sessionId: '$1',
+        windowId: '@1',
+        paneId: '%1',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return { hostSessionId: session.hostSessionId, runtimeId }
+  }
+
+  it('hrc status renders session-centric human output with joined runtime/tmux/surface details', async () => {
+    const seeded = await seedTmuxRuntime(testProjectScope('status-human-joined'))
+    const bindResult = await runCli(
+      ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-human-1'],
+      cliEnv()
+    )
+    expect(bindResult.exitCode).toBe(0)
+
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(seeded.hostSessionId)
+    expect(result.stdout).toContain(testProjectScope('status-human-joined'))
+    expect(result.stdout).toContain(seeded.runtimeId)
+    expect(result.stdout).toMatch(/tmux/i)
+    expect(result.stdout).toContain('%1')
+    expect(result.stdout).toContain('ghostty-status-human-1')
+  })
+
+  it('hrc status renders explicit no-runtime and no-surface states without overfitting spacing', async () => {
+    await resolveSession(testProjectScope('status-no-runtime'))
+    await seedTmuxRuntime(testProjectScope('status-no-surfaces'))
+
+    const result = await runCli(['status'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(testProjectScope('status-no-runtime'))
+    expect(result.stdout).toContain(testProjectScope('status-no-surfaces'))
+    expect(result.stdout).toMatch(/no active runtime/i)
+    expect(result.stdout).toMatch(/no active surfaces/i)
+  })
+
+  it('hrc status --json exposes joined sessions with activeRuntime tmux and activeSurfaces', async () => {
+    const seeded = await seedTmuxRuntime(testProjectScope('status-json-joined'))
+    const bindResult = await runCli(
+      ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-json-1'],
+      cliEnv()
+    )
+    expect(bindResult.exitCode).toBe(0)
+
+    const result = await runCli(['status', '--json'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim()) as UnifiedStatusResponse
+    expect(Array.isArray(body.sessions)).toBe(true)
+
+    const joined = body.sessions.find(
+      (session) => session.session.hostSessionId === seeded.hostSessionId
+    )
+    expect(joined).toBeDefined()
+    expect(joined?.session.scopeRef).toBe(testProjectScope('status-json-joined'))
+    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(seeded.runtimeId)
+    expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
+    expect(joined?.activeRuntime?.tmux?.paneId).toBe('%1')
+    expect(Array.isArray(joined?.activeRuntime?.surfaceBindings)).toBe(true)
+    expect(joined?.activeRuntime?.surfaceBindings).toHaveLength(1)
+    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceKind).toBe('ghostty')
+    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceId).toBe('ghostty-status-json-1')
+  })
+})
+
+// ===========================================================================
+// 12. Error output format
 // ===========================================================================
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {

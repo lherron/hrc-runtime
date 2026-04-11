@@ -131,10 +131,7 @@ describe('acquireBridgeTarget()', () => {
 
     const result = await client.acquireBridgeTarget({
       selector: {
-        appSession: {
-          appId: 'test-app',
-          appSessionKey: 'worker-1',
-        },
+        sessionRef: 'agent:rex:project:agent-spaces/lane:main',
       },
       transport: 'tmux',
       target: 'test-pane',
@@ -144,9 +141,7 @@ describe('acquireBridgeTarget()', () => {
     expect(lastRequest.pathname).toBe('/v1/bridges/target')
     const sentBody = lastRequest.body as Record<string, unknown>
     const selector = sentBody.selector as Record<string, unknown>
-    const appSession = selector.appSession as Record<string, unknown>
-    expect(appSession.appId).toBe('test-app')
-    expect(appSession.appSessionKey).toBe('worker-1')
+    expect(selector.sessionRef).toBe('agent:rex:project:agent-spaces/lane:main')
     expect(sentBody.transport).toBe('tmux')
     expect(result.bridgeId).toBe('bridge-stub')
   })

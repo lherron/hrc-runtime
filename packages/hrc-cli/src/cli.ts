@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { basename, join, resolve } from 'node:path'
 
 import {
   formatScopeRef,
@@ -13,6 +13,8 @@ import {
 } from 'agent-scope'
 
 import {
+  HrcDomainError,
+  HrcErrorCode,
   resolveControlSocketPath,
   resolveDatabasePath,
   resolveRuntimeRoot,
@@ -20,15 +22,39 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type {
-  HrcAppSessionSpec,
-  HrcRuntimeIntent,
-  HrcStatusResponse,
-  HrcStatusSessionView,
-} from 'hrc-core'
+import type { HrcRuntimeIntent, HrcStatusResponse, HrcStatusSessionView } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
-import { getAgentsRoot, getProjectsRoot } from 'spaces-config'
+import { getAgentsRoot, getProjectsRoot, parseAgentProfile } from 'spaces-config'
+
+// -- .env.local loading -------------------------------------------------------
+
+/**
+ * Load .env.local from cwd into process.env.
+ * Existing env vars are NOT overwritten (env takes precedence).
+ */
+function loadDotEnvLocal(): void {
+  const envPath = join(process.cwd(), '.env.local')
+  let content: string
+  try {
+    content = readFileSync(envPath, 'utf8')
+  } catch {
+    return // no .env.local — nothing to do
+  }
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eqIdx = trimmed.indexOf('=')
+    if (eqIdx === -1) continue
+    const key = trimmed.slice(0, eqIdx).trim()
+    const value = trimmed.slice(eqIdx + 1).trim()
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value
+    }
+  }
+}
+
+loadDotEnvLocal()
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -99,6 +125,25 @@ function createDefaultRuntimeIntent(
   }
 }
 
+/**
+ * Infer a project ID from ASP_PROJECT env var or from cwd being a direct
+ * child of the configured projects root.
+ */
+function inferProjectId(): string | undefined {
+  const fromEnv = process.env['ASP_PROJECT']
+  if (fromEnv) return fromEnv
+
+  const projectsRoot = getProjectsRoot()
+  if (!projectsRoot) return undefined
+  const cwd = resolve(process.cwd())
+  const resolvedRoot = resolve(projectsRoot)
+  // cwd must be a direct child of projectsRoot (e.g. ~/praesidium/agent-spaces)
+  if (resolve(join(cwd, '..')) === resolvedRoot) {
+    return basename(cwd)
+  }
+  return undefined
+}
+
 function resolveRunScopeInput(input: string): {
   parsed: ReturnType<typeof parseScopeRef>
   scopeRef: string
@@ -133,8 +178,24 @@ function resolveRunScopeInput(input: string): {
   }
 
   throw new Error(
-    `Invalid scope input "${input}": not a valid ScopeHandle, SessionHandle, or ScopeRef`
+    `invalid scope "${input}". Expected one of:\n  agent name       e.g. larry\n  agent@project    e.g. larry@agent-spaces\n  with task        e.g. larry@agent-spaces:T-00123\n  with lane        e.g. larry@agent-spaces:T-00123~repair\n  canonical ref    e.g. agent:larry:project:agent-spaces:task:T-00123`
   )
+}
+
+function resolveProviderFromAgent(agentRoot: string): 'anthropic' | 'openai' {
+  const profilePath = join(agentRoot, 'agent-profile.toml')
+  if (!existsSync(profilePath)) return 'anthropic'
+  try {
+    const source = readFileSync(profilePath, 'utf8').replace(
+      /^(\s*)schema_version(\s*=)/m,
+      '$1schemaVersion$2'
+    )
+    const profile = parseAgentProfile(source, profilePath)
+    if (profile.identity?.harness === 'codex') return 'openai'
+  } catch {
+    // Profile parse failed — fall back to default
+  }
+  return 'anthropic'
 }
 
 function buildRunBundle(
@@ -153,43 +214,55 @@ function buildRunBundle(
   return { kind: 'agent-default' }
 }
 
-function encodeManagedAppSessionKey(publicAppSessionKey: string): string {
-  return encodeURIComponent(publicAppSessionKey)
-}
-
-function withPublicAppSessionKey<T extends { session: { appSessionKey: string } }>(
-  result: T,
-  publicAppSessionKey: string
-): T {
-  return {
-    ...result,
-    session: {
-      ...result.session,
-      appSessionKey: publicAppSessionKey,
-    },
-  }
-}
-
-function parseRunPrompt(args: string[]): string | undefined {
+async function parseRunPrompt(args: string[]): Promise<string | undefined> {
   let prompt: string | undefined
+  let source: 'positional' | '-p' | '--prompt-file' | undefined
+
+  const setPrompt = (value: string, from: 'positional' | '-p' | '--prompt-file') => {
+    if (prompt !== undefined) {
+      fatal(
+        source === from
+          ? `run accepts at most one ${from === 'positional' ? 'positional prompt' : `${from} value`}`
+          : `run prompt sources are mutually exclusive (${source} vs ${from})`
+      )
+    }
+    prompt = value
+    source = from
+  }
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]
     if (!arg) continue
 
-    if (arg === '--label') {
-      if (args[i + 1] === undefined) {
-        fatal('--label requires a value')
-      }
+    if (
+      arg === '--force-restart' ||
+      arg === '--no-attach' ||
+      arg === '--dry-run' ||
+      arg === '--debug'
+    ) {
+      continue
+    }
+
+    if (arg === '-p') {
+      const value = args[i + 1]
+      if (value === undefined) fatal('-p requires a value')
+      setPrompt(value, '-p')
       i += 1
       continue
     }
 
-    if (arg.startsWith('--label=')) {
-      continue
-    }
-
-    if (arg === '--force-restart' || arg === '--no-attach') {
+    if (arg === '--prompt-file') {
+      const value = args[i + 1]
+      if (value === undefined) fatal('--prompt-file requires a value')
+      try {
+        const contents = await Bun.file(value).text()
+        setPrompt(contents, '--prompt-file')
+      } catch (err) {
+        fatal(
+          `--prompt-file: cannot read ${value}: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+      i += 1
       continue
     }
 
@@ -197,10 +270,7 @@ function parseRunPrompt(args: string[]): string | undefined {
       fatal(`unknown run option: ${arg}`)
     }
 
-    if (prompt !== undefined) {
-      fatal('run accepts at most one positional prompt')
-    }
-    prompt = arg
+    setPrompt(arg, 'positional')
   }
 
   return prompt
@@ -262,7 +332,6 @@ async function daemonize(): Promise<void> {
     env: { ...process.env },
   })
 
-  // Detach so the parent can exit without killing the child
   proc.unref()
 
   await writeFile(pidPath, `${proc.pid}\n`)
@@ -302,6 +371,9 @@ async function serverForeground(): Promise<void> {
     process.exit(0)
   }
 
+  // Ignore SIGHUP so the daemon survives when the parent terminal/session exits
+  // (e.g., Claude Code terminating). SIGINT and SIGTERM still trigger graceful shutdown.
+  process.on('SIGHUP', () => {})
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
 }
@@ -338,36 +410,6 @@ async function cmdSessionGet(args: string[]): Promise<void> {
   printJson(session)
 }
 
-async function cmdSessionApply(args: string[]): Promise<void> {
-  const appIdFlag = parseFlag(args, '--app')
-  const hostSessionIdFlag = parseFlag(args, '--host-session-id')
-  const filePath = parseFlag(args, '--file')
-  const jsonPayload = parseFlag(args, '--json')
-
-  if (!filePath && !jsonPayload) {
-    fatal('session apply requires --file <path> or --json <payload>')
-  }
-
-  if (filePath && jsonPayload) {
-    fatal('session apply accepts only one of --file or --json')
-  }
-
-  const raw =
-    filePath !== undefined ? await readFile(filePath, 'utf-8') : (jsonPayload as string | undefined)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw ?? '')
-  } catch {
-    fatal('session apply payload must be valid JSON')
-  }
-
-  const request = toSessionApplyRequest(parsed, appIdFlag, hostSessionIdFlag)
-
-  const client = createClient()
-  const result = await client.applyAppSessions(request)
-  printJson(result)
-}
-
 async function cmdSession(args: string[]): Promise<void> {
   const subcommand = args[0]
   const rest = args.slice(1)
@@ -379,13 +421,11 @@ async function cmdSession(args: string[]): Promise<void> {
       return cmdSessionList(rest)
     case 'get':
       return cmdSessionGet(rest)
-    case 'apply':
-      return cmdSessionApply(rest)
     default:
       fatal(
         subcommand
           ? `unknown session subcommand: ${subcommand}`
-          : 'session subcommand required (resolve, list, get, apply)'
+          : 'session subcommand required (resolve, list, get)'
       )
   }
 }
@@ -543,8 +583,9 @@ function printStatusHuman(status: HrcStatusResponse): void {
 
 async function cmdStatus(args: string[]): Promise<void> {
   const jsonFlag = hasFlag(args, '--json')
+  const allFlag = hasFlag(args, '--all')
   const client = createClient()
-  const result = await client.getStatus()
+  const result = await client.getStatus(allFlag ? { includeArchived: true } : undefined)
 
   if (jsonFlag) {
     printJson(result)
@@ -578,74 +619,247 @@ async function cmdAdopt(args: string[]): Promise<void> {
   printJson(result)
 }
 
+/**
+ * Convert common failure modes from `hrc run` into actionable error messages.
+ * Preserves the original message for unrecognized cases. Returns an Error with
+ * the wrapped message so the top-level `fatal()` handler prints it with the
+ * `hrc:` prefix.
+ */
+function explainRunError(err: unknown, scopeInput: string, sessionRef?: string): Error {
+  const raw = err instanceof Error ? err.message : String(err)
+
+  // Daemon not running — discoverSocket throws this
+  if (raw.includes('HRC daemon socket not found')) {
+    return new Error(`${raw}\n  Start it with: hrc server --daemon`)
+  }
+
+  // Bun fetch connection-refused when socket exists but nothing is listening
+  if (/typo in the url or port|ECONNREFUSED|Unable to connect/i.test(raw)) {
+    return new Error(
+      'cannot reach HRC daemon (socket present but not responding).\n' +
+        '  The daemon may have crashed. Try: hrc server --daemon'
+    )
+  }
+
+  if (err instanceof HrcDomainError) {
+    const detail = (err.detail ?? {}) as { scopeRef?: string; sessionRef?: string }
+    const storedScope = detail.scopeRef
+
+    // Hydration guard: server rejected a stored non-canonical scopeRef
+    if (
+      err.code === HrcErrorCode.INVALID_SELECTOR &&
+      raw.includes('canonical agent ScopeRef') &&
+      storedScope &&
+      !storedScope.startsWith('agent:')
+    ) {
+      return new Error(
+        `cannot reattach to "${scopeInput}": an existing session is stored with a legacy scopeRef "${storedScope}".\n  This database predates the canonical scope cleanup (T-01077).\n  Fix: wipe HRC state.\n    rm ~/.local/state/hrc/state.sqlite*`
+      )
+    }
+
+    // Generic invalid sessionRef (user-facing input problem)
+    if (err.code === HrcErrorCode.INVALID_SELECTOR) {
+      return new Error(
+        `invalid sessionRef for "${scopeInput}": ${err.message}\n` +
+          `  sessionRef sent: ${sessionRef ?? '(not yet computed)'}`
+      )
+    }
+
+    if (err.code === HrcErrorCode.STALE_CONTEXT) {
+      return new Error(
+        `conflict on "${scopeInput}": ${err.message}\n  Another alias already owns a different canonical session for this key.`
+      )
+    }
+
+    if (err.code === HrcErrorCode.UNSUPPORTED_CAPABILITY) {
+      return new Error(`cannot run "${scopeInput}": ${err.message}`)
+    }
+
+    // Other domain errors — show the code so operators can look it up
+    return new Error(`"${scopeInput}" [${err.code}]: ${err.message}`)
+  }
+
+  // Fallback: pass the raw message through. Top-level fatal() adds the `hrc:`
+  // prefix, and most helper errors already mention the scope in-line.
+  return err instanceof Error ? err : new Error(raw)
+}
+
 async function cmdRun(args: string[]): Promise<void> {
-  const scopeInput = requireArg(args, 0, '<scope>')
-  const label = parseFlag(args, '--label')
-  const forceRestart = hasFlag(args, '--force-restart')
-  const noAttach = hasFlag(args, '--no-attach')
-  const prompt = parseRunPrompt(args)
+  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+    process.stdout.write(`Usage: hrc run <scope> [options]
 
-  const { parsed, scopeRef, laneRef } = resolveRunScopeInput(scopeInput)
-  const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
-  const publicAppSessionKey = `${scopeRef}/lane:${laneId}`
-  const appSessionKey = encodeManagedAppSessionKey(publicAppSessionKey)
+  Launch or reattach an agent harness in a managed tmux session.
 
-  const agentsRoot = getAgentsRoot()
-  if (!agentsRoot) {
-    fatal('run requires an agents root; set ASP_AGENTS_ROOT or configure agents-root')
-  }
+  <scope>  Agent scope: agent, agent@project, or full scope ref.
+           When run from a project directory, the project is inferred
+           automatically (e.g. "larry" becomes "larry@agent-spaces").
 
-  const agentRoot = join(agentsRoot, parsed.agentId)
-  const projectsRoot = getProjectsRoot()
-  const projectRoot =
-    parsed.projectId && projectsRoot ? join(projectsRoot, parsed.projectId) : undefined
-  const cwd = projectRoot ?? agentRoot
-  const bundle = buildRunBundle(agentRoot, parsed.agentId, projectRoot)
+  By default, rerunning the same scope reattaches to the existing
+  runtime and preserves the PTY/context. Use --force-restart to
+  replace the runtime with a fresh PTY.
 
-  const intent = {
-    placement: {
-      agentRoot,
-      ...(projectRoot ? { projectRoot } : {}),
-      cwd,
-      runMode: 'task' as const,
-      bundle,
-    },
-    harness: {
-      provider: 'anthropic' as const,
-      interactive: true,
-    },
-    execution: {
-      preferredMode: 'interactive' as const,
-    },
-    ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
-  }
-
-  const client = createClient()
-  const result = await client.ensureAppSession({
-    selector: {
-      appId: 'hrc-cli',
-      appSessionKey,
-    },
-    spec: {
-      kind: 'harness',
-      runtimeIntent: intent,
-    },
-    label: label ?? scopeInput,
-    restartStyle: 'fresh_pty',
-    ...(forceRestart ? { forceRestart: true } : {}),
-    ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
-  })
-
-  if (noAttach) {
-    printJson(withPublicAppSessionKey(result, publicAppSessionKey))
+Options:
+  --force-restart      Replace any existing runtime with a fresh PTY
+  --no-attach          Start/ensure without attaching to the tmux session
+  --dry-run            Local plan preview — no server calls, no side effects
+  --debug              Keep tmux shell alive after harness exits
+  -p <text>            Initial prompt to send to the harness
+  --prompt-file <path> Read initial prompt from a file
+`)
     return
   }
 
-  const descriptor = await client.attachAppSession({
-    appId: 'hrc-cli',
-    appSessionKey,
-  })
-  await attachDescriptor(client, descriptor)
+  const scopeInput = requireArg(args, 0, '<scope>')
+  const forceRestart = hasFlag(args, '--force-restart')
+  const noAttach = hasFlag(args, '--no-attach')
+  const dryRun = hasFlag(args, '--dry-run')
+  const debug = hasFlag(args, '--debug')
+  const prompt = await parseRunPrompt(args)
+
+  let sessionRef: string | undefined
+  try {
+    let { parsed, scopeRef, laneRef } = resolveRunScopeInput(scopeInput)
+
+    // Infer project from environment or cwd when a bare agent name is given.
+    if (!parsed.projectId) {
+      const inferredProject = inferProjectId()
+      if (inferredProject) {
+        const qualifiedInput = `${scopeInput}@${inferredProject}`
+        ;({ parsed, scopeRef, laneRef } = resolveRunScopeInput(qualifiedInput))
+      }
+    }
+
+    const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
+    sessionRef = `${scopeRef}/lane:${laneId}`
+
+    const agentsRoot = getAgentsRoot()
+    if (!agentsRoot) {
+      throw new Error(
+        'run requires an agents root.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.'
+      )
+    }
+
+    const agentRoot = join(agentsRoot, parsed.agentId)
+    if (!existsSync(agentRoot)) {
+      throw new Error(
+        `agent "${parsed.agentId}" not found at ${agentRoot}.\n` +
+          `  Check the spelling, or confirm ASP_AGENTS_ROOT (${agentsRoot}) contains this agent.`
+      )
+    }
+
+    const projectsRoot = getProjectsRoot()
+    const projectRoot =
+      parsed.projectId && projectsRoot ? join(projectsRoot, parsed.projectId) : undefined
+    const cwd = projectRoot ?? agentRoot
+    const bundle = buildRunBundle(agentRoot, parsed.agentId, projectRoot)
+
+    // Read agent profile to determine harness/provider
+    const provider = resolveProviderFromAgent(agentRoot)
+
+    const intent: HrcRuntimeIntent = {
+      placement: {
+        agentRoot,
+        ...(projectRoot ? { projectRoot } : {}),
+        cwd,
+        runMode: 'task' as const,
+        bundle,
+      },
+      harness: {
+        provider,
+        interactive: true,
+      },
+      execution: {
+        preferredMode: 'interactive' as const,
+      },
+      ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
+      ...(debug ? { launch: { env: { HRC_DEBUG: '1' } } } : {}),
+    }
+
+    const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
+
+    if (dryRun) {
+      printLocalRunPreview(scopeInput, sessionRef, intent, restartStyle, prompt)
+      return
+    }
+
+    const client = createClient()
+
+    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    const runtime = await client.ensureRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent,
+      restartStyle,
+    })
+
+    // ensureRuntime only allocates the tmux pane — the harness process is
+    // started by dispatchTurn. Always dispatch so the agent actually launches.
+    // The server requires a non-empty prompt; when the user did not supply
+    // one we send the scope as a placeholder. The priming prompt in argv is
+    // built server-side from the agent profile and is not affected by this.
+    // If the runtime is already busy (reused PTY with a running harness),
+    // the server responds with RUNTIME_BUSY — in that case we silently skip
+    // the dispatch and fall through to attach.
+    try {
+      await client.dispatchTurn({
+        hostSessionId: resolved.hostSessionId,
+        prompt: prompt && prompt.length > 0 ? prompt : scopeInput,
+      })
+    } catch (err) {
+      if (!(err instanceof HrcDomainError) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
+        throw err
+      }
+    }
+
+    if (noAttach) {
+      printJson({
+        sessionRef,
+        hostSessionId: resolved.hostSessionId,
+        created: resolved.created,
+        runtime,
+      })
+      return
+    }
+
+    const descriptor = await client.getAttachDescriptor(runtime.runtimeId)
+    await attachDescriptor(client, descriptor)
+  } catch (err) {
+    throw explainRunError(err, scopeInput, sessionRef)
+  }
+}
+
+function printLocalRunPreview(
+  scope: string,
+  sessionRef: string,
+  intent: HrcRuntimeIntent,
+  restartStyle: 'reuse_pty' | 'fresh_pty',
+  prompt: string | undefined
+): void {
+  const w = (s: string) => process.stdout.write(`${s}\n`)
+
+  w(`hrc run ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
+  w(`  sessionRef:   ${sessionRef}`)
+  w(`  restartStyle: ${restartStyle}`)
+  w(`  agentRoot:    ${intent.placement.agentRoot}`)
+  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+  w(`  cwd:          ${intent.placement.cwd}`)
+  w(`  provider:     ${intent.harness.provider}`)
+  w(`  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`)
+
+  const envOverrides = intent.launch?.env
+  if (envOverrides && Object.keys(envOverrides).length > 0) {
+    w('  env overrides:')
+    for (const key of Object.keys(envOverrides).sort()) {
+      const val = envOverrides[key]
+      if (val === undefined) continue
+      const display = val.length > 120 ? `${val.slice(0, 117)}...` : val
+      w(`    ${key}=${display}`)
+    }
+  }
+
+  w('')
+  w('  Note: this preview shows the request the client would send. Server-side')
+  w('  details (existing runtime, PTY state, tmux session) are not consulted.')
+  w('  Run without --dry-run to execute.')
 }
 
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
@@ -992,8 +1206,7 @@ async function cmdBridgeClose(args: string[]): Promise<void> {
 async function cmdBridgeTarget(args: string[]): Promise<void> {
   const bridge = parseFlag(args, '--bridge')
   const hostSession = parseFlag(args, '--host-session')
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
+  const sessionRef = parseFlag(args, '--session-ref')
   const transport = parseFlag(args, '--transport')
   const target = parseFlag(args, '--target')
   const runtimeId = parseFlag(args, '--runtime-id')
@@ -1011,12 +1224,12 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
     fatal('--target (or --bridge) is required for bridge target')
   }
 
-  // Selector: --app/--key or --host-session (exactly one required)
-  if (!hostSession && !(appId && appSessionKey)) {
-    fatal('bridge target requires --host-session or --app/--key selector')
+  // Selector: exactly one of --host-session or --session-ref
+  if (!hostSession && !sessionRef) {
+    fatal('bridge target requires --host-session or --session-ref selector')
   }
-  if (hostSession && appId) {
-    fatal('bridge target accepts --host-session or --app/--key, not both')
+  if (hostSession && sessionRef) {
+    fatal('bridge target accepts --host-session or --session-ref, not both')
   }
 
   const expectedGeneration =
@@ -1028,10 +1241,9 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
     fatal('--expected-generation must be a non-negative integer')
   }
 
-  const selector: import('hrc-core').HrcBridgeTargetSelector =
-    appId && appSessionKey
-      ? { appSession: { appId, appSessionKey } }
-      : { hostSessionId: hostSession as string }
+  const selector: import('hrc-core').HrcBridgeTargetSelector = sessionRef
+    ? { sessionRef }
+    : { hostSessionId: hostSession as string }
 
   const client = createClient()
   const result = await client.acquireBridgeTarget({
@@ -1106,477 +1318,6 @@ async function cmdBridge(args: string[]): Promise<void> {
   }
 }
 
-function toSessionApplyRequest(
-  parsed: unknown,
-  appIdFlag: string | undefined,
-  hostSessionIdFlag: string | undefined
-): {
-  appId: string
-  hostSessionId: string
-  sessions: Array<{
-    appSessionKey: string
-    label?: string | undefined
-    metadata?: Record<string, unknown> | undefined
-  }>
-} {
-  if (Array.isArray(parsed)) {
-    if (!appIdFlag) {
-      fatal('session apply requires --app when the payload is an array')
-    }
-    if (!hostSessionIdFlag) {
-      fatal('session apply requires --host-session-id when the payload is an array')
-    }
-
-    return {
-      appId: appIdFlag,
-      hostSessionId: hostSessionIdFlag,
-      sessions: parsed.map((entry, index) => parseCliAppSession(entry, index)),
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    fatal('session apply payload must be a JSON object or array')
-  }
-
-  const appIdValue =
-    typeof (parsed as Record<string, unknown>)['appId'] === 'string'
-      ? ((parsed as Record<string, unknown>)['appId'] as string).trim()
-      : appIdFlag
-  const hostSessionIdValue =
-    typeof (parsed as Record<string, unknown>)['hostSessionId'] === 'string'
-      ? ((parsed as Record<string, unknown>)['hostSessionId'] as string).trim()
-      : hostSessionIdFlag
-  const sessions = (parsed as Record<string, unknown>)['sessions']
-
-  if (!appIdValue) {
-    fatal('session apply requires appId in the payload or via --app')
-  }
-  if (!hostSessionIdValue) {
-    fatal('session apply requires hostSessionId in the payload or via --host-session-id')
-  }
-  if (!Array.isArray(sessions)) {
-    fatal('session apply payload object must include a sessions array')
-  }
-
-  return {
-    appId: appIdValue,
-    hostSessionId: hostSessionIdValue,
-    sessions: sessions.map((entry, index) => parseCliAppSession(entry, index)),
-  }
-}
-
-function parseCliAppSession(
-  value: unknown,
-  index: number
-): {
-  appSessionKey: string
-  label?: string | undefined
-  metadata?: Record<string, unknown> | undefined
-} {
-  if (!value || typeof value !== 'object') {
-    fatal(`session apply entry ${index} must be an object`)
-  }
-
-  const record = value as Record<string, unknown>
-  const appSessionKey = requireCliString(record, 'appSessionKey', index)
-  const label = optionalCliString(record, 'label', index)
-  const metadata = record['metadata']
-  if (
-    metadata !== undefined &&
-    (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
-  ) {
-    fatal(`session apply entry ${index} metadata must be an object`)
-  }
-
-  return {
-    appSessionKey,
-    ...(label ? { label } : {}),
-    ...(metadata !== undefined ? { metadata: metadata as Record<string, unknown> } : {}),
-  }
-}
-
-function requireCliString(record: Record<string, unknown>, field: string, index: number): string {
-  const value = record[field]
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    fatal(`session apply entry ${index} requires ${field}`)
-  }
-
-  return value.trim()
-}
-
-function optionalCliString(
-  record: Record<string, unknown>,
-  field: string,
-  index: number
-): string | undefined {
-  const value = record[field]
-  if (value === undefined) {
-    return undefined
-  }
-  if (typeof value !== 'string') {
-    fatal(`session apply entry ${index} field ${field} must be a string`)
-  }
-
-  const normalized = value.trim()
-  return normalized.length > 0 ? normalized : undefined
-}
-
-// -- App-session commands (Phase 4) -------------------------------------------
-
-async function cmdAppSessionEnsure(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const kind = parseFlag(args, '--kind')
-  const label = parseFlag(args, '--label')
-  const specJson = parseFlag(args, '--spec')
-  const restartStyle = parseFlag(args, '--restart-style')
-  const forceRestart = hasFlag(args, '--force-restart')
-  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
-
-  if (!appId) fatal('--app is required for app-session ensure')
-  if (!appSessionKey) fatal('--key is required for app-session ensure')
-
-  const effectiveKind = kind ?? 'harness'
-  if (effectiveKind !== 'harness' && effectiveKind !== 'command') {
-    fatal('--kind must be one of: harness, command')
-  }
-
-  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
-    fatal('--restart-style must be one of: reuse_pty, fresh_pty')
-  }
-
-  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
-    fatal('--provider must be one of: anthropic, openai')
-  }
-
-  let spec: HrcAppSessionSpec
-  if (specJson) {
-    try {
-      spec = JSON.parse(specJson) as HrcAppSessionSpec
-    } catch {
-      fatal('--spec must be valid JSON')
-    }
-  } else if (effectiveKind === 'command') {
-    spec = { kind: 'command', command: {} }
-  } else {
-    spec = {
-      kind: 'harness',
-      runtimeIntent: createDefaultRuntimeIntent(providerRaw),
-    }
-  }
-
-  const client = createClient()
-  const result = await client.ensureAppSession({
-    selector: { appId, appSessionKey },
-    spec,
-    ...(label ? { label } : {}),
-    ...(restartStyle ? { restartStyle } : {}),
-    ...(forceRestart ? { forceRestart: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionList(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const kind = parseFlag(args, '--kind')
-  const includeRemoved = hasFlag(args, '--include-removed')
-
-  if (kind !== undefined && kind !== 'harness' && kind !== 'command') {
-    fatal('--kind must be one of: harness, command')
-  }
-
-  const client = createClient()
-  const result = await client.listAppSessions({
-    ...(appId ? { appId } : {}),
-    ...(kind ? { kind: kind as 'harness' | 'command' } : {}),
-    ...(includeRemoved ? { includeRemoved: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionGet(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-
-  if (!appId) fatal('--app is required for app-session get')
-  if (!appSessionKey) fatal('--key is required for app-session get')
-
-  const client = createClient()
-  const result = await client.getAppSessionByKey(appId, appSessionKey)
-  printJson(result)
-}
-
-async function cmdAppSessionRemove(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const keepRuntime = hasFlag(args, '--keep-runtime')
-
-  if (!appId) fatal('--app is required for app-session remove')
-  if (!appSessionKey) fatal('--key is required for app-session remove')
-
-  const client = createClient()
-  const result = await client.removeAppSession({
-    selector: { appId, appSessionKey },
-    ...(keepRuntime ? { terminateRuntime: false } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionApply(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const filePath = parseFlag(args, '--file')
-  const jsonPayload = parseFlag(args, '--json')
-  const pruneMissing = hasFlag(args, '--prune-missing')
-
-  if (!appId) fatal('--app is required for app-session apply')
-  if (!filePath && !jsonPayload)
-    fatal('app-session apply requires --file <path> or --json <payload>')
-  if (filePath && jsonPayload) fatal('app-session apply accepts only one of --file or --json')
-
-  const raw = filePath !== undefined ? await readFile(filePath, 'utf-8') : (jsonPayload as string)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    fatal('app-session apply payload must be valid JSON')
-  }
-
-  if (!Array.isArray(parsed)) {
-    fatal('app-session apply payload must be a JSON array of session entries')
-  }
-
-  const client = createClient()
-  const result = await client.applyManagedAppSessions({
-    appId,
-    sessions: parsed as Array<{
-      appSessionKey: string
-      spec: HrcAppSessionSpec
-      label?: string
-      metadata?: Record<string, unknown>
-    }>,
-    ...(pruneMissing ? { pruneMissing: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionCapture(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-
-  if (!appId) fatal('--app is required for app-session capture')
-  if (!appSessionKey) fatal('--key is required for app-session capture')
-
-  const client = createClient()
-  const result = await client.captureAppSession({ appId, appSessionKey })
-  process.stdout.write(result.text)
-  if (!result.text.endsWith('\n')) {
-    process.stdout.write('\n')
-  }
-}
-
-async function cmdAppSessionAttach(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-
-  if (!appId) fatal('--app is required for app-session attach')
-  if (!appSessionKey) fatal('--key is required for app-session attach')
-
-  const client = createClient()
-  const descriptor = await client.attachAppSession({ appId, appSessionKey })
-  printJson(descriptor)
-}
-
-async function cmdAppSessionLiteralInput(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const text = parseFlag(args, '--text')
-  const enter = hasFlag(args, '--enter')
-  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
-
-  if (!appId) fatal('--app is required for app-session literal-input')
-  if (!appSessionKey) fatal('--key is required for app-session literal-input')
-  if (!text) fatal('--text is required for app-session literal-input')
-
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
-
-  const client = createClient()
-  const result = await client.sendLiteralInput({
-    selector: { appId, appSessionKey },
-    text,
-    enter,
-    ...(expectedHostSessionId || expectedGeneration !== undefined
-      ? {
-          fence: {
-            ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
-            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
-          },
-        }
-      : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionInterrupt(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const hard = hasFlag(args, '--hard')
-
-  if (!appId) fatal('--app is required for app-session interrupt')
-  if (!appSessionKey) fatal('--key is required for app-session interrupt')
-
-  const client = createClient()
-  const result = await client.interruptAppSession({
-    selector: { appId, appSessionKey },
-    ...(hard ? { hard: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionTerminate(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const hard = hasFlag(args, '--hard')
-
-  if (!appId) fatal('--app is required for app-session terminate')
-  if (!appSessionKey) fatal('--key is required for app-session terminate')
-
-  const client = createClient()
-  const result = await client.terminateAppSession({
-    selector: { appId, appSessionKey },
-    ...(hard ? { hard: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionTurn(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const text = parseFlag(args, '--text')
-  const runId = parseFlag(args, '--run-id')
-  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
-  const followLatest = hasFlag(args, '--follow-latest')
-
-  if (!appId) fatal('--app is required for app-session turn')
-  if (!appSessionKey) fatal('--key is required for app-session turn')
-  if (!text) fatal('--text is required for app-session turn')
-
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
-
-  const fenceValue =
-    expectedHostSessionId !== undefined || expectedGeneration !== undefined || followLatest
-      ? {
-          ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
-          ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
-          ...(followLatest ? { followLatest: true } : {}),
-        }
-      : undefined
-
-  const client = createClient()
-  const result = await client.dispatchAppHarnessTurn({
-    selector: { appId, appSessionKey },
-    prompt: text,
-    input: { text },
-    ...(runId ? { runId } : {}),
-    fence: fenceValue,
-    fences: fenceValue,
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionInflight(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const runId = parseFlag(args, '--run-id')
-  const text = parseFlag(args, '--text')
-  const inputType = parseFlag(args, '--input-type')
-
-  if (!appId) fatal('--app is required for app-session inflight')
-  if (!appSessionKey) fatal('--key is required for app-session inflight')
-  if (!text) fatal('--text is required for app-session inflight')
-
-  const client = createClient()
-  const result = await client.sendAppHarnessInFlightInput({
-    selector: { appId, appSessionKey },
-    prompt: text,
-    input: { text },
-    ...(runId ? { runId } : {}),
-    ...(inputType ? { inputType } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSessionClearContext(args: string[]): Promise<void> {
-  const appId = parseFlag(args, '--app')
-  const appSessionKey = parseFlag(args, '--key')
-  const relaunch = hasFlag(args, '--relaunch')
-
-  if (!appId) fatal('--app is required for app-session clear-context')
-  if (!appSessionKey) fatal('--key is required for app-session clear-context')
-
-  const client = createClient()
-  const result = await client.clearAppSessionContext({
-    selector: { appId, appSessionKey },
-    ...(relaunch ? { relaunch: true } : {}),
-  })
-  printJson(result)
-}
-
-async function cmdAppSession(args: string[]): Promise<void> {
-  const subcommand = args[0]
-  const rest = args.slice(1)
-
-  switch (subcommand) {
-    case 'ensure':
-      return cmdAppSessionEnsure(rest)
-    case 'list':
-      return cmdAppSessionList(rest)
-    case 'get':
-      return cmdAppSessionGet(rest)
-    case 'remove':
-      return cmdAppSessionRemove(rest)
-    case 'apply':
-      return cmdAppSessionApply(rest)
-    case 'capture':
-      return cmdAppSessionCapture(rest)
-    case 'attach':
-      return cmdAppSessionAttach(rest)
-    case 'literal-input':
-      return cmdAppSessionLiteralInput(rest)
-    case 'interrupt':
-      return cmdAppSessionInterrupt(rest)
-    case 'terminate':
-      return cmdAppSessionTerminate(rest)
-    case 'turn':
-      return cmdAppSessionTurn(rest)
-    case 'inflight':
-      return cmdAppSessionInflight(rest)
-    case 'clear-context':
-      return cmdAppSessionClearContext(rest)
-    default:
-      fatal(
-        subcommand
-          ? `unknown app-session subcommand: ${subcommand}`
-          : 'app-session subcommand required (ensure, list, get, remove, apply, capture, attach, literal-input, interrupt, terminate, turn, inflight, clear-context)'
-      )
-  }
-}
-
 // -- Usage --------------------------------------------------------------------
 
 function printUsage(): void {
@@ -1589,7 +1330,6 @@ Commands:
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
-  session apply --app <appId> --host-session-id <hostSessionId> (--file <path> | --json <payload>)
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   health                              Check server health
   status [--json]                     Show server status and capabilities
@@ -1597,7 +1337,7 @@ Commands:
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   adopt <runtimeId>                   Adopt a dead/stale runtime
-  run <scope> [prompt] [--label <text>] [--force-restart] [--no-attach]
+  run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -1605,25 +1345,12 @@ Commands:
   surface bind <runtimeId> --kind <kind> --id <surfaceId>
   surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
   surface list <runtimeId>            List active surface bindings for a runtime
-  bridge target --bridge <bridge> (--host-session <id> | --app <appId> --key <appSessionKey>) [--transport <t>] [--target <tgt>]
+  bridge target --bridge <bridge> (--host-session <id> | --session-ref <sessionRef>) [--transport <t>] [--target <tgt>]
   bridge deliver-text --bridge <bridgeId> --text <text> [--enter] [--oob-suffix <s>]
   bridge register <hostSessionId> --transport <name> --target <value>  (compat)
   bridge deliver <bridgeId> --text <text>                              (compat)
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
-  app-session ensure --app <appId> --key <key> [--kind harness|command] [--spec <json>]
-  app-session list [--app <appId>] [--kind harness|command] [--include-removed]
-  app-session get --app <appId> --key <key>
-  app-session remove --app <appId> --key <key> [--keep-runtime]
-  app-session apply --app <appId> (--file <path> | --json <payload>) [--prune-missing]
-  app-session capture --app <appId> --key <key>
-  app-session attach --app <appId> --key <key>
-  app-session literal-input --app <appId> --key <key> --text <text> [--enter]
-  app-session interrupt --app <appId> --key <key> [--hard]
-  app-session terminate --app <appId> --key <key> [--hard]
-  app-session turn --app <appId> --key <key> --text <text> [--run-id <runId>] [--expected-host-session-id <id>] [--expected-generation <n>] [--follow-latest]
-  app-session inflight --app <appId> --key <key> --text <text> [--run-id <runId>] [--input-type <type>]
-  app-session clear-context --app <appId> --key <key> [--relaunch]
   clear-context <hostSessionId> [--relaunch]
   interrupt <runtimeId>               Send Ctrl-C to a runtime pane
   terminate <runtimeId>               Terminate a runtime session
@@ -1675,8 +1402,6 @@ async function main(): Promise<void> {
         return await cmdSurface(rest)
       case 'bridge':
         return await cmdBridge(rest)
-      case 'app-session':
-        return await cmdAppSession(rest)
       case 'clear-context':
         return await cmdClearContext(rest)
       case 'interrupt':

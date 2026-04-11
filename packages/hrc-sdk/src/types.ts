@@ -1,11 +1,5 @@
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
-  ApplyAppManagedSessionInput,
-  ApplyAppManagedSessionsRequest,
-  ApplyAppManagedSessionsResponse,
-  ApplyAppSessionInput,
-  ApplyAppSessionsRequest,
-  ApplyAppSessionsResponse,
   BindSurfaceRequest,
   CaptureResponse,
   ClearContextRequest,
@@ -15,34 +9,22 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
-  EnsureAppSessionRequest,
-  EnsureAppSessionResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
-  HrcAppSessionFilter,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetSelector,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
-  ListAppSessionsRequest,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
-  RemoveAppSessionRequest,
-  RemoveAppSessionResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
   RuntimeActionResponse,
   StatusResponse,
   UnbindSurfaceRequest,
-  DispatchAppHarnessTurnRequest,
-  DispatchAppHarnessTurnResponse,
-  SendAppHarnessInFlightInputRequest,
-  SendAppHarnessInFlightInputResponse,
-  ClearAppSessionContextRequest,
-  ClearAppSessionContextResponse,
 } from 'hrc-core'
 
 // -- SDK-only types (not duplicated in hrc-server) ----------------------------
@@ -106,50 +88,4 @@ export type LaunchListFilter = {
 
 export type AdoptRuntimeRequest = {
   runtimeId: string
-}
-
-// -- App-session selector-based operations (Phase 4) --------------------------
-
-export type AppSessionSelector = {
-  appId: string
-  appSessionKey: string
-}
-
-export type SendLiteralInputBySelectorRequest = {
-  selector: AppSessionSelector
-  text: string
-  enter?: boolean | undefined
-  fence?:
-    | {
-        expectedHostSessionId?: string | undefined
-        expectedGeneration?: number | undefined
-      }
-    | undefined
-}
-
-export type SendLiteralInputResponse = {
-  delivered: true
-  hostSessionId: string
-  generation: number
-  runtimeId?: string | undefined
-}
-
-export type CaptureAppSessionRequest = {
-  appId: string
-  appSessionKey: string
-}
-
-export type AttachAppSessionRequest = {
-  appId: string
-  appSessionKey: string
-}
-
-export type InterruptAppSessionRequest = {
-  selector: AppSessionSelector
-  hard?: boolean | undefined
-}
-
-export type TerminateAppSessionRequest = {
-  selector: AppSessionSelector
-  hard?: boolean | undefined
 }
