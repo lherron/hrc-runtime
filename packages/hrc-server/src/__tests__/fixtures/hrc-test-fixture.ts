@@ -94,15 +94,21 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
     }
   }
 
+  function toCanonicalScopeRef(input: string): string {
+    return input.startsWith('agent:') ? input : `agent:${input}`
+  }
+
   async function resolveSession(scopeRef: string): Promise<ResolveSessionResult> {
+    const canonical = toCanonicalScopeRef(scopeRef)
     const res = await postJson('/v1/sessions/resolve', {
-      sessionRef: `${scopeRef}/lane:default`,
+      sessionRef: `${canonical}/lane:default`,
     })
     return (await res.json()) as ResolveSessionResult
   }
 
   async function ensureRuntime(scopeRef: string): Promise<SeedRuntimeResult> {
-    const resolved = await resolveSession(scopeRef)
+    const canonical = toCanonicalScopeRef(scopeRef)
+    const resolved = await resolveSession(canonical)
     const runtimeId = `rt-test-${randomUUID()}`
     const db = openHrcDatabase(dbPath)
     const timestamp = now()
@@ -111,7 +117,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       db.runtimes.insert({
         runtimeId,
         hostSessionId: resolved.hostSessionId,
-        scopeRef,
+        scopeRef: canonical,
         laneRef: 'default',
         generation: resolved.generation,
         transport: 'sdk',
@@ -131,13 +137,14 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   }
 
   function seedSession(hostSessionId: string, scopeRef: string): void {
+    const canonical = toCanonicalScopeRef(scopeRef)
     const db = openHrcDatabase(dbPath)
     const timestamp = now()
 
     try {
       db.sessions.insert({
         hostSessionId,
-        scopeRef,
+        scopeRef: canonical,
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -163,7 +170,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       db.runtimes.insert({
         runtimeId,
         hostSessionId,
-        scopeRef,
+        scopeRef: toCanonicalScopeRef(scopeRef),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',

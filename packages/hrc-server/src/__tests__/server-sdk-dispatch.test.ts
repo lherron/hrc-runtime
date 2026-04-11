@@ -61,7 +61,10 @@ async function postJson(path: string, body: unknown): Promise<Response> {
 
 /** Resolve a session and return the hostSessionId */
 async function resolveSession(scope: string): Promise<string> {
-  const res = await postJson('/v1/sessions/resolve', { sessionRef: `${scope}/lane:default` })
+  const canonical = scope.startsWith('agent:') ? scope : `agent:${scope}`
+  const res = await postJson('/v1/sessions/resolve', {
+    sessionRef: `${canonical}/lane:default`,
+  })
   const data = (await res.json()) as any
   return data.hostSessionId
 }

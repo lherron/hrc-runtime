@@ -92,7 +92,7 @@ async function ensureRuntime(scopeRef: string): Promise<{
   runtimeId: string
 }> {
   const resolveRes = await postJson('/v1/sessions/resolve', {
-    sessionRef: `${scopeRef}/lane:default`,
+    sessionRef: `agent:${scopeRef}/lane:default`,
   })
   const resolved = (await resolveRes.json()) as {
     hostSessionId: string
@@ -105,7 +105,7 @@ async function ensureRuntime(scopeRef: string): Promise<{
   db.runtimes.insert({
     runtimeId,
     hostSessionId: resolved.hostSessionId,
-    scopeRef,
+    scopeRef: `agent:${scopeRef}`,
     laneRef: 'default',
     generation: resolved.generation,
     transport: 'sdk',
