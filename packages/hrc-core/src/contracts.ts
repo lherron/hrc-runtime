@@ -247,7 +247,6 @@ export type HrcAppSessionRecord = {
   appSessionKey: string
   hostSessionId: string
   label?: string | undefined
-  /** Opaque app-defined metadata. Validated by the app at apply time, not by hrc-core. */
   metadata?: Record<string, unknown> | undefined
   createdAt: string
   updatedAt: string

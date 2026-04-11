@@ -21,6 +21,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-json-corruption:task:${scopeKey}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-json-corruption-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -37,7 +41,7 @@ function insertSession(hostSessionId: string): void {
   const now = ts()
   db.sessions.insert({
     hostSessionId,
-    scopeRef: 'scope-corrupt',
+    scopeRef: testScopeRef('corrupt'),
     laneRef: 'default',
     generation: 1,
     status: 'active',
@@ -115,7 +119,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
     db.runtimes.insert({
       runtimeId: 'rt-corrupt-1',
       hostSessionId: 'hsid-rt-corrupt',
-      scopeRef: 'scope-corrupt',
+      scopeRef: testScopeRef('corrupt'),
       laneRef: 'default',
       generation: 1,
       transport: 'tmux',
@@ -148,7 +152,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
     db.events.append({
       ts: ts(),
       hostSessionId: 'hsid-ev-corrupt',
-      scopeRef: 'scope-corrupt',
+      scopeRef: testScopeRef('corrupt'),
       laneRef: 'default',
       generation: 1,
       source: 'test' as any,
@@ -207,7 +211,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
     const now = ts()
     db.sessions.insert({
       hostSessionId: 'hsid-ok-2',
-      scopeRef: 'scope-corrupt',
+      scopeRef: testScopeRef('corrupt'),
       laneRef: 'default',
       generation: 2,
       status: 'active',
@@ -222,7 +226,7 @@ describe('C-2: corrupted JSON does not crash reads', () => {
 
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {})
     try {
-      const sessions = db.sessions.listByScopeRef('scope-corrupt', 'default')
+      const sessions = db.sessions.listByScopeRef(testScopeRef('corrupt'), 'default')
       expect(sessions.length).toBe(2)
       // One has undefined parsedScopeJson, the other doesn't
       const corrupted = sessions.find((s) => s.hostSessionId === 'hsid-ok-1')

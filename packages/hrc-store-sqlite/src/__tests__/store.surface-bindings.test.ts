@@ -42,6 +42,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-surface-bindings:task:${scopeKey}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-surface-store-test-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -66,7 +70,7 @@ function seedSessionAndRuntime(
   }
 ) {
   const now = ts()
-  const scopeRef = opts.scopeRef ?? 'test-scope'
+  const scopeRef = opts.scopeRef ?? testScopeRef(opts.hostSessionId)
   const laneRef = opts.laneRef ?? 'default'
   const generation = opts.generation ?? 1
 

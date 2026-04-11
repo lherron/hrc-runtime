@@ -60,29 +60,35 @@ type EnsureResponse = {
   runtimeId?: string
 }
 
+function managedSessionScopeRef(appId: string, appSessionKey: string): string {
+  return `agent:${appId}:project:hrc-bridge-tests:task:${appSessionKey}`
+}
+
+function managedSessionRef(appId: string, appSessionKey: string): string {
+  return `${managedSessionScopeRef(appId, appSessionKey)}/lane:main`
+}
+
+function legacyScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-bridge-tests:task:${scopeKey}`
+}
+
 /**
  * Ensure a managed app-session via the server API.
  * Creates the session in db.appManagedSessions (the canonical table).
  */
 async function ensureManagedSession(
   appId: string,
-  appSessionKey: string,
-  kind: 'harness' | 'command' = 'harness'
+  appSessionKey: string
 ): Promise<EnsureResponse & { hostSessionId: string; generation: number }> {
   const res = await fixture.postJson('/v1/app-sessions/ensure', {
     selector: { appId, appSessionKey },
+    sessionRef: managedSessionRef(appId, appSessionKey),
     spec: {
-      kind,
-      ...(kind === 'harness'
-        ? {
-            runtimeIntent: {
-              placement: 'workspace',
-              harness: { provider: 'anthropic', interactive: true },
-            },
-          }
-        : {
-            command: { argv: ['echo', 'hello'] },
-          }),
+      kind: 'harness',
+      runtimeIntent: {
+        placement: 'workspace',
+        harness: { provider: 'anthropic', interactive: false },
+      },
     },
   })
   expect(res.status).toBe(200)
@@ -116,9 +122,14 @@ describe('POST /v1/bridges/target — canonical selector + bridge (T-01007)', ()
 
     // Seed a runtime so the handler can resolve runtimeId from the session
     const runtimeId = `rt-t7-${Date.now()}`
-    fixture.seedTmuxRuntime(hostSessionId, 'app:bridge-t7', runtimeId, {
-      status: 'ready',
-    })
+    fixture.seedTmuxRuntime(
+      hostSessionId,
+      managedSessionScopeRef('bridge-t7', 'worker-1'),
+      runtimeId,
+      {
+        status: 'ready',
+      }
+    )
 
     // Canonical form: selector + bridge profile, NO transport/target
     const res = await fixture.postJson('/v1/bridges/target', {
@@ -147,9 +158,14 @@ describe('POST /v1/bridges/target — canonical selector + bridge (T-01007)', ()
     const { hostSessionId } = await ensureManagedSession('bridge-t7-cont', 'cont-1')
 
     const runtimeId = `rt-t7-cont-${Date.now()}`
-    fixture.seedTmuxRuntime(hostSessionId, 'app:bridge-t7-cont', runtimeId, {
-      status: 'ready',
-    })
+    fixture.seedTmuxRuntime(
+      hostSessionId,
+      managedSessionScopeRef('bridge-t7-cont', 'cont-1'),
+      runtimeId,
+      {
+        status: 'ready',
+      }
+    )
 
     const res = await fixture.postJson('/v1/bridges/target', {
       selector: {
@@ -189,9 +205,14 @@ describe('POST /v1/bridges/deliver-text — via canonical appSession bridge (T-0
 
     // Seed tmux runtime with real pane info
     const runtimeId = `rt-t7-tmux-${Date.now()}`
-    fixture.seedTmuxRuntime(hostSessionId, 'app:bridge-t7-tmux', runtimeId, {
-      status: 'ready',
-    })
+    fixture.seedTmuxRuntime(
+      hostSessionId,
+      managedSessionScopeRef('bridge-t7-tmux', 'worker-tmux'),
+      runtimeId,
+      {
+        status: 'ready',
+      }
+    )
 
     // Register bridge using canonical form (selector + bridge, no transport/target)
     const regRes = await fixture.postJson('/v1/bridges/target', {
@@ -288,8 +309,9 @@ describe('POST /v1/bridges/target — missing appSession canonical (T-01007)', (
 // ---------------------------------------------------------------------------
 describe('POST /v1/bridges/target — legacy transport/target compat (T-01007)', () => {
   it('still accepts top-level transport/target without selector (T7-4)', async () => {
-    const { hostSessionId, generation, runtimeId } =
-      await fixture.ensureRuntime('bridge-legacy-compat')
+    const { hostSessionId, generation, runtimeId } = await fixture.ensureRuntime(
+      legacyScopeRef('bridge-legacy-compat')
+    )
 
     const res = await fixture.postJson('/v1/bridges/target', {
       transport: 'tmux',
@@ -312,9 +334,14 @@ describe('POST /v1/bridges/target — legacy transport/target compat (T-01007)',
     const { hostSessionId } = await ensureManagedSession('bridge-t7-both', 'both-1')
 
     const runtimeId = `rt-t7-both-${Date.now()}`
-    fixture.seedTmuxRuntime(hostSessionId, 'app:bridge-t7-both', runtimeId, {
-      status: 'ready',
-    })
+    fixture.seedTmuxRuntime(
+      hostSessionId,
+      managedSessionScopeRef('bridge-t7-both', 'both-1'),
+      runtimeId,
+      {
+        status: 'ready',
+      }
+    )
 
     const res = await fixture.postJson('/v1/bridges/target', {
       selector: {

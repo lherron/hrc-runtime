@@ -12,3 +12,9 @@ asp-lock.json
 # Bun workspace self-referencing symlinks (cause recursive expansion on clone/zip)
 packages/config/config
 packages/execution/execution
+
+# Runtime scratch project dirs created by tests/harness
+projects/
+integration-tests/projects/
+packages/hrc-cli/projects/
+packages/hrc-server/projects/

@@ -58,6 +58,7 @@ install:
     bun install
     bun run build
     cd packages/cli && bun link
+    cd packages/hrc-cli && bun link
 
 # Run control-plane interface test with rex-home target
 cp-test prompt="List skills available. Use only what is in your context, no tools.":

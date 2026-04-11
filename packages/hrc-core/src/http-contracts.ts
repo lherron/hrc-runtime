@@ -5,6 +5,7 @@
 import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcCommandLaunchSpec,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
   HrcRuntimeIntent,
@@ -12,6 +13,7 @@ import type {
   HrcStatusResponse,
 } from './contracts.js'
 import type { HrcFence } from './fences.js'
+import type { HrcSessionRef } from './selectors.js'
 
 // -- Restart style (shared between server tmux manager and SDK) ---------------
 
@@ -70,6 +72,17 @@ export type EnsureRuntimeResponse = {
   }
 }
 
+export type EnsureWindowRequest = {
+  sessionRef: HrcSessionRef
+  command: HrcCommandLaunchSpec
+  restartStyle?: RestartStyle | undefined
+  forceRestart?: boolean | undefined
+}
+
+export type EnsureWindowResponse = EnsureRuntimeResponse & {
+  generation: number
+}
+
 // -- Execution / dispatch -----------------------------------------------------
 
 export type DispatchTurnRequest = {
@@ -119,6 +132,12 @@ export type RuntimeActionResponse = {
   ok: true
   hostSessionId: string
   runtimeId: string
+}
+
+export type SendWindowLiteralInputRequest = {
+  runtimeId: string
+  text: string
+  enter?: boolean | undefined
 }
 
 export type HealthResponse = {
@@ -177,7 +196,10 @@ export type CloseBridgeRequest = {
 
 // -- Canonical bridge DTOs (Phase 2) ------------------------------------------
 
-export type HrcBridgeTargetSelector = { hostSessionId: string } | { appSession: HrcAppSessionRef }
+export type HrcBridgeTargetSelector =
+  | { hostSessionId: string }
+  | { sessionRef: HrcSessionRef }
+  | { appSession: HrcAppSessionRef }
 
 export type HrcBridgeTargetRequest = {
   selector: HrcBridgeTargetSelector
@@ -206,16 +228,32 @@ export type HrcBridgeDeliverTextResponse = {
   bridgeId: string
 }
 
-// -- Managed app-session registry (Phase 3) -----------------------------------
-
 export type EnsureAppSessionRequest = {
   selector: HrcAppSessionRef
+  sessionRef?: HrcSessionRef | undefined
   spec: HrcAppSessionSpec
   label?: string | undefined
   metadata?: Record<string, unknown> | undefined
   restartStyle?: RestartStyle | undefined
   forceRestart?: boolean | undefined
   initialPrompt?: string | undefined
+  dryRun?: boolean | undefined
+}
+
+export type EnsureAppSessionDryRunPlan = {
+  action: 'reattach' | 'create'
+  sessionExists: boolean
+  runtimeId?: string | undefined
+  runtimeStatus?: string | undefined
+  runtimePid?: number | undefined
+  tmuxSession?: string | undefined
+  invocation?:
+    | {
+        argv: string[]
+        env: Record<string, string>
+        cwd: string
+      }
+    | undefined
 }
 
 export type EnsureAppSessionResponse = {
@@ -225,6 +263,7 @@ export type EnsureAppSessionResponse = {
   status: 'created' | 'ensured' | 'restarted'
   runtimeId?: string | undefined
   runtime?: EnsureRuntimeResponse | undefined
+  dryRun?: EnsureAppSessionDryRunPlan | undefined
 }
 
 export type ListAppSessionsRequest = {
@@ -249,6 +288,7 @@ export type RemoveAppSessionResponse = {
 
 export type ApplyAppManagedSessionInput = {
   appSessionKey: string
+  sessionRef?: HrcSessionRef | undefined
   spec: HrcAppSessionSpec
   label?: string | undefined
   metadata?: Record<string, unknown> | undefined
@@ -294,8 +334,6 @@ export type TerminateAppSessionRequest = {
   selector: HrcAppSessionRef
   hard?: boolean | undefined
 }
-
-// -- App-session harness dispatch (Phase 5) -----------------------------------
 
 export type DispatchAppHarnessTurnRequest = {
   selector: HrcAppSessionRef

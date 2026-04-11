@@ -29,6 +29,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-json-parse:task:${scopeKey}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-store-json-crash-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -43,7 +47,7 @@ function insertSession(db: ReturnType<typeof openHrcDatabase>, hostSessionId: st
   const now = ts()
   db.sessions.insert({
     hostSessionId,
-    scopeRef: `scope://${hostSessionId}`,
+    scopeRef: testScopeRef(hostSessionId),
     laneRef: 'default',
     generation: 1,
     status: 'active',
@@ -105,7 +109,7 @@ describe('C-2: parseJson crash guard', () => {
       db.runtimes.insert({
         runtimeId: 'rt-corrupt-1',
         hostSessionId: 'hsid-rt-corrupt',
-        scopeRef: 'scope://hsid-rt-corrupt',
+        scopeRef: testScopeRef('hsid-rt-corrupt'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -141,7 +145,7 @@ describe('C-2: parseJson crash guard', () => {
       db.events.append({
         ts: ts(),
         hostSessionId: 'hsid-evt-corrupt',
-        scopeRef: 'scope://hsid-evt-corrupt',
+        scopeRef: testScopeRef('hsid-evt-corrupt'),
         laneRef: 'default',
         generation: 1,
         source: 'hrc',

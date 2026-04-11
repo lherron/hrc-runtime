@@ -41,6 +41,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-app-sessions:task:${scopeKey}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-appsession-store-test-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -65,7 +69,7 @@ function seedSession(
   const now = ts()
   db.sessions.insert({
     hostSessionId: opts.hostSessionId,
-    scopeRef: opts.scopeRef ?? 'test-scope',
+    scopeRef: opts.scopeRef ?? testScopeRef(opts.hostSessionId),
     laneRef: opts.laneRef ?? 'default',
     generation: opts.generation ?? 1,
     status: 'active',

@@ -167,6 +167,7 @@ describe('POST /v1/app-sessions/ensure', () => {
     // RED GATE: POST /v1/app-sessions/ensure route does not exist
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'assistant' },
+      sessionRef: 'agent:test:project:ms-test/lane:assistant',
       label: 'Main assistant',
       spec: {
         kind: 'harness',
@@ -193,6 +194,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const ensurePayload = {
       selector: { appId: 'workbench', appSessionKey: 'idem-test' },
+      sessionRef: 'agent:test:project:ms-test/lane:idem-test',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -216,11 +218,15 @@ describe('POST /v1/app-sessions/ensure', () => {
     expect(body2.session.createdAt).toBe(body1.session.createdAt)
   })
 
-  it('creates a command-kind managed session', async () => {
+  // T-01077: command kind is evicted from app-managed sessions (Phase 3a).
+  // This test was: 'creates a command-kind managed session'.
+  // After the split, command sessions go through /v1/windows/ensure.
+  it('rejects command-kind on managed session ensure', async () => {
     server = await createHrcServer(serverOpts())
 
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'log-tail' },
+      sessionRef: 'agent:test:project:ms-test/lane:log-tail',
       spec: {
         kind: 'command',
         command: {
@@ -230,10 +236,9 @@ describe('POST /v1/app-sessions/ensure', () => {
       },
     })
 
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as EnsureAppSessionResponse
-    expect(body.session.kind).toBe('command')
-    expect(body.session.status).toBe('active')
+    expect(res.status).toBe(422)
+    const body = (await res.json()) as HrcHttpError
+    expect(body.error.code).toBe('unsupported_capability')
   })
 
   it('accepts initialPrompt on ensure and persists it into the harness runtime intent', async () => {
@@ -241,6 +246,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-seed' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-seed',
       initialPrompt: 'Investigate the failing smoke test',
       spec: {
         kind: 'harness',
@@ -279,6 +285,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-seed-noninteractive' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-seed-ni',
       initialPrompt: 'Investigate the failing smoke test',
       spec: {
         kind: 'harness',
@@ -305,6 +312,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-absent' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-absent',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -350,6 +358,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-autostart' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-autostart',
       initialPrompt: 'Investigate the failing smoke test',
       spec: {
         kind: 'harness',
@@ -387,6 +396,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-no-autostart' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-no-autostart',
       spec: {
         kind: 'harness',
         runtimeIntent: interactiveHarnessIntent(tmpDir),
@@ -438,6 +448,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const firstRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-restart-autostart' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-restart-autostart',
       spec: {
         kind: 'harness',
         runtimeIntent: interactiveHarnessIntent(tmpDir),
@@ -448,6 +459,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const secondRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'prompt-restart-autostart' },
+      sessionRef: 'agent:test:project:ms-test/lane:prompt-restart-autostart',
       initialPrompt: 'Re-dispatch after restart',
       forceRestart: true,
       spec: {
@@ -479,6 +491,7 @@ describe('POST /v1/app-sessions/ensure', () => {
     // First ensure to create the session
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'restart-test' },
+      sessionRef: 'agent:test:project:ms-test/lane:restart-test',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -491,6 +504,7 @@ describe('POST /v1/app-sessions/ensure', () => {
     // Second ensure with forceRestart
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'restart-test' },
+      sessionRef: 'agent:test:project:ms-test/lane:restart-test',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -518,6 +532,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const ensurePayload = {
       selector: { appId: 'workbench', appSessionKey: 'reattach-live-runtime' },
+      sessionRef: 'agent:test:project:ms-test/lane:reattach-live-runtime',
       spec: {
         kind: 'harness' as const,
         runtimeIntent: interactiveHarnessIntent(tmpDir),
@@ -558,6 +573,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const ensurePayload = {
       selector: { appId: 'workbench', appSessionKey: 'reattach-dead-runtime' },
+      sessionRef: 'agent:test:project:ms-test/lane:reattach-dead-runtime',
       spec: {
         kind: 'harness' as const,
         runtimeIntent: interactiveHarnessIntent(tmpDir),
@@ -591,6 +607,7 @@ describe('POST /v1/app-sessions/ensure', () => {
      */
     const firstRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'reattach-force-restart' },
+      sessionRef: 'agent:test:project:ms-test/lane:reattach-force-restart',
       spec: {
         kind: 'harness',
         runtimeIntent: interactiveHarnessIntent(tmpDir),
@@ -604,6 +621,7 @@ describe('POST /v1/app-sessions/ensure', () => {
 
     const secondRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'reattach-force-restart' },
+      sessionRef: 'agent:test:project:ms-test/lane:reattach-force-restart',
       forceRestart: true,
       spec: {
         kind: 'harness',
@@ -636,6 +654,7 @@ describe('GET /v1/app-sessions', () => {
     // Create sessions for two apps
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'app-a', appSessionKey: 'a-1' },
+      sessionRef: 'agent:test:project:ms-test/lane:a-1',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -646,6 +665,7 @@ describe('GET /v1/app-sessions', () => {
     })
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'app-b', appSessionKey: 'b-1' },
+      sessionRef: 'agent:test:project:ms-test/lane:b-1',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -668,6 +688,7 @@ describe('GET /v1/app-sessions', () => {
 
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'harness-1' },
+      sessionRef: 'agent:test:project:ms-test/lane:harness-1',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -678,6 +699,7 @@ describe('GET /v1/app-sessions', () => {
     })
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'cmd-1' },
+      sessionRef: 'agent:test:project:ms-test/lane:cmd-1',
       spec: {
         kind: 'command',
         command: { argv: ['/bin/sh'] },
@@ -696,6 +718,7 @@ describe('GET /v1/app-sessions', () => {
 
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'active-1' },
+      sessionRef: 'agent:test:project:ms-test/lane:active-1',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -706,6 +729,7 @@ describe('GET /v1/app-sessions', () => {
     })
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'to-remove' },
+      sessionRef: 'agent:test:project:ms-test/lane:to-remove',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -743,6 +767,7 @@ describe('GET /v1/app-sessions/by-key', () => {
 
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'findable' },
+      sessionRef: 'agent:test:project:ms-test/lane:findable',
       label: 'Findable session',
       spec: {
         kind: 'harness',
@@ -801,6 +826,7 @@ describe('POST /v1/app-sessions/remove', () => {
 
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'rm-test' },
+      sessionRef: 'agent:test:project:ms-test/lane:rm-test',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -836,6 +862,7 @@ describe('POST /v1/app-sessions/remove', () => {
     // Create managed session
     const ensureRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'bridge-cleanup' },
+      sessionRef: 'agent:test:project:ms-test/lane:bridge-cleanup',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -883,6 +910,7 @@ describe('POST /v1/app-sessions/remove', () => {
     // Create managed session
     const ensureRes = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'surface-cleanup' },
+      sessionRef: 'agent:test:project:ms-test/lane:surface-cleanup',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -902,7 +930,7 @@ describe('POST /v1/app-sessions/remove', () => {
       db.runtimes.insert({
         runtimeId: seedRuntimeId,
         hostSessionId,
-        scopeRef: 'surface-cleanup-scope',
+        scopeRef: 'agent:test:project:ms-test',
         laneRef: 'default',
         generation: ensured.session.generation,
         transport: 'sdk',
@@ -974,6 +1002,7 @@ describe('POST /v1/app-sessions/apply', () => {
       sessions: [
         {
           appSessionKey: 'ws-1',
+          sessionRef: 'agent:test:project:ms-test/lane:ws-1',
           label: 'Workspace 1',
           spec: {
             kind: 'harness',
@@ -985,6 +1014,7 @@ describe('POST /v1/app-sessions/apply', () => {
         },
         {
           appSessionKey: 'ws-2',
+          sessionRef: 'agent:test:project:ms-test/lane:ws-2',
           label: 'Workspace 2',
           spec: {
             kind: 'harness',
@@ -1015,6 +1045,7 @@ describe('POST /v1/app-sessions/apply', () => {
       sessions: [
         {
           appSessionKey: 'keep-1',
+          sessionRef: 'agent:test:project:ms-test/lane:keep-1',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1025,6 +1056,7 @@ describe('POST /v1/app-sessions/apply', () => {
         },
         {
           appSessionKey: 'keep-2',
+          sessionRef: 'agent:test:project:ms-test/lane:keep-2',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1035,6 +1067,7 @@ describe('POST /v1/app-sessions/apply', () => {
         },
         {
           appSessionKey: 'drop-1',
+          sessionRef: 'agent:test:project:ms-test/lane:drop-1',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1052,6 +1085,7 @@ describe('POST /v1/app-sessions/apply', () => {
       sessions: [
         {
           appSessionKey: 'keep-1',
+          sessionRef: 'agent:test:project:ms-test/lane:keep-1',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1062,6 +1096,7 @@ describe('POST /v1/app-sessions/apply', () => {
         },
         {
           appSessionKey: 'keep-2',
+          sessionRef: 'agent:test:project:ms-test/lane:keep-2',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1092,6 +1127,7 @@ describe('POST /v1/app-sessions/apply', () => {
       sessions: [
         {
           appSessionKey: 'original',
+          sessionRef: 'agent:test:project:ms-test/lane:original',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1109,6 +1145,7 @@ describe('POST /v1/app-sessions/apply', () => {
       sessions: [
         {
           appSessionKey: 'new-one',
+          sessionRef: 'agent:test:project:ms-test/lane:new-one',
           spec: {
             kind: 'harness',
             runtimeIntent: {
@@ -1161,6 +1198,7 @@ describe('Managed session error codes', () => {
 
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'no-spec' },
+      sessionRef: 'agent:test:project:ms-test/lane:no-spec',
       // no spec
     })
 
@@ -1169,12 +1207,16 @@ describe('Managed session error codes', () => {
     expect(body.error.code).toBe('malformed_request')
   })
 
-  it('returns SESSION_KIND_MISMATCH when ensure changes kind', async () => {
+  // T-01077: kind-mismatch test updated — command kind is now rejected as
+  // unsupported_capability before reaching the kind-mismatch check.
+  // After the split, only 'harness' is valid on app-managed sessions.
+  it('returns UNSUPPORTED_CAPABILITY when ensure attempts command kind on existing harness session', async () => {
     server = await createHrcServer(serverOpts())
 
     // Create as harness
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'kind-mismatch' },
+      sessionRef: 'agent:test:project:ms-test/lane:kind-mismatch',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -1184,9 +1226,10 @@ describe('Managed session error codes', () => {
       },
     })
 
-    // Try to ensure as command — should fail
+    // Try to ensure as command — rejected because command is no longer valid
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'kind-mismatch' },
+      sessionRef: 'agent:test:project:ms-test/lane:kind-mismatch',
       spec: {
         kind: 'command',
         command: { argv: ['/bin/sh'] },
@@ -1195,7 +1238,7 @@ describe('Managed session error codes', () => {
 
     expect(res.status).toBe(422)
     const body = (await res.json()) as HrcHttpError
-    expect(body.error.code).toBe('session_kind_mismatch')
+    expect(body.error.code).toBe('unsupported_capability')
   })
 
   it('returns APP_SESSION_REMOVED when ensuring a removed session', async () => {
@@ -1204,6 +1247,7 @@ describe('Managed session error codes', () => {
     // Create then remove
     await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'removed-ensure' },
+      sessionRef: 'agent:test:project:ms-test/lane:removed-ensure',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -1214,11 +1258,13 @@ describe('Managed session error codes', () => {
     })
     await postJson('/v1/app-sessions/remove', {
       selector: { appId: 'workbench', appSessionKey: 'removed-ensure' },
+      sessionRef: 'agent:test:project:ms-test/lane:removed-ensure',
     })
 
     // Try to ensure again — should fail
     const res = await postJson('/v1/app-sessions/ensure', {
       selector: { appId: 'workbench', appSessionKey: 'removed-ensure' },
+      sessionRef: 'agent:test:project:ms-test/lane:removed-ensure',
       spec: {
         kind: 'harness',
         runtimeIntent: {
@@ -1252,5 +1298,377 @@ describe('GET /v1/status — appOwnedSessions capability', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as StatusResponse
     expect(body.capabilities.platform.appOwnedSessions).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Dry-run mode for POST /v1/app-sessions/ensure
+// ---------------------------------------------------------------------------
+import type { EnsureAppSessionDryRunPlan } from 'hrc-core'
+
+describe('POST /v1/app-sessions/ensure — dryRun mode', () => {
+  let server: HrcServer
+  let targetDir: string
+
+  beforeEach(async () => {
+    targetDir = join(tmpDir, 'target-dryrun')
+    await mkdir(targetDir, { recursive: true })
+    server = await createHrcServer(serverOpts())
+  })
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('returns action=create and sessionExists=false when no session exists', async () => {
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-new' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-new',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+      dryRun: true,
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { dryRun: EnsureAppSessionDryRunPlan }
+    expect(body.dryRun).toBeDefined()
+    expect(body.dryRun.action).toBe('create')
+    expect(body.dryRun.sessionExists).toBe(false)
+  })
+
+  it('does not create a session when dryRun is true', async () => {
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-noop' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-noop',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+      dryRun: true,
+    })
+    expect(res.status).toBe(200)
+
+    // Verify session was NOT created
+    const lookupRes = await fetchSocket(
+      '/v1/app-sessions/by-key?appId=test&appSessionKey=dry-run-noop'
+    )
+    expect(lookupRes.status).toBe(404)
+  })
+
+  it('returns action=create with prior runtime info when session exists but runtime is dead', async () => {
+    // Create a real session first
+    const createRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-dead' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-dead',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+    })
+    expect(createRes.status).toBe(200)
+    const created = (await createRes.json()) as EnsureAppSessionResponse
+    expect(created.runtimeId).toBeDefined()
+
+    // Mark the launch started with a dead PID so the liveness check sees a dead process
+    await markLatestLaunchStarted(created.session.activeHostSessionId, DEAD_PID)
+
+    // Now dry-run — should see the session exists but runtime is dead
+    const dryRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-dead' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-dead',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+      dryRun: true,
+    })
+    expect(dryRes.status).toBe(200)
+    const plan = (await dryRes.json()) as { dryRun: EnsureAppSessionDryRunPlan }
+    expect(plan.dryRun.action).toBe('create')
+    expect(plan.dryRun.sessionExists).toBe(true)
+    expect(plan.dryRun.runtimeId).toBeDefined()
+  })
+
+  it('returns action=reattach when session exists and runtime is live', async () => {
+    // Create a real session
+    const createRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-live' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-live',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+    })
+    expect(createRes.status).toBe(200)
+    const created = (await createRes.json()) as EnsureAppSessionResponse
+
+    // Mark the launch started with OUR OWN PID (guaranteed alive)
+    await markLatestLaunchStarted(created.session.activeHostSessionId, process.pid)
+
+    // Dry-run should detect the runtime as live
+    const dryRes = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'test', appSessionKey: 'dry-run-live' },
+      sessionRef: 'agent:test:project:ms-test/lane:dry-run-live',
+      spec: { kind: 'harness', runtimeIntent: interactiveHarnessIntent(targetDir) },
+      dryRun: true,
+    })
+    expect(dryRes.status).toBe(200)
+    const plan = (await dryRes.json()) as { dryRun: EnsureAppSessionDryRunPlan }
+    expect(plan.dryRun.action).toBe('reattach')
+    expect(plan.dryRun.sessionExists).toBe(true)
+    expect(plan.dryRun.runtimeId).toBe(created.runtimeId)
+    expect(plan.dryRun.runtimePid).toBe(process.pid)
+    expect(plan.dryRun.tmuxSession).toBeString()
+  })
+})
+
+// ===========================================================================
+// T-01077 SCOPEREF_CLEANUP Phase 3/5: Canonical sessionRef on ensure,
+// alias reuse, conflict detection, shared-alias lifecycle
+//
+// RED GATE: These tests require:
+//   - EnsureAppSessionRequest.sessionRef (Phase 3)
+//   - Canonical continuity reuse (Phase 5b)
+//   - 409 conflict on sessionRef mismatch (Phase 5c)
+//   - Shared-alias lifecycle (Phase 5d)
+//   - Rejection of kind: 'command' on ensure (Phase 3a/5e)
+// ===========================================================================
+
+describe('POST /v1/app-sessions/ensure — sessionRef required (T-01077)', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('accepts ensure with a canonical sessionRef and returns it on the session record', async () => {
+    server = await createHrcServer(serverOpts())
+
+    // RED: sessionRef field does not exist on EnsureAppSessionRequest yet
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'canonical-test' },
+      sessionRef: 'agent:rex:project:agent-spaces:task:T-00100/lane:main',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EnsureAppSessionResponse
+    expect(body.session).toBeDefined()
+    expect(body.session.appSessionKey).toBe('canonical-test')
+
+    // The underlying host session must carry the canonical scopeRef/laneRef
+    const sessionsRes = await fetchSocket(
+      `/v1/sessions?hostSessionId=${encodeURIComponent(body.session.activeHostSessionId)}`
+    )
+    expect(sessionsRes.status).toBe(200)
+  })
+
+  it('rejects ensure without sessionRef with 400', async () => {
+    server = await createHrcServer(serverOpts())
+
+    // RED: currently ensure succeeds without sessionRef
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'no-ref' },
+      // sessionRef intentionally omitted
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as HrcHttpError
+    expect(body.error.code).toBe('malformed_request')
+  })
+
+  it('rejects ensure with non-canonical sessionRef with 400', async () => {
+    server = await createHrcServer(serverOpts())
+
+    // RED: splitSessionRef does not validate canonical forms yet
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'bad-scope' },
+      sessionRef: 'app:hrc-cli/lane:main',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as HrcHttpError
+    // Non-canonical sessionRef should fail with invalid_selector (via validateScopeRef)
+    // RED: currently server rejects at the malformed_request level before
+    // reaching canonical validation. Once Phase 5 wires splitSessionRef
+    // into the ensure handler, this should be invalid_selector.
+    expect(body.error.code).toBe('invalid_selector')
+  })
+})
+
+describe('POST /v1/app-sessions/ensure — canonical alias reuse (T-01077 Phase 5b)', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('reuses existing host session when another alias already owns the same sessionRef', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const sessionRef = 'agent:rex:project:agent-spaces:task:T-00200/lane:main'
+
+    // First app creates a managed session for this sessionRef
+    const res1 = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'app-alpha', appSessionKey: 'rex-task-200' },
+      sessionRef,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+    expect(res1.status).toBe(200)
+    const body1 = (await res1.json()) as EnsureAppSessionResponse
+
+    // Second app creates a managed session for the SAME sessionRef
+    // RED: currently creates a brand new host session instead of reusing
+    const res2 = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'app-beta', appSessionKey: 'rex-task-200' },
+      sessionRef,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+    expect(res2.status).toBe(200)
+    const body2 = (await res2.json()) as EnsureAppSessionResponse
+
+    // Both aliases must point at the same host session — canonical continuity
+    expect(body2.session.activeHostSessionId).toBe(body1.session.activeHostSessionId)
+  })
+})
+
+describe('POST /v1/app-sessions/ensure — sessionRef conflict 409 (T-01077 Phase 5c)', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('returns 409 when re-ensuring an alias with a different sessionRef', async () => {
+    server = await createHrcServer(serverOpts())
+
+    // Create alias with sessionRef A
+    const res1 = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'mutable-alias' },
+      sessionRef: 'agent:rex:project:agent-spaces:task:T-00300/lane:main',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+    expect(res1.status).toBe(200)
+
+    // Re-ensure the same alias with sessionRef B
+    // RED: currently the server ignores sessionRef entirely
+    const res2 = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'mutable-alias' },
+      sessionRef: 'agent:larry:project:agent-spaces:task:T-00400/lane:main',
+      spec: {
+        kind: 'harness',
+        runtimeIntent: {
+          placement: 'workspace',
+          harness: { provider: 'anthropic', interactive: false },
+        },
+      },
+    })
+
+    expect(res2.status).toBe(409)
+  })
+})
+
+describe('POST /v1/app-sessions/ensure — command kind rejected (T-01077 Phase 3a)', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('rejects kind: command on app-session ensure after the split', async () => {
+    server = await createHrcServer(serverOpts())
+
+    // RED: currently command kind is accepted
+    const res = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'workbench', appSessionKey: 'log-tail' },
+      sessionRef: 'agent:rex:project:agent-spaces/lane:main',
+      spec: {
+        kind: 'command',
+        command: {
+          launchMode: 'exec',
+          argv: ['tail', '-f', '/var/log/app.log'],
+        },
+      },
+    })
+
+    // After the split, command sessions go through /v1/windows/ensure
+    expect(res.status).toBe(422)
+  })
+})
+
+describe('Shared-alias lifecycle (T-01077 Phase 5d)', () => {
+  let server: HrcServer
+
+  afterEach(async () => {
+    if (server) await server.stop()
+  })
+
+  it('remove with remaining aliases preserves the runtime', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const sessionRef = 'agent:rex:project:agent-spaces:task:T-00500/lane:main'
+
+    // Two apps alias the same canonical session
+    const res1 = await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'app-alpha', appSessionKey: 'shared-session' },
+      sessionRef,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+    expect(res1.status).toBe(200)
+    const body1 = (await res1.json()) as EnsureAppSessionResponse
+    const hostSessionId = body1.session.activeHostSessionId
+
+    await postJson('/v1/app-sessions/ensure', {
+      selector: { appId: 'app-beta', appSessionKey: 'shared-session' },
+      sessionRef,
+      spec: {
+        kind: 'harness',
+        runtimeIntent: interactiveHarnessIntent(tmpDir),
+      },
+    })
+
+    // Remove app-alpha's alias — app-beta still active
+    // RED: currently remove tears down the runtime unconditionally
+    const removeRes = await postJson('/v1/app-sessions/remove', {
+      selector: { appId: 'app-alpha', appSessionKey: 'shared-session' },
+    })
+    expect(removeRes.status).toBe(200)
+
+    // Runtime should still be accessible for the remaining alias
+    const runtimesRes = await fetchSocket(
+      `/v1/runtimes?hostSessionId=${encodeURIComponent(hostSessionId)}`
+    )
+    expect(runtimesRes.status).toBe(200)
+    const runtimes = (await runtimesRes.json()) as Array<{ runtimeId: string }>
+    // Runtime must still exist because app-beta still holds an active alias
+    expect(runtimes.length).toBeGreaterThanOrEqual(1)
   })
 })

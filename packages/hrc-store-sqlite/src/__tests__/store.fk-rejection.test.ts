@@ -29,10 +29,14 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-fk:task:${scopeKey}`
+}
+
 function makeSession(id: string): HrcSessionRecord {
   return {
     hostSessionId: id,
-    scopeRef: 'scope:test',
+    scopeRef: testScopeRef('fk-test'),
     laneRef: 'default',
     generation: 1,
     status: 'active',
@@ -46,7 +50,7 @@ function makeRuntime(id: string, hostSessionId: string): HrcRuntimeSnapshot {
   return {
     runtimeId: id,
     hostSessionId,
-    scopeRef: 'scope:test',
+    scopeRef: testScopeRef('fk-test'),
     laneRef: 'default',
     generation: 1,
     transport: 'stdio',
@@ -86,7 +90,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
       db.runs.insert({
         runId: 'run-orphan',
         hostSessionId: 'hsid-does-not-exist',
-        scopeRef: 'scope:test',
+        scopeRef: testScopeRef('fk-test'),
         laneRef: 'default',
         generation: 1,
         transport: 'stdio',
@@ -103,7 +107,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         runId: 'run-bad-rt',
         hostSessionId: session.hostSessionId,
         runtimeId: 'rt-does-not-exist',
-        scopeRef: 'scope:test',
+        scopeRef: testScopeRef('fk-test'),
         laneRef: 'default',
         generation: 1,
         transport: 'stdio',
@@ -135,7 +139,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         seq: 0,
         ts: ts(),
         hostSessionId: 'hsid-does-not-exist',
-        scopeRef: 'scope:test',
+        scopeRef: testScopeRef('fk-test'),
         laneRef: 'default',
         generation: 1,
         source: 'hrc',
@@ -153,7 +157,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         seq: 0,
         ts: ts(),
         hostSessionId: session.hostSessionId,
-        scopeRef: 'scope:test',
+        scopeRef: testScopeRef('fk-test'),
         laneRef: 'default',
         generation: 1,
         runId: 'run-does-not-exist',
@@ -172,7 +176,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
         seq: 0,
         ts: ts(),
         hostSessionId: session.hostSessionId,
-        scopeRef: 'scope:test',
+        scopeRef: testScopeRef('fk-test'),
         laneRef: 'default',
         generation: 1,
         runtimeId: 'rt-does-not-exist',
@@ -259,7 +263,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
       runId: 'run-valid',
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
-      scopeRef: 'scope:test',
+      scopeRef: testScopeRef('fk-test'),
       laneRef: 'default',
       generation: 1,
       transport: 'stdio',
@@ -270,7 +274,7 @@ describe('M-14: FK rejection on real relations (T-00985)', () => {
       seq: 0,
       ts: ts(),
       hostSessionId: session.hostSessionId,
-      scopeRef: 'scope:test',
+      scopeRef: testScopeRef('fk-test'),
       laneRef: 'default',
       generation: 1,
       runId: run.runId,

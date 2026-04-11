@@ -26,6 +26,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-continuity:task:${scopeKey}`
+}
+
 function makeSession(
   hostSessionId: string,
   generation: number,
@@ -33,7 +37,7 @@ function makeSession(
 ): HrcSessionRecord {
   return {
     hostSessionId,
-    scopeRef: 'scope:chain-test',
+    scopeRef: testScopeRef('chain-test'),
     laneRef: 'default',
     generation,
     status: 'active',
@@ -62,13 +66,13 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
   it('returns empty array for single session with no prior', () => {
     db.sessions.insert(makeSession('hsid-solo', 1))
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-solo',
       updatedAt: ts(),
     })
 
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity).not.toBeNull()
     expect(continuity!.priorHostSessionIds).toEqual([])
   })
@@ -80,13 +84,13 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     db.sessions.insert(makeSession('hsid-C', 3, 'hsid-B'))
 
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-C',
       updatedAt: ts(),
     })
 
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity).not.toBeNull()
     // Walk from C→B→A, then reverse → [A, B]
     expect(continuity!.priorHostSessionIds).toEqual(['hsid-A', 'hsid-B'])
@@ -100,13 +104,13 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     db.sessions.insert(makeSession('hsid-5', 5, 'hsid-4'))
 
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-5',
       updatedAt: ts(),
     })
 
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity!.priorHostSessionIds).toEqual(['hsid-1', 'hsid-2', 'hsid-3', 'hsid-4'])
   })
 
@@ -127,14 +131,14 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     )
 
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-cycle-B',
       updatedAt: ts(),
     })
 
     // Should return a result (not hang) — cycle detection breaks the loop
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity).not.toBeNull()
     // The chain walks B→A, sees A→B but B is already "seen" from start, so stops
     // Result should contain at most [A] (the prior of B)
@@ -146,7 +150,7 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     // Create a session in a different scope — FK is satisfied but chain walk won't find it
     db.sessions.insert({
       hostSessionId: 'hsid-other-scope',
-      scopeRef: 'scope:other',
+      scopeRef: testScopeRef('other'),
       laneRef: 'default',
       generation: 1,
       status: 'active',
@@ -159,13 +163,13 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     db.sessions.insert(makeSession('hsid-cross-B', 1, 'hsid-other-scope'))
 
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-cross-B',
       updatedAt: ts(),
     })
 
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity).not.toBeNull()
     // hsid-other-scope is in the sessions table but NOT in scope:chain-test/default query
     // So byHostSessionId map won't contain it. But the chain walk pushes it, then can't find it.
@@ -183,7 +187,7 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     // Different lane should not interfere
     db.sessions.insert({
       hostSessionId: 'hsid-lane-other',
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'other-lane',
       generation: 1,
       status: 'active',
@@ -196,13 +200,13 @@ describe('M-15: continuity chain derivation (T-00985)', () => {
     db.sessions.insert(makeSession('hsid-lane-B', 2, 'hsid-lane-A'))
 
     db.continuities.upsert({
-      scopeRef: 'scope:chain-test',
+      scopeRef: testScopeRef('chain-test'),
       laneRef: 'default',
       activeHostSessionId: 'hsid-lane-B',
       updatedAt: ts(),
     })
 
-    const continuity = db.continuities.getByKey('scope:chain-test', 'default')
+    const continuity = db.continuities.getByKey(testScopeRef('chain-test'), 'default')
     expect(continuity!.priorHostSessionIds).toEqual(['hsid-lane-A'])
   })
 })

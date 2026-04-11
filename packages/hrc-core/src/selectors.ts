@@ -1,3 +1,5 @@
+import { validateScopeRef } from 'agent-scope'
+
 import { HrcBadRequestError, HrcErrorCode } from './errors.js'
 
 export type HrcSessionRef = string
@@ -37,7 +39,7 @@ function assertNonEmptyString(value: unknown, fieldName: string): string {
   return normalized
 }
 
-function splitSessionRef(sessionRef: string): SessionRefParts {
+export function splitSessionRef(sessionRef: string): SessionRefParts {
   const [scopeRef, laneSuffix, ...rest] = sessionRef.split('/')
   if (
     scopeRef === undefined ||
@@ -64,16 +66,25 @@ function splitSessionRef(sessionRef: string): SessionRefParts {
     )
   }
 
+  const scopeValidation = validateScopeRef(normalizedScopeRef)
+  if (!scopeValidation.ok) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.INVALID_SELECTOR,
+      `sessionRef must include a canonical agent ScopeRef: ${scopeValidation.error}`,
+      { sessionRef, scopeRef: normalizedScopeRef }
+    )
+  }
+
   return {
     scopeRef: normalizedScopeRef,
-    laneRef: normalizedLaneRef,
+    laneRef: laneId,
   }
 }
 
 export function normalizeSessionRef(sessionRef: string): HrcSessionRef {
   const normalized = assertNonEmptyString(sessionRef, 'sessionRef')
   const parts = splitSessionRef(normalized)
-  return `${parts.scopeRef}/${parts.laneRef}`
+  return `${parts.scopeRef}/lane:${parts.laneRef}`
 }
 
 export function parseSelector(input: unknown): HrcSelector {

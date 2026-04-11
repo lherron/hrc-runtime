@@ -46,6 +46,18 @@ type EnsureResponse = {
   runtimeId?: string
 }
 
+function managedSessionScopeRef(appId: string, appSessionKey: string): string {
+  return `agent:${appId}:project:hrc-phase6-tests:task:${appSessionKey}`
+}
+
+function managedSessionRef(appId: string, appSessionKey: string): string {
+  return `${managedSessionScopeRef(appId, appSessionKey)}/lane:main`
+}
+
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-phase6-tests:task:${scopeKey}`
+}
+
 async function fetchEvents(): Promise<
   Array<{ seq: number; eventKind: string; eventJson: unknown; runtimeId?: string }>
 > {
@@ -64,23 +76,17 @@ async function fetchEvents(): Promise<
  */
 async function ensureManagedSession(
   appId: string,
-  appSessionKey: string,
-  kind: 'harness' | 'command' = 'harness'
+  appSessionKey: string
 ): Promise<EnsureResponse & { hostSessionId: string; generation: number }> {
   const res = await fixture.postJson('/v1/app-sessions/ensure', {
     selector: { appId, appSessionKey },
+    sessionRef: managedSessionRef(appId, appSessionKey),
     spec: {
-      kind,
-      ...(kind === 'harness'
-        ? {
-            runtimeIntent: {
-              placement: 'workspace',
-              harness: { provider: 'anthropic', interactive: true },
-            },
-          }
-        : {
-            command: { argv: ['echo', 'hello'] },
-          }),
+      kind: 'harness',
+      runtimeIntent: {
+        placement: 'workspace',
+        harness: { provider: 'anthropic', interactive: false },
+      },
     },
   })
   expect(res.status).toBe(200)
@@ -119,9 +125,14 @@ describe('POST /v1/bridges/target — appSession selector (P6-1)', () => {
     let bridgeRuntimeId = runtimeId
     if (!bridgeRuntimeId) {
       bridgeRuntimeId = `rt-bridge-${Date.now()}`
-      fixture.seedTmuxRuntime(hostSessionId, 'app:bridge-app', bridgeRuntimeId, {
-        status: 'ready',
-      })
+      fixture.seedTmuxRuntime(
+        hostSessionId,
+        managedSessionScopeRef('bridge-app', 'worker-1'),
+        bridgeRuntimeId,
+        {
+          status: 'ready',
+        }
+      )
     }
 
     // 2. Register bridge using appSession selector — must resolve through
@@ -196,8 +207,9 @@ describe('POST /v1/bridges/target — appSession selector (P6-1)', () => {
 // ===========================================================================
 describe('POST /v1/bridges/close — bridge.closed event (P6-2)', () => {
   it('emits bridge.closed event when bridge is closed', async () => {
-    const { hostSessionId, generation, runtimeId } =
-      await fixture.ensureRuntime('bridge-close-event')
+    const { hostSessionId, generation, runtimeId } = await fixture.ensureRuntime(
+      testScopeRef('bridge-close-event')
+    )
 
     // Register bridge
     const regRes = await fixture.postJson('/v1/bridges/target', {
@@ -301,9 +313,14 @@ describe('POST /v1/app-sessions/interrupt — runtime.interrupted event (P6-6)',
     let targetRuntimeId = runtimeId
     if (!targetRuntimeId) {
       targetRuntimeId = `rt-int-${Date.now()}`
-      fixture.seedTmuxRuntime(hostSessionId, 'app:interrupt-app', targetRuntimeId, {
-        status: 'ready',
-      })
+      fixture.seedTmuxRuntime(
+        hostSessionId,
+        managedSessionScopeRef('interrupt-app', 'int-1'),
+        targetRuntimeId,
+        {
+          status: 'ready',
+        }
+      )
     }
 
     const baseline = await fetchEvents()
@@ -347,9 +364,14 @@ describe('Surface binding via app-session resolution (P6-7)', () => {
     let targetRuntimeId = runtimeId
     if (!targetRuntimeId) {
       targetRuntimeId = `rt-surf-${Date.now()}`
-      fixture.seedTmuxRuntime(hostSessionId, 'app:surface-app', targetRuntimeId, {
-        status: 'ready',
-      })
+      fixture.seedTmuxRuntime(
+        hostSessionId,
+        managedSessionScopeRef('surface-app', 'surf-1'),
+        targetRuntimeId,
+        {
+          status: 'ready',
+        }
+      )
     }
 
     // Bind surface using the runtimeId from the managed session
@@ -386,9 +408,14 @@ describe('Surface binding via app-session resolution (P6-7)', () => {
     let runtimeA = runtimeId
     if (!runtimeA) {
       runtimeA = `rt-rebind-a-${Date.now()}`
-      fixture.seedTmuxRuntime(hostSessionId, 'app:rebind-app', runtimeA, {
-        status: 'ready',
-      })
+      fixture.seedTmuxRuntime(
+        hostSessionId,
+        managedSessionScopeRef('rebind-app', 'rebind-1'),
+        runtimeA,
+        {
+          status: 'ready',
+        }
+      )
     }
 
     // Bind surface to runtime A
@@ -426,7 +453,7 @@ describe('Surface binding via app-session resolution (P6-7)', () => {
       db.runtimes.insert({
         runtimeId: runtimeB,
         hostSessionId: newHostSessionId,
-        scopeRef: 'app:rebind-app',
+        scopeRef: managedSessionScopeRef('rebind-app', 'rebind-1'),
         laneRef: 'default',
         generation: newGeneration,
         transport: 'tmux',

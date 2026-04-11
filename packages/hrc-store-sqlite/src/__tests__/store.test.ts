@@ -40,6 +40,14 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store:task:${scopeKey}`
+}
+
+function testSessionRef(scopeKey: string, laneRef = 'default'): string {
+  return `${testScopeRef(scopeKey)}/lane:${laneRef}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-store-test-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -125,17 +133,17 @@ describe('ContinuityRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       const record = db.continuities.upsert({
-        sessionRef: 'test://scope/lane' as any,
-        scopeRef: 'test-scope',
+        sessionRef: testSessionRef('continuity'),
+        scopeRef: testScopeRef('continuity'),
         laneRef: 'default',
         activeHostSessionId: 'hsid-001',
         updatedAt: ts(),
       })
-      expect(record.scopeRef).toBe('test-scope')
+      expect(record.scopeRef).toBe(testScopeRef('continuity'))
       expect(record.laneRef).toBe('default')
       expect(record.activeHostSessionId).toBe('hsid-001')
 
-      const found = db.continuities.getByKey('test-scope', 'default')
+      const found = db.continuities.getByKey(testScopeRef('continuity'), 'default')
       expect(found).not.toBeNull()
       expect(found!.activeHostSessionId).toBe('hsid-001')
     } finally {
@@ -147,20 +155,20 @@ describe('ContinuityRepository', () => {
     const db = openHrcDatabase(dbPath)
     try {
       db.continuities.upsert({
-        sessionRef: 'test://scope/lane' as any,
-        scopeRef: 'test-scope',
+        sessionRef: testSessionRef('continuity'),
+        scopeRef: testScopeRef('continuity'),
         laneRef: 'default',
         activeHostSessionId: 'hsid-001',
         updatedAt: ts(),
       })
       db.continuities.upsert({
-        sessionRef: 'test://scope/lane' as any,
-        scopeRef: 'test-scope',
+        sessionRef: testSessionRef('continuity'),
+        scopeRef: testScopeRef('continuity'),
         laneRef: 'default',
         activeHostSessionId: 'hsid-002',
         updatedAt: ts(),
       })
-      const found = db.continuities.getByKey('test-scope', 'default')
+      const found = db.continuities.getByKey(testScopeRef('continuity'), 'default')
       expect(found!.activeHostSessionId).toBe('hsid-002')
     } finally {
       db.close()
@@ -188,7 +196,7 @@ describe('SessionRepository', () => {
       const now = ts()
       const session: HrcSessionRecord = {
         hostSessionId: 'hsid-100',
-        scopeRef: 'scope-a',
+        scopeRef: testScopeRef('scope-a'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -214,7 +222,7 @@ describe('SessionRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-200',
-        scopeRef: 'scope-b',
+        scopeRef: testScopeRef('scope-b'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -224,7 +232,7 @@ describe('SessionRepository', () => {
       })
       db.sessions.insert({
         hostSessionId: 'hsid-201',
-        scopeRef: 'scope-b',
+        scopeRef: testScopeRef('scope-b'),
         laneRef: 'default',
         generation: 2,
         status: 'active',
@@ -233,7 +241,7 @@ describe('SessionRepository', () => {
         updatedAt: now,
         ancestorScopeRefs: [],
       })
-      const list = db.sessions.listByScopeRef('scope-b', 'default')
+      const list = db.sessions.listByScopeRef(testScopeRef('scope-b'), 'default')
       expect(list.length).toBe(2)
     } finally {
       db.close()
@@ -246,7 +254,7 @@ describe('SessionRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-300',
-        scopeRef: 'scope-c',
+        scopeRef: testScopeRef('scope-c'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -269,7 +277,7 @@ describe('SessionRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-json-1',
-        scopeRef: 'scope-json',
+        scopeRef: testScopeRef('scope-json'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -305,7 +313,7 @@ describe('SessionRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-json-2',
-        scopeRef: 'scope-json',
+        scopeRef: testScopeRef('scope-json'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -339,7 +347,7 @@ describe('RuntimeRepository', () => {
       // Need a session first for the FK
       db.sessions.insert({
         hostSessionId: 'hsid-rt-1',
-        scopeRef: 'scope-rt',
+        scopeRef: testScopeRef('scope-rt'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -351,7 +359,7 @@ describe('RuntimeRepository', () => {
       const runtime: HrcRuntimeSnapshot = {
         runtimeId: 'rt-001',
         hostSessionId: 'hsid-rt-1',
-        scopeRef: 'scope-rt',
+        scopeRef: testScopeRef('scope-rt'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -380,7 +388,7 @@ describe('RuntimeRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-rt-2',
-        scopeRef: 'scope-rt2',
+        scopeRef: testScopeRef('scope-rt2'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -391,7 +399,7 @@ describe('RuntimeRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-002',
         hostSessionId: 'hsid-rt-2',
-        scopeRef: 'scope-rt2',
+        scopeRef: testScopeRef('scope-rt2'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -418,7 +426,7 @@ describe('RuntimeRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-rt-3',
-        scopeRef: 'scope-rt3',
+        scopeRef: testScopeRef('scope-rt3'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -429,7 +437,7 @@ describe('RuntimeRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-003',
         hostSessionId: 'hsid-rt-3',
-        scopeRef: 'scope-rt3',
+        scopeRef: testScopeRef('scope-rt3'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -462,7 +470,7 @@ describe('RuntimeRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-rt-tmux',
-        scopeRef: 'scope-rt-tmux',
+        scopeRef: testScopeRef('scope-rt-tmux'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -474,7 +482,7 @@ describe('RuntimeRepository', () => {
       const created = db.runtimes.insert({
         runtimeId: 'rt-tmux-1',
         hostSessionId: 'hsid-rt-tmux',
-        scopeRef: 'scope-rt-tmux',
+        scopeRef: testScopeRef('scope-rt-tmux'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -507,7 +515,7 @@ describe('RunRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-run-1',
-        scopeRef: 'scope-run',
+        scopeRef: testScopeRef('scope-run'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -519,7 +527,7 @@ describe('RunRepository', () => {
       const run: HrcRunRecord = {
         runId: 'run-001',
         hostSessionId: 'hsid-run-1',
-        scopeRef: 'scope-run',
+        scopeRef: testScopeRef('scope-run'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -544,7 +552,7 @@ describe('RunRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-run-2',
-        scopeRef: 'scope-run2',
+        scopeRef: testScopeRef('scope-run2'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -555,7 +563,7 @@ describe('RunRepository', () => {
       db.runs.insert({
         runId: 'run-002',
         hostSessionId: 'hsid-run-2',
-        scopeRef: 'scope-run2',
+        scopeRef: testScopeRef('scope-run2'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -590,7 +598,7 @@ describe('LaunchRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-launch-1',
-        scopeRef: 'scope-launch',
+        scopeRef: testScopeRef('scope-launch'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -627,7 +635,7 @@ describe('LaunchRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-launch-2',
-        scopeRef: 'scope-launch2',
+        scopeRef: testScopeRef('scope-launch2'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -689,7 +697,7 @@ describe('EventRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-evt-1',
-        scopeRef: 'scope-evt',
+        scopeRef: testScopeRef('scope-evt'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -701,7 +709,7 @@ describe('EventRepository', () => {
       const base: Omit<HrcEventEnvelope, 'seq'> = {
         ts: now,
         hostSessionId: 'hsid-evt-1',
-        scopeRef: 'scope-evt',
+        scopeRef: testScopeRef('scope-evt'),
         laneRef: 'default',
         generation: 1,
         source: 'hrc',
@@ -727,7 +735,7 @@ describe('EventRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-evt-2',
-        scopeRef: 'scope-evt2',
+        scopeRef: testScopeRef('scope-evt2'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -739,7 +747,7 @@ describe('EventRepository', () => {
       const base: Omit<HrcEventEnvelope, 'seq'> = {
         ts: now,
         hostSessionId: 'hsid-evt-2',
-        scopeRef: 'scope-evt2',
+        scopeRef: testScopeRef('scope-evt2'),
         laneRef: 'default',
         generation: 1,
         source: 'hrc',
@@ -764,7 +772,7 @@ describe('EventRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-evt-3',
-        scopeRef: 'scope-evt3',
+        scopeRef: testScopeRef('scope-evt3'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -776,7 +784,7 @@ describe('EventRepository', () => {
       const base: Omit<HrcEventEnvelope, 'seq'> = {
         ts: now,
         hostSessionId: 'hsid-evt-3',
-        scopeRef: 'scope-evt3',
+        scopeRef: testScopeRef('scope-evt3'),
         laneRef: 'default',
         generation: 1,
         source: 'hrc',
@@ -802,7 +810,7 @@ describe('EventRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-evt-json',
-        scopeRef: 'scope-evt-json',
+        scopeRef: testScopeRef('scope-evt-json'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -820,7 +828,7 @@ describe('EventRepository', () => {
       const _evt = db.events.append({
         ts: now,
         hostSessionId: 'hsid-evt-json',
-        scopeRef: 'scope-evt-json',
+        scopeRef: testScopeRef('scope-evt-json'),
         laneRef: 'default',
         generation: 1,
         source: 'hook',
@@ -847,7 +855,7 @@ describe('SurfaceBindingRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-surface-1',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -858,7 +866,7 @@ describe('SurfaceBindingRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-surface-1',
         hostSessionId: 'hsid-surface-1',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -902,7 +910,7 @@ describe('SurfaceBindingRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-surface-2',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -912,7 +920,7 @@ describe('SurfaceBindingRepository', () => {
       })
       db.sessions.insert({
         hostSessionId: 'hsid-surface-3',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 2,
         status: 'active',
@@ -923,7 +931,7 @@ describe('SurfaceBindingRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-surface-2',
         hostSessionId: 'hsid-surface-2',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -938,7 +946,7 @@ describe('SurfaceBindingRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-surface-3',
         hostSessionId: 'hsid-surface-3',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 2,
         transport: 'tmux',
@@ -984,7 +992,7 @@ describe('SurfaceBindingRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-surface-4',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -995,7 +1003,7 @@ describe('SurfaceBindingRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-surface-4',
         hostSessionId: 'hsid-surface-4',
-        scopeRef: 'scope-surface',
+        scopeRef: testScopeRef('scope-surface'),
         laneRef: 'default',
         generation: 1,
         transport: 'tmux',
@@ -1039,7 +1047,7 @@ describe('RuntimeBufferRepository', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-buf-1',
-        scopeRef: 'scope-buf',
+        scopeRef: testScopeRef('scope-buf'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -1050,7 +1058,7 @@ describe('RuntimeBufferRepository', () => {
       db.runtimes.insert({
         runtimeId: 'rt-buf-1',
         hostSessionId: 'hsid-buf-1',
-        scopeRef: 'scope-buf',
+        scopeRef: testScopeRef('scope-buf'),
         laneRef: 'default',
         generation: 1,
         transport: 'sdk',
@@ -1098,7 +1106,7 @@ describe('WAL concurrent reads', () => {
       const now = ts()
       db.sessions.insert({
         hostSessionId: 'hsid-wal-1',
-        scopeRef: 'scope-wal',
+        scopeRef: testScopeRef('scope-wal'),
         laneRef: 'default',
         generation: 1,
         status: 'active',
@@ -1114,7 +1122,7 @@ describe('WAL concurrent reads', () => {
         db.events.append({
           ts: now,
           hostSessionId: 'hsid-wal-1',
-          scopeRef: 'scope-wal',
+          scopeRef: testScopeRef('scope-wal'),
           laneRef: 'default',
           generation: 1,
           source: 'hrc',

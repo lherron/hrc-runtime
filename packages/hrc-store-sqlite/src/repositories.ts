@@ -797,6 +797,10 @@ export class SessionRepository {
     return row ? mapSessionRow(row) : null
   }
 
+  findByHostSessionId(hostSessionId: string): HrcSessionRecord | null {
+    return this.getByHostSessionId(hostSessionId)
+  }
+
   listByScopeRef(scopeRef: string, laneRef?: string | undefined): HrcSessionRecord[] {
     return this.listByFilters({ scopeRef, laneRef })
   }
@@ -1129,6 +1133,18 @@ export class AppManagedSessionRepository {
           ORDER BY app_session_key ASC`
       )
       .all(...values)
+
+    return rows.map(mapAppManagedSessionRow)
+  }
+
+  findByActiveHostSessionId(hostSessionId: string): AppManagedSessionRecord[] {
+    const rows = this.db
+      .query<AppManagedSessionRow, [string]>(
+        `SELECT ${APP_MANAGED_SESSION_COLUMNS} FROM app_managed_sessions
+          WHERE active_host_session_id = ?
+          ORDER BY app_id ASC, app_session_key ASC`
+      )
+      .all(hostSessionId)
 
     return rows.map(mapAppManagedSessionRow)
   }

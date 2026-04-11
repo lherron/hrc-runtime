@@ -45,6 +45,7 @@
         "spaces-config": "*",
         "spaces-execution": "*",
         "spaces-harness-pi-sdk": "*",
+        "spaces-runtime": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -98,6 +99,7 @@
       "name": "spaces-execution",
       "version": "0.1.0",
       "dependencies": {
+        "chalk": "^5.3.0",
         "spaces-config": "*",
         "spaces-harness-claude": "*",
         "spaces-harness-codex": "*",
@@ -168,8 +170,10 @@
         "hrc": "./src/cli.ts",
       },
       "dependencies": {
+        "agent-scope": "*",
         "hrc-core": "*",
         "hrc-sdk": "*",
+        "spaces-config": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",

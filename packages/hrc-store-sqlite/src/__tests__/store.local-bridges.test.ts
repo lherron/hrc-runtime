@@ -44,6 +44,10 @@ function ts(): string {
   return new Date().toISOString()
 }
 
+function testScopeRef(scopeKey: string): string {
+  return `agent:test:project:hrc-store-local-bridges:task:${scopeKey}`
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-bridge-store-test-'))
   dbPath = join(tmpDir, 'test.sqlite')
@@ -67,7 +71,7 @@ function seedSessionAndRuntime(
   }
 ) {
   const now = ts()
-  const scopeRef = opts.scopeRef ?? 'test-scope'
+  const scopeRef = opts.scopeRef ?? testScopeRef(opts.hostSessionId)
   const laneRef = opts.laneRef ?? 'default'
   const generation = opts.generation ?? 1
 

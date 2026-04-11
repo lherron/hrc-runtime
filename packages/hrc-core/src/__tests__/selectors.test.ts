@@ -30,10 +30,10 @@ import {
 
 describe('parseSelector (T-00949)', () => {
   test('parses a valid sessionRef selector', () => {
-    const result = parseSelector({ sessionRef: 'project:myproject/lane:default' })
+    const result = parseSelector({ sessionRef: 'agent:rex:project:myproject/lane:default' })
     expect(result).toBeDefined()
     expect(result.kind).toBe('stable')
-    expect(result.sessionRef).toBe('project:myproject/lane:default')
+    expect(result.sessionRef).toBe('agent:rex:project:myproject/lane:default')
   })
 
   test('parses a valid concrete hostSessionId selector', () => {
@@ -78,17 +78,19 @@ describe('parseSelector (T-00949)', () => {
 
 describe('normalizeSessionRef (T-00949)', () => {
   test('trims leading/trailing whitespace', () => {
-    expect(normalizeSessionRef('  project:foo/lane:bar  ')).toBe('project:foo/lane:bar')
+    expect(normalizeSessionRef('  agent:rex:project:foo/lane:bar  ')).toBe(
+      'agent:rex:project:foo/lane:bar'
+    )
   })
 
   test('preserves valid sessionRef as-is', () => {
-    const ref = 'project:my-project/lane:default'
+    const ref = 'agent:rex:project:my-project/lane:default'
     expect(normalizeSessionRef(ref)).toBe(ref)
   })
 
   test('returns consistent output for equivalent refs', () => {
-    const a = normalizeSessionRef('project:foo/lane:bar')
-    const b = normalizeSessionRef('  project:foo/lane:bar  ')
+    const a = normalizeSessionRef('agent:rex:project:foo/lane:bar')
+    const b = normalizeSessionRef('  agent:rex:project:foo/lane:bar  ')
     expect(a).toBe(b)
   })
 })
@@ -97,9 +99,72 @@ describe('normalizeSessionRef (T-00949)', () => {
 // Selector kind guards
 // ===================================================================
 
+// ===================================================================
+// Canonical scopeRef validation (T-01077 — SCOPEREF_CLEANUP Phase 2)
+//
+// RED GATE: splitSessionRef must call validateScopeRef() from agent-scope
+// and reject non-canonical forms. Currently it only checks format, not
+// canonical prefix.
+// ===================================================================
+
+describe('splitSessionRef rejects non-canonical scopeRefs (T-01077)', () => {
+  // Non-canonical forms must be rejected
+  const nonCanonical = [
+    { input: 'app:hrc-cli/lane:main', reason: 'app: prefix is not a canonical agent scope' },
+    { input: 'app:workbench/lane:default', reason: 'app: prefix is synthetic' },
+    {
+      input: 'project:myproject/lane:default',
+      reason: 'project: without agent: prefix is invalid',
+    },
+    { input: 'project:foo/lane:bar', reason: 'bare project: is not canonical' },
+    { input: 'task:T-001/lane:main', reason: 'bare task: is not canonical' },
+    { input: 'role:operator/lane:main', reason: 'bare role: is not canonical' },
+    { input: 'workspace:main/lane:default', reason: 'workspace: is not a valid scope kind' },
+    { input: 'user:alice/lane:default', reason: 'user: is not a valid scope kind' },
+  ]
+
+  for (const { input, reason } of nonCanonical) {
+    test(`rejects "${input}" — ${reason}`, () => {
+      expect(() => normalizeSessionRef(input)).toThrow()
+    })
+
+    test(`parseSelector rejects non-canonical "${input}"`, () => {
+      expect(() => parseSelector({ sessionRef: input })).toThrow()
+    })
+  }
+})
+
+describe('splitSessionRef accepts all 5 canonical agent: forms (T-01077)', () => {
+  // All 5 canonical ScopeRef forms per acp-spec
+  const canonical = [
+    'agent:rex/lane:main',
+    'agent:rex:project:agent-spaces/lane:default',
+    'agent:rex:project:agent-spaces:role:operator/lane:main',
+    'agent:rex:project:agent-spaces:task:T-00123/lane:main',
+    'agent:rex:project:agent-spaces:task:T-00123:role:investigator/lane:repair',
+  ]
+
+  for (const ref of canonical) {
+    test(`accepts canonical "${ref}"`, () => {
+      const result = normalizeSessionRef(ref)
+      expect(result).toBe(ref)
+    })
+
+    test(`parseSelector accepts canonical "${ref}"`, () => {
+      const sel = parseSelector({ sessionRef: ref })
+      expect(sel.kind).toBe('stable')
+      expect(sel.sessionRef).toBe(ref)
+    })
+  }
+})
+
+// ===================================================================
+// Selector kind guards
+// ===================================================================
+
 describe('Selector kind guards (T-00949)', () => {
   test('isStableSelector returns true for sessionRef selectors', () => {
-    const sel: HrcSelector = { kind: 'stable', sessionRef: 'project:x/lane:y' }
+    const sel: HrcSelector = { kind: 'stable', sessionRef: 'agent:rex:project:x/lane:y' }
     expect(isStableSelector(sel)).toBe(true)
     expect(isConcreteSelector(sel)).toBe(false)
   })
