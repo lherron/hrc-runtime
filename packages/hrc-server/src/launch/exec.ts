@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { parseArgs } from 'node:util'
 
 import { postCallback } from './callback-client.js'
+import { scrubInheritedEnv } from './env.js'
 import { readLaunchArtifact } from './launch-artifact.js'
 import { spoolCallback } from './spool.js'
 
@@ -22,6 +23,7 @@ function printLaunchSummary(artifact: {
   launchId: string
   runtimeId: string
   runId?: string | undefined
+  harness: string
   argv: string[]
   env: Record<string, string>
   cwd: string
@@ -43,6 +45,9 @@ function printLaunchSummary(artifact: {
   w(dim(`  runtime:  ${artifact.runtimeId}`))
   if (artifact.runId) w(dim(`  run:      ${artifact.runId}`))
   w(dim(`  cwd:      ${artifact.cwd}`))
+  if (artifact.harness === 'codex-cli' && artifact.env['CODEX_HOME']) {
+    w(dim(`  codex home: ${artifact.env['CODEX_HOME']}`))
+  }
   w('')
 
   if (systemPrompt) {
@@ -166,7 +171,7 @@ async function main(): Promise<void> {
   // Spawn child
   const child: ChildProcess = spawn(command, argv.slice(1), {
     env: {
-      ...process.env,
+      ...scrubInheritedEnv(process.env),
       ...env,
       HRC_LAUNCH_FILE: launchFile,
       HRC_CALLBACK_SOCKET: callbackSocketPath,

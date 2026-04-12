@@ -125,6 +125,61 @@ async function ensureRuntime(scopeRef: string): Promise<{
   }
 }
 
+async function ensureInteractiveRuntime(scopeRef: string): Promise<{
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+}> {
+  const resolveRes = await postJson('/v1/sessions/resolve', {
+    sessionRef: `agent:${scopeRef}/lane:default`,
+  })
+  const resolved = (await resolveRes.json()) as {
+    hostSessionId: string
+    generation: number
+  }
+
+  const ensureRes = await postJson('/v1/runtimes/ensure', {
+    hostSessionId: resolved.hostSessionId,
+    intent: {
+      placement: {
+        agentRoot: '/tmp/agent',
+        projectRoot: '/tmp/project',
+        cwd: '/tmp/project',
+        runMode: 'task',
+        bundle: { kind: 'agent-default' },
+        dryRun: true,
+      },
+      harness: {
+        provider: 'anthropic',
+        interactive: true,
+      },
+    },
+    restartStyle: 'reuse_pty',
+  })
+  const runtime = (await ensureRes.json()) as { runtimeId: string }
+
+  return {
+    hostSessionId: resolved.hostSessionId,
+    generation: resolved.generation,
+    runtimeId: runtime.runtimeId,
+  }
+}
+
+async function hasTmuxSession(hostSessionId: string): Promise<boolean> {
+  const sessionName = `hrc-${hostSessionId.slice(0, 12)}`
+  const proc = Bun.spawn(
+    ['tmux', '-S', tmuxSocketPath, 'list-panes', '-t', `=${sessionName}:main`, '-F', '#{pane_id}'],
+    {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      stdin: 'ignore',
+    }
+  )
+
+  const exitCode = await proc.exited
+  return exitCode === 0
+}
+
 /**
  * Helper: fetch all events and return parsed envelopes.
  */
@@ -480,10 +535,10 @@ describe('GET /v1/surfaces', () => {
 // 4. Restart survival — bindings persist across daemon restart
 // ---------------------------------------------------------------------------
 describe('restart survival', () => {
-  it('bindings survive daemon stop and restart', async () => {
+  it('bindings survive daemon stop and restart while tmux sessions stay alive', async () => {
     // Start server, bind a surface
     let server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('restart-test')
+    const { hostSessionId, generation, runtimeId } = await ensureInteractiveRuntime('restart-test')
 
     await postJson('/v1/surfaces/bind', {
       surfaceKind: 'ghostty',
@@ -493,12 +548,16 @@ describe('restart survival', () => {
       generation,
     })
 
+    expect(await hasTmuxSession(hostSessionId)).toBe(true)
+
     // Stop the server
     await server.stop()
+    expect(await hasTmuxSession(hostSessionId)).toBe(true)
 
     // Restart with same DB path
     server = await createHrcServer(serverOpts())
     try {
+      expect(await hasTmuxSession(hostSessionId)).toBe(true)
       // Query the binding — it should still be there
       const res = await fetchSocket(`/v1/surfaces?runtimeId=${runtimeId}`)
       expect(res.status).toBe(200)

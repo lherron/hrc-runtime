@@ -1,5 +1,11 @@
 import { rm } from 'node:fs/promises'
 
+import {
+  listInheritedEnvKeysToScrub,
+  sanitizeTmuxClientEnv,
+  sanitizeTmuxServerPath,
+} from './launch/env.js'
+
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 export type TmuxManagerOptions = {
   socketPath: string
@@ -90,6 +96,7 @@ export class TmuxManager {
   async initialize(): Promise<void> {
     await this.checkVersion()
     await this.startServer()
+    await this.scrubServerEnvironment()
   }
 
   async ensurePane(hostSessionId: string, restartStyle: RestartStyle): Promise<TmuxPaneState> {
@@ -201,19 +208,34 @@ export class TmuxManager {
   }
 
   private async createNamedSession(sessionName: string): Promise<TmuxPaneState> {
-    const result = await this.exec([
-      'new-session',
-      '-d',
+    const args = ['new-session', '-d']
+    const sanitizedPath = sanitizeTmuxServerPath(process.env['PATH'])
+    if (sanitizedPath) {
+      args.push('-e', `PATH=${sanitizedPath}`)
+    }
+    args.push(
       '-P',
       '-s',
       sessionName,
       '-n',
       WINDOW_NAME,
       '-F',
-      '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}',
-    ])
+      '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}'
+    )
+
+    const result = await this.exec(args)
 
     return parsePaneState(result.stdout, this.socketPath)
+  }
+
+  private async scrubServerEnvironment(): Promise<void> {
+    for (const key of listInheritedEnvKeysToScrub(process.env)) {
+      try {
+        await this.exec(['set-environment', '-gu', key])
+      } catch {
+        // Best effort: keep startup resilient if a key is already absent.
+      }
+    }
   }
 
   private async killSession(sessionName: string): Promise<void> {
@@ -242,6 +264,7 @@ export class TmuxManager {
 
   private async execRaw(args: string[]): Promise<TmuxExecResult> {
     const proc = Bun.spawn([this.tmuxBinary, ...args], {
+      env: sanitizeTmuxClientEnv(process.env),
       stdout: 'pipe',
       stderr: 'pipe',
     })

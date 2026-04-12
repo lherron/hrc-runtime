@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { basename, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   formatScopeRef,
@@ -25,6 +27,7 @@ import {
 import type { HrcRuntimeIntent, HrcStatusResponse, HrcStatusSessionView } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
+import { buildCliInvocation } from 'hrc-server'
 import { getAgentsRoot, getProjectsRoot, parseAgentProfile } from 'spaces-config'
 
 // -- .env.local loading -------------------------------------------------------
@@ -58,9 +61,49 @@ loadDotEnvLocal()
 
 // -- Helpers ------------------------------------------------------------------
 
+type ServerPaths = {
+  runtimeRoot: string
+  stateRoot: string
+  socketPath: string
+  lockPath: string
+  spoolDir: string
+  dbPath: string
+  tmuxSocketPath: string
+  pidPath: string
+}
+
+type ServerRuntimeStatus = {
+  running: boolean
+  pid?: number | undefined
+  pidAlive: boolean
+  pidPath: string
+  socketPath: string
+  socketResponsive: boolean
+  lockPath: string
+  lockExists: boolean
+  tmuxSocketPath: string
+  serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+}
+
+type TmuxStatus = {
+  available: boolean
+  version?: string | undefined
+  socketPath: string
+  running: boolean
+  sessionCount: number
+  sessions: string[]
+  error?: string | undefined
+}
+
 function fatal(message: string): never {
   process.stderr.write(`hrc: ${message}\n`)
   process.exit(1)
+}
+
+function writeServerProcessLog(event: string, details?: Record<string, unknown> | undefined): void {
+  const ts = new Date().toISOString()
+  const suffix = details === undefined ? '' : ` ${JSON.stringify(details)}`
+  process.stderr.write(`${ts} [hrc-server] INFO ${event}${suffix}\n`)
 }
 
 function printJson(value: unknown): void {
@@ -95,6 +138,342 @@ function parseFlag(args: string[], flag: string): string | undefined {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag)
+}
+
+function resolveServerPaths(): ServerPaths {
+  const runtimeRoot = resolveRuntimeRoot()
+  return {
+    runtimeRoot,
+    stateRoot: resolveStateRoot(),
+    socketPath: resolveControlSocketPath(),
+    lockPath: `${runtimeRoot}/server.lock`,
+    spoolDir: resolveSpoolDir(),
+    dbPath: resolveDatabasePath(),
+    tmuxSocketPath: resolveTmuxSocketPath(),
+    pidPath: `${runtimeRoot}/server.pid`,
+  }
+}
+
+function parseIntegerFlag(
+  args: string[],
+  flag: string,
+  options: {
+    defaultValue: number
+    min?: number | undefined
+  }
+): number {
+  const raw = parseFlag(args, flag)
+  if (raw === undefined) {
+    return options.defaultValue
+  }
+
+  const value = Number.parseInt(raw, 10)
+  const min = options.min ?? 0
+  if (!Number.isFinite(value) || value < min) {
+    fatal(`${flag} must be an integer >= ${min}`)
+  }
+  return value
+}
+
+function readPidFile(pidPath: string): number | undefined {
+  try {
+    const raw = readFileSync(pidPath, 'utf8').trim()
+    if (raw.length === 0) {
+      return undefined
+    }
+    const pid = Number.parseInt(raw, 10)
+    return Number.isFinite(pid) && pid > 0 ? pid : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function isLiveProcess(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error ? error.code : undefined
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
+  }
+}
+
+async function isUnixSocketResponsive(socketPath: string, timeoutMs = 200): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const socket = connect(socketPath)
+    let settled = false
+
+    const finish = (value: boolean): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(value)
+    }
+
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+  })
+}
+
+async function waitForCondition(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 50
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await check()) {
+      return true
+    }
+    await delay(intervalMs)
+  }
+  return await check()
+}
+
+async function execProcess(argv: string[]): Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}> {
+  const proc = Bun.spawn(argv, {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    stdin: 'ignore',
+    env: { ...process.env },
+  })
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+
+  return { stdout, stderr, exitCode }
+}
+
+async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus> {
+  const paths = resolveServerPaths()
+  const pid = readPidFile(paths.pidPath)
+  const pidAlive = pid !== undefined ? isLiveProcess(pid) : false
+  const socketResponsive = await isUnixSocketResponsive(paths.socketPath)
+  let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+
+  if (socketResponsive) {
+    try {
+      const status = await new HrcClient(paths.socketPath).getStatus()
+      serverStatus = {
+        startedAt: status.startedAt,
+        apiVersion: status.apiVersion,
+      }
+    } catch {
+      // Treat the daemon as responsive even if the status request fails mid-restart.
+    }
+  }
+
+  return {
+    running: socketResponsive && (pid === undefined || pidAlive),
+    ...(pid !== undefined ? { pid } : {}),
+    pidAlive,
+    pidPath: paths.pidPath,
+    socketPath: paths.socketPath,
+    socketResponsive,
+    lockPath: paths.lockPath,
+    lockExists: existsSync(paths.lockPath),
+    tmuxSocketPath: paths.tmuxSocketPath,
+    ...(serverStatus ? { serverStatus } : {}),
+  }
+}
+
+function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
+  const lines = [
+    'HRC Daemon Status',
+    `  running:      ${status.running ? 'yes' : 'no'}`,
+    `  pid:          ${status.pid ?? '(none)'}`,
+    `  pid alive:    ${status.pidAlive ? 'yes' : 'no'}`,
+    `  pid file:     ${status.pidPath}`,
+    `  socket:       ${status.socketPath}${status.socketResponsive ? ' (responsive)' : ' (down)'}`,
+    `  lock:         ${status.lockPath}${status.lockExists ? ' (present)' : ' (missing)'}`,
+    `  tmux socket:  ${status.tmuxSocketPath}`,
+  ]
+
+  if (status.serverStatus) {
+    lines.push(`  started:      ${status.serverStatus.startedAt}`)
+    lines.push(`  apiVersion:   ${status.serverStatus.apiVersion}`)
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
+function resolveServerMode(
+  args: string[],
+  defaultMode: 'foreground' | 'daemon'
+): 'foreground' | 'daemon' {
+  const wantsDaemon =
+    hasFlag(args, '--daemon') || hasFlag(args, '-d') || hasFlag(args, '--background')
+  const wantsForeground = hasFlag(args, '--foreground')
+
+  if (wantsDaemon && wantsForeground) {
+    fatal('choose either --foreground or --daemon/--background, not both')
+  }
+
+  if (wantsForeground) return 'foreground'
+  if (wantsDaemon) return 'daemon'
+  return defaultMode
+}
+
+async function daemonizeAndWait(timeoutMs = 5_000): Promise<number> {
+  const { runtimeRoot, pidPath, socketPath } = resolveServerPaths()
+  await mkdir(runtimeRoot, { recursive: true })
+
+  const logPath = `${runtimeRoot}/server.log`
+  const proc = Bun.spawn(['bun', process.argv[1] ?? import.meta.path, 'server', 'start'], {
+    detached: true,
+    stdout: Bun.file(logPath),
+    stderr: Bun.file(logPath),
+    stdin: 'ignore',
+    env: { ...process.env },
+  })
+
+  proc.unref()
+  await writeFile(pidPath, `${proc.pid}\n`)
+
+  const ready = await waitForCondition(() => isUnixSocketResponsive(socketPath), timeoutMs)
+  if (!ready) {
+    fatal(
+      `daemon did not become responsive within ${timeoutMs}ms (pid ${proc.pid}); log at ${logPath}`
+    )
+  }
+
+  process.stderr.write(`hrc: daemon started (pid ${proc.pid}), log at ${logPath}\n`)
+  return proc.pid
+}
+
+async function stopServerProcess(options?: {
+  timeoutMs?: number | undefined
+  force?: boolean | undefined
+  allowNotRunning?: boolean | undefined
+}): Promise<void> {
+  const { pidPath, socketPath } = resolveServerPaths()
+  const pid = readPidFile(pidPath)
+  const socketResponsive = await isUnixSocketResponsive(socketPath)
+
+  if (pid === undefined) {
+    if (!socketResponsive || options?.allowNotRunning) {
+      return
+    }
+    fatal(`daemon is responsive on ${socketPath}, but pid file is missing at ${pidPath}`)
+  }
+
+  const timeoutMs = options?.timeoutMs ?? 5_000
+  const force = options?.force ?? false
+
+  if (!isLiveProcess(pid)) {
+    try {
+      await unlink(pidPath)
+    } catch {}
+    if (!socketResponsive || options?.allowNotRunning) {
+      return
+    }
+    fatal(`daemon socket ${socketPath} is still responsive, but pid ${pid} is not alive`)
+  }
+
+  process.kill(pid, 'SIGTERM')
+  let stopped = await waitForCondition(
+    async () => !isLiveProcess(pid) && !(await isUnixSocketResponsive(socketPath)),
+    timeoutMs
+  )
+
+  if (!stopped && force) {
+    process.kill(pid, 'SIGKILL')
+    stopped = await waitForCondition(
+      async () => !isLiveProcess(pid) && !(await isUnixSocketResponsive(socketPath)),
+      timeoutMs
+    )
+  }
+
+  if (!stopped) {
+    fatal(
+      `daemon pid ${pid} did not stop within ${timeoutMs}ms${force ? ' after SIGTERM/SIGKILL' : ''}`
+    )
+  }
+
+  try {
+    await unlink(pidPath)
+  } catch {}
+}
+
+async function collectTmuxStatus(): Promise<TmuxStatus> {
+  const socketPath = resolveTmuxSocketPath()
+  const versionResult = await execProcess(['tmux', '-V'])
+  const versionOutput = `${versionResult.stdout}\n${versionResult.stderr}`.trim()
+  const version = versionResult.exitCode === 0 ? versionOutput : undefined
+  if (versionResult.exitCode !== 0) {
+    return {
+      available: false,
+      socketPath,
+      running: false,
+      sessionCount: 0,
+      sessions: [],
+      error: versionOutput || 'tmux unavailable',
+    }
+  }
+
+  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'])
+  if (listResult.exitCode !== 0) {
+    const output = `${listResult.stderr}\n${listResult.stdout}`.trim().toLowerCase()
+    const noServer =
+      output.includes('no server running') ||
+      output.includes('failed to connect to server') ||
+      output.includes('no such file or directory')
+
+    return {
+      available: true,
+      version,
+      socketPath,
+      running: false,
+      sessionCount: 0,
+      sessions: [],
+      ...(noServer ? {} : { error: `${listResult.stderr}\n${listResult.stdout}`.trim() }),
+    }
+  }
+
+  const sessions = listResult.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+
+  return {
+    available: true,
+    version,
+    socketPath,
+    running: true,
+    sessionCount: sessions.length,
+    sessions,
+  }
+}
+
+function formatTmuxStatus(status: TmuxStatus): string {
+  const lines = [
+    'HRC Tmux Status',
+    `  available:    ${status.available ? 'yes' : 'no'}`,
+    `  running:      ${status.running ? 'yes' : 'no'}`,
+    `  socket:       ${status.socketPath}`,
+    `  version:      ${status.version ?? '(unknown)'}`,
+    `  sessions:     ${status.sessionCount}`,
+  ]
+
+  if (status.sessions.length > 0) {
+    lines.push(`  session list: ${status.sessions.join(', ')}`)
+  }
+  if (status.error) {
+    lines.push(`  error:        ${status.error}`)
+  }
+
+  return `${lines.join('\n')}\n`
 }
 
 function createClient(): HrcClient {
@@ -309,64 +688,115 @@ async function attachDescriptor(client: HrcClient, descriptor: AttachDescriptor)
 // -- Command handlers ---------------------------------------------------------
 
 async function cmdServer(args: string[]): Promise<void> {
-  const daemon = hasFlag(args, '--daemon') || hasFlag(args, '-d') || hasFlag(args, '--background')
+  const subcommand = args[0]
 
-  if (daemon) {
-    return daemonize()
+  if (!subcommand || subcommand.startsWith('-')) {
+    return cmdServerStart(args, 'foreground')
+  }
+
+  switch (subcommand) {
+    case 'start':
+      return cmdServerStart(args.slice(1), 'foreground')
+    case 'stop':
+      return cmdServerStop(args.slice(1))
+    case 'restart':
+      return cmdServerRestart(args.slice(1))
+    case 'status':
+      return cmdServerStatus(args.slice(1))
+    default:
+      fatal(`unknown server subcommand: ${subcommand}`)
+  }
+}
+
+async function cmdServerStart(args: string[], defaultMode: 'foreground' | 'daemon'): Promise<void> {
+  const mode = resolveServerMode(args, defaultMode)
+  const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
+  const status = await collectServerRuntimeStatus()
+
+  if (status.running) {
+    fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
+  }
+
+  if (mode === 'daemon') {
+    await daemonizeAndWait(timeoutMs)
+    return
   }
 
   return serverForeground()
 }
 
-async function daemonize(): Promise<void> {
-  const runtimeRoot = resolveRuntimeRoot()
-  await mkdir(runtimeRoot, { recursive: true })
+async function cmdServerStop(args: string[]): Promise<void> {
+  const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
+  const force = hasFlag(args, '--force')
+  const before = await collectServerRuntimeStatus()
 
-  const logPath = `${runtimeRoot}/server.log`
-  const pidPath = `${runtimeRoot}/server.pid`
+  if (!before.running && before.pid === undefined) {
+    process.stderr.write('hrc: daemon is not running\n')
+    return
+  }
 
-  const proc = Bun.spawn(['bun', process.argv[1] ?? import.meta.path, 'server'], {
-    stdout: Bun.file(logPath),
-    stderr: Bun.file(logPath),
-    stdin: 'ignore',
-    env: { ...process.env },
-  })
+  await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
+  process.stderr.write('hrc: daemon stopped\n')
+}
 
-  proc.unref()
+async function cmdServerRestart(args: string[]): Promise<void> {
+  const mode = resolveServerMode(args, 'daemon')
+  const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
+  const force = hasFlag(args, '--force')
 
-  await writeFile(pidPath, `${proc.pid}\n`)
-  process.stderr.write(`hrc: daemon started (pid ${proc.pid}), log at ${logPath}\n`)
+  await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
+  if (mode === 'daemon') {
+    await daemonizeAndWait(timeoutMs)
+    process.stderr.write('hrc: daemon restarted\n')
+    return
+  }
+
+  return serverForeground()
+}
+
+async function cmdServerStatus(args: string[]): Promise<void> {
+  const jsonFlag = hasFlag(args, '--json')
+  const status = await collectServerRuntimeStatus()
+  if (jsonFlag) {
+    printJson(status)
+    return
+  }
+  process.stdout.write(formatServerRuntimeStatus(status))
 }
 
 async function serverForeground(): Promise<void> {
   const { createHrcServer } = await import('hrc-server')
 
-  const runtimeRoot = resolveRuntimeRoot()
-  const stateRoot = resolveStateRoot()
-  const pidPath = `${runtimeRoot}/server.pid`
+  const paths = resolveServerPaths()
 
   const server = await createHrcServer({
-    runtimeRoot,
-    stateRoot,
-    socketPath: resolveControlSocketPath(),
-    lockPath: `${runtimeRoot}/server.lock`,
-    spoolDir: resolveSpoolDir(),
-    dbPath: resolveDatabasePath(),
-    tmuxSocketPath: resolveTmuxSocketPath(),
+    runtimeRoot: paths.runtimeRoot,
+    stateRoot: paths.stateRoot,
+    socketPath: paths.socketPath,
+    lockPath: paths.lockPath,
+    spoolDir: paths.spoolDir,
+    dbPath: paths.dbPath,
+    tmuxSocketPath: paths.tmuxSocketPath,
   })
 
   // Write PID file for foreground too (used by status/stop)
-  await mkdir(runtimeRoot, { recursive: true })
-  await writeFile(pidPath, `${process.pid}\n`)
+  await mkdir(paths.runtimeRoot, { recursive: true })
+  await writeFile(paths.pidPath, `${process.pid}\n`)
 
-  process.stderr.write(`hrc: server listening on ${resolveControlSocketPath()}\n`)
+  writeServerProcessLog('server.listening', {
+    pid: process.pid,
+    socketPath: paths.socketPath,
+    runtimeRoot: paths.runtimeRoot,
+    stateRoot: paths.stateRoot,
+    tmuxSocketPath: paths.tmuxSocketPath,
+  })
 
-  const shutdown = async () => {
-    process.stderr.write('hrc: shutting down...\n')
+  const shutdown = async (reason: string) => {
+    writeServerProcessLog('server.shutting_down', { pid: process.pid, reason })
     await server.stop()
     // Clean up PID file
     try {
-      await unlink(pidPath)
+      await unlink(paths.pidPath)
     } catch {}
     process.exit(0)
   }
@@ -374,8 +804,8 @@ async function serverForeground(): Promise<void> {
   // Ignore SIGHUP so the daemon survives when the parent terminal/session exits
   // (e.g., Claude Code terminating). SIGINT and SIGTERM still trigger graceful shutdown.
   process.on('SIGHUP', () => {})
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', () => void shutdown('SIGINT'))
+  process.on('SIGTERM', () => void shutdown('SIGTERM'))
 }
 
 async function cmdSessionResolve(args: string[]): Promise<void> {
@@ -594,6 +1024,55 @@ async function cmdStatus(args: string[]): Promise<void> {
   }
 }
 
+async function cmdTmuxStatus(args: string[]): Promise<void> {
+  const jsonFlag = hasFlag(args, '--json')
+  const status = await collectTmuxStatus()
+  if (jsonFlag) {
+    printJson(status)
+    return
+  }
+  process.stdout.write(formatTmuxStatus(status))
+}
+
+async function cmdTmuxKill(args: string[]): Promise<void> {
+  if (!hasFlag(args, '--yes')) {
+    fatal('tmux kill is destructive; rerun with --yes to kill the HRC tmux server')
+  }
+
+  const status = await collectTmuxStatus()
+  if (!status.available) {
+    fatal(status.error ?? 'tmux unavailable')
+  }
+
+  if (!status.running) {
+    process.stderr.write('hrc: tmux server is not running\n')
+    return
+  }
+
+  const result = await execProcess(['tmux', '-S', status.socketPath, 'kill-server'])
+  if (result.exitCode !== 0) {
+    fatal(`${result.stderr}\n${result.stdout}`.trim() || 'tmux kill-server failed')
+  }
+
+  process.stderr.write(`hrc: tmux server killed (${status.sessionCount} session(s))\n`)
+}
+
+async function cmdTmux(args: string[]): Promise<void> {
+  const subcommand = args[0]
+  switch (subcommand) {
+    case 'status':
+      return cmdTmuxStatus(args.slice(1))
+    case 'kill':
+      return cmdTmuxKill(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown tmux subcommand: ${subcommand}`
+          : 'tmux subcommand required (status, kill)'
+      )
+  }
+}
+
 async function cmdRuntimeList(args: string[]): Promise<void> {
   const hostSessionId = parseFlag(args, '--host-session-id')
   const client = createClient()
@@ -630,14 +1109,14 @@ function explainRunError(err: unknown, scopeInput: string, sessionRef?: string):
 
   // Daemon not running — discoverSocket throws this
   if (raw.includes('HRC daemon socket not found')) {
-    return new Error(`${raw}\n  Start it with: hrc server --daemon`)
+    return new Error(`${raw}\n  Start it with: hrc server start --daemon`)
   }
 
   // Bun fetch connection-refused when socket exists but nothing is listening
   if (/typo in the url or port|ECONNREFUSED|Unable to connect/i.test(raw)) {
     return new Error(
       'cannot reach HRC daemon (socket present but not responding).\n' +
-        '  The daemon may have crashed. Try: hrc server --daemon'
+        '  The daemon may have crashed. Try: hrc server restart'
     )
   }
 
@@ -778,7 +1257,7 @@ Options:
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
-      printLocalRunPreview(scopeInput, sessionRef, intent, restartStyle, prompt)
+      await printLocalRunPreview(scopeInput, sessionRef, intent, restartStyle, prompt)
       return
     }
 
@@ -827,13 +1306,13 @@ Options:
   }
 }
 
-function printLocalRunPreview(
+async function printLocalRunPreview(
   scope: string,
   sessionRef: string,
   intent: HrcRuntimeIntent,
   restartStyle: 'reuse_pty' | 'fresh_pty',
   prompt: string | undefined
-): void {
+): Promise<void> {
   const w = (s: string) => process.stdout.write(`${s}\n`)
 
   w(`hrc run ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
@@ -856,10 +1335,48 @@ function printLocalRunPreview(
     }
   }
 
+  // Build the actual argv/env that the harness would launch with. This
+  // invokes the same spec-builder the server uses on a real run, which
+  // materializes spaces, writes praesidium context into CODEX_HOME/AGENTS.md,
+  // resolves the harness binary, and produces the final command.
+  w('')
+  w('Harness invocation:')
+  try {
+    const invocation = await buildCliInvocation(intent)
+    const display = formatHarnessCommand(invocation.argv)
+    w(`  cwd:      ${invocation.cwd}`)
+    w(`  provider: ${invocation.provider}`)
+    w(`  frontend: ${invocation.frontend}`)
+    w(`  argv:     ${display}`)
+    const envKeys = Object.keys(invocation.env).sort()
+    if (envKeys.length > 0) {
+      w('  env:')
+      for (const key of envKeys) {
+        const val = invocation.env[key] ?? ''
+        const shown = val.length > 160 ? `${val.slice(0, 157)}...` : val
+        w(`    ${key}=${shown}`)
+      }
+    }
+    if (invocation.warnings && invocation.warnings.length > 0) {
+      w('  warnings:')
+      for (const warning of invocation.warnings) {
+        w(`    - ${warning}`)
+      }
+    }
+  } catch (err) {
+    w(`  (spec build failed: ${err instanceof Error ? err.message : String(err)})`)
+  }
+
   w('')
   w('  Note: this preview shows the request the client would send. Server-side')
   w('  details (existing runtime, PTY state, tmux session) are not consulted.')
   w('  Run without --dry-run to execute.')
+}
+
+function formatHarnessCommand(argv: readonly string[]): string {
+  return argv
+    .map((arg) => (/^[\w./:=@+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`))
+    .join(' ')
 }
 
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
@@ -1326,13 +1843,18 @@ function printUsage(): void {
 Usage: hrc <command> [options]
 
 Commands:
-  server [-d|--daemon|--background]   Start the HRC server (foreground by default)
+  server [start] [--foreground|--daemon]     Start the HRC server (foreground by default)
+  server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
+  server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
+  server status [--json]                     Show daemon/socket/pid state without requiring the API
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
   watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
   health                              Check server health
   status [--json]                     Show server status and capabilities
+  tmux status [--json]                Show HRC tmux socket/session state
+  tmux kill --yes                     Kill the HRC tmux server and all interactive runtimes
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
@@ -1382,6 +1904,8 @@ async function main(): Promise<void> {
         return await cmdHealth()
       case 'status':
         return await cmdStatus(rest)
+      case 'tmux':
+        return await cmdTmux(rest)
       case 'runtime':
         return await cmdRuntime(rest)
       case 'launch':

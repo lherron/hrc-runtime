@@ -15,10 +15,23 @@ function resolveUid(): number {
   return 0
 }
 
+function resolvePraesidiumVarRoot(): string | undefined {
+  const homeDir = readEnv('HOME')
+  if (homeDir === undefined) {
+    return undefined
+  }
+  return join(homeDir, 'praesidium', 'var')
+}
+
 export function resolveRuntimeRoot(): string {
   const explicitRuntimeRoot = readEnv('HRC_RUNTIME_DIR')
   if (explicitRuntimeRoot !== undefined) {
     return explicitRuntimeRoot
+  }
+
+  const praesidiumVarRoot = resolvePraesidiumVarRoot()
+  if (praesidiumVarRoot !== undefined) {
+    return join(praesidiumVarRoot, 'run', 'hrc')
   }
 
   const xdgRuntimeDir = readEnv('XDG_RUNTIME_DIR')
@@ -36,16 +49,16 @@ export function resolveStateRoot(): string {
     return explicitStateRoot
   }
 
+  const praesidiumVarRoot = resolvePraesidiumVarRoot()
+  if (praesidiumVarRoot !== undefined) {
+    return join(praesidiumVarRoot, 'state', 'hrc')
+  }
+
   const xdgStateHome = readEnv('XDG_STATE_HOME')
   if (xdgStateHome !== undefined) {
     return join(xdgStateHome, 'hrc')
   }
-
-  const homeDir = readEnv('HOME')
-  if (homeDir === undefined) {
-    throw new Error('Cannot resolve HRC state directory: HOME environment variable is not set')
-  }
-  return join(homeDir, '.local', 'state', 'hrc')
+  throw new Error('Cannot resolve HRC state directory: set HRC_STATE_DIR, HOME, or XDG_STATE_HOME')
 }
 
 export function resolveControlSocketPath(): string {

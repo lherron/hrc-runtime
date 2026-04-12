@@ -7,12 +7,15 @@
  *
  * runtimeRoot:
  *   1. HRC_RUNTIME_DIR if set
- *   2. ${XDG_RUNTIME_DIR}/hrc when XDG_RUNTIME_DIR exists
- *   3. ${TMPDIR}/hrc-${UID} (fallback, TMPDIR defaults to /tmp)
+ *   2. ~/praesidium/var/run/hrc when HOME exists
+ *   3. ${XDG_RUNTIME_DIR}/hrc when XDG_RUNTIME_DIR exists
+ *   4. ${TMPDIR}/hrc-${UID} (fallback, TMPDIR defaults to /tmp)
  *
  * stateRoot:
  *   1. HRC_STATE_DIR if set
- *   2. ${XDG_STATE_HOME}/hrc (XDG_STATE_HOME defaults to $HOME/.local/state)
+ *   2. ~/praesidium/var/state/hrc when HOME exists
+ *   3. ${XDG_STATE_HOME}/hrc when HOME is unavailable
+ *   4. otherwise throw
  *
  * Within roots:
  *   - control socket: <runtimeRoot>/hrc.sock
@@ -75,18 +78,28 @@ afterEach(() => {
 describe('resolveRuntimeRoot (T-00949)', () => {
   test('prefers HRC_RUNTIME_DIR when set', () => {
     process.env.HRC_RUNTIME_DIR = '/custom/runtime'
+    process.env.HOME = '/home/testuser'
     process.env.XDG_RUNTIME_DIR = '/xdg/runtime'
     expect(resolveRuntimeRoot()).toBe('/custom/runtime')
   })
 
-  test('falls back to XDG_RUNTIME_DIR/hrc when HRC_RUNTIME_DIR is unset', () => {
+  test('falls back to HOME/praesidium/var/run/hrc when HRC_RUNTIME_DIR is unset', () => {
     process.env.HRC_RUNTIME_DIR = undefined
+    process.env.HOME = '/home/testuser'
+    process.env.XDG_RUNTIME_DIR = '/xdg/runtime'
+    expect(resolveRuntimeRoot()).toBe('/home/testuser/praesidium/var/run/hrc')
+  })
+
+  test('falls back to XDG_RUNTIME_DIR/hrc when HOME is unset', () => {
+    process.env.HRC_RUNTIME_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_RUNTIME_DIR = '/xdg/runtime'
     expect(resolveRuntimeRoot()).toBe('/xdg/runtime/hrc')
   })
 
-  test('falls back to TMPDIR/hrc-UID when both HRC_RUNTIME_DIR and XDG_RUNTIME_DIR are unset', () => {
+  test('falls back to TMPDIR/hrc-UID when HRC_RUNTIME_DIR, HOME, and XDG_RUNTIME_DIR are unset', () => {
     process.env.HRC_RUNTIME_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_RUNTIME_DIR = undefined
     process.env.TMPDIR = '/my/tmp'
     const result = resolveRuntimeRoot()
@@ -96,6 +109,7 @@ describe('resolveRuntimeRoot (T-00949)', () => {
 
   test('uses /tmp as TMPDIR fallback', () => {
     process.env.HRC_RUNTIME_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_RUNTIME_DIR = undefined
     process.env.TMPDIR = undefined
     const result = resolveRuntimeRoot()
@@ -104,12 +118,14 @@ describe('resolveRuntimeRoot (T-00949)', () => {
 
   test('ignores empty HRC_RUNTIME_DIR', () => {
     process.env.HRC_RUNTIME_DIR = ''
+    process.env.HOME = '/home/testuser'
     process.env.XDG_RUNTIME_DIR = '/xdg/runtime'
-    expect(resolveRuntimeRoot()).toBe('/xdg/runtime/hrc')
+    expect(resolveRuntimeRoot()).toBe('/home/testuser/praesidium/var/run/hrc')
   })
 
   test('ignores empty XDG_RUNTIME_DIR', () => {
     process.env.HRC_RUNTIME_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_RUNTIME_DIR = ''
     process.env.TMPDIR = '/my/tmp'
     const result = resolveRuntimeRoot()
@@ -124,27 +140,39 @@ describe('resolveRuntimeRoot (T-00949)', () => {
 describe('resolveStateRoot (T-00949)', () => {
   test('prefers HRC_STATE_DIR when set', () => {
     process.env.HRC_STATE_DIR = '/custom/state'
+    process.env.HOME = '/home/testuser'
     process.env.XDG_STATE_HOME = '/xdg/state'
     expect(resolveStateRoot()).toBe('/custom/state')
   })
 
-  test('falls back to XDG_STATE_HOME/hrc when HRC_STATE_DIR is unset', () => {
+  test('falls back to HOME/praesidium/var/state/hrc when HRC_STATE_DIR is unset', () => {
     process.env.HRC_STATE_DIR = undefined
+    process.env.HOME = '/home/testuser'
+    process.env.XDG_STATE_HOME = '/xdg/state'
+    expect(resolveStateRoot()).toBe('/home/testuser/praesidium/var/state/hrc')
+  })
+
+  test('falls back to XDG_STATE_HOME/hrc when HOME is unset', () => {
+    process.env.HRC_STATE_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_STATE_HOME = '/xdg/state'
     expect(resolveStateRoot()).toBe('/xdg/state/hrc')
   })
 
-  test('falls back to HOME/.local/state/hrc when both are unset', () => {
+  test('throws when HRC_STATE_DIR, HOME, and XDG_STATE_HOME are all unavailable', () => {
     process.env.HRC_STATE_DIR = undefined
+    process.env.HOME = undefined
     process.env.XDG_STATE_HOME = undefined
-    process.env.HOME = '/home/testuser'
-    expect(resolveStateRoot()).toBe('/home/testuser/.local/state/hrc')
+    expect(() => resolveStateRoot()).toThrow(
+      'Cannot resolve HRC state directory: set HRC_STATE_DIR, HOME, or XDG_STATE_HOME'
+    )
   })
 
   test('ignores empty HRC_STATE_DIR', () => {
     process.env.HRC_STATE_DIR = ''
+    process.env.HOME = '/home/testuser'
     process.env.XDG_STATE_HOME = '/xdg/state'
-    expect(resolveStateRoot()).toBe('/xdg/state/hrc')
+    expect(resolveStateRoot()).toBe('/home/testuser/praesidium/var/state/hrc')
   })
 })
 

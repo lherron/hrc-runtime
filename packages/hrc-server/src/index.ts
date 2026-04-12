@@ -52,6 +52,7 @@ import type {
   HrcFence,
   HrcHarness,
   HrcHttpError,
+  HrcLaunchArtifact,
   HrcLaunchRecord,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
@@ -138,6 +139,103 @@ type AttachDescriptorResponse = {
 }
 
 type FollowSubscriber = (event: HrcEventEnvelope) => void
+
+type ServerLogLevel = 'INFO' | 'WARN' | 'ERROR'
+
+const SERVER_LOG_REDACT_KEY_PATTERN =
+  /token|secret|password|passwd|pwd|auth|cookie|session|credential|api[_-]?key|access[_-]?key|refresh[_-]?token|bearer|oauth|client[_-]?secret/i
+
+function writeServerLog(
+  level: ServerLogLevel,
+  event: string,
+  details?: Record<string, unknown> | undefined
+): void {
+  const ts = new Date().toISOString()
+  const detailSuffix =
+    details === undefined ? '' : ` ${safeStringifyForServerLog(redactForServerLog(details))}`
+  process.stderr.write(`${ts} [hrc-server] ${level} ${event}${detailSuffix}\n`)
+}
+
+function safeStringifyForServerLog(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch (error) {
+    const rendered = error instanceof Error ? error.message : String(error)
+    return JSON.stringify({ serializationError: rendered })
+  }
+}
+
+function redactForServerLog(value: unknown, key?: string): unknown {
+  if (value === null || value === undefined) {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    if (key && SERVER_LOG_REDACT_KEY_PATTERN.test(key)) {
+      return '[REDACTED]'
+    }
+    return value.length > 500 ? `${value.slice(0, 497)}...` : value
+  }
+
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint' ||
+    typeof value === 'symbol'
+  ) {
+    return value
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      ...(value.stack ? { stack: value.stack.split('\n').slice(0, 5).join('\n') } : {}),
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactForServerLog(entry))
+  }
+
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactForServerLog(entryValue, entryKey),
+      ])
+    )
+  }
+
+  return String(value)
+}
+
+function buildLaunchLogDetails(
+  launchArtifactPath: string,
+  artifact: HrcLaunchArtifact
+): Record<string, unknown> {
+  return {
+    launchId: artifact.launchId,
+    hostSessionId: artifact.hostSessionId,
+    generation: artifact.generation,
+    runtimeId: artifact.runtimeId,
+    ...(artifact.runId ? { runId: artifact.runId } : {}),
+    harness: artifact.harness,
+    provider: artifact.provider,
+    artifactPath: launchArtifactPath,
+    codexHome: artifact.env['CODEX_HOME'],
+    execution: {
+      argv: artifact.argv,
+      cwd: artifact.cwd,
+      env: artifact.env,
+      callbackSocketPath: artifact.callbackSocketPath,
+      spoolDir: artifact.spoolDir,
+      correlationEnv: artifact.correlationEnv,
+      ...(artifact.launchEnv ? { launchEnv: artifact.launchEnv } : {}),
+      ...(artifact.hookBridge ? { hookBridge: artifact.hookBridge } : {}),
+    },
+  }
+}
 
 type LaunchLifecyclePayload = {
   hostSessionId: string
@@ -232,6 +330,11 @@ export type TmuxManager = ServerTmuxManager
 export { createTmuxManager }
 export type { RestartStyle, TmuxManagerOptions }
 
+// Re-export CLI invocation builder so hrc-cli can produce dry-run previews
+// without duplicating the intent → argv/env translation.
+export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
+export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
+
 const STALE_LOCK_RETRY_DELAY_MS = 25
 const SOCKET_PROBE_TIMEOUT_MS = 200
 const MIN_SUPPORTED_TMUX_VERSION = {
@@ -265,21 +368,15 @@ class HrcServerInstance implements HrcServer {
     }
 
     this.stopping = true
+    writeServerLog('INFO', 'server.stop.begin', {
+      socketPath: this.options.socketPath,
+      dbPath: this.options.dbPath,
+      tmuxSocketPath: getTmuxSocketPath(this.options),
+    })
     this.server.stop(true)
     this.followSubscribers.clear()
     this.db.close()
     let cleanupError: unknown
-
-    // Kill the tmux server that owns our runtimes — prevents orphaned PTYs
-    try {
-      const tmuxSocket = getTmuxSocketPath(this.options)
-      Bun.spawnSync(['tmux', '-S', tmuxSocket, 'kill-server'], {
-        stdout: 'ignore',
-        stderr: 'ignore',
-      })
-    } catch {
-      // no server running — fine
-    }
 
     try {
       await unlinkIfExists(this.options.socketPath)
@@ -294,8 +391,20 @@ class HrcServerInstance implements HrcServer {
     }
 
     if (cleanupError) {
+      writeServerLog('ERROR', 'server.stop.cleanup_failed', {
+        socketPath: this.options.socketPath,
+        dbPath: this.options.dbPath,
+        tmuxSocketPath: getTmuxSocketPath(this.options),
+        error: cleanupError,
+      })
       throw cleanupError
     }
+
+    writeServerLog('INFO', 'server.stop.complete', {
+      socketPath: this.options.socketPath,
+      dbPath: this.options.dbPath,
+      tmuxSocketPath: getTmuxSocketPath(this.options),
+    })
   }
 
   private async handleRequest(request: Request): Promise<Response> {
@@ -1475,6 +1584,12 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const cliInvocation = await buildDispatchInvocation(intent)
+    const tmuxPane = requireTmuxPane(runtime)
+    const launchEnv = {
+      ...cliInvocation.env,
+      AGENTCHAT_TRANSPORT: 'tmux',
+      AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
+    }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchArtifact = {
       launchId,
@@ -1485,14 +1600,19 @@ class HrcServerInstance implements HrcServer {
       harness: runtime.harness,
       provider: runtime.provider,
       argv: cliInvocation.argv,
-      env: cliInvocation.env,
+      env: launchEnv,
       cwd: cliInvocation.cwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(cliInvocation.env),
+      correlationEnv: extractCorrelationEnv(launchEnv),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
+    writeServerLog(
+      'INFO',
+      'launch.dispatch.prepared',
+      buildLaunchLogDetails(launchArtifactPath, launchArtifact)
+    )
 
     const run = this.db.runs.insert({
       runId,
@@ -1531,8 +1651,15 @@ class HrcServerInstance implements HrcServer {
       })
       launchCreated = true
 
-      const tmuxPane = requireTmuxPane(runtime)
       await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+      writeServerLog('INFO', 'launch.dispatch.enqueued', {
+        launchId,
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        runId: run.runId,
+        paneId: tmuxPane.paneId,
+        launchArtifactPath,
+      })
     } catch (error) {
       rollbackFailedTmuxDispatch(this.db, runtime, run.runId, launchCreated ? launchId : undefined)
       throw new HrcInternalError('tmux dispatch failed before launch start', {
@@ -3292,6 +3419,13 @@ class HrcServerInstance implements HrcServer {
 }
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
+  writeServerLog('INFO', 'server.start.begin', {
+    runtimeRoot: options.runtimeRoot,
+    stateRoot: options.stateRoot,
+    socketPath: options.socketPath,
+    dbPath: options.dbPath,
+    tmuxSocketPath: getTmuxSocketPath(options),
+  })
   await prepareFilesystem(options)
   const lockHandle = await acquireServerLock(options)
   let shouldCleanupSocket = false
@@ -3306,8 +3440,23 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     const db = openHrcDatabase(options.dbPath)
     await replaySpool(options, db)
     await reconcileStartupState(db, tmux)
+    writeServerLog('INFO', 'server.start.ready', {
+      runtimeRoot: options.runtimeRoot,
+      stateRoot: options.stateRoot,
+      socketPath: options.socketPath,
+      dbPath: options.dbPath,
+      tmuxSocketPath: getTmuxSocketPath(options),
+    })
     return new HrcServerInstance(options, db, tmux, lockHandle)
   } catch (error) {
+    writeServerLog('ERROR', 'server.start.failed', {
+      runtimeRoot: options.runtimeRoot,
+      stateRoot: options.stateRoot,
+      socketPath: options.socketPath,
+      dbPath: options.dbPath,
+      tmuxSocketPath: getTmuxSocketPath(options),
+      error,
+    })
     await cleanupFailedStartup(options, lockHandle, shouldCleanupSocket)
     throw error
   }
@@ -3380,7 +3529,6 @@ async function cleanupFailedStartup(
     await unlinkIfExists(options.socketPath).catch(() => undefined)
   }
 
-  await unlinkIfExists(getTmuxSocketPath(options)).catch(() => undefined)
   await releaseServerLock(options.lockPath, lockHandle).catch(() => undefined)
 }
 
@@ -4009,8 +4157,11 @@ function markRuntimeStale(
 }
 
 function logStartupIssue(message: string, detail: Record<string, unknown>, error: unknown): void {
-  const rendered = error instanceof Error ? error.message : String(error)
-  console.error(`[hrc-server] ${message}`, JSON.stringify(detail), rendered)
+  writeServerLog('ERROR', 'startup.issue', {
+    message,
+    detail,
+    error,
+  })
 }
 
 function parseResolveSessionRequest(input: unknown): ResolveSessionRequest {
@@ -5961,14 +6112,31 @@ async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
     if (await isLaunchCommandAvailable(invocation.argv[0])) {
       return { argv: invocation.argv, env, cwd }
     }
-  } catch {
+    writeServerLog('WARN', 'dispatch.invocation.command_unavailable', {
+      provider: invocation.provider,
+      frontend: invocation.frontend,
+      command: invocation.argv[0],
+      cwd: invocation.cwd,
+    })
+  } catch (error) {
     // Fall back to the local harness shim when the real CLI invocation cannot be built.
+    writeServerLog('WARN', 'dispatch.invocation.build_failed', {
+      provider: intent.harness.provider,
+      interactive: intent.harness.interactive,
+      error,
+    })
   }
 
   const shimPath = await findHarnessShimPath()
   if (!shimPath) {
     throw new HrcRuntimeUnavailableError('no interactive harness executable is available')
   }
+
+  writeServerLog('WARN', 'dispatch.invocation.using_shim', {
+    provider: intent.harness.provider,
+    shimPath,
+    cwd,
+  })
 
   return {
     argv: [shimPath],

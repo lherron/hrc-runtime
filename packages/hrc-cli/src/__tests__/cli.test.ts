@@ -23,7 +23,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { StatusResponse } from 'hrc-core'
@@ -121,6 +121,7 @@ let originalPath: string | undefined
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const CLAUDE_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'claude-shim')
+const CODEX_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'codex-shim')
 
 function serverOpts(): HrcServerOptions {
   return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath, tmuxSocketPath }
@@ -154,13 +155,15 @@ beforeEach(async () => {
   await mkdir(projectsRoot, { recursive: true })
 
   originalPath = process.env.PATH
-  process.env.PATH = `${CLAUDE_SHIM_DIR}:${originalPath ?? ''}`
+  process.env.PATH = `${CLAUDE_SHIM_DIR}:${CODEX_SHIM_DIR}:${originalPath ?? ''}`
 })
 
 afterEach(async () => {
   if (server) {
     await server.stop()
     server = null
+  } else {
+    await runCli(['server', 'stop', '--force'], cliEnv()).catch(() => undefined)
   }
   try {
     const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
@@ -199,6 +202,10 @@ exit 0
   return shimDir
 }
 
+async function readServerLog(): Promise<string> {
+  return await readFile(join(runtimeRoot, 'server.log'), 'utf8')
+}
+
 // ===========================================================================
 // 1. No args / help
 // ===========================================================================
@@ -228,6 +235,183 @@ describe('unknown command', () => {
     expect(result.exitCode).toBe(1)
     expect(result.stderr.length).toBeGreaterThan(0)
     expect(result.stderr.toLowerCase()).toMatch(/unknown|unrecognized|invalid/i)
+  })
+})
+
+// ===========================================================================
+// 2b. server/tmux admin lifecycle
+// ===========================================================================
+describe('server/tmux admin lifecycle', () => {
+  async function resolveHostSessionId(scope: string): Promise<string> {
+    const result = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    return JSON.parse(result.stdout.trim()).hostSessionId as string
+  }
+
+  async function ensureTmuxRuntime(scope: string): Promise<{
+    hostSessionId: string
+    runtimeId: string
+  }> {
+    const hostSessionId = await resolveHostSessionId(scope)
+    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+    expect(ensureResult.exitCode).toBe(0)
+    const runtime = JSON.parse(ensureResult.stdout.trim()) as { runtimeId: string }
+    return { hostSessionId, runtimeId: runtime.runtimeId }
+  }
+
+  it('server start --daemon boots the daemon and server status reports it running', async () => {
+    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
+    expect(startResult.exitCode).toBe(0)
+    expect(startResult.stderr).toMatch(/daemon started/i)
+
+    // The daemon must survive after the launcher process exits.
+    await Bun.sleep(250)
+
+    const statusResult = await runCli(['server', 'status', '--json'], cliEnv())
+    expect(statusResult.exitCode).toBe(0)
+    const status = JSON.parse(statusResult.stdout.trim()) as {
+      running: boolean
+      socketResponsive: boolean
+      pid?: number
+    }
+    expect(status.running).toBe(true)
+    expect(status.socketResponsive).toBe(true)
+    expect(status.pid).toBeNumber()
+  })
+
+  it('server log includes timestamped lifecycle entries', async () => {
+    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
+    expect(startResult.exitCode).toBe(0)
+
+    await Bun.sleep(250)
+    const log = await readServerLog()
+    expect(log).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[hrc-server\] INFO server\.start\.begin /m
+    )
+    expect(log).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[hrc-server\] INFO server\.listening /m
+    )
+  })
+
+  it('server log records codex launch execution JSON and CODEX_HOME', async () => {
+    const aspHome = join(tmpDir, 'asp-home')
+    await mkdir(aspHome, { recursive: true })
+    const env = cliEnv({ ASP_HOME: aspHome })
+
+    const startResult = await runCli(['server', 'start', '--daemon'], env)
+    expect(startResult.exitCode).toBe(0)
+
+    const hostSessionId = await resolveHostSessionId(testProjectScope('codex-launch-logging'))
+    const ensureResult = await runCli(
+      ['runtime', 'ensure', hostSessionId, '--provider', 'openai'],
+      env
+    )
+    expect(ensureResult.exitCode).toBe(0)
+
+    const sendResult = await runCli(
+      ['turn', 'send', hostSessionId, '--prompt', 'log codex launch', '--provider', 'openai'],
+      env
+    )
+    expect(sendResult.exitCode).toBe(0)
+
+    await Bun.sleep(250)
+    const log = await readServerLog()
+    expect(log).toContain('launch.dispatch.prepared')
+    expect(log).toContain('"execution"')
+    expect(log).toContain('"codexHome"')
+    expect(log).toContain(`${aspHome}/codex-homes/`)
+  })
+
+  it('server stop shuts down only the daemon and leaves the HRC tmux server running', async () => {
+    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
+    expect(startResult.exitCode).toBe(0)
+
+    await ensureTmuxRuntime(testProjectScope('server-stop-preserves-tmux'))
+
+    const beforeTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    expect(beforeTmux.exitCode).toBe(0)
+    const before = JSON.parse(beforeTmux.stdout.trim()) as {
+      running: boolean
+      sessionCount: number
+      sessions: string[]
+    }
+    expect(before.running).toBe(true)
+    expect(before.sessionCount).toBeGreaterThan(0)
+
+    const stopResult = await runCli(['server', 'stop'], cliEnv())
+    expect(stopResult.exitCode).toBe(0)
+    expect(stopResult.stderr).toMatch(/daemon stopped/i)
+
+    const daemonStatus = await runCli(['server', 'status', '--json'], cliEnv())
+    expect(daemonStatus.exitCode).toBe(0)
+    const serverState = JSON.parse(daemonStatus.stdout.trim()) as { running: boolean }
+    expect(serverState.running).toBe(false)
+
+    const afterTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    expect(afterTmux.exitCode).toBe(0)
+    const after = JSON.parse(afterTmux.stdout.trim()) as {
+      running: boolean
+      sessions: string[]
+    }
+    expect(after.running).toBe(true)
+    expect(after.sessions).toEqual(before.sessions)
+  })
+
+  it('server restart preserves the existing tmux session and interactive runtime', async () => {
+    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
+    expect(startResult.exitCode).toBe(0)
+
+    const seeded = await ensureTmuxRuntime(testProjectScope('server-restart-preserves-runtime'))
+
+    const beforeTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    expect(beforeTmux.exitCode).toBe(0)
+    const before = JSON.parse(beforeTmux.stdout.trim()) as {
+      running: boolean
+      sessions: string[]
+    }
+    expect(before.running).toBe(true)
+
+    const restartResult = await runCli(['server', 'restart'], cliEnv())
+    expect(restartResult.exitCode).toBe(0)
+    expect(restartResult.stderr).toMatch(/daemon restarted/i)
+
+    const afterTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    expect(afterTmux.exitCode).toBe(0)
+    const after = JSON.parse(afterTmux.stdout.trim()) as {
+      running: boolean
+      sessions: string[]
+    }
+    expect(after.running).toBe(true)
+    expect(after.sessions).toEqual(before.sessions)
+
+    const statusResult = await runCli(['status', '--json'], cliEnv())
+    expect(statusResult.exitCode).toBe(0)
+    const status = JSON.parse(statusResult.stdout.trim()) as UnifiedStatusResponse
+    const joined = status.sessions.find(
+      (entry) => entry.session.hostSessionId === seeded.hostSessionId
+    )
+    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(seeded.runtimeId)
+    expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
+  })
+
+  it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
+    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
+    expect(startResult.exitCode).toBe(0)
+
+    await ensureTmuxRuntime(testProjectScope('tmux-kill-cli'))
+
+    const unsafeResult = await runCli(['tmux', 'kill'], cliEnv())
+    expect(unsafeResult.exitCode).toBe(1)
+    expect(unsafeResult.stderr).toMatch(/--yes/i)
+
+    const killResult = await runCli(['tmux', 'kill', '--yes'], cliEnv())
+    expect(killResult.exitCode).toBe(0)
+    expect(killResult.stderr).toMatch(/tmux server killed/i)
+
+    const statusResult = await runCli(['tmux', 'status', '--json'], cliEnv())
+    expect(statusResult.exitCode).toBe(0)
+    const status = JSON.parse(statusResult.stdout.trim()) as { running: boolean }
+    expect(status.running).toBe(false)
   })
 })
 

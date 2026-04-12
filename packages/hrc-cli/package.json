@@ -17,11 +17,11 @@
     "agent-scope": "*",
     "hrc-core": "*",
     "hrc-sdk": "*",
+    "hrc-server": "*",
     "spaces-config": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "hrc-server": "*",
     "typescript": "^5.8.3"
   }
 }

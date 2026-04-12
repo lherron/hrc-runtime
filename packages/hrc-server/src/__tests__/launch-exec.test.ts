@@ -55,11 +55,13 @@ function makeArtifact(overrides: Partial<HrcLaunchArtifact> = {}): HrcLaunchArti
 
 async function runExec(
   artifact: HrcLaunchArtifact,
-  timeoutMs = 2_000
+  timeoutMs = 2_000,
+  wrapperEnv: Record<string, string | undefined> = {}
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const launchFile = await writeLaunchArtifact(artifact, join(tmpDir, 'artifacts'))
   const proc = Bun.spawn([process.execPath, EXEC_PATH, '--launch-file', launchFile], {
     cwd: tmpDir,
+    env: { ...process.env, ...wrapperEnv },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -98,6 +100,87 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
 }
 
 describe('hrc-launch exec crash paths', () => {
+  it('prints CODEX_HOME in the summary for codex launches', async () => {
+    const codexHome = join(tmpDir, 'codex-home')
+    const result = await runExec(
+      makeArtifact({
+        harness: 'codex-cli',
+        provider: 'openai',
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: 'launch-exec-test-001',
+          CODEX_HOME: codexHome,
+        },
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(`codex home: ${codexHome}`)
+  })
+
+  it('does not print CODEX_HOME for non-codex launches', async () => {
+    const codexHome = join(tmpDir, 'codex-home')
+    const result = await runExec(
+      makeArtifact({
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: 'launch-exec-test-001',
+          CODEX_HOME: codexHome,
+        },
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).not.toContain(`codex home: ${codexHome}`)
+  })
+
+  it('scrubs inherited color, ci, and stale codex vars before spawning the child', async () => {
+    const wantedCodexHome = join(tmpDir, 'wanted-codex-home')
+    const result = await runExec(
+      makeArtifact({
+        harness: 'codex-cli',
+        provider: 'openai',
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            'process.stdout.write(JSON.stringify({',
+            '  noColor: process.env.NO_COLOR ?? null,',
+            '  codexCi: process.env.CODEX_CI ?? null,',
+            '  codexHome: process.env.CODEX_HOME ?? null,',
+            '  hrcRunId: process.env.HRC_RUN_ID ?? null,',
+            '  agentchatId: process.env.AGENTCHAT_ID ?? null,',
+            '}))',
+          ].join('\n'),
+        ],
+        env: {
+          HOME: tmpDir,
+          CODEX_HOME: wantedCodexHome,
+          AGENTCHAT_ID: 'larry',
+        },
+      }),
+      2_000,
+      {
+        AGENTCHAT_ID: 'cody',
+        CODEX_CI: '1',
+        CODEX_HOME: '/tmp/stale-codex-home',
+        HRC_RUN_ID: 'run-stale',
+        NO_COLOR: '1',
+      }
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(
+      JSON.stringify({
+        noColor: null,
+        codexCi: null,
+        codexHome: wantedCodexHome,
+        hrcRunId: null,
+        agentchatId: 'larry',
+      })
+    )
+  })
+
   it('spools an exited callback when spawn emits an error', async () => {
     const launchId = 'launch-spawn-error'
     const spoolDir = join(tmpDir, 'spool')
