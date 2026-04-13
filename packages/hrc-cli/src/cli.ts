@@ -2,17 +2,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
-import { basename, join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import {
-  formatScopeRef,
-  parseScopeHandle,
-  parseScopeRef,
-  parseSessionHandle,
-  validateScopeHandle,
-  validateScopeRef,
-} from 'agent-scope'
+import { resolveScopeInput } from 'agent-scope'
 
 import {
   HrcDomainError,
@@ -30,11 +23,13 @@ import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
 import {
   type TargetDefinition,
+  buildRuntimeBundleRef,
   getAgentsRoot,
-  getProjectsRoot,
+  inferProjectIdFromCwd,
   mergeAgentWithProjectTarget,
   parseAgentProfile,
   parseTargetsToml,
+  resolveAgentPlacementPaths,
   resolveAgentPrimingPrompt,
   resolveHarnessProvider,
 } from 'spaces-config'
@@ -513,63 +508,6 @@ function createDefaultRuntimeIntent(
   }
 }
 
-/**
- * Infer a project ID from ASP_PROJECT env var or from cwd being a direct
- * child of the configured projects root.
- */
-function inferProjectId(): string | undefined {
-  const fromEnv = process.env['ASP_PROJECT']
-  if (fromEnv) return fromEnv
-
-  const projectsRoot = getProjectsRoot()
-  if (!projectsRoot) return undefined
-  const cwd = resolve(process.cwd())
-  const resolvedRoot = resolve(projectsRoot)
-  // cwd must be a direct child of projectsRoot (e.g. ~/praesidium/agent-spaces)
-  if (resolve(join(cwd, '..')) === resolvedRoot) {
-    return basename(cwd)
-  }
-  return undefined
-}
-
-function resolveRunScopeInput(input: string): {
-  parsed: ReturnType<typeof parseScopeRef>
-  scopeRef: string
-  laneRef: 'main' | `lane:${string}`
-} {
-  if (input.includes('~')) {
-    const session = parseSessionHandle(input)
-    return {
-      parsed: parseScopeRef(session.scopeRef),
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-    }
-  }
-
-  const handleResult = validateScopeHandle(input)
-  if (handleResult.ok) {
-    const parsed = parseScopeHandle(input)
-    return {
-      parsed: parseScopeRef(parsed.scopeRef),
-      scopeRef: formatScopeRef(parsed),
-      laneRef: 'main',
-    }
-  }
-
-  const refResult = validateScopeRef(input)
-  if (refResult.ok) {
-    return {
-      parsed: parseScopeRef(input),
-      scopeRef: input,
-      laneRef: 'main',
-    }
-  }
-
-  throw new Error(
-    `invalid scope "${input}". Expected one of:\n  agent name       e.g. larry\n  agent@project    e.g. larry@agent-spaces\n  with task        e.g. larry@agent-spaces:T-00123\n  with lane        e.g. larry@agent-spaces:T-00123~repair\n  canonical ref    e.g. agent:larry:project:agent-spaces:task:T-00123`
-  )
-}
-
 function loadProjectTarget(
   projectRoot: string | undefined,
   targetName: string
@@ -612,22 +550,6 @@ function resolveProviderFromAgent(
     // Profile parse failed — fall back to default
   }
   return resolveProviderForHarness(projectTarget?.harness)
-}
-
-function buildRunBundle(
-  agentRoot: string,
-  agentName: string,
-  projectRoot?: string
-): { kind: 'agent-default' } | { kind: 'agent-project'; agentName: string; projectRoot?: string } {
-  const profilePath = join(agentRoot, 'agent-profile.toml')
-  if (existsSync(profilePath)) {
-    return {
-      kind: 'agent-project',
-      agentName,
-      ...(projectRoot ? { projectRoot } : {}),
-    }
-  }
-  return { kind: 'agent-default' }
 }
 
 async function parseRunPrompt(args: string[]): Promise<string | undefined> {
@@ -1234,14 +1156,14 @@ Options:
 
   let sessionRef: string | undefined
   try {
-    let { parsed, scopeRef, laneRef } = resolveRunScopeInput(scopeInput)
+    let { parsed, scopeRef, laneRef } = resolveScopeInput(scopeInput)
 
     // Infer project from environment or cwd when a bare agent name is given.
     if (!parsed.projectId) {
-      const inferredProject = inferProjectId()
+      const inferredProject = inferProjectIdFromCwd()
       if (inferredProject) {
         const qualifiedInput = `${scopeInput}@${inferredProject}`
-        ;({ parsed, scopeRef, laneRef } = resolveRunScopeInput(qualifiedInput))
+        ;({ parsed, scopeRef, laneRef } = resolveScopeInput(qualifiedInput))
       }
     }
 
@@ -1263,11 +1185,18 @@ Options:
       )
     }
 
-    const projectsRoot = getProjectsRoot()
-    const projectRoot =
-      parsed.projectId && projectsRoot ? join(projectsRoot, parsed.projectId) : undefined
-    const cwd = projectRoot ?? agentRoot
-    const bundle = buildRunBundle(agentRoot, parsed.agentId, projectRoot)
+    const paths = resolveAgentPlacementPaths({
+      agentId: parsed.agentId,
+      projectId: parsed.projectId,
+      agentRoot,
+    })
+    const projectRoot = paths.projectRoot
+    const cwd = paths.cwd ?? agentRoot
+    const bundle = buildRuntimeBundleRef({
+      agentName: parsed.agentId,
+      agentRoot,
+      projectRoot,
+    })
 
     // Read agent profile to determine harness/provider
     const provider = resolveProviderFromAgent(agentRoot, parsed.agentId, projectRoot)
