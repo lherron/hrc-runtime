@@ -14,6 +14,7 @@ import {
   type HrcRuntimeIntent,
   HrcUnprocessableEntityError,
 } from 'hrc-core'
+import { resolveHarnessFrontendForProvider, resolveHarnessProvider } from 'spaces-config'
 
 import { UnsupportedHarnessError } from './cli-adapter.js'
 
@@ -123,7 +124,11 @@ export async function deliverSdkInflightInput(
 const VALID_PROVIDERS: readonly string[] = ['anthropic', 'openai'] satisfies readonly HrcProvider[]
 
 function toFrontend(provider: HrcProvider): 'agent-sdk' | 'pi-sdk' {
-  return provider === 'openai' ? 'pi-sdk' : 'agent-sdk'
+  const frontend = resolveHarnessFrontendForProvider(provider, 'sdk')
+  if (frontend === 'agent-sdk' || frontend === 'pi-sdk') {
+    return frontend
+  }
+  return 'agent-sdk'
 }
 
 function toEventKind(event: AgentEvent): string {
@@ -166,7 +171,7 @@ async function defaultRunner(
   intent: HrcRuntimeIntent
 ): Promise<RunTurnNonInteractiveResponse> {
   if (intent.placement.dryRun === true) {
-    const provider = request.frontend === 'pi-sdk' ? 'openai' : 'anthropic'
+    const provider = resolveHarnessProvider(request.frontend) ?? 'anthropic'
     const continuation =
       request.frontend === 'pi-sdk'
         ? undefined

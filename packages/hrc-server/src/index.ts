@@ -82,6 +82,7 @@ import type {
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
+import { resolveHarnessFrontendForProvider } from 'spaces-config'
 import {
   buildCliInvocation,
   deliverSdkInflightInput,
@@ -4865,11 +4866,11 @@ function validateEnsureRuntimeIntent(intent: HrcRuntimeIntent): void {
 }
 
 function deriveInteractiveHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
-  return provider === 'openai' ? 'codex-cli' : 'claude-code'
+  return resolveHarnessFrontendForProvider(provider, 'cli') ?? 'claude-code'
 }
 
 function deriveSdkHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
-  return provider === 'openai' ? 'pi-sdk' : 'agent-sdk'
+  return resolveHarnessFrontendForProvider(provider, 'sdk') ?? 'agent-sdk'
 }
 
 function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {

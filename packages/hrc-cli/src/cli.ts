@@ -28,7 +28,16 @@ import type { HrcRuntimeIntent, HrcStatusResponse, HrcStatusSessionView } from '
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
-import { getAgentsRoot, getProjectsRoot, parseAgentProfile } from 'spaces-config'
+import {
+  type TargetDefinition,
+  getAgentsRoot,
+  getProjectsRoot,
+  mergeAgentWithProjectTarget,
+  parseAgentProfile,
+  parseTargetsToml,
+  resolveAgentPrimingPrompt,
+  resolveHarnessProvider,
+} from 'spaces-config'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -561,20 +570,48 @@ function resolveRunScopeInput(input: string): {
   )
 }
 
-function resolveProviderFromAgent(agentRoot: string): 'anthropic' | 'openai' {
+function loadProjectTarget(
+  projectRoot: string | undefined,
+  targetName: string
+): TargetDefinition | undefined {
+  if (!projectRoot) return undefined
+  const targetsPath = join(projectRoot, 'asp-targets.toml')
+  if (!existsSync(targetsPath)) return undefined
+  return parseTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
+}
+
+function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' {
+  return resolveHarnessProvider(harness) ?? 'anthropic'
+}
+
+function resolveProviderFromAgent(
+  agentRoot: string,
+  agentName: string,
+  projectRoot?: string
+): 'anthropic' | 'openai' {
+  const projectTarget = loadProjectTarget(projectRoot, agentName)
   const profilePath = join(agentRoot, 'agent-profile.toml')
-  if (!existsSync(profilePath)) return 'anthropic'
+  if (!existsSync(profilePath)) return resolveProviderForHarness(projectTarget?.harness)
   try {
     const source = readFileSync(profilePath, 'utf8').replace(
       /^(\s*)schema_version(\s*=)/m,
       '$1schemaVersion$2'
     )
     const profile = parseAgentProfile(source, profilePath)
-    if (profile.identity?.harness === 'codex') return 'openai'
+    const primingPrompt = resolveAgentPrimingPrompt(profile, agentRoot)
+    const effective = mergeAgentWithProjectTarget(
+      {
+        ...profile,
+        ...(primingPrompt !== undefined ? { priming_prompt: primingPrompt } : {}),
+      },
+      projectTarget,
+      'task'
+    )
+    return resolveProviderForHarness(effective.harness)
   } catch {
     // Profile parse failed — fall back to default
   }
-  return 'anthropic'
+  return resolveProviderForHarness(projectTarget?.harness)
 }
 
 function buildRunBundle(
@@ -1233,7 +1270,7 @@ Options:
     const bundle = buildRunBundle(agentRoot, parsed.agentId, projectRoot)
 
     // Read agent profile to determine harness/provider
-    const provider = resolveProviderFromAgent(agentRoot)
+    const provider = resolveProviderFromAgent(agentRoot, parsed.agentId, projectRoot)
 
     const intent: HrcRuntimeIntent = {
       placement: {

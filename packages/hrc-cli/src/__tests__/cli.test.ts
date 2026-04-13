@@ -841,6 +841,49 @@ describe('hrc run --dry-run', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('initialPrompt: 15 chars')
   })
+
+  it('infers openai provider from agent profile harness', async () => {
+    await writeFile(
+      join(agentsRoot, 'rex', 'agent-profile.toml'),
+      'schemaVersion = 2\n\n[identity]\ndisplay = "Rex"\nrole = "worker"\nharness = "codex"\n',
+      'utf8'
+    )
+
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('provider:     openai')
+  })
+
+  it('prefers project target harness over agent profile harness for provider inference', async () => {
+    await writeFile(
+      join(agentsRoot, 'rex', 'agent-profile.toml'),
+      'schemaVersion = 2\n\n[identity]\ndisplay = "Rex"\nrole = "worker"\nharness = "claude-code"\n',
+      'utf8'
+    )
+    await writeFile(
+      join(projectsRoot, 'agent-spaces', 'asp-targets.toml'),
+      'schema = 1\n\n[targets.rex]\nharness = "codex"\ncompose = []\n',
+      'utf8'
+    )
+
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('provider:     openai')
+  })
 })
 
 // ===========================================================================
