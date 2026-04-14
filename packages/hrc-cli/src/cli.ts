@@ -6,7 +6,13 @@ import { join } from 'node:path'
 import { resolveScopeInput } from 'agent-scope'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
-import type { HrcRuntimeIntent, HrcStatusResponse, HrcStatusSessionView } from 'hrc-core'
+import type {
+  AttachRuntimeResponse,
+  HrcRuntimeIntent,
+  HrcRuntimeSnapshot,
+  HrcStatusResponse,
+  HrcStatusSessionView,
+} from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
@@ -74,7 +80,8 @@ function createClient(): HrcClient {
 
 function createDefaultRuntimeIntent(
   provider: 'anthropic' | 'openai',
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  preferredMode: 'headless' | 'interactive' | 'nonInteractive' = 'interactive'
 ): HrcRuntimeIntent {
   return {
     placement: {
@@ -90,7 +97,7 @@ function createDefaultRuntimeIntent(
       interactive: true,
     },
     execution: {
-      preferredMode: 'interactive',
+      preferredMode,
     },
   }
 }
@@ -139,7 +146,128 @@ function resolveProviderFromAgent(
   return resolveProviderForHarness(projectTarget?.harness)
 }
 
-async function parseRunPrompt(args: string[]): Promise<string | undefined> {
+type ManagedScopeContext = {
+  agentId: string
+  projectId?: string | undefined
+  scopeRef: string
+  sessionRef: string
+}
+
+function resolveManagedScopeContext(scopeInput: string): ManagedScopeContext {
+  let { parsed, scopeRef, laneRef } = resolveScopeInput(scopeInput)
+
+  if (!parsed.projectId) {
+    const inferredProject = inferProjectIdFromCwd()
+    if (inferredProject) {
+      ;({ parsed, scopeRef, laneRef } = resolveScopeInput(`${scopeInput}@${inferredProject}`))
+    }
+  }
+
+  const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
+  return {
+    agentId: parsed.agentId,
+    projectId: parsed.projectId,
+    scopeRef,
+    sessionRef: `${scopeRef}/lane:${laneId}`,
+  }
+}
+
+function buildManagedRuntimeIntent(
+  scope: ManagedScopeContext,
+  options: {
+    preferredMode?: 'headless' | 'interactive' | 'nonInteractive' | undefined
+    prompt?: string | undefined
+    debug?: boolean | undefined
+  } = {}
+): HrcRuntimeIntent {
+  const agentsRoot = getAgentsRoot()
+  if (!agentsRoot) {
+    throw new Error(
+      'run requires an agents root.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.'
+    )
+  }
+
+  const agentRoot = join(agentsRoot, scope.agentId)
+  if (!existsSync(agentRoot)) {
+    throw new Error(
+      `agent "${scope.agentId}" not found at ${agentRoot}.\n` +
+        `  Check the spelling, or confirm ASP_AGENTS_ROOT (${agentsRoot}) contains this agent.`
+    )
+  }
+
+  const paths = resolveAgentPlacementPaths({
+    agentId: scope.agentId,
+    projectId: scope.projectId,
+    agentRoot,
+  })
+  const projectRoot = paths.projectRoot
+  const cwd = paths.cwd ?? agentRoot
+  const bundle = buildRuntimeBundleRef({
+    agentName: scope.agentId,
+    agentRoot,
+    projectRoot,
+  })
+  const provider = resolveProviderFromAgent(agentRoot, scope.agentId, projectRoot)
+
+  return {
+    placement: {
+      agentRoot,
+      ...(projectRoot ? { projectRoot } : {}),
+      cwd,
+      runMode: 'task' as const,
+      bundle,
+    },
+    harness: {
+      provider,
+      interactive: true,
+    },
+    execution: {
+      preferredMode: options.preferredMode ?? ('interactive' as const),
+    },
+    ...(options.prompt !== undefined ? { initialPrompt: options.prompt } : {}),
+    ...(options.debug ? { launch: { env: { HRC_DEBUG: '1' } } } : {}),
+  }
+}
+
+function buildManagedRunIntent(
+  scope: ManagedScopeContext,
+  options: {
+    prompt?: string | undefined
+    debug?: boolean | undefined
+  } = {}
+): HrcRuntimeIntent {
+  return buildManagedRuntimeIntent(scope, {
+    ...options,
+    preferredMode: 'interactive',
+  })
+}
+
+function buildManagedStartIntent(
+  scope: ManagedScopeContext,
+  options: {
+    prompt?: string | undefined
+    debug?: boolean | undefined
+  } = {}
+): HrcRuntimeIntent {
+  return buildManagedRuntimeIntent(scope, {
+    ...options,
+    preferredMode: 'headless',
+  })
+}
+
+function buildManagedAttachIntent(scope: ManagedScopeContext): HrcRuntimeIntent {
+  return buildManagedRuntimeIntent(scope, {
+    preferredMode: 'interactive',
+  })
+}
+
+async function parseScopePrompt(
+  args: string[],
+  options: {
+    command: 'run' | 'start'
+    passthroughFlags: string[]
+  }
+): Promise<string | undefined> {
   let prompt: string | undefined
   let source: 'positional' | '-p' | '--prompt-file' | undefined
 
@@ -147,8 +275,10 @@ async function parseRunPrompt(args: string[]): Promise<string | undefined> {
     if (prompt !== undefined) {
       fatal(
         source === from
-          ? `run accepts at most one ${from === 'positional' ? 'positional prompt' : `${from} value`}`
-          : `run prompt sources are mutually exclusive (${source} vs ${from})`
+          ? `${options.command} accepts at most one ${
+              from === 'positional' ? 'positional prompt' : `${from} value`
+            }`
+          : `${options.command} prompt sources are mutually exclusive (${source} vs ${from})`
       )
     }
     prompt = value
@@ -159,12 +289,7 @@ async function parseRunPrompt(args: string[]): Promise<string | undefined> {
     const arg = args[i]
     if (!arg) continue
 
-    if (
-      arg === '--force-restart' ||
-      arg === '--no-attach' ||
-      arg === '--dry-run' ||
-      arg === '--debug'
-    ) {
+    if (options.passthroughFlags.includes(arg)) {
       continue
     }
 
@@ -192,13 +317,24 @@ async function parseRunPrompt(args: string[]): Promise<string | undefined> {
     }
 
     if (arg.startsWith('-')) {
-      fatal(`unknown run option: ${arg}`)
+      fatal(`unknown ${options.command} option: ${arg}`)
     }
 
     setPrompt(arg, 'positional')
   }
 
   return prompt
+}
+
+function isRuntimeUnavailableStatus(status: string): boolean {
+  return status === 'terminated' || status === 'dead' || status === 'stale'
+}
+
+function selectLatestTmuxRuntime(runtimes: HrcRuntimeSnapshot[]): HrcRuntimeSnapshot | undefined {
+  const attachable = runtimes.filter(
+    (runtime) => runtime.transport === 'tmux' && !isRuntimeUnavailableStatus(runtime.status)
+  )
+  return attachable.at(-1)
 }
 
 async function bindGhosttySurfaceIfPresent(
@@ -224,6 +360,19 @@ async function attachDescriptor(client: HrcClient, descriptor: AttachDescriptor)
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
+  })
+
+  if (attached.exitCode !== 0) {
+    fatal(`attach command exited with code ${attached.exitCode}`)
+  }
+}
+
+function execAttachCommand(argv: string[], env?: Record<string, string> | undefined): void {
+  const attached = Bun.spawnSync(argv, {
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   })
 
   if (attached.exitCode !== 0) {
@@ -650,7 +799,12 @@ async function cmdAdopt(args: string[]): Promise<void> {
  * the wrapped message so the top-level `fatal()` handler prints it with the
  * `hrc:` prefix.
  */
-function explainRunError(err: unknown, scopeInput: string, sessionRef?: string): Error {
+function explainScopeCommandError(
+  command: 'attach' | 'run' | 'start',
+  err: unknown,
+  scopeInput: string,
+  sessionRef?: string
+): Error {
   const raw = err instanceof Error ? err.message : String(err)
 
   // Daemon not running — discoverSocket throws this
@@ -691,13 +845,11 @@ function explainRunError(err: unknown, scopeInput: string, sessionRef?: string):
     }
 
     if (err.code === HrcErrorCode.STALE_CONTEXT) {
-      return new Error(
-        `conflict on "${scopeInput}": ${err.message}\n  Another alias already owns a different canonical session for this key.`
-      )
+      return new Error(`conflict on "${scopeInput}": ${err.message}`)
     }
 
     if (err.code === HrcErrorCode.UNSUPPORTED_CAPABILITY) {
-      return new Error(`cannot run "${scopeInput}": ${err.message}`)
+      return new Error(`cannot ${command} "${scopeInput}": ${err.message}`)
     }
 
     // Other domain errors — show the code so operators can look it up
@@ -709,28 +861,40 @@ function explainRunError(err: unknown, scopeInput: string, sessionRef?: string):
   return err instanceof Error ? err : new Error(raw)
 }
 
-async function cmdRun(args: string[]): Promise<void> {
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
-    process.stdout.write(`Usage: hrc run <scope> [options]
+function printManagedScopeUsage(command: 'run' | 'start'): void {
+  const summary =
+    command === 'run'
+      ? 'Launch or reattach an agent harness in a managed tmux session.'
+      : 'Resolve a session and start its managed runtime without attaching.'
+  const attachSummary =
+    command === 'run'
+      ? '\n  By default, rerunning the same scope reattaches to the existing\n  runtime and preserves the PTY/context. Use --force-restart to\n  replace the runtime with a fresh PTY.\n'
+      : ''
+  const noAttachOption =
+    command === 'run'
+      ? '  --no-attach          Start/ensure without attaching to the tmux session\n'
+      : ''
 
-  Launch or reattach an agent harness in a managed tmux session.
+  process.stdout.write(`Usage: hrc ${command} <scope> [options]
+
+  ${summary}
 
   <scope>  Agent scope: agent, agent@project, or full scope ref.
            When run from a project directory, the project is inferred
-           automatically (e.g. "larry" becomes "larry@agent-spaces").
-
-  By default, rerunning the same scope reattaches to the existing
-  runtime and preserves the PTY/context. Use --force-restart to
-  replace the runtime with a fresh PTY.
+           automatically (e.g. "larry" becomes "larry@agent-spaces").${attachSummary}
 
 Options:
   --force-restart      Replace any existing runtime with a fresh PTY
-  --no-attach          Start/ensure without attaching to the tmux session
-  --dry-run            Local plan preview — no server calls, no side effects
+${noAttachOption}  --dry-run            Local plan preview — no server calls, no side effects
   --debug              Keep tmux shell alive after harness exits
   -p <text>            Initial prompt to send to the harness
   --prompt-file <path> Read initial prompt from a file
 `)
+}
+
+async function cmdRun(args: string[]): Promise<void> {
+  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+    printManagedScopeUsage('run')
     return
   }
 
@@ -739,78 +903,20 @@ Options:
   const noAttach = hasFlag(args, '--no-attach')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
-  const prompt = await parseRunPrompt(args)
+  const prompt = await parseScopePrompt(args, {
+    command: 'run',
+    passthroughFlags: ['--force-restart', '--no-attach', '--dry-run', '--debug'],
+  })
 
   let sessionRef: string | undefined
   try {
-    let { parsed, scopeRef, laneRef } = resolveScopeInput(scopeInput)
-
-    // Infer project from environment or cwd when a bare agent name is given.
-    if (!parsed.projectId) {
-      const inferredProject = inferProjectIdFromCwd()
-      if (inferredProject) {
-        const qualifiedInput = `${scopeInput}@${inferredProject}`
-        ;({ parsed, scopeRef, laneRef } = resolveScopeInput(qualifiedInput))
-      }
-    }
-
-    const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
-    sessionRef = `${scopeRef}/lane:${laneId}`
-
-    const agentsRoot = getAgentsRoot()
-    if (!agentsRoot) {
-      throw new Error(
-        'run requires an agents root.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.'
-      )
-    }
-
-    const agentRoot = join(agentsRoot, parsed.agentId)
-    if (!existsSync(agentRoot)) {
-      throw new Error(
-        `agent "${parsed.agentId}" not found at ${agentRoot}.\n` +
-          `  Check the spelling, or confirm ASP_AGENTS_ROOT (${agentsRoot}) contains this agent.`
-      )
-    }
-
-    const paths = resolveAgentPlacementPaths({
-      agentId: parsed.agentId,
-      projectId: parsed.projectId,
-      agentRoot,
-    })
-    const projectRoot = paths.projectRoot
-    const cwd = paths.cwd ?? agentRoot
-    const bundle = buildRuntimeBundleRef({
-      agentName: parsed.agentId,
-      agentRoot,
-      projectRoot,
-    })
-
-    // Read agent profile to determine harness/provider
-    const provider = resolveProviderFromAgent(agentRoot, parsed.agentId, projectRoot)
-
-    const intent: HrcRuntimeIntent = {
-      placement: {
-        agentRoot,
-        ...(projectRoot ? { projectRoot } : {}),
-        cwd,
-        runMode: 'task' as const,
-        bundle,
-      },
-      harness: {
-        provider,
-        interactive: true,
-      },
-      execution: {
-        preferredMode: 'interactive' as const,
-      },
-      ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
-      ...(debug ? { launch: { env: { HRC_DEBUG: '1' } } } : {}),
-    }
-
+    const scope = resolveManagedScopeContext(scopeInput)
+    sessionRef = scope.sessionRef
+    const intent = buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
-      await printLocalRunPreview(scopeInput, sessionRef, intent, restartStyle, prompt)
+      await printLocalRunPreview('run', scopeInput, sessionRef, intent, restartStyle, prompt)
       return
     }
 
@@ -823,14 +929,6 @@ Options:
       restartStyle,
     })
 
-    // ensureRuntime only allocates the tmux pane — the harness process is
-    // started by dispatchTurn. Always dispatch so the agent actually launches.
-    // The server requires a non-empty prompt; when the user did not supply
-    // one we send the scope as a placeholder. The priming prompt in argv is
-    // built server-side from the agent profile and is not affected by this.
-    // If the runtime is already busy (reused PTY with a running harness),
-    // the server responds with RUNTIME_BUSY — in that case we silently skip
-    // the dispatch and fall through to attach.
     try {
       await client.dispatchTurn({
         hostSessionId: resolved.hostSessionId,
@@ -855,11 +953,58 @@ Options:
     const descriptor = await client.getAttachDescriptor(runtime.runtimeId)
     await attachDescriptor(client, descriptor)
   } catch (err) {
-    throw explainRunError(err, scopeInput, sessionRef)
+    throw explainScopeCommandError('run', err, scopeInput, sessionRef)
+  }
+}
+
+async function cmdStart(args: string[]): Promise<void> {
+  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+    printManagedScopeUsage('start')
+    return
+  }
+
+  const scopeInput = requireArg(args, 0, '<scope>')
+  const forceRestart = hasFlag(args, '--force-restart')
+  const dryRun = hasFlag(args, '--dry-run')
+  const debug = hasFlag(args, '--debug')
+  const prompt = await parseScopePrompt(args, {
+    command: 'start',
+    passthroughFlags: ['--force-restart', '--dry-run', '--debug'],
+  })
+
+  let sessionRef: string | undefined
+  try {
+    const scope = resolveManagedScopeContext(scopeInput)
+    sessionRef = scope.sessionRef
+    const intent = buildManagedStartIntent(scope, { prompt, debug })
+    const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
+
+    if (dryRun) {
+      await printLocalRunPreview('start', scopeInput, sessionRef, intent, restartStyle, prompt)
+      return
+    }
+
+    const client = createClient()
+    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    const runtime = await client.startRuntime({
+      hostSessionId: resolved.hostSessionId,
+      intent,
+      restartStyle,
+    })
+
+    printJson({
+      sessionRef,
+      hostSessionId: resolved.hostSessionId,
+      created: resolved.created,
+      runtime,
+    })
+  } catch (err) {
+    throw explainScopeCommandError('start', err, scopeInput, sessionRef)
   }
 }
 
 async function printLocalRunPreview(
+  command: 'run' | 'start',
   scope: string,
   sessionRef: string,
   intent: HrcRuntimeIntent,
@@ -868,7 +1013,7 @@ async function printLocalRunPreview(
 ): Promise<void> {
   const w = (s: string) => process.stdout.write(`${s}\n`)
 
-  w(`hrc run ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
+  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
   w(`  sessionRef:   ${sessionRef}`)
   w(`  restartStyle: ${restartStyle}`)
   w(`  agentRoot:    ${intent.placement.agentRoot}`)
@@ -935,15 +1080,21 @@ function formatHarnessCommand(argv: readonly string[]): string {
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
-  const restartStyle = parseFlag(args, '--restart-style')
+  const restartStyleRaw = parseFlag(args, '--restart-style')
 
   if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
     fatal('--provider must be one of: anthropic, openai')
   }
 
-  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
+  if (
+    restartStyleRaw !== undefined &&
+    restartStyleRaw !== 'reuse_pty' &&
+    restartStyleRaw !== 'fresh_pty'
+  ) {
     fatal('--restart-style must be one of: reuse_pty, fresh_pty')
   }
+  const restartStyle =
+    restartStyleRaw === 'reuse_pty' || restartStyleRaw === 'fresh_pty' ? restartStyleRaw : undefined
 
   const client = createClient()
   const result = await client.ensureRuntime({
@@ -1103,12 +1254,105 @@ async function cmdCapture(args: string[]): Promise<void> {
   }
 }
 
+function printAttachUsage(): void {
+  process.stdout.write(`Usage: hrc attach <scope> [--dry-run]
+
+  Resolve a managed session by scope and attach to its latest active tmux runtime.
+
+  Compatibility:
+  attach <runtimeId>  Print the attach descriptor JSON for an explicit runtime ID.
+`)
+}
+
+async function printLocalAttachPreview(scope: string, sessionRef: string): Promise<void> {
+  const w = (s: string) => process.stdout.write(`${s}\n`)
+
+  w(`hrc attach ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
+  w(`  sessionRef:    ${sessionRef}`)
+  w('  runtimeLookup: latest non-unavailable tmux runtime for the resolved host session')
+  w('  recovery:      if tmux is gone for an existing session, ensure a fresh tmux runtime')
+  w('  action:        POST /v1/runtimes/attach for that runtime, then exec returned argv')
+  w('')
+  w('  Note: this preview does not resolve the session or inspect runtime state.')
+  w('  Run without --dry-run to execute.')
+}
+
 async function cmdAttach(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
-  const client = createClient()
-  const descriptor = await client.getAttachDescriptor(runtimeId)
-  await bindGhosttySurfaceIfPresent(client, descriptor)
-  printJson(descriptor)
+  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+    printAttachUsage()
+    return
+  }
+
+  const target = requireArg(args, 0, '<scope>')
+  const dryRun = hasFlag(args, '--dry-run')
+
+  if (target.startsWith('rt-')) {
+    if (dryRun) {
+      fatal('attach --dry-run expects a scope, not a runtimeId')
+    }
+    const client = createClient()
+    const descriptor = await client.getAttachDescriptor(target)
+    await bindGhosttySurfaceIfPresent(client, descriptor)
+    printJson(descriptor)
+    return
+  }
+
+  let sessionRef: string | undefined
+  try {
+    const scope = resolveManagedScopeContext(target)
+    sessionRef = scope.sessionRef
+    const intent = buildManagedAttachIntent(scope)
+
+    if (dryRun) {
+      await printLocalAttachPreview(target, sessionRef)
+      return
+    }
+
+    const client = createClient()
+    const resolved = await client.resolveSession({ sessionRef })
+    if (resolved.created) {
+      throw new Error(`no active tmux runtime found for "${target}"`)
+    }
+
+    const runtime =
+      intent.harness.provider === 'openai'
+        ? await client.ensureRuntime({
+            hostSessionId: resolved.hostSessionId,
+            intent,
+            restartStyle: 'reuse_pty',
+          })
+        : selectLatestTmuxRuntime(
+            await client.listRuntimes({ hostSessionId: resolved.hostSessionId })
+          )
+    if (!runtime) {
+      throw new Error(`no active tmux runtime found for "${target}"`)
+    }
+
+    const descriptor: AttachRuntimeResponse =
+      intent.harness.provider === 'openai'
+        ? await client.attachRuntime({ runtimeId: runtime.runtimeId })
+        : await (async () => {
+            try {
+              return await client.attachRuntime({ runtimeId: runtime.runtimeId })
+            } catch (err) {
+              if (
+                !(err instanceof HrcDomainError) ||
+                err.code !== HrcErrorCode.RUNTIME_UNAVAILABLE
+              ) {
+                throw err
+              }
+              const recoveredRuntime = await client.ensureRuntime({
+                hostSessionId: resolved.hostSessionId,
+                intent,
+                restartStyle: 'reuse_pty',
+              })
+              return await client.attachRuntime({ runtimeId: recoveredRuntime.runtimeId })
+            }
+          })()
+    execAttachCommand(descriptor.argv, descriptor.env)
+  } catch (err) {
+    throw explainScopeCommandError('attach', err, target, sessionRef)
+  }
 }
 
 async function cmdInterrupt(args: string[]): Promise<void> {
@@ -1412,10 +1656,12 @@ Commands:
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   adopt <runtimeId>                   Adopt a dead/stale runtime
+  start <scope> [prompt] [--force-restart] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
+  attach <scope> [--dry-run]          Attach to the latest active tmux runtime for a scope
   attach <runtimeId>                  Print tmux attach descriptor JSON
   surface bind <runtimeId> --kind <kind> --id <surfaceId>
   surface unbind --kind <kind> --id <surfaceId> [--reason <reason>]
@@ -1465,6 +1711,8 @@ async function main(): Promise<void> {
         return await cmdLaunch(rest)
       case 'adopt':
         return await cmdAdopt(rest)
+      case 'start':
+        return await cmdStart(rest)
       case 'run':
         return await cmdRun(rest)
       case 'turn':

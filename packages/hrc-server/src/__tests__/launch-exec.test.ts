@@ -100,6 +100,120 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
 }
 
 describe('hrc-launch exec crash paths', () => {
+  it('posts a continuation callback when headless codex emits legacy event-based thread.started JSONL', async () => {
+    const launchId = 'launch-headless-continuation'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            "process.stdout.write(JSON.stringify({event:'thread.started',thread_id:'thread-123'}) + '\\n')",
+            'process.exit(0)',
+          ].join('\n'),
+        ],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(
+      received.some(
+        (entry) =>
+          entry.url === `/v1/internal/launches/${launchId}/continuation` &&
+          (entry.body as { continuation?: { provider?: string; key?: string } }).continuation
+            ?.provider === 'openai' &&
+          (entry.body as { continuation?: { provider?: string; key?: string } }).continuation
+            ?.key === 'thread-123'
+      )
+    ).toBe(true)
+  })
+
+  it('posts a continuation callback when headless codex emits real type-based thread.started JSONL', async () => {
+    const launchId = 'launch-headless-continuation-real-codex'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            "process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'thread-123'}) + '\\n')",
+            'process.exit(0)',
+          ].join('\n'),
+        ],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(
+      received.some(
+        (entry) =>
+          entry.url === `/v1/internal/launches/${launchId}/continuation` &&
+          (entry.body as { continuation?: { provider?: string; key?: string } }).continuation
+            ?.provider === 'openai' &&
+          (entry.body as { continuation?: { provider?: string; key?: string } }).continuation
+            ?.key === 'thread-123'
+      )
+    ).toBe(true)
+  })
+
   it('prints CODEX_HOME in the summary for codex launches', async () => {
     const codexHome = join(tmpDir, 'codex-home')
     const result = await runExec(

@@ -7,6 +7,7 @@ export type HrcProvider = 'anthropic' | 'openai'
 export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-sdk'
 export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'tmux'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
+export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 
 export type HrcContinuationRef = {
   provider: HrcProvider
@@ -128,6 +129,9 @@ export type HrcLaunchArtifact = {
   callbackSocketPath: string
   spoolDir: string
   correlationEnv: Record<string, string>
+  interactionMode?: 'headless' | 'interactive' | undefined
+  ioMode?: HrcIoMode | undefined
+  lifecycleAction?: 'attach' | 'start' | 'turn' | undefined
   launchEnv?: HrcLaunchEnvConfig | undefined
   hookBridge?: HrcHookBridgeConfig | undefined
 }

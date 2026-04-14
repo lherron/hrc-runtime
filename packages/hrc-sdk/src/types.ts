@@ -1,5 +1,7 @@
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
+  AttachRuntimeRequest,
+  AttachRuntimeResponse,
   BindSurfaceRequest,
   CaptureResponse,
   ClearContextRequest,
@@ -22,6 +24,8 @@ export type {
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartStyle,
+  StartRuntimeRequest,
+  StartRuntimeResponse,
   RuntimeActionResponse,
   StatusResponse,
   UnbindSurfaceRequest,

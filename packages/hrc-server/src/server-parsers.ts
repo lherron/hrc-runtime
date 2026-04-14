@@ -1,9 +1,13 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { HrcBadRequestError, HrcErrorCode, HrcUnprocessableEntityError, parseFence } from 'hrc-core'
 import type {
   AppSessionFreshnessFence,
   ApplyAppManagedSessionsRequest,
   ApplyAppSessionInput,
   ApplyAppSessionsRequest,
+  AttachRuntimeRequest,
   BindSurfaceRequest,
   ClearAppSessionContextRequest,
   ClearContextRequest,
@@ -22,9 +26,11 @@ import type {
   RestartStyle,
   SendAppHarnessInFlightInputRequest,
   SendLiteralInputRequest,
+  StartRuntimeRequest,
   TerminateAppSessionRequest,
   UnbindSurfaceRequest,
 } from 'hrc-core'
+import { parseAgentProfile, resolveHarnessProvider } from 'spaces-config'
 
 export type InFlightInputRequest = {
   runtimeId: string
@@ -74,6 +80,57 @@ export type DeliverTextRequest = {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function resolveHarnessFromPlacement(
+  placement: unknown,
+  execution: unknown
+): HrcRuntimeIntent['harness'] {
+  if (!isRecord(placement)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent.harness is required unless placement.agentRoot can resolve it',
+      { field: 'runtimeIntent.harness' }
+    )
+  }
+
+  const agentRoot = placement['agentRoot']
+  if (typeof agentRoot !== 'string' || agentRoot.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent.harness is required unless placement.agentRoot can resolve it',
+      { field: 'runtimeIntent.placement.agentRoot' }
+    )
+  }
+
+  const profilePath = join(agentRoot, 'agent-profile.toml')
+  if (!existsSync(profilePath)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent.harness is required when agent-profile.toml is missing',
+      { field: 'runtimeIntent.placement.agentRoot' }
+    )
+  }
+
+  const profile = parseAgentProfile(readFileSync(profilePath, 'utf8'), profilePath)
+  const provider = resolveHarnessProvider(profile.identity?.harness)
+  if (!provider) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent.harness is required when agent-profile identity.harness is missing',
+      { field: 'runtimeIntent.placement.agentRoot' }
+    )
+  }
+
+  const preferredMode =
+    isRecord(execution) && typeof execution['preferredMode'] === 'string'
+      ? execution['preferredMode']
+      : undefined
+
+  return {
+    provider,
+    interactive: preferredMode !== 'nonInteractive',
+  }
 }
 
 export async function parseJsonBody(request: Request): Promise<unknown> {
@@ -241,45 +298,46 @@ function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
 }
 
 function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
-  const harness = input['harness']
-  if (!isRecord(harness)) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'runtimeIntent.harness is required',
-      { field: 'runtimeIntent.harness' }
-    )
-  }
-
-  const provider = requireTrimmedStringField(harness, 'provider')
-  if (provider !== 'anthropic' && provider !== 'openai') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'harness.provider must be "anthropic" or "openai"',
-      { field: 'harness.provider' }
-    )
-  }
-
-  const interactive = harness['interactive']
-  if (typeof interactive !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'harness.interactive must be a boolean',
-      { field: 'harness.interactive' }
-    )
-  }
-
   const placement = input['placement'] ?? 'workspace'
   const execution = input['execution']
+  const harness = input['harness']
+  const launch = input['launch']
+  const initialPrompt = input['initialPrompt']
+  const resolvedHarness = isRecord(harness)
+    ? (() => {
+        const provider = requireTrimmedStringField(harness, 'provider')
+        if (provider !== 'anthropic' && provider !== 'openai') {
+          throw new HrcBadRequestError(
+            HrcErrorCode.MALFORMED_REQUEST,
+            'harness.provider must be "anthropic" or "openai"',
+            { field: 'harness.provider' }
+          )
+        }
+
+        const interactive = harness['interactive']
+        if (typeof interactive !== 'boolean') {
+          throw new HrcBadRequestError(
+            HrcErrorCode.MALFORMED_REQUEST,
+            'harness.interactive must be a boolean',
+            { field: 'harness.interactive' }
+          )
+        }
+
+        return {
+          provider: provider as HrcProvider,
+          interactive,
+          ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
+          ...(harness['yolo'] === true ? { yolo: true } : {}),
+        }
+      })()
+    : resolveHarnessFromPlacement(placement, execution)
 
   return {
     placement: placement as import('spaces-config').RuntimePlacement,
-    harness: {
-      provider: provider as HrcProvider,
-      interactive,
-      ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
-      ...(harness['yolo'] === true ? { yolo: true } : {}),
-    },
+    harness: resolvedHarness,
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
+    ...(isRecord(launch) ? { launch: launch as HrcRuntimeIntent['launch'] } : {}),
+    ...(typeof initialPrompt === 'string' ? { initialPrompt } : {}),
   }
 }
 
@@ -679,9 +737,13 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
 
   return {
     hostSessionId: hostSessionId.trim(),
-    intent: intent as HrcRuntimeIntent,
+    intent: parseRuntimeIntent(intent),
     restartStyle,
   }
+}
+
+export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
+  return parseEnsureRuntimeRequest(input)
 }
 
 export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
@@ -709,7 +771,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     hostSessionId: hostSessionId.trim(),
     prompt: prompt.trim(),
     ...(runtimeIntent && isRecord(runtimeIntent)
-      ? { runtimeIntent: runtimeIntent as HrcRuntimeIntent }
+      ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
       : {}),
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
   }
@@ -795,6 +857,10 @@ export function parseRuntimeActionBody(input: unknown): { runtimeId: string } {
   return {
     runtimeId: runtimeId.trim(),
   }
+}
+
+export function parseAttachRuntimeRequest(input: unknown): AttachRuntimeRequest {
+  return parseRuntimeActionBody(input)
 }
 
 export function parseBindSurfaceRequest(input: unknown): BindSurfaceRequest {

@@ -101,6 +101,130 @@ describe('HrcClient constructor', () => {
   })
 })
 
+describe('runtime lifecycle client methods', () => {
+  let tmpDir: string
+  let stubSocketPath: string
+  let stubServer: ReturnType<typeof Bun.serve> | undefined
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-lifecycle-'))
+    stubSocketPath = join(tmpDir, 'lifecycle.sock')
+  })
+
+  afterEach(async () => {
+    if (stubServer) {
+      stubServer.stop(true)
+      stubServer = undefined
+    }
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('startRuntime posts to /v1/runtimes/start and returns the typed response', async () => {
+    let capturedPath = ''
+    let capturedBody: unknown
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        capturedPath = new URL(req.url).pathname
+        capturedBody = await req.json()
+        return Response.json({
+          runtimeId: 'rt-start-1',
+          hostSessionId: 'hsid-start-1',
+          transport: 'tmux',
+          status: 'ready',
+          supportsInFlightInput: false,
+          tmux: {
+            sessionId: '$1',
+            windowId: '@1',
+            paneId: '%1',
+          },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const result = await (client as any).startRuntime({
+      hostSessionId: 'hsid-start-1',
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: true,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+
+    expect(capturedPath).toBe('/v1/runtimes/start')
+    expect(capturedBody).toEqual({
+      hostSessionId: 'hsid-start-1',
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: true,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+    expect(result.runtimeId).toBe('rt-start-1')
+    expect(result.transport).toBe('tmux')
+  })
+
+  it('attachRuntime posts to /v1/runtimes/attach and returns the attach descriptor', async () => {
+    let capturedPath = ''
+    let capturedBody: unknown
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        capturedPath = new URL(req.url).pathname
+        capturedBody = await req.json()
+        return Response.json({
+          transport: 'tmux',
+          argv: ['tmux', 'attach', '-t', 'hrc-demo'],
+          bindingFence: {
+            hostSessionId: 'hsid-attach-1',
+            runtimeId: 'rt-attach-1',
+            generation: 1,
+            windowId: '@1',
+            paneId: '%1',
+          },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const result = await (client as any).attachRuntime({
+      runtimeId: 'rt-attach-1',
+    })
+
+    expect(capturedPath).toBe('/v1/runtimes/attach')
+    expect(capturedBody).toEqual({ runtimeId: 'rt-attach-1' })
+    expect(result.bindingFence.runtimeId).toBe('rt-attach-1')
+    expect(result.argv).toEqual(['tmux', 'attach', '-t', 'hrc-demo'])
+  })
+})
+
 // Error parsing tests use a minimal HTTP server that returns known error shapes
 describe('typed error parsing', () => {
   let tmpDir: string

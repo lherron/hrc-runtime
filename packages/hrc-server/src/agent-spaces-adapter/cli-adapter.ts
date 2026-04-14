@@ -12,7 +12,14 @@ import {
   type BuildProcessInvocationSpecResponse,
   createAgentSpacesClient,
 } from 'agent-spaces'
-import type { HrcHarness, HrcLaunchEnvConfig, HrcProvider, HrcRuntimeIntent } from 'hrc-core'
+import type {
+  HrcContinuationRef,
+  HrcHarness,
+  HrcIoMode,
+  HrcLaunchEnvConfig,
+  HrcProvider,
+  HrcRuntimeIntent,
+} from 'hrc-core'
 import { type ResolvedRuntimeBundle, getAspHome } from 'spaces-config'
 
 // ---------------------------------------------------------------------------
@@ -45,6 +52,7 @@ export type SpecBuilder = (
 /** Optional configuration for buildCliInvocation */
 export interface BuildCliInvocationOptions {
   specBuilder?: SpecBuilder | undefined
+  continuation?: HrcContinuationRef | undefined
 }
 
 /** Result of building a CLI invocation from HRC intent */
@@ -54,6 +62,8 @@ export interface CliInvocationResult {
   cwd: string
   provider: HrcProvider
   frontend: CliFrontend
+  interactionMode: 'headless' | 'interactive'
+  ioMode: HrcIoMode
   resolvedBundle?: ResolvedRuntimeBundle | undefined
   warnings?: string[] | undefined
 }
@@ -165,6 +175,29 @@ function defaultSpecBuilder(): SpecBuilder {
   return (req) => client.buildProcessInvocationSpec(req)
 }
 
+function resolveInvocationModes(intent: HrcRuntimeIntent): {
+  interactionMode: 'headless' | 'interactive'
+  ioMode: HrcIoMode
+} {
+  const preferredMode = intent.execution?.preferredMode
+  // HRC only has a true detached headless lifecycle for Codex today.
+  // Claude must stay interactive so the tmux runtime remains attachable.
+  if (
+    intent.harness.provider === 'openai' &&
+    (preferredMode === 'headless' || preferredMode === 'nonInteractive')
+  ) {
+    return {
+      interactionMode: 'headless',
+      ioMode: 'pipes',
+    }
+  }
+
+  return {
+    interactionMode: 'interactive',
+    ioMode: 'pty',
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Core adapter function
 // ---------------------------------------------------------------------------
@@ -185,6 +218,7 @@ export async function buildCliInvocation(
   options?: BuildCliInvocationOptions
 ): Promise<CliInvocationResult> {
   const frontend = resolveCliFrontend(intent)
+  const { interactionMode, ioMode } = resolveInvocationModes(intent)
 
   const specBuilder = options?.specBuilder ?? defaultSpecBuilder()
 
@@ -195,10 +229,13 @@ export async function buildCliInvocation(
     provider: intent.harness.provider,
     frontend,
     model: intent.harness.model,
-    interactionMode: 'interactive',
-    ioMode: 'pty',
+    interactionMode,
+    ioMode,
+    ...(options?.continuation ? { continuation: options.continuation } : {}),
     ...(intent.harness.yolo ? { yolo: true } : {}),
-    ...(intent.initialPrompt !== undefined ? { prompt: intent.initialPrompt } : {}),
+    ...(options?.continuation === undefined && intent.initialPrompt !== undefined
+      ? { prompt: intent.initialPrompt }
+      : {}),
     // Required by the type but ignored when placement is set
     aspHome: getAspHome(),
     spec: { spaces: [] },
@@ -206,6 +243,12 @@ export async function buildCliInvocation(
   }
 
   const response = await specBuilder(placementReq)
+  const argv =
+    frontend === 'codex-cli' &&
+    interactionMode === 'headless' &&
+    !response.spec.argv.includes('--json')
+      ? [...response.spec.argv, '--json']
+      : response.spec.argv
 
   // Build HRC correlation env vars from placement
   const correlationEnv = buildHrcCorrelationEnv(intent)
@@ -215,11 +258,13 @@ export async function buildCliInvocation(
   const finalEnv = mergeEnv(envWithCorrelation, intent.launch)
 
   return {
-    argv: response.spec.argv,
+    argv,
     env: finalEnv,
     cwd: response.spec.cwd,
     provider: intent.harness.provider,
     frontend,
+    interactionMode,
+    ioMode,
     resolvedBundle: response.resolvedBundle,
     warnings: response.warnings,
   }

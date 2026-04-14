@@ -1,4 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { accessSync, existsSync, constants as fsConstants } from 'node:fs'
+import { delimiter, isAbsolute, join } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { postCallback } from './callback-client.js'
@@ -87,6 +89,118 @@ function formatError(err: unknown): string {
   return String(err)
 }
 
+function resolveExecutable(command: string, envPath: string | undefined): string {
+  if (isAbsolute(command) || command.includes('/')) {
+    return command
+  }
+
+  for (const entry of (envPath ?? '').split(delimiter)) {
+    if (!entry) {
+      continue
+    }
+    const candidate = join(entry, command)
+    try {
+      accessSync(candidate, fsConstants.X_OK)
+      return candidate
+    } catch {
+      // try next PATH entry
+    }
+  }
+
+  return command
+}
+
+function isHeadlessCodexLaunch(artifact: {
+  harness: string
+  interactionMode?: 'headless' | 'interactive' | undefined
+  ioMode?: 'inherit' | 'pipes' | 'pty' | undefined
+}): boolean {
+  return (
+    artifact.harness === 'codex-cli' &&
+    artifact.interactionMode === 'headless' &&
+    artifact.ioMode === 'pipes'
+  )
+}
+
+async function pumpHeadlessCodexOutput(
+  stream: NodeJS.ReadableStream | null,
+  artifact: {
+    callbackSocketPath: string
+    hostSessionId: string
+    launchId: string
+    spoolDir: string
+  }
+): Promise<void> {
+  if (!stream) {
+    return
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let deliveredContinuation = false
+
+  for await (const chunk of stream) {
+    buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) {
+        continue
+      }
+
+      if (deliveredContinuation) {
+        continue
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed) as {
+          event?: string
+          type?: string
+          thread_id?: string
+          threadId?: string
+        }
+        const eventName = parsed.event ?? parsed.type
+        const threadId = parsed.thread_id ?? parsed.threadId
+        if (eventName === 'thread.started' && typeof threadId === 'string') {
+          deliveredContinuation = true
+          await callbackOrSpool(
+            artifact.callbackSocketPath,
+            `/v1/internal/launches/${artifact.launchId}/continuation`,
+            {
+              hostSessionId: artifact.hostSessionId,
+              continuation: {
+                provider: 'openai',
+                key: threadId,
+              },
+              harnessSessionJson: {
+                threadId,
+              },
+            },
+            artifact.spoolDir,
+            artifact.launchId
+          )
+        }
+      } catch {
+        // Ignore non-JSON output in headless mode.
+      }
+    }
+  }
+}
+
+async function pumpToStderr(stream: NodeJS.ReadableStream | null): Promise<void> {
+  if (!stream) {
+    return
+  }
+
+  for await (const chunk of stream) {
+    if (chunk) {
+      process.stderr.write(chunk)
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -119,6 +233,7 @@ async function main(): Promise<void> {
     process.stderr.write('hrc-launch exec: empty argv in launch artifact\n')
     process.exit(1)
   }
+  const effectiveCwd = existsSync(cwd) ? cwd : process.cwd()
 
   // Display launch summary before spawning the harness.
   printLaunchSummary(artifact)
@@ -156,7 +271,7 @@ async function main(): Promise<void> {
     process.stdout.write(`agentchat ${regArgs.join(' ')}\n`)
     const regResult = spawnSync('agentchat', regArgs, {
       env: { ...process.env, ...env },
-      cwd,
+      cwd: effectiveCwd,
       timeout: 5_000,
       stdio: ['ignore', 'ignore', 'pipe'],
     })
@@ -169,7 +284,8 @@ async function main(): Promise<void> {
   }
 
   // Spawn child
-  const child: ChildProcess = spawn(command, argv.slice(1), {
+  const resolvedCommand = resolveExecutable(command, env['PATH'])
+  const child: ChildProcess = spawn(resolvedCommand, argv.slice(1), {
     env: {
       ...scrubInheritedEnv(process.env),
       ...env,
@@ -182,9 +298,16 @@ async function main(): Promise<void> {
       HRC_GENERATION: String(generation),
       ...(runtimeId ? { HRC_RUNTIME_ID: runtimeId } : {}),
     },
-    cwd,
-    stdio: 'inherit',
+    cwd: effectiveCwd,
+    stdio: isHeadlessCodexLaunch(artifact) ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   })
+
+  const childStdout =
+    isHeadlessCodexLaunch(artifact) && child.stdout
+      ? pumpHeadlessCodexOutput(child.stdout, artifact)
+      : Promise.resolve()
+  const childStderr =
+    isHeadlessCodexLaunch(artifact) && child.stderr ? pumpToStderr(child.stderr) : Promise.resolve()
 
   // POST child-started
   if (child.pid !== undefined) {
@@ -244,11 +367,13 @@ async function main(): Promise<void> {
     })
   })
 
+  await Promise.all([childStdout, childStderr])
+
   // Deregister agent from agentchat on exit (best-effort).
   if (agentchatId && agentchatProject) {
     spawnSync('agentchat', ['--project', agentchatProject, 'deregister', '--id', agentchatId], {
       env: { ...process.env, ...env },
-      cwd,
+      cwd: effectiveCwd,
       timeout: 5_000,
       stdio: ['ignore', 'ignore', 'pipe'],
     })

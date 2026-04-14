@@ -11,6 +11,8 @@ import { HrcDomainError } from 'hrc-core'
 
 import type {
   AttachDescriptor,
+  AttachRuntimeRequest,
+  AttachRuntimeResponse,
   BindSurfaceRequest,
   BridgeListFilter,
   CaptureResponse,
@@ -38,6 +40,8 @@ import type {
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
+  StartRuntimeRequest,
+  StartRuntimeResponse,
   StatusResponse,
   SurfaceListFilter,
   UnbindSurfaceRequest,
@@ -131,6 +135,10 @@ export class HrcClient {
     return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)
   }
 
+  async startRuntime(request: StartRuntimeRequest): Promise<StartRuntimeResponse> {
+    return this.postJson<StartRuntimeResponse>('/v1/runtimes/start', request)
+  }
+
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
     return this.postJson<DispatchTurnResponse>('/v1/turns', request)
   }
@@ -155,6 +163,10 @@ export class HrcClient {
 
   async getAttachDescriptor(runtimeId: string): Promise<AttachDescriptor> {
     return this.getJson<AttachDescriptor>(`/v1/attach?runtimeId=${encodeURIComponent(runtimeId)}`)
+  }
+
+  async attachRuntime(request: AttachRuntimeRequest): Promise<AttachRuntimeResponse> {
+    return this.postJson<AttachRuntimeResponse>('/v1/runtimes/attach', request)
   }
 
   async interrupt(runtimeId: string): Promise<RuntimeActionResponse> {

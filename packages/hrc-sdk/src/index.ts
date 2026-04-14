@@ -3,6 +3,8 @@ export { HrcClient } from './client.js'
 export type {
   AdoptRuntimeRequest,
   AttachDescriptor,
+  AttachRuntimeRequest,
+  AttachRuntimeResponse,
   BridgeListFilter,
   BindSurfaceRequest,
   CaptureResponse,
@@ -22,6 +24,8 @@ export type {
   RestartStyle,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  StartRuntimeRequest,
+  StartRuntimeResponse,
   RuntimeActionResponse,
   RuntimeListFilter,
   SendInFlightInputRequest,

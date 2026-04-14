@@ -26,9 +26,11 @@
  * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 2
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
@@ -90,6 +92,41 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   }
 }
 
+function interactiveCliIntent(
+  provider: 'anthropic' | 'openai',
+  options: {
+    preferredMode?: 'interactive' | 'headless' | 'nonInteractive'
+    pathPrepend?: string[]
+    initialPrompt?: string
+  } = {}
+): object {
+  return {
+    placement: {
+      agentRoot: '/tmp/agent',
+      projectRoot: '/tmp/project',
+      cwd: '/tmp/project',
+      runMode: 'task',
+      bundle: { kind: 'agent-default' },
+      dryRun: true,
+    },
+    harness: {
+      provider,
+      interactive: true,
+    },
+    execution: {
+      preferredMode: options.preferredMode ?? 'interactive',
+    },
+    ...(options.pathPrepend
+      ? {
+          launch: {
+            pathPrepend: options.pathPrepend,
+          },
+        }
+      : {}),
+    ...(options.initialPrompt !== undefined ? { initialPrompt: options.initialPrompt } : {}),
+  }
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
@@ -130,6 +167,298 @@ afterEach(async () => {
     // ok
   }
   await rm(tmpDir, { recursive: true, force: true })
+})
+
+describe('runtime lifecycle start/attach', () => {
+  async function installFakeCodex(
+    dirName: string,
+    behavior: {
+      execDelayMs?: number
+      interactiveBanner?: string
+      interactiveDelayMs?: number
+      resumeDelayMs?: number
+    } = {}
+  ): Promise<{ binDir: string; logPath: string; resumePath: string }> {
+    const binDir = join(tmpDir, dirName)
+    const logPath = join(binDir, 'codex.log')
+    const resumePath = join(binDir, 'resume.log')
+    await mkdir(binDir, { recursive: true })
+    const scriptPath = join(binDir, 'codex')
+    await writeFile(
+      scriptPath,
+      `#!/bin/sh
+set -eu
+cmd="\${1:-}"
+log_path=${JSON.stringify(logPath)}
+resume_path=${JSON.stringify(resumePath)}
+if [ "$cmd" = "exec" ]; then
+  printf 'exec\\n' >> "$log_path"
+  /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
+  printf '{"type":"thread.started","thread_id":"thread-123"}\\n'
+  exit 0
+fi
+if [ "$cmd" = "resume" ]; then
+  printf 'resume:%s\\n' "\${2:-}" >> "$resume_path"
+  /bin/sleep ${((behavior.resumeDelayMs ?? 0) / 1000).toFixed(3)}
+  exit 0
+fi
+printf 'interactive:%s\\n' "$*" >> "$log_path"
+printf '%s\\n' ${JSON.stringify(behavior.interactiveBanner ?? 'INTERACTIVE_HARNESS_STARTED')}
+/bin/sleep ${((behavior.interactiveDelayMs ?? 1_500) / 1000).toFixed(3)}
+exit 0
+`,
+      'utf-8'
+    )
+    await chmod(scriptPath, 0o755)
+    return { binDir, logPath, resumePath }
+  }
+
+  it('POST /v1/runtimes/start is idempotent for headless codex startup and persists continuation', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-idempotent')
+    const hsid = await resolveSession('lifecycle-start-idempotent')
+
+    const startBody = {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed a detached session',
+      }),
+    }
+
+    const firstRes = await postJson('/v1/runtimes/start', startBody)
+    expect(firstRes.status).toBe(200)
+    const firstData = (await firstRes.json()) as any
+
+    const secondRes = await postJson('/v1/runtimes/start', startBody)
+    expect(secondRes.status).toBe(200)
+    const secondData = (await secondRes.json()) as any
+
+    expect(secondData.runtimeId).toBe(firstData.runtimeId)
+
+    const sessionRes = await fetchSocket(`/v1/sessions/by-host/${hsid}`)
+    const sessionData = (await sessionRes.json()) as any
+    expect(sessionData.continuation).toEqual({
+      provider: 'openai',
+      key: 'thread-123',
+    })
+
+    const launchesRes = await fetchSocket(
+      `/v1/launches?runtimeId=${encodeURIComponent(firstData.runtimeId)}`
+    )
+    const launches = (await launchesRes.json()) as any[]
+    expect(launches).toHaveLength(1)
+
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8')
+    expect(execLog.trim().split('\n')).toEqual(['exec'])
+  })
+
+  it('POST /v1/runtimes/attach blocks on in-flight start and is idempotent for codex resume', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-attach', {
+      execDelayMs: 350,
+      resumeDelayMs: 250,
+    })
+    const hsid = await resolveSession('lifecycle-attach-blocks')
+
+    const startPromise = postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed before attach',
+      }),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 75))
+
+    let attachSettled = false
+    const attachPromise = (async () => {
+      const startRes = await startPromise
+      const startData = (await startRes.json()) as any
+      const attachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      attachSettled = true
+      return { startData, attachRes }
+    })()
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(attachSettled).toBe(false)
+
+    const { startData, attachRes } = await attachPromise
+    expect(attachRes.status).toBe(200)
+    const attachData = (await attachRes.json()) as any
+    expect(attachData.bindingFence.runtimeId).toBe(startData.runtimeId)
+
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    const secondAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(secondAttachRes.status).toBe(200)
+
+    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8')
+    expect(resumeLog.trim().split('\n')).toEqual(['resume:thread-123'])
+  })
+
+  it('POST /v1/runtimes/attach prefers tmux sessionId when stored sessionName is stale', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-stale-session-name')
+    const hsid = await resolveSession('lifecycle-attach-stale-session-name')
+    let sessionId = ''
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed before stale session attach',
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(startData.runtimeId)
+      expect(runtime).not.toBeNull()
+      expect(runtime?.tmuxJson?.['sessionId']).toBeString()
+      sessionId = String(runtime?.tmuxJson?.['sessionId'])
+
+      db.runtimes.update(startData.runtimeId, {
+        tmuxJson: {
+          ...(runtime?.tmuxJson ?? {}),
+          sessionName: 'hrc-stale-session-name',
+        },
+        updatedAt: new Date().toISOString(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const attachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(attachRes.status).toBe(200)
+    const attachData = (await attachRes.json()) as any
+    expect(attachData.argv).toEqual([
+      'tmux',
+      '-S',
+      tmuxSocketPath,
+      'attach-session',
+      '-t',
+      sessionId,
+    ])
+  })
+
+  it('POST /v1/runtimes/attach attaches directly to a live codex tmux runtime without continuation', async () => {
+    const hsid = await resolveSession('lifecycle-attach-live-no-continuation')
+    const ensureRes = await postJson('/v1/runtimes/ensure', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai'),
+    })
+    expect(ensureRes.status).toBe(200)
+    const ensureData = (await ensureRes.json()) as any
+    const runtimeId = String(ensureData.runtimeId)
+
+    const attachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId,
+    })
+    expect(attachRes.status).toBe(200)
+    const attachData = (await attachRes.json()) as any
+    expect(attachData.argv[0]).toBe('tmux')
+    expect(attachData.argv).toContain('attach-session')
+  })
+
+  it('POST /v1/internal/launches/:id/exited marks the runtime dead when the tmux session is gone', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-dead-after-exit', {
+      interactiveDelayMs: 10_000,
+    })
+    const hsid = await resolveSession('lifecycle-exited-dead-runtime')
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        pathPrepend: [fakeCodex.binDir],
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    let launchId = ''
+    let sessionTarget = ''
+    const db = openHrcDatabase(dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(startData.runtimeId)
+      expect(runtime).not.toBeNull()
+      expect(runtime?.launchId).toBeString()
+      launchId = String(runtime?.launchId)
+      sessionTarget = String(runtime?.tmuxJson?.['sessionId'] ?? runtime?.tmuxJson?.['sessionName'])
+    } finally {
+      db.close()
+    }
+
+    const killed = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-session', '-t', sessionTarget], {
+      stdout: 'ignore',
+      stderr: 'pipe',
+    })
+    const killStderr = await new Response(killed.stderr).text()
+    expect(await killed.exited).toBe(0)
+    expect(killStderr.trim()).toBe('')
+
+    const exitedRes = await postJson(`/v1/internal/launches/${launchId}/exited`, {
+      hostSessionId: hsid,
+      exitCode: 0,
+    })
+    expect(exitedRes.status).toBe(200)
+
+    const runtimeRes = await fetchSocket(`/v1/runtimes?hostSessionId=${encodeURIComponent(hsid)}`)
+    expect(runtimeRes.status).toBe(200)
+    const runtimes = (await runtimeRes.json()) as Array<{ runtimeId: string; status: string }>
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0]?.runtimeId).toBe(startData.runtimeId)
+    expect(runtimes[0]?.status).toBe('dead')
+  })
+
+  it('POST /v1/runtimes/start launches the interactive harness before attach', async () => {
+    const interactiveBanner = 'INTERACTIVE_START_LAUNCHED'
+    const fakeCodex = await installFakeCodex('fake-codex-interactive-start', {
+      interactiveBanner,
+      interactiveDelayMs: 2_000,
+    })
+    const hsid = await resolveSession('lifecycle-interactive-start')
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        pathPrepend: [fakeCodex.binDir],
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    const attachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(attachRes.status).toBe(200)
+    const attachData = (await attachRes.json()) as any
+    expect(attachData.bindingFence.runtimeId).toBe(startData.runtimeId)
+
+    let captureText = ''
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const captureRes = await fetchSocket(`/v1/capture?runtimeId=${startData.runtimeId}`)
+      expect(captureRes.status).toBe(200)
+      captureText = ((await captureRes.json()) as any).text
+      if (captureText.includes(interactiveBanner)) {
+        break
+      }
+      await Bun.sleep(100)
+    }
+
+    expect(captureText).toContain(interactiveBanner)
+
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8')
+    expect(execLog).toContain('interactive:')
+  })
 })
 
 // ---------------------------------------------------------------------------

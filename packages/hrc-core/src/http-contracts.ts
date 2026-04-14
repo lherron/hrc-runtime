@@ -72,6 +72,17 @@ export type EnsureRuntimeResponse = {
   }
 }
 
+/**
+ * Canonical hosted-runtime lifecycle start surface.
+ *
+ * Semantics:
+ * - detached-safe and idempotent
+ * - may launch provider-native startup work before returning
+ * - duplicate calls converge on the same runtime/startup result
+ */
+export type StartRuntimeRequest = EnsureRuntimeRequest
+export type StartRuntimeResponse = EnsureRuntimeResponse
+
 export type EnsureWindowRequest = {
   sessionRef: HrcSessionRef
   command: HrcCommandLaunchSpec
@@ -127,6 +138,20 @@ export type HrcAttachDescriptor = {
     runtimeId?: string | undefined
   }
 }
+
+/**
+ * Canonical hosted-runtime lifecycle attach surface.
+ *
+ * Semantics:
+ * - blocks on any in-flight `start` for the same runtime/session
+ * - may perform provider-native promotion before returning
+ * - idempotent for already-attachable runtimes
+ */
+export type AttachRuntimeRequest = {
+  runtimeId: string
+}
+
+export type AttachRuntimeResponse = HrcAttachDescriptor
 
 export type RuntimeActionResponse = {
   ok: true

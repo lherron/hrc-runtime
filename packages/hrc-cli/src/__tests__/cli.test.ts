@@ -23,7 +23,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { StatusResponse } from 'hrc-core'
@@ -200,6 +201,57 @@ exit 0
   )
 
   return shimDir
+}
+
+async function installFakeCodex(
+  dirName: string,
+  behavior: {
+    execDelayMs?: number
+    interactiveBanner?: string
+    interactiveDelayMs?: number
+    resumeDelayMs?: number
+  } = {}
+): Promise<{ binDir: string; logPath: string; resumePath: string }> {
+  const binDir = join(tmpDir, dirName)
+  const logPath = join(binDir, 'codex.log')
+  const resumePath = join(binDir, 'resume.log')
+  await mkdir(binDir, { recursive: true })
+  const scriptPath = join(binDir, 'codex')
+  await writeFile(
+    scriptPath,
+    `#!/bin/sh
+set -eu
+cmd="\${1:-}"
+log_path=${JSON.stringify(logPath)}
+resume_path=${JSON.stringify(resumePath)}
+if [ "$cmd" = "exec" ]; then
+  printf 'exec\\n' >> "$log_path"
+  /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
+  printf '{"type":"thread.started","thread_id":"thread-123"}\\n'
+  exit 0
+fi
+if [ "$cmd" = "resume" ]; then
+  printf 'resume:%s\\n' "\${2:-}" >> "$resume_path"
+  /bin/sleep ${((behavior.resumeDelayMs ?? 0) / 1000).toFixed(3)}
+  exit 0
+fi
+printf 'interactive:%s\\n' "$*" >> "$log_path"
+printf '%s\\n' ${JSON.stringify(behavior.interactiveBanner ?? 'INTERACTIVE_HARNESS_STARTED')}
+/bin/sleep ${((behavior.interactiveDelayMs ?? 1_500) / 1000).toFixed(3)}
+exit 0
+`,
+    'utf-8'
+  )
+  await chmod(scriptPath, 0o755)
+  return { binDir, logPath, resumePath }
+}
+
+async function writeCodexAgentProfile(agentId: string): Promise<void> {
+  await writeFile(
+    join(agentsRoot, agentId, 'agent-profile.toml'),
+    'schemaVersion = 2\n\n[identity]\ndisplay = "Codex Agent"\nrole = "worker"\nharness = "codex"\n',
+    'utf8'
+  )
 }
 
 async function readServerLog(): Promise<string> {
@@ -558,7 +610,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('attach auto-binds Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
-    const runtimeId = await seedAttachableRuntime(testProjectScope('attach-ghostty-cli'))
+    const runtimeId = await ensureRuntime(testProjectScope('attach-ghostty-cli'))
     const result = await runCli(
       ['attach', runtimeId],
       cliEnv({ GHOSTTY_SURFACE_UUID: 'ghostty-cli-attach-1' })
@@ -627,6 +679,176 @@ describe('runtime lifecycle commands', () => {
 // ===========================================================================
 // 5. hrc run convenience command (T-01019)
 // ===========================================================================
+describe('hrc start', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+    await seedRunRoots('rex', 'agent-spaces')
+  })
+
+  it('prints a local plan preview for detached startup without mutating server state', async () => {
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain('hrc start rex@agent-spaces --dry-run')
+    expect(result.stdout).toContain('sessionRef:   agent:rex:project:agent-spaces/lane:main')
+    expect(result.stdout).toContain('restartStyle: reuse_pty')
+
+    const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
+    try {
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      expect(sessions.length).toBe(0)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('creates a session and runtime without attaching', async () => {
+    const tmuxShimDir = await createTmuxAttachShim()
+    const result = await runCli(
+      ['start', 'rex@agent-spaces:T-00123'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+        PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout.trim())
+    expect(body.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
+    expect(body.hostSessionId).toBeDefined()
+    expect(body.created).toBe(true)
+    expect(body.runtime.runtimeId).toBeDefined()
+    expect(body.runtime.transport).toBe('tmux')
+    expect(existsSync(join(tmuxShimDir, 'tmux-attach.json'))).toBe(false)
+  })
+
+  it('uses detached codex exec for start previews when the agent harness is codex', async () => {
+    await writeCodexAgentProfile('rex')
+
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('provider:     openai')
+    expect(result.stdout).toContain('argv:     codex exec')
+    expect(result.stdout).toContain('--json')
+  })
+})
+
+describe('hrc attach <scope>', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+    await seedRunRoots('rex', 'agent-spaces')
+  })
+
+  it('prints a local runtime lookup plan without mutating server state', async () => {
+    const result = await runCli(
+      ['attach', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('local plan preview')
+    expect(result.stdout).toContain('runtimeLookup: latest non-unavailable tmux runtime')
+    expect(result.stdout).toContain('recovery:      if tmux is gone for an existing session')
+    expect(result.stdout).toContain('POST /v1/runtimes/attach')
+
+    const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
+    try {
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      expect(sessions.length).toBe(0)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('attaches to the started runtime for a scope', async () => {
+    const tmuxShimDir = await createTmuxAttachShim()
+    const env = cliEnv({
+      ASP_AGENTS_ROOT: agentsRoot,
+      ASP_PROJECTS_ROOT: projectsRoot,
+      PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
+    })
+
+    const startResult = await runCli(['start', 'rex@agent-spaces:T-00123'], env)
+    expect(startResult.exitCode).toBe(0)
+
+    const attachResult = await runCli(['attach', 'rex@agent-spaces:T-00123'], env)
+    expect(attachResult.exitCode).toBe(0)
+    expect(attachResult.stdout.trim()).toBe('')
+    expect(attachResult.stderr.trim()).toBe('')
+
+    const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
+    expect(loggedArgs).toContain('attach-session')
+  })
+
+  it('recreates tmux and resumes codex when the detached session exists but tmux is gone', async () => {
+    await writeCodexAgentProfile('rex')
+    const fakeCodex = await installFakeCodex('fake-codex-cli-attach-recovery')
+    process.env.PATH = `${fakeCodex.binDir}:${process.env.PATH ?? ''}`
+
+    const tmuxShimDir = await createTmuxAttachShim()
+    const env = cliEnv({
+      ASP_AGENTS_ROOT: agentsRoot,
+      ASP_PROJECTS_ROOT: projectsRoot,
+      PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
+    })
+
+    const startResult = await runCli(['start', 'rex@agent-spaces:T-00123'], env)
+    expect(startResult.exitCode).toBe(0)
+
+    const started = JSON.parse(startResult.stdout.trim()) as {
+      hostSessionId: string
+      runtime: { runtimeId: string }
+    }
+
+    let sessionTarget = ''
+    const db = openHrcDatabase(dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(started.runtime.runtimeId)
+      expect(runtime).toBeDefined()
+      sessionTarget = String(
+        runtime?.tmuxJson?.['sessionId'] ?? runtime?.tmuxJson?.['sessionName'] ?? ''
+      )
+    } finally {
+      db.close()
+    }
+
+    const killed = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-session', '-t', sessionTarget], {
+      stdout: 'ignore',
+      stderr: 'pipe',
+    })
+    expect(await killed.exited).toBe(0)
+
+    const attachResult = await runCli(['attach', 'rex@agent-spaces:T-00123'], env)
+    expect(attachResult.exitCode).toBe(0)
+    expect(attachResult.stdout.trim()).toBe('')
+    expect(attachResult.stderr.trim()).toBe('')
+
+    const resumeLog = await Bun.file(fakeCodex.resumePath).text()
+    expect(resumeLog.trim().split('\n')).toEqual(['resume:thread-123'])
+
+    const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
+    expect(loggedArgs).toContain('attach-session')
+  })
+})
+
 describe('hrc run', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
@@ -744,6 +966,32 @@ describe('hrc run', () => {
 
     const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
     expect(loggedArgs).toContain('attach-session')
+  })
+
+  it('reuses the existing runtime on repeat invocations without --force-restart', async () => {
+    const first = await runCli(
+      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(first.exitCode).toBe(0)
+    const firstBody = JSON.parse(first.stdout.trim())
+
+    const second = await runCli(
+      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECTS_ROOT: projectsRoot,
+      })
+    )
+    expect(second.exitCode).toBe(0)
+    const secondBody = JSON.parse(second.stdout.trim())
+
+    expect(secondBody.hostSessionId).toBe(firstBody.hostSessionId)
+    expect(secondBody.runtime.runtimeId).toBe(firstBody.runtime.runtimeId)
+    expect(secondBody.created).toBe(false)
   })
 })
 
