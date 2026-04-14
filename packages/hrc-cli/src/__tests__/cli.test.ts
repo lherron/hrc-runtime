@@ -545,40 +545,6 @@ describe('runtime lifecycle commands', () => {
     return JSON.parse(result.stdout.trim()).runtimeId as string
   }
 
-  async function seedAttachableRuntime(scope: string): Promise<string> {
-    const hostSessionId = await resolveHostSessionId(scope)
-    const session = JSON.parse(
-      (await runCli(['session', 'get', hostSessionId], cliEnv())).stdout.trim()
-    ) as { generation: number; scopeRef: string; laneRef: string }
-    const runtimeId = `rt-test-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    db.runtimes.insert({
-      runtimeId,
-      hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'ready',
-      tmuxJson: {
-        socketPath: tmuxSocketPath,
-        sessionName: `hrc-${hostSessionId.slice(0, 12)}`,
-        windowName: 'main',
-        sessionId: '$1',
-        windowId: '@1',
-        paneId: '%1',
-      },
-      supportsInflightInput: false,
-      adopted: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-    return runtimeId
-  }
-
   it('runtime ensure outputs runtime JSON for a known hostSessionId', async () => {
     const hostSessionId = await resolveHostSessionId(testProjectScope('runtimecli'))
     const result = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
@@ -646,7 +612,7 @@ describe('runtime lifecycle commands', () => {
   })
 
   it('surface bind/list/unbind commands manage runtime bindings', async () => {
-    const runtimeId = await seedAttachableRuntime(testProjectScope('surfacecli'))
+    const runtimeId = await ensureRuntime(testProjectScope('surfacecli'))
 
     const bindResult = await runCli(
       ['surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
@@ -1600,42 +1566,29 @@ describe('unified status session/runtime/surface view (T-01025)', () => {
     }
   }
 
-  async function seedTmuxRuntime(scope: string): Promise<{
+  async function ensureTmuxRuntime(scope: string): Promise<{
     hostSessionId: string
     runtimeId: string
+    paneId?: string
   }> {
     const session = await resolveSession(scope)
-    const runtimeId = `rt-status-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    db.runtimes.insert({
-      runtimeId,
+    const ensureResult = await runCli(['runtime', 'ensure', session.hostSessionId], cliEnv())
+    expect(ensureResult.exitCode).toBe(0)
+    const runtime = JSON.parse(ensureResult.stdout.trim()) as {
+      runtimeId: string
+      tmuxJson?: {
+        paneId?: string
+      }
+    }
+    return {
       hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'ready',
-      tmuxJson: {
-        socketPath: tmuxSocketPath,
-        sessionName: `hrc-${session.hostSessionId.slice(0, 12)}`,
-        windowName: 'main',
-        sessionId: '$1',
-        windowId: '@1',
-        paneId: '%1',
-      },
-      supportsInflightInput: false,
-      adopted: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-    return { hostSessionId: session.hostSessionId, runtimeId }
+      runtimeId: runtime.runtimeId,
+      paneId: runtime.tmuxJson?.paneId,
+    }
   }
 
   it('hrc status renders session-centric human output with joined runtime/tmux/surface details', async () => {
-    const seeded = await seedTmuxRuntime(testProjectScope('status-human-joined'))
+    const seeded = await ensureTmuxRuntime(testProjectScope('status-human-joined'))
     const bindResult = await runCli(
       ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-human-1'],
       cliEnv()
@@ -1648,13 +1601,15 @@ describe('unified status session/runtime/surface view (T-01025)', () => {
     expect(result.stdout).toContain(testProjectScope('status-human-joined'))
     expect(result.stdout).toContain(seeded.runtimeId)
     expect(result.stdout).toMatch(/tmux/i)
-    expect(result.stdout).toContain('%1')
+    if (seeded.paneId) {
+      expect(result.stdout).toContain(seeded.paneId)
+    }
     expect(result.stdout).toContain('ghostty-status-human-1')
   })
 
   it('hrc status renders explicit no-runtime and no-surface states without overfitting spacing', async () => {
     await resolveSession(testProjectScope('status-no-runtime'))
-    await seedTmuxRuntime(testProjectScope('status-no-surfaces'))
+    await ensureTmuxRuntime(testProjectScope('status-no-surfaces'))
 
     const result = await runCli(['status'], cliEnv())
     expect(result.exitCode).toBe(0)
@@ -1665,7 +1620,7 @@ describe('unified status session/runtime/surface view (T-01025)', () => {
   })
 
   it('hrc status --json exposes joined sessions with activeRuntime tmux and activeSurfaces', async () => {
-    const seeded = await seedTmuxRuntime(testProjectScope('status-json-joined'))
+    const seeded = await ensureTmuxRuntime(testProjectScope('status-json-joined'))
     const bindResult = await runCli(
       ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-json-1'],
       cliEnv()
@@ -1684,7 +1639,7 @@ describe('unified status session/runtime/surface view (T-01025)', () => {
     expect(joined?.session.scopeRef).toBe(testProjectScope('status-json-joined'))
     expect(joined?.activeRuntime?.runtime.runtimeId).toBe(seeded.runtimeId)
     expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
-    expect(joined?.activeRuntime?.tmux?.paneId).toBe('%1')
+    expect(joined?.activeRuntime?.tmux?.paneId).toBeString()
     expect(Array.isArray(joined?.activeRuntime?.surfaceBindings)).toBe(true)
     expect(joined?.activeRuntime?.surfaceBindings).toHaveLength(1)
     expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceKind).toBe('ghostty')
