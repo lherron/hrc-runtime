@@ -106,6 +106,7 @@ export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIn
       cwd,
       runMode: 'task' as const,
       bundle,
+      dryRun: false,
     },
     harness: {
       provider,

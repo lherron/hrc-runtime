@@ -3700,8 +3700,11 @@ class HrcServerInstance implements HrcServer {
               })
             }
           } catch (err) {
-            // Update execution as failed but don't fail the whole dm
             const errorMessage = err instanceof Error ? err.message : String(err)
+            writeServerLog('WARN', 'semantic_dm.execution_failed', {
+              messageId: record.messageId,
+              error: errorMessage,
+            })
             this.db.messages.updateExecution(record.messageId, {
               state: 'failed',
               errorMessage,
