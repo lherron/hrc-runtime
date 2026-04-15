@@ -8,9 +8,11 @@ import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { fatal } from './cli-args.js'
 import { cmdDm } from './commands/dm.js'
 import { cmdDoctor } from './commands/doctor.js'
+import { cmdInfo } from './commands/info.js'
 import { cmdMessages } from './commands/messages.js'
 import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
+import { cmdShow } from './commands/show.js'
 import { cmdStatus } from './commands/status.js'
 import { cmdSummon } from './commands/summon.js'
 import { cmdWait } from './commands/wait.js'
@@ -54,10 +56,12 @@ function createClient(): HrcClient {
 const USAGE = `hrcchat — semantic directed messaging for HRC agents
 
 Usage:
+  hrcchat info
   hrcchat who [--discover] [--all-projects] [--json]
   hrcchat summon <target> [--json]
   hrcchat dm <target|human|system> [message|-] [options]
   hrcchat send <target> [message|-] [--enter] [--no-enter] [--json]
+  hrcchat show <seq|message-id> [--json]
   hrcchat messages [<target>] [filters] [--json]
   hrcchat watch [<target>] [--follow] [--timeout <dur>] [--json]
   hrcchat wait [filters] [--timeout <dur>] [--json]
@@ -83,6 +87,11 @@ async function main(): Promise<void> {
   const subArgs = args.slice(1)
 
   try {
+    if (command === 'info') {
+      cmdInfo()
+      return
+    }
+
     const client = createClient()
 
     switch (command) {
@@ -112,6 +121,9 @@ async function main(): Promise<void> {
         break
       case 'status':
         await cmdStatus(client, subArgs)
+        break
+      case 'show':
+        await cmdShow(client, subArgs)
         break
       case 'doctor':
         await cmdDoctor(client, subArgs)

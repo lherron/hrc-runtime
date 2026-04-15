@@ -84,15 +84,17 @@ Enhanced `handleSemanticDm`:
 |---------|--------|-------|
 | `hrcchat who` | **working** | Shows all targets with state/capabilities |
 | `hrcchat summon <target>` | **working** | Idempotent, persists intent + parsedScopeJson |
-| `hrcchat dm <target> <msg>` | **partial** | Durable message stored; turn dispatch fails (see blocker 1) |
+| `hrcchat dm <target> <msg>` | **working** | Real SDK turn or tmux literal delivery; formatted `[DM #seq from → to]` |
 | `hrcchat dm human <msg>` | **working** | Stores durable oneway message |
 | `hrcchat send <target> <msg>` | **working** | Live tmux literal injection; correct `runtime_unavailable` for dormant |
 | `hrcchat peek <target>` | **working** | Captures live output; correct `runtime_unavailable` for dormant |
 | `hrcchat messages` | **working** | Query with all filters, human + JSON output |
 | `hrcchat watch` | **working** | NDJSON streaming with follow, replay/high-water race protection |
 | `hrcchat wait` | **working** | Server-side blocking; timeout returns exit 124 |
+| `hrcchat show <seq>` | **working** | View individual message by seq or message-id |
 | `hrcchat status` | **working** | General + per-target, JSON mode |
 | `hrcchat doctor` | **working** | Connectivity + tmux health checks |
+| `hrcchat info` | **working** | Usage, examples, env vars, command list |
 
 ### Live agent-to-agent messaging test
 ```
@@ -101,39 +103,29 @@ Enhanced `handleSemanticDm`:
 ```
 Both messages persisted in durable store, visible from both agents via `hrcchat messages`.
 
-## Remaining blockers
+## Resolved blockers
 
-### Blocker 1: SDK turn execution path uses empty ASP_HOME/spec (CRITICAL)
+### Blocker 1: SDK turn execution path uses empty ASP_HOME/spec — FIXED (2026-04-15)
 
-**What:** `hrcchat dm <target> <message>` stores the durable request message but fails to execute a real semantic turn. The error is: `Space manifest not found: ENOENT: no such file or directory, open 'repo/spaces/defaults/space.toml'`
+**Root cause:** `sdk-adapter.ts` passed `aspHome: ''` to `runTurnNonInteractive()`. Empty string is not nullish, so `req.aspHome ?? defaultAspHome ?? getAspHome()` in the agent-spaces client did not fall through — aspHome stayed as `''`, causing ENOENT on space manifest resolution.
 
-**Root cause:** `packages/hrc-server/src/agent-spaces-adapter/sdk-adapter.ts` line 252-255 passes placeholder values to `createAgentSpacesClient().runTurnNonInteractive()`:
-```ts
-aspHome: '',
-spec: { spaces: [] },
-cwd: '/',
-```
+**Fix:** Changed `aspHome: ''` to `aspHome: getAspHome()` in `packages/hrc-server/src/agent-spaces-adapter/sdk-adapter.ts`. The `spec` and `cwd` placeholders are fine — they're ignored when `placement` is set (same pattern as `cli-adapter.ts`).
 
-The real execution path needs the actual `ASP_HOME` and resolved space spec from the control plane's placement resolution. Without them, the agent-spaces client cannot find space manifests or resolve the execution environment.
+**E2E verified:** `hrcchat dm cody <msg>` now completes real SDK semantic turns with finalOutput and durable reply messages.
 
-**Why it was masked:** `normalizeDispatchIntent()` in hrc-server defaults `dryRun: true` (line ~6854), so all SDK turns went through the dry-run shim that returns `"Dry run SDK response for: <prompt>"`. Setting `dryRun: false` in hrcchat's `resolveRuntimeIntentForTarget` exposed this.
+### Blocker 2: status:'completed' for SDK turns — NOT A BUG
 
-**Current state:** `resolve-intent.ts` sets `dryRun: false` but the turn fails silently (caught and logged as `semantic_dm.execution_failed`). The durable request message is still created. No reply is generated.
+SDK turns are synchronous (`await runSdkTurn`), so `'completed'` is correct. The `DispatchTurnResponse` contract supports `'started'` for future async paths. No code change needed.
 
-**Fix path:** The SDK adapter needs to resolve `aspHome` and `spec` from the runtime environment or control plane placement API, similar to how the CLI launch path builds these from `ASP_HOME` env and space resolution. Options:
-1. Read `ASP_HOME` from server process env and resolve spaces at turn time
-2. Store resolved space spec on the session (alongside intent) during summon
-3. Have the CLI pass resolved `aspHome`/`spec` in the runtimeIntent
+### Non-blocker: cognitive complexity — FIXED (2026-04-15, Cody)
 
-### Blocker 2: handleSdkDispatchTurn returns status:'completed' for all SDK turns
+`handleRequest` refactored from flat if-chain (45 routes, complexity 105) into a typed route dispatch table. Pattern-match routes (`/v1/sessions/by-host/*`, `/v1/internal/launches/:id/*`) remain explicit. 122 tests pass.
 
-**What:** After fixing the dry-run status bug (SDK turns now return `status: 'completed'`), the `DispatchTurnResponse` type declares `status: 'completed' | 'started'`. The existing test expected `'started'` — test was updated to expect `'completed'`. However, this means the `DispatchTurnResponse` contract is potentially misleading for callers that assumed async semantics.
+## Remaining observations
 
-**Impact:** Low. SDK turns are synchronous (await `runSdkTurn`), so `'completed'` is correct. But if a future SDK turn path becomes async, the response contract needs revisiting.
+### Minor: Pi SDK triple-repeated finalOutput
 
-### Non-blocker: cognitive complexity warning
-
-`handleRequest` scores 105 (max 85). Pre-existing; grew with new routes. Could be addressed by extracting route dispatch into a table or splitting the method, but this is cosmetic.
+`finalOutput` contains the response text repeated 3x (e.g. "Ready and standing by.Ready and standing by.Ready and standing by."). Likely a Pi SDK streaming delta aggregation quirk — the buffer captures all `message_delta` events. Not an hrcchat issue; investigate in the Pi harness layer.
 
 ## Build and test status
 

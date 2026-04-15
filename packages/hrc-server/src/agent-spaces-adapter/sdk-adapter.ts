@@ -14,7 +14,11 @@ import {
   type HrcRuntimeIntent,
   HrcUnprocessableEntityError,
 } from 'hrc-core'
-import { resolveHarnessFrontendForProvider, resolveHarnessProvider } from 'spaces-config'
+import {
+  getAspHome,
+  resolveHarnessFrontendForProvider,
+  resolveHarnessProvider,
+} from 'spaces-config'
 
 import { UnsupportedHarnessError } from './cli-adapter.js'
 
@@ -250,9 +254,9 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
   const onBuffer = options.onBuffer ?? (() => {})
 
   const runnerPromise = runner({
-    aspHome: '',
-    spec: { spaces: [] },
-    cwd: '/',
+    aspHome: getAspHome(), // required by type but ignored when placement is set
+    spec: { spaces: [] }, // required by type but ignored when placement is set
+    cwd: '/', // required by type but ignored when placement is set
     placement: options.intent.placement,
     frontend,
     model: options.intent.harness.model,

@@ -3,15 +3,29 @@
  */
 import { resolveScopeInput } from 'agent-scope'
 import type { HrcMessageAddress } from 'hrc-core'
+import { inferProjectIdFromCwd } from 'spaces-config'
 
 /**
  * Resolve a CLI target string to a canonical sessionRef.
  * Accepts: SessionHandle (e.g. cody@demo~lane), ScopeHandle, or raw scopeRef.
+ *
+ * When the input omits a project qualifier (e.g. bare "clod"), the project is
+ * inferred from ASP_PROJECT env or cwd so that the sessionRef matches the
+ * control-plane's project-qualified sessions.
  */
 export function resolveTargetToSessionRef(input: string): string {
   const resolved = resolveScopeInput(input, 'main')
-  const scopeRef = resolved.scopeRef
+  let scopeRef = resolved.scopeRef
   const laneRef = resolved.laneRef ?? 'main'
+
+  // Qualify with project when not already present
+  if (resolved.parsed.kind === 'agent') {
+    const projectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+    if (projectId) {
+      scopeRef = `${scopeRef}:project:${projectId}`
+    }
+  }
+
   return `${scopeRef}/lane:${laneRef}`
 }
 
@@ -77,7 +91,7 @@ export function resolveProjectId(args: string[]): string | undefined {
 export function formatAddress(addr: HrcMessageAddress): string {
   if (addr.kind === 'entity') return addr.entity
   // Try to extract a friendly handle from the sessionRef
-  const match = addr.sessionRef.match(/^agent:([^:]+)(?::project:([^:]+))?/)
+  const match = addr.sessionRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
   if (match?.[1]) {
     const agent = match[1]
     const project = match[2]

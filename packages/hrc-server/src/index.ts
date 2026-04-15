@@ -345,6 +345,11 @@ const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
 
 type MessageSubscriber = (record: HrcMessageRecord) => void
+type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
+
+function exactRouteKey(method: string, pathname: string): string {
+  return `${method} ${pathname}`
+}
 
 class HrcServerInstance implements HrcServer {
   private readonly followSubscribers = new Set<FollowSubscriber>()
@@ -353,6 +358,87 @@ class HrcServerInstance implements HrcServer {
   private readonly startedAt = new Date().toISOString()
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
+    [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
+      this.handleResolveSession(request),
+    [exactRouteKey('GET', '/v1/sessions')]: (_request, url) => this.handleListSessions(url),
+    [exactRouteKey('POST', '/v1/sessions/apply')]: (request) =>
+      this.handleApplyAppSessions(request),
+    [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) => this.handleListAppSessions(url),
+    [exactRouteKey('GET', '/v1/events')]: (request, url) => this.handleEvents(url, request),
+    [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
+    [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
+    [exactRouteKey('POST', '/v1/runtimes/attach')]: (request) => this.handleAttachRuntime(request),
+    [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
+    [exactRouteKey('POST', '/v1/in-flight-input')]: (request) => this.handleInFlightInput(request),
+    [exactRouteKey('GET', '/v1/capture')]: (_request, url) => this.handleCapture(url),
+    [exactRouteKey('GET', '/v1/attach')]: (_request, url) => this.handleAttach(url),
+    [exactRouteKey('POST', '/v1/surfaces/bind')]: (request) => this.handleBindSurface(request),
+    [exactRouteKey('POST', '/v1/surfaces/unbind')]: (request) => this.handleUnbindSurface(request),
+    [exactRouteKey('GET', '/v1/surfaces')]: (_request, url) => this.handleListSurfaces(url),
+    [exactRouteKey('POST', '/v1/bridges/local-target')]: (request) =>
+      this.handleRegisterBridgeTarget(request),
+    [exactRouteKey('POST', '/v1/bridges/target')]: (request) =>
+      this.handleRegisterBridgeTarget(request),
+    [exactRouteKey('POST', '/v1/bridges/deliver')]: (request) => this.handleDeliverBridge(request),
+    [exactRouteKey('POST', '/v1/bridges/deliver-text')]: (request) =>
+      this.handleDeliverBridgeText(request),
+    [exactRouteKey('POST', '/v1/bridges/close')]: (request) => this.handleCloseBridge(request),
+    [exactRouteKey('GET', '/v1/bridges')]: (_request, url) => this.handleListBridges(url),
+    [exactRouteKey('POST', '/v1/interrupt')]: (request) => this.handleInterrupt(request),
+    [exactRouteKey('POST', '/v1/terminate')]: (request) => this.handleTerminate(request),
+    [exactRouteKey('POST', '/v1/clear-context')]: (request) => this.handleClearContext(request),
+    [exactRouteKey('POST', '/v1/sessions/clear-context')]: (request) =>
+      this.handleClearContext(request),
+    [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
+      this.handleHookIngest(request),
+    [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
+    [exactRouteKey('GET', '/v1/status')]: () => this.handleStatus(),
+    [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
+    [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
+      this.handleGetTarget(url),
+    [exactRouteKey('POST', '/v1/messages/query')]: (request) => this.handleQueryMessages(request),
+    [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
+    [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => this.handleEnsureTarget(request),
+    [exactRouteKey('POST', '/v1/messages')]: (request) => this.handleCreateMessage(request),
+    [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>
+      this.handleCaptureBySelector(request),
+    [exactRouteKey('POST', '/v1/literal-input/by-selector')]: (request) =>
+      this.handleLiteralInputBySelector(request),
+    [exactRouteKey('POST', '/v1/turns/by-selector')]: (request) =>
+      this.handleDispatchTurnBySelector(request),
+    [exactRouteKey('POST', '/v1/messages/wait')]: (request) => this.handleWaitMessage(request),
+    [exactRouteKey('POST', '/v1/messages/watch')]: (request) => this.handleWatchMessages(request),
+    [exactRouteKey('GET', '/v1/runtimes')]: (_request, url) => this.handleListRuntimes(url),
+    [exactRouteKey('GET', '/v1/launches')]: (_request, url) => this.handleListLaunches(url),
+    [exactRouteKey('POST', '/v1/runtimes/adopt')]: (request) => this.handleAdoptRuntime(request),
+    [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
+      this.handleEnsureAppSession(request),
+    [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>
+      this.handleListManagedAppSessions(url),
+    [exactRouteKey('GET', '/v1/app-sessions/by-key')]: (_request, url) =>
+      this.handleGetManagedAppSessionByKey(url),
+    [exactRouteKey('POST', '/v1/app-sessions/remove')]: (request) =>
+      this.handleRemoveAppSession(request),
+    [exactRouteKey('POST', '/v1/app-sessions/apply')]: (request) =>
+      this.handleApplyManagedAppSessions(request),
+    [exactRouteKey('POST', '/v1/app-sessions/turns')]: (request) =>
+      this.handleAppSessionDispatchTurn(request),
+    [exactRouteKey('POST', '/v1/app-sessions/in-flight-input')]: (request) =>
+      this.handleAppSessionInFlightInput(request),
+    [exactRouteKey('POST', '/v1/app-sessions/clear-context')]: (request) =>
+      this.handleAppSessionClearContext(request),
+    [exactRouteKey('POST', '/v1/app-sessions/literal-input')]: (request) =>
+      this.handleAppSessionLiteralInput(request),
+    [exactRouteKey('GET', '/v1/app-sessions/capture')]: (_request, url) =>
+      this.handleAppSessionCapture(url),
+    [exactRouteKey('GET', '/v1/app-sessions/attach')]: (_request, url) =>
+      this.handleAppSessionAttach(url),
+    [exactRouteKey('POST', '/v1/app-sessions/interrupt')]: (request) =>
+      this.handleAppSessionInterrupt(request),
+    [exactRouteKey('POST', '/v1/app-sessions/terminate')]: (request) =>
+      this.handleAppSessionTerminate(request),
+  }
   private stopping = false
 
   constructor(
@@ -417,109 +503,14 @@ class HrcServerInstance implements HrcServer {
     try {
       const url = new URL(request.url)
       const pathname = url.pathname
-
-      if (request.method === 'POST' && pathname === '/v1/sessions/resolve') {
-        return await this.handleResolveSession(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/sessions') {
-        return this.handleListSessions(url)
+      const exactRouteHandler = this.exactRouteHandlers[exactRouteKey(request.method, pathname)]
+      if (exactRouteHandler) {
+        return await exactRouteHandler(request, url)
       }
 
       if (request.method === 'GET' && pathname.startsWith('/v1/sessions/by-host/')) {
         const hostSessionId = pathname.slice('/v1/sessions/by-host/'.length)
         return this.handleGetSessionByHost(hostSessionId)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/sessions/apply') {
-        return await this.handleApplyAppSessions(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/sessions/app') {
-        return this.handleListAppSessions(url)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/events') {
-        return this.handleEvents(url, request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/runtimes/ensure') {
-        return await this.handleEnsureRuntime(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/runtimes/start') {
-        return await this.handleStartRuntime(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/runtimes/attach') {
-        return await this.handleAttachRuntime(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/turns') {
-        return await this.handleDispatchTurn(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/in-flight-input') {
-        return await this.handleInFlightInput(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/capture') {
-        return await this.handleCapture(url)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/attach') {
-        return await this.handleAttach(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/surfaces/bind') {
-        return await this.handleBindSurface(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/surfaces/unbind') {
-        return await this.handleUnbindSurface(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/surfaces') {
-        return this.handleListSurfaces(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/bridges/local-target') {
-        return await this.handleRegisterBridgeTarget(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/bridges/target') {
-        return await this.handleRegisterBridgeTarget(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/bridges/deliver') {
-        return await this.handleDeliverBridge(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/bridges/deliver-text') {
-        return await this.handleDeliverBridgeText(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/bridges/close') {
-        return await this.handleCloseBridge(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/bridges') {
-        return this.handleListBridges(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/interrupt') {
-        return await this.handleInterrupt(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/terminate') {
-        return await this.handleTerminate(request)
-      }
-
-      if (
-        request.method === 'POST' &&
-        (pathname === '/v1/clear-context' || pathname === '/v1/sessions/clear-context')
-      ) {
-        return await this.handleClearContext(request)
       }
 
       if (
@@ -562,105 +553,6 @@ class HrcServerInstance implements HrcServer {
       ) {
         const launchId = pathname.slice('/v1/internal/launches/'.length).replace('/exited', '')
         return await this.handleExited(launchId, request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/internal/hooks/ingest') {
-        return await this.handleHookIngest(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/health') {
-        return this.handleHealth()
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/status') {
-        return await this.handleStatus()
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/targets') {
-        return this.handleListTargets(url)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/targets/by-session-ref') {
-        return this.handleGetTarget(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/messages/query') {
-        return await this.handleQueryMessages(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/messages/dm') {
-        return await this.handleSemanticDm(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/targets/ensure') {
-        return await this.handleEnsureTarget(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/messages') {
-        return await this.handleCreateMessage(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/capture/by-selector') {
-        return await this.handleCaptureBySelector(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/literal-input/by-selector') {
-        return await this.handleLiteralInputBySelector(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/turns/by-selector') {
-        return await this.handleDispatchTurnBySelector(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/messages/wait') {
-        return await this.handleWaitMessage(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/messages/watch') {
-        return await this.handleWatchMessages(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/runtimes') {
-        return await this.handleListRuntimes(url)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/launches') {
-        return this.handleListLaunches(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/runtimes/adopt') {
-        return await this.handleAdoptRuntime(request)
-      }
-
-      // -- Managed app-session registry (Phase 3) ---
-      if (request.method === 'POST' && pathname === '/v1/app-sessions/ensure') {
-        return await this.handleEnsureAppSession(request)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/app-sessions') {
-        return this.handleListManagedAppSessions(url)
-      }
-
-      if (request.method === 'GET' && pathname === '/v1/app-sessions/by-key') {
-        return this.handleGetManagedAppSessionByKey(url)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/app-sessions/remove') {
-        return await this.handleRemoveAppSession(request)
-      }
-
-      if (request.method === 'POST' && pathname === '/v1/app-sessions/apply') {
-        return await this.handleApplyManagedAppSessions(request)
-      }
-      {
-        const appSessionResponse = await this.handleAppSessionOperationRequest(
-          request,
-          pathname,
-          url
-        )
-        if (appSessionResponse) {
-          return appSessionResponse
-        }
       }
 
       return new Response('Not Found', { status: 404 })
@@ -1311,46 +1203,6 @@ class HrcServerInstance implements HrcServer {
     } satisfies ApplyAppManagedSessionsResponse)
   }
 
-  private async handleAppSessionOperationRequest(
-    request: Request,
-    pathname: string,
-    url: URL
-  ): Promise<Response | null> {
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/turns') {
-      return await this.handleAppSessionDispatchTurn(request)
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/in-flight-input') {
-      return await this.handleAppSessionInFlightInput(request)
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/clear-context') {
-      return await this.handleAppSessionClearContext(request)
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/literal-input') {
-      return await this.handleAppSessionLiteralInput(request)
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/app-sessions/capture') {
-      return await this.handleAppSessionCapture(url)
-    }
-
-    if (request.method === 'GET' && pathname === '/v1/app-sessions/attach') {
-      return this.handleAppSessionAttach(url)
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/interrupt') {
-      return await this.handleAppSessionInterrupt(request)
-    }
-
-    if (request.method === 'POST' && pathname === '/v1/app-sessions/terminate') {
-      return await this.handleAppSessionTerminate(request)
-    }
-
-    return null
-  }
-
   private async handleAppSessionDispatchTurn(request: Request): Promise<Response> {
     const body = parseDispatchAppHarnessTurnRequest(await parseJsonBody(request))
     const managed = requireManagedAppSession(this.db, body.selector)
@@ -1649,7 +1501,17 @@ class HrcServerInstance implements HrcServer {
     const runId = options.runId ?? `run-${randomUUID()}`
 
     if (shouldUseSdkTransport(intent)) {
-      return await this.handleSdkDispatchTurn(session, intent, prompt, runId)
+      // Prefer live idle tmux runtime over SDK when one is available (spec §11.3.3:
+      // headless for CLI/headless-capable targets, SDK only as fallback)
+      const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      const tmuxAvailableAndIdle =
+        liveTmuxRuntime &&
+        !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
+        liveTmuxRuntime.activeRunId === undefined
+      if (!tmuxAvailableAndIdle) {
+        return await this.handleSdkDispatchTurn(session, intent, prompt, runId)
+      }
+      // Fall through to tmux/headless path with the idle runtime
     }
 
     const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
@@ -3624,84 +3486,32 @@ class HrcServerInstance implements HrcServer {
       }
 
       if (session) {
-        const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
-        if (intent) {
+        // If the target has a busy interactive tmux runtime, deliver via
+        // literal send-keys instead of dispatching a new turn. This lets dm
+        // reach agents that are mid-conversation in an interactive session.
+        const busyTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+        if (
+          busyTmuxRuntime &&
+          !isRuntimeUnavailableStatus(busyTmuxRuntime.status) &&
+          busyTmuxRuntime.activeRunId !== undefined
+        ) {
           try {
-            const runId = `run-${randomUUID()}`
-            const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
-            const turnResponse = await this.dispatchTurnForSession(
-              session,
-              normalizedIntent,
-              body.body,
-              { runId }
-            )
-            const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-            const transport = turnBody.transport as 'sdk' | 'tmux'
-
-            // Collect finalOutput from SDK runtimes
-            let finalOutput: string | undefined
-            if (transport === 'sdk') {
-              const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
-              if (rt) {
-                finalOutput = this.db.runtimeBuffers
-                  .listByRuntimeId(rt.runtimeId)
-                  .map((chunk) => chunk.text)
-                  .join('')
-              }
-            }
-
-            const turnStatus = turnBody.status as 'completed' | 'started'
-            execution = {
-              runId: turnBody.runId,
-              sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
-              hostSessionId: turnBody.hostSessionId,
-              generation: turnBody.generation,
-              runtimeId: turnBody.runtimeId,
-              transport,
-              mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
-              status: turnStatus,
-              finalOutput,
-              continuationUpdated: turnStatus === 'completed',
-            }
-
-            // Update execution state on the request message
+            const paneId = requireTmuxPane(busyTmuxRuntime).paneId
+            const payload = formatDmPayload(body.from, body.to, body.body, record.messageSeq)
+            await this.tmux.sendLiteral(paneId, payload)
+            await this.tmux.sendEnter(paneId)
             this.db.messages.updateExecution(record.messageId, {
-              state: turnStatus === 'completed' ? 'completed' : 'started',
-              mode: execution.mode,
-              sessionRef: execution.sessionRef,
-              hostSessionId: execution.hostSessionId,
-              generation: execution.generation,
-              runtimeId: execution.runtimeId,
-              runId: execution.runId,
-              transport: execution.transport,
+              state: 'completed',
+              mode: 'headless',
+              sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+              hostSessionId: session.hostSessionId,
+              generation: session.generation,
+              runtimeId: busyTmuxRuntime.runtimeId,
+              transport: 'tmux',
             })
-
-            // Create automatic reply message if we have output
-            if (finalOutput && finalOutput.trim().length > 0) {
-              reply = this.insertAndNotifyMessage({
-                messageId: `msg-${randomUUID()}`,
-                kind: 'dm',
-                phase: 'response',
-                from: body.to,
-                to: respondTo,
-                body: finalOutput,
-                replyToMessageId: record.messageId,
-                rootMessageId: record.rootMessageId,
-                execution: {
-                  state: 'completed',
-                  mode: execution.mode,
-                  sessionRef: execution.sessionRef,
-                  hostSessionId: execution.hostSessionId,
-                  generation: execution.generation,
-                  runtimeId: execution.runtimeId,
-                  runId: execution.runId,
-                  transport: execution.transport,
-                },
-              })
-            }
           } catch (err) {
             const errorMessage = err instanceof Error ? err.message : String(err)
-            writeServerLog('WARN', 'semantic_dm.execution_failed', {
+            writeServerLog('WARN', 'semantic_dm.literal_delivery_failed', {
               messageId: record.messageId,
               error: errorMessage,
             })
@@ -3710,6 +3520,10 @@ class HrcServerInstance implements HrcServer {
               errorMessage,
             })
           }
+        } else {
+          const result = await this.executeSemanticTurn(session, body, record, respondTo)
+          execution = result.execution
+          reply = result.reply
         }
       }
     }
@@ -3735,6 +3549,102 @@ class HrcServerInstance implements HrcServer {
       ...(reply ? { reply } : {}),
       ...(waited ? { waited } : {}),
     } satisfies SemanticDmResponse)
+  }
+
+  private async executeSemanticTurn(
+    session: HrcSessionRecord,
+    body: { runtimeIntent?: HrcRuntimeIntent | undefined; body: string; to: HrcMessageAddress },
+    record: HrcMessageRecord,
+    respondTo: HrcMessageAddress
+  ): Promise<{
+    execution?: DispatchTurnBySelectorResponse
+    reply?: HrcMessageRecord | undefined
+  }> {
+    const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
+    if (!intent) return {}
+
+    try {
+      const runId = `run-${randomUUID()}`
+      const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
+      const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, body.body, {
+        runId,
+      })
+      const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+      const transport = turnBody.transport as 'sdk' | 'tmux'
+
+      let finalOutput: string | undefined
+      if (transport === 'sdk') {
+        const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
+        if (rt) {
+          finalOutput = this.db.runtimeBuffers
+            .listByRuntimeId(rt.runtimeId)
+            .map((chunk) => chunk.text)
+            .join('')
+        }
+      }
+
+      const turnStatus = turnBody.status as 'completed' | 'started'
+      const execution: DispatchTurnBySelectorResponse = {
+        runId: turnBody.runId,
+        sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+        hostSessionId: turnBody.hostSessionId,
+        generation: turnBody.generation,
+        runtimeId: turnBody.runtimeId,
+        transport,
+        mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
+        status: turnStatus,
+        finalOutput,
+        continuationUpdated: turnStatus === 'completed',
+      }
+
+      this.db.messages.updateExecution(record.messageId, {
+        state: turnStatus === 'completed' ? 'completed' : 'started',
+        mode: execution.mode,
+        sessionRef: execution.sessionRef,
+        hostSessionId: execution.hostSessionId,
+        generation: execution.generation,
+        runtimeId: execution.runtimeId,
+        runId: execution.runId,
+        transport: execution.transport,
+      })
+
+      let reply: HrcMessageRecord | undefined
+      if (finalOutput && finalOutput.trim().length > 0) {
+        reply = this.insertAndNotifyMessage({
+          messageId: `msg-${randomUUID()}`,
+          kind: 'dm',
+          phase: 'response',
+          from: body.to,
+          to: respondTo,
+          body: finalOutput,
+          replyToMessageId: record.messageId,
+          rootMessageId: record.rootMessageId,
+          execution: {
+            state: 'completed',
+            mode: execution.mode,
+            sessionRef: execution.sessionRef,
+            hostSessionId: execution.hostSessionId,
+            generation: execution.generation,
+            runtimeId: execution.runtimeId,
+            runId: execution.runId,
+            transport: execution.transport,
+          },
+        })
+      }
+
+      return { execution, reply }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      writeServerLog('WARN', 'semantic_dm.execution_failed', {
+        messageId: record.messageId,
+        error: errorMessage,
+      })
+      this.db.messages.updateExecution(record.messageId, {
+        state: 'failed',
+        errorMessage,
+      })
+      return {}
+    }
   }
 
   private async handleListRuntimes(url: URL): Promise<Response> {
@@ -5805,6 +5715,42 @@ function parseTmuxVersion(
     minor: Number.parseInt((match[2] ?? '0').replace(/[^0-9].*$/, ''), 10),
     raw: `${match[1]}.${match[2]}`,
   }
+}
+
+/**
+ * Format an HrcMessageAddress for display in DM delivery (e.g. "clod@agent-spaces" or "human").
+ */
+function formatDmAddress(addr: HrcMessageAddress): string {
+  if (addr.kind === 'entity') return addr.entity
+  const match = addr.sessionRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
+  if (match?.[1]) {
+    const agent = match[1]
+    const project = match[2]
+    return project ? `${agent}@${project}` : agent
+  }
+  return addr.sessionRef
+}
+
+/**
+ * Format a DM body for literal tmux injection using agentchat-compatible format:
+ * [DM #<seq> <from> → <to>]: <content>  # reply_cmd if reply requested: hrcchat dm <from> "<your reply>"
+ */
+function formatDmPayload(
+  from: HrcMessageAddress,
+  to: HrcMessageAddress,
+  body: string,
+  messageSeq: number
+): string {
+  const fromDisplay = formatDmAddress(from)
+  const toDisplay = formatDmAddress(to)
+  const maxChars = 1200
+  let content = body
+  if (content.length > maxChars) {
+    const suffix = `… (truncated; hrcchat show ${messageSeq})`
+    content = content.slice(0, maxChars - suffix.length) + suffix
+  }
+  const replyHint = `reply_cmd if reply requested: hrcchat dm ${fromDisplay} "<your reply>"`
+  return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}  # ${replyHint}`
 }
 
 function normalizeTargetLane(laneRef: string | undefined): string | undefined {
