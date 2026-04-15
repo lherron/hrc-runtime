@@ -1,7 +1,9 @@
 import type {
   HrcEventEnvelope,
   HrcHttpError,
+  HrcMessageRecord,
   HrcSessionRecord,
+  HrcTargetView,
   HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
@@ -15,28 +17,40 @@ import type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BridgeListFilter,
+  CaptureBySelectorRequest,
+  CaptureBySelectorResponse,
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
   CloseBridgeRequest,
+  CreateMessageRequest,
+  CreateMessageResponse,
   DeliverBridgeRequest,
   DeliverBridgeResponse,
+  DeliverLiteralBySelectorRequest,
+  DeliverLiteralBySelectorResponse,
+  DispatchTurnBySelectorRequest,
+  DispatchTurnBySelectorResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
+  EnsureTargetRequest,
   HealthResponse,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   LaunchListFilter,
+  ListMessagesResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RuntimeActionResponse,
   RuntimeListFilter,
+  SemanticDmRequest,
+  SemanticDmResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
@@ -44,7 +58,11 @@ import type {
   StartRuntimeResponse,
   StatusResponse,
   SurfaceListFilter,
+  TargetListFilter,
   UnbindSurfaceRequest,
+  WaitMessageRequest,
+  WaitMessageResponse,
+  WatchMessagesOptions,
   WatchOptions,
 } from './types.js'
 
@@ -259,6 +277,118 @@ export class HrcClient {
   async adoptRuntime(runtimeId: string): Promise<RuntimeRecord> {
     return this.postJson<RuntimeRecord>('/v1/runtimes/adopt', { runtimeId })
   }
+
+  // -- hrcchat: targets --------------------------------------------------------
+
+  async listTargets(filter?: TargetListFilter): Promise<HrcTargetView[]> {
+    const params = new URLSearchParams()
+    if (filter?.projectId) params.set('projectId', filter.projectId)
+    if (filter?.lane) params.set('lane', filter.lane)
+    if (filter?.discover) params.set('discover', 'true')
+    const qs = params.toString()
+    const path = qs ? `/v1/targets?${qs}` : '/v1/targets'
+    return this.getJson<HrcTargetView[]>(path)
+  }
+
+  async getTarget(sessionRef: string): Promise<HrcTargetView> {
+    return this.getJson<HrcTargetView>(
+      `/v1/targets/by-session-ref?sessionRef=${encodeURIComponent(sessionRef)}`
+    )
+  }
+
+  async ensureTarget(request: EnsureTargetRequest): Promise<HrcTargetView> {
+    return this.postJson<HrcTargetView>('/v1/targets/ensure', request)
+  }
+
+  // -- hrcchat: selector-based dispatch ----------------------------------------
+
+  async dispatchTurnBySelector(
+    request: DispatchTurnBySelectorRequest
+  ): Promise<DispatchTurnBySelectorResponse> {
+    return this.postJson<DispatchTurnBySelectorResponse>('/v1/turns/by-selector', request)
+  }
+
+  async deliverLiteralBySelector(
+    request: DeliverLiteralBySelectorRequest
+  ): Promise<DeliverLiteralBySelectorResponse> {
+    return this.postJson<DeliverLiteralBySelectorResponse>('/v1/literal-input/by-selector', request)
+  }
+
+  async captureBySelector(request: CaptureBySelectorRequest): Promise<CaptureBySelectorResponse> {
+    return this.postJson<CaptureBySelectorResponse>('/v1/capture/by-selector', request)
+  }
+
+  // -- hrcchat: durable messages -----------------------------------------------
+
+  async createMessage(request: CreateMessageRequest): Promise<CreateMessageResponse> {
+    return this.postJson<CreateMessageResponse>('/v1/messages', request)
+  }
+
+  async listMessages(filter?: import('hrc-core').HrcMessageFilter): Promise<ListMessagesResponse> {
+    return this.postJson<ListMessagesResponse>('/v1/messages/query', filter ?? {})
+  }
+
+  async waitMessage(request: WaitMessageRequest): Promise<WaitMessageResponse> {
+    return this.postJson<WaitMessageResponse>('/v1/messages/wait', request)
+  }
+
+  async semanticDm(request: SemanticDmRequest): Promise<SemanticDmResponse> {
+    return this.postJson<SemanticDmResponse>('/v1/messages/dm', request)
+  }
+
+  async *watchMessages(options?: WatchMessagesOptions): AsyncIterable<HrcMessageRecord> {
+    const body = {
+      ...(options?.filter ?? {}),
+      follow: options?.follow ?? false,
+      timeoutMs: options?.timeoutMs,
+    }
+
+    const res = await fetch(`${BASE_URL}/v1/messages/watch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      unix: this.socketPath,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    } as RequestInit)
+
+    if (!res.ok) {
+      await this.throwTypedError(res)
+    }
+
+    const respBody = res.body
+    if (!respBody) return
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    for await (const chunk of respBody) {
+      if (options?.signal?.aborted) return
+      buffer += decoder.decode(chunk, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.length === 0) continue
+        try {
+          yield JSON.parse(trimmed) as HrcMessageRecord
+        } catch {
+          continue
+        }
+        if (options?.signal?.aborted) return
+      }
+    }
+
+    const remaining = buffer.trim()
+    if (remaining.length > 0) {
+      try {
+        yield JSON.parse(remaining) as HrcMessageRecord
+      } catch {
+        // skip malformed trailing content
+      }
+    }
+  }
+
+  // -- Event stream -----------------------------------------------------------
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcEventEnvelope> {
     const params = new URLSearchParams()

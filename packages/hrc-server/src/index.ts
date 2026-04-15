@@ -19,21 +19,27 @@ import {
   HrcUnprocessableEntityError,
   createHrcError,
   httpStatusForErrorCode,
+  normalizeSessionRef,
   validateFence,
 } from 'hrc-core'
 import type {
   AppSessionFreshnessFence,
   ApplyAppManagedSessionsResponse,
   ApplyAppSessionsResponse,
+  CaptureBySelectorResponse,
   CaptureResponse,
   ClearAppSessionContextResponse,
   ClearContextResponse,
+  CreateMessageResponse,
   DeliverBridgeResponse,
+  DeliverLiteralBySelectorResponse,
+  DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
   EnsureAppSessionDryRunPlan,
   EnsureAppSessionRequest,
   EnsureAppSessionResponse,
   EnsureRuntimeResponse,
+  EnsureTargetResponse,
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
@@ -45,6 +51,9 @@ import type {
   HrcLaunchRecord,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
+  HrcMessageAddress,
+  HrcMessageFilter,
+  HrcMessageRecord,
   HrcProvider,
   HrcRunRecord,
   HrcRuntimeIntent,
@@ -54,15 +63,22 @@ import type {
   HrcStatusResponse,
   HrcStatusSessionView,
   HrcStatusTmuxView,
+  HrcTargetRuntimeView,
+  HrcTargetState,
+  HrcTargetView,
+  ListMessagesResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   RemoveAppSessionResponse,
   ResolveSessionResponse,
   RestartStyle,
   RuntimeActionResponse,
+  SemanticDmResponse,
   SendAppHarnessInFlightInputResponse,
   SendLiteralInputResponse,
   StartRuntimeResponse,
+  TargetCapabilityView,
+  WaitMessageResponse,
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
@@ -328,8 +344,11 @@ const MIN_SUPPORTED_TMUX_VERSION = {
 const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
 
+type MessageSubscriber = (record: HrcMessageRecord) => void
+
 class HrcServerInstance implements HrcServer {
   private readonly followSubscribers = new Set<FollowSubscriber>()
+  private readonly messageSubscribers = new Set<MessageSubscriber>()
   private readonly server: Bun.Server<undefined>
   private readonly startedAt = new Date().toISOString()
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
@@ -361,6 +380,7 @@ class HrcServerInstance implements HrcServer {
     })
     this.server.stop(true)
     this.followSubscribers.clear()
+    this.messageSubscribers.clear()
     this.db.close()
     let cleanupError: unknown
 
@@ -554,6 +574,50 @@ class HrcServerInstance implements HrcServer {
 
       if (request.method === 'GET' && pathname === '/v1/status') {
         return await this.handleStatus()
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/targets') {
+        return this.handleListTargets(url)
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/targets/by-session-ref') {
+        return this.handleGetTarget(url)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/messages/query') {
+        return await this.handleQueryMessages(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/messages/dm') {
+        return await this.handleSemanticDm(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/targets/ensure') {
+        return await this.handleEnsureTarget(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/messages') {
+        return await this.handleCreateMessage(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/capture/by-selector') {
+        return await this.handleCaptureBySelector(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/literal-input/by-selector') {
+        return await this.handleLiteralInputBySelector(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/turns/by-selector') {
+        return await this.handleDispatchTurnBySelector(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/messages/wait') {
+        return await this.handleWaitMessage(request)
+      }
+
+      if (request.method === 'POST' && pathname === '/v1/messages/watch') {
+        return await this.handleWatchMessages(request)
       }
 
       if (request.method === 'GET' && pathname === '/v1/runtimes') {
@@ -3457,6 +3521,219 @@ class HrcServerInstance implements HrcServer {
     } satisfies HrcStatusResponse)
   }
 
+  private handleListTargets(url: URL): Response {
+    const projectId = normalizeOptionalQuery(url.searchParams.get('projectId'))
+    const laneRef = normalizeTargetLane(normalizeOptionalQuery(url.searchParams.get('lane')))
+    const targets = new Map<string, HrcTargetView>()
+
+    for (const session of this.listAllSessions()) {
+      if (!isActiveTargetSession(this.db, session)) {
+        continue
+      }
+      if (projectId && extractProjectId(session.scopeRef) !== projectId) {
+        continue
+      }
+      if (laneRef && normalizeTargetLane(session.laneRef) !== laneRef) {
+        continue
+      }
+
+      const view = toTargetView(this.db, session)
+      const existing = targets.get(view.sessionRef)
+      if (!existing || (view.generation ?? 0) >= (existing.generation ?? 0)) {
+        targets.set(view.sessionRef, view)
+      }
+    }
+
+    return json(
+      Array.from(targets.values()).sort((a, b) => a.sessionRef.localeCompare(b.sessionRef))
+    )
+  }
+
+  private handleGetTarget(url: URL): Response {
+    const sessionRef = normalizeOptionalQuery(url.searchParams.get('sessionRef'))
+    if (!sessionRef) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
+        field: 'sessionRef',
+      })
+    }
+
+    const session = findTargetSession(this.db, sessionRef)
+    if (!session) {
+      throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
+        sessionRef,
+      })
+    }
+
+    return json(toTargetView(this.db, session))
+  }
+
+  private async handleQueryMessages(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    const filter = parseMessageFilter(body)
+    return json({
+      messages: this.db.messages.query(filter),
+    } satisfies ListMessagesResponse)
+  }
+
+  private async handleSemanticDm(request: Request): Promise<Response> {
+    const body = parseSemanticDmRequest(await parseJsonBody(request))
+    const parent =
+      body.replyToMessageId !== undefined
+        ? this.db.messages.getById(body.replyToMessageId)
+        : undefined
+
+    if (body.replyToMessageId !== undefined && !parent) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `unknown replyToMessageId "${body.replyToMessageId}"`,
+        {
+          field: 'replyToMessageId',
+          replyToMessageId: body.replyToMessageId,
+        }
+      )
+    }
+
+    const respondTo = body.respondTo ?? body.from
+    const record = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'dm',
+      phase: parent !== undefined ? 'response' : body.to.kind === 'session' ? 'request' : 'oneway',
+      from: body.from,
+      to: body.to,
+      body: body.body,
+      ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
+      ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
+      execution: {
+        state: 'not_applicable',
+        ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
+      },
+    })
+
+    // If target is a session, attempt semantic turn execution
+    let execution: DispatchTurnBySelectorResponse | undefined
+    let reply: HrcMessageRecord | undefined
+
+    if (body.to.kind === 'session') {
+      // Auto-summon if needed
+      let session = findTargetSession(this.db, body.to.sessionRef)
+      if (!session && body.createIfMissing !== false) {
+        const intent = body.runtimeIntent
+        if (intent) {
+          session = this.ensureTargetSession(body.to.sessionRef, intent, body.parsedScopeJson)
+        }
+      }
+
+      if (session) {
+        const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
+        if (intent) {
+          try {
+            const runId = `run-${randomUUID()}`
+            const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
+            const turnResponse = await this.dispatchTurnForSession(
+              session,
+              normalizedIntent,
+              body.body,
+              { runId }
+            )
+            const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+            const transport = turnBody.transport as 'sdk' | 'tmux'
+
+            // Collect finalOutput from SDK runtimes
+            let finalOutput: string | undefined
+            if (transport === 'sdk') {
+              const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
+              if (rt) {
+                finalOutput = this.db.runtimeBuffers
+                  .listByRuntimeId(rt.runtimeId)
+                  .map((chunk) => chunk.text)
+                  .join('')
+              }
+            }
+
+            const turnStatus = turnBody.status as 'completed' | 'started'
+            execution = {
+              runId: turnBody.runId,
+              sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+              hostSessionId: turnBody.hostSessionId,
+              generation: turnBody.generation,
+              runtimeId: turnBody.runtimeId,
+              transport,
+              mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
+              status: turnStatus,
+              finalOutput,
+              continuationUpdated: turnStatus === 'completed',
+            }
+
+            // Update execution state on the request message
+            this.db.messages.updateExecution(record.messageId, {
+              state: turnStatus === 'completed' ? 'completed' : 'started',
+              mode: execution.mode,
+              sessionRef: execution.sessionRef,
+              hostSessionId: execution.hostSessionId,
+              generation: execution.generation,
+              runtimeId: execution.runtimeId,
+              runId: execution.runId,
+              transport: execution.transport,
+            })
+
+            // Create automatic reply message if we have output
+            if (finalOutput && finalOutput.trim().length > 0) {
+              reply = this.insertAndNotifyMessage({
+                messageId: `msg-${randomUUID()}`,
+                kind: 'dm',
+                phase: 'response',
+                from: body.to,
+                to: respondTo,
+                body: finalOutput,
+                replyToMessageId: record.messageId,
+                rootMessageId: record.rootMessageId,
+                execution: {
+                  state: 'completed',
+                  mode: execution.mode,
+                  sessionRef: execution.sessionRef,
+                  hostSessionId: execution.hostSessionId,
+                  generation: execution.generation,
+                  runtimeId: execution.runtimeId,
+                  runId: execution.runId,
+                  transport: execution.transport,
+                },
+              })
+            }
+          } catch (err) {
+            // Update execution as failed but don't fail the whole dm
+            const errorMessage = err instanceof Error ? err.message : String(err)
+            this.db.messages.updateExecution(record.messageId, {
+              state: 'failed',
+              errorMessage,
+            })
+          }
+        }
+      }
+    }
+
+    // Handle --wait
+    let waited: WaitMessageResponse | undefined
+    if (body.wait?.enabled && record.phase === 'request') {
+      const timeoutMs = body.wait.timeoutMs ?? 30_000
+      waited = await this.waitForMessage(
+        {
+          thread: { rootMessageId: record.rootMessageId },
+          to: respondTo,
+          phases: ['response'],
+          afterSeq: record.messageSeq,
+        },
+        timeoutMs
+      )
+    }
+
+    return json({
+      request: record,
+      ...(execution ? { execution } : {}),
+      ...(reply ? { reply } : {}),
+      ...(waited ? { waited } : {}),
+    } satisfies SemanticDmResponse)
+  }
+
   private async handleListRuntimes(url: URL): Promise<Response> {
     const hostSessionId = url.searchParams.get('hostSessionId') ?? undefined
     const runtimes = hostSessionId
@@ -3574,6 +3851,20 @@ class HrcServerInstance implements HrcServer {
     for (const subscriber of this.followSubscribers) {
       subscriber(event)
     }
+  }
+
+  private notifyMessageSubscribers(record: HrcMessageRecord): void {
+    for (const subscriber of this.messageSubscribers) {
+      subscriber(record)
+    }
+  }
+
+  private insertAndNotifyMessage(
+    input: Parameters<HrcDatabase['messages']['insert']>[0]
+  ): HrcMessageRecord {
+    const record = this.db.messages.insert(input)
+    this.notifyMessageSubscribers(record)
+    return record
   }
 
   private listSessionsByScope(scopeRef: string, laneRef?: string): HrcSessionRecord[] {
@@ -3925,9 +4216,570 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       transport: 'sdk',
-      status: 'started',
+      status: 'completed',
       supportsInFlightInput: runtime.supportsInflightInput,
     } satisfies DispatchTurnResponse)
+  }
+
+  // -- hrcchat: target ensure (summon) ------------------------------------------
+
+  private ensureTargetSession(
+    sessionRef: string,
+    intent: HrcRuntimeIntent,
+    parsedScopeJson?: Record<string, unknown>
+  ): HrcSessionRecord {
+    const normalized = normalizeTargetSessionRef(sessionRef)
+    const existing = findTargetSession(this.db, normalized)
+    if (existing) {
+      const now = timestamp()
+      this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
+      if (parsedScopeJson) {
+        this.db.sessions.updateParsedScope(existing.hostSessionId, parsedScopeJson, now)
+      }
+      // Re-read to return the updated record
+      return requireSession(this.db, existing.hostSessionId)
+    }
+
+    const { scopeRef, laneRef } = parseSessionRef(normalized)
+    const now = timestamp()
+    const hostSessionId = createHostSessionId()
+    const session: HrcSessionRecord = {
+      hostSessionId,
+      scopeRef,
+      laneRef,
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: [],
+      lastAppliedIntentJson: intent,
+      ...(parsedScopeJson ? { parsedScopeJson } : {}),
+    }
+
+    const created = this.db.sessions.insert(session)
+    this.db.continuities.upsert({
+      scopeRef,
+      laneRef,
+      activeHostSessionId: hostSessionId,
+      updatedAt: now,
+    })
+
+    const event = this.appendEvent(created, 'session.created', { created: true, summon: true })
+    this.notifyEvent(event)
+    return created
+  }
+
+  private async handleEnsureTarget(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body)) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+    }
+
+    const sessionRef = body['sessionRef']
+    if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
+        field: 'sessionRef',
+      })
+    }
+
+    const runtimeIntent = body['runtimeIntent']
+    if (!isRecord(runtimeIntent)) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeIntent is required', {
+        field: 'runtimeIntent',
+      })
+    }
+
+    const parsedScopeJson = isRecord(body['parsedScopeJson'])
+      ? (body['parsedScopeJson'] as Record<string, unknown>)
+      : undefined
+
+    const session = this.ensureTargetSession(
+      sessionRef,
+      runtimeIntent as HrcRuntimeIntent,
+      parsedScopeJson
+    )
+    return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
+  }
+
+  // -- hrcchat: raw message creation --------------------------------------------
+
+  private async handleCreateMessage(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body)) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+    }
+
+    if (typeof body['body'] !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'body must be a string', {
+        field: 'body',
+      })
+    }
+
+    const kind = body['kind']
+    if (kind !== 'dm' && kind !== 'literal' && kind !== 'system') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'kind must be dm, literal, or system',
+        {
+          field: 'kind',
+        }
+      )
+    }
+
+    const phase = body['phase']
+    if (phase !== 'request' && phase !== 'response' && phase !== 'oneway') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'phase must be request, response, or oneway',
+        {
+          field: 'phase',
+        }
+      )
+    }
+
+    const from = parseMessageAddress(body['from'], 'from')
+    const to = parseMessageAddress(body['to'], 'to')
+
+    const replyToMessageId = body['replyToMessageId']
+    if (replyToMessageId !== undefined && typeof replyToMessageId !== 'string') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'replyToMessageId must be a string',
+        {
+          field: 'replyToMessageId',
+        }
+      )
+    }
+
+    let rootMessageId: string | undefined
+    if (replyToMessageId !== undefined) {
+      const parent = this.db.messages.getById(replyToMessageId)
+      if (!parent) {
+        throw new HrcBadRequestError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          `unknown replyToMessageId "${replyToMessageId}"`,
+          {
+            field: 'replyToMessageId',
+          }
+        )
+      }
+      rootMessageId = parent.rootMessageId
+    }
+
+    const execution = isRecord(body['execution'])
+      ? (body['execution'] as Partial<{ state: string }>)
+      : undefined
+    const metadataJson = isRecord(body['metadataJson'])
+      ? (body['metadataJson'] as Record<string, unknown>)
+      : undefined
+
+    const record = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind,
+      phase,
+      from,
+      to,
+      body: body['body'],
+      ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
+      ...(rootMessageId !== undefined ? { rootMessageId } : {}),
+      ...(execution
+        ? { execution: execution as Parameters<HrcDatabase['messages']['insert']>[0]['execution'] }
+        : {}),
+      ...(metadataJson ? { metadataJson } : {}),
+    })
+
+    return json(record satisfies CreateMessageResponse)
+  }
+
+  // -- hrcchat: selector-based capture (peek) -----------------------------------
+
+  private async handleCaptureBySelector(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || !isRecord(body['selector'])) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
+    }
+
+    const sessionRef = (body['selector'] as Record<string, unknown>)['sessionRef']
+    if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'selector.sessionRef is required',
+        {
+          field: 'selector.sessionRef',
+        }
+      )
+    }
+
+    const session = findTargetSession(this.db, sessionRef)
+    if (!session) {
+      throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
+        sessionRef,
+      })
+    }
+
+    const runtime = findLatestSessionRuntime(this.db, session.hostSessionId)
+    if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+      throw new HrcRuntimeUnavailableError('no capturable runtime is currently bound', {
+        sessionRef,
+        hostSessionId: session.hostSessionId,
+      })
+    }
+
+    const lines = typeof body['lines'] === 'number' ? body['lines'] : undefined
+    let text: string
+
+    if (runtime.transport === 'sdk') {
+      text = this.db.runtimeBuffers
+        .listByRuntimeId(runtime.runtimeId)
+        .map((chunk) => chunk.text)
+        .join('')
+    } else {
+      text = await this.tmux.capture(requireTmuxPane(runtime).paneId)
+    }
+
+    if (lines !== undefined && lines > 0) {
+      const allLines = text.split('\n')
+      text = allLines.slice(-lines).join('\n')
+    }
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+
+    const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+    return json({
+      text,
+      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+      runtimeId: runtime.runtimeId,
+    } satisfies CaptureBySelectorResponse)
+  }
+
+  // -- hrcchat: selector-based literal send -------------------------------------
+
+  private async handleLiteralInputBySelector(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || !isRecord(body['selector'])) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
+    }
+
+    const sessionRef = (body['selector'] as Record<string, unknown>)['sessionRef']
+    if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'selector.sessionRef is required',
+        {
+          field: 'selector.sessionRef',
+        }
+      )
+    }
+
+    if (typeof body['text'] !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'text is required', {
+        field: 'text',
+      })
+    }
+
+    const session = findTargetSession(this.db, sessionRef)
+    if (!session) {
+      throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
+        sessionRef,
+      })
+    }
+
+    const runtime = findLatestRuntime(this.db, session.hostSessionId)
+    if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+      throw new HrcRuntimeUnavailableError('no live literal-capable runtime is currently bound', {
+        sessionRef,
+        hostSessionId: session.hostSessionId,
+      })
+    }
+
+    if (runtime.transport !== 'tmux') {
+      throw new HrcRuntimeUnavailableError('runtime does not support literal input (not tmux)', {
+        sessionRef,
+        runtimeId: runtime.runtimeId,
+        transport: runtime.transport,
+      })
+    }
+
+    const paneId = requireTmuxPane(runtime).paneId
+    await this.tmux.sendLiteral(paneId, body['text'])
+    if (body['enter'] !== false) {
+      await this.tmux.sendEnter(paneId)
+    }
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+
+    const event = this.appendEvent(session, 'target.literal-input', {
+      sessionRef,
+      payloadLength: (body['text'] as string).length,
+      enter: body['enter'] !== false,
+    })
+    this.notifyEvent(event)
+
+    const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+    return json({
+      delivered: true,
+      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+    } satisfies DeliverLiteralBySelectorResponse)
+  }
+
+  // -- hrcchat: selector-based turn dispatch ------------------------------------
+
+  private async handleDispatchTurnBySelector(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || !isRecord(body['selector'])) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
+    }
+
+    const sessionRef = (body['selector'] as Record<string, unknown>)['sessionRef']
+    if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'selector.sessionRef is required',
+        {
+          field: 'selector.sessionRef',
+        }
+      )
+    }
+
+    if (typeof body['prompt'] !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
+        field: 'prompt',
+      })
+    }
+
+    let session = findTargetSession(this.db, sessionRef)
+    if (!session && body['createIfMissing'] === true) {
+      const runtimeIntent = isRecord(body['runtimeIntent'])
+        ? (body['runtimeIntent'] as HrcRuntimeIntent)
+        : undefined
+      if (!runtimeIntent) {
+        throw new HrcBadRequestError(
+          HrcErrorCode.MALFORMED_REQUEST,
+          'runtimeIntent is required when createIfMissing is true',
+          {
+            field: 'runtimeIntent',
+          }
+        )
+      }
+      const parsedScopeJson = isRecord(body['parsedScopeJson'])
+        ? (body['parsedScopeJson'] as Record<string, unknown>)
+        : undefined
+      session = this.ensureTargetSession(sessionRef, runtimeIntent, parsedScopeJson)
+    }
+
+    if (!session) {
+      throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
+        sessionRef,
+      })
+    }
+
+    const intent = isRecord(body['runtimeIntent'])
+      ? (body['runtimeIntent'] as HrcRuntimeIntent)
+      : session.lastAppliedIntentJson
+
+    if (!intent) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'no runtime intent available for target',
+        {
+          sessionRef,
+        }
+      )
+    }
+
+    const runId = `run-${randomUUID()}`
+    const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
+    const turnResponse = await this.dispatchTurnForSession(
+      session,
+      normalizedIntent,
+      body['prompt'],
+      { runId }
+    )
+    const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    const transport = turnBody.transport as 'sdk' | 'tmux'
+
+    let finalOutput: string | undefined
+    if (transport === 'sdk') {
+      const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
+      if (rt) {
+        finalOutput = this.db.runtimeBuffers
+          .listByRuntimeId(rt.runtimeId)
+          .map((chunk) => chunk.text)
+          .join('')
+      }
+    }
+
+    const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+    const turnStatus = turnBody.status as 'completed' | 'started'
+    return json({
+      runId: turnBody.runId,
+      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+      hostSessionId: turnBody.hostSessionId,
+      generation: turnBody.generation,
+      runtimeId: turnBody.runtimeId,
+      transport,
+      mode: transport === 'sdk' ? 'nonInteractive' : 'headless',
+      status: turnStatus,
+      finalOutput,
+      continuationUpdated: turnStatus === 'completed',
+    } satisfies DispatchTurnBySelectorResponse)
+  }
+
+  // -- hrcchat: blocking message wait -------------------------------------------
+
+  private async waitForMessage(
+    filter: HrcMessageFilter,
+    timeoutMs: number
+  ): Promise<WaitMessageResponse> {
+    // Use buffered subscriber pattern to avoid replay/subscribe race
+    const buffered: HrcMessageRecord[] = []
+    let resolveWait: ((result: WaitMessageResponse) => void) | null = null
+    let settled = false
+
+    const subscriber: MessageSubscriber = (record) => {
+      if (settled) return
+      if (matchesMessageFilter(record, filter)) {
+        if (resolveWait) {
+          settled = true
+          resolveWait({ matched: true, record })
+        } else {
+          buffered.push(record)
+        }
+      }
+    }
+
+    this.messageSubscribers.add(subscriber)
+
+    try {
+      // Replay existing messages that match
+      const existing = this.db.messages.query(filter)
+      const first = existing[0]
+      if (first) {
+        return { matched: true, record: first }
+      }
+
+      // Check buffered messages that arrived during replay
+      for (const record of buffered) {
+        if (matchesMessageFilter(record, filter)) {
+          return { matched: true, record }
+        }
+      }
+
+      // Block until match or timeout
+      return await new Promise<WaitMessageResponse>((resolve) => {
+        resolveWait = resolve
+        setTimeout(() => {
+          if (!settled) {
+            settled = true
+            resolve({ matched: false, reason: 'timeout' })
+          }
+        }, timeoutMs)
+      })
+    } finally {
+      this.messageSubscribers.delete(subscriber)
+    }
+  }
+
+  private async handleWaitMessage(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    const filter = parseMessageFilter(isRecord(body) ? body : {})
+    const timeoutMs =
+      isRecord(body) && typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : 30_000
+
+    const result = await this.waitForMessage(filter, timeoutMs)
+    return json(result satisfies WaitMessageResponse)
+  }
+
+  // -- hrcchat: NDJSON message watch stream -------------------------------------
+
+  private async handleWatchMessages(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request).catch(() => ({}))
+    const parsedBody = isRecord(body) ? body : {}
+    const filter = parseMessageFilter(parsedBody)
+    const follow = parsedBody['follow'] === true
+    const timeoutMs =
+      typeof parsedBody['timeoutMs'] === 'number' ? parsedBody['timeoutMs'] : undefined
+
+    if (!follow) {
+      const messages = this.db.messages.query(filter)
+      return new Response(messages.map((m) => `${JSON.stringify(m)}\n`).join(''), {
+        status: 200,
+        headers: NDJSON_HEADERS,
+      })
+    }
+
+    // Streaming follow mode — mirrors handleEvents pattern
+    const bufferedMessages: HrcMessageRecord[] = []
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null
+    let replayHighWater = (filter.afterSeq ?? 0) - 1
+    let closed = false
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+
+    const subscriber: MessageSubscriber = (record) => {
+      if (closed) return
+      if (!matchesMessageFilter(record, filter)) return
+
+      if (controllerRef) {
+        if (record.messageSeq > replayHighWater) {
+          controllerRef.enqueue(encodeNdjson(record))
+        }
+        return
+      }
+
+      bufferedMessages.push(record)
+    }
+
+    this.messageSubscribers.add(subscriber)
+    const close = () => {
+      if (closed) return
+      closed = true
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      this.messageSubscribers.delete(subscriber)
+      bufferedMessages.length = 0
+      try {
+        controllerRef?.close()
+      } catch {
+        // Stream may already be closed
+      } finally {
+        controllerRef = null
+      }
+    }
+
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        const replayMessages = this.db.messages.query(filter)
+        replayHighWater = replayMessages.at(-1)?.messageSeq ?? replayHighWater
+        controllerRef = controller
+        controller.enqueue(new TextEncoder().encode('\n'))
+
+        for (const msg of replayMessages) {
+          controller.enqueue(encodeNdjson(msg))
+        }
+
+        for (const msg of bufferedMessages) {
+          if (msg.messageSeq > replayHighWater) {
+            controller.enqueue(encodeNdjson(msg))
+          }
+        }
+
+        if (timeoutMs !== undefined && timeoutMs > 0) {
+          timeoutTimer = setTimeout(close, timeoutMs)
+        }
+
+        request.signal.addEventListener('abort', close, { once: true })
+      },
+      cancel: () => close(),
+    })
+
+    return new Response(stream, {
+      status: 200,
+      headers: NDJSON_HEADERS,
+    })
   }
 }
 
@@ -4952,6 +5804,263 @@ function parseTmuxVersion(
   }
 }
 
+function normalizeTargetLane(laneRef: string | undefined): string | undefined {
+  if (laneRef === undefined) {
+    return undefined
+  }
+
+  return laneRef === 'default' ? 'main' : laneRef
+}
+
+function targetLaneCandidates(laneRef: string): string[] {
+  const normalized = normalizeTargetLane(laneRef) ?? laneRef
+  return normalized === 'main' ? ['main', 'default'] : [normalized]
+}
+
+function normalizeTargetSessionRef(sessionRef: string): string {
+  const normalized = normalizeSessionRef(sessionRef)
+  const { scopeRef, laneRef } = parseSessionRef(normalized)
+  return `${scopeRef}/lane:${normalizeTargetLane(laneRef) ?? laneRef}`
+}
+
+function extractProjectId(scopeRef: string): string | undefined {
+  const match = scopeRef.match(/:project:([^:]+)/)
+  return match?.[1]
+}
+
+function parseMessageAddress(input: unknown, field: string): HrcMessageAddress {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be an object`, {
+      field,
+    })
+  }
+
+  const kind = input['kind']
+  if (kind === 'entity') {
+    const entity = input['entity']
+    if (entity !== 'human' && entity !== 'system') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `${field}.entity must be "human" or "system"`,
+        { field: `${field}.entity` }
+      )
+    }
+    return { kind: 'entity', entity }
+  }
+
+  if (kind === 'session') {
+    const sessionRef = input['sessionRef']
+    if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `${field}.sessionRef is required`,
+        { field: `${field}.sessionRef` }
+      )
+    }
+    return { kind: 'session', sessionRef: normalizeTargetSessionRef(sessionRef) }
+  }
+
+  throw new HrcBadRequestError(
+    HrcErrorCode.MALFORMED_REQUEST,
+    `${field}.kind must be "session" or "entity"`,
+    { field: `${field}.kind` }
+  )
+}
+
+function parseMessageFilterList<T extends string>(
+  input: unknown,
+  field: string,
+  allowed: readonly T[]
+): T[] | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (!Array.isArray(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be an array`, {
+      field,
+    })
+  }
+
+  return input.map((entry, index) => {
+    if (typeof entry !== 'string' || !allowed.includes(entry as T)) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `${field}[${index}] is invalid`,
+        { field: `${field}[${index}]` }
+      )
+    }
+    return entry as T
+  })
+}
+
+function parseMessageFilter(input: unknown): HrcMessageFilter {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const thread = input['thread']
+  if (thread !== undefined && (!isRecord(thread) || typeof thread['rootMessageId'] !== 'string')) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'thread.rootMessageId is required when thread is provided',
+      { field: 'thread.rootMessageId' }
+    )
+  }
+
+  const afterSeq = input['afterSeq']
+  if (
+    afterSeq !== undefined &&
+    (typeof afterSeq !== 'number' || !Number.isInteger(afterSeq) || afterSeq < 0)
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'afterSeq must be a non-negative integer',
+      { field: 'afterSeq' }
+    )
+  }
+
+  const limit = input['limit']
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'limit must be a positive integer',
+      { field: 'limit' }
+    )
+  }
+
+  const kinds = parseMessageFilterList(input['kinds'], 'kinds', [
+    'dm',
+    'literal',
+    'system',
+  ] as const)
+  const phases = parseMessageFilterList(input['phases'], 'phases', [
+    'request',
+    'response',
+    'oneway',
+  ] as const)
+
+  return {
+    ...(input['participant'] !== undefined
+      ? { participant: parseMessageAddress(input['participant'], 'participant') }
+      : {}),
+    ...(input['from'] !== undefined ? { from: parseMessageAddress(input['from'], 'from') } : {}),
+    ...(input['to'] !== undefined ? { to: parseMessageAddress(input['to'], 'to') } : {}),
+    ...(thread !== undefined
+      ? { thread: { rootMessageId: thread['rootMessageId'] as string } }
+      : {}),
+    ...(afterSeq !== undefined ? { afterSeq } : {}),
+    ...(kinds !== undefined ? { kinds } : {}),
+    ...(phases !== undefined ? { phases } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  }
+}
+
+function parseSemanticDmRequest(input: unknown): {
+  from: HrcMessageAddress
+  to: HrcMessageAddress
+  body: string
+  mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
+  respondTo?: HrcMessageAddress | undefined
+  replyToMessageId?: string | undefined
+  runtimeIntent?: HrcRuntimeIntent | undefined
+  createIfMissing?: boolean | undefined
+  parsedScopeJson?: Record<string, unknown> | undefined
+  wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
+} {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  if (typeof input['body'] !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'body must be a string', {
+      field: 'body',
+    })
+  }
+
+  const mode = input['mode']
+  if (mode !== undefined && mode !== 'auto' && mode !== 'headless' && mode !== 'nonInteractive') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'mode is invalid', {
+      field: 'mode',
+    })
+  }
+
+  const replyToMessageId = input['replyToMessageId']
+  if (replyToMessageId !== undefined && typeof replyToMessageId !== 'string') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'replyToMessageId must be a string',
+      {
+        field: 'replyToMessageId',
+      }
+    )
+  }
+
+  const respondTo =
+    input['respondTo'] !== undefined
+      ? parseMessageAddress(input['respondTo'], 'respondTo')
+      : undefined
+
+  const runtimeIntent = isRecord(input['runtimeIntent'])
+    ? (input['runtimeIntent'] as HrcRuntimeIntent)
+    : undefined
+
+  const createIfMissing =
+    typeof input['createIfMissing'] === 'boolean' ? input['createIfMissing'] : undefined
+
+  const parsedScopeJson = isRecord(input['parsedScopeJson'])
+    ? (input['parsedScopeJson'] as Record<string, unknown>)
+    : undefined
+
+  const waitInput = input['wait']
+  const wait =
+    isRecord(waitInput) && typeof waitInput['enabled'] === 'boolean'
+      ? {
+          enabled: waitInput['enabled'] as boolean,
+          ...(typeof waitInput['timeoutMs'] === 'number'
+            ? { timeoutMs: waitInput['timeoutMs'] as number }
+            : {}),
+        }
+      : undefined
+
+  return {
+    from: parseMessageAddress(input['from'], 'from'),
+    to: parseMessageAddress(input['to'], 'to'),
+    body: input['body'],
+    ...(mode !== undefined ? { mode } : {}),
+    ...(respondTo !== undefined ? { respondTo } : {}),
+    ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
+    ...(runtimeIntent !== undefined ? { runtimeIntent } : {}),
+    ...(createIfMissing !== undefined ? { createIfMissing } : {}),
+    ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
+    ...(wait !== undefined ? { wait } : {}),
+  }
+}
+
+function addressMatches(a: HrcMessageAddress, b: HrcMessageAddress): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'entity' && b.kind === 'entity') return a.entity === b.entity
+  if (a.kind === 'session' && b.kind === 'session') return a.sessionRef === b.sessionRef
+  return false
+}
+
+function matchesMessageFilter(record: HrcMessageRecord, filter: HrcMessageFilter): boolean {
+  if (filter.afterSeq !== undefined && record.messageSeq <= filter.afterSeq) return false
+  if (filter.from && !addressMatches(record.from, filter.from)) return false
+  if (filter.to && !addressMatches(record.to, filter.to)) return false
+  if (filter.participant) {
+    if (
+      !addressMatches(record.from, filter.participant) &&
+      !addressMatches(record.to, filter.participant)
+    ) {
+      return false
+    }
+  }
+  if (filter.thread && record.rootMessageId !== filter.thread.rootMessageId) return false
+  if (filter.kinds && !filter.kinds.includes(record.kind)) return false
+  if (filter.phases && !filter.phases.includes(record.phase)) return false
+  return true
+}
+
 function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
   const runtime = findLatestRuntime(db, hostSessionId)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
@@ -5043,6 +6152,130 @@ function findContinuitySession(db: HrcDatabase, sessionRef: string): HrcSessionR
   }
 
   return db.sessions.getByHostSessionId(continuity.activeHostSessionId)
+}
+
+function findTargetSession(db: HrcDatabase, sessionRef: string): HrcSessionRecord | null {
+  const { scopeRef, laneRef } = parseSessionRef(normalizeTargetSessionRef(sessionRef))
+
+  for (const candidateLaneRef of targetLaneCandidates(laneRef)) {
+    const continuity = db.continuities.getByKey(scopeRef, candidateLaneRef)
+    if (!continuity) {
+      continue
+    }
+
+    const session = db.sessions.getByHostSessionId(continuity.activeHostSessionId)
+    if (session) {
+      return session
+    }
+  }
+
+  for (const candidateLaneRef of targetLaneCandidates(laneRef)) {
+    const session = db.sessions.listByScopeRef(scopeRef, candidateLaneRef).at(-1)
+    if (session) {
+      return session
+    }
+  }
+
+  return null
+}
+
+function isActiveTargetSession(db: HrcDatabase, session: HrcSessionRecord): boolean {
+  const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
+  if (!continuity) {
+    return true
+  }
+
+  return continuity.activeHostSessionId === session.hostSessionId
+}
+
+function toTargetState(
+  session: HrcSessionRecord,
+  runtime: HrcTargetRuntimeView | undefined
+): HrcTargetState {
+  if (session.status !== 'active') {
+    return 'broken'
+  }
+  if (!runtime) {
+    return 'summoned'
+  }
+  if (
+    runtime.activeRunId !== undefined ||
+    runtime.status === 'busy' ||
+    runtime.status === 'starting'
+  ) {
+    return 'busy'
+  }
+
+  return 'bound'
+}
+
+function toTargetCapabilities(
+  session: HrcSessionRecord,
+  runtime: HrcTargetRuntimeView | undefined,
+  state: HrcTargetState
+): TargetCapabilityView {
+  const modesSupported = new Set<'headless' | 'nonInteractive'>()
+  if (
+    runtime?.transport === 'sdk' ||
+    session.lastAppliedIntentJson?.harness.interactive === false
+  ) {
+    modesSupported.add('nonInteractive')
+  }
+  if (
+    runtime?.transport === 'tmux' ||
+    session.lastAppliedIntentJson?.harness.interactive === true
+  ) {
+    modesSupported.add('headless')
+  }
+
+  const supported = Array.from(modesSupported)
+  return {
+    state,
+    modesSupported: supported,
+    defaultMode: supported[0] ?? 'none',
+    dmReady: supported.length > 0 || session.lastAppliedIntentJson !== undefined,
+    sendReady: runtime?.transport === 'tmux',
+    peekReady: runtime !== undefined,
+  }
+}
+
+function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRuntimeView | undefined {
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+    return undefined
+  }
+  if (runtime.transport !== 'sdk' && runtime.transport !== 'tmux') {
+    return undefined
+  }
+
+  return {
+    runtimeId: runtime.runtimeId,
+    transport: runtime.transport,
+    status: runtime.status,
+    supportsLiteralSend: runtime.transport === 'tmux',
+    supportsCapture: true,
+    activeRunId: runtime.activeRunId,
+    lastActivityAt: runtime.lastActivityAt,
+  }
+}
+
+function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTargetView {
+  const runtime = toTargetRuntimeView(findLatestSessionRuntime(db, session.hostSessionId))
+  const state = toTargetState(session, runtime)
+  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+
+  return {
+    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+    scopeRef: session.scopeRef,
+    laneRef,
+    state,
+    parsedScopeJson: session.parsedScopeJson,
+    lastAppliedIntentJson: session.lastAppliedIntentJson,
+    continuation: session.continuation,
+    activeHostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtime,
+    capabilities: toTargetCapabilities(session, runtime, state),
+  }
 }
 
 function resolveBridgeTargetSession(
@@ -5918,8 +7151,8 @@ function parseJsonValue<T>(value: string | null): T | undefined {
   return JSON.parse(value) as T
 }
 
-function encodeNdjson(event: HrcEventEnvelope): Uint8Array {
-  return new TextEncoder().encode(serializeEvent(event))
+function encodeNdjson(event: HrcEventEnvelope | HrcMessageRecord): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(event)}\n`)
 }
 
 function serializeEvent(event: HrcEventEnvelope): string {

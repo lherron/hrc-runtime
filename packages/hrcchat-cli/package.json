@@ -1,0 +1,26 @@
+{
+  "name": "hrcchat-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hrcchat: semantic directed messaging CLI for HRC",
+  "type": "module",
+  "bin": {
+    "hrcchat": "./src/main.ts"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "agent-scope": "*",
+    "hrc-core": "*",
+    "hrc-sdk": "*",
+    "spaces-config": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

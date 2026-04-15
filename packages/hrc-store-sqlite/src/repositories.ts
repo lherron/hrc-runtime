@@ -837,6 +837,26 @@ export class SessionRepository {
     return this.getByHostSessionId(hostSessionId)
   }
 
+  updateParsedScope(
+    hostSessionId: string,
+    parsedScopeJson: Record<string, unknown> | undefined,
+    updatedAt: string
+  ): HrcSessionRecord | null {
+    execute(
+      this.db,
+      `
+        UPDATE sessions
+        SET parsed_scope_json = ?, updated_at = ?
+        WHERE host_session_id = ?
+      `,
+      serializeJson(parsedScopeJson),
+      updatedAt,
+      hostSessionId
+    )
+
+    return this.getByHostSessionId(hostSessionId)
+  }
+
   updateContinuation(
     hostSessionId: string,
     continuation: HrcContinuationRef | undefined,

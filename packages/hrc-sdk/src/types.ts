@@ -1,3 +1,5 @@
+import type { HrcMessageFilter } from 'hrc-core'
+
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
   AttachRuntimeRequest,
@@ -92,4 +94,45 @@ export type LaunchListFilter = {
 
 export type AdoptRuntimeRequest = {
   runtimeId: string
+}
+
+// -- hrcchat SDK types -------------------------------------------------------
+
+// Re-export hrcchat wire DTOs from hrc-core
+export type {
+  EnsureTargetRequest,
+  EnsureTargetResponse,
+  ListTargetsRequest,
+  GetTargetRequest,
+  DispatchTurnBySelectorRequest,
+  DispatchTurnBySelectorResponse,
+  DeliverLiteralBySelectorRequest,
+  DeliverLiteralBySelectorResponse,
+  CaptureBySelectorRequest,
+  CaptureBySelectorResponse,
+  CreateMessageRequest,
+  CreateMessageResponse,
+  ListMessagesRequest,
+  ListMessagesResponse,
+  WatchMessagesRequest,
+  WaitMessageRequest,
+  WaitMessageResponse,
+  SemanticDmRequest,
+  SemanticDmResponse,
+  HrcTargetView,
+  HrcMessageRecord,
+  HrcMessageFilter,
+} from 'hrc-core'
+
+export type TargetListFilter = {
+  projectId?: string | undefined
+  lane?: string | undefined
+  discover?: boolean | undefined
+}
+
+export type WatchMessagesOptions = {
+  filter?: HrcMessageFilter | undefined
+  follow?: boolean | undefined
+  timeoutMs?: number | undefined
+  signal?: AbortSignal | undefined
 }

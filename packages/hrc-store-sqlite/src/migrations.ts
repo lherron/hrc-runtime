@@ -313,6 +313,58 @@ const phase8CommandRuntimeFieldsMigration: HrcMigration = {
   },
 }
 
+const hrcchatMessagesMigration: HrcMigration = {
+  id: '0007_hrcchat_messages',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        message_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        from_kind TEXT NOT NULL,
+        from_ref TEXT NOT NULL,
+        to_kind TEXT NOT NULL,
+        to_ref TEXT NOT NULL,
+        reply_to_message_id TEXT,
+        root_message_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        body_format TEXT NOT NULL,
+        execution_state TEXT NOT NULL,
+        execution_mode TEXT,
+        session_ref TEXT,
+        host_session_id TEXT,
+        generation INTEGER,
+        runtime_id TEXT,
+        run_id TEXT,
+        transport TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        metadata_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_to_seq
+        ON messages(to_kind, to_ref, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_from_seq
+        ON messages(from_kind, from_ref, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_root_seq
+        ON messages(root_message_id, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_reply_to_seq
+        ON messages(reply_to_message_id, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_session_seq
+        ON messages(session_ref, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_run
+        ON messages(run_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -320,6 +372,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   phase6LocalBridgesRuntimeIdIndexMigration,
   phase7ManagedAppSessionsMigration,
   phase8CommandRuntimeFieldsMigration,
+  hrcchatMessagesMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

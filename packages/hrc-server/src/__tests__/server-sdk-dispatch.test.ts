@@ -477,7 +477,7 @@ describe('SDK dispatch via dispatchTurn', () => {
     // RED GATE: This will fail until Larry implements SDK dispatch branching
     expect(res.status).toBe(200)
     const data = (await res.json()) as any
-    expect(data.status).toBe('started')
+    expect(data.status).toBe('completed')
     expect(data.runtimeId).toBeDefined()
     // The key Phase 2 assertion: transport should be 'sdk', not 'tmux'
     expect(data.transport).toBe('sdk')

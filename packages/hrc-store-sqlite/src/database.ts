@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
   AppManagedSessionRepository,
@@ -34,6 +35,7 @@ export type HrcDatabase = {
   localBridges: LocalBridgeRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
+  messages: MessageRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -75,5 +77,6 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
+    messages: new MessageRepository(sqlite),
   }
 }
