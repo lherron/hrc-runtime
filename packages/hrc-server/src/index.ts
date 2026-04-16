@@ -43,6 +43,7 @@ import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
+  HrcContinuationRef,
   HrcEventEnvelope,
   HrcFence,
   HrcHarness,
@@ -1403,6 +1404,10 @@ class HrcServerInstance implements HrcServer {
     const close = () => {
       this.followSubscribers.delete(subscriber)
       bufferedEvents.length = 0
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer)
+        keepaliveTimer = null
+      }
       try {
         controllerRef?.close()
       } catch {
@@ -1412,12 +1417,15 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null
+    const keepaliveBytes = new TextEncoder().encode('\n')
+
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         const replayEvents = this.db.events.listFromSeq(fromSeq)
         replayHighWater = replayEvents.at(-1)?.seq ?? replayHighWater
         controllerRef = controller
-        controller.enqueue(new TextEncoder().encode('\n'))
+        controller.enqueue(keepaliveBytes)
 
         for (const event of replayEvents) {
           controller.enqueue(encodeNdjson(event))
@@ -1428,6 +1436,14 @@ class HrcServerInstance implements HrcServer {
             controller.enqueue(encodeNdjson(event))
           }
         }
+
+        keepaliveTimer = setInterval(() => {
+          try {
+            controller.enqueue(keepaliveBytes)
+          } catch {
+            // Stream closed
+          }
+        }, 10_000)
 
         request.signal.addEventListener('abort', close, { once: true })
       },
@@ -1459,7 +1475,7 @@ class HrcServerInstance implements HrcServer {
       body.intent,
       body.restartStyle ?? 'reuse_pty'
     )
-    return json(toEnsureRuntimeResponse(runtime) satisfies StartRuntimeResponse)
+    return json(toStartRuntimeResponse(runtime) satisfies StartRuntimeResponse)
   }
 
   private async handleDispatchTurn(request: Request): Promise<Response> {
@@ -1499,11 +1515,17 @@ class HrcServerInstance implements HrcServer {
     } = {}
   ): Promise<Response> {
     const runId = options.runId ?? `run-${randomUUID()}`
+    const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
+
+    if (shouldUseHeadlessTransport(intent)) {
+      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId)
+    }
 
     if (shouldUseSdkTransport(intent)) {
       // Prefer live idle tmux runtime over SDK when one is available (spec §11.3.3:
       // headless for CLI/headless-capable targets, SDK only as fallback)
-      const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      const liveTmuxRuntime = latestRuntime
       const tmuxAvailableAndIdle =
         liveTmuxRuntime &&
         !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
@@ -1514,18 +1536,24 @@ class HrcServerInstance implements HrcServer {
       // Fall through to tmux/headless path with the idle runtime
     }
 
-    const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
-    const runtime =
-      options.ensureInteractiveRuntime === true &&
-      (!latestRuntime || isRuntimeUnavailableStatus(latestRuntime.status))
-        ? await this.ensureRuntimeForSession(session, intent, 'reuse_pty')
-        : requireLatestRuntime(this.db, session.hostSessionId)
+    const ensureTmuxRuntime = shouldEnsureTmuxRuntimeForDispatch(
+      latestRuntime,
+      intent,
+      options.ensureInteractiveRuntime === true
+    )
+    const runtime = ensureTmuxRuntime
+      ? await this.ensureRuntimeForSession(
+          session,
+          dispatchIntent,
+          selectEnsureRuntimeRestartStyle(latestRuntime, intent)
+        )
+      : requireLatestRuntime(this.db, session.hostSessionId)
     assertRuntimeNotBusy(this.db, runtime)
 
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const cliInvocation = await buildDispatchInvocation(intent)
+    const cliInvocation = await buildDispatchInvocation(dispatchIntent)
     const tmuxPane = requireTmuxPane(runtime)
     const launchEnv = {
       ...cliInvocation.env,
@@ -1664,6 +1692,324 @@ class HrcServerInstance implements HrcServer {
     } satisfies DispatchTurnResponse)
   }
 
+  private async handleHeadlessDispatchTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string
+  ): Promise<Response> {
+    const runtime =
+      getReusableHeadlessRuntimeForSession(
+        this.db,
+        session.hostSessionId,
+        intent.harness.provider
+      ) ?? this.createHeadlessRuntimeForSession(session, intent)
+    assertRuntimeNotBusy(this.db, runtime)
+
+    const continuation = runtime.continuation ?? session.continuation
+    const now = timestamp()
+    this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+
+    const run = this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+    })
+
+    this.db.runtimes.update(runtime.runtimeId, {
+      activeRunId: run.runId,
+      status: 'busy',
+      continuation,
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+
+    const acceptedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.accepted',
+      eventJson: {
+        promptLength: prompt.length,
+        transport: 'headless',
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    const startedAt = timestamp()
+    this.db.runs.update(runId, {
+      status: 'started',
+      startedAt,
+      updatedAt: startedAt,
+    })
+    this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
+
+    const startedEvent = this.db.events.append({
+      ts: startedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.started',
+      eventJson: {
+        transport: 'headless',
+      },
+    })
+    this.notifyEvent(startedEvent)
+
+    if (intent.harness.provider === 'anthropic') {
+      return await this.executeHeadlessSdkTurn(
+        session,
+        runtime,
+        intent,
+        prompt,
+        runId,
+        continuation
+      )
+    }
+
+    return await this.executeHeadlessCliTurn(session, runtime, intent, runId, continuation)
+  }
+
+  /**
+   * Anthropic headless: execute via agent-sdk in-process.
+   * Produces the same transport:'headless' records as the CLI path.
+   */
+  private async executeHeadlessSdkTurn(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string,
+    continuation: HrcContinuationRef | undefined
+  ): Promise<Response> {
+    const existingProvider =
+      findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
+      session.continuation?.provider
+    // runSdkTurn requires interactive=false; the outer headless path may have
+    // normalized it to true for tmux provisioning, so override here.
+    // Also default dryRun for start paths that bypass normalizeDispatchIntent.
+    const sdkIntent = {
+      ...intent,
+      placement: {
+        ...intent.placement,
+        dryRun: intent.placement.dryRun ?? true,
+      },
+      harness: { ...intent.harness, interactive: false as const },
+    }
+    let chunkSeq = 1
+    const result = await runSdkTurn({
+      intent: sdkIntent,
+      hostSessionId: session.hostSessionId,
+      runId,
+      runtimeId: runtime.runtimeId,
+      prompt,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      existingProvider,
+      continuation,
+      onHrcEvent: (event) => {
+        const appended = this.db.events.append(event)
+        this.notifyEvent(appended)
+        this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+      },
+      onBuffer: (text) => {
+        this.db.runtimeBuffers.append({
+          runtimeId: runtime.runtimeId,
+          chunkSeq,
+          text,
+          createdAt: timestamp(),
+        })
+        chunkSeq += 1
+      },
+    })
+
+    const completedAt = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: result.result.success ? 'completed' : 'failed',
+      completedAt,
+      updatedAt: completedAt,
+      ...(!result.result.success
+        ? {
+            errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+            errorMessage: result.result.error?.message ?? 'headless sdk turn failed',
+          }
+        : {}),
+    })
+
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'ready',
+      lastActivityAt: completedAt,
+      updatedAt: completedAt,
+      harnessSessionJson: result.harnessSessionJson,
+      continuation: result.continuation,
+    })
+    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+
+    if (result.continuation) {
+      this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
+    }
+
+    const completedEvent = this.db.events.append({
+      ts: completedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'turn.completed',
+      eventJson: {
+        success: result.result.success,
+        transport: 'headless',
+      },
+    })
+    this.notifyEvent(completedEvent)
+
+    if (!result.result.success) {
+      throw new HrcRuntimeUnavailableError(
+        result.result.error?.message ?? 'headless sdk turn failed',
+        { runtimeId: runtime.runtimeId, runId }
+      )
+    }
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      status: 'completed',
+      supportsInFlightInput: false,
+    } satisfies DispatchTurnResponse)
+  }
+
+  /**
+   * OpenAI headless: execute via exec.ts CLI subprocess.
+   * Continuation is persisted by the launch wrapper callback.
+   */
+  private async executeHeadlessCliTurn(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    intent: HrcRuntimeIntent,
+    runId: string,
+    continuation: HrcContinuationRef | undefined
+  ): Promise<Response> {
+    const launchId = `launch-${randomUUID()}`
+    const launchesDir = join(this.options.runtimeRoot, 'launches')
+    const cliInvocation = await buildDispatchInvocation(intent, { continuation })
+    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchArtifact = {
+      launchId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      runId,
+      harness: runtime.harness,
+      provider: runtime.provider,
+      argv: cliInvocation.argv,
+      env: cliInvocation.env,
+      cwd: cliInvocation.cwd,
+      callbackSocketPath: this.options.socketPath,
+      spoolDir: this.options.spoolDir,
+      correlationEnv: extractCorrelationEnv(cliInvocation.env),
+      interactionMode: cliInvocation.interactionMode,
+      ioMode: cliInvocation.ioMode,
+    } satisfies Parameters<typeof writeLaunchArtifact>[0]
+
+    await writeLaunchArtifact(launchArtifact, launchesDir)
+    writeServerLog(
+      'INFO',
+      'launch.dispatch.prepared',
+      buildLaunchLogDetails(launchArtifactPath, launchArtifact)
+    )
+
+    const now = timestamp()
+    this.db.runtimes.update(runtime.runtimeId, {
+      launchId,
+      updatedAt: now,
+    })
+    this.db.launches.insert({
+      launchId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      harness: runtime.harness,
+      provider: runtime.provider,
+      launchArtifactPath,
+      continuation,
+      status: 'accepted',
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        join(WORKSPACE_ROOT, 'packages/hrc-server/src/launch/exec.ts'),
+        '--launch-file',
+        launchArtifactPath,
+      ],
+      {
+        cwd: WORKSPACE_ROOT,
+        stdin: 'ignore',
+        stdout: 'ignore',
+        stderr: 'pipe',
+        env: process.env,
+      }
+    )
+    const stderrTextPromise = new Response(proc.stderr).text().catch(() => '')
+    const exitCode = await proc.exited
+    const stderrText = await stderrTextPromise
+    if (exitCode !== 0) {
+      throw new HrcRuntimeUnavailableError('headless turn dispatch failed', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        launchId,
+        exitCode,
+        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
+      })
+    }
+
+    const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
+    const refreshedSession = requireSession(this.db, session.hostSessionId)
+    if (!(refreshedRuntime.continuation?.key ?? refreshedSession.continuation?.key)) {
+      throw new HrcRuntimeUnavailableError('headless turn dispatch did not persist continuation', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        launchId,
+        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
+      })
+    }
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      status: 'completed',
+      supportsInFlightInput: false,
+    } satisfies DispatchTurnResponse)
+  }
+
   private async handleInFlightInput(request: Request): Promise<Response> {
     const body = parseInFlightInputRequest(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
@@ -1770,6 +2116,7 @@ class HrcServerInstance implements HrcServer {
     return json(
       await this.rotateSessionContext(session, {
         relaunch: body.relaunch === true,
+        dropContinuation: body.dropContinuation === true,
         ...(managed ? { managed } : {}),
       })
     )
@@ -1783,15 +2130,15 @@ class HrcServerInstance implements HrcServer {
 
   private async handleAttach(url: URL): Promise<Response> {
     const runtimeId = parseRuntimeIdQuery(url)
-    const runtime = await this.reconcileTmuxRuntimeLiveness(requireRuntime(this.db, runtimeId))
-    this.assertTmuxRuntimeStillLive(runtime)
+    const runtime = await this.reconcileTmuxRuntimeLiveness(requireKnownRuntime(this.db, runtimeId))
     return await this.attachRuntimeEffectfully(runtime)
   }
 
   private async handleAttachRuntime(request: Request): Promise<Response> {
     const body = parseAttachRuntimeRequest(await parseJsonBody(request))
-    const runtime = await this.reconcileTmuxRuntimeLiveness(requireRuntime(this.db, body.runtimeId))
-    this.assertTmuxRuntimeStillLive(runtime)
+    const runtime = await this.reconcileTmuxRuntimeLiveness(
+      requireKnownRuntime(this.db, body.runtimeId)
+    )
     return await this.attachRuntimeEffectfully(runtime)
   }
 
@@ -2275,7 +2622,7 @@ class HrcServerInstance implements HrcServer {
 
   private async captureRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
     const text =
-      runtime.transport === 'sdk'
+      runtime.transport === 'sdk' || runtime.transport === 'headless'
         ? this.db.runtimeBuffers
             .listByRuntimeId(runtime.runtimeId)
             .map((chunk) => chunk.text)
@@ -2316,27 +2663,6 @@ class HrcServerInstance implements HrcServer {
     return requireRuntime(this.db, runtime.runtimeId)
   }
 
-  private async resolveRuntimeStatusAfterLaunchExit(runtime: HrcRuntimeSnapshot): Promise<{
-    status: HrcRuntimeSnapshot['status']
-    sessionTarget?: string | undefined
-  }> {
-    if (runtime.transport !== 'tmux' || isRuntimeUnavailableStatus(runtime.status)) {
-      return { status: runtime.status }
-    }
-
-    const sessionTarget = getObservedTmuxSessionName(runtime)
-    if (!sessionTarget) {
-      return { status: 'ready' }
-    }
-
-    const inspected = await this.tmux.inspectSession(sessionTarget)
-    if (inspected) {
-      return { status: 'ready', sessionTarget }
-    }
-
-    return { status: 'dead', sessionTarget }
-  }
-
   private assertTmuxRuntimeStillLive(runtime: HrcRuntimeSnapshot): void {
     if (runtime.transport === 'tmux' && isRuntimeUnavailableStatus(runtime.status)) {
       throw new HrcRuntimeUnavailableError('tmux runtime is no longer live', {
@@ -2358,12 +2684,36 @@ class HrcServerInstance implements HrcServer {
     }
 
     const operation = (async () => {
-      const existingRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      const existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
+      const normalizedIntent = normalizeRuntimeProvisionIntent(intent)
+      if (shouldUseHeadlessTransport(intent)) {
+        const now = timestamp()
+        this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
+        const reusableRuntime = getReusableHeadlessRuntimeForSession(
+          this.db,
+          session.hostSessionId,
+          intent.harness.provider
+        )
+        if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
+          return reusableRuntime
+        }
+
+        const runtime =
+          reusableRuntime ?? this.createHeadlessRuntimeForSession(session, normalizedIntent)
+        if (runtime.continuation?.key ?? session.continuation?.key) {
+          return requireRuntime(this.db, runtime.runtimeId)
+        }
+
+        return await this.runHeadlessStartLaunch(session, runtime, normalizedIntent)
+      }
+
       if (
         existingRuntime &&
         !isRuntimeUnavailableStatus(existingRuntime.status) &&
-        !requiresHeadlessCodexStart(existingRuntime, intent) &&
-        (existingRuntime.status === 'busy' || existingRuntime.status === 'starting')
+        !requiresHeadlessStart(intent) &&
+        (existingRuntime.status === 'busy' ||
+          existingRuntime.status === 'starting' ||
+          hasLiveInteractiveLaunch(this.db, existingRuntime))
       ) {
         return existingRuntime
       }
@@ -2371,15 +2721,15 @@ class HrcServerInstance implements HrcServer {
       if (
         existingRuntime &&
         !isRuntimeUnavailableStatus(existingRuntime.status) &&
-        requiresHeadlessCodexStart(existingRuntime, intent) &&
+        requiresHeadlessStart(intent) &&
         (existingRuntime.continuation?.key ?? session.continuation?.key)
       ) {
         return existingRuntime
       }
 
-      const runtime = await this.ensureRuntimeForSession(session, intent, restartStyle)
-      if (!requiresHeadlessCodexStart(runtime, intent)) {
-        return await this.enqueueInteractiveStartLaunch(session, runtime, intent)
+      const runtime = await this.ensureRuntimeForSession(session, normalizedIntent, restartStyle)
+      if (!requiresHeadlessStart(intent)) {
+        return await this.enqueueInteractiveStartLaunch(session, runtime, normalizedIntent)
       }
 
       const refreshedSession = requireSession(this.db, session.hostSessionId)
@@ -2387,7 +2737,7 @@ class HrcServerInstance implements HrcServer {
         return requireRuntime(this.db, runtime.runtimeId)
       }
 
-      return await this.runHeadlessStartLaunch(refreshedSession, runtime, intent)
+      return await this.runHeadlessStartLaunch(refreshedSession, runtime, normalizedIntent)
     })().finally(() => {
       this.runtimeStartOperations.delete(session.hostSessionId)
     })
@@ -2397,7 +2747,7 @@ class HrcServerInstance implements HrcServer {
   }
 
   private attachRuntime(runtime: HrcRuntimeSnapshot): Response {
-    if (runtime.transport === 'sdk') {
+    if (runtime.transport !== 'tmux') {
       throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
         runtimeId: runtime.runtimeId,
         transport: runtime.transport,
@@ -2419,52 +2769,95 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async attachRuntimeEffectfully(runtime: HrcRuntimeSnapshot): Promise<Response> {
+    if (runtime.transport === 'sdk') {
+      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
+        runtimeId: runtime.runtimeId,
+        transport: runtime.transport,
+      })
+    }
+
     const session = requireSession(this.db, runtime.hostSessionId)
     const startOperation = this.runtimeStartOperations.get(session.hostSessionId)
     if (startOperation) {
       await startOperation
     }
 
-    const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
+    const refreshedRuntime = requireKnownRuntime(this.db, runtime.runtimeId)
     const existingOperation = this.runtimeAttachOperations.get(refreshedRuntime.runtimeId)
     if (existingOperation) {
       return await existingOperation
     }
 
-    if (!requiresInteractiveCodexAttach(refreshedRuntime)) {
-      return this.attachRuntime(refreshedRuntime)
-    }
-
-    if (refreshedRuntime.harnessSessionJson?.['attachPrepared'] === true) {
-      return this.attachRuntime(refreshedRuntime)
-    }
-
-    if (
-      (refreshedRuntime.status === 'busy' || refreshedRuntime.status === 'starting') &&
-      refreshedRuntime.launchId
-    ) {
-      return this.attachRuntime(refreshedRuntime)
-    }
-
     const operation = (async () => {
-      const latestRuntime = requireRuntime(this.db, refreshedRuntime.runtimeId)
-      if (
-        (latestRuntime.status === 'busy' || latestRuntime.status === 'starting') &&
-        latestRuntime.launchId
-      ) {
+      const latestRuntime = requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
+      if (latestRuntime.transport === 'tmux' && !isRuntimeUnavailableStatus(latestRuntime.status)) {
         return this.attachRuntime(latestRuntime)
+      }
+      if (latestRuntime.transport === 'tmux' && latestRuntime.provider !== 'openai') {
+        this.assertTmuxRuntimeStillLive(latestRuntime)
       }
 
       const effectiveContinuation = latestRuntime.continuation ?? session.continuation
       if (!effectiveContinuation?.key) {
-        // Legacy/openly interactive codex runtimes may already have a live TUI in tmux
-        // without a stored continuation. When tmux is still live, attaching directly is
-        // better than failing the operator on a missing resume token.
-        return this.attachRuntime(latestRuntime)
+        throw new HrcRuntimeUnavailableError('headless runtime is missing continuation', {
+          runtimeId: latestRuntime.runtimeId,
+          hostSessionId: latestRuntime.hostSessionId,
+        })
       }
 
-      await this.enqueueAttachLaunch(session, latestRuntime, effectiveContinuation)
-      return this.attachRuntime(requireRuntime(this.db, latestRuntime.runtimeId))
+      const latestTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      if (
+        latestTmuxRuntime &&
+        !isRuntimeUnavailableStatus(latestTmuxRuntime.status) &&
+        latestTmuxRuntime.provider === latestRuntime.provider &&
+        (latestTmuxRuntime.harnessSessionJson?.['attachPrepared'] === true ||
+          latestTmuxRuntime.status === 'busy' ||
+          latestTmuxRuntime.status === 'starting' ||
+          hasLiveInteractiveLaunch(this.db, latestTmuxRuntime))
+      ) {
+        return this.attachRuntime(latestTmuxRuntime)
+      }
+
+      const latestIntent =
+        session.lastAppliedIntentJson ??
+        ({
+          placement: {
+            agentRoot: process.cwd(),
+            projectRoot: process.cwd(),
+            cwd: process.cwd(),
+            runMode: 'task',
+            bundle: { kind: 'agent-default' },
+            dryRun: true,
+          },
+          harness: {
+            provider: latestRuntime.provider,
+            interactive: true,
+          },
+          execution: {
+            preferredMode: 'interactive',
+          },
+        } satisfies HrcRuntimeIntent)
+      const interactiveIntent = {
+        ...latestIntent,
+        harness: {
+          ...latestIntent.harness,
+          interactive: true,
+        },
+        execution: {
+          ...latestIntent.execution,
+          preferredMode: 'interactive',
+        },
+      } satisfies HrcRuntimeIntent
+
+      const tmuxRuntime = await this.ensureRuntimeForSession(
+        session,
+        interactiveIntent,
+        selectEnsureRuntimeRestartStyle(latestTmuxRuntime, interactiveIntent)
+      )
+      if (tmuxRuntime.harnessSessionJson?.['attachPrepared'] !== true) {
+        await this.enqueueAttachLaunch(session, tmuxRuntime, effectiveContinuation)
+      }
+      return this.attachRuntime(requireKnownRuntime(this.db, tmuxRuntime.runtimeId))
     })().finally(() => {
       this.runtimeAttachOperations.delete(refreshedRuntime.runtimeId)
     })
@@ -2516,7 +2909,7 @@ class HrcServerInstance implements HrcServer {
       harness: runtime.harness,
       provider: runtime.provider,
       launchArtifactPath,
-      tmuxJson: runtime.tmuxJson,
+      continuation: runtime.continuation ?? session.continuation,
       status: 'accepted',
       createdAt: now,
       updatedAt: now,
@@ -2524,6 +2917,7 @@ class HrcServerInstance implements HrcServer {
     this.db.runtimes.update(runtime.runtimeId, {
       launchId,
       status: 'starting',
+      continuation: runtime.continuation ?? session.continuation,
       updatedAt: now,
       lastActivityAt: now,
     })
@@ -2551,6 +2945,114 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async runHeadlessStartLaunch(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    intent: HrcRuntimeIntent
+  ): Promise<HrcRuntimeSnapshot> {
+    if (intent.harness.provider === 'anthropic') {
+      return await this.runHeadlessSdkStartLaunch(session, runtime, intent)
+    }
+
+    return await this.runHeadlessCliStartLaunch(session, runtime, intent)
+  }
+
+  /** Anthropic headless start: run an initial SDK turn to establish continuation. */
+  private async runHeadlessSdkStartLaunch(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    intent: HrcRuntimeIntent
+  ): Promise<HrcRuntimeSnapshot> {
+    const now = timestamp()
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'starting',
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+
+    const prompt = intent.initialPrompt ?? 'hello'
+    const runId = `run-${randomUUID()}`
+    const existingProvider =
+      findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
+      session.continuation?.provider
+
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+    })
+    this.db.runtimes.update(runtime.runtimeId, {
+      activeRunId: runId,
+      updatedAt: now,
+    })
+
+    // runSdkTurn requires interactive=false and the placement needs dryRun
+    // defaulted (normalizeDispatchIntent handles this for turns but start
+    // bypasses that path).
+    const sdkIntent = {
+      ...intent,
+      placement: {
+        ...intent.placement,
+        dryRun: intent.placement.dryRun ?? true,
+      },
+      harness: { ...intent.harness, interactive: false as const },
+    }
+    const result = await runSdkTurn({
+      intent: sdkIntent,
+      hostSessionId: session.hostSessionId,
+      runId,
+      runtimeId: runtime.runtimeId,
+      prompt,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      existingProvider,
+      continuation: session.continuation,
+      onHrcEvent: (event) => {
+        const appended = this.db.events.append(event)
+        this.notifyEvent(appended)
+        this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+      },
+    })
+
+    const completedAt = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: result.result.success ? 'completed' : 'failed',
+      completedAt,
+      updatedAt: completedAt,
+    })
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'ready',
+      lastActivityAt: completedAt,
+      updatedAt: completedAt,
+      harnessSessionJson: result.harnessSessionJson,
+      continuation: result.continuation,
+    })
+    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+
+    if (result.continuation) {
+      this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
+    }
+
+    const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
+    if (!(refreshedRuntime.continuation?.key ?? session.continuation?.key)) {
+      throw new HrcRuntimeUnavailableError('headless runtime start did not persist continuation', {
+        runtimeId: runtime.runtimeId,
+        provider: runtime.provider,
+      })
+    }
+
+    return refreshedRuntime
+  }
+
+  /** OpenAI headless start: run exec.ts CLI subprocess. */
+  private async runHeadlessCliStartLaunch(
     session: HrcSessionRecord,
     runtime: HrcRuntimeSnapshot,
     intent: HrcRuntimeIntent
@@ -2644,6 +3146,51 @@ class HrcServerInstance implements HrcServer {
     }
 
     return refreshedRuntime
+  }
+
+  private createHeadlessRuntimeForSession(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent
+  ): HrcRuntimeSnapshot {
+    const now = timestamp()
+    this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+
+    const runtime = this.db.runtimes.insert({
+      runtimeId: `rt-${randomUUID()}`,
+      runtimeKind: 'harness',
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      harness: deriveInteractiveHarness(intent.harness.provider),
+      provider: intent.harness.provider,
+      status: 'ready',
+      continuation: session.continuation,
+      supportsInflightInput: false,
+      adopted: false,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const event = this.db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hrc',
+      eventKind: 'runtime.created',
+      eventJson: {
+        transport: 'headless',
+        harness: runtime.harness,
+      },
+    })
+    this.notifyEvent(event)
+
+    return runtime
   }
 
   private async enqueueAttachLaunch(
@@ -2953,6 +3500,7 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     options: {
       relaunch: boolean
+      dropContinuation?: boolean | undefined
       managed?: AppManagedSessionRecord | undefined
       relaunchSpec?: HrcAppSessionSpec | undefined
       reason?: string | undefined
@@ -2986,7 +3534,9 @@ class HrcServerInstance implements HrcServer {
       ...(session.lastAppliedIntentJson
         ? { lastAppliedIntentJson: session.lastAppliedIntentJson }
         : {}),
-      ...(session.continuation ? { continuation: session.continuation } : {}),
+      ...(!options.dropContinuation && session.continuation
+        ? { continuation: session.continuation }
+        : {}),
     }
 
     const invalidated = await this.invalidateHostContext(session.hostSessionId, reason)
@@ -3022,6 +3572,7 @@ class HrcServerInstance implements HrcServer {
         bridgesClosed: invalidated.bridgesClosed,
         surfacesUnbound: invalidated.surfacesUnbound,
         runtimesTerminated: invalidated.runtimesTerminated,
+        dropContinuation: options.dropContinuation === true,
         ...(options.managed
           ? {
               appId: options.managed.appId,
@@ -3275,10 +3826,10 @@ class HrcServerInstance implements HrcServer {
     if (launch.runtimeId) {
       const runtime = requireRuntime(this.db, launch.runtimeId)
       const activeRunId = runtime.activeRunId
-      const nextStatus = await this.resolveRuntimeStatusAfterLaunchExit(runtime)
       this.db.runtimes.updateRunId(launch.runtimeId, undefined, now)
+      const nextStatus = runtime.transport === 'headless' ? 'ready' : 'terminated'
       this.db.runtimes.update(launch.runtimeId, {
-        status: nextStatus.status,
+        status: nextStatus,
         updatedAt: now,
         lastActivityAt: now,
       })
@@ -3295,17 +3846,6 @@ class HrcServerInstance implements HrcServer {
               }),
         })
       }
-      if (nextStatus.status === 'dead') {
-        this.notifyEvent(
-          this.appendEvent(session, 'runtime.dead', {
-            runtimeId: runtime.runtimeId,
-            sessionTarget: nextStatus.sessionTarget,
-            reason: 'tmux_session_missing_after_launch_exit',
-            priorStatus: runtime.status,
-            launchId,
-          })
-        )
-      }
     }
     this.notifyEvent(event)
     return json({ ok: true })
@@ -3313,23 +3853,10 @@ class HrcServerInstance implements HrcServer {
 
   private async handleHookIngest(request: Request): Promise<Response> {
     const envelope = parseHookEnvelope(await parseJsonBody(request))
-    const session = requireSession(this.db, envelope.hostSessionId)
-    const event = this.db.events.append({
-      ts: timestamp(),
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: envelope.generation,
-      runtimeId: envelope.runtimeId,
-      source: 'hook',
-      eventKind: 'hook.ingested',
-      eventJson: {
-        launchId: envelope.launchId,
-        hookData: envelope.hookData,
-      },
-    })
-
-    this.notifyEvent(event)
+    const events = applyHookLifecycleEnvelope(this.db, envelope, { replayed: false })
+    for (const event of events) {
+      this.notifyEvent(event)
+    }
     return json({ ok: true })
   }
 
@@ -3486,19 +4013,19 @@ class HrcServerInstance implements HrcServer {
       }
 
       if (session) {
-        // If the target has a busy interactive tmux runtime, deliver via
+        // If the target has a live interactive tmux runtime, deliver via
         // literal send-keys instead of dispatching a new turn. This lets dm
-        // reach agents that are mid-conversation in an interactive session.
-        const busyTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
-        if (
-          busyTmuxRuntime &&
-          !isRuntimeUnavailableStatus(busyTmuxRuntime.status) &&
-          busyTmuxRuntime.activeRunId !== undefined
-        ) {
+        // reach agents whether they are mid-turn or idle in an interactive session.
+        // Falls back to SDK dispatch if tmux delivery fails (e.g. pane gone).
+        let tmuxDelivered = false
+        const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+        if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
           try {
-            const paneId = requireTmuxPane(busyTmuxRuntime).paneId
+            const paneId = requireTmuxPane(liveTmuxRuntime).paneId
             const payload = formatDmPayload(body.from, body.to, body.body, record.messageSeq)
             await this.tmux.sendLiteral(paneId, payload)
+            // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
+            await Bun.sleep(200)
             await this.tmux.sendEnter(paneId)
             this.db.messages.updateExecution(record.messageId, {
               state: 'completed',
@@ -3506,21 +4033,20 @@ class HrcServerInstance implements HrcServer {
               sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
               hostSessionId: session.hostSessionId,
               generation: session.generation,
-              runtimeId: busyTmuxRuntime.runtimeId,
+              runtimeId: liveTmuxRuntime.runtimeId,
               transport: 'tmux',
             })
+            tmuxDelivered = true
           } catch (err) {
             const errorMessage = err instanceof Error ? err.message : String(err)
             writeServerLog('WARN', 'semantic_dm.literal_delivery_failed', {
               messageId: record.messageId,
               error: errorMessage,
             })
-            this.db.messages.updateExecution(record.messageId, {
-              state: 'failed',
-              errorMessage,
-            })
           }
-        } else {
+        }
+
+        if (!tmuxDelivered) {
           const result = await this.executeSemanticTurn(session, body, record, respondTo)
           execution = result.execution
           reply = result.reply
@@ -3570,7 +4096,7 @@ class HrcServerInstance implements HrcServer {
         runId,
       })
       const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-      const transport = turnBody.transport as 'sdk' | 'tmux'
+      const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
 
       let finalOutput: string | undefined
       if (transport === 'sdk') {
@@ -3849,33 +4375,35 @@ class HrcServerInstance implements HrcServer {
       const inspected = await this.tmux.inspectSession(getTmuxSessionName(existingRuntime))
       if (inspected) {
         tmuxPane = inspected
-        const now = timestamp()
-        runtime =
-          this.db.runtimes.update(existingRuntime.runtimeId, {
-            runtimeKind: 'harness',
-            status: 'ready',
-            tmuxJson: toTmuxJson(tmuxPane),
-            updatedAt: now,
-            lastActivityAt: now,
-          }) ?? existingRuntime
-        eventKind = 'runtime.ensured'
-        this.db.sessions.updateIntent(session.hostSessionId, intent, now)
-        const event = this.db.events.append({
-          ts: now,
-          hostSessionId: session.hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: session.generation,
-          runtimeId: runtime.runtimeId,
-          source: 'hrc',
-          eventKind,
-          eventJson: {
-            restartStyle,
-            tmux: simplifyTmuxJson(runtime.tmuxJson),
-          },
-        })
-        this.notifyEvent(event)
-        return runtime
+        if (!isRuntimeUnavailableStatus(existingRuntime.status)) {
+          const now = timestamp()
+          runtime =
+            this.db.runtimes.update(existingRuntime.runtimeId, {
+              runtimeKind: 'harness',
+              status: 'ready',
+              tmuxJson: toTmuxJson(tmuxPane),
+              updatedAt: now,
+              lastActivityAt: now,
+            }) ?? existingRuntime
+          eventKind = 'runtime.ensured'
+          this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+          const event = this.db.events.append({
+            ts: now,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runtimeId: runtime.runtimeId,
+            source: 'hrc',
+            eventKind,
+            eventJson: {
+              restartStyle,
+              tmux: simplifyTmuxJson(runtime.tmuxJson),
+            },
+          })
+          this.notifyEvent(event)
+          return runtime
+        }
       }
       tmuxPane = await this.tmux.ensurePane(session.hostSessionId, restartStyle)
     } else {
@@ -4341,7 +4869,7 @@ class HrcServerInstance implements HrcServer {
     const lines = typeof body['lines'] === 'number' ? body['lines'] : undefined
     let text: string
 
-    if (runtime.transport === 'sdk') {
+    if (runtime.transport === 'sdk' || runtime.transport === 'headless') {
       text = this.db.runtimeBuffers
         .listByRuntimeId(runtime.runtimeId)
         .map((chunk) => chunk.text)
@@ -4514,7 +5042,7 @@ class HrcServerInstance implements HrcServer {
       { runId }
     )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-    const transport = turnBody.transport as 'sdk' | 'tmux'
+    const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
 
     let finalOutput: string | undefined
     if (transport === 'sdk') {
@@ -5255,22 +5783,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
 
   if (endpoint === '/v1/internal/hooks/ingest') {
     const envelope = parseHookEnvelope(replayPayload)
-    const session = requireSession(db, envelope.hostSessionId)
-    db.events.append({
-      ts: timestamp(),
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: envelope.generation,
-      runtimeId: envelope.runtimeId,
-      source: 'hook',
-      eventKind: 'hook.ingested',
-      eventJson: {
-        launchId: envelope.launchId,
-        hookData: envelope.hookData,
-        replayed: true,
-      },
-    })
+    applyHookLifecycleEnvelope(db, envelope, { replayed: true })
     return
   }
 
@@ -5372,6 +5885,19 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
 
 function isOrphanableLaunchStatus(status: string): boolean {
   return status === 'started' || status === 'wrapper_started' || status === 'child_started'
+}
+
+function hasLiveInteractiveLaunch(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
+  if (runtime.transport !== 'tmux') return false
+  if (!runtime.launchId) return false
+
+  const launch = db.launches.getByLaunchId(runtime.launchId)
+  if (!launch) return false
+  if (launch.runtimeId !== runtime.runtimeId) return false
+  if (!isOrphanableLaunchStatus(launch.status)) return false
+
+  const trackedPid = getTrackedLaunchPid(launch)
+  return trackedPid === undefined || isLiveProcess(trackedPid)
 }
 
 function getTrackedLaunchPid(launch: HrcLaunchRecord): number | undefined {
@@ -5524,26 +6050,66 @@ function deriveSdkHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] 
   return resolveHarnessFrontendForProvider(provider, 'sdk') ?? 'agent-sdk'
 }
 
+function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
+  const preferredMode = intent.execution?.preferredMode
+  return preferredMode === 'headless' || preferredMode === 'nonInteractive'
+}
+
 function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
+  if (shouldUseHeadlessTransport(intent)) {
+    return false
+  }
+
   return (
     intent.harness.interactive === false || intent.execution?.preferredMode === 'nonInteractive'
   )
 }
 
-function requiresHeadlessCodexStart(
-  runtime: HrcRuntimeSnapshot,
-  intent: HrcRuntimeIntent
-): boolean {
-  const preferredMode = intent.execution?.preferredMode
-  return (
-    runtime.transport === 'tmux' &&
-    runtime.provider === 'openai' &&
-    (preferredMode === 'headless' || preferredMode === 'nonInteractive')
-  )
+function normalizeRuntimeProvisionIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {
+  if (!shouldUseHeadlessTransport(intent) || intent.harness.interactive === true) {
+    return intent
+  }
+
+  return {
+    ...intent,
+    harness: {
+      ...intent.harness,
+      interactive: true,
+    },
+  }
 }
 
-function requiresInteractiveCodexAttach(runtime: HrcRuntimeSnapshot): boolean {
-  return runtime.transport === 'tmux' && runtime.provider === 'openai'
+function shouldEnsureTmuxRuntimeForDispatch(
+  runtime: HrcRuntimeSnapshot | null,
+  intent: HrcRuntimeIntent,
+  ensureInteractiveRuntime: boolean
+): boolean {
+  if (!ensureInteractiveRuntime && !shouldUseHeadlessTransport(intent)) {
+    return false
+  }
+
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+    return true
+  }
+
+  return runtime.transport !== 'tmux' || runtime.provider !== intent.harness.provider
+}
+
+function selectEnsureRuntimeRestartStyle(
+  runtime: HrcRuntimeSnapshot | null,
+  intent: HrcRuntimeIntent
+): RestartStyle {
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+    return 'reuse_pty'
+  }
+
+  return runtime.transport === 'tmux' && runtime.provider === intent.harness.provider
+    ? 'reuse_pty'
+    : 'fresh_pty'
+}
+
+function requiresHeadlessStart(intent: HrcRuntimeIntent): boolean {
+  return shouldUseHeadlessTransport(intent)
 }
 
 function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
@@ -5634,11 +6200,40 @@ function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResp
   }
 }
 
+function toStartRuntimeResponse(runtime: HrcRuntimeSnapshot): StartRuntimeResponse {
+  if (runtime.transport === 'headless') {
+    return {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      transport: 'headless',
+      status: runtime.status,
+      supportsInFlightInput: runtime.supportsInflightInput,
+    }
+  }
+
+  return toEnsureRuntimeResponse(runtime)
+}
+
 function findLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot | null {
   const runtimes = db.runtimes
     .listByHostSessionId(hostSessionId)
     .filter((runtime) => runtime.transport === 'tmux')
   return runtimes.at(-1) ?? null
+}
+
+function getReusableHeadlessRuntimeForSession(
+  db: HrcDatabase,
+  hostSessionId: string,
+  provider: HrcProvider
+): HrcRuntimeSnapshot | null {
+  const runtime = db.runtimes
+    .listByHostSessionId(hostSessionId)
+    .filter((candidate) => candidate.transport === 'headless' && candidate.provider === provider)
+    .at(-1)
+  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
+    return null
+  }
+  return runtime
 }
 
 function findLatestSessionRuntime(
@@ -6155,6 +6750,10 @@ function toTargetState(
     return 'busy'
   }
 
+  if (runtime.transport === 'headless') {
+    return 'summoned'
+  }
+
   return 'bound'
 }
 
@@ -6172,6 +6771,7 @@ function toTargetCapabilities(
   }
   if (
     runtime?.transport === 'tmux' ||
+    runtime?.transport === 'headless' ||
     session.lastAppliedIntentJson?.harness.interactive === true
   ) {
     modesSupported.add('headless')
@@ -6184,7 +6784,7 @@ function toTargetCapabilities(
     defaultMode: supported[0] ?? 'none',
     dmReady: supported.length > 0 || session.lastAppliedIntentJson !== undefined,
     sendReady: runtime?.transport === 'tmux',
-    peekReady: runtime !== undefined,
+    peekReady: runtime !== undefined && runtime.transport !== 'headless',
   }
 }
 
@@ -6192,7 +6792,11 @@ function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRunti
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     return undefined
   }
-  if (runtime.transport !== 'sdk' && runtime.transport !== 'tmux') {
+  if (
+    runtime.transport !== 'sdk' &&
+    runtime.transport !== 'tmux' &&
+    runtime.transport !== 'headless'
+  ) {
     return undefined
   }
 
@@ -6201,7 +6805,7 @@ function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRunti
     transport: runtime.transport,
     status: runtime.status,
     supportsLiteralSend: runtime.transport === 'tmux',
-    supportsCapture: true,
+    supportsCapture: runtime.transport !== 'headless',
     activeRunId: runtime.activeRunId,
     lastActivityAt: runtime.lastActivityAt,
   }
@@ -6450,7 +7054,7 @@ function buildStaleLaunchCallbackRejection(
   db: HrcDatabase,
   session: HrcSessionRecord,
   launchId: string,
-  callbackKind: 'child_started' | 'continuation' | 'exited' | 'wrapper_started',
+  callbackKind: 'child_started' | 'continuation' | 'exited' | 'hook_ingest' | 'wrapper_started',
   replayed = false
 ): { event: HrcEventEnvelope; error: HrcConflictError } | null {
   const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
@@ -6558,6 +7162,98 @@ function buildStaleLaunchCallbackRejection(
       activeLaunchId: runtime.launchId,
     }),
   }
+}
+
+function applyHookLifecycleEnvelope(
+  db: HrcDatabase,
+  envelope: HookEnvelope,
+  options: { replayed: boolean }
+): HrcEventEnvelope[] {
+  const events: HrcEventEnvelope[] = []
+  const session = requireSession(db, envelope.hostSessionId)
+  const now = timestamp()
+
+  events.push(
+    db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: envelope.generation,
+      runtimeId: envelope.runtimeId,
+      source: 'hook',
+      eventKind: 'hook.ingested',
+      eventJson: {
+        launchId: envelope.launchId,
+        hookData: envelope.hookData,
+        ...(options.replayed ? { replayed: true } : {}),
+      },
+    })
+  )
+
+  const rejection = buildStaleLaunchCallbackRejection(
+    db,
+    session,
+    envelope.launchId,
+    'hook_ingest',
+    options.replayed
+  )
+  if (rejection) {
+    events.push(rejection.event)
+    return events
+  }
+
+  if (!envelope.runtimeId) return events
+
+  const runtime = db.runtimes.getByRuntimeId(envelope.runtimeId)
+  if (!runtime) return events
+  if (runtime.transport !== 'tmux') return events
+  if (isRuntimeUnavailableStatus(runtime.status)) return events
+  if (runtime.activeRunId !== undefined) return events
+
+  const kind = isRecord(envelope.hookData)
+    ? (envelope.hookData as Record<string, unknown>)['kind']
+    : undefined
+  const nextStatus =
+    kind === 'runtime.ready'
+      ? 'ready'
+      : kind === 'turn.started'
+        ? 'busy'
+        : kind === 'turn.stopped'
+          ? 'ready'
+          : undefined
+
+  if (!nextStatus) return events
+
+  db.runtimes.update(runtime.runtimeId, {
+    status: nextStatus,
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+
+  events.push(
+    db.events.append({
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: envelope.generation,
+      runtimeId: runtime.runtimeId,
+      source: 'hook',
+      eventKind:
+        kind === 'runtime.ready'
+          ? 'hook.runtime_ready'
+          : kind === 'turn.started'
+            ? 'hook.turn_started'
+            : 'hook.turn_stopped',
+      eventJson: {
+        launchId: envelope.launchId,
+        ...(options.replayed ? { replayed: true } : {}),
+      },
+    })
+  )
+
+  return events
 }
 
 function rollbackFailedTmuxDispatch(
@@ -6691,20 +7387,23 @@ function validateBridgeFence(fence: HrcFence | undefined, activeSession: HrcSess
 }
 
 function requireRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot {
-  const runtime = db.runtimes.getByRuntimeId(runtimeId)
-  if (!runtime) {
-    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime "${runtimeId}"`, {
-      runtimeId,
-    })
-  }
-
+  const runtime = requireKnownRuntime(db, runtimeId)
   if (isRuntimeUnavailableStatus(runtime.status)) {
     throw new HrcRuntimeUnavailableError(`runtime "${runtimeId}" is ${runtime.status}`, {
       runtimeId,
       status: runtime.status,
     })
   }
+  return runtime
+}
 
+function requireKnownRuntime(db: HrcDatabase, runtimeId: string): HrcRuntimeSnapshot {
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime "${runtimeId}"`, {
+      runtimeId,
+    })
+  }
   return runtime
 }
 
@@ -6813,7 +7512,12 @@ function normalizeDispatchIntent(
   }
 }
 
-async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
+async function buildDispatchInvocation(
+  intent: HrcRuntimeIntent,
+  options: {
+    continuation?: HrcContinuationRef | undefined
+  } = {}
+): Promise<{
   argv: string[]
   env: Record<string, string>
   cwd: string
@@ -6826,7 +7530,9 @@ async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
   let ioMode: 'inherit' | 'pipes' | 'pty' = 'pty'
 
   try {
-    const invocation = await buildCliInvocation(intent)
+    const invocation = await buildCliInvocation(intent, {
+      ...(options.continuation ? { continuation: options.continuation } : {}),
+    })
     env = invocation.env
     cwd = invocation.cwd
     interactionMode = invocation.interactionMode
@@ -6841,6 +7547,13 @@ async function buildDispatchInvocation(intent: HrcRuntimeIntent): Promise<{
       cwd: invocation.cwd,
     })
   } catch (error) {
+    if (error instanceof Error && /provider mismatch/i.test(error.message)) {
+      throw new HrcUnprocessableEntityError(HrcErrorCode.PROVIDER_MISMATCH, error.message, {
+        provider: intent.harness.provider,
+        ...(options.continuation ? { continuationProvider: options.continuation.provider } : {}),
+      })
+    }
+
     // Fall back to the local harness shim when the real CLI invocation cannot be built.
     writeServerLog('WARN', 'dispatch.invocation.build_failed', {
       provider: intent.harness.provider,

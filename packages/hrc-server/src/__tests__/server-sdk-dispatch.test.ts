@@ -71,7 +71,9 @@ async function resolveSession(scope: string): Promise<string> {
   return data.hostSessionId
 }
 
-/** Build a non-interactive (SDK) runtime intent */
+/** Build a non-interactive (SDK) runtime intent.
+ * Uses interactive=false without preferredMode so that
+ * shouldUseSdkTransport matches (not shouldUseHeadlessTransport). */
 function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   return {
     placement: {
@@ -85,9 +87,6 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
     harness: {
       provider,
       interactive: false,
-    },
-    execution: {
-      preferredMode: 'nonInteractive',
     },
   }
 }
@@ -174,6 +173,7 @@ describe('runtime lifecycle start/attach', () => {
     dirName: string,
     behavior: {
       execDelayMs?: number
+      execThreadId?: string
       interactiveBanner?: string
       interactiveDelayMs?: number
       resumeDelayMs?: number
@@ -194,7 +194,7 @@ resume_path=${JSON.stringify(resumePath)}
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
-  printf '{"type":"thread.started","thread_id":"thread-123"}\\n'
+  printf '{"type":"thread.started","thread_id":"${behavior.execThreadId ?? 'thread-123'}"}\\n'
   exit 0
 fi
 if [ "$cmd" = "resume" ]; then
@@ -211,6 +211,50 @@ exit 0
     )
     await chmod(scriptPath, 0o755)
     return { binDir, logPath, resumePath }
+  }
+
+  async function waitForResumeLog(resumePath: string, expectedLines: number): Promise<string[]> {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const resumeLog = await readFile(resumePath, 'utf-8')
+        const lines = resumeLog
+          .trim()
+          .split('\n')
+          .filter((line) => line.length > 0)
+        if (lines.length >= expectedLines) {
+          return lines
+        }
+      } catch {
+        // Resume log is written asynchronously by the fake Codex shim.
+      }
+      await Bun.sleep(100)
+    }
+
+    throw new Error(`resume log ${resumePath} did not reach ${expectedLines} lines in time`)
+  }
+
+  async function waitForRuntimeStatus(
+    runtimeId: string,
+    expectedStatuses: string[],
+    timeoutMs = 5_000
+  ): Promise<string> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const db = openHrcDatabase(dbPath)
+      try {
+        const runtime = db.runtimes.getByRuntimeId(runtimeId)
+        if (runtime && expectedStatuses.includes(runtime.status)) {
+          return runtime.status
+        }
+      } finally {
+        db.close()
+      }
+      await Bun.sleep(100)
+    }
+
+    throw new Error(
+      `runtime ${runtimeId} did not reach one of [${expectedStatuses.join(', ')}] within ${timeoutMs}ms`
+    )
   }
 
   it('POST /v1/runtimes/start is idempotent for headless codex startup and persists continuation', async () => {
@@ -253,6 +297,52 @@ exit 0
     expect(execLog.trim().split('\n')).toEqual(['exec'])
   })
 
+  it('POST /v1/clear-context can rotate to a fresh session without inheriting continuation', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-clear-context-new-session', {
+      execThreadId: 'thread-old',
+    })
+    const hsid = await resolveSession('lifecycle-clear-context-new-session')
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed detached session',
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as { runtimeId: string }
+    await waitForRuntimeStatus(startData.runtimeId, ['ready'])
+
+    const clearRes = await postJson('/v1/clear-context', {
+      hostSessionId: hsid,
+      dropContinuation: true,
+    })
+    expect(clearRes.status).toBe(200)
+    const clearData = (await clearRes.json()) as {
+      hostSessionId: string
+      priorHostSessionId: string
+      generation: number
+    }
+    expect(clearData.priorHostSessionId).toBe(hsid)
+    expect(clearData.hostSessionId).not.toBe(hsid)
+    expect(clearData.generation).toBe(2)
+
+    const priorSessionRes = await fetchSocket(`/v1/sessions/by-host/${hsid}`)
+    const priorSessionData = (await priorSessionRes.json()) as any
+    expect(priorSessionData.status).toBe('archived')
+    expect(priorSessionData.continuation).toEqual({
+      provider: 'openai',
+      key: 'thread-old',
+    })
+
+    const nextSessionRes = await fetchSocket(`/v1/sessions/by-host/${clearData.hostSessionId}`)
+    const nextSessionData = (await nextSessionRes.json()) as any
+    expect(nextSessionData.status).toBe('active')
+    expect(nextSessionData.continuation).toBeUndefined()
+  })
+
   it('POST /v1/runtimes/attach blocks on in-flight start and is idempotent for codex resume', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach', {
       execDelayMs: 350,
@@ -288,7 +378,8 @@ exit 0
     const { startData, attachRes } = await attachPromise
     expect(attachRes.status).toBe(200)
     const attachData = (await attachRes.json()) as any
-    expect(attachData.bindingFence.runtimeId).toBe(startData.runtimeId)
+    expect(attachData.bindingFence.runtimeId).toBeString()
+    expect(attachData.bindingFence.runtimeId).not.toBe(startData.runtimeId)
 
     await new Promise((resolve) => setTimeout(resolve, 400))
 
@@ -297,8 +388,7 @@ exit 0
     })
     expect(secondAttachRes.status).toBe(200)
 
-    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8')
-    expect(resumeLog.trim().split('\n')).toEqual(['resume:thread-123'])
+    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
   })
 
   it('POST /v1/runtimes/attach prefers tmux sessionId when stored sessionName is stale', async () => {
@@ -317,14 +407,21 @@ exit 0
     expect(startRes.status).toBe(200)
     const startData = (await startRes.json()) as any
 
+    const initialAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(initialAttachRes.status).toBe(200)
+    const initialAttachData = (await initialAttachRes.json()) as any
+    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
+
     const db = openHrcDatabase(dbPath)
     try {
-      const runtime = db.runtimes.getByRuntimeId(startData.runtimeId)
+      const runtime = db.runtimes.getByRuntimeId(attachedRuntimeId)
       expect(runtime).not.toBeNull()
       expect(runtime?.tmuxJson?.['sessionId']).toBeString()
       sessionId = String(runtime?.tmuxJson?.['sessionId'])
 
-      db.runtimes.update(startData.runtimeId, {
+      db.runtimes.update(attachedRuntimeId, {
         tmuxJson: {
           ...(runtime?.tmuxJson ?? {}),
           sessionName: 'hrc-stale-session-name',
@@ -336,7 +433,7 @@ exit 0
     }
 
     const attachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
+      runtimeId: attachedRuntimeId,
     })
     expect(attachRes.status).toBe(200)
     const attachData = (await attachRes.json()) as any
@@ -349,6 +446,92 @@ exit 0
       sessionId,
     ])
   })
+
+  it('POST /v1/runtimes/attach rematerializes tmux when the requested codex tmux runtime is already dead', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-attach-dead-runtime')
+    const hsid = await resolveSession('lifecycle-attach-dead-runtime')
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed before dead attach recovery',
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    const initialAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(initialAttachRes.status).toBe(200)
+    const initialAttachData = (await initialAttachRes.json()) as any
+    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(attachedRuntimeId)
+      expect(runtime).not.toBeNull()
+      db.runtimes.update(attachedRuntimeId, {
+        status: 'dead',
+        updatedAt: new Date().toISOString(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: attachedRuntimeId,
+    })
+    expect(recoveredAttachRes.status).toBe(200)
+    const recoveredAttachData = (await recoveredAttachRes.json()) as any
+    expect(recoveredAttachData.bindingFence.runtimeId).toBeString()
+    expect(recoveredAttachData.argv).toContain('attach-session')
+
+    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toContain('resume:thread-123')
+  }, 10_000)
+
+  it('POST /v1/runtimes/attach rematerializes tmux in one call after the prior attach runtime exits', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-attach-terminated-runtime', {
+      resumeDelayMs: 250,
+    })
+    const hsid = await resolveSession('lifecycle-attach-terminated-runtime')
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: 'Seed before terminated attach recovery',
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    const initialAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(initialAttachRes.status).toBe(200)
+    const initialAttachData = (await initialAttachRes.json()) as any
+    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
+
+    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
+    expect(await waitForRuntimeStatus(attachedRuntimeId, ['terminated'])).toBe('terminated')
+
+    const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: attachedRuntimeId,
+    })
+    expect(recoveredAttachRes.status).toBe(200)
+    const recoveredAttachData = (await recoveredAttachRes.json()) as any
+    expect(recoveredAttachData.bindingFence.runtimeId).toBeString()
+    expect(recoveredAttachData.bindingFence.runtimeId).not.toBe(attachedRuntimeId)
+
+    expect(await waitForResumeLog(fakeCodex.resumePath, 2)).toEqual([
+      'resume:thread-123',
+      'resume:thread-123',
+    ])
+  }, 10_000)
 
   it('POST /v1/runtimes/attach attaches directly to a live codex tmux runtime without continuation', async () => {
     const hsid = await resolveSession('lifecycle-attach-live-no-continuation')
@@ -369,7 +552,7 @@ exit 0
     expect(attachData.argv).toContain('attach-session')
   })
 
-  it('POST /v1/internal/launches/:id/exited marks the runtime dead when the tmux session is gone', async () => {
+  it('POST /v1/internal/launches/:id/exited marks the runtime terminated when the harness exits', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-dead-after-exit', {
       interactiveDelayMs: 10_000,
     })
@@ -416,7 +599,7 @@ exit 0
     const runtimes = (await runtimeRes.json()) as Array<{ runtimeId: string; status: string }>
     expect(runtimes).toHaveLength(1)
     expect(runtimes[0]?.runtimeId).toBe(startData.runtimeId)
-    expect(runtimes[0]?.status).toBe('dead')
+    expect(runtimes[0]?.status).toBe('terminated')
   })
 
   it('POST /v1/runtimes/start launches the interactive harness before attach', async () => {

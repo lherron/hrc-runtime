@@ -825,6 +825,7 @@ export function parseClearContextRequest(input: unknown): ClearContextRequest {
 
   const hostSessionId = input['hostSessionId']
   const relaunch = input['relaunch']
+  const dropContinuation = input['dropContinuation']
   if (typeof hostSessionId !== 'string' || hostSessionId.trim().length === 0) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'hostSessionId is required', {
       field: 'hostSessionId',
@@ -835,10 +836,20 @@ export function parseClearContextRequest(input: unknown): ClearContextRequest {
       field: 'relaunch',
     })
   }
+  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'dropContinuation must be a boolean',
+      {
+        field: 'dropContinuation',
+      }
+    )
+  }
 
   return {
     hostSessionId: hostSessionId.trim(),
     ...(typeof relaunch === 'boolean' ? { relaunch } : {}),
+    ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
   }
 }
 

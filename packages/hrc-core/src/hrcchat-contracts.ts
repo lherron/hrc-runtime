@@ -29,7 +29,7 @@ export type TargetCapabilityView = {
 
 export type HrcTargetRuntimeView = {
   runtimeId: string
-  transport: 'sdk' | 'tmux'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: string
   supportsLiteralSend: boolean
   supportsCapture: boolean
@@ -70,7 +70,7 @@ export type HrcMessageExecution = {
   generation?: number | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
-  transport?: 'sdk' | 'tmux' | undefined
+  transport?: 'sdk' | 'tmux' | 'headless' | undefined
   errorCode?: string | undefined
   errorMessage?: string | undefined
 }
@@ -144,7 +144,7 @@ export type DispatchTurnBySelectorResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux'
+  transport: 'sdk' | 'tmux' | 'headless'
   mode: 'headless' | 'nonInteractive'
   status: 'completed' | 'started'
   finalOutput?: string | undefined

@@ -4,10 +4,11 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { resolveScopeInput } from 'agent-scope'
+import chalk from 'chalk'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
-  AttachRuntimeResponse,
+  HrcEventEnvelope,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcStatusResponse,
@@ -151,6 +152,11 @@ type ManagedScopeContext = {
   projectId?: string | undefined
   scopeRef: string
   sessionRef: string
+}
+
+type ExecAttachDescriptor = {
+  argv: string[]
+  env?: Record<string, string> | undefined
 }
 
 function resolveManagedScopeContext(scopeInput: string): ManagedScopeContext {
@@ -330,11 +336,112 @@ function isRuntimeUnavailableStatus(status: string): boolean {
   return status === 'terminated' || status === 'dead' || status === 'stale'
 }
 
-function selectLatestTmuxRuntime(runtimes: HrcRuntimeSnapshot[]): HrcRuntimeSnapshot | undefined {
-  const attachable = runtimes.filter(
-    (runtime) => runtime.transport === 'tmux' && !isRuntimeUnavailableStatus(runtime.status)
+function runtimeRecency(runtime: HrcRuntimeSnapshot): number {
+  const updatedAt = Date.parse(runtime.updatedAt)
+  if (Number.isFinite(updatedAt)) {
+    return updatedAt
+  }
+
+  const createdAt = Date.parse(runtime.createdAt)
+  return Number.isFinite(createdAt) ? createdAt : 0
+}
+
+function sortRuntimesByRecency(runtimes: HrcRuntimeSnapshot[]): HrcRuntimeSnapshot[] {
+  return [...runtimes].sort((left, right) => runtimeRecency(left) - runtimeRecency(right))
+}
+
+function hasContinuation(runtime: HrcRuntimeSnapshot): boolean {
+  return runtime.continuation != null
+}
+
+function isHrcDomainErrorLike(
+  err: unknown
+): err is Pick<HrcDomainError, 'code' | 'message' | 'detail'> {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    typeof err.code === 'string' &&
+    'message' in err &&
+    typeof err.message === 'string'
   )
-  return attachable.at(-1)
+}
+
+export function selectLatestUsableRuntime(
+  runtimes: HrcRuntimeSnapshot[]
+): HrcRuntimeSnapshot | undefined {
+  const usable = sortRuntimesByRecency(runtimes).filter(
+    (runtime) => !isRuntimeUnavailableStatus(runtime.status)
+  )
+  const busyTmux = usable.filter(
+    (runtime) => runtime.transport === 'tmux' && runtime.status === 'busy'
+  )
+  if (busyTmux.length > 0) {
+    return busyTmux.at(-1)
+  }
+
+  const attachPreparedTmux = usable.filter(
+    (runtime) =>
+      runtime.transport === 'tmux' && runtime.harnessSessionJson?.['attachPrepared'] === true
+  )
+  if (attachPreparedTmux.length > 0) {
+    return attachPreparedTmux.at(-1)
+  }
+
+  const headless = usable.filter((runtime) => runtime.transport === 'headless')
+  if (headless.length > 0) {
+    return headless.at(-1)
+  }
+
+  const resumable = usable.filter(hasContinuation)
+  if (resumable.length > 0) {
+    return resumable.at(-1)
+  }
+
+  return usable.at(-1)
+}
+
+function selectNextUsableRuntime(
+  runtimes: HrcRuntimeSnapshot[],
+  attemptedRuntimeIds: ReadonlySet<string>
+): HrcRuntimeSnapshot | undefined {
+  return selectLatestUsableRuntime(
+    runtimes.filter((runtime) => !attemptedRuntimeIds.has(runtime.runtimeId))
+  )
+}
+
+export async function attachOpenAiRuntime(
+  client: HrcClient,
+  hostSessionId: string,
+  runtime: HrcRuntimeSnapshot
+): Promise<ExecAttachDescriptor> {
+  return attachWithRetry(client, hostSessionId, runtime)
+}
+
+async function attachWithRetry(
+  client: HrcClient,
+  hostSessionId: string,
+  runtime: HrcRuntimeSnapshot,
+  _intent?: HrcRuntimeIntent
+): Promise<ExecAttachDescriptor> {
+  const attemptedRuntimeIds = new Set<string>()
+  let candidate: HrcRuntimeSnapshot | undefined = runtime
+
+  while (candidate) {
+    attemptedRuntimeIds.add(candidate.runtimeId)
+    try {
+      return await client.attachRuntime({ runtimeId: candidate.runtimeId })
+    } catch (err) {
+      if (!isHrcDomainErrorLike(err) || err.code !== HrcErrorCode.RUNTIME_UNAVAILABLE) {
+        throw err
+      }
+
+      const refreshedRuntimes = await client.listRuntimes({ hostSessionId })
+      candidate = selectNextUsableRuntime(refreshedRuntimes, attemptedRuntimeIds)
+    }
+  }
+
+  throw new HrcDomainError(HrcErrorCode.RUNTIME_UNAVAILABLE, 'no attachable runtime available')
 }
 
 async function bindGhosttySurfaceIfPresent(
@@ -558,6 +665,7 @@ async function cmdSession(args: string[]): Promise<void> {
 async function cmdWatch(args: string[]): Promise<void> {
   const fromSeqRaw = parseFlag(args, '--from-seq')
   const follow = hasFlag(args, '--follow')
+  const pretty = hasFlag(args, '--pretty')
 
   const fromSeq = fromSeqRaw !== undefined ? Number.parseInt(fromSeqRaw, 10) : undefined
   if (fromSeqRaw !== undefined && (!Number.isFinite(fromSeq) || (fromSeq ?? 0) < 1)) {
@@ -566,7 +674,296 @@ async function cmdWatch(args: string[]): Promise<void> {
 
   const client = createClient()
   for await (const event of client.watch({ fromSeq, follow })) {
-    process.stdout.write(`${JSON.stringify(event)}\n`)
+    process.stdout.write(pretty ? formatWatchEvent(event) : `${JSON.stringify(event)}\n`)
+  }
+}
+
+function formatWatchEvent(event: HrcEventEnvelope): string {
+  const theme = getWatchTheme(event.eventKind)
+  const agent = formatAgentBadge(event.scopeRef)
+  const kindSuffix = event.eventKind.split('.').slice(1).join('.')
+  const header = [
+    agent
+      ? `${chalk.bgWhite.black.bold(` ${agent} `)} ${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)}`
+      : `${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)} ${theme.dim(event.scopeRef)}`,
+    chalk.dim(`#${event.seq} ${formatWatchTimestamp(event.ts)}`),
+  ].join(' ')
+
+  const meta = [
+    `${chalk.dim('src:')}${colorizeSource(event.source)(event.source)}`,
+    `${chalk.dim('g:')}${chalk.white(String(event.generation))}`,
+    event.runtimeId ? `${chalk.dim('rt:')}${theme.dim(event.runtimeId)}` : undefined,
+  ].filter((part): part is string => part !== undefined)
+
+  const prettyValue = sanitizePrettyValue(event.eventJson)
+  const inlineDetails = renderInlinePrettyValue(prettyValue, theme)
+  const details = inlineDetails ? [] : renderPrettyValue(prettyValue, '', theme)
+  const summary = inlineDetails ? [...meta, inlineDetails] : meta
+  const metaLine = summary.join(chalk.dim(' \u2502 '))
+  const lines = [header, `  ${metaLine}`]
+  if (details.length > 0) {
+    lines.push(...details.map((line) => `  ${line}`))
+  }
+  lines.push('')
+  return `${lines.join('\n')}\n`
+}
+
+function formatAgentBadge(scopeRef: string): string | undefined {
+  const match = scopeRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
+  if (!match?.[1]) return undefined
+  return match[2] ? `${match[1]}@${match[2]}` : match[1]
+}
+
+function formatFriendlyScopeLane(scopeRef: string, laneRef: string): string {
+  const match = scopeRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
+  if (!match?.[1]) return `${scopeRef}/lane:${laneRef}`
+  return match[2] ? `${match[1]}@${match[2]}:${laneRef}` : `${match[1]}:${laneRef}`
+}
+
+function formatFriendlySessionRef(sessionRef: string): string {
+  const match = sessionRef.match(/^(.+)\/lane:([^/]+)$/)
+  if (!match?.[1] || !match[2]) return sessionRef
+  return formatFriendlyScopeLane(match[1], match[2])
+}
+
+function formatWatchTimestamp(ts: string): string {
+  return ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z')
+}
+
+const STRIPPED_KEYS = new Set(['hostSessionId', 'hookData', 'launchId', 'replayed'])
+
+function sanitizePrettyValue(value: unknown, key?: string): unknown {
+  if (key !== undefined && STRIPPED_KEYS.has(key)) return undefined
+  if (typeof value === 'string' && key === 'sessionRef') {
+    return formatFriendlySessionRef(value)
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined).map((item) => sanitizePrettyValue(item))
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(
+        ([childKey, childValue]) => [childKey, sanitizePrettyValue(childValue, childKey)] as const
+      )
+      .filter(([, childValue]) => childValue !== undefined)
+  )
+}
+
+function renderPrettyValue(
+  value: unknown,
+  indent = '',
+  theme: WatchTheme = getWatchTheme('generic')
+): string[] {
+  if (value === undefined) return []
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
+
+    return value.flatMap((item, index) => {
+      const marker = `${theme.gutter(`${indent}|`)} ${chalk.dim(`[${index + 1}]`)}`
+      return isPrettyPrimitive(item)
+        ? [`${marker} ${formatPrettyPrimitive(item)}`]
+        : [marker, ...renderPrettyValue(item, `${indent}  `, theme)]
+    })
+  }
+
+  if (isPrettyPrimitive(value)) {
+    return [`${indent}${formatPrettyPrimitive(value)}`]
+  }
+
+  const entries = Object.entries(value)
+  if (entries.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
+  const keyWidth = Math.min(16, Math.max(...entries.map(([key]) => key.length)))
+
+  return entries.flatMap(([key, childValue]) =>
+    isPrettyPrimitive(childValue)
+      ? [
+          `${theme.gutter(`${indent}|`)} ${theme.key(key.padEnd(keyWidth))} ${chalk.dim(':')} ${formatPrettyPrimitive(childValue)}`,
+        ]
+      : [
+          `${theme.gutter(`${indent}|`)} ${theme.key(key.toUpperCase())}`,
+          ...renderPrettyValue(childValue, `${indent}  `, theme),
+        ]
+  )
+}
+
+function renderInlinePrettyValue(value: unknown, theme: WatchTheme): string | undefined {
+  if (value === undefined) return undefined
+  if (isPrettyPrimitive(value)) {
+    return `${chalk.dim('VALUE')} ${formatPrettyPrimitive(value)}`
+  }
+  if (Array.isArray(value) || !value || typeof value !== 'object') {
+    return undefined
+  }
+
+  const entries = Object.entries(value)
+  if (entries.length === 0 || entries.length > 3) return undefined
+  if (entries.some(([, childValue]) => !isPrettyPrimitive(childValue))) return undefined
+
+  return entries
+    .map(([key, childValue]) => `${theme.key(key)} ${formatPrettyPrimitive(childValue)}`)
+    .join(chalk.dim('  /  '))
+}
+
+function isPrettyPrimitive(value: unknown): value is string | number | boolean | null {
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  )
+}
+
+function formatPrettyPrimitive(value: string | number | boolean | null): string {
+  if (value === null) return chalk.dim('null')
+  if (typeof value === 'boolean') return value ? chalk.green('true') : chalk.red('false')
+  if (typeof value === 'number') return chalk.white(String(value))
+  return chalk.white(value)
+}
+
+function colorizeSource(source: HrcEventEnvelope['source']): (text: string) => string {
+  switch (source) {
+    case 'agent-spaces':
+      return chalk.blue
+    case 'hook':
+      return chalk.yellow
+    case 'tmux':
+      return chalk.cyan
+    default:
+      return chalk.gray
+  }
+}
+
+type WatchTheme = {
+  label: string
+  badge: (text: string) => string
+  accent: typeof chalk
+  dim: (text: string) => string
+  gutter: (text: string) => string
+  key: (text: string) => string
+}
+
+function getWatchTheme(eventKind: string): WatchTheme {
+  // TURN — hero events: bold white-on-blue, high contrast
+  if (eventKind.startsWith('turn.')) {
+    return {
+      label: '\u25B6 TURN',
+      badge: chalk.bgBlueBright.white.bold,
+      accent: chalk.blueBright,
+      dim: chalk.blue,
+      gutter: chalk.blueBright.dim,
+      key: chalk.whiteBright,
+    }
+  }
+  // SESSION — lifecycle: green tones
+  if (eventKind.startsWith('session.')) {
+    return {
+      label: 'SESSION',
+      badge: chalk.bgGreen.black,
+      accent: chalk.greenBright,
+      dim: chalk.green,
+      gutter: chalk.green.dim,
+      key: chalk.greenBright,
+    }
+  }
+  // RUNTIME — infrastructure: cyan tones
+  if (eventKind.startsWith('runtime.')) {
+    return {
+      label: 'RUNTIME',
+      badge: chalk.bgCyan.black,
+      accent: chalk.cyanBright,
+      dim: chalk.cyan.dim,
+      gutter: chalk.cyan.dim,
+      key: chalk.cyanBright,
+    }
+  }
+  // HOOK — subdued infrastructure: dim yellow, fg-only badge
+  if (eventKind.startsWith('hook.')) {
+    return {
+      label: 'hook',
+      badge: chalk.yellow.dim,
+      accent: chalk.yellow.dim,
+      dim: chalk.yellow.dim,
+      gutter: chalk.yellow.dim,
+      key: chalk.yellow,
+    }
+  }
+  // LAUNCH — subdued infrastructure: dim magenta, fg-only badge
+  if (eventKind.startsWith('launch.')) {
+    return {
+      label: 'launch',
+      badge: chalk.magenta.dim,
+      accent: chalk.magenta.dim,
+      dim: chalk.magenta.dim,
+      gutter: chalk.magenta.dim,
+      key: chalk.magenta,
+    }
+  }
+  // BRIDGE — messaging: blue tones
+  if (eventKind.startsWith('bridge.')) {
+    return {
+      label: 'BRIDGE',
+      badge: chalk.bgBlue.white,
+      accent: chalk.blue,
+      dim: chalk.blue.dim,
+      gutter: chalk.blue.dim,
+      key: chalk.blueBright,
+    }
+  }
+  // INFLIGHT — transient: dim, fg-only
+  if (eventKind.startsWith('inflight.')) {
+    return {
+      label: 'inflight',
+      badge: chalk.gray,
+      accent: chalk.white.dim,
+      dim: chalk.gray,
+      gutter: chalk.gray,
+      key: chalk.white,
+    }
+  }
+  // SURFACE — system plumbing: dim, fg-only
+  if (eventKind.startsWith('surface.')) {
+    return {
+      label: 'surface',
+      badge: chalk.gray,
+      accent: chalk.gray,
+      dim: chalk.gray,
+      gutter: chalk.gray,
+      key: chalk.white,
+    }
+  }
+  // CONTEXT — system: dim, fg-only
+  if (eventKind.startsWith('context.')) {
+    return {
+      label: 'context',
+      badge: chalk.gray,
+      accent: chalk.gray,
+      dim: chalk.gray,
+      gutter: chalk.gray,
+      key: chalk.white,
+    }
+  }
+  // APP-SESSION — app lifecycle: dim green, fg-only
+  if (eventKind.startsWith('app-session.')) {
+    return {
+      label: 'app',
+      badge: chalk.green.dim,
+      accent: chalk.green.dim,
+      dim: chalk.green.dim,
+      gutter: chalk.green.dim,
+      key: chalk.green,
+    }
+  }
+  return {
+    label: 'EVENT',
+    badge: chalk.bgWhite.black,
+    accent: chalk.white,
+    dim: chalk.gray,
+    gutter: chalk.gray,
+    key: chalk.whiteBright,
   }
 }
 
@@ -820,7 +1217,7 @@ function explainScopeCommandError(
     )
   }
 
-  if (err instanceof HrcDomainError) {
+  if (isHrcDomainErrorLike(err)) {
     const detail = (err.detail ?? {}) as { scopeRef?: string; sessionRef?: string }
     const storedScope = detail.scopeRef
 
@@ -874,6 +1271,10 @@ function printManagedScopeUsage(command: 'run' | 'start'): void {
     command === 'run'
       ? '  --no-attach          Start/ensure without attaching to the tmux session\n'
       : ''
+  const newSessionOption =
+    command === 'start'
+      ? '  --new-session        Rotate to a fresh host session before starting\n'
+      : ''
 
   process.stdout.write(`Usage: hrc ${command} <scope> [options]
 
@@ -885,7 +1286,7 @@ function printManagedScopeUsage(command: 'run' | 'start'): void {
 
 Options:
   --force-restart      Replace any existing runtime with a fresh PTY
-${noAttachOption}  --dry-run            Local plan preview — no server calls, no side effects
+${noAttachOption}${newSessionOption}  --dry-run            Local plan preview — no server calls, no side effects
   --debug              Keep tmux shell alive after harness exits
   -p <text>            Initial prompt to send to the harness
   --prompt-file <path> Read initial prompt from a file
@@ -935,7 +1336,7 @@ async function cmdRun(args: string[]): Promise<void> {
         prompt: prompt && prompt.length > 0 ? prompt : scopeInput,
       })
     } catch (err) {
-      if (!(err instanceof HrcDomainError) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
+      if (!isHrcDomainErrorLike(err) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
         throw err
       }
     }
@@ -965,11 +1366,12 @@ async function cmdStart(args: string[]): Promise<void> {
 
   const scopeInput = requireArg(args, 0, '<scope>')
   const forceRestart = hasFlag(args, '--force-restart')
+  const newSession = hasFlag(args, '--new-session')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const prompt = await parseScopePrompt(args, {
     command: 'start',
-    passthroughFlags: ['--force-restart', '--dry-run', '--debug'],
+    passthroughFlags: ['--force-restart', '--new-session', '--dry-run', '--debug'],
   })
 
   let sessionRef: string | undefined
@@ -986,16 +1388,23 @@ async function cmdStart(args: string[]): Promise<void> {
 
     const client = createClient()
     const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    const targetSession =
+      newSession && !resolved.created
+        ? await client.clearContext({
+            hostSessionId: resolved.hostSessionId,
+            dropContinuation: true,
+          })
+        : resolved
     const runtime = await client.startRuntime({
-      hostSessionId: resolved.hostSessionId,
+      hostSessionId: targetSession.hostSessionId,
       intent,
       restartStyle,
     })
 
     printJson({
       sessionRef,
-      hostSessionId: resolved.hostSessionId,
-      created: resolved.created,
+      hostSessionId: targetSession.hostSessionId,
+      created: resolved.created || newSession,
       runtime,
     })
   } catch (err) {
@@ -1257,7 +1666,7 @@ async function cmdCapture(args: string[]): Promise<void> {
 function printAttachUsage(): void {
   process.stdout.write(`Usage: hrc attach <scope> [--dry-run]
 
-  Resolve a managed session by scope and attach to its latest active tmux runtime.
+  Resolve a managed session by scope and attach to its latest active runtime.
 
   Compatibility:
   attach <runtimeId>  Print the attach descriptor JSON for an explicit runtime ID.
@@ -1269,8 +1678,8 @@ async function printLocalAttachPreview(scope: string, sessionRef: string): Promi
 
   w(`hrc attach ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
   w(`  sessionRef:    ${sessionRef}`)
-  w('  runtimeLookup: latest non-unavailable tmux runtime for the resolved host session')
-  w('  recovery:      if tmux is gone for an existing session, ensure a fresh tmux runtime')
+  w('  runtimeLookup: latest non-unavailable runtime for the resolved host session')
+  w('  recovery:      detached OpenAI sessions materialize a fresh tmux runtime on attach')
   w('  action:        POST /v1/runtimes/attach for that runtime, then exec returned argv')
   w('')
   w('  Note: this preview does not resolve the session or inspect runtime state.')
@@ -1311,44 +1720,21 @@ async function cmdAttach(args: string[]): Promise<void> {
     const client = createClient()
     const resolved = await client.resolveSession({ sessionRef })
     if (resolved.created) {
-      throw new Error(`no active tmux runtime found for "${target}"`)
+      throw new Error(`no active runtime found for "${target}"`)
     }
 
-    const runtime =
-      intent.harness.provider === 'openai'
-        ? await client.ensureRuntime({
-            hostSessionId: resolved.hostSessionId,
-            intent,
-            restartStyle: 'reuse_pty',
-          })
-        : selectLatestTmuxRuntime(
-            await client.listRuntimes({ hostSessionId: resolved.hostSessionId })
-          )
+    const runtimes = await client.listRuntimes({ hostSessionId: resolved.hostSessionId })
+    const runtime = selectLatestUsableRuntime(runtimes)
     if (!runtime) {
-      throw new Error(`no active tmux runtime found for "${target}"`)
+      throw new Error(`no active runtime found for "${target}"`)
     }
 
-    const descriptor: AttachRuntimeResponse =
-      intent.harness.provider === 'openai'
-        ? await client.attachRuntime({ runtimeId: runtime.runtimeId })
-        : await (async () => {
-            try {
-              return await client.attachRuntime({ runtimeId: runtime.runtimeId })
-            } catch (err) {
-              if (
-                !(err instanceof HrcDomainError) ||
-                err.code !== HrcErrorCode.RUNTIME_UNAVAILABLE
-              ) {
-                throw err
-              }
-              const recoveredRuntime = await client.ensureRuntime({
-                hostSessionId: resolved.hostSessionId,
-                intent,
-                restartStyle: 'reuse_pty',
-              })
-              return await client.attachRuntime({ runtimeId: recoveredRuntime.runtimeId })
-            }
-          })()
+    const descriptor: ExecAttachDescriptor = await attachWithRetry(
+      client,
+      resolved.hostSessionId,
+      runtime,
+      intent
+    )
     execAttachCommand(descriptor.argv, descriptor.env)
   } catch (err) {
     throw explainScopeCommandError('attach', err, target, sessionRef)
@@ -1647,7 +2033,8 @@ Commands:
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
-  watch [--from-seq <n>] [--follow]   Watch HRC event stream (NDJSON)
+  watch [--from-seq <n>] [--follow] [--pretty]
+                                     Watch HRC event stream (NDJSON or pretty)
   health                              Check server health
   status [--json]                     Show server status and capabilities
   tmux status [--json]                Show HRC tmux socket/session state
@@ -1656,7 +2043,7 @@ Commands:
   runtime list [--host-session-id <id>]  List runtimes
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   adopt <runtimeId>                   Adopt a dead/stale runtime
-  start <scope> [prompt] [--force-restart] [--dry-run]
+  start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
@@ -1742,4 +2129,6 @@ async function main(): Promise<void> {
   }
 }
 
-main()
+if (import.meta.main) {
+  main()
+}

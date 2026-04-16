@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { accessSync, existsSync, constants as fsConstants } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
 import { postCallback } from './callback-client.js'
@@ -40,6 +41,9 @@ function printLaunchSummary(artifact: {
   const systemPrompt = sysIdx !== -1 ? artifact.argv[sysIdx + 1] : undefined
   const dashIdx = artifact.argv.indexOf('--')
   const primingPrompt = dashIdx !== -1 ? artifact.argv[dashIdx + 1] : undefined
+  const resumeId = extractCodexResumeId(artifact.harness, artifact.argv)
+  const codexCommand =
+    artifact.harness === 'codex-cli' ? formatShellCommand(artifact.argv) : undefined
 
   w('')
   w(bold(`hrc launch ${artifact.env['AGENTCHAT_ID'] ?? artifact.launchId}`))
@@ -49,6 +53,9 @@ function printLaunchSummary(artifact: {
   w(dim(`  cwd:      ${artifact.cwd}`))
   if (artifact.harness === 'codex-cli' && artifact.env['CODEX_HOME']) {
     w(dim(`  codex home: ${artifact.env['CODEX_HOME']}`))
+  }
+  if (resumeId) {
+    w(dim(`  resuming session: ${resumeId}`))
   }
   w('')
 
@@ -79,6 +86,42 @@ function printLaunchSummary(artifact: {
     for (const e of envDisplay) w(`  ${e}`)
     w('')
   }
+
+  if (codexCommand) {
+    w(cyan('── command ──'))
+    w(`  ${codexCommand}`)
+    w('')
+  }
+}
+
+function extractCodexResumeId(harness: string, argv: string[]): string | undefined {
+  if (harness !== 'codex-cli') {
+    return undefined
+  }
+
+  const resumeIdx = argv.indexOf('resume')
+  if (resumeIdx === -1) {
+    return undefined
+  }
+
+  const resumeId = argv[resumeIdx + 1]
+  if (!resumeId || resumeId.startsWith('-')) {
+    return undefined
+  }
+
+  return resumeId
+}
+
+function formatShellCommand(argv: string[]): string {
+  return argv.map((arg) => quoteShellArg(arg)).join(' ')
+}
+
+function quoteShellArg(arg: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(arg)) {
+    return arg
+  }
+
+  return `'${arg.replace(/'/g, `'\"'\"'`)}'`
 }
 
 function formatError(err: unknown): string {
@@ -296,11 +339,21 @@ async function main(): Promise<void> {
       HRC_LAUNCH_ID: launchId,
       HRC_HOST_SESSION_ID: hostSessionId,
       HRC_GENERATION: String(generation),
+      HRC_LAUNCH_HOOK_CLI: fileURLToPath(new URL('./hook-cli.ts', import.meta.url)),
       ...(runtimeId ? { HRC_RUNTIME_ID: runtimeId } : {}),
     },
     cwd: effectiveCwd,
     stdio: isHeadlessCodexLaunch(artifact) ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   })
+
+  // Trap SIGHUP/SIGTERM so the wrapper survives tmux session teardown long
+  // enough to post the exit callback.  The signal is forwarded to the child;
+  // the wrapper exits after the callback completes (see handleTerminalState).
+  for (const sig of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => {
+      child.kill(sig)
+    })
+  }
 
   const childStdout =
     isHeadlessCodexLaunch(artifact) && child.stdout

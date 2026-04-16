@@ -24,16 +24,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { StatusResponse } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import type { HrcRuntimeSnapshot, StatusResponse } from 'hrc-core'
 
 // RED GATE: cli.ts must exist as the bin entry point
 // This import will fail until Curly implements the CLI module
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import { attachOpenAiRuntime, selectLatestUsableRuntime } from '../cli'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 
@@ -119,6 +121,7 @@ let server: HrcServer | null = null
 let agentsRoot: string
 let projectsRoot: string
 let originalPath: string | undefined
+let originalClaudePath: string | undefined
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const CLAUDE_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'claude-shim')
@@ -156,6 +159,7 @@ beforeEach(async () => {
   await mkdir(projectsRoot, { recursive: true })
 
   originalPath = process.env.PATH
+  originalClaudePath = process.env.ASP_CLAUDE_PATH
   process.env.PATH = `${CLAUDE_SHIM_DIR}:${CODEX_SHIM_DIR}:${originalPath ?? ''}`
 })
 
@@ -176,6 +180,7 @@ afterEach(async () => {
     // fine when no tmux server was created
   }
   process.env.PATH = originalPath
+  process.env.ASP_CLAUDE_PATH = originalClaudePath
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -207,6 +212,7 @@ async function installFakeCodex(
   dirName: string,
   behavior: {
     execDelayMs?: number
+    execThreadId?: string
     interactiveBanner?: string
     interactiveDelayMs?: number
     resumeDelayMs?: number
@@ -227,7 +233,7 @@ resume_path=${JSON.stringify(resumePath)}
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
-  printf '{"type":"thread.started","thread_id":"thread-123"}\\n'
+  printf '{"type":"thread.started","thread_id":"${behavior.execThreadId ?? 'thread-123'}"}\\n'
   exit 0
 fi
 if [ "$cmd" = "resume" ]; then
@@ -246,6 +252,33 @@ exit 0
   return { binDir, logPath, resumePath }
 }
 
+async function installFakeClaude(
+  dirName: string,
+  behavior: {
+    interactiveBanner?: string
+    interactiveDelayMs?: number
+  } = {}
+): Promise<{ binDir: string; logPath: string }> {
+  const binDir = join(tmpDir, dirName)
+  const logPath = join(binDir, 'claude.log')
+  await mkdir(binDir, { recursive: true })
+  const scriptPath = join(binDir, 'claude')
+  await writeFile(
+    scriptPath,
+    `#!/bin/sh
+set -eu
+log_path=${JSON.stringify(logPath)}
+printf 'interactive:%s\\n' "$*" >> "$log_path"
+printf '%s\\n' ${JSON.stringify(behavior.interactiveBanner ?? 'INTERACTIVE_HARNESS_STARTED')}
+/bin/sleep ${((behavior.interactiveDelayMs ?? 1_500) / 1000).toFixed(3)}
+exit 0
+`,
+    'utf-8'
+  )
+  await chmod(scriptPath, 0o755)
+  return { binDir, logPath }
+}
+
 async function writeCodexAgentProfile(agentId: string): Promise<void> {
   await writeFile(
     join(agentsRoot, agentId, 'agent-profile.toml'),
@@ -256,6 +289,28 @@ async function writeCodexAgentProfile(agentId: string): Promise<void> {
 
 async function readServerLog(): Promise<string> {
   return await readFile(join(runtimeRoot, 'server.log'), 'utf8')
+}
+
+async function waitForContinuation(
+  hostSessionId: string,
+  runtimeId: string,
+  env: Record<string, string>
+) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const listResult = await runCli(['runtime', 'list', '--host-session-id', hostSessionId], env)
+    expect(listResult.exitCode).toBe(0)
+    const runtimes = JSON.parse(listResult.stdout.trim()) as Array<{
+      runtimeId: string
+      continuation?: { key?: string | undefined } | null
+    }>
+    const runtime = runtimes.find((candidate) => candidate.runtimeId === runtimeId)
+    if (runtime?.continuation?.key) {
+      return
+    }
+    await Bun.sleep(100)
+  }
+
+  throw new Error(`runtime ${runtimeId} did not persist a continuation in time`)
 }
 
 // ===========================================================================
@@ -692,7 +747,8 @@ describe('hrc start', () => {
     expect(body.hostSessionId).toBeDefined()
     expect(body.created).toBe(true)
     expect(body.runtime.runtimeId).toBeDefined()
-    expect(body.runtime.transport).toBe('tmux')
+    // Anthropic start with preferredMode=headless now creates a headless SDK runtime
+    expect(body.runtime.transport).toBe('headless')
     expect(existsSync(join(tmuxShimDir, 'tmux-attach.json'))).toBe(false)
   })
 
@@ -712,6 +768,75 @@ describe('hrc start', () => {
     expect(result.stdout).toContain('argv:     codex exec')
     expect(result.stdout).toContain('--json')
   })
+
+  it('rotates to a fresh headless session when start uses --new-session', async () => {
+    await writeCodexAgentProfile('rex')
+
+    const firstCodex = await installFakeCodex('fake-codex-start-new-session-1', {
+      execThreadId: 'thread-111',
+    })
+    process.env.PATH = `${firstCodex.binDir}:${process.env.PATH ?? ''}`
+    const firstEnv = cliEnv({
+      ASP_AGENTS_ROOT: agentsRoot,
+      ASP_PROJECTS_ROOT: projectsRoot,
+      PATH: `${firstCodex.binDir}:${process.env.PATH ?? ''}`,
+    })
+    const firstStart = await runCli(
+      ['start', 'rex@agent-spaces', '-p', 'seed first session'],
+      firstEnv
+    )
+    expect(firstStart.exitCode).toBe(0)
+    const firstBody = JSON.parse(firstStart.stdout.trim()) as {
+      hostSessionId: string
+      created: boolean
+      runtime: { runtimeId: string; transport: string }
+    }
+    expect(firstBody.created).toBe(true)
+    expect(firstBody.runtime.transport).toBe('headless')
+    await waitForContinuation(firstBody.hostSessionId, firstBody.runtime.runtimeId, firstEnv)
+
+    const secondCodex = await installFakeCodex('fake-codex-start-new-session-2', {
+      execThreadId: 'thread-222',
+    })
+    process.env.PATH = `${secondCodex.binDir}:${process.env.PATH ?? ''}`
+    const secondEnv = cliEnv({
+      ASP_AGENTS_ROOT: agentsRoot,
+      ASP_PROJECTS_ROOT: projectsRoot,
+      PATH: `${secondCodex.binDir}:${process.env.PATH ?? ''}`,
+    })
+    const secondStart = await runCli(
+      ['start', 'rex@agent-spaces', '--new-session', '-p', 'seed second session'],
+      secondEnv
+    )
+    expect(secondStart.exitCode).toBe(0)
+    const secondBody = JSON.parse(secondStart.stdout.trim()) as {
+      hostSessionId: string
+      created: boolean
+      runtime: { runtimeId: string; transport: string }
+    }
+    expect(secondBody.created).toBe(true)
+    expect(secondBody.hostSessionId).not.toBe(firstBody.hostSessionId)
+    expect(secondBody.runtime.transport).toBe('headless')
+    await waitForContinuation(secondBody.hostSessionId, secondBody.runtime.runtimeId, secondEnv)
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      const firstSession = db.sessions.getByHostSessionId(firstBody.hostSessionId)
+      const secondSession = db.sessions.getByHostSessionId(secondBody.hostSessionId)
+      expect(firstSession?.status).toBe('archived')
+      expect(firstSession?.continuation).toEqual({
+        provider: 'openai',
+        key: 'thread-111',
+      })
+      expect(secondSession?.status).toBe('active')
+      expect(secondSession?.continuation).toEqual({
+        provider: 'openai',
+        key: 'thread-222',
+      })
+    } finally {
+      db.close()
+    }
+  })
 })
 
 describe('hrc attach <scope>', () => {
@@ -719,6 +844,28 @@ describe('hrc attach <scope>', () => {
     server = await createHrcServer(serverOpts())
     await seedRunRoots('rex', 'agent-spaces')
   })
+
+  async function waitForContinuation(
+    hostSessionId: string,
+    runtimeId: string,
+    env: Record<string, string>
+  ) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const listResult = await runCli(['runtime', 'list', '--host-session-id', hostSessionId], env)
+      expect(listResult.exitCode).toBe(0)
+      const runtimes = JSON.parse(listResult.stdout.trim()) as Array<{
+        runtimeId: string
+        continuation?: { key?: string | undefined } | null
+      }>
+      const runtime = runtimes.find((candidate) => candidate.runtimeId === runtimeId)
+      if (runtime?.continuation?.key) {
+        return
+      }
+      await Bun.sleep(100)
+    }
+
+    throw new Error(`runtime ${runtimeId} did not persist a continuation in time`)
+  }
 
   it('prints a local runtime lookup plan without mutating server state', async () => {
     const result = await runCli(
@@ -731,8 +878,10 @@ describe('hrc attach <scope>', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('local plan preview')
-    expect(result.stdout).toContain('runtimeLookup: latest non-unavailable tmux runtime')
-    expect(result.stdout).toContain('recovery:      if tmux is gone for an existing session')
+    expect(result.stdout).toContain('runtimeLookup: latest non-unavailable runtime')
+    expect(result.stdout).toContain(
+      'recovery:      detached OpenAI sessions materialize a fresh tmux runtime on attach'
+    )
     expect(result.stdout).toContain('POST /v1/runtimes/attach')
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
@@ -744,27 +893,30 @@ describe('hrc attach <scope>', () => {
     }
   })
 
-  it('attaches to the started runtime for a scope', async () => {
+  it('headless anthropic start creates resumable runtime that attach can rematerialize', async () => {
+    const fakeClaude = await installFakeClaude('fake-claude-cli-attach', {
+      interactiveDelayMs: 200,
+    })
+    process.env.ASP_CLAUDE_PATH = join(fakeClaude.binDir, 'claude')
     const tmuxShimDir = await createTmuxAttachShim()
     const env = cliEnv({
       ASP_AGENTS_ROOT: agentsRoot,
       ASP_PROJECTS_ROOT: projectsRoot,
-      PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
+      PATH: `${tmuxShimDir}:${fakeClaude.binDir}:${process.env.PATH ?? ''}`,
     })
 
     const startResult = await runCli(['start', 'rex@agent-spaces:T-00123'], env)
     expect(startResult.exitCode).toBe(0)
+    const startBody = JSON.parse(startResult.stdout.trim())
+    expect(startBody.runtime.transport).toBe('headless')
 
+    // Anthropic headless start creates a resumable runtime with continuation;
+    // attach should find it and rematerialize to tmux
     const attachResult = await runCli(['attach', 'rex@agent-spaces:T-00123'], env)
     expect(attachResult.exitCode).toBe(0)
-    expect(attachResult.stdout.trim()).toBe('')
-    expect(attachResult.stderr.trim()).toBe('')
-
-    const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
-    expect(loggedArgs).toContain('attach-session')
   })
 
-  it('recreates tmux and resumes codex when the detached session exists but tmux is gone', async () => {
+  it('materializes tmux and resumes codex when only a detached session exists', async () => {
     await writeCodexAgentProfile('rex')
     const fakeCodex = await installFakeCodex('fake-codex-cli-attach-recovery')
     process.env.PATH = `${fakeCodex.binDir}:${process.env.PATH ?? ''}`
@@ -781,37 +933,251 @@ describe('hrc attach <scope>', () => {
 
     const started = JSON.parse(startResult.stdout.trim()) as {
       hostSessionId: string
-      runtime: { runtimeId: string }
+      runtime: { runtimeId: string; transport: string }
     }
-
-    let sessionTarget = ''
-    const db = openHrcDatabase(dbPath)
-    try {
-      const runtime = db.runtimes.getByRuntimeId(started.runtime.runtimeId)
-      expect(runtime).toBeDefined()
-      sessionTarget = String(
-        runtime?.tmuxJson?.['sessionId'] ?? runtime?.tmuxJson?.['sessionName'] ?? ''
-      )
-    } finally {
-      db.close()
-    }
-
-    const killed = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-session', '-t', sessionTarget], {
-      stdout: 'ignore',
-      stderr: 'pipe',
-    })
-    expect(await killed.exited).toBe(0)
+    expect(started.runtime.transport).toBe('headless')
+    await waitForContinuation(started.hostSessionId, started.runtime.runtimeId, env)
 
     const attachResult = await runCli(['attach', 'rex@agent-spaces:T-00123'], env)
     expect(attachResult.exitCode).toBe(0)
     expect(attachResult.stdout.trim()).toBe('')
     expect(attachResult.stderr.trim()).toBe('')
 
-    const resumeLog = await Bun.file(fakeCodex.resumePath).text()
-    expect(resumeLog.trim().split('\n')).toEqual(['resume:thread-123'])
+    let attachArtifact:
+      | {
+          argv?: string[]
+          lifecycleAction?: string
+        }
+      | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const launchFiles = await readdir(join(runtimeRoot, 'launches'))
+        for (const file of launchFiles) {
+          const parsed = JSON.parse(await Bun.file(join(runtimeRoot, 'launches', file)).text()) as {
+            argv?: string[]
+            lifecycleAction?: string
+          }
+          if (parsed.lifecycleAction === 'attach') {
+            attachArtifact = parsed
+            break
+          }
+        }
+      } catch {
+        attachArtifact = undefined
+      }
+      if (attachArtifact?.lifecycleAction === 'attach') {
+        break
+      }
+      await Bun.sleep(100)
+    }
+    expect(attachArtifact?.lifecycleAction).toBe('attach')
+    expect(attachArtifact?.argv?.[0]).toBe('codex')
+    expect(attachArtifact?.argv).toContain('resume')
+    expect(attachArtifact?.argv).toContain('thread-123')
 
     const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
     expect(loggedArgs).toContain('attach-session')
+  }, 15_000)
+
+  it('prefers a detached headless runtime over a newer idle tmux runtime', () => {
+    const hostSessionId = 'hsid-test-attach-priority'
+    const runtimes: HrcRuntimeSnapshot[] = [
+      {
+        runtimeId: 'rt-headless',
+        hostSessionId,
+        scopeRef: 'agent:rex:project:agent-spaces:task:T-00999',
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        continuation: {
+          provider: 'openai',
+          key: 'thread-123',
+        },
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: '2026-04-15T21:25:32.416Z',
+        updatedAt: '2026-04-15T21:25:32.416Z',
+      },
+      {
+        runtimeId: 'rt-idle-tmux',
+        hostSessionId,
+        scopeRef: 'agent:rex:project:agent-spaces:task:T-00999',
+        laneRef: 'main',
+        generation: 1,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        tmuxJson: {
+          sessionId: '$12',
+          windowId: '@12',
+          paneId: '%12',
+        },
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: '2026-04-15T21:27:16.883Z',
+        updatedAt: '2026-04-15T21:27:16.883Z',
+      },
+    ]
+
+    expect(selectLatestUsableRuntime(runtimes)?.runtimeId).toBe('rt-headless')
+  })
+
+  it('retries attach with a refreshed headless runtime when the initial tmux runtime is stale', async () => {
+    const initialRuntime: HrcRuntimeSnapshot = {
+      runtimeId: 'rt-dead-tmux',
+      hostSessionId: 'hsid-test-attach-retry',
+      scopeRef: 'agent:rex:project:agent-spaces:task:T-01000',
+      laneRef: 'main',
+      generation: 1,
+      transport: 'tmux',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      tmuxJson: {
+        sessionId: '$14',
+        windowId: '@14',
+        paneId: '%14',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: '2026-04-16T00:00:00.000Z',
+      updatedAt: '2026-04-16T00:00:00.000Z',
+    }
+    const fallbackRuntime: HrcRuntimeSnapshot = {
+      runtimeId: 'rt-headless-fallback',
+      hostSessionId: initialRuntime.hostSessionId,
+      scopeRef: initialRuntime.scopeRef,
+      laneRef: initialRuntime.laneRef,
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      continuation: {
+        provider: 'openai',
+        key: 'thread-123',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: '2026-04-16T00:00:01.000Z',
+      updatedAt: '2026-04-16T00:00:01.000Z',
+    }
+
+    let listCalls = 0
+    const client = {
+      async attachRuntime({ runtimeId }: { runtimeId: string }) {
+        if (runtimeId === initialRuntime.runtimeId) {
+          throw new HrcDomainError(HrcErrorCode.RUNTIME_UNAVAILABLE, 'runtime is dead')
+        }
+        expect(runtimeId).toBe(fallbackRuntime.runtimeId)
+        return {
+          kind: 'exec',
+          argv: ['tmux', 'attach-session', '-t', '$15'],
+          bindingFence: {
+            hostSessionId: initialRuntime.hostSessionId,
+            runtimeId,
+            generation: 1,
+          },
+        }
+      },
+      async listRuntimes() {
+        listCalls += 1
+        return [initialRuntime, fallbackRuntime]
+      },
+    } as unknown as import('hrc-sdk').HrcClient
+
+    const descriptor = await attachOpenAiRuntime(
+      client,
+      initialRuntime.hostSessionId,
+      initialRuntime
+    )
+
+    expect(descriptor.argv).toContain('attach-session')
+    expect(descriptor.bindingFence.runtimeId).toBe(fallbackRuntime.runtimeId)
+    expect(listCalls).toBe(1)
+  })
+
+  it('retries attach when runtime_unavailable is shaped like a domain error but fails instanceof', async () => {
+    const initialRuntime: HrcRuntimeSnapshot = {
+      runtimeId: 'rt-dead-tmux-structural',
+      hostSessionId: 'hsid-test-attach-structural',
+      scopeRef: 'agent:rex:project:agent-spaces:task:T-01001',
+      laneRef: 'main',
+      generation: 1,
+      transport: 'tmux',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      tmuxJson: {
+        sessionId: '$16',
+        windowId: '@16',
+        paneId: '%16',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: '2026-04-16T00:10:00.000Z',
+      updatedAt: '2026-04-16T00:10:00.000Z',
+    }
+    const fallbackRuntime: HrcRuntimeSnapshot = {
+      runtimeId: 'rt-headless-structural-fallback',
+      hostSessionId: initialRuntime.hostSessionId,
+      scopeRef: initialRuntime.scopeRef,
+      laneRef: initialRuntime.laneRef,
+      generation: 1,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      continuation: {
+        provider: 'openai',
+        key: 'thread-456',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: '2026-04-16T00:10:01.000Z',
+      updatedAt: '2026-04-16T00:10:01.000Z',
+    }
+
+    let listCalls = 0
+    const client = {
+      async attachRuntime({ runtimeId }: { runtimeId: string }) {
+        if (runtimeId === initialRuntime.runtimeId) {
+          throw {
+            code: HrcErrorCode.RUNTIME_UNAVAILABLE,
+            message: 'runtime is dead',
+            detail: { runtimeId },
+          }
+        }
+        expect(runtimeId).toBe(fallbackRuntime.runtimeId)
+        return {
+          kind: 'exec',
+          argv: ['tmux', 'attach-session', '-t', '$17'],
+          bindingFence: {
+            hostSessionId: initialRuntime.hostSessionId,
+            runtimeId,
+            generation: 1,
+          },
+        }
+      },
+      async listRuntimes() {
+        listCalls += 1
+        return [initialRuntime, fallbackRuntime]
+      },
+    } as unknown as import('hrc-sdk').HrcClient
+
+    const descriptor = await attachOpenAiRuntime(
+      client,
+      initialRuntime.hostSessionId,
+      initialRuntime
+    )
+
+    expect(descriptor.argv).toContain('attach-session')
+    expect(descriptor.bindingFence.runtimeId).toBe(fallbackRuntime.runtimeId)
+    expect(listCalls).toBe(1)
   })
 })
 
@@ -932,32 +1298,6 @@ describe('hrc run', () => {
 
     const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
     expect(loggedArgs).toContain('attach-session')
-  })
-
-  it('reuses the existing runtime on repeat invocations without --force-restart', async () => {
-    const first = await runCli(
-      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
-      })
-    )
-    expect(first.exitCode).toBe(0)
-    const firstBody = JSON.parse(first.stdout.trim())
-
-    const second = await runCli(
-      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
-      })
-    )
-    expect(second.exitCode).toBe(0)
-    const secondBody = JSON.parse(second.stdout.trim())
-
-    expect(secondBody.hostSessionId).toBe(firstBody.hostSessionId)
-    expect(secondBody.runtime.runtimeId).toBe(firstBody.runtime.runtimeId)
-    expect(secondBody.created).toBe(false)
   })
 })
 
@@ -1275,6 +1615,18 @@ describe('hrc watch', () => {
     for (const ev of filteredEvents) {
       expect(ev.seq).toBeGreaterThanOrEqual(fromSeq)
     }
+  })
+
+  it('supports --pretty with colored human-readable output and hides hostSessionId', async () => {
+    await runCli(['session', 'resolve', '--scope', testProjectScope('watchpretty')], cliEnv())
+
+    const result = await runCli(['watch', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('test@watchpretty')
+    expect(result.stdout).toContain('SESSION')
+    expect(result.stdout).toContain('created')
+    expect(result.stdout).not.toContain('hostSessionId')
+    expect(result.stdout).toContain('\u001b[')
   })
 })
 

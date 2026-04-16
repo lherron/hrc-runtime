@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, openSync, readFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -228,10 +228,11 @@ export async function daemonizeAndWait(timeoutMs = 5_000): Promise<number> {
   await mkdir(runtimeRoot, { recursive: true })
 
   const logPath = `${runtimeRoot}/server.log`
+  const logFd = openSync(logPath, 'a')
   const proc = Bun.spawn(['bun', process.argv[1] ?? import.meta.path, 'server', 'start'], {
     detached: true,
-    stdout: Bun.file(logPath),
-    stderr: Bun.file(logPath),
+    stdout: logFd,
+    stderr: logFd,
     stdin: 'ignore',
     env: { ...process.env },
   })

@@ -47,7 +47,9 @@ async function resolveSession(scope: string): Promise<string> {
   return resolved.hostSessionId
 }
 
-/** Build a non-interactive (SDK) runtime intent */
+/** Build a non-interactive (SDK) runtime intent.
+ * Uses interactive=false without preferredMode so that
+ * shouldUseSdkTransport matches (not shouldUseHeadlessTransport). */
 function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   return {
     placement: {
@@ -61,9 +63,6 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
     harness: {
       provider,
       interactive: false,
-    },
-    execution: {
-      preferredMode: 'nonInteractive',
     },
   }
 }

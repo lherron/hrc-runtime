@@ -81,7 +81,15 @@ export type EnsureRuntimeResponse = {
  * - duplicate calls converge on the same runtime/startup result
  */
 export type StartRuntimeRequest = EnsureRuntimeRequest
-export type StartRuntimeResponse = EnsureRuntimeResponse
+export type StartRuntimeResponse =
+  | EnsureRuntimeResponse
+  | {
+      runtimeId: string
+      hostSessionId: string
+      transport: 'headless'
+      status: string
+      supportsInFlightInput: boolean
+    }
 
 export type EnsureWindowRequest = {
   sessionRef: HrcSessionRef
@@ -108,7 +116,7 @@ export type DispatchTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
 }
@@ -116,6 +124,7 @@ export type DispatchTurnResponse = {
 export type ClearContextRequest = {
   hostSessionId: string
   relaunch?: boolean | undefined
+  dropContinuation?: boolean | undefined
 }
 
 export type ClearContextResponse = {
@@ -378,7 +387,7 @@ export type DispatchAppHarnessTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
 }

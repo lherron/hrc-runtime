@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import type { HrcTargetView, ListMessagesResponse, SemanticDmResponse } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
@@ -21,6 +24,33 @@ afterEach(async () => {
 })
 
 describe('hrcchat minimal server routes', () => {
+  async function installFakeCodex(dirName: string): Promise<{ binDir: string; logPath: string }> {
+    const binDir = join(fixture.tmpDir, dirName)
+    const logPath = join(binDir, 'codex.log')
+    const scriptPath = join(binDir, 'codex')
+
+    await mkdir(binDir, { recursive: true })
+    await writeFile(
+      scriptPath,
+      `#!/bin/sh
+set -eu
+log_path=${JSON.stringify(logPath)}
+cmd="\${1:-}"
+if [ "$cmd" = "exec" ]; then
+  printf 'exec:%s\\n' "$*" >> "$log_path"
+  printf '{"type":"thread.started","thread_id":"thread-dm"}\\n'
+  exit 0
+fi
+printf 'interactive:%s\\n' "$*" >> "$log_path"
+exit 0
+`,
+      'utf-8'
+    )
+    await chmod(scriptPath, 0o755)
+
+    return { binDir, logPath }
+  }
+
   it('lists targets and normalizes legacy default lanes to main', async () => {
     await fixture.resolveSession('agent:cody:project:agent-spaces')
 
@@ -72,5 +102,68 @@ describe('hrcchat minimal server routes', () => {
     expect(listed.messages).toHaveLength(1)
     expect(listed.messages[0]?.messageId).toBe(dm.request.messageId)
     expect(listed.messages[0]?.body).toBe('ping from cody')
+  })
+
+  it('uses headless transport for openai nonInteractive dm fallback', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-dm-fallback')
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:clod:project:agent-spaces/lane:main' },
+      body: 'fallback to headless transport',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'nonInteractive',
+        },
+        launch: {
+          pathPrepend: [fakeCodex.binDir],
+        },
+      },
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    expect(dm.execution?.transport).toBe('headless')
+    expect(dm.execution?.mode).toBe('headless')
+    expect(dm.execution?.runtimeId).toBeString()
+    expect(dm.execution?.continuationUpdated).toBe(true)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(String(dm.execution?.runtimeId))
+      expect(runtime).not.toBeNull()
+      expect(runtime?.transport).toBe('headless')
+      expect(runtime?.provider).toBe('openai')
+      expect(runtime?.tmuxJson).toBeUndefined()
+    } finally {
+      db.close()
+    }
+
+    let execLog = ''
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        execLog = await readFile(fakeCodex.logPath, 'utf-8')
+      } catch {
+        execLog = ''
+      }
+      if (execLog.includes('exec:')) {
+        break
+      }
+      await Bun.sleep(100)
+    }
+
+    expect(execLog).toContain('exec:')
   })
 })

@@ -232,6 +232,23 @@ describe('hrc-launch exec crash paths', () => {
     expect(result.stdout).toContain(`codex home: ${codexHome}`)
   })
 
+  it('prints the resume session id in the summary for codex resume launches', async () => {
+    const result = await runExec(
+      makeArtifact({
+        harness: 'codex-cli',
+        provider: 'openai',
+        argv: [process.execPath, '-e', 'process.exit(0)', 'resume', 'abcd-efgh-ijkl'],
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('── command ──')
+    expect(result.stdout).toContain(
+      `  ${process.execPath} -e 'process.exit(0)' resume abcd-efgh-ijkl`
+    )
+    expect(result.stdout).toContain('resuming session: abcd-efgh-ijkl')
+  })
+
   it('does not print CODEX_HOME for non-codex launches', async () => {
     const codexHome = join(tmpDir, 'codex-home')
     const result = await runExec(
@@ -291,6 +308,29 @@ describe('hrc-launch exec crash paths', () => {
         codexHome: wantedCodexHome,
         hrcRunId: null,
         agentchatId: 'larry',
+      })
+    )
+  })
+
+  it('exports HRC_LAUNCH_HOOK_CLI to the child harness env', async () => {
+    const result = await runExec(
+      makeArtifact({
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            'process.stdout.write(JSON.stringify({',
+            '  hookCli: process.env.HRC_LAUNCH_HOOK_CLI ?? null,',
+            '}))',
+          ].join('\n'),
+        ],
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(
+      JSON.stringify({
+        hookCli: fileURLToPath(new URL('../launch/hook-cli.ts', import.meta.url)),
       })
     )
   })
