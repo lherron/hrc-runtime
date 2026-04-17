@@ -10,6 +10,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "bun run --filter '*' test",
+    "test:fast": "bun scripts/test-fast.ts",
     "test:integration": "bun test integration-tests/tests",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",

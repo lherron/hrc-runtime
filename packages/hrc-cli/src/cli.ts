@@ -2309,8 +2309,7 @@ Commands:
 
 // -- Main dispatch ------------------------------------------------------------
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2)
+export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   const command = args[0]
   const rest = args.slice(1)
 

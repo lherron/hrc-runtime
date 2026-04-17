@@ -35,6 +35,7 @@ import type { HrcRuntimeSnapshot, StatusResponse } from 'hrc-core'
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import { main } from '../cli'
 import { attachOpenAiRuntime, selectLatestUsableRuntime } from '../cli'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
@@ -47,6 +48,12 @@ type CliResult = {
   stdout: string
   stderr: string
   exitCode: number
+}
+
+class CliExit extends Error {
+  constructor(readonly code: number) {
+    super(`CLI exited with code ${code}`)
+  }
 }
 
 type UnifiedStatusSessionView = {
@@ -83,6 +90,42 @@ type UnifiedStatusResponse = StatusResponse & {
  * Uses `bun run` to execute the TypeScript CLI entry point directly.
  */
 async function runCli(args: string[], env?: Record<string, string>): Promise<CliResult> {
+  if (shouldUseSubprocess(args)) {
+    return runCliSubprocess(args, env)
+  }
+  return runCliInProcess(args, env)
+}
+
+function shouldUseSubprocess(args: string[]): boolean {
+  const command = args[0]
+  if (!command || command === '--help' || command === '-h' || command === 'info') {
+    return false
+  }
+
+  if (command === 'events' && args.includes('--pretty')) {
+    return true
+  }
+
+  switch (command) {
+    case 'server':
+      return shouldUseServerSubprocess(args.slice(1))
+    case 'start':
+      return false
+    case 'run':
+      return !(args.includes('--no-attach') || args.includes('--dry-run'))
+    case 'attach':
+      return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
+    default:
+      return false
+  }
+}
+
+function shouldUseServerSubprocess(args: string[]): boolean {
+  const subcommand = args[0]
+  return subcommand === undefined || subcommand === 'start' || subcommand === 'restart'
+}
+
+async function runCliSubprocess(args: string[], env?: Record<string, string>): Promise<CliResult> {
   const proc = Bun.spawn(['bun', 'run', CLI_PATH, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
@@ -99,6 +142,71 @@ async function runCli(args: string[], env?: Record<string, string>): Promise<Cli
 
   const exitCode = await proc.exited
   return { stdout, stderr, exitCode }
+}
+
+function captureChunk(chunk: string | ArrayBufferView | ArrayBuffer, chunks: string[]): void {
+  if (typeof chunk === 'string') {
+    chunks.push(chunk)
+    return
+  }
+  chunks.push(Buffer.from(chunk as ArrayBufferView).toString('utf8'))
+}
+
+async function runCliInProcess(args: string[], env?: Record<string, string>): Promise<CliResult> {
+  const stdoutChunks: string[] = []
+  const stderrChunks: string[] = []
+  const originalStdoutWrite = process.stdout.write
+  const originalStderrWrite = process.stderr.write
+  const originalExit = process.exit
+  const originalEnv = new Map<string, string | undefined>()
+
+  for (const [key, value] of Object.entries(env ?? {})) {
+    originalEnv.set(key, process.env[key])
+    process.env[key] = value
+  }
+
+  process.stdout.write = ((chunk: string | ArrayBufferView | ArrayBuffer, ...rest: unknown[]) => {
+    captureChunk(chunk, stdoutChunks)
+    const callback = rest.find((value) => typeof value === 'function') as (() => void) | undefined
+    callback?.()
+    return true
+  }) as typeof process.stdout.write
+
+  process.stderr.write = ((chunk: string | ArrayBufferView | ArrayBuffer, ...rest: unknown[]) => {
+    captureChunk(chunk, stderrChunks)
+    const callback = rest.find((value) => typeof value === 'function') as (() => void) | undefined
+    callback?.()
+    return true
+  }) as typeof process.stderr.write
+
+  process.exit = ((code?: number) => {
+    throw new CliExit(code ?? 0)
+  }) as typeof process.exit
+
+  try {
+    await main(args)
+    return { stdout: stdoutChunks.join(''), stderr: stderrChunks.join(''), exitCode: 0 }
+  } catch (error) {
+    if (error instanceof CliExit) {
+      return {
+        stdout: stdoutChunks.join(''),
+        stderr: stderrChunks.join(''),
+        exitCode: error.code,
+      }
+    }
+    throw error
+  } finally {
+    process.stdout.write = originalStdoutWrite
+    process.stderr.write = originalStderrWrite
+    process.exit = originalExit
+    for (const [key, value] of originalEnv.entries()) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
 }
 
 function testProjectScope(projectId: string): string {

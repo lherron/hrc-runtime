@@ -19,4 +19,4 @@ pre-push:
     install:
       run: bun install
     test:
-      run: env -u GIT_DIR -u GIT_WORK_TREE bun run test
+      run: bun run test:fast
