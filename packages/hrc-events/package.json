@@ -1,8 +1,8 @@
 {
-  "name": "hrc-server",
+  "name": "hrc-events",
   "version": "0.1.0",
   "private": true,
-  "description": "HRC daemon: Unix socket HTTP API, tmux management, runtime orchestration",
+  "description": "Hook-derived event types, Zod schemas, and Claude hook normalizer",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,16 +20,12 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5",
-    "agent-spaces": "*",
-    "hrc-core": "*",
-    "hrc-events": "*",
-    "hrc-store-sqlite": "*",
-    "spaces-execution": "*",
-    "spaces-runtime": "*"
+    "diff": "^7.0.0",
+    "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/diff": "^7.0.2",
     "typescript": "^5.8.3"
   }
 }

@@ -1648,6 +1648,63 @@ describe('hrc events', () => {
     expect(result.stdout).not.toContain('hostSessionId')
     expect(result.stdout).toContain('\u001b[')
   })
+
+  it('supports pretty rendering for normalized hook-derived event kinds', async () => {
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', testProjectScope('watchprettyhook')],
+      cliEnv()
+    )
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+    }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchprettyhook'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'hook',
+        eventKind: 'tool_execution_start',
+        eventJson: {
+          type: 'tool_execution_start',
+          toolUseId: 'toolu_pretty',
+          toolName: 'Bash',
+          input: { command: 'pwd' },
+        },
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchprettyhook'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'hook',
+        eventKind: 'notice',
+        eventJson: {
+          type: 'notice',
+          level: 'info',
+          message: 'Heads up',
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('TOOL')
+    expect(result.stdout).toContain('tool_execution_start')
+    expect(result.stdout).toContain('toolUseId')
+    expect(result.stdout).toContain('toolu_pretty')
+    expect(result.stdout).not.toContain('type')
+    expect(result.stdout).toContain('NOTICE')
+    expect(result.stdout).toContain('Heads up')
+  })
 })
 
 // ===========================================================================

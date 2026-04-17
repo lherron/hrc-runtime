@@ -14,6 +14,7 @@ import type {
   HrcStatusResponse,
   HrcStatusSessionView,
 } from 'hrc-core'
+import type { HookDerivedEventType } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
@@ -709,7 +710,9 @@ async function cmdEvents(args: string[]): Promise<void> {
 function formatWatchEvent(event: HrcEventEnvelope): string {
   const theme = getWatchTheme(event.eventKind)
   const agent = formatAgentBadge(event.scopeRef)
-  const kindSuffix = event.eventKind.split('.').slice(1).join('.')
+  const kindSuffix = event.eventKind.includes('.')
+    ? event.eventKind.split('.').slice(1).join('.')
+    : event.eventKind
   const header = [
     agent
       ? `${chalk.bgWhite.black.bold(` ${agent} `)} ${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)}`
@@ -723,7 +726,7 @@ function formatWatchEvent(event: HrcEventEnvelope): string {
     event.runtimeId ? `${chalk.dim('rt:')}${theme.dim(event.runtimeId)}` : undefined,
   ].filter((part): part is string => part !== undefined)
 
-  const prettyValue = sanitizePrettyValue(event.eventJson)
+  const prettyValue = sanitizePrettyValue(event.eventJson, undefined, event.eventKind)
   const inlineDetails = renderInlinePrettyValue(prettyValue, theme)
   const details = inlineDetails ? [] : renderPrettyValue(prettyValue, '', theme)
   const summary = inlineDetails ? [...meta, inlineDetails] : meta
@@ -760,13 +763,16 @@ function formatWatchTimestamp(ts: string): string {
 
 const STRIPPED_KEYS = new Set(['hostSessionId', 'hookData', 'launchId', 'replayed'])
 
-function sanitizePrettyValue(value: unknown, key?: string): unknown {
+function sanitizePrettyValue(value: unknown, key?: string, eventKind?: string): unknown {
   if (key !== undefined && STRIPPED_KEYS.has(key)) return undefined
+  if (key === 'type' && eventKind !== undefined && value === eventKind) return undefined
   if (typeof value === 'string' && key === 'sessionRef') {
     return formatFriendlySessionRef(value)
   }
   if (Array.isArray(value)) {
-    return value.filter((item) => item !== undefined).map((item) => sanitizePrettyValue(item))
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizePrettyValue(item, undefined, eventKind))
   }
   if (!value || typeof value !== 'object') {
     return value
@@ -775,7 +781,8 @@ function sanitizePrettyValue(value: unknown, key?: string): unknown {
   return Object.fromEntries(
     Object.entries(value)
       .map(
-        ([childKey, childValue]) => [childKey, sanitizePrettyValue(childValue, childKey)] as const
+        ([childKey, childValue]) =>
+          [childKey, sanitizePrettyValue(childValue, childKey, eventKind)] as const
       )
       .filter(([, childValue]) => childValue !== undefined)
   )
@@ -874,6 +881,12 @@ type WatchTheme = {
   key: (text: string) => string
 }
 
+const HOOK_TOOL_EVENT_KINDS = new Set<HookDerivedEventType>([
+  'tool_execution_start',
+  'tool_execution_update',
+  'tool_execution_end',
+])
+
 function getWatchTheme(eventKind: string): WatchTheme {
   // TURN — hero events: bold white-on-blue, high contrast
   if (eventKind.startsWith('turn.')) {
@@ -917,6 +930,50 @@ function getWatchTheme(eventKind: string): WatchTheme {
       dim: chalk.yellow.dim,
       gutter: chalk.yellow.dim,
       key: chalk.yellow,
+    }
+  }
+  // TOOL — normalized Claude hook tool events
+  if (HOOK_TOOL_EVENT_KINDS.has(eventKind as HookDerivedEventType)) {
+    return {
+      label: 'TOOL',
+      badge: chalk.bgYellow.black.bold,
+      accent: chalk.yellowBright,
+      dim: chalk.yellow,
+      gutter: chalk.yellow.dim,
+      key: chalk.yellowBright,
+    }
+  }
+  // NOTICE — normalized Claude hook notifications
+  if (eventKind === 'notice') {
+    return {
+      label: 'NOTICE',
+      badge: chalk.bgMagenta.white.bold,
+      accent: chalk.magentaBright,
+      dim: chalk.magenta,
+      gutter: chalk.magenta.dim,
+      key: chalk.magentaBright,
+    }
+  }
+  // COMPACT — context compaction signal from hooks
+  if (eventKind === 'context_compaction') {
+    return {
+      label: 'COMPACT',
+      badge: chalk.bgBlue.white.bold,
+      accent: chalk.blueBright,
+      dim: chalk.blue,
+      gutter: chalk.blue.dim,
+      key: chalk.blueBright,
+    }
+  }
+  // SUBAGENT — hook-derived nested agent launch
+  if (eventKind === 'subagent_start') {
+    return {
+      label: 'SUBAGENT',
+      badge: chalk.bgCyan.black.bold,
+      accent: chalk.cyanBright,
+      dim: chalk.cyan,
+      gutter: chalk.cyan.dim,
+      key: chalk.cyanBright,
     }
   }
   // LAUNCH — subdued infrastructure: dim magenta, fg-only badge

@@ -111,6 +111,26 @@ describe('Launch artifact IO', () => {
     expect(read.correlationEnv).toEqual(artifact.correlationEnv)
   })
 
+  it('round-trips the optional otel launch config block', async () => {
+    const authHeaderValue = ['launch-test-001', 'testsecret'].join('_')
+    const artifact = makeArtifact({
+      harness: 'codex-cli',
+      provider: 'openai',
+      otel: {
+        transport: 'otlp-http-json',
+        endpoint: 'http://127.0.0.1:4318/v1/logs',
+        authHeaderName: 'x-hrc-launch-auth',
+        authHeaderValue,
+        secret: 'secret',
+      },
+    })
+
+    const path = await writeLaunchArtifact(artifact, tmpDir)
+    const read = await readLaunchArtifact(path)
+
+    expect(read.otel).toEqual(artifact.otel)
+  })
+
   it('throws on readLaunchArtifact for non-existent file', async () => {
     await expect(readLaunchArtifact('/nonexistent/path.json')).rejects.toThrow()
   })

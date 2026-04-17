@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { type Server, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import TOML from '@iarna/toml'
 
 import type { HrcLaunchArtifact } from 'hrc-core'
 
@@ -230,6 +231,69 @@ describe('hrc-launch exec crash paths', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain(`codex home: ${codexHome}`)
+  })
+
+  it('injects launch-scoped OTEL config into CODEX_HOME/config.toml before spawning codex', async () => {
+    const codexHome = join(tmpDir, 'codex-home')
+    const authHeaderValue = ['launch-exec-test-001', 'testsecret'].join('_')
+    await mkdir(codexHome, { recursive: true })
+    await Bun.write(
+      join(codexHome, 'config.toml'),
+      [
+        'model = "gpt-5.4"',
+        'approval_policy = "never"',
+        '',
+        '[projects."/tmp/workspace"]',
+        'trust_level = "trusted"',
+        '',
+      ].join('\n')
+    )
+
+    const result = await runExec(
+      makeArtifact({
+        harness: 'codex-cli',
+        provider: 'openai',
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: 'launch-exec-test-001',
+          CODEX_HOME: codexHome,
+        },
+        otel: {
+          transport: 'otlp-http-json',
+          endpoint: 'http://127.0.0.1:4318/v1/logs',
+          authHeaderName: 'x-hrc-launch-auth',
+          authHeaderValue,
+          secret: 'secret',
+        },
+        argv: [process.execPath, '-e', 'process.exit(0)'],
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+
+    const configRaw = await readFile(join(codexHome, 'config.toml'), 'utf-8')
+    const parsed = TOML.parse(configRaw) as Record<string, unknown>
+    expect(parsed['model']).toBe('gpt-5.4')
+    expect(parsed['approval_policy']).toBe('never')
+
+    const otel = parsed['otel'] as Record<string, unknown>
+    expect(otel['environment']).toBe('hrc')
+    expect(otel['log_user_prompt']).toBe(false)
+    expect(otel['metrics_exporter']).toBe('none')
+    expect(otel['trace_exporter']).toBe('none')
+
+    const exporter = (otel['exporter'] as Record<string, unknown>)['otlp-http'] as Record<
+      string,
+      unknown
+    >
+    expect(exporter['endpoint']).toBe('http://127.0.0.1:4318/v1/logs')
+    expect(exporter['protocol']).toBe('json')
+    expect((exporter['headers'] as Record<string, unknown>)['x-hrc-launch-auth']).toBe(
+      'launch-exec-test-001.secret'
+    )
+
+    const projects = parsed['projects'] as Record<string, unknown>
+    expect((projects['/tmp/workspace'] as Record<string, unknown>)['trust_level']).toBe('trusted')
   })
 
   it('prints the resume session id in the summary for codex resume launches', async () => {

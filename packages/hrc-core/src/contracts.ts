@@ -5,7 +5,7 @@ import type { HrcSessionRef } from './selectors.js'
 
 export type HrcProvider = 'anthropic' | 'openai'
 export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-sdk'
-export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'tmux'
+export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 
@@ -134,6 +134,15 @@ export type HrcLaunchArtifact = {
   lifecycleAction?: 'attach' | 'start' | 'turn' | undefined
   launchEnv?: HrcLaunchEnvConfig | undefined
   hookBridge?: HrcHookBridgeConfig | undefined
+  otel?:
+    | {
+        transport: 'otlp-http-json'
+        endpoint: string
+        authHeaderName: 'x-hrc-launch-auth'
+        authHeaderValue: string
+        secret: string
+      }
+    | undefined
 }
 
 export type HrcContinuityRecord = {

@@ -81,6 +81,7 @@ import type {
   TargetCapabilityView,
   WaitMessageResponse,
 } from 'hrc-core'
+import { normalizeClaudeHook, normalizeCodexOtelEvent } from 'hrc-events'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
@@ -90,7 +91,18 @@ import {
   getSdkInflightCapability,
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
-import { readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
+import { readLaunchArtifact, readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
+import {
+  OTLP_DEFAULT_PREFERRED_PORT,
+  OTLP_LOGS_PATH,
+  OtelAuthError,
+  type OtlpLaunchContext,
+  type OtlpListenerControl,
+  buildHrcEventFromOtelRecord,
+  normalizeOtlpJsonRequest,
+  startOtlpListener,
+  validateOtelLaunchAuth,
+} from './otel-ingest.js'
 import {
   type BridgeTargetRequest,
   type DeliverTextRequest,
@@ -253,6 +265,25 @@ function buildLaunchLogDetails(
   }
 }
 
+function buildLaunchOtelConfig(
+  harness: HrcHarness,
+  launchId: string,
+  endpoint: string | undefined
+): HrcLaunchArtifact['otel'] {
+  if (harness !== 'codex-cli' || !endpoint) {
+    return undefined
+  }
+
+  const secret = randomUUID()
+  return {
+    transport: 'otlp-http-json',
+    endpoint,
+    authHeaderName: OTEL_AUTH_HEADER_NAME,
+    authHeaderValue: `${launchId}.${secret}`,
+    secret,
+  }
+}
+
 type LaunchLifecyclePayload = {
   hostSessionId: string
   timestamp?: string | undefined
@@ -306,11 +337,30 @@ export type HrcServerOptions = {
   lockPath: string
   spoolDir: string
   dbPath: string
+  /**
+   * Preferred port for the OTLP/HTTP log ingest listener on 127.0.0.1. Falls
+   * back to an OS-chosen ephemeral port if occupied. Defaults to 4318.
+   */
+  otelPreferredPort?: number | undefined
+  /**
+   * Disable the OTLP listener entirely (tests/environments that don't want
+   * Codex OTEL ingest). When false, the server runs without OTEL capture and
+   * `otelEndpoint` is undefined.
+   */
+  otelListenerEnabled?: boolean | undefined
+  /**
+   * Test-only override: if provided, no listener is started and this string is
+   * stamped into launch artifacts verbatim. Useful for integration tests that
+   * want deterministic URLs without binding a real port.
+   */
+  otelEndpoint?: string | undefined
   tmuxSocketPath?: string | undefined
 }
 
 export type HrcServer = {
   stop(): Promise<void>
+  /** Resolved OTLP/HTTP log ingest URL (e.g. http://127.0.0.1:4318/v1/logs), if the listener is active. */
+  readonly otelEndpoint: string | undefined
 }
 
 type ServerLockOwner = {
@@ -344,6 +394,8 @@ const MIN_SUPPORTED_TMUX_VERSION = {
 }
 const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
+const OTEL_AUTH_HEADER_NAME = 'x-hrc-launch-auth'
+const OTLP_CONTENT_TYPE_JSON = 'application/json'
 
 type MessageSubscriber = (record: HrcMessageRecord) => void
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
@@ -357,6 +409,8 @@ class HrcServerInstance implements HrcServer {
   private readonly messageSubscribers = new Set<MessageSubscriber>()
   private readonly server: Bun.Server<undefined>
   private readonly startedAt = new Date().toISOString()
+  private readonly otelListener: OtlpListenerControl | undefined
+  public readonly otelEndpoint: string | undefined
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
@@ -452,6 +506,30 @@ class HrcServerInstance implements HrcServer {
       unix: options.socketPath,
       fetch: (request) => this.handleRequest(request),
     })
+
+    if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
+      // Test-only override: caller supplies a fixed endpoint, no listener started.
+      this.otelEndpoint = options.otelEndpoint
+      this.otelListener = undefined
+    } else if (options.otelListenerEnabled === false) {
+      this.otelEndpoint = undefined
+      this.otelListener = undefined
+    } else {
+      try {
+        const preferredPort = options.otelPreferredPort ?? OTLP_DEFAULT_PREFERRED_PORT
+        const control = startOtlpListener(preferredPort, (request) =>
+          this.handleOtlpRequest(request)
+        )
+        this.otelListener = control
+        this.otelEndpoint = control.endpoint.url
+      } catch (error) {
+        // If binding fails entirely (both preferred and ephemeral), log and continue
+        // without OTEL ingest rather than failing daemon startup.
+        writeServerLog('WARN', 'server.start.otel_listener_failed', { error })
+        this.otelListener = undefined
+        this.otelEndpoint = undefined
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -466,6 +544,13 @@ class HrcServerInstance implements HrcServer {
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
     this.server.stop(true)
+    if (this.otelListener) {
+      try {
+        this.otelListener.stop()
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.otel_listener_stop_failed', { error })
+      }
+    }
     this.followSubscribers.clear()
     this.messageSubscribers.clear()
     this.db.close()
@@ -1561,6 +1646,7 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -1575,6 +1661,7 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
+      ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
@@ -1916,6 +2003,7 @@ class HrcServerInstance implements HrcServer {
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const cliInvocation = await buildDispatchInvocation(intent, { continuation })
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -1932,6 +2020,7 @@ class HrcServerInstance implements HrcServer {
       correlationEnv: extractCorrelationEnv(cliInvocation.env),
       interactionMode: cliInvocation.interactionMode,
       ioMode: cliInvocation.ioMode,
+      ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
@@ -2882,6 +2971,7 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -2898,6 +2988,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
+      ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
@@ -3062,6 +3153,7 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -3078,6 +3170,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
+      ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
@@ -3241,6 +3334,7 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
+    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -3257,6 +3351,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'attach',
+      ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
     await writeLaunchArtifact(launchArtifact, launchesDir)
@@ -3858,6 +3953,128 @@ class HrcServerInstance implements HrcServer {
       this.notifyEvent(event)
     }
     return json({ ok: true })
+  }
+
+  /**
+   * Dispatches requests on the OTLP TCP listener (separate from the Unix
+   * socket server). Only POST /v1/logs is accepted.
+   */
+  private async handleOtlpRequest(request: Request): Promise<Response> {
+    try {
+      const url = new URL(request.url)
+      if (request.method !== 'POST' || url.pathname !== OTLP_LOGS_PATH) {
+        return new Response('Not Found', { status: 404 })
+      }
+      return await this.handleOtlpLogs(request)
+    } catch (error) {
+      writeServerLog('ERROR', 'otel.ingest.unhandled', { error })
+      return new Response('Internal Server Error', { status: 500 })
+    }
+  }
+
+  private async handleOtlpLogs(request: Request): Promise<Response> {
+    const contentType = request.headers.get('content-type') ?? ''
+    if (!contentType.toLowerCase().startsWith(OTLP_CONTENT_TYPE_JSON)) {
+      return new Response('OTLP/HTTP JSON only', {
+        status: 415,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    const authHeader = request.headers.get(OTEL_AUTH_HEADER_NAME)
+
+    let ctx: OtlpLaunchContext
+    try {
+      ctx = await validateOtelLaunchAuth({
+        authHeader,
+        getLaunch: (launchId) => this.db.launches.getByLaunchId(launchId),
+        readArtifact: (path) => readLaunchArtifact(path),
+      })
+    } catch (error) {
+      if (error instanceof OtelAuthError) {
+        writeServerLog('WARN', 'otel.ingest.auth_failed', {
+          status: error.status,
+          message: error.message,
+        })
+        return new Response(error.message, {
+          status: error.status,
+          headers: { 'content-type': 'text/plain' },
+        })
+      }
+      throw error
+    }
+
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return new Response('invalid JSON body', {
+        status: 400,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    const { records, rejected, errorMessage } = normalizeOtlpJsonRequest(body)
+    if (records.length === 0 && rejected === 0) {
+      // body wasn't shaped like an OTLP ExportLogsServiceRequest at all.
+      return new Response(errorMessage ?? 'invalid OTLP request body', {
+        status: 400,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    const session = this.db.sessions.getByHostSessionId(ctx.hostSessionId)
+    if (!session) {
+      // Launch exists without a matching session — shouldn't happen in
+      // practice, but fail closed.
+      return new Response('launch session not found', {
+        status: 403,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    const fallbackTs = timestamp()
+    for (const record of records) {
+      const eventInput = buildHrcEventFromOtelRecord({
+        record,
+        launchCtx: ctx,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        fallbackTimestamp: fallbackTs,
+      })
+      const appendedEvent = this.db.events.append(eventInput)
+      this.notifyEvent(appendedEvent)
+
+      // Codex sessions emit typed lifecycle events via OTEL; Claude Code
+      // sessions emit them via hooks. Those paths are disjoint per session
+      // today, so we append both the raw audit row and any derived typed rows.
+      const normalized = normalizeCodexOtelEvent(record)
+      for (const typedEvent of normalized.events) {
+        const appendedTypedEvent = this.db.events.append({
+          ts: eventInput.ts,
+          hostSessionId: eventInput.hostSessionId,
+          scopeRef: eventInput.scopeRef,
+          laneRef: eventInput.laneRef,
+          generation: eventInput.generation,
+          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
+          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
+          source: 'otel' as const,
+          eventKind: typedEvent.type,
+          eventJson: typedEvent,
+        })
+        this.notifyEvent(appendedTypedEvent)
+      }
+    }
+
+    if (rejected > 0) {
+      return json({
+        partialSuccess: {
+          rejectedLogRecords: String(rejected),
+          errorMessage: errorMessage ?? 'some log records could not be ingested',
+        },
+      })
+    }
+    return json({})
   }
 
   private handleHealth(): Response {
@@ -7201,6 +7418,25 @@ function applyHookLifecycleEnvelope(
   if (rejection) {
     events.push(rejection.event)
     return events
+  }
+
+  if (isRecord(envelope.hookData)) {
+    const normalized = normalizeClaudeHook(envelope.hookData)
+    for (const event of normalized.events) {
+      events.push(
+        db.events.append({
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: envelope.generation,
+          runtimeId: envelope.runtimeId,
+          source: 'hook',
+          eventKind: event.type,
+          eventJson: event,
+        })
+      )
+    }
   }
 
   if (!envelope.runtimeId) return events

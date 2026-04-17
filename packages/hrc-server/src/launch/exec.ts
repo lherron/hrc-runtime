@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { accessSync, existsSync, constants as fsConstants } from 'node:fs'
+import { readFile, writeFile } from 'node:fs/promises'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
 import { postCallback } from './callback-client.js'
+import { injectCodexOtelConfig } from './codex-otel.js'
 import { scrubInheritedEnv } from './env.js'
 import { readLaunchArtifact } from './launch-artifact.js'
 import { spoolCallback } from './spool.js'
@@ -244,6 +246,22 @@ async function pumpToStderr(stream: NodeJS.ReadableStream | null): Promise<void>
   }
 }
 
+async function applyLaunchCodexConfig(artifact: Awaited<ReturnType<typeof readLaunchArtifact>>) {
+  if (artifact.harness !== 'codex-cli' || !artifact.otel) {
+    return
+  }
+
+  const codexHome = artifact.env['CODEX_HOME']
+  if (!codexHome) {
+    return
+  }
+
+  const configPath = join(codexHome, 'config.toml')
+  const existingConfig = existsSync(configPath) ? await readFile(configPath, 'utf-8') : ''
+  const nextConfig = injectCodexOtelConfig(existingConfig, artifact.otel)
+  await writeFile(configPath, nextConfig)
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -277,6 +295,8 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   const effectiveCwd = existsSync(cwd) ? cwd : process.cwd()
+
+  await applyLaunchCodexConfig(artifact)
 
   // Display launch summary before spawning the harness.
   printLaunchSummary(artifact)

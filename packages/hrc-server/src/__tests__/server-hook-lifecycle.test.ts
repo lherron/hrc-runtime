@@ -197,6 +197,45 @@ describe('manual turn lifecycle', () => {
     expect(hookEvents[0].eventKind).toBe('hook.turn_started')
     expect(hookEvents[1].eventKind).toBe('hook.turn_stopped')
   })
+
+  it('preserves hook.ingested and appends normalized tool event for PreToolUse', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-pretool-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'ready', launchId })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'toolu_123',
+        tool_name: 'Bash',
+        tool_input: { command: 'pwd' },
+      },
+    })
+
+    expect(res.status).toBe(200)
+
+    const events = await getAllEvents()
+    const ingested = events.filter((e) => e.eventKind === 'hook.ingested')
+    const toolStarts = events.filter((e) => e.eventKind === 'tool_execution_start')
+
+    expect(ingested.length).toBe(1)
+    expect(toolStarts.length).toBe(1)
+    expect(toolStarts[0].eventJson).toEqual({
+      type: 'tool_execution_start',
+      toolUseId: 'toolu_123',
+      toolName: 'Bash',
+      input: { command: 'pwd' },
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
