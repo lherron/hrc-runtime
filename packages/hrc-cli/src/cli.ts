@@ -505,6 +505,10 @@ async function cmdServer(args: string[]): Promise<void> {
       return cmdServerRestart(args.slice(1))
     case 'status':
       return cmdServerStatus(args.slice(1))
+    case 'health':
+      return cmdServerHealth(args.slice(1))
+    case 'tmux':
+      return cmdServerTmux(args.slice(1))
     default:
       fatal(`unknown server subcommand: ${subcommand}`)
   }
@@ -564,6 +568,28 @@ async function cmdServerStatus(args: string[]): Promise<void> {
     return
   }
   process.stdout.write(formatServerRuntimeStatus(status))
+}
+
+async function cmdServerHealth(_args: string[]): Promise<void> {
+  const client = createClient()
+  const result = await client.getHealth()
+  printJson(result)
+}
+
+async function cmdServerTmux(args: string[]): Promise<void> {
+  const subcommand = args[0]
+  switch (subcommand) {
+    case 'status':
+      return cmdTmuxStatus(args.slice(1))
+    case 'kill':
+      return cmdTmuxKill(args.slice(1))
+    default:
+      fatal(
+        subcommand
+          ? `unknown server tmux subcommand: ${subcommand}`
+          : 'server tmux subcommand required (status, kill)'
+      )
+  }
 }
 
 async function serverForeground(): Promise<void> {
@@ -653,16 +679,18 @@ async function cmdSession(args: string[]): Promise<void> {
       return cmdSessionList(rest)
     case 'get':
       return cmdSessionGet(rest)
+    case 'clear-context':
+      return cmdSessionClearContext(rest)
     default:
       fatal(
         subcommand
           ? `unknown session subcommand: ${subcommand}`
-          : 'session subcommand required (resolve, list, get)'
+          : 'session subcommand required (resolve, list, get, clear-context)'
       )
   }
 }
 
-async function cmdWatch(args: string[]): Promise<void> {
+async function cmdEvents(args: string[]): Promise<void> {
   const fromSeqRaw = parseFlag(args, '--from-seq')
   const follow = hasFlag(args, '--follow')
   const pretty = hasFlag(args, '--pretty')
@@ -967,12 +995,6 @@ function getWatchTheme(eventKind: string): WatchTheme {
   }
 }
 
-async function cmdHealth(): Promise<void> {
-  const client = createClient()
-  const result = await client.getHealth()
-  printJson(result)
-}
-
 // -- Status capability display (T-00998) ---------------------------------------
 
 // -- Session-centric status helpers (T-01025) ---------------------------------
@@ -1147,22 +1169,6 @@ async function cmdTmuxKill(args: string[]): Promise<void> {
   }
 
   process.stderr.write(`hrc: tmux server killed (${status.sessionCount} session(s))\n`)
-}
-
-async function cmdTmux(args: string[]): Promise<void> {
-  const subcommand = args[0]
-  switch (subcommand) {
-    case 'status':
-      return cmdTmuxStatus(args.slice(1))
-    case 'kill':
-      return cmdTmuxKill(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown tmux subcommand: ${subcommand}`
-          : 'tmux subcommand required (status, kill)'
-      )
-  }
 }
 
 async function cmdRuntimeList(args: string[]): Promise<void> {
@@ -1522,11 +1528,19 @@ async function cmdRuntime(args: string[]): Promise<void> {
       return cmdRuntimeEnsure(args.slice(1))
     case 'list':
       return cmdRuntimeList(args.slice(1))
+    case 'capture':
+      return cmdCapture(args.slice(1))
+    case 'interrupt':
+      return cmdInterrupt(args.slice(1))
+    case 'terminate':
+      return cmdTerminate(args.slice(1))
+    case 'adopt':
+      return cmdAdopt(args.slice(1))
     default:
       fatal(
         subcommand
           ? `unknown runtime subcommand: ${subcommand}`
-          : 'runtime subcommand required (ensure, list)'
+          : 'runtime subcommand required (ensure, list, capture, interrupt, terminate, adopt)'
       )
   }
 }
@@ -1641,7 +1655,7 @@ async function cmdInflight(args: string[]): Promise<void> {
   }
 }
 
-async function cmdClearContext(args: string[]): Promise<void> {
+async function cmdSessionClearContext(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const relaunch = hasFlag(args, '--relaunch')
 
@@ -2020,29 +2034,161 @@ async function cmdBridge(args: string[]): Promise<void> {
 
 // -- Usage --------------------------------------------------------------------
 
+const INFO_TEXT = `hrc — HRC operator CLI
+
+ABOUT
+  HRC is the local runtime control plane for agent sessions.
+
+  It gives an agent target a stable identity, preserves continuity across
+  launches, manages live runtimes, and lets an operator or another agent
+  inspect, attach, start, interrupt, or clear that runtime state.
+
+  Use hrc to control HRC itself.
+  Use hrcchat to semantically message agents.
+
+CORE MODEL
+  HRC tracks three main things:
+
+  target
+    The logical agent you want to control.
+
+  session
+    The stable continuity record for that target and lane.
+
+  runtime
+    A live execution bound to a session.
+
+  In practice:
+  use a target handle to select who you mean,
+  a session when you care about continuity,
+  and a runtime when you need to act on a live process.
+
+ADDRESSING TARGETS
+  HRC accepts shorthand target handles:
+
+    <agentId>
+    <agentId>@<projectId>
+    <agentId>@<projectId>:<taskId>
+    <agentId>@<projectId>:<taskId>/<roleName>
+
+  Examples:
+    cody
+    cody@agent-spaces
+    cody@agent-spaces:T-123
+    cody@agent-spaces:T-123/reviewer
+
+  A handle may also include a lane:
+
+    <handle>~<lane>
+
+  Examples:
+    cody@agent-spaces
+    cody@agent-spaces~repair
+    cody@agent-spaces:T-123/reviewer~planning
+
+  Notes:
+    Managed handle commands such as run/start/attach normally use main when
+    lane is omitted.
+    Low-level session resolve defaults to default unless --lane is passed.
+    If project is omitted, HRC may infer it from the current directory.
+
+COMMON CONTROL FLOWS
+  Start or reattach a managed runtime and attach to it:
+    hrc run cody@agent-spaces
+
+  Start detached without attaching:
+    hrc start cody@agent-spaces
+
+  Attach to an already-running target:
+    hrc attach cody@agent-spaces
+
+  Send a turn to an existing session:
+    hrc turn send <hostSessionId> --prompt "Continue."
+
+  Inspect live output:
+    hrc capture <runtimeId>
+
+  Stream lifecycle events:
+    hrc events --pretty
+
+  Clear continuity / rotate generation:
+    hrc session clear-context <hostSessionId>
+
+SAFETY RULES
+  Prefer stable target handles first.
+  Prefer inspection before mutation.
+  clear-context changes continuity state.
+  interrupt and terminate affect live runtimes.
+  tmux kill is destructive to all interactive HRC runtimes.
+
+USE HRCCHAT FOR MESSAGING
+  hrc is not the semantic messaging interface.
+
+  For agent-to-agent or human-to-agent messaging, use:
+    hrcchat info
+    hrcchat who
+    hrcchat dm cody@agent-spaces "Review the repo."
+    hrcchat messages cody@agent-spaces
+
+ENVIRONMENT
+  HRC_RUNTIME_DIR   Override runtime root
+  HRC_STATE_DIR     Override persistent state root
+  ASP_PROJECT       Default project context for shorthand resolution
+  ASP_AGENTS_ROOT   Agents root for managed run/start resolution
+  HRC_SESSION_REF   Caller identity for HRC-aware child processes
+
+COMMANDS
+  server            Daemon lifecycle, health, and tmux backend control
+  status            API status, sessions, capabilities
+  events            Stream HRC event envelopes
+  session           Resolve, list, and inspect sessions
+  runtime           Ensure, inspect, and control runtimes
+  launch            List launches
+  run               Resolve, launch, and attach
+  start             Resolve and start detached
+  attach            Attach to a live runtime
+  turn              Dispatch turns to a session
+  inflight          Send in-flight runtime input
+  capture           Capture live runtime output
+  surface           Manage surface bindings
+  bridge            Manage low-level local bridge delivery
+
+NEXT STEP
+  Run hrc <command> --help for command-specific flags and edge cases.
+`
+
+function printInfo(): void {
+  process.stdout.write(INFO_TEXT)
+}
+
 function printUsage(): void {
   process.stderr.write(`hrc — HRC operator CLI
 
 Usage: hrc <command> [options]
 
 Commands:
+  info                                Show HRC orientation and first-contact guidance
   server [start] [--foreground|--daemon]     Start the HRC server (foreground by default)
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
   server status [--json]                     Show daemon/socket/pid state without requiring the API
+  server health                       Check daemon health through the API
+  server tmux status [--json]         Show HRC tmux socket/session state
+  server tmux kill --yes              Kill the HRC tmux server and all interactive runtimes
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
-  watch [--from-seq <n>] [--follow] [--pretty]
-                                     Watch HRC event stream (NDJSON or pretty)
-  health                              Check server health
+  session clear-context <hostSessionId> [--relaunch]
   status [--json]                     Show server status and capabilities
-  tmux status [--json]                Show HRC tmux socket/session state
-  tmux kill --yes                     Kill the HRC tmux server and all interactive runtimes
+  events [--from-seq <n>] [--follow] [--pretty]
+                                     Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--host-session-id <id>]  List runtimes
+  runtime capture <runtimeId>         Capture tmux pane text
+  runtime interrupt <runtimeId>       Send Ctrl-C to a runtime pane
+  runtime terminate <runtimeId>       Terminate a runtime session
+  runtime adopt <runtimeId>           Adopt a dead/stale runtime
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
-  adopt <runtimeId>                   Adopt a dead/stale runtime
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
   turn send <hostSessionId> --prompt <text> [--provider <provider>]
@@ -2059,9 +2205,6 @@ Commands:
   bridge deliver <bridgeId> --text <text>                              (compat)
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
-  clear-context <hostSessionId> [--relaunch]
-  interrupt <runtimeId>               Send Ctrl-C to a runtime pane
-  terminate <runtimeId>               Terminate a runtime session
 `)
 }
 
@@ -2071,6 +2214,11 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0]
   const rest = args.slice(1)
+
+  if (command === 'info') {
+    printInfo()
+    return
+  }
 
   if (!command || command === '--help' || command === '-h') {
     printUsage()
@@ -2084,20 +2232,14 @@ async function main(): Promise<void> {
         return await cmdServer(rest)
       case 'session':
         return await cmdSession(rest)
-      case 'watch':
-        return await cmdWatch(rest)
-      case 'health':
-        return await cmdHealth()
+      case 'events':
+        return await cmdEvents(rest)
       case 'status':
         return await cmdStatus(rest)
-      case 'tmux':
-        return await cmdTmux(rest)
       case 'runtime':
         return await cmdRuntime(rest)
       case 'launch':
         return await cmdLaunch(rest)
-      case 'adopt':
-        return await cmdAdopt(rest)
       case 'start':
         return await cmdStart(rest)
       case 'run':
@@ -2114,12 +2256,6 @@ async function main(): Promise<void> {
         return await cmdSurface(rest)
       case 'bridge':
         return await cmdBridge(rest)
-      case 'clear-context':
-        return await cmdClearContext(rest)
-      case 'interrupt':
-        return await cmdInterrupt(rest)
-      case 'terminate':
-        return await cmdTerminate(rest)
       default:
         fatal(`unknown command: ${command}`)
     }

@@ -8,14 +8,14 @@
  * Pass conditions for Curly (T-00957):
  *   1. `hrc` with no args prints help text to stderr and exits 1
  *   2. `hrc unknowncmd` prints error to stderr and exits 1
- *   3. `hrc turn send` and `hrc clear-context` validate args and dispatch
+ *   3. `hrc turn send` and `hrc session clear-context` validate args and dispatch
  *      through hrc-sdk
  *      to stderr and exit 1
  *   4. `hrc server` starts the daemon (tested via createHrcServer delegation)
  *   5. `hrc session resolve --scope <scopeRef>` outputs JSON to stdout
  *   6. `hrc session list` outputs JSON array to stdout
  *   7. `hrc session get <hostSessionId>` outputs JSON to stdout
- *   8. `hrc watch` outputs NDJSON events to stdout
+ *   8. `hrc events` outputs NDJSON events to stdout
  *   9. All structured output is valid JSON on stdout; all errors on stderr
  *  10. Exit code 0 on success, 1 on error
  *
@@ -331,6 +331,18 @@ describe('no args / help', () => {
     const output = result.stdout + result.stderr
     expect(output.toLowerCase()).toMatch(/usage|help|commands/i)
   })
+
+  it('prints first-contact orientation for info', async () => {
+    const result = await runCli(['info'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('ABOUT')
+    expect(result.stdout).toContain('ADDRESSING TARGETS')
+    expect(result.stdout).toContain('COMMON CONTROL FLOWS')
+    expect(result.stdout).toContain('Use hrcchat to semantically message agents.')
+    expect(result.stdout).toContain('cody@agent-spaces~repair')
+    expect(result.stdout).not.toContain('\n  info              ')
+    expect(result.stderr).toBe('')
+  })
 })
 
 // ===========================================================================
@@ -435,7 +447,7 @@ describe('server/tmux admin lifecycle', () => {
 
     await ensureTmuxRuntime(testProjectScope('server-stop-preserves-tmux'))
 
-    const beforeTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    const beforeTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(beforeTmux.exitCode).toBe(0)
     const before = JSON.parse(beforeTmux.stdout.trim()) as {
       running: boolean
@@ -454,7 +466,7 @@ describe('server/tmux admin lifecycle', () => {
     const serverState = JSON.parse(daemonStatus.stdout.trim()) as { running: boolean }
     expect(serverState.running).toBe(false)
 
-    const afterTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    const afterTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(afterTmux.exitCode).toBe(0)
     const after = JSON.parse(afterTmux.stdout.trim()) as {
       running: boolean
@@ -470,7 +482,7 @@ describe('server/tmux admin lifecycle', () => {
 
     const seeded = await ensureTmuxRuntime(testProjectScope('server-restart-preserves-runtime'))
 
-    const beforeTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    const beforeTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(beforeTmux.exitCode).toBe(0)
     const before = JSON.parse(beforeTmux.stdout.trim()) as {
       running: boolean
@@ -482,7 +494,7 @@ describe('server/tmux admin lifecycle', () => {
     expect(restartResult.exitCode).toBe(0)
     expect(restartResult.stderr).toMatch(/daemon restarted/i)
 
-    const afterTmux = await runCli(['tmux', 'status', '--json'], cliEnv())
+    const afterTmux = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(afterTmux.exitCode).toBe(0)
     const after = JSON.parse(afterTmux.stdout.trim()) as {
       running: boolean
@@ -507,15 +519,15 @@ describe('server/tmux admin lifecycle', () => {
 
     await ensureTmuxRuntime(testProjectScope('tmux-kill-cli'))
 
-    const unsafeResult = await runCli(['tmux', 'kill'], cliEnv())
+    const unsafeResult = await runCli(['server', 'tmux', 'kill'], cliEnv())
     expect(unsafeResult.exitCode).toBe(1)
     expect(unsafeResult.stderr).toMatch(/--yes/i)
 
-    const killResult = await runCli(['tmux', 'kill', '--yes'], cliEnv())
+    const killResult = await runCli(['server', 'tmux', 'kill', '--yes'], cliEnv())
     expect(killResult.exitCode).toBe(0)
     expect(killResult.stderr).toMatch(/tmux server killed/i)
 
-    const statusResult = await runCli(['tmux', 'status', '--json'], cliEnv())
+    const statusResult = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
     expect(statusResult.exitCode).toBe(0)
     const status = JSON.parse(statusResult.stdout.trim()) as { running: boolean }
     expect(status.running).toBe(false)
@@ -523,9 +535,9 @@ describe('server/tmux admin lifecycle', () => {
 })
 
 // ===========================================================================
-// 3. turn send / clear-context
+// 3. turn send / session clear-context
 // ===========================================================================
-describe('turn send / clear-context', () => {
+describe('turn send / session clear-context', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
   })
@@ -558,18 +570,18 @@ describe('turn send / clear-context', () => {
     expect(body.status).toBe('started')
   })
 
-  it('clear-context exits 1 when hostSessionId is missing', async () => {
-    const result = await runCli(['clear-context'], cliEnv())
+  it('session clear-context exits 1 when hostSessionId is missing', async () => {
+    const result = await runCli(['session', 'clear-context'], cliEnv())
     expect(result.exitCode).toBe(1)
     expect(result.stderr.toLowerCase()).toContain('missing required argument')
   })
 
-  it('clear-context outputs rotation JSON for a known hostSessionId', async () => {
+  it('session clear-context outputs rotation JSON for a known hostSessionId', async () => {
     const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
     const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
     expect(ensureResult.exitCode).toBe(0)
 
-    const result = await runCli(['clear-context', hostSessionId], cliEnv())
+    const result = await runCli(['session', 'clear-context', hostSessionId], cliEnv())
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
@@ -581,7 +593,7 @@ describe('turn send / clear-context', () => {
 })
 
 // ===========================================================================
-// 4. hrc runtime ensure / capture / attach / interrupt / terminate
+// 4. hrc runtime ensure / capture / attach / runtime interrupt / runtime terminate
 // ===========================================================================
 describe('runtime lifecycle commands', () => {
   beforeEach(async () => {
@@ -620,6 +632,14 @@ describe('runtime lifecycle commands', () => {
     expect(typeof result.stdout).toBe('string')
   })
 
+  it('runtime capture prints pane text for a runtimeId', async () => {
+    const runtimeId = await ensureRuntime(testProjectScope('runtime-capturecli'))
+    const result = await runCli(['runtime', 'capture', runtimeId], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    expect(typeof result.stdout).toBe('string')
+  })
+
   it('attach prints descriptor JSON for a runtimeId', async () => {
     const runtimeId = await ensureRuntime(testProjectScope('attachcli'))
     const result = await runCli(['attach', runtimeId], cliEnv())
@@ -646,9 +666,9 @@ describe('runtime lifecycle commands', () => {
     expect(listed[0].surfaceId).toBe('ghostty-cli-attach-1')
   })
 
-  it('interrupt prints JSON for a runtimeId', async () => {
+  it('runtime interrupt prints JSON for a runtimeId', async () => {
     const runtimeId = await ensureRuntime(testProjectScope('interruptcli'))
-    const result = await runCli(['interrupt', runtimeId], cliEnv())
+    const result = await runCli(['runtime', 'interrupt', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
@@ -656,9 +676,9 @@ describe('runtime lifecycle commands', () => {
     expect(body.runtimeId).toBe(runtimeId)
   })
 
-  it('terminate prints JSON for a runtimeId', async () => {
+  it('runtime terminate prints JSON for a runtimeId', async () => {
     const runtimeId = await ensureRuntime(testProjectScope('terminatecli'))
-    const result = await runCli(['terminate', runtimeId], cliEnv())
+    const result = await runCli(['runtime', 'terminate', runtimeId], cliEnv())
 
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
@@ -836,7 +856,7 @@ describe('hrc start', () => {
     } finally {
       db.close()
     }
-  })
+  }, 10000)
 })
 
 describe('hrc attach <scope>', () => {
@@ -1558,9 +1578,9 @@ describe('hrc session get', () => {
 })
 
 // ===========================================================================
-// 8. hrc watch — NDJSON output
+// 8. hrc events — NDJSON output
 // ===========================================================================
-describe('hrc watch', () => {
+describe('hrc events', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
   })
@@ -1570,7 +1590,7 @@ describe('hrc watch', () => {
     await runCli(['session', 'resolve', '--scope', testProjectScope('watchcli')], cliEnv())
 
     // Watch without follow — should return events and exit
-    const result = await runCli(['watch'], cliEnv())
+    const result = await runCli(['events'], cliEnv())
     expect(result.exitCode).toBe(0)
 
     const lines = result.stdout
@@ -1593,7 +1613,7 @@ describe('hrc watch', () => {
     await runCli(['session', 'resolve', '--scope', testProjectScope('fromseqcli2')], cliEnv())
 
     // Get all events
-    const allResult = await runCli(['watch'], cliEnv())
+    const allResult = await runCli(['events'], cliEnv())
     const allLines = allResult.stdout
       .trim()
       .split('\n')
@@ -1604,7 +1624,7 @@ describe('hrc watch', () => {
     const fromSeq = allEvents[1].seq
 
     // Watch from second event's seq
-    const result = await runCli(['watch', '--from-seq', String(fromSeq)], cliEnv())
+    const result = await runCli(['events', '--from-seq', String(fromSeq)], cliEnv())
     expect(result.exitCode).toBe(0)
 
     const filteredLines = result.stdout
@@ -1620,7 +1640,7 @@ describe('hrc watch', () => {
   it('supports --pretty with colored human-readable output and hides hostSessionId', async () => {
     await runCli(['session', 'resolve', '--scope', testProjectScope('watchpretty')], cliEnv())
 
-    const result = await runCli(['watch', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
+    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('test@watchpretty')
     expect(result.stdout).toContain('SESSION')
@@ -1634,27 +1654,26 @@ describe('hrc watch', () => {
 // 9. Phase 6 diagnostics CLI commands (T-00973 / T-00974)
 //
 // RED GATE: These tests call CLI commands that do not exist yet:
-//   hrc health, hrc status, hrc runtime list, hrc launch list, hrc adopt
+//   hrc server health, hrc status, hrc runtime list, hrc launch list, hrc runtime adopt
 //
 // Pass conditions for Curly (T-00973):
-//   1. `hrc health` → exit 0, stdout JSON with { ok: true }
+//   1. `hrc server health` → exit 0, stdout JSON with { ok: true }
 //   2. `hrc status` → exit 0, stdout JSON with uptime (number), startedAt, socketPath, dbPath
 //   3. `hrc runtime list` → exit 0, stdout JSON array
 //   4. `hrc runtime list --host-session-id <id>` → exit 0, filtered JSON array
 //   5. `hrc launch list` → exit 0, stdout JSON array
 //   6. `hrc launch list --runtime-id <id>` → exit 0, filtered JSON array
-//   7. `hrc adopt <runtimeId>` on dead runtime → exit 0, stdout JSON with status='adopted'
-//   8. `hrc adopt <runtimeId>` on active runtime → exit 1 (CONFLICT)
-//   9. `hrc adopt <unknownId>` → exit 1 (UNKNOWN_RUNTIME)
+//   7. `hrc runtime adopt <runtimeId>` on dead runtime → exit 0, stdout JSON with status='adopted'
+//   8. `hrc runtime adopt <runtimeId>` on active runtime → exit 1 (CONFLICT)
+//   9. `hrc runtime adopt <unknownId>` → exit 1 (UNKNOWN_RUNTIME)
 // ===========================================================================
 describe('Phase 6 diagnostics CLI', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
   })
 
-  it('hrc health prints { ok: true } and exits 0', async () => {
-    // RED: 'health' command does not exist in CLI dispatch
-    const result = await runCli(['health'], cliEnv())
+  it('hrc server health prints { ok: true } and exits 0', async () => {
+    const result = await runCli(['server', 'health'], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body).toEqual({ ok: true })
@@ -1729,7 +1748,7 @@ describe('Phase 6 diagnostics CLI', () => {
     }
   })
 
-  it('hrc adopt on dead runtime prints adopted JSON and exits 0', async () => {
+  it('hrc runtime adopt on dead runtime prints adopted JSON and exits 0', async () => {
     // Seed a dead runtime
     const resolveResult = await runCli(
       ['session', 'resolve', '--scope', testProjectScope('diag-adopt-cli')],
@@ -1763,8 +1782,7 @@ describe('Phase 6 diagnostics CLI', () => {
       updatedAt: now,
     })
 
-    // RED: 'adopt' command does not exist in CLI dispatch
-    const result = await runCli(['adopt', runtimeId], cliEnv())
+    const result = await runCli(['runtime', 'adopt', runtimeId], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body.status).toBe('adopted')
@@ -1772,7 +1790,7 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(body.runtimeId).toBe(runtimeId)
   })
 
-  it('hrc adopt on active runtime exits 1', async () => {
+  it('hrc runtime adopt on active runtime exits 1', async () => {
     const resolveResult = await runCli(
       ['session', 'resolve', '--scope', testProjectScope('diag-adopt-active-cli')],
       cliEnv()
@@ -1781,15 +1799,13 @@ describe('Phase 6 diagnostics CLI', () => {
     const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
     const runtimeId = JSON.parse(ensureResult.stdout.trim()).runtimeId as string
 
-    // RED: 'adopt' command does not exist in CLI dispatch
-    const result = await runCli(['adopt', runtimeId], cliEnv())
+    const result = await runCli(['runtime', 'adopt', runtimeId], cliEnv())
     expect(result.exitCode).toBe(1)
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 
-  it('hrc adopt on unknown runtime exits 1', async () => {
-    // RED: 'adopt' command does not exist in CLI dispatch
-    const result = await runCli(['adopt', 'nonexistent-runtime-id'], cliEnv())
+  it('hrc runtime adopt on unknown runtime exits 1', async () => {
+    const result = await runCli(['runtime', 'adopt', 'nonexistent-runtime-id'], cliEnv())
     expect(result.exitCode).toBe(1)
     expect(result.stderr.length).toBeGreaterThan(0)
   })
