@@ -111,8 +111,9 @@ function tryParseJson(value: unknown): Record<string, unknown> | undefined {
  * Normalize a Codex OTEL log record into typed events.
  *
  * Maps Codex-specific event names to the shared HookDerivedEvent union:
- * - codex.tool_decision → tool_execution_start
- * - codex.tool_result   → tool_execution_end
+ * - codex.tool_decision → tool_execution_start (only when arguments are present)
+ * - codex.tool_result   → tool_execution_end, and backfills tool_execution_start
+ *                          when Codex emits arguments only on the result row
  * - codex.user_prompt   → notice (user turn start)
  * - codex.conversation_starts → notice (session start)
  *
@@ -130,7 +131,8 @@ export function normalizeCodexOtelEvent(record: OtelLogRecordInput): NormalizeOt
 
     // Try to parse arguments JSON string into an input record
     const argumentsRaw = getAttrString(attrs, 'arguments')
-    const input = tryParseJson(argumentsRaw) ?? {}
+    const input = tryParseJson(argumentsRaw)
+    if (!input) return { events: [], eventName }
 
     return {
       events: [
@@ -150,22 +152,33 @@ export function normalizeCodexOtelEvent(record: OtelLogRecordInput): NormalizeOt
     const callId = getAttrString(attrs, 'call_id')
     if (!callId) return { events: [], eventName }
 
+    const input = tryParseJson(getAttrString(attrs, 'arguments'))
     const output = getAttrString(attrs, 'output') ?? ''
     const successRaw = getAttrBool(attrs, 'success')
     const isError = successRaw === false
 
+    const events: HookDerivedEvent[] = []
+    if (input) {
+      events.push({
+        type: 'tool_execution_start',
+        toolUseId: callId,
+        toolName,
+        input,
+      })
+    }
+
+    events.push({
+      type: 'tool_execution_end',
+      toolUseId: callId,
+      toolName,
+      result: {
+        content: [{ type: 'text' as const, text: output }],
+      },
+      isError,
+    })
+
     return {
-      events: [
-        {
-          type: 'tool_execution_end',
-          toolUseId: callId,
-          toolName,
-          result: {
-            content: [{ type: 'text' as const, text: output }],
-          },
-          isError,
-        },
-      ],
+      events,
       eventName,
     }
   }

@@ -1637,6 +1637,111 @@ describe('hrc events', () => {
     }
   })
 
+  it('filters raw hook and otel envelopes while preserving normalized typed events', async () => {
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', testProjectScope('watchfilter')],
+      cliEnv()
+    )
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+    }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfilter'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'hrc',
+        eventKind: 'runtime.created',
+        eventJson: {
+          transport: 'tmux',
+          harness: 'claude-code',
+        },
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfilter'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'hook',
+        eventKind: 'hook.ingested',
+        eventJson: {
+          hookData: { kind: 'PreToolUse' },
+        },
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfilter'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'hook',
+        eventKind: 'tool_execution_start',
+        eventJson: {
+          type: 'tool_execution_start',
+          toolUseId: 'toolu_visible',
+          toolName: 'Bash',
+          input: { command: 'pwd' },
+        },
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfilter'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'otel',
+        eventKind: 'codex.conversation.message',
+        eventJson: {
+          otel: {
+            logRecord: {
+              body: {
+                stringValue: 'assistant response',
+              },
+            },
+          },
+        },
+      })
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfilter'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'otel',
+        eventKind: 'notice',
+        eventJson: {
+          type: 'notice',
+          level: 'info',
+          message: 'Codex conversation started',
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events'], cliEnv())
+    expect(result.exitCode).toBe(0)
+
+    const events = result.stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
+
+    expect(events.some((event) => event.eventKind === 'runtime.created')).toBe(true)
+    expect(events.some((event) => event.eventKind === 'tool_execution_start')).toBe(true)
+    expect(events.some((event) => event.eventKind === 'notice')).toBe(true)
+    expect(events.some((event) => event.eventKind === 'hook.ingested')).toBe(false)
+    expect(events.some((event) => event.eventKind === 'codex.conversation.message')).toBe(false)
+  })
+
   it('supports --pretty with colored human-readable output and hides hostSessionId', async () => {
     await runCli(['session', 'resolve', '--scope', testProjectScope('watchpretty')], cliEnv())
 
@@ -1704,6 +1809,53 @@ describe('hrc events', () => {
     expect(result.stdout).not.toContain('type')
     expect(result.stdout).toContain('NOTICE')
     expect(result.stdout).toContain('Heads up')
+  })
+
+  it('keeps multiline pretty output aligned inside the gutter', async () => {
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', testProjectScope('watchprettymultiline')],
+      cliEnv()
+    )
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+    }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.events.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchprettymultiline'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        source: 'otel',
+        eventKind: 'tool_execution_end',
+        eventJson: {
+          type: 'tool_execution_end',
+          toolUseId: 'toolu_multiline',
+          toolName: 'exec_command',
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: 'Chunk ID: 384f38\nWall time: 0.0000 seconds\nProcess exited with code 3',
+              },
+            ],
+          },
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '0' }))
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('Chunk ID: 384f38')
+    expect(result.stdout).toContain('| text : Chunk ID: 384f38')
+    expect(result.stdout).toContain('|        Wall time: 0.0000 seconds')
+    expect(result.stdout).toContain('|        Process exited with code 3')
   })
 })
 

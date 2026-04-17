@@ -47,7 +47,19 @@ describe('normalizeCodexOtelEvent', () => {
       }
     })
 
-    it('uses empty input when arguments is not valid JSON', () => {
+    it('returns no typed event when tool_decision has no arguments payload', () => {
+      const result = normalizeCodexOtelEvent(
+        makeRecord('codex.tool_decision', {
+          tool_name: 'exec_command',
+          call_id: 'call_xyz',
+        })
+      )
+
+      expect(result.events).toHaveLength(0)
+      expect(result.eventName).toBe('codex.tool_decision')
+    })
+
+    it('returns no typed event when arguments is not valid JSON', () => {
       const result = normalizeCodexOtelEvent(
         makeRecord('codex.tool_decision', {
           tool_name: 'exec_command',
@@ -56,10 +68,7 @@ describe('normalizeCodexOtelEvent', () => {
         })
       )
 
-      expect(result.events).toHaveLength(1)
-      if (result.events[0]!.type === 'tool_execution_start') {
-        expect(result.events[0]!.input).toEqual({})
-      }
+      expect(result.events).toHaveLength(0)
     })
 
     it('returns empty events when call_id is missing', () => {
@@ -73,12 +82,15 @@ describe('normalizeCodexOtelEvent', () => {
       expect(result.eventName).toBe('codex.tool_decision')
     })
 
-    it('defaults tool_name to "tool" when missing', () => {
+    it('defaults tool_name to "tool" when tool_result backfills the start event', () => {
       const result = normalizeCodexOtelEvent(
-        makeRecord('codex.tool_decision', { call_id: 'call_1' })
+        makeRecord('codex.tool_result', {
+          call_id: 'call_1',
+          arguments: '{"cmd":"ls"}',
+        })
       )
 
-      expect(result.events).toHaveLength(1)
+      expect(result.events).toHaveLength(2)
       if (result.events[0]!.type === 'tool_execution_start') {
         expect(result.events[0]!.toolName).toBe('tool')
       }
@@ -105,6 +117,28 @@ describe('normalizeCodexOtelEvent', () => {
         expect(event.toolName).toBe('exec_command')
         expect(event.isError).toBe(false)
         expect(event.result.content).toEqual([{ type: 'text', text: 'hello world' }])
+      }
+    })
+
+    it('emits tool_execution_start before tool_execution_end when tool_result carries arguments', () => {
+      const result = normalizeCodexOtelEvent(
+        makeRecord('codex.tool_result', {
+          tool_name: 'exec_command',
+          call_id: 'call_args',
+          arguments: '{"cmd":"agentchat dm animata","workdir":"/tmp/project"}',
+          output: 'ok',
+          success: true,
+        })
+      )
+
+      expect(result.events).toHaveLength(2)
+      expect(result.events[0]?.type).toBe('tool_execution_start')
+      expect(result.events[1]?.type).toBe('tool_execution_end')
+      if (result.events[0]?.type === 'tool_execution_start') {
+        expect(result.events[0].input).toEqual({
+          cmd: 'agentchat dm animata',
+          workdir: '/tmp/project',
+        })
       }
     })
 

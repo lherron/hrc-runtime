@@ -14,7 +14,7 @@ import type {
   HrcStatusResponse,
   HrcStatusSessionView,
 } from 'hrc-core'
-import type { HookDerivedEventType } from 'hrc-events'
+import { type HookDerivedEventType, isHookDerivedEvent } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
@@ -703,8 +703,21 @@ async function cmdEvents(args: string[]): Promise<void> {
 
   const client = createClient()
   for await (const event of client.watch({ fromSeq, follow })) {
+    if (!shouldDisplayEvent(event)) continue
     process.stdout.write(pretty ? formatWatchEvent(event) : `${JSON.stringify(event)}\n`)
   }
+}
+
+function shouldDisplayEvent(event: HrcEventEnvelope): boolean {
+  if (event.source !== 'hook' && event.source !== 'otel') {
+    return true
+  }
+  if (!event.eventJson || typeof event.eventJson !== 'object' || Array.isArray(event.eventJson)) {
+    return false
+  }
+
+  const candidate = event.eventJson as { type?: unknown }
+  return typeof candidate.type === 'string' && isHookDerivedEvent(candidate as { type: string })
 }
 
 function formatWatchEvent(event: HrcEventEnvelope): string {
@@ -799,35 +812,52 @@ function renderPrettyValue(
 
     return value.flatMap((item, index) => {
       const marker = `${theme.gutter(`${indent}|`)} ${chalk.dim(`[${index + 1}]`)}`
-      return isPrettyPrimitive(item)
-        ? [`${marker} ${formatPrettyPrimitive(item)}`]
-        : [marker, ...renderPrettyValue(item, `${indent}  `, theme)]
+      if (!isPrettyPrimitive(item)) {
+        return [marker, ...renderPrettyValue(item, `${indent}  `, theme)]
+      }
+
+      const lines = formatPrettyPrimitiveLines(item)
+      return [
+        `${marker} ${lines[0]}`,
+        ...lines
+          .slice(1)
+          .map(
+            (line) => `${theme.gutter(`${indent}|`)} ${' '.repeat(`[${index + 1}]`.length)} ${line}`
+          ),
+      ]
     })
   }
 
   if (isPrettyPrimitive(value)) {
-    return [`${indent}${formatPrettyPrimitive(value)}`]
+    return formatPrettyPrimitiveLines(value).map((line) => `${indent}${line}`)
   }
 
   const entries = Object.entries(value)
   if (entries.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
   const keyWidth = Math.min(16, Math.max(...entries.map(([key]) => key.length)))
 
-  return entries.flatMap(([key, childValue]) =>
-    isPrettyPrimitive(childValue)
-      ? [
-          `${theme.gutter(`${indent}|`)} ${theme.key(key.padEnd(keyWidth))} ${chalk.dim(':')} ${formatPrettyPrimitive(childValue)}`,
-        ]
-      : [
-          `${theme.gutter(`${indent}|`)} ${theme.key(key.toUpperCase())}`,
-          ...renderPrettyValue(childValue, `${indent}  `, theme),
-        ]
-  )
+  return entries.flatMap(([key, childValue]) => {
+    if (!isPrettyPrimitive(childValue)) {
+      return [
+        `${theme.gutter(`${indent}|`)} ${theme.key(key.toUpperCase())}`,
+        ...renderPrettyValue(childValue, `${indent}  `, theme),
+      ]
+    }
+
+    const lines = formatPrettyPrimitiveLines(childValue)
+    return [
+      `${theme.gutter(`${indent}|`)} ${theme.key(key.padEnd(keyWidth))} ${chalk.dim(':')} ${lines[0]}`,
+      ...lines
+        .slice(1)
+        .map((line) => `${theme.gutter(`${indent}|`)} ${' '.repeat(keyWidth)}   ${line}`),
+    ]
+  })
 }
 
 function renderInlinePrettyValue(value: unknown, theme: WatchTheme): string | undefined {
   if (value === undefined) return undefined
   if (isPrettyPrimitive(value)) {
+    if (typeof value === 'string' && value.includes('\n')) return undefined
     return `${chalk.dim('VALUE')} ${formatPrettyPrimitive(value)}`
   }
   if (Array.isArray(value) || !value || typeof value !== 'object') {
@@ -837,6 +867,11 @@ function renderInlinePrettyValue(value: unknown, theme: WatchTheme): string | un
   const entries = Object.entries(value)
   if (entries.length === 0 || entries.length > 3) return undefined
   if (entries.some(([, childValue]) => !isPrettyPrimitive(childValue))) return undefined
+  if (
+    entries.some(([, childValue]) => typeof childValue === 'string' && childValue.includes('\n'))
+  ) {
+    return undefined
+  }
 
   return entries
     .map(([key, childValue]) => `${theme.key(key)} ${formatPrettyPrimitive(childValue)}`)
@@ -857,6 +892,13 @@ function formatPrettyPrimitive(value: string | number | boolean | null): string 
   if (typeof value === 'boolean') return value ? chalk.green('true') : chalk.red('false')
   if (typeof value === 'number') return chalk.white(String(value))
   return chalk.white(value)
+}
+
+function formatPrettyPrimitiveLines(value: string | number | boolean | null): string[] {
+  if (typeof value !== 'string' || !value.includes('\n')) {
+    return [formatPrettyPrimitive(value)]
+  }
+  return value.split('\n').map((line) => chalk.white(line))
 }
 
 function colorizeSource(source: HrcEventEnvelope['source']): (text: string) => string {
