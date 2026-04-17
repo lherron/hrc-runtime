@@ -289,7 +289,7 @@ describe('hrc-launch exec crash paths', () => {
     expect(exporter['endpoint']).toBe('http://127.0.0.1:4318/v1/logs')
     expect(exporter['protocol']).toBe('json')
     expect((exporter['headers'] as Record<string, unknown>)['x-hrc-launch-auth']).toBe(
-      'launch-exec-test-001.secret'
+      authHeaderValue
     )
 
     const projects = parsed['projects'] as Record<string, unknown>
