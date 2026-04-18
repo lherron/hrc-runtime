@@ -79,13 +79,21 @@ function getRuntimeStatus(runtimeId: string): string | undefined {
 }
 
 async function getAllEvents(): Promise<any[]> {
-  const res = await fixture.fetchSocket('/v1/events?fromSeq=1')
-  const text = await res.text()
-  return text
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.events.listFromSeq(1)
+  } finally {
+    db.close()
+  }
+}
+
+async function getAllHrcEvents(): Promise<any[]> {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents.listFromHrcSeq(1)
+  } finally {
+    db.close()
+  }
 }
 
 beforeEach(async () => {
@@ -308,11 +316,11 @@ describe('stale hook handling', () => {
     expect(getRuntimeStatus(rtId)).toBe('ready')
 
     // Rejection event must be appended
-    const events = await getAllEvents()
+    const events = await getAllHrcEvents()
     const rejections = events.filter((e) => e.eventKind === 'launch.callback_rejected')
     expect(rejections.length).toBeGreaterThanOrEqual(1)
     const rejection = rejections.find(
-      (e) => e.eventJson?.launchId === staleLaunchId && e.eventJson?.callback === 'hook_ingest'
+      (e) => e.launchId === staleLaunchId && e.payload?.callback === 'hook_ingest'
     )
     expect(rejection).toBeDefined()
   })

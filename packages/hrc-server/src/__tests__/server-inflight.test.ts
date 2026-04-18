@@ -23,7 +23,7 @@
  *   5. POST /v1/in-flight-input on an SDK runtime with supportsInflightInput=false
  *      returns 422 { error: { code: 'inflight_unsupported' } }
  *   6. On success, an event with eventKind='inflight.accepted' is appended with
- *      source='hrc', correct runtimeId/runId, and eventJson containing the prompt
+ *      correct runtimeId/runId, and payload containing the prompt
  *   7. On rejection (run_mismatch, inflight_unsupported), an event with
  *      eventKind='inflight.rejected' is appended with the rejection reason
  *   8. On success, the runtime's last_activity_at is updated to a timestamp
@@ -264,11 +264,10 @@ describe('POST /v1/in-flight-input — accepted event', () => {
     const events = await getAllEvents()
     const accepted = events.find((e: any) => e.eventKind === 'inflight.accepted')
     expect(accepted).toBeDefined()
-    expect(accepted!.source).toBe('hrc')
     expect(accepted!.runtimeId).toBe(runtimeId)
     expect(accepted!.runId).toBe(runId)
-    expect(accepted!.eventJson).toBeDefined()
-    expect((accepted!.eventJson as any).prompt).toBe('Additional user context')
+    expect(accepted!.payload).toBeDefined()
+    expect((accepted!.payload as any).prompt).toBe('Additional user context')
   })
 })
 
@@ -290,10 +289,9 @@ describe('POST /v1/in-flight-input — rejected event', () => {
     const events = await getAllEvents()
     const rejected = events.find((e: any) => e.eventKind === 'inflight.rejected')
     expect(rejected).toBeDefined()
-    expect(rejected!.source).toBe('hrc')
     expect(rejected!.runtimeId).toBe(runtimeId)
-    expect(rejected!.eventJson).toBeDefined()
-    expect((rejected!.eventJson as any).reason).toMatch(/unsupported|inflight/i)
+    expect(rejected!.payload).toBeDefined()
+    expect((rejected!.payload as any).reason).toMatch(/unsupported|inflight/i)
   })
 })
 

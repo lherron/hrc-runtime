@@ -45,7 +45,7 @@ let fixture: HrcServerTestFixture
  * Helper: fetch all events and return parsed envelopes.
  */
 async function fetchEvents(): Promise<
-  Array<{ seq: number; eventKind: string; eventJson: unknown; runtimeId?: string }>
+  Array<{ hrcSeq: number; eventKind: string; payload: unknown; runtimeId?: string }>
 > {
   const res = await fixture.fetchSocket('/v1/events')
   const text = await res.text()
@@ -185,9 +185,15 @@ describe('POST /v1/bridges/deliver-text', () => {
       expectedGeneration: generation,
     })
 
-    // Wait briefly for tmux to process keys, then capture
-    await Bun.sleep(200)
-    const captured = await tmux.capture(pane.paneId)
+    // tmux delivery can take a few scheduler ticks before capture reflects it.
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(100)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('SMOKEY_INJECTION_MARKER')) {
+        break
+      }
+    }
     expect(captured).toContain('SMOKEY_INJECTION_MARKER')
   })
 
@@ -426,15 +432,15 @@ describe('bridge.delivered event metadata (P2-7)', () => {
     const delivered = events.find((e) => e.eventKind === 'bridge.delivered')
     expect(delivered).toBeDefined()
 
-    const ej = delivered!.eventJson as Record<string, unknown>
+    const ej = delivered!.payload as Record<string, unknown>
 
     // Required metadata fields
     expect(ej['payloadLength']).toBe(17) // 'Hello event world'.length
     expect(ej['enter']).toBe(true)
     expect(ej['oobSuffixLength']).toBe(5) // '__OOB'.length
-    expect(ej['hostSessionId']).toBe(hostSessionId)
-    expect(ej['generation']).toBe(generation)
-    expect(ej['runtimeId']).toBe(runtimeId)
+    expect(delivered!.hostSessionId).toBe(hostSessionId)
+    expect(delivered!.generation).toBe(generation)
+    expect(delivered!.runtimeId).toBe(runtimeId)
 
     // MUST NOT contain raw text — security/privacy requirement
     expect(ej['text']).toBeUndefined()
@@ -466,7 +472,7 @@ describe('bridge.delivered event metadata (P2-7)', () => {
     const delivered = events.find((e) => e.eventKind === 'bridge.delivered')
     expect(delivered).toBeDefined()
 
-    const ej = delivered!.eventJson as Record<string, unknown>
+    const ej = delivered!.payload as Record<string, unknown>
     expect(ej['payloadLength']).toBe(14) // 'No suffix test'.length
     expect(ej['enter']).toBe(false)
     expect(ej['oobSuffixLength']).toBe(0)

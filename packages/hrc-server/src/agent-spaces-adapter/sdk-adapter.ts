@@ -38,7 +38,9 @@ export type SdkTurnOptions = {
   existingProvider?: HrcProvider | undefined
   continuation?: HrcContinuationRef | undefined
   runner?: SdkTurnRunner | undefined
-  onHrcEvent?: ((event: Omit<HrcEventEnvelope, 'seq'>) => void | Promise<void>) | undefined
+  onHrcEvent?:
+    | ((event: Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>) => void | Promise<void>)
+    | undefined
   onBuffer?: ((text: string) => void | Promise<void>) | undefined
   signal?: AbortSignal | undefined
 }
@@ -78,7 +80,9 @@ export type SdkInflightInputOptions = {
   scopeRef: string
   laneRef: string
   generation: number
-  onHrcEvent?: ((event: Omit<HrcEventEnvelope, 'seq'>) => void | Promise<void>) | undefined
+  onHrcEvent?:
+    | ((event: Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>) => void | Promise<void>)
+    | undefined
   client?: SdkInflightInputClient | undefined
 }
 

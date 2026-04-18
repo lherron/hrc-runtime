@@ -1710,7 +1710,8 @@ describe('hrc events', () => {
     // Each line must be valid JSON
     for (const line of lines) {
       const event = JSON.parse(line)
-      expect(typeof event.seq).toBe('number')
+      expect(typeof event.hrcSeq).toBe('number')
+      expect(typeof event.streamSeq).toBe('number')
       expect(typeof event.eventKind).toBe('string')
     }
   })
@@ -1729,7 +1730,7 @@ describe('hrc events', () => {
     expect(allLines.length).toBeGreaterThanOrEqual(2)
 
     const allEvents = allLines.map((l) => JSON.parse(l))
-    const fromSeq = allEvents[1].seq
+    const fromSeq = allEvents[1].hrcSeq
 
     // Watch from second event's seq
     const result = await runCli(['events', '--from-seq', String(fromSeq)], cliEnv())
@@ -1741,11 +1742,11 @@ describe('hrc events', () => {
       .filter((l) => l.length > 0)
     const filteredEvents = filteredLines.map((l) => JSON.parse(l))
     for (const ev of filteredEvents) {
-      expect(ev.seq).toBeGreaterThanOrEqual(fromSeq)
+      expect(ev.hrcSeq).toBeGreaterThanOrEqual(fromSeq)
     }
   })
 
-  it('filters raw hook and otel envelopes while preserving normalized typed events', async () => {
+  it('shows only hrc lifecycle rows on /v1/events', async () => {
     const resolveResult = await runCli(
       ['session', 'resolve', '--scope', testProjectScope('watchfilter')],
       cliEnv()
@@ -1758,16 +1759,16 @@ describe('hrc events', () => {
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
     try {
-      db.events.append({
+      db.hrcEvents.append({
         ts: now,
         hostSessionId: resolved.hostSessionId,
         scopeRef: testProjectScope('watchfilter'),
         laneRef: 'default',
         generation: resolved.generation,
-        source: 'hrc',
+        category: 'runtime',
+        transport: 'tmux',
         eventKind: 'runtime.created',
-        eventJson: {
-          transport: 'tmux',
+        payload: {
           harness: 'claude-code',
         },
       })
@@ -1844,10 +1845,11 @@ describe('hrc events', () => {
       .map((line) => JSON.parse(line))
 
     expect(events.some((event) => event.eventKind === 'runtime.created')).toBe(true)
-    expect(events.some((event) => event.eventKind === 'tool_execution_start')).toBe(true)
-    expect(events.some((event) => event.eventKind === 'notice')).toBe(true)
+    expect(events.every((event) => event.category)).toBe(true)
+    expect(events.every((event) => event.hrcSeq >= 1)).toBe(true)
     expect(events.some((event) => event.eventKind === 'hook.ingested')).toBe(false)
-    expect(events.some((event) => event.eventKind === 'codex.conversation.message')).toBe(false)
+    expect(events.some((event) => event.eventKind === 'tool_execution_start')).toBe(false)
+    expect(events.some((event) => event.eventKind === 'notice')).toBe(false)
   })
 
   it('supports --pretty with colored human-readable output and hides hostSessionId', async () => {
@@ -1862,9 +1864,9 @@ describe('hrc events', () => {
     expect(result.stdout).toContain('\u001b[')
   })
 
-  it('supports pretty rendering for normalized hook-derived event kinds', async () => {
+  it('supports pretty rendering for lifecycle event metadata and payload', async () => {
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('watchprettyhook')],
+      ['session', 'resolve', '--scope', testProjectScope('watchprettybridge')],
       cliEnv()
     )
     const resolved = JSON.parse(resolveResult.stdout.trim()) as {
@@ -1875,33 +1877,21 @@ describe('hrc events', () => {
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
     try {
-      db.events.append({
+      db.hrcEvents.append({
         ts: now,
         hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchprettyhook'),
+        scopeRef: testProjectScope('watchprettybridge'),
         laneRef: 'default',
         generation: resolved.generation,
-        source: 'hook',
-        eventKind: 'tool_execution_start',
-        eventJson: {
-          type: 'tool_execution_start',
-          toolUseId: 'toolu_pretty',
-          toolName: 'Bash',
-          input: { command: 'pwd' },
-        },
-      })
-      db.events.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchprettyhook'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        source: 'hook',
-        eventKind: 'notice',
-        eventJson: {
-          type: 'notice',
-          level: 'info',
-          message: 'Heads up',
+        category: 'bridge',
+        runtimeId: 'rt-pretty',
+        transport: 'tmux',
+        eventKind: 'bridge.delivered',
+        payload: {
+          bridgeId: 'bridge-pretty',
+          target: 'smokey-pane@test',
+          payloadLength: 3,
+          enter: true,
         },
       })
     } finally {
@@ -1910,13 +1900,11 @@ describe('hrc events', () => {
 
     const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('TOOL')
-    expect(result.stdout).toContain('tool_execution_start')
-    expect(result.stdout).toContain('toolUseId')
-    expect(result.stdout).toContain('toolu_pretty')
-    expect(result.stdout).not.toContain('type')
-    expect(result.stdout).toContain('NOTICE')
-    expect(result.stdout).toContain('Heads up')
+    expect(result.stdout).toContain('BRIDGE')
+    expect(result.stdout).toContain('delivered')
+    expect(result.stdout).toContain('bridgeId')
+    expect(result.stdout).toContain('bridge-pretty')
+    expect(result.stdout).toContain('smokey-pane@test')
   })
 
   it('keeps multiline pretty output aligned inside the gutter', async () => {
@@ -1932,18 +1920,16 @@ describe('hrc events', () => {
     const now = new Date().toISOString()
     const db = openHrcDatabase(dbPath)
     try {
-      db.events.append({
+      db.hrcEvents.append({
         ts: now,
         hostSessionId: resolved.hostSessionId,
         scopeRef: testProjectScope('watchprettymultiline'),
         laneRef: 'default',
         generation: resolved.generation,
-        source: 'otel',
-        eventKind: 'tool_execution_end',
-        eventJson: {
-          type: 'tool_execution_end',
-          toolUseId: 'toolu_multiline',
-          toolName: 'exec_command',
+        category: 'turn',
+        eventKind: 'turn.completed',
+        payload: {
+          success: false,
           result: {
             content: [
               {

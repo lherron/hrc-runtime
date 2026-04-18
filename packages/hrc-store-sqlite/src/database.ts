@@ -9,6 +9,7 @@ import {
   AppSessionRepository,
   ContinuityRepository,
   EventRepository,
+  HrcLifecycleEventRepository,
   LaunchRepository,
   LocalBridgeRepository,
   RunRepository,
@@ -32,6 +33,7 @@ export type HrcDatabase = {
   runs: RunRepository
   launches: LaunchRepository
   events: EventRepository
+  hrcEvents: HrcLifecycleEventRepository
   localBridges: LocalBridgeRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
@@ -74,6 +76,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     runs: new RunRepository(sqlite),
     launches: new LaunchRepository(sqlite),
     events: new EventRepository(sqlite),
+    hrcEvents: new HrcLifecycleEventRepository(sqlite),
     localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),

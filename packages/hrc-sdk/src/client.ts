@@ -1,6 +1,6 @@
 import type {
-  HrcEventEnvelope,
   HrcHttpError,
+  HrcLifecycleEvent,
   HrcMessageRecord,
   HrcSessionRecord,
   HrcTargetView,
@@ -390,7 +390,7 @@ export class HrcClient {
 
   // -- Event stream -----------------------------------------------------------
 
-  async *watch(options?: WatchOptions): AsyncIterable<HrcEventEnvelope> {
+  async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
     const params = new URLSearchParams()
     if (options?.fromSeq !== undefined) params.set('fromSeq', String(options.fromSeq))
     if (options?.follow) params.set('follow', 'true')
@@ -423,7 +423,7 @@ export class HrcClient {
         const trimmed = line.trim()
         if (trimmed.length === 0) continue
         try {
-          yield JSON.parse(trimmed) as HrcEventEnvelope
+          yield JSON.parse(trimmed) as HrcLifecycleEvent
         } catch {
           // M-10: skip malformed NDJSON lines instead of crashing the generator
           continue
@@ -436,7 +436,7 @@ export class HrcClient {
     const remaining = buffer.trim()
     if (remaining.length > 0) {
       try {
-        yield JSON.parse(remaining) as HrcEventEnvelope
+        yield JSON.parse(remaining) as HrcLifecycleEvent
       } catch {
         // M-10: skip malformed trailing content
       }

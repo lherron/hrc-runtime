@@ -8,7 +8,7 @@
  *   - resolveSession() — POST /v1/sessions/resolve round-trip
  *   - listSessions() — GET /v1/sessions round-trip
  *   - getSession() — GET /v1/sessions/by-host/:id round-trip
- *   - watch() — GET /v1/events NDJSON parsing into AsyncIterable<HrcEventEnvelope>
+ *   - watch() — GET /v1/events NDJSON parsing into AsyncIterable<HrcLifecycleEvent>
  *   - Export surface from src/index.ts
  *
  * Pass conditions for Curly (T-00955):
@@ -19,7 +19,7 @@
  *   5. resolveSession() sends POST, returns ResolveSessionResponse
  *   6. listSessions() sends GET, returns HrcSessionRecord[]
  *   7. getSession() sends GET, returns HrcSessionRecord, throws 404 as HrcDomainError
- *   8. watch() returns AsyncIterable<HrcEventEnvelope> from NDJSON stream
+ *   8. watch() returns AsyncIterable<HrcLifecycleEvent> from NDJSON stream
  *   9. watch({ fromSeq }) sends fromSeq query param
  *  10. All public types are exported from src/index.ts
  *
@@ -33,7 +33,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcEventEnvelope, StatusResponse } from 'hrc-core'
+import type { HrcLifecycleEvent, StatusResponse } from 'hrc-core'
 import { HRC_API_VERSION, HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
@@ -355,29 +355,33 @@ describe('watch NDJSON parsing', () => {
     await rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('parses NDJSON stream into AsyncIterable<HrcEventEnvelope>', async () => {
-    const testEvents: HrcEventEnvelope[] = [
+  it('parses NDJSON stream into AsyncIterable<HrcLifecycleEvent>', async () => {
+    const testEvents: HrcLifecycleEvent[] = [
       {
-        seq: 1,
+        hrcSeq: 1,
+        streamSeq: 10,
         ts: '2026-03-31T15:00:00.000Z',
         hostSessionId: 'hsid-1',
         scopeRef: 'project:test',
         laneRef: 'default',
         generation: 1,
-        source: 'hrc' as const,
+        category: 'session',
         eventKind: 'session.created',
-        eventJson: {},
+        replayed: false,
+        payload: {},
       },
       {
-        seq: 2,
+        hrcSeq: 2,
+        streamSeq: 11,
         ts: '2026-03-31T15:00:01.000Z',
         hostSessionId: 'hsid-1',
         scopeRef: 'project:test',
         laneRef: 'default',
         generation: 1,
-        source: 'hrc' as const,
+        category: 'session',
         eventKind: 'session.resolved',
-        eventJson: {},
+        replayed: false,
+        payload: {},
       },
     ]
 
@@ -392,16 +396,16 @@ describe('watch NDJSON parsing', () => {
     })
 
     const client = new HrcClient(stubSocketPath)
-    const collected: HrcEventEnvelope[] = []
+    const collected: HrcLifecycleEvent[] = []
 
     for await (const event of client.watch()) {
       collected.push(event)
     }
 
     expect(collected.length).toBe(2)
-    expect(collected[0]!.seq).toBe(1)
+    expect(collected[0]!.hrcSeq).toBe(1)
     expect(collected[0]!.eventKind).toBe('session.created')
-    expect(collected[1]!.seq).toBe(2)
+    expect(collected[1]!.hrcSeq).toBe(2)
     expect(collected[1]!.eventKind).toBe('session.resolved')
   })
 
@@ -694,27 +698,31 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
   // One malformed line kills the async generator with SyntaxError.
   // Expected: generator skips/yields-error for the bad line and yields remaining valid events.
   it('M-10: watch() survives malformed NDJSON and yields valid events', async () => {
-    const validEvent1: HrcEventEnvelope = {
-      seq: 1,
+    const validEvent1: HrcLifecycleEvent = {
+      hrcSeq: 1,
+      streamSeq: 10,
       ts: '2026-04-01T00:00:00Z',
       hostSessionId: 'hsid-m10',
       scopeRef: 'project:m10',
       laneRef: 'default',
       generation: 1,
-      source: 'hrc' as const,
+      category: 'session',
       eventKind: 'session.created',
-      eventJson: {},
+      replayed: false,
+      payload: {},
     }
-    const validEvent2: HrcEventEnvelope = {
-      seq: 3,
+    const validEvent2: HrcLifecycleEvent = {
+      hrcSeq: 3,
+      streamSeq: 12,
       ts: '2026-04-01T00:00:02Z',
       hostSessionId: 'hsid-m10',
       scopeRef: 'project:m10',
       laneRef: 'default',
       generation: 1,
-      source: 'hrc' as const,
+      category: 'session',
       eventKind: 'session.resolved',
-      eventJson: {},
+      replayed: false,
+      payload: {},
     }
 
     stubServer = Bun.serve({
@@ -733,7 +741,7 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
     })
 
     const client = new HrcClient(stubSocketPath)
-    const collected: HrcEventEnvelope[] = []
+    const collected: HrcLifecycleEvent[] = []
 
     // This should NOT throw — the generator must handle malformed lines gracefully
     for await (const event of client.watch()) {
@@ -742,8 +750,8 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
 
     // Both valid events should be yielded; the malformed line should be skipped
     expect(collected.length).toBe(2)
-    expect(collected[0]!.seq).toBe(1)
-    expect(collected[1]!.seq).toBe(3)
+    expect(collected[0]!.hrcSeq).toBe(1)
+    expect(collected[1]!.hrcSeq).toBe(3)
   })
 
   // -- m-20: watch() has no AbortSignal/cancellation --
@@ -751,16 +759,18 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
   // Expected: WatchOptions accepts optional `signal: AbortSignal` and terminates
   // iteration when aborted.
   it('m-20: watch() terminates on AbortSignal after first event', async () => {
-    const events: HrcEventEnvelope[] = Array.from({ length: 5 }, (_, i) => ({
-      seq: i + 1,
+    const events: HrcLifecycleEvent[] = Array.from({ length: 5 }, (_, i) => ({
+      hrcSeq: i + 1,
+      streamSeq: i + 10,
       ts: `2026-04-01T00:00:0${i}Z`,
       hostSessionId: 'hsid-m20',
       scopeRef: 'project:m20',
       laneRef: 'default',
       generation: 1,
-      source: 'hrc' as const,
+      category: 'session',
       eventKind: 'session.created',
-      eventJson: {},
+      replayed: false,
+      payload: {},
     }))
 
     stubServer = Bun.serve({
@@ -776,7 +786,7 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
 
     const client = new HrcClient(stubSocketPath)
     const controller = new AbortController()
-    const collected: HrcEventEnvelope[] = []
+    const collected: HrcLifecycleEvent[] = []
 
     // Pass signal in WatchOptions — this field does not exist yet (RED)
     for await (const event of client.watch({ signal: controller.signal } as any)) {
@@ -788,7 +798,7 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
 
     // Should stop after first event — not consume all 5
     expect(collected.length).toBe(1)
-    expect(collected[0]!.seq).toBe(1)
+    expect(collected[0]!.hrcSeq).toBe(1)
   })
 
   // -- m-22: throwTypedError discards non-JSON response bodies --

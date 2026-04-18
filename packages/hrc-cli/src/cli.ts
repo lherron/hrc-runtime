@@ -8,13 +8,12 @@ import chalk from 'chalk'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
-  HrcEventEnvelope,
+  HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcStatusResponse,
   HrcStatusSessionView,
 } from 'hrc-core'
-import { type HookDerivedEventType, isHookDerivedEvent } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
@@ -703,24 +702,11 @@ async function cmdEvents(args: string[]): Promise<void> {
 
   const client = createClient()
   for await (const event of client.watch({ fromSeq, follow })) {
-    if (!shouldDisplayEvent(event)) continue
     process.stdout.write(pretty ? formatWatchEvent(event) : `${JSON.stringify(event)}\n`)
   }
 }
 
-function shouldDisplayEvent(event: HrcEventEnvelope): boolean {
-  if (event.source !== 'hook' && event.source !== 'otel') {
-    return true
-  }
-  if (!event.eventJson || typeof event.eventJson !== 'object' || Array.isArray(event.eventJson)) {
-    return false
-  }
-
-  const candidate = event.eventJson as { type?: unknown }
-  return typeof candidate.type === 'string' && isHookDerivedEvent(candidate as { type: string })
-}
-
-function formatWatchEvent(event: HrcEventEnvelope): string {
+function formatWatchEvent(event: HrcLifecycleEvent): string {
   const theme = getWatchTheme(event.eventKind)
   const agent = formatAgentBadge(event.scopeRef)
   const kindSuffix = event.eventKind.includes('.')
@@ -730,16 +716,22 @@ function formatWatchEvent(event: HrcEventEnvelope): string {
     agent
       ? `${chalk.bgWhite.black.bold(` ${agent} `)} ${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)}`
       : `${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)} ${theme.dim(event.scopeRef)}`,
-    chalk.dim(`#${event.seq} ${formatWatchTimestamp(event.ts)}`),
+    chalk.dim(`#${event.hrcSeq} @${event.streamSeq} ${formatWatchTimestamp(event.ts)}`),
   ].join(' ')
 
   const meta = [
-    `${chalk.dim('src:')}${colorizeSource(event.source)(event.source)}`,
+    `${chalk.dim('cat:')}${theme.dim(event.category)}`,
     `${chalk.dim('g:')}${chalk.white(String(event.generation))}`,
     event.runtimeId ? `${chalk.dim('rt:')}${theme.dim(event.runtimeId)}` : undefined,
+    event.runId ? `${chalk.dim('run:')}${theme.dim(event.runId)}` : undefined,
+    event.launchId ? `${chalk.dim('launch:')}${theme.dim(event.launchId)}` : undefined,
+    event.transport ? `${chalk.dim('transport:')}${theme.dim(event.transport)}` : undefined,
+    event.errorCode ? `${chalk.dim('error:')}${chalk.red(event.errorCode)}` : undefined,
+    event.appSessionKey ? `${chalk.dim('app:')}${theme.dim(event.appSessionKey)}` : undefined,
+    event.replayed ? chalk.dim('replayed') : undefined,
   ].filter((part): part is string => part !== undefined)
 
-  const prettyValue = sanitizePrettyValue(event.eventJson, undefined, event.eventKind)
+  const prettyValue = sanitizePrettyValue(event.payload, undefined, event.eventKind)
   const inlineDetails = renderInlinePrettyValue(prettyValue, theme)
   const details = inlineDetails ? [] : renderPrettyValue(prettyValue, '', theme)
   const summary = inlineDetails ? [...meta, inlineDetails] : meta
@@ -774,7 +766,7 @@ function formatWatchTimestamp(ts: string): string {
   return ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z')
 }
 
-const STRIPPED_KEYS = new Set(['hostSessionId', 'hookData', 'launchId', 'replayed'])
+const STRIPPED_KEYS = new Set(['hostSessionId', 'launchId', 'replayed'])
 
 function sanitizePrettyValue(value: unknown, key?: string, eventKind?: string): unknown {
   if (key !== undefined && STRIPPED_KEYS.has(key)) return undefined
@@ -901,19 +893,6 @@ function formatPrettyPrimitiveLines(value: string | number | boolean | null): st
   return value.split('\n').map((line) => chalk.white(line))
 }
 
-function colorizeSource(source: HrcEventEnvelope['source']): (text: string) => string {
-  switch (source) {
-    case 'agent-spaces':
-      return chalk.blue
-    case 'hook':
-      return chalk.yellow
-    case 'tmux':
-      return chalk.cyan
-    default:
-      return chalk.gray
-  }
-}
-
 type WatchTheme = {
   label: string
   badge: (text: string) => string
@@ -922,12 +901,6 @@ type WatchTheme = {
   gutter: (text: string) => string
   key: (text: string) => string
 }
-
-const HOOK_TOOL_EVENT_KINDS = new Set<HookDerivedEventType>([
-  'tool_execution_start',
-  'tool_execution_update',
-  'tool_execution_end',
-])
 
 function getWatchTheme(eventKind: string): WatchTheme {
   // TURN — hero events: bold white-on-blue, high contrast
@@ -959,61 +932,6 @@ function getWatchTheme(eventKind: string): WatchTheme {
       badge: chalk.bgCyan.black,
       accent: chalk.cyanBright,
       dim: chalk.cyan.dim,
-      gutter: chalk.cyan.dim,
-      key: chalk.cyanBright,
-    }
-  }
-  // HOOK — subdued infrastructure: dim yellow, fg-only badge
-  if (eventKind.startsWith('hook.')) {
-    return {
-      label: 'hook',
-      badge: chalk.yellow.dim,
-      accent: chalk.yellow.dim,
-      dim: chalk.yellow.dim,
-      gutter: chalk.yellow.dim,
-      key: chalk.yellow,
-    }
-  }
-  // TOOL — normalized Claude hook tool events
-  if (HOOK_TOOL_EVENT_KINDS.has(eventKind as HookDerivedEventType)) {
-    return {
-      label: 'TOOL',
-      badge: chalk.bgYellow.black.bold,
-      accent: chalk.yellowBright,
-      dim: chalk.yellow,
-      gutter: chalk.yellow.dim,
-      key: chalk.yellowBright,
-    }
-  }
-  // NOTICE — normalized Claude hook notifications
-  if (eventKind === 'notice') {
-    return {
-      label: 'NOTICE',
-      badge: chalk.bgMagenta.white.bold,
-      accent: chalk.magentaBright,
-      dim: chalk.magenta,
-      gutter: chalk.magenta.dim,
-      key: chalk.magentaBright,
-    }
-  }
-  // COMPACT — context compaction signal from hooks
-  if (eventKind === 'context_compaction') {
-    return {
-      label: 'COMPACT',
-      badge: chalk.bgBlue.white.bold,
-      accent: chalk.blueBright,
-      dim: chalk.blue,
-      gutter: chalk.blue.dim,
-      key: chalk.blueBright,
-    }
-  }
-  // SUBAGENT — hook-derived nested agent launch
-  if (eventKind === 'subagent_start') {
-    return {
-      label: 'SUBAGENT',
-      badge: chalk.bgCyan.black.bold,
-      accent: chalk.cyanBright,
-      dim: chalk.cyan,
       gutter: chalk.cyan.dim,
       key: chalk.cyanBright,
     }

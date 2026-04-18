@@ -4,7 +4,7 @@
  * Tests the server's SDK transport support:
  *   - dispatchTurn with interactive=false uses SDK transport
  *   - SDK dispatch creates runtime with transport='sdk'
- *   - Events stream through watch during SDK dispatch
+ *   - Raw ledger records agent-spaces events during SDK dispatch
  *   - runtime_buffers populated during SDK dispatch
  *   - Continuation persisted on session after SDK turn
  *   - Provider mismatch returns 422
@@ -14,7 +14,7 @@
  * Pass conditions for Larry (T-00967):
  *   1. POST /v1/turns with { harness: { interactive: false } } returns transport='sdk' in response
  *   2. Runtime record created by SDK dispatch has transport='sdk', no tmux_json
- *   3. Events with source='agent-spaces' appear in GET /v1/events during SDK dispatch
+ *   3. Events with source='agent-spaces' appear in the raw events ledger during SDK dispatch
  *   4. GET /v1/capture on SDK runtime returns text from runtime_buffers
  *   5. Continuation from SDK turn is persisted on session record
  *   6. POST /v1/turns with provider mismatch on existing runtime returns 422
@@ -59,6 +59,15 @@ async function postJson(path: string, body: unknown): Promise<Response> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+}
+
+function listRawEvents(): any[] {
+  const db = openHrcDatabase(dbPath)
+  try {
+    return db.events.listFromSeq(1)
+  } finally {
+    db.close()
+  }
 }
 
 /** Resolve a session and return the hostSessionId */
@@ -696,8 +705,8 @@ describe('SDK runtime record', () => {
 // ---------------------------------------------------------------------------
 // 3. Events from SDK dispatch appear in watch stream
 // ---------------------------------------------------------------------------
-describe('SDK events in watch stream', () => {
-  it('SDK dispatch events have source=agent-spaces in event stream', async () => {
+describe('SDK events in raw ledger', () => {
+  it('SDK dispatch events have source=agent-spaces in the raw events ledger', async () => {
     const hsid = await resolveSession('sdk-test-3')
 
     await postJson('/v1/turns', {
@@ -709,13 +718,7 @@ describe('SDK events in watch stream', () => {
     // Wait for in-process SDK dispatch to complete
     await new Promise((r) => setTimeout(r, 1000))
 
-    const eventsRes = await fetchSocket('/v1/events?fromSeq=1')
-    const eventsText = await eventsRes.text()
-    const events = eventsText
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l))
+    const events = listRawEvents()
 
     // Should have agent-spaces sourced events from the SDK adapter
     const sdkEvents = events.filter((e: any) => e.source === 'agent-spaces')

@@ -5,6 +5,20 @@ export type HrcMigration = {
   apply(db: Database): void
 }
 
+type LegacyHrcEventRow = {
+  seq: number
+  stream_seq: number | null
+  ts: string
+  host_session_id: string
+  scope_ref: string
+  lane_ref: string
+  generation: number
+  runtime_id: string | null
+  run_id: string | null
+  event_kind: string
+  event_json: string
+}
+
 const phase1SchemaMigration: HrcMigration = {
   id: '0001_phase1_schema',
   apply(db) {
@@ -313,6 +327,314 @@ const phase8CommandRuntimeFieldsMigration: HrcMigration = {
   },
 }
 
+const hrcEventsMigration: HrcMigration = {
+  id: '0008_hrc_events',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS event_stream_cursor (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        next_seq INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS hrc_events (
+        hrc_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_seq INTEGER NOT NULL UNIQUE,
+        ts TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        scope_ref TEXT NOT NULL,
+        lane_ref TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        runtime_id TEXT,
+        run_id TEXT,
+        launch_id TEXT,
+        app_id TEXT,
+        app_session_key TEXT,
+        category TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        transport TEXT,
+        error_code TEXT,
+        replayed INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_host_session_seq
+        ON hrc_events(host_session_id, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_scope_ref_seq
+        ON hrc_events(scope_ref, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_runtime_seq
+        ON hrc_events(runtime_id, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_run_seq
+        ON hrc_events(run_id, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_launch_seq
+        ON hrc_events(launch_id, hrc_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_kind_seq
+        ON hrc_events(event_kind, hrc_seq);
+    `)
+
+    const eventsColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(events)')
+      .all()
+      .map((row) => row.name)
+
+    if (!eventsColumns.includes('stream_seq')) {
+      db.exec('ALTER TABLE events ADD COLUMN stream_seq INTEGER')
+      db.exec('UPDATE events SET stream_seq = seq WHERE stream_seq IS NULL')
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_stream_seq ON events(stream_seq)')
+    }
+
+    const maxEventSeq =
+      db.query<{ max_seq: number | null }, []>('SELECT MAX(seq) AS max_seq FROM events').get()
+        ?.max_seq ?? 0
+
+    db.exec(
+      `INSERT OR IGNORE INTO event_stream_cursor (id, next_seq) VALUES (1, ${maxEventSeq + 1})`
+    )
+  },
+}
+
+function parseLegacyEventJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function readLifecycleTransport(value: unknown): 'sdk' | 'tmux' | undefined {
+  return value === 'sdk' || value === 'tmux' ? value : undefined
+}
+
+function categoryForLegacyHrcEventKind(eventKind: string): string {
+  if (eventKind.startsWith('session.')) {
+    return 'session'
+  }
+  if (eventKind.startsWith('runtime.')) {
+    return 'runtime'
+  }
+  if (eventKind.startsWith('launch.')) {
+    return 'launch'
+  }
+  if (eventKind.startsWith('turn.')) {
+    return 'turn'
+  }
+  if (eventKind.startsWith('inflight.')) {
+    return 'inflight'
+  }
+  if (eventKind.startsWith('surface.')) {
+    return 'surface'
+  }
+  if (eventKind.startsWith('bridge.')) {
+    return 'bridge'
+  }
+  if (eventKind.startsWith('context.')) {
+    return 'context'
+  }
+  if (eventKind.startsWith('app-session.') || eventKind.startsWith('target.')) {
+    return 'app_session'
+  }
+  throw new Error(`unknown legacy hrc event kind: ${eventKind}`)
+}
+
+function normalizeLegacyHrcPayload(eventJson: unknown): {
+  launchId?: string | undefined
+  appId?: string | undefined
+  appSessionKey?: string | undefined
+  transport?: 'sdk' | 'tmux' | undefined
+  errorCode?: string | undefined
+  replayed?: boolean | undefined
+  payload: unknown
+} {
+  if (!isRecord(eventJson)) {
+    return { payload: eventJson ?? {} }
+  }
+
+  const {
+    ts: _ts,
+    hostSessionId: _hostSessionId,
+    scopeRef: _scopeRef,
+    laneRef: _laneRef,
+    generation: _generation,
+    runtimeId: _runtimeId,
+    runId: _runId,
+    launchId: rawLaunchId,
+    appId: rawAppId,
+    appSessionKey: rawAppSessionKey,
+    source: _source,
+    eventKind: _eventKind,
+    category: _category,
+    seq: _seq,
+    streamSeq: _streamSeq,
+    transport: rawTransport,
+    errorCode: rawErrorCode,
+    replayed: rawReplayed,
+    ...payload
+  } = eventJson
+  const launchId =
+    typeof rawLaunchId === 'string' && rawLaunchId.length > 0 ? rawLaunchId : undefined
+  const appId = typeof rawAppId === 'string' && rawAppId.length > 0 ? rawAppId : undefined
+  const appSessionKey =
+    typeof rawAppSessionKey === 'string' && rawAppSessionKey.length > 0
+      ? rawAppSessionKey
+      : undefined
+  const transport = readLifecycleTransport(rawTransport)
+  const errorCode =
+    typeof rawErrorCode === 'string' && rawErrorCode.length > 0 ? rawErrorCode : undefined
+  const replayed = typeof rawReplayed === 'boolean' ? rawReplayed : undefined
+
+  return {
+    ...(launchId ? { launchId } : {}),
+    ...(appId ? { appId } : {}),
+    ...(appSessionKey ? { appSessionKey } : {}),
+    ...(transport ? { transport } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(replayed !== undefined ? { replayed } : {}),
+    payload,
+  }
+}
+
+const legacyHrcEventsBackfillMigration: HrcMigration = {
+  id: '0009_backfill_legacy_hrc_events',
+  apply(db) {
+    const eventsColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(events)')
+      .all()
+      .map((row) => row.name)
+
+    if (!eventsColumns.includes('stream_seq')) {
+      db.exec('ALTER TABLE events ADD COLUMN stream_seq INTEGER')
+    }
+    db.exec('UPDATE events SET stream_seq = seq WHERE stream_seq IS NULL')
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_stream_seq ON events(stream_seq)')
+
+    const legacyRows = db
+      .query<LegacyHrcEventRow, [string]>(
+        `
+          SELECT
+            seq,
+            stream_seq,
+            ts,
+            host_session_id,
+            scope_ref,
+            lane_ref,
+            generation,
+            runtime_id,
+            run_id,
+            event_kind,
+            event_json
+          FROM events
+          WHERE source = ?
+          ORDER BY stream_seq ASC, seq ASC
+        `
+      )
+      .all('hrc')
+
+    if (legacyRows.length > 0) {
+      const insertHrcEvent = db.prepare<
+        never,
+        [
+          number,
+          string,
+          string,
+          string,
+          string,
+          number,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
+          string,
+          string,
+          'sdk' | 'tmux' | null,
+          string | null,
+          number,
+          string,
+        ]
+      >(`
+        INSERT OR IGNORE INTO hrc_events (
+          stream_seq,
+          ts,
+          host_session_id,
+          scope_ref,
+          lane_ref,
+          generation,
+          runtime_id,
+          run_id,
+          launch_id,
+          app_id,
+          app_session_key,
+          category,
+          event_kind,
+          transport,
+          error_code,
+          replayed,
+          payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+
+      for (const row of legacyRows) {
+        const eventJson = parseLegacyEventJson(row.event_json)
+        const normalized = normalizeLegacyHrcPayload(eventJson)
+        insertHrcEvent.run(
+          row.stream_seq ?? row.seq,
+          row.ts,
+          row.host_session_id,
+          row.scope_ref,
+          row.lane_ref,
+          row.generation,
+          row.runtime_id ?? null,
+          row.run_id ?? null,
+          normalized.launchId ?? null,
+          normalized.appId ?? null,
+          normalized.appSessionKey ?? null,
+          categoryForLegacyHrcEventKind(row.event_kind),
+          row.event_kind,
+          normalized.transport ?? null,
+          normalized.errorCode ?? null,
+          normalized.replayed ? 1 : 0,
+          JSON.stringify(normalized.payload)
+        )
+      }
+
+      execute(db, 'DELETE FROM events WHERE source = ?', 'hrc')
+    }
+
+    const maxStreamSeq =
+      db
+        .query<{ max_seq: number | null }, []>(
+          `
+            SELECT MAX(stream_seq) AS max_seq
+            FROM (
+              SELECT stream_seq FROM events
+              UNION ALL
+              SELECT stream_seq FROM hrc_events
+            )
+          `
+        )
+        .get()?.max_seq ?? 0
+
+    execute(
+      db,
+      `
+        INSERT INTO event_stream_cursor (id, next_seq)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET next_seq = MAX(next_seq, excluded.next_seq)
+      `,
+      maxStreamSeq + 1
+    )
+  },
+}
+
 const hrcchatMessagesMigration: HrcMigration = {
   id: '0007_hrcchat_messages',
   apply(db) {
@@ -373,6 +695,8 @@ export const phase1Migrations: readonly HrcMigration[] = [
   phase7ManagedAppSessionsMigration,
   phase8CommandRuntimeFieldsMigration,
   hrcchatMessagesMigration,
+  hrcEventsMigration,
+  legacyHrcEventsBackfillMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

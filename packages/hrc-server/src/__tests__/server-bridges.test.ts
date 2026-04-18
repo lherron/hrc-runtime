@@ -42,7 +42,7 @@ let fixture: HrcServerTestFixture
  * Helper: fetch all events and return parsed envelopes.
  */
 async function fetchEvents(): Promise<
-  Array<{ seq: number; eventKind: string; eventJson: unknown; runtimeId?: string }>
+  Array<{ hrcSeq: number; eventKind: string; payload: unknown; runtimeId?: string }>
 > {
   const res = await fixture.fetchSocket('/v1/events')
   const text = await res.text()
@@ -183,7 +183,7 @@ describe('POST /v1/bridges/deliver', () => {
     const events = await fetchEvents()
     const deliveredEvent = events.find((e) => e.eventKind === 'bridge.delivered')
     expect(deliveredEvent).toBeDefined()
-    const ej = deliveredEvent!.eventJson as Record<string, unknown>
+    const ej = deliveredEvent!.payload as Record<string, unknown>
     expect(ej['bridgeId']).toBe(bridge.bridgeId)
     expect(ej['payloadLength']).toBe('Event test payload'.length)
     expect(ej['enter']).toBe(true)

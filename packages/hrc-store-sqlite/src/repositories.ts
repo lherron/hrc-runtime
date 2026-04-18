@@ -8,6 +8,7 @@ import {
   type HrcErrorCode,
   type HrcEventEnvelope,
   type HrcLaunchRecord,
+  type HrcLifecycleEvent,
   type HrcLocalBridgeRecord,
   type HrcManagedSessionRecord,
   type HrcRunRecord,
@@ -173,6 +174,7 @@ type LaunchRow = {
 
 type EventRow = {
   seq: number
+  stream_seq: number
   ts: string
   host_session_id: string
   scope_ref: string
@@ -183,6 +185,27 @@ type EventRow = {
   source: HrcEventEnvelope['source']
   event_kind: string
   event_json: string
+}
+
+type HrcEventRow = {
+  hrc_seq: number
+  stream_seq: number
+  ts: string
+  host_session_id: string
+  scope_ref: string
+  lane_ref: string
+  generation: number
+  runtime_id: string | null
+  run_id: string | null
+  launch_id: string | null
+  app_id: string | null
+  app_session_key: string | null
+  category: HrcLifecycleEvent['category']
+  event_kind: string
+  transport: HrcLifecycleEvent['transport'] | null
+  error_code: string | null
+  replayed: number
+  payload_json: string
 }
 
 type RuntimeBufferRow = {
@@ -371,6 +394,7 @@ const LAUNCH_COLUMNS = `
 
 const EVENT_COLUMNS = `
   seq,
+  stream_seq,
   ts,
   host_session_id,
   scope_ref,
@@ -381,6 +405,26 @@ const EVENT_COLUMNS = `
   source,
   event_kind,
   event_json`
+
+const HRC_EVENT_COLUMNS = `
+  hrc_seq,
+  stream_seq,
+  ts,
+  host_session_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  runtime_id,
+  run_id,
+  launch_id,
+  app_id,
+  app_session_key,
+  category,
+  event_kind,
+  transport,
+  error_code,
+  replayed,
+  payload_json`
 
 const APP_SESSION_COLUMNS = `
   app_id,
@@ -625,6 +669,7 @@ function mapLaunchRow(row: LaunchRow): HrcLaunchRecord {
 function mapEventRow(row: EventRow): HrcEventEnvelope {
   return {
     seq: row.seq,
+    streamSeq: row.stream_seq,
     ts: row.ts,
     hostSessionId: row.host_session_id,
     scopeRef: row.scope_ref,
@@ -636,6 +681,41 @@ function mapEventRow(row: EventRow): HrcEventEnvelope {
     eventKind: row.event_kind,
     eventJson: parseJson<unknown>(row.event_json, 'event_json'),
   }
+}
+
+function mapHrcEventRow(row: HrcEventRow): HrcLifecycleEvent {
+  return {
+    hrcSeq: row.hrc_seq,
+    streamSeq: row.stream_seq,
+    ts: row.ts,
+    hostSessionId: row.host_session_id,
+    scopeRef: row.scope_ref,
+    laneRef: row.lane_ref,
+    generation: row.generation,
+    runtimeId: row.runtime_id ?? undefined,
+    runId: row.run_id ?? undefined,
+    launchId: row.launch_id ?? undefined,
+    appId: row.app_id ?? undefined,
+    appSessionKey: row.app_session_key ?? undefined,
+    category: row.category,
+    eventKind: row.event_kind,
+    transport: row.transport ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    replayed: row.replayed !== 0,
+    payload: parseJson<unknown>(row.payload_json, 'payload_json'),
+  }
+}
+
+function allocateStreamSeq(db: Database): number {
+  const row = db
+    .query<{ next_seq: number }, []>('SELECT next_seq FROM event_stream_cursor WHERE id = 1')
+    .get()
+  if (!row) {
+    throw new Error('event_stream_cursor singleton missing; run migrations')
+  }
+  const allocated = row.next_seq
+  execute(db, 'UPDATE event_stream_cursor SET next_seq = next_seq + 1 WHERE id = 1')
+  return allocated
 }
 
 function mapRuntimeBufferRow(row: RuntimeBufferRow): HrcRuntimeBufferRecord {
@@ -1843,15 +1923,19 @@ export class LaunchRepository {
   }
 }
 
+export type EventAppendInput = Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>
+
 export class EventRepository {
-  private readonly appendInTransaction: (event: Omit<HrcEventEnvelope, 'seq'>) => HrcEventEnvelope
+  private readonly appendInTransaction: (event: EventAppendInput) => HrcEventEnvelope
 
   constructor(private readonly db: Database) {
-    this.appendInTransaction = db.transaction((event: Omit<HrcEventEnvelope, 'seq'>) => {
+    this.appendInTransaction = db.transaction((event: EventAppendInput) => {
+      const streamSeq = allocateStreamSeq(this.db)
       execute(
         this.db,
         `
           INSERT INTO events (
+            stream_seq,
             ts,
             host_session_id,
             scope_ref,
@@ -1862,8 +1946,9 @@ export class EventRepository {
             source,
             event_kind,
             event_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
+        streamSeq,
         event.ts,
         event.hostSessionId,
         event.scopeRef,
@@ -1894,7 +1979,7 @@ export class EventRepository {
     })
   }
 
-  append(event: Omit<HrcEventEnvelope, 'seq'>): HrcEventEnvelope {
+  append(event: EventAppendInput): HrcEventEnvelope {
     return this.appendInTransaction(event)
   }
 
@@ -1960,6 +2045,205 @@ export class EventRepository {
       .get(...values)
 
     return row?.count ?? 0
+  }
+}
+
+export type HrcLifecycleEventInput = Omit<
+  HrcLifecycleEvent,
+  'hrcSeq' | 'streamSeq' | 'replayed'
+> & {
+  replayed?: boolean | undefined
+}
+
+export type HrcLifecycleQueryFilters = {
+  hostSessionId?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  launchId?: string | undefined
+  eventKind?: string | undefined
+  category?: HrcLifecycleEvent['category'] | undefined
+  fromHrcSeq?: number | undefined
+  fromStreamSeq?: number | undefined
+  limit?: number | undefined
+}
+
+export class HrcLifecycleEventRepository {
+  private readonly appendInTransaction: (event: HrcLifecycleEventInput) => HrcLifecycleEvent
+
+  constructor(private readonly db: Database) {
+    this.appendInTransaction = db.transaction((event: HrcLifecycleEventInput) => {
+      const streamSeq = allocateStreamSeq(this.db)
+      execute(
+        this.db,
+        `
+          INSERT INTO hrc_events (
+            stream_seq,
+            ts,
+            host_session_id,
+            scope_ref,
+            lane_ref,
+            generation,
+            runtime_id,
+            run_id,
+            launch_id,
+            app_id,
+            app_session_key,
+            category,
+            event_kind,
+            transport,
+            error_code,
+            replayed,
+            payload_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        streamSeq,
+        event.ts,
+        event.hostSessionId,
+        event.scopeRef,
+        event.laneRef,
+        event.generation,
+        event.runtimeId ?? null,
+        event.runId ?? null,
+        event.launchId ?? null,
+        event.appId ?? null,
+        event.appSessionKey ?? null,
+        event.category,
+        event.eventKind,
+        event.transport ?? null,
+        event.errorCode ?? null,
+        event.replayed ? 1 : 0,
+        JSON.stringify(event.payload ?? {})
+      )
+
+      const inserted = this.db.query<{ seq: number }, []>('SELECT last_insert_rowid() AS seq').get()
+      if (!inserted) {
+        throw new Error('failed to read inserted hrc event sequence')
+      }
+
+      const stored = this.db
+        .query<HrcEventRow, [number]>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events WHERE hrc_seq = ?`
+        )
+        .get(inserted.seq)
+      if (!stored) {
+        throw new Error(`failed to reload hrc event ${inserted.seq}`)
+      }
+
+      return mapHrcEventRow(stored)
+    })
+  }
+
+  append(event: HrcLifecycleEventInput): HrcLifecycleEvent {
+    return this.appendInTransaction(event)
+  }
+
+  listFromHrcSeq(
+    fromHrcSeq = 1,
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, fromHrcSeq }, 'hrc_seq')
+  }
+
+  listFromStreamSeq(
+    fromStreamSeq = 1,
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, fromStreamSeq }, 'stream_seq')
+  }
+
+  listByRun(
+    runId: string,
+    filters: Omit<HrcLifecycleQueryFilters, 'runId'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, runId }, 'hrc_seq')
+  }
+
+  listByLaunch(
+    launchId: string,
+    filters: Omit<HrcLifecycleQueryFilters, 'launchId'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, launchId }, 'hrc_seq')
+  }
+
+  listByKind(
+    eventKind: string,
+    filters: Omit<HrcLifecycleQueryFilters, 'eventKind'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, eventKind }, 'hrc_seq')
+  }
+
+  listByScope(
+    scopeRef: string,
+    filters: Omit<HrcLifecycleQueryFilters, 'scopeRef'> = {}
+  ): HrcLifecycleEvent[] {
+    return this.runQuery({ ...filters, scopeRef }, 'hrc_seq')
+  }
+
+  private runQuery(
+    filters: HrcLifecycleQueryFilters,
+    orderColumn: 'hrc_seq' | 'stream_seq'
+  ): HrcLifecycleEvent[] {
+    const where: string[] = []
+    const values: Array<string | number> = []
+
+    if (filters.fromHrcSeq !== undefined) {
+      where.push('hrc_seq >= ?')
+      values.push(filters.fromHrcSeq)
+    }
+    if (filters.fromStreamSeq !== undefined) {
+      where.push('stream_seq >= ?')
+      values.push(filters.fromStreamSeq)
+    }
+    if (filters.hostSessionId !== undefined) {
+      where.push('host_session_id = ?')
+      values.push(filters.hostSessionId)
+    }
+    if (filters.scopeRef !== undefined) {
+      where.push('scope_ref = ?')
+      values.push(filters.scopeRef)
+    }
+    if (filters.laneRef !== undefined) {
+      where.push('lane_ref = ?')
+      values.push(filters.laneRef)
+    }
+    if (filters.runtimeId !== undefined) {
+      where.push('runtime_id = ?')
+      values.push(filters.runtimeId)
+    }
+    if (filters.runId !== undefined) {
+      where.push('run_id = ?')
+      values.push(filters.runId)
+    }
+    if (filters.launchId !== undefined) {
+      where.push('launch_id = ?')
+      values.push(filters.launchId)
+    }
+    if (filters.eventKind !== undefined) {
+      where.push('event_kind = ?')
+      values.push(filters.eventKind)
+    }
+    if (filters.category !== undefined) {
+      where.push('category = ?')
+      values.push(filters.category)
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+    const limitClause = filters.limit !== undefined ? ' LIMIT ?' : ''
+    if (filters.limit !== undefined) {
+      values.push(filters.limit)
+    }
+
+    const rows = this.db
+      .query<HrcEventRow, Array<string | number>>(
+        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+          ${whereClause}
+          ORDER BY ${orderColumn} ASC${limitClause}`
+      )
+      .all(...values)
+
+    return rows.map(mapHrcEventRow)
   }
 }
 

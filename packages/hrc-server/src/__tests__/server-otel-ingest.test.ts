@@ -10,7 +10,7 @@
  *   6. Partial-success batch appends valid rows + returns partialSuccess JSON
  *   7. Post-exit grace: 403 when launch exited > 30s ago, success within window
  *   8. Daemon restart: reauthenticates off persisted artifact
- *   9. notifyEvent fanout delivers OTEL events to /v1/events followers
+ *   9. OTEL ingest stays out of the hrc-only /v1/events stream
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
@@ -224,13 +224,12 @@ async function seedCodexLaunch(params: SeedParams = {}): Promise<SeedResult> {
 }
 
 async function getAllEvents(): Promise<unknown[]> {
-  const res = await fixture.fetchSocket('/v1/events?fromSeq=1')
-  const text = await res.text()
-  return text
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.events.listFromSeq(1)
+  } finally {
+    db.close()
+  }
 }
 
 async function postOtlp(
@@ -246,6 +245,56 @@ async function postOtlp(
     },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
+}
+
+async function collectFollowEvents(path: string, durationMs: number): Promise<any[]> {
+  const res = await fixture.fetchSocket(path)
+  const reader = res.body?.getReader()
+  if (!reader) {
+    return []
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const events: any[] = []
+  const deadline = Date.now() + durationMs
+
+  try {
+    while (Date.now() < deadline) {
+      const remainingMs = Math.max(1, deadline - Date.now())
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), remainingMs)),
+      ])
+
+      if (result === null) {
+        break
+      }
+
+      const { value, done } = result
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue
+        }
+        events.push(JSON.parse(line))
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {
+      /* noop */
+    }
+  }
+
+  return events
 }
 
 function expectMatchingOtelMetadata(rawEvent: any, typedEvent: any, seed: SeedResult): void {
@@ -487,40 +536,12 @@ describe('OTLP/HTTP JSON ingest', () => {
     expect(events.map((e: any) => e.eventKind)).toEqual(['codex.a', 'codex.b'])
   })
 
-  it('delivers OTEL events to /v1/events SSE-style followers', async () => {
+  it('does not deliver OTEL events to hrc-only /v1/events followers', async () => {
     const started = await startServer()
     server = started.server
     const seed = await seedCodexLaunch()
 
-    // Open an events follower via the existing Unix socket path; consume the
-    // first line after our POST.
-    const followerPromise = (async () => {
-      const res = await fixture.fetchSocket('/v1/events?follow=true&fromSeq=1')
-      const reader = res.body?.getReader()
-      if (!reader) return []
-      const decoder = new TextDecoder()
-      let buffer = ''
-      const events: any[] = []
-      const deadline = Date.now() + 3000
-      while (Date.now() < deadline) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          events.push(JSON.parse(line))
-        }
-        if (events.some((e) => e.source === 'otel')) break
-      }
-      try {
-        await reader.cancel()
-      } catch {
-        /* noop */
-      }
-      return events
-    })()
+    const followerPromise = collectFollowEvents('/v1/events?follow=true&fromSeq=1', 400)
 
     // Small delay so the follower is attached before the ingest POST.
     await new Promise((r) => setTimeout(r, 50))
@@ -532,9 +553,7 @@ describe('OTLP/HTTP JSON ingest', () => {
     expect(res.status).toBe(200)
 
     const streamed = await followerPromise
-    const otel = streamed.filter((e: any) => e.source === 'otel')
-    expect(otel.length).toBeGreaterThanOrEqual(1)
-    expect(otel[0].eventKind).toBe('codex.live_delivery')
+    expect(streamed).toEqual([])
   })
 
   it('rejects launches without an otel block in their artifact', async () => {
@@ -739,41 +758,12 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect((events[0] as any).eventKind).toBe('codex.api_request')
     })
 
-    it('fans out derived typed OTEL events to followers', async () => {
+    it('does not fan out derived OTEL events to hrc-only followers', async () => {
       const started = await startServer()
       server = started.server
       const seed = await seedCodexLaunch()
 
-      const followerPromise = (async () => {
-        const res = await fixture.fetchSocket('/v1/events?follow=true&fromSeq=1')
-        const reader = res.body?.getReader()
-        if (!reader) return []
-        const decoder = new TextDecoder()
-        let buffer = ''
-        const events: any[] = []
-        const deadline = Date.now() + 3000
-        while (Date.now() < deadline) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-          for (const line of lines) {
-            if (!line.trim()) continue
-            events.push(JSON.parse(line))
-          }
-          const kinds = new Set(
-            events.filter((event) => event.source === 'otel').map((event) => event.eventKind)
-          )
-          if (kinds.has('codex.tool_decision') && kinds.has('tool_execution_start')) break
-        }
-        try {
-          await reader.cancel()
-        } catch {
-          /* noop */
-        }
-        return events
-      })()
+      const followerPromise = collectFollowEvents('/v1/events?follow=true&fromSeq=1', 400)
 
       await new Promise((r) => setTimeout(r, 50))
       const res = await postOtlp(
@@ -793,10 +783,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect(res.status).toBe(200)
 
       const streamed = await followerPromise
-      const otelEvents = streamed.filter((e: any) => e.source === 'otel')
-      const kinds = otelEvents.map((e: any) => e.eventKind)
-      expect(kinds).toContain('codex.tool_decision')
-      expect(kinds).toContain('tool_execution_start')
+      expect(streamed).toEqual([])
     })
   })
 })

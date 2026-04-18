@@ -184,7 +184,7 @@ async function hasTmuxSession(hostSessionId: string): Promise<boolean> {
  * Helper: fetch all events and return parsed envelopes.
  */
 async function fetchEvents(): Promise<
-  Array<{ seq: number; eventKind: string; eventJson: unknown }>
+  Array<{ hrcSeq: number; eventKind: string; payload: unknown }>
 > {
   const res = await fetchSocket('/v1/events')
   const text = await res.text()
@@ -271,7 +271,7 @@ describe('POST /v1/surfaces/bind', () => {
     const events = await fetchEvents()
     const boundEvent = events.find((e) => e.eventKind === 'surface.bound')
     expect(boundEvent).toBeDefined()
-    const ej = boundEvent!.eventJson as Record<string, unknown>
+    const ej = boundEvent!.payload as Record<string, unknown>
     expect(ej['surfaceKind']).toBe('ghostty')
     expect(ej['surfaceId']).toBe('ghost-evt')
     expect(ej['runtimeId']).toBe(runtimeId)
@@ -310,7 +310,7 @@ describe('POST /v1/surfaces/bind', () => {
     const boundEvents = events.filter(
       (e) =>
         (e.eventKind === 'surface.bound' || e.eventKind === 'surface.rebound') &&
-        (e.eventJson as Record<string, unknown>)['surfaceId'] === 'ghost-noop'
+        (e.payload as Record<string, unknown>)['surfaceId'] === 'ghost-noop'
     )
     expect(boundEvents.length).toBe(1)
   })
@@ -345,7 +345,7 @@ describe('POST /v1/surfaces/bind', () => {
     const events = await fetchEvents()
     const reboundEvent = events.find((e) => e.eventKind === 'surface.rebound')
     expect(reboundEvent).toBeDefined()
-    const ej = reboundEvent!.eventJson as Record<string, unknown>
+    const ej = reboundEvent!.payload as Record<string, unknown>
     expect(ej['previousRuntimeId']).toBe(rt1.runtimeId)
     expect(ej['previousHostSessionId']).toBe(rt1.hostSessionId)
     expect(ej['runtimeId']).toBe(rt2.runtimeId)
@@ -408,7 +408,7 @@ describe('POST /v1/surfaces/unbind', () => {
     const events = await fetchEvents()
     const unboundEvent = events.find((e) => e.eventKind === 'surface.unbound')
     expect(unboundEvent).toBeDefined()
-    const ej = unboundEvent!.eventJson as Record<string, unknown>
+    const ej = unboundEvent!.payload as Record<string, unknown>
     expect(ej['surfaceKind']).toBe('ghostty')
     expect(ej['surfaceId']).toBe('ghost-unbind')
     expect(ej['reason']).toBe('tab-closed')

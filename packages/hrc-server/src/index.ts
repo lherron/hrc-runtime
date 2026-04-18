@@ -50,6 +50,7 @@ import type {
   HrcHttpError,
   HrcLaunchArtifact,
   HrcLaunchRecord,
+  HrcLifecycleEvent,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
   HrcMessageAddress,
@@ -91,6 +92,7 @@ import {
   getSdkInflightCapability,
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { readLaunchArtifact, readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
@@ -166,7 +168,7 @@ type AttachDescriptorResponse = {
   }
 }
 
-type FollowSubscriber = (event: HrcEventEnvelope) => void
+type FollowSubscriber = (event: HrcEventEnvelope | HrcLifecycleEvent) => void
 
 type ServerLogLevel = 'INFO' | 'WARN' | 'ERROR'
 
@@ -967,11 +969,20 @@ class HrcServerInstance implements HrcServer {
       runtimeId = runtime.runtimeId
     }
 
-    this.appendEvent(session, 'app-session.created', {
-      appId,
-      appSessionKey,
-      kind: spec.kind,
-    })
+    this.notifyEvent(
+      appendHrcEvent(this.db, 'app-session.created', {
+        ts: timestamp(),
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        appId,
+        appSessionKey,
+        payload: {
+          kind: spec.kind,
+        },
+      })
+    )
 
     return json({
       session: toManagedSessionRecord(managed),
@@ -1206,13 +1217,22 @@ class HrcServerInstance implements HrcServer {
 
     const session = this.db.sessions.getByHostSessionId(hostSessionId)
     if (session) {
-      this.appendEvent(session, 'app-session.removed', {
-        appId,
-        appSessionKey,
-        runtimeTerminated,
-        bridgesClosed,
-        surfacesUnbound,
-      })
+      this.notifyEvent(
+        appendHrcEvent(this.db, 'app-session.removed', {
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          appId,
+          appSessionKey,
+          payload: {
+            runtimeTerminated,
+            bridgesClosed,
+            surfacesUnbound,
+          },
+        })
+      )
     }
 
     return json({
@@ -1407,18 +1427,16 @@ class HrcServerInstance implements HrcServer {
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'app-session.literal-input', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'app-session.literal-input',
-      eventJson: {
-        appId: managed.appId,
-        appSessionKey: managed.appSessionKey,
+      appId: managed.appId,
+      appSessionKey: managed.appSessionKey,
+      payload: {
         payloadLength: body.text.length,
         enter: body.enter === true,
       },
@@ -1460,23 +1478,23 @@ class HrcServerInstance implements HrcServer {
     const follow = url.searchParams.get('follow') === 'true'
 
     if (!follow) {
-      const events = this.db.events.listFromSeq(fromSeq)
+      const events = this.db.hrcEvents.listFromHrcSeq(fromSeq)
       return new Response(events.map(serializeEvent).join(''), {
         status: 200,
         headers: NDJSON_HEADERS,
       })
     }
 
-    const bufferedEvents: HrcEventEnvelope[] = []
+    const bufferedEvents: HrcLifecycleEvent[] = []
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null
     let replayHighWater = fromSeq - 1
     const subscriber: FollowSubscriber = (event) => {
-      if (event.seq < fromSeq) {
+      if (!('hrcSeq' in event) || event.hrcSeq < fromSeq) {
         return
       }
 
       if (controllerRef) {
-        if (event.seq > replayHighWater) {
+        if (event.hrcSeq > replayHighWater) {
           controllerRef.enqueue(encodeNdjson(event))
         }
         return
@@ -1507,8 +1525,8 @@ class HrcServerInstance implements HrcServer {
 
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const replayEvents = this.db.events.listFromSeq(fromSeq)
-        replayHighWater = replayEvents.at(-1)?.seq ?? replayHighWater
+        const replayEvents = this.db.hrcEvents.listFromHrcSeq(fromSeq)
+        replayHighWater = replayEvents.at(-1)?.hrcSeq ?? replayHighWater
         controllerRef = controller
         controller.enqueue(keepaliveBytes)
 
@@ -1517,7 +1535,7 @@ class HrcServerInstance implements HrcServer {
         }
 
         for (const event of bufferedEvents) {
-          if (event.seq > replayHighWater) {
+          if (event.hrcSeq > replayHighWater) {
             controller.enqueue(encodeNdjson(event))
           }
         }
@@ -1727,7 +1745,7 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const acceptedEvent = this.db.events.append({
+    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1735,10 +1753,9 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.accepted',
-      eventJson: {
-        launchId,
+      launchId,
+      transport: 'tmux',
+      payload: {
         promptLength: prompt.length,
       },
     })
@@ -1752,7 +1769,7 @@ class HrcServerInstance implements HrcServer {
     })
     this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
 
-    const startedEvent = this.db.events.append({
+    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
       ts: startedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1760,11 +1777,8 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.started',
-      eventJson: {
-        launchId,
-      },
+      launchId,
+      transport: 'tmux',
     })
     this.notifyEvent(startedEvent)
 
@@ -1818,7 +1832,7 @@ class HrcServerInstance implements HrcServer {
       lastActivityAt: now,
     })
 
-    const acceptedEvent = this.db.events.append({
+    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1826,9 +1840,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.accepted',
-      eventJson: {
+      payload: {
         promptLength: prompt.length,
         transport: 'headless',
       },
@@ -1843,7 +1855,7 @@ class HrcServerInstance implements HrcServer {
     })
     this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
 
-    const startedEvent = this.db.events.append({
+    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
       ts: startedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1851,9 +1863,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.started',
-      eventJson: {
+      payload: {
         transport: 'headless',
       },
     })
@@ -1953,7 +1963,7 @@ class HrcServerInstance implements HrcServer {
       this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
     }
 
-    const completedEvent = this.db.events.append({
+    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
       ts: completedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -1961,9 +1971,8 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.completed',
-      eventJson: {
+      errorCode: result.result.success ? undefined : HrcErrorCode.RUNTIME_UNAVAILABLE,
+      payload: {
         success: result.result.success,
         transport: 'headless',
       },
@@ -2172,7 +2181,7 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
 
-    const acceptedEvent = this.db.events.append({
+    const acceptedEvent = appendHrcEvent(this.db, 'inflight.accepted', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -2180,9 +2189,8 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId: body.runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'inflight.accepted',
-      eventJson: {
+      transport: 'sdk',
+      payload: {
         prompt: body.prompt,
         ...(body.inputType ? { inputType: body.inputType } : {}),
         ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
@@ -2288,16 +2296,14 @@ class HrcServerInstance implements HrcServer {
       eventJson['previousGeneration'] = existing.generation
     }
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, eventKind, {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind,
-      eventJson,
+      payload: eventJson,
     })
     this.notifyEvent(event)
 
@@ -2337,16 +2343,14 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'surface.unbound', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: binding.runtimeId,
-      source: 'hrc',
-      eventKind: 'surface.unbound',
-      eventJson: {
+      payload: {
         surfaceKind: binding.surfaceKind,
         surfaceId: binding.surfaceId,
         runtimeId: binding.runtimeId,
@@ -2515,20 +2519,17 @@ class HrcServerInstance implements HrcServer {
       await this.tmux.sendEnter(paneId)
     }
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'bridge.delivered', {
       ts: timestamp(),
       hostSessionId: activeSession.hostSessionId,
       scopeRef: activeSession.scopeRef,
       laneRef: activeSession.laneRef,
       generation: activeSession.generation,
       runtimeId: bridge.runtimeId,
-      source: 'hrc',
-      eventKind: 'bridge.delivered',
-      eventJson: {
+      transport: bridge.transport === 'tmux' ? 'tmux' : undefined,
+      payload: {
         bridgeId: bridge.bridgeId,
-        hostSessionId: bridge.hostSessionId,
         ...(bridge.runtimeId !== undefined ? { runtimeId: bridge.runtimeId } : {}),
-        transport: bridge.transport,
         target: bridge.target,
         payloadLength: delivery.text.length,
         enter: delivery.enter,
@@ -2686,10 +2687,17 @@ class HrcServerInstance implements HrcServer {
 
     const session = this.db.sessions.getByHostSessionId(bridge.hostSessionId)
     if (session) {
-      const event = this.appendEvent(session, 'bridge.closed', {
-        bridgeId: bridge.bridgeId,
-        transport: bridge.transport,
-        target: bridge.target,
+      const event = appendHrcEvent(this.db, 'bridge.closed', {
+        ts: timestamp(),
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        transport: bridge.transport === 'tmux' ? 'tmux' : undefined,
+        payload: {
+          bridgeId: bridge.bridgeId,
+          target: bridge.target,
+        },
       })
       this.notifyEvent(event)
     }
@@ -3267,16 +3275,14 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'runtime.created', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'runtime.created',
-      eventJson: {
+      payload: {
         transport: 'headless',
         harness: runtime.harness,
       },
@@ -3404,16 +3410,15 @@ class HrcServerInstance implements HrcServer {
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'runtime.interrupted', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'runtime.interrupted',
-      eventJson: {
+      transport: 'tmux',
+      payload: {
         paneId: tmux.paneId,
       },
     })
@@ -3437,16 +3442,15 @@ class HrcServerInstance implements HrcServer {
     }
 
     finalizeRuntimeTermination(this.db, runtime, now)
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'runtime.terminated', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'runtime.terminated',
-      eventJson: {
+      transport: 'tmux',
+      payload: {
         sessionName: tmux.sessionName,
       },
     })
@@ -3510,16 +3514,15 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, forceRestart ? 'runtime.restarted' : 'runtime.created', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: forceRestart ? 'runtime.restarted' : 'runtime.created',
-      eventJson: {
+      transport: 'tmux',
+      payload: {
         runtimeKind: 'command',
         restartStyle,
         tmux: simplifyTmuxJson(runtime.tmuxJson),
@@ -3653,41 +3656,37 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const clearedEvent = this.db.events.append({
+    const clearedEvent = appendHrcEvent(this.db, 'context.cleared', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      source: 'hrc',
-      eventKind: 'context.cleared',
-      eventJson: {
+      ...(options.managed
+        ? {
+            appId: options.managed.appId,
+            appSessionKey: options.managed.appSessionKey,
+          }
+        : {}),
+      payload: {
         nextHostSessionId: nextSession.hostSessionId,
         relaunch: options.relaunch,
         bridgesClosed: invalidated.bridgesClosed,
         surfacesUnbound: invalidated.surfacesUnbound,
         runtimesTerminated: invalidated.runtimesTerminated,
         dropContinuation: options.dropContinuation === true,
-        ...(options.managed
-          ? {
-              appId: options.managed.appId,
-              appSessionKey: options.managed.appSessionKey,
-            }
-          : {}),
         ...(options.reason ? { reason: options.reason } : {}),
       },
     })
     this.notifyEvent(clearedEvent)
 
-    const createdEvent = this.db.events.append({
+    const createdEvent = appendHrcEvent(this.db, 'session.created', {
       ts: now,
       hostSessionId: nextSession.hostSessionId,
       scopeRef: nextSession.scopeRef,
       laneRef: nextSession.laneRef,
       generation: nextSession.generation,
-      source: 'hrc',
-      eventKind: 'session.created',
-      eventJson: {
+      payload: {
         created: true,
         priorHostSessionId: session.hostSessionId,
       },
@@ -3809,9 +3808,17 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.appendEvent(session, 'launch.wrapper_started', {
+    const event = appendHrcEvent(this.db, 'launch.wrapper_started', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: launch.runtimeId,
       launchId,
-      wrapperPid: launch.wrapperPid,
+      payload: {
+        wrapperPid: launch.wrapperPid,
+      },
     })
     if (launch.runtimeId) {
       this.db.runtimes.update(launch.runtimeId, {
@@ -3843,9 +3850,17 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.appendEvent(session, 'launch.child_started', {
+    const event = appendHrcEvent(this.db, 'launch.child_started', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: launch.runtimeId,
       launchId,
-      childPid: body.childPid,
+      payload: {
+        childPid: body.childPid,
+      },
     })
     if (launch.runtimeId) {
       this.db.runtimes.update(launch.runtimeId, {
@@ -3886,10 +3901,18 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const event = this.appendEvent(session, 'launch.continuation_captured', {
+    const event = appendHrcEvent(this.db, 'launch.continuation_captured', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: launch.runtimeId,
       launchId,
-      continuation: body.continuation,
-      ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
+      payload: {
+        continuation: body.continuation,
+        ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
+      },
     })
     this.notifyEvent(event)
     return json({ ok: true })
@@ -3913,10 +3936,18 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.appendEvent(session, 'launch.exited', {
+    const event = appendHrcEvent(this.db, 'launch.exited', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: launch.runtimeId,
       launchId,
-      exitCode: body.exitCode,
-      signal: body.signal,
+      payload: {
+        exitCode: body.exitCode,
+        signal: body.signal,
+      },
     })
     if (launch.runtimeId) {
       const runtime = requireRuntime(this.db, launch.runtimeId)
@@ -4447,7 +4478,12 @@ class HrcServerInstance implements HrcServer {
     }
     const session = this.db.sessions.getByHostSessionId(runtime.hostSessionId)
     if (session) {
-      const event = this.appendEvent(session, 'runtime.adopted', {
+      const event = appendHrcEvent(this.db, 'runtime.adopted', {
+        ts: timestamp(),
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
         runtimeId,
       })
       this.notifyEvent(event)
@@ -4459,16 +4495,14 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     eventKind: string,
     eventJson: Record<string, unknown>
-  ): HrcEventEnvelope {
-    return this.db.events.append({
+  ): HrcLifecycleEvent {
+    return appendHrcEvent(this.db, eventKind, {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      source: 'hrc',
-      eventKind,
-      eventJson,
+      payload: eventJson,
     })
   }
 
@@ -4482,7 +4516,7 @@ class HrcServerInstance implements HrcServer {
     error: HrcDomainError
   ): HrcDomainError {
     const knownRun = this.db.runs.getByRunId(runId)
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, 'inflight.rejected', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -4490,9 +4524,8 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       ...(knownRun ? { runId } : {}),
       runtimeId,
-      source: 'hrc',
-      eventKind: 'inflight.rejected',
-      eventJson: {
+      errorCode: error.code,
+      payload: {
         reason,
         requestedRunId: runId,
         prompt,
@@ -4503,7 +4536,7 @@ class HrcServerInstance implements HrcServer {
     return error
   }
 
-  private notifyEvent(event: HrcEventEnvelope): void {
+  private notifyEvent(event: HrcEventEnvelope | HrcLifecycleEvent): void {
     for (const subscriber of this.followSubscribers) {
       subscriber(event)
     }
@@ -4604,16 +4637,15 @@ class HrcServerInstance implements HrcServer {
             }) ?? existingRuntime
           eventKind = 'runtime.ensured'
           this.db.sessions.updateIntent(session.hostSessionId, intent, now)
-          const event = this.db.events.append({
+          const event = appendHrcEvent(this.db, eventKind, {
             ts: now,
             hostSessionId: session.hostSessionId,
             scopeRef: session.scopeRef,
             laneRef: session.laneRef,
             generation: session.generation,
             runtimeId: runtime.runtimeId,
-            source: 'hrc',
-            eventKind,
-            eventJson: {
+            transport: 'tmux',
+            payload: {
               restartStyle,
               tmux: simplifyTmuxJson(runtime.tmuxJson),
             },
@@ -4656,16 +4688,15 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const event = this.db.events.append({
+    const event = appendHrcEvent(this.db, eventKind, {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind,
-      eventJson: {
+      transport: 'tmux',
+      payload: {
         restartStyle,
         tmux: simplifyTmuxJson(runtime.tmuxJson),
       },
@@ -4722,23 +4753,21 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
     })
 
-    const runtimeCreatedEvent = this.db.events.append({
+    const runtimeCreatedEvent = appendHrcEvent(this.db, 'runtime.created', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'runtime.created',
-      eventJson: {
-        transport: 'sdk',
+      transport: 'sdk',
+      payload: {
         harness: runtime.harness,
       },
     })
     this.notifyEvent(runtimeCreatedEvent)
 
-    const acceptedEvent = this.db.events.append({
+    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
       ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -4746,11 +4775,9 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.accepted',
-      eventJson: {
+      transport: 'sdk',
+      payload: {
         promptLength: prompt.length,
-        transport: 'sdk',
       },
     })
     this.notifyEvent(acceptedEvent)
@@ -4763,7 +4790,7 @@ class HrcServerInstance implements HrcServer {
     })
     this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
 
-    const startedEvent = this.db.events.append({
+    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
       ts: startedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -4771,11 +4798,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.started',
-      eventJson: {
-        transport: 'sdk',
-      },
+      transport: 'sdk',
     })
     this.notifyEvent(startedEvent)
 
@@ -4836,7 +4859,7 @@ class HrcServerInstance implements HrcServer {
       this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
     }
 
-    const completedEvent = this.db.events.append({
+    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
       ts: completedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -4844,11 +4867,14 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      source: 'hrc',
-      eventKind: 'turn.completed',
-      eventJson: {
+      transport: 'sdk',
+      errorCode: result.result.success
+        ? undefined
+        : result.result.error?.code === 'provider_mismatch'
+          ? HrcErrorCode.PROVIDER_MISMATCH
+          : HrcErrorCode.RUNTIME_UNAVAILABLE,
+      payload: {
         success: result.result.success,
-        transport: 'sdk',
       },
     })
     this.notifyEvent(completedEvent)
@@ -5168,10 +5194,18 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
 
-    const event = this.appendEvent(session, 'target.literal-input', {
-      sessionRef,
-      payloadLength: (body['text'] as string).length,
-      enter: body['enter'] !== false,
+    const event = appendHrcEvent(this.db, 'target.literal-input', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      payload: {
+        sessionRef,
+        payloadLength: (body['text'] as string).length,
+        enter: body['enter'] !== false,
+      },
     })
     this.notifyEvent(event)
 
@@ -5846,15 +5880,15 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         lastActivityAt: now,
       })
     }
-    db.events.append({
+    appendHrcEvent(db, 'launch.wrapper_started', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      source: 'hrc',
-      eventKind: 'launch.wrapper_started',
-      eventJson: { launchId, wrapperPid: body.wrapperPid, replayed: true },
+      launchId,
+      replayed: true,
+      payload: { wrapperPid: body.wrapperPid },
     })
     return
   }
@@ -5889,15 +5923,15 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         lastActivityAt: now,
       })
     }
-    db.events.append({
+    appendHrcEvent(db, 'launch.child_started', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      source: 'hrc',
-      eventKind: 'launch.child_started',
-      eventJson: { launchId, childPid: body.childPid, replayed: true },
+      launchId,
+      replayed: true,
+      payload: { childPid: body.childPid },
     })
     return
   }
@@ -5926,20 +5960,18 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         lastActivityAt: now,
       })
     }
-    db.events.append({
+    appendHrcEvent(db, 'launch.continuation_captured', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: replayedLaunch.runtimeId,
-      source: 'hrc',
-      eventKind: 'launch.continuation_captured',
-      eventJson: {
-        launchId,
+      launchId,
+      replayed: true,
+      payload: {
         continuation: body.continuation,
         ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-        replayed: true,
       },
     })
     return
@@ -5985,15 +6017,15 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         })
       }
     }
-    db.events.append({
+    appendHrcEvent(db, 'launch.exited', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      source: 'hrc',
-      eventKind: 'launch.exited',
-      eventJson: { launchId, exitCode: body.exitCode, signal: body.signal, replayed: true },
+      launchId,
+      replayed: true,
+      payload: { exitCode: body.exitCode, signal: body.signal },
     })
     return
   }
@@ -6029,17 +6061,15 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
         status: 'orphaned',
         updatedAt: now,
       })
-      db.events.append({
+      appendHrcEvent(db, 'launch.orphaned', {
         ts: now,
         hostSessionId: session.hostSessionId,
         scopeRef: session.scopeRef,
         laneRef: session.laneRef,
         generation: session.generation,
         runtimeId: launch.runtimeId,
-        source: 'hrc',
-        eventKind: 'launch.orphaned',
-        eventJson: {
-          launchId: launch.launchId,
+        launchId: launch.launchId,
+        payload: {
           pid: trackedPid,
           priorStatus: launch.status,
         },
@@ -6207,16 +6237,14 @@ function markRuntimeStale(
     updatedAt: now,
     lastActivityAt: now,
   })
-  db.events.append({
+  appendHrcEvent(db, 'runtime.stale', {
     ts: now,
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
     generation: session.generation,
     runtimeId: runtime.runtimeId,
-    source: 'hrc',
-    eventKind: 'runtime.stale',
-    eventJson,
+    payload: eventJson,
   })
 }
 
@@ -7273,29 +7301,27 @@ function buildStaleLaunchCallbackRejection(
   launchId: string,
   callbackKind: 'child_started' | 'continuation' | 'exited' | 'hook_ingest' | 'wrapper_started',
   replayed = false
-): { event: HrcEventEnvelope; error: HrcConflictError } | null {
+): { event: HrcLifecycleEvent; error: HrcConflictError } | null {
   const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
   const activeSession = continuity
     ? db.sessions.getByHostSessionId(continuity.activeHostSessionId)
     : null
   if (activeSession && activeSession.hostSessionId !== session.hostSessionId) {
     const activeRuntime = findLatestSessionRuntime(db, activeSession.hostSessionId)
-    const event = db.events.append({
+    const event = appendHrcEvent(db, 'launch.callback_rejected', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: activeRuntime?.runtimeId,
-      source: 'hrc',
-      eventKind: 'launch.callback_rejected',
-      eventJson: {
-        launchId,
+      launchId,
+      replayed,
+      payload: {
         callback: callbackKind,
         reason: 'stale_generation',
         activeHostSessionId: activeSession.hostSessionId,
         activeGeneration: activeSession.generation,
-        ...(replayed ? { replayed: true } : {}),
       },
     })
 
@@ -7320,22 +7346,20 @@ function buildStaleLaunchCallbackRejection(
     existingLaunch.status === 'terminated' ||
     runtime?.status === 'terminated'
   ) {
-    const event = db.events.append({
+    const event = appendHrcEvent(db, 'launch.callback_rejected', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
       runtimeId: runtime?.runtimeId ?? existingLaunch.runtimeId,
-      source: 'hrc',
-      eventKind: 'launch.callback_rejected',
-      eventJson: {
-        launchId,
+      launchId,
+      replayed,
+      payload: {
         callback: callbackKind,
         reason: runtime?.status === 'terminated' ? 'terminated_runtime' : 'terminated_launch',
         launchStatus: existingLaunch.status,
         ...(runtime ? { runtimeStatus: runtime.status } : {}),
-        ...(replayed ? { replayed: true } : {}),
       },
     })
 
@@ -7353,21 +7377,19 @@ function buildStaleLaunchCallbackRejection(
     return null
   }
 
-  const event = db.events.append({
+  const event = appendHrcEvent(db, 'launch.callback_rejected', {
     ts: timestamp(),
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
     laneRef: session.laneRef,
     generation: session.generation,
     runtimeId: runtime.runtimeId,
-    source: 'hrc',
-    eventKind: 'launch.callback_rejected',
-    eventJson: {
-      launchId,
+    launchId,
+    replayed,
+    payload: {
       callback: callbackKind,
       activeLaunchId: runtime.launchId,
       reason: 'stale_launch',
-      ...(replayed ? { replayed: true } : {}),
     },
   })
 
@@ -7385,8 +7407,8 @@ function applyHookLifecycleEnvelope(
   db: HrcDatabase,
   envelope: HookEnvelope,
   options: { replayed: boolean }
-): HrcEventEnvelope[] {
-  const events: HrcEventEnvelope[] = []
+): Array<HrcEventEnvelope | HrcLifecycleEvent> {
+  const events: Array<HrcEventEnvelope | HrcLifecycleEvent> = []
   const session = requireSession(db, envelope.hostSessionId)
   const now = timestamp()
 
@@ -8049,11 +8071,11 @@ function parseJsonValue<T>(value: string | null): T | undefined {
   return JSON.parse(value) as T
 }
 
-function encodeNdjson(event: HrcEventEnvelope | HrcMessageRecord): Uint8Array {
+function encodeNdjson(event: HrcLifecycleEvent | HrcMessageRecord): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(event)}\n`)
 }
 
-function serializeEvent(event: HrcEventEnvelope): string {
+function serializeEvent(event: HrcLifecycleEvent): string {
   return `${JSON.stringify(event)}\n`
 }
 

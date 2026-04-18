@@ -16,6 +16,7 @@ export type HrcContinuationRef = {
 
 export type HrcEventEnvelope = {
   seq: number
+  streamSeq: number
   ts: string
   hostSessionId: string
   scopeRef: string
@@ -26,6 +27,40 @@ export type HrcEventEnvelope = {
   source: HrcEventSource
   eventKind: string
   eventJson: unknown
+}
+
+export type HrcEventCategory =
+  | 'session'
+  | 'runtime'
+  | 'launch'
+  | 'turn'
+  | 'inflight'
+  | 'surface'
+  | 'bridge'
+  | 'context'
+  | 'app_session'
+
+export type HrcLifecycleTransport = 'sdk' | 'tmux'
+
+export type HrcLifecycleEvent = {
+  hrcSeq: number
+  streamSeq: number
+  ts: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  launchId?: string | undefined
+  appId?: string | undefined
+  appSessionKey?: string | undefined
+  category: HrcEventCategory
+  eventKind: string
+  transport?: HrcLifecycleTransport | undefined
+  errorCode?: string | undefined
+  replayed: boolean
+  payload: unknown
 }
 
 export type HrcHarnessIntent = {
