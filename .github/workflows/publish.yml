@@ -21,8 +21,14 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - name: Update npm
-        run: npm install -g npm@latest
+      - name: Install npm 11 (for trusted publisher OIDC)
+        # Node 22 ships npm 10.x which predates trusted-publisher OIDC.
+        # Pin to a specific version to avoid the self-upgrade flake
+        # `npm install -g npm@latest` sometimes hits (missing
+        # promise-retry in npm's own node_modules).
+        run: |
+          npm install -g npm@11.5.2
+          npm --version
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -34,19 +40,8 @@ jobs:
       - name: Build
         run: bun run clean && bun run build
 
-      - name: Bundle workspace packages for npm
-        run: |
-          for pkg in config runtime harness-claude harness-pi harness-pi-sdk harness-codex execution; do
-            mkdir -p node_modules/spaces-$pkg
-            cp -r ../$pkg/dist node_modules/spaces-$pkg/
-            cp ../$pkg/package.json node_modules/spaces-$pkg/
-          done
-          mkdir -p node_modules/agent-spaces
-          cp -r ../agent-spaces/dist node_modules/agent-spaces/
-          cp ../agent-spaces/package.json node_modules/agent-spaces/
-          mkdir -p node_modules/agent-scope
-          cp -r ../agent-scope/dist node_modules/agent-scope/
-          cp ../agent-scope/package.json node_modules/agent-scope/
+      - name: Pack smoke test
+        run: bun scripts/smoke-test-pack.ts
         working-directory: packages/cli
 
       - name: Publish @lherron/agent-spaces
