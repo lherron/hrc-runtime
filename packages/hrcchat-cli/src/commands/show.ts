@@ -4,7 +4,7 @@ import { formatAddress } from '../normalize.js'
 
 export async function cmdShow(client: HrcClient, args: string[]): Promise<void> {
   const json = hasFlag(args, '--json')
-  const seqOrId = requireArg(args, 0, '<seq|message-id>')
+  const seqOrId = requireArg(args, 0, '<seq|message-id>', ['--project'])
 
   // Try as numeric seq first, then as message ID
   const seq = Number(seqOrId)

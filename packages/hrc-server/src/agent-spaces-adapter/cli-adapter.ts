@@ -233,9 +233,7 @@ export async function buildCliInvocation(
     ioMode,
     ...(options?.continuation ? { continuation: options.continuation } : {}),
     ...(intent.harness.yolo ? { yolo: true } : {}),
-    ...(options?.continuation === undefined && intent.initialPrompt !== undefined
-      ? { prompt: intent.initialPrompt }
-      : {}),
+    ...(intent.initialPrompt !== undefined ? { prompt: intent.initialPrompt } : {}),
     // Required by the type but ignored when placement is set
     aspHome: getAspHome(),
     spec: { spaces: [] },

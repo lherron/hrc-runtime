@@ -29,19 +29,25 @@ export async function cmdMessages(client: HrcClient, args: string[]): Promise<vo
 
   filter.limit = parseIntegerFlag(args, '--limit', { defaultValue: 50, min: 1 })
 
+  // Without an --after cursor, tail: fetch the latest N in descending order
+  // then reverse so the display is oldest-first within the window.
+  const tailMode = filter.afterSeq === undefined
+  if (tailMode) filter.order = 'desc'
+
   const result = await client.listMessages(filter)
+  const messages = tailMode ? [...result.messages].reverse() : result.messages
 
   if (json) {
-    printJson(result)
+    printJson({ ...result, messages })
     return
   }
 
-  if (result.messages.length === 0) {
+  if (messages.length === 0) {
     process.stdout.write('No messages.\n')
     return
   }
 
-  for (const msg of result.messages) {
+  for (const msg of messages) {
     renderMessage(msg)
   }
 }

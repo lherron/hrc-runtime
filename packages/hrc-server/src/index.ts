@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 /** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
+import { formatScopeHandle, parseScopeRef } from 'agent-scope'
 import {
   HRC_API_VERSION,
   HrcBadRequestError,
@@ -1880,7 +1881,7 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
-    return await this.executeHeadlessCliTurn(session, runtime, intent, runId, continuation)
+    return await this.executeHeadlessCliTurn(session, runtime, intent, prompt, runId, continuation)
   }
 
   /**
@@ -2005,12 +2006,15 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     runtime: HrcRuntimeSnapshot,
     intent: HrcRuntimeIntent,
+    prompt: string,
     runId: string,
     continuation: HrcContinuationRef | undefined
   ): Promise<Response> {
     const launchId = `launch-${randomUUID()}`
     const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const cliInvocation = await buildDispatchInvocation(intent, { continuation })
+    const turnIntent: HrcRuntimeIntent =
+      prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+    const cliInvocation = await buildDispatchInvocation(turnIntent, { continuation })
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
@@ -4270,7 +4274,13 @@ class HrcServerInstance implements HrcServer {
         if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
           try {
             const paneId = requireTmuxPane(liveTmuxRuntime).paneId
-            const payload = formatDmPayload(body.from, body.to, body.body, record.messageSeq)
+            const payload = formatDmPayload(
+              body.from,
+              body.to,
+              body.body,
+              record.messageSeq,
+              record.messageId
+            )
             await this.tmux.sendLiteral(paneId, payload)
             // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
             await Bun.sleep(200)
@@ -4327,7 +4337,12 @@ class HrcServerInstance implements HrcServer {
 
   private async executeSemanticTurn(
     session: HrcSessionRecord,
-    body: { runtimeIntent?: HrcRuntimeIntent | undefined; body: string; to: HrcMessageAddress },
+    body: {
+      runtimeIntent?: HrcRuntimeIntent | undefined
+      body: string
+      from: HrcMessageAddress
+      to: HrcMessageAddress
+    },
     record: HrcMessageRecord,
     respondTo: HrcMessageAddress
   ): Promise<{
@@ -4340,7 +4355,14 @@ class HrcServerInstance implements HrcServer {
     try {
       const runId = `run-${randomUUID()}`
       const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
-      const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, body.body, {
+      const payload = formatDmPayload(
+        body.from,
+        body.to,
+        body.body,
+        record.messageSeq,
+        record.messageId
+      )
+      const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
         runId,
       })
       const turnBody = (await turnResponse.json()) as DispatchTurnResponse
@@ -6562,24 +6584,29 @@ function parseTmuxVersion(
  */
 function formatDmAddress(addr: HrcMessageAddress): string {
   if (addr.kind === 'entity') return addr.entity
-  const match = addr.sessionRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
-  if (match?.[1]) {
-    const agent = match[1]
-    const project = match[2]
-    return project ? `${agent}@${project}` : agent
+  try {
+    const laneIdx = addr.sessionRef.indexOf('/lane:')
+    const scopeRef = laneIdx >= 0 ? addr.sessionRef.slice(0, laneIdx) : addr.sessionRef
+    return formatScopeHandle(parseScopeRef(scopeRef))
+  } catch {
+    return addr.sessionRef
   }
-  return addr.sessionRef
 }
 
 /**
- * Format a DM body for literal tmux injection using agentchat-compatible format:
- * [DM #<seq> <from> → <to>]: <content>  # reply_cmd if reply requested: hrcchat dm <from> "<your reply>"
+ * Format a DM body for literal tmux injection. Includes --reply-to so the
+ * recipient's reply threads onto the originating request (required for
+ * --wait on the sender side and for clean thread history).
+ *
+ *   [DM #<seq> <from> → <to>]: <content>
+ *     # reply_cmd if reply requested: hrcchat dm <from> --reply-to <id> "<your reply>"
  */
 function formatDmPayload(
   from: HrcMessageAddress,
   to: HrcMessageAddress,
   body: string,
-  messageSeq: number
+  messageSeq: number,
+  messageId: string
 ): string {
   const fromDisplay = formatDmAddress(from)
   const toDisplay = formatDmAddress(to)
@@ -6589,7 +6616,7 @@ function formatDmPayload(
     const suffix = `… (truncated; hrcchat show ${messageSeq})`
     content = content.slice(0, maxChars - suffix.length) + suffix
   }
-  const replyHint = `reply_cmd if reply requested: hrcchat dm ${fromDisplay} "<your reply>"`
+  const replyHint = `reply_cmd if reply requested: hrcchat dm ${fromDisplay} --reply-to ${messageId} "<your reply>"`
   return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}  # ${replyHint}`
 }
 
@@ -6717,6 +6744,13 @@ function parseMessageFilter(input: unknown): HrcMessageFilter {
     )
   }
 
+  const order = input['order']
+  if (order !== undefined && order !== 'asc' && order !== 'desc') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'order must be "asc" or "desc"', {
+      field: 'order',
+    })
+  }
+
   const kinds = parseMessageFilterList(input['kinds'], 'kinds', [
     'dm',
     'literal',
@@ -6741,6 +6775,7 @@ function parseMessageFilter(input: unknown): HrcMessageFilter {
     ...(kinds !== undefined ? { kinds } : {}),
     ...(phases !== undefined ? { phases } : {}),
     ...(limit !== undefined ? { limit } : {}),
+    ...(order !== undefined ? { order: order as 'asc' | 'desc' } : {}),
   }
 }
 
@@ -7787,6 +7822,9 @@ async function buildDispatchInvocation(
   let interactionMode: 'headless' | 'interactive' = 'interactive'
   let ioMode: 'inherit' | 'pipes' | 'pty' = 'pty'
 
+  let buildError: unknown
+  let unavailableCommand: string | undefined
+
   try {
     const invocation = await buildCliInvocation(intent, {
       ...(options.continuation ? { continuation: options.continuation } : {}),
@@ -7798,6 +7836,7 @@ async function buildDispatchInvocation(
     if (await isLaunchCommandAvailable(invocation.argv[0])) {
       return { argv: invocation.argv, env, cwd, interactionMode, ioMode }
     }
+    unavailableCommand = invocation.argv[0]
     writeServerLog('WARN', 'dispatch.invocation.command_unavailable', {
       provider: invocation.provider,
       frontend: invocation.frontend,
@@ -7812,12 +7851,26 @@ async function buildDispatchInvocation(
       })
     }
 
-    // Fall back to the local harness shim when the real CLI invocation cannot be built.
+    buildError = error
     writeServerLog('WARN', 'dispatch.invocation.build_failed', {
       provider: intent.harness.provider,
       interactive: intent.harness.interactive,
       error,
     })
+  }
+
+  // Only fall through to the test harness shim when explicitly opted in. The
+  // shim is an integration-test fixture — in production, a failed invocation
+  // build or missing harness command should surface loudly instead of running
+  // a placeholder that appears to succeed.
+  if (process.env['HRC_ALLOW_HARNESS_SHIM'] !== '1') {
+    if (buildError) {
+      const detail = buildError instanceof Error ? buildError.message : String(buildError)
+      throw new HrcRuntimeUnavailableError(`failed to build harness invocation: ${detail}`)
+    }
+    throw new HrcRuntimeUnavailableError(
+      `harness command not found on PATH: ${unavailableCommand ?? '<unknown>'}`
+    )
   }
 
   const shimPath = await findHarnessShimPath()

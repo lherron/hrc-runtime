@@ -251,10 +251,11 @@ export class MessageRepository {
     if (filter.limit !== undefined) {
       values.push(filter.limit)
     }
+    const order = filter.order === 'desc' ? 'DESC' : 'ASC'
 
     const rows = this.db
       .query<MessageRow, Array<string | number>>(
-        `SELECT ${MESSAGE_COLUMNS} FROM messages ${whereClause} ORDER BY message_seq ASC${limitClause}`
+        `SELECT ${MESSAGE_COLUMNS} FROM messages ${whereClause} ORDER BY message_seq ${order}${limitClause}`
       )
       .all(...values)
 

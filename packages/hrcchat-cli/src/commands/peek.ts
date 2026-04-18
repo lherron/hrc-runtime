@@ -4,7 +4,7 @@ import { resolveTargetToSessionRef } from '../normalize.js'
 
 export async function cmdPeek(client: HrcClient, args: string[]): Promise<void> {
   const json = hasFlag(args, '--json')
-  const targetInput = requireArg(args, 0, '<target>')
+  const targetInput = requireArg(args, 0, '<target>', ['--lines', '--project'])
   const lines = parseIntegerFlag(args, '--lines', { defaultValue: 80, min: 1 })
   const sessionRef = resolveTargetToSessionRef(targetInput)
 

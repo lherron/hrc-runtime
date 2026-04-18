@@ -294,7 +294,12 @@ async function main(): Promise<void> {
     process.stderr.write('hrc-launch exec: empty argv in launch artifact\n')
     process.exit(1)
   }
-  const effectiveCwd = existsSync(cwd) ? cwd : process.cwd()
+  if (!existsSync(cwd)) {
+    process.stderr.write(
+      `hrc-launch exec: launch cwd does not exist: ${cwd}\n  The launch artifact specified a cwd that is not present on disk.\n  Check the project's configured root (asp config / projects-root).\n`
+    )
+    process.exit(1)
+  }
 
   await applyLaunchCodexConfig(artifact)
 
@@ -334,7 +339,7 @@ async function main(): Promise<void> {
     process.stdout.write(`agentchat ${regArgs.join(' ')}\n`)
     const regResult = spawnSync('agentchat', regArgs, {
       env: { ...process.env, ...env },
-      cwd: effectiveCwd,
+      cwd: cwd,
       timeout: 5_000,
       stdio: ['ignore', 'ignore', 'pipe'],
     })
@@ -362,7 +367,7 @@ async function main(): Promise<void> {
       HRC_LAUNCH_HOOK_CLI: fileURLToPath(new URL('./hook-cli.ts', import.meta.url)),
       ...(runtimeId ? { HRC_RUNTIME_ID: runtimeId } : {}),
     },
-    cwd: effectiveCwd,
+    cwd: cwd,
     stdio: isHeadlessCodexLaunch(artifact) ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   })
 
@@ -446,7 +451,7 @@ async function main(): Promise<void> {
   if (agentchatId && agentchatProject) {
     spawnSync('agentchat', ['--project', agentchatProject, 'deregister', '--id', agentchatId], {
       env: { ...process.env, ...env },
-      cwd: effectiveCwd,
+      cwd: cwd,
       timeout: 5_000,
       stdio: ['ignore', 'ignore', 'pipe'],
     })

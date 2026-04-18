@@ -5,7 +5,7 @@ import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
 export async function cmdSummon(client: HrcClient, args: string[]): Promise<void> {
   const json = hasFlag(args, '--json')
-  const targetInput = requireArg(args, 0, '<target>')
+  const targetInput = requireArg(args, 0, '<target>', ['--project'])
   const sessionRef = resolveTargetToSessionRef(targetInput)
 
   const runtimeIntent = await resolveRuntimeIntentForTarget(targetInput)

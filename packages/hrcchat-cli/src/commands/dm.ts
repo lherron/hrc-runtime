@@ -11,11 +11,13 @@ import {
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
+const DM_VALUE_FLAGS = ['--file', '--respond-to', '--reply-to', '--mode', '--timeout', '--project']
+
 export async function cmdDm(client: HrcClient, args: string[]): Promise<void> {
   const json = hasFlag(args, '--json')
   const wait = hasFlag(args, '--wait')
-  const targetInput = requireArg(args, 0, '<target>')
-  const body = consumeBody(args, 1)
+  const targetInput = requireArg(args, 0, '<target>', DM_VALUE_FLAGS)
+  const body = consumeBody(args, 1, DM_VALUE_FLAGS)
 
   if (!body) {
     fatal('dm requires a message body (positional, -, or --file)')

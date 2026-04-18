@@ -1,7 +1,7 @@
 /**
  * Address normalization and resolution for hrcchat CLI.
  */
-import { resolveScopeInput } from 'agent-scope'
+import { formatScopeHandle, parseScopeRef, resolveScopeInput } from 'agent-scope'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
@@ -90,12 +90,11 @@ export function resolveProjectId(args: string[]): string | undefined {
  */
 export function formatAddress(addr: HrcMessageAddress): string {
   if (addr.kind === 'entity') return addr.entity
-  // Try to extract a friendly handle from the sessionRef
-  const match = addr.sessionRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
-  if (match?.[1]) {
-    const agent = match[1]
-    const project = match[2]
-    return project ? `${agent}@${project}` : agent
+  try {
+    const laneIdx = addr.sessionRef.indexOf('/lane:')
+    const scopeRef = laneIdx >= 0 ? addr.sessionRef.slice(0, laneIdx) : addr.sessionRef
+    return formatScopeHandle(parseScopeRef(scopeRef))
+  } catch {
+    return addr.sessionRef
   }
-  return addr.sessionRef
 }

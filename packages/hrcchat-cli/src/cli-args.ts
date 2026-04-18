@@ -7,8 +7,43 @@ export function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 }
 
-export function requireArg(args: string[], index: number, name: string): string {
-  const value = args[index]
+/**
+ * Strip flag tokens from an argv, returning only positional arguments.
+ * Honors `--` (everything after is positional) and removes a following
+ * value token for each flag listed in `valueFlags`.
+ */
+export function extractPositionals(args: string[], valueFlags: string[] = []): string[] {
+  const result: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === undefined) continue
+    if (arg === '--') {
+      for (const rest of args.slice(i + 1)) {
+        if (rest !== undefined) result.push(rest)
+      }
+      break
+    }
+    if (arg.startsWith('--') && arg.length > 2) {
+      if (arg.includes('=')) continue
+      if (valueFlags.includes(arg)) i++
+      continue
+    }
+    if (arg.startsWith('-') && arg.length > 1 && arg !== '-') {
+      if (valueFlags.includes(arg)) i++
+      continue
+    }
+    result.push(arg)
+  }
+  return result
+}
+
+export function requireArg(
+  args: string[],
+  index: number,
+  name: string,
+  valueFlags: string[] = []
+): string {
+  const value = extractPositionals(args, valueFlags)[index]
   if (value === undefined) {
     fatal(`missing required argument: ${name}`)
   }
@@ -54,16 +89,19 @@ export function parseIntegerFlag(
 /**
  * Consume the body argument: either positional, stdin (-), or --file.
  */
-export function consumeBody(args: string[], startIndex: number): string | undefined {
+export function consumeBody(
+  args: string[],
+  startIndex: number,
+  valueFlags: string[] = []
+): string | undefined {
   const filePath = parseFlag(args, '--file')
   if (filePath) {
     const { readFileSync } = require('node:fs')
     return readFileSync(filePath, 'utf8')
   }
 
-  const positional = args[startIndex]
+  const positional = extractPositionals(args, valueFlags)[startIndex]
   if (positional === '-') {
-    // Read from stdin
     const { readFileSync } = require('node:fs')
     return readFileSync('/dev/stdin', 'utf8')
   }

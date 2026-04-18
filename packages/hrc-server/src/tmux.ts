@@ -32,7 +32,12 @@ const MIN_SUPPORTED_TMUX_VERSION = {
 }
 
 const WINDOW_NAME = 'main'
-const TABS = '\t'
+
+// Match the metadata format we request: session_id, window_id, pane_id, session_name.
+// tmux separates the fields with the tab we pass in the -F string, but falls back to
+// `_` when the locale is unset (C/POSIX) — this happens under launchd, which does not
+// inherit LANG from the user shell. Both separators are accepted.
+const PANE_METADATA_PATTERN = /^(\$\d+)[\t_](@\d+)[\t_](%\d+)[\t_](.+)$/
 
 function sessionNameFor(hostSessionId: string): string {
   return `hrc-${hostSessionId.slice(0, 12)}`
@@ -61,7 +66,7 @@ function parseVersion(stdout: string, stderr: string): { major: number; minor: n
   }
 }
 
-function parsePaneState(stdout: string, socketPath: string): TmuxPaneState {
+export function parsePaneState(stdout: string, socketPath: string): TmuxPaneState {
   const line = stdout
     .trim()
     .split('\n')
@@ -72,9 +77,15 @@ function parsePaneState(stdout: string, socketPath: string): TmuxPaneState {
     throw new Error('tmux command did not return pane metadata')
   }
 
-  const [sessionId, windowId, paneId, sessionName] = line.split(TABS)
-  if (!sessionId || !windowId || !paneId || !sessionName) {
+  const match = PANE_METADATA_PATTERN.exec(line)
+  if (!match) {
     throw new Error(`unexpected tmux metadata line: ${line}`)
+  }
+
+  const [, sessionId, windowId, paneId, sessionName] = match
+
+  if (!sessionName || !sessionId || !windowId || !paneId) {
+    throw new Error(`tmux metadata regex captured empty groups in line: ${line}`)
   }
 
   return {

@@ -102,6 +102,7 @@ export type HrcMessageFilter = {
   kinds?: HrcMessageKind[] | undefined
   phases?: HrcMessagePhase[] | undefined
   limit?: number | undefined
+  order?: 'asc' | 'desc' | undefined
 }
 
 // -- HTTP request/response DTOs -----------------------------------------------
