@@ -490,6 +490,10 @@ function normalizeLegacyHrcPayload(eventJson: unknown): {
   const errorCode =
     typeof rawErrorCode === 'string' && rawErrorCode.length > 0 ? rawErrorCode : undefined
   const replayed = typeof rawReplayed === 'boolean' ? rawReplayed : undefined
+  const normalizedPayload =
+    rawTransport !== undefined && transport === undefined
+      ? { ...payload, transport: rawTransport }
+      : payload
 
   return {
     ...(launchId ? { launchId } : {}),
@@ -498,7 +502,7 @@ function normalizeLegacyHrcPayload(eventJson: unknown): {
     ...(transport ? { transport } : {}),
     ...(errorCode ? { errorCode } : {}),
     ...(replayed !== undefined ? { replayed } : {}),
-    payload,
+    payload: normalizedPayload,
   }
 }
 
