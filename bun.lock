@@ -55,17 +55,30 @@
     },
     "packages/cli": {
       "name": "@lherron/agent-spaces",
-      "version": "0.4.0",
+      "version": "0.4.2",
       "bin": {
         "asp": "./bin/asp.js",
       },
       "dependencies": {
-        "agent-scope": "*",
-        "agent-spaces": "*",
+        "@anthropic-ai/claude-agent-sdk": "^0.1.72",
+        "@iarna/toml": "^2.2.5",
+        "@mariozechner/pi-coding-agent": "^0.63.1",
+        "ajv": "^8.17.1",
+        "ajv-formats": "^3.0.1",
         "chalk": "^5.3.0",
         "commander": "^12.1.0",
         "figures": "^6.1.0",
         "ora": "^9.0.0",
+        "proper-lockfile": "^4.1.2",
+        "semver": "^7.7.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+      "optionalDependencies": {
+        "agent-scope": "*",
+        "agent-spaces": "*",
         "spaces-config": "*",
         "spaces-execution": "*",
         "spaces-harness-claude": "*",
@@ -73,10 +86,6 @@
         "spaces-harness-pi": "*",
         "spaces-harness-pi-sdk": "*",
         "spaces-runtime": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "typescript": "^5.8.3",
       },
     },
     "packages/config": {
@@ -968,7 +977,7 @@
 
     "@isaacs/cliui/wrap-ansi": ["wrap-ansi@8.1.0", "", { "dependencies": { "ansi-styles": "^6.1.0", "string-width": "^5.0.1", "strip-ansi": "^7.0.1" } }, "sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ=="],
 
-    "@lherron/agent-spaces/@types/bun": ["@types/bun@1.3.11", "", { "dependencies": { "bun-types": "1.3.11" } }, "sha512-5vPne5QvtpjGpsGYXiFyycfpDF2ECyPcTSsFBMa0fraoxiQyMJ3SmuQIGhzPg2WJuWxVBoxWJ2kClYTcw/4fAg=="],
+    "@lherron/agent-spaces/@types/bun": ["@types/bun@1.3.12", "", { "dependencies": { "bun-types": "1.3.12" } }, "sha512-DBv81elK+/VSwXHDlnH3Qduw+KxkTIWi7TXkAeh24zpi5l0B2kUg9Ga3tb4nJaPcOFswflgi/yAvMVBPrxMB+A=="],
 
     "@mariozechner/pi-coding-agent/diff": ["diff@8.0.3", "", {}, "sha512-qejHi7bcSD4hQAZE0tNAawRK1ZtafHDmMTMkrrIGgSLl7hTnQHmKCeB45xAcbfTqK2zowkM3j3bHt/4b/ARbYQ=="],
 
@@ -1064,7 +1073,7 @@
 
     "@isaacs/cliui/wrap-ansi/ansi-styles": ["ansi-styles@6.2.3", "", {}, "sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg=="],
 
-    "@lherron/agent-spaces/@types/bun/bun-types": ["bun-types@1.3.11", "", { "dependencies": { "@types/node": "*" } }, "sha512-1KGPpoxQWl9f6wcZh57LvrPIInQMn2TQ7jsgxqpRzg+l0QPOFvJVH7HmvHo/AiPgwXy+/Thf6Ov3EdVn1vOabg=="],
+    "@lherron/agent-spaces/@types/bun/bun-types": ["bun-types@1.3.12", "", { "dependencies": { "@types/node": "*" } }, "sha512-HqOLj5PoFajAQciOMRiIZGNoKxDJSr6qigAttOX40vJuSp6DN/CxWp9s3C1Xwm4oH7ybueITwiaOcWXoYVoRkA=="],
 
     "agent-scope/@types/bun/bun-types": ["bun-types@1.3.12", "", { "dependencies": { "@types/node": "*" } }, "sha512-HqOLj5PoFajAQciOMRiIZGNoKxDJSr6qigAttOX40vJuSp6DN/CxWp9s3C1Xwm4oH7ybueITwiaOcWXoYVoRkA=="],
 
