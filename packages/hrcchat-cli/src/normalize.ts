@@ -1,7 +1,8 @@
 /**
  * Address normalization and resolution for hrcchat CLI.
  */
-import { formatScopeHandle, parseScopeRef, resolveScopeInput } from 'agent-scope'
+import { formatSessionHandle, resolveScopeInput } from 'agent-scope'
+import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
@@ -16,7 +17,6 @@ import { inferProjectIdFromCwd } from 'spaces-config'
 export function resolveTargetToSessionRef(input: string): string {
   const resolved = resolveScopeInput(input, 'main')
   let scopeRef = resolved.scopeRef
-  const laneRef = resolved.laneRef ?? 'main'
 
   // Qualify with project when not already present
   if (resolved.parsed.kind === 'agent') {
@@ -26,7 +26,7 @@ export function resolveTargetToSessionRef(input: string): string {
     }
   }
 
-  return `${scopeRef}/lane:${laneRef}`
+  return `${scopeRef}/lane:${resolved.laneId}`
 }
 
 /**
@@ -91,9 +91,11 @@ export function resolveProjectId(args: string[]): string | undefined {
 export function formatAddress(addr: HrcMessageAddress): string {
   if (addr.kind === 'entity') return addr.entity
   try {
-    const laneIdx = addr.sessionRef.indexOf('/lane:')
-    const scopeRef = laneIdx >= 0 ? addr.sessionRef.slice(0, laneIdx) : addr.sessionRef
-    return formatScopeHandle(parseScopeRef(scopeRef))
+    const { scopeRef, laneRef } = splitSessionRef(addr.sessionRef)
+    return formatSessionHandle({
+      scopeRef,
+      laneRef: laneRef === 'main' ? 'main' : `lane:${laneRef}`,
+    })
   } catch {
     return addr.sessionRef
   }

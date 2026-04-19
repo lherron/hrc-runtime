@@ -153,6 +153,47 @@ export async function execProcess(argv: string[]): Promise<{
   return { stdout, stderr, exitCode }
 }
 
+const DEFAULT_LAUNCHD_LABEL = 'com.praesidium.hrc-server'
+
+export type LaunchdOwner = {
+  label: string
+  domain: string
+  serviceTarget: string
+}
+
+/**
+ * Probe launchd to see if the HRC daemon is managed by a Launch Agent.
+ * Returns non-null only on macOS when the labelled agent is loaded in the
+ * current user's GUI domain. The plist should invoke `hrc server serve`
+ * so the supervised process never enters this code path.
+ */
+export async function detectLaunchdOwner(): Promise<LaunchdOwner | null> {
+  if (process.platform !== 'darwin') return null
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  if (uid === undefined) return null
+
+  const label = process.env['HRC_LAUNCHD_LABEL'] ?? DEFAULT_LAUNCHD_LABEL
+  const domain = `gui/${uid}`
+  const serviceTarget = `${domain}/${label}`
+  const result = await execProcess(['launchctl', 'print', serviceTarget])
+  if (result.exitCode !== 0) return null
+  return { label, domain, serviceTarget }
+}
+
+export async function launchctlKickstart(
+  owner: LaunchdOwner,
+  opts: { kill?: boolean } = {}
+): Promise<void> {
+  const argv = ['launchctl', 'kickstart']
+  if (opts.kill) argv.push('-k')
+  argv.push(owner.serviceTarget)
+  const result = await execProcess(argv)
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout).trim()
+    fatal(`launchctl kickstart failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`)
+  }
+}
+
 export async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus> {
   const paths = resolveServerPaths()
   const pid = readPidFile(paths.pidPath)

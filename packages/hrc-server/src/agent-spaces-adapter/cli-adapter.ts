@@ -53,6 +53,7 @@ export type SpecBuilder = (
 export interface BuildCliInvocationOptions {
   specBuilder?: SpecBuilder | undefined
   continuation?: HrcContinuationRef | undefined
+  suppressInitialPrompt?: boolean | undefined
 }
 
 /** Result of building a CLI invocation from HRC intent */
@@ -219,6 +220,9 @@ export async function buildCliInvocation(
 ): Promise<CliInvocationResult> {
   const frontend = resolveCliFrontend(intent)
   const { interactionMode, ioMode } = resolveInvocationModes(intent)
+  // `undefined` allows placement planning to fall back to the target's default
+  // priming prompt. Use an explicit empty string to mean "suppress replay".
+  const initialPrompt = options?.suppressInitialPrompt ? '' : intent.initialPrompt
 
   const specBuilder = options?.specBuilder ?? defaultSpecBuilder()
 
@@ -233,7 +237,7 @@ export async function buildCliInvocation(
     ioMode,
     ...(options?.continuation ? { continuation: options.continuation } : {}),
     ...(intent.harness.yolo ? { yolo: true } : {}),
-    ...(intent.initialPrompt !== undefined ? { prompt: intent.initialPrompt } : {}),
+    ...(initialPrompt !== undefined ? { prompt: initialPrompt } : {}),
     // Required by the type but ignored when placement is set
     aspHome: getAspHome(),
     spec: { spaces: [] },

@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 /** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
-import { formatScopeHandle, parseScopeRef } from 'agent-scope'
+import { formatSessionHandle } from 'agent-scope'
 import {
   HRC_API_VERSION,
   HrcBadRequestError,
@@ -507,7 +507,10 @@ class HrcServerInstance implements HrcServer {
   ) {
     this.server = Bun.serve({
       unix: options.socketPath,
-      fetch: (request) => this.handleRequest(request),
+      fetch: (request, server) => {
+        server.timeout(request, 0)
+        return this.handleRequest(request)
+      },
     })
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
@@ -2015,6 +2018,7 @@ class HrcServerInstance implements HrcServer {
     const turnIntent: HrcRuntimeIntent =
       prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
     const cliInvocation = await buildDispatchInvocation(turnIntent, { continuation })
+    const launchCwd = await resolveDispatchCwd(cliInvocation.cwd, turnIntent)
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
     const launchArtifact = {
@@ -2027,7 +2031,7 @@ class HrcServerInstance implements HrcServer {
       provider: runtime.provider,
       argv: cliInvocation.argv,
       env: cliInvocation.env,
-      cwd: cliInvocation.cwd,
+      cwd: launchCwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(cliInvocation.env),
@@ -3321,18 +3325,19 @@ class HrcServerInstance implements HrcServer {
         },
       } satisfies HrcRuntimeIntent)
 
-    const invocation = await buildCliInvocation(
-      {
-        ...latestIntent,
-        execution: {
-          ...latestIntent.execution,
-          preferredMode: 'interactive',
-        },
+    const attachIntent = {
+      ...latestIntent,
+      execution: {
+        ...latestIntent.execution,
+        preferredMode: 'interactive',
       },
-      {
-        continuation,
-      }
-    )
+    } satisfies HrcRuntimeIntent
+
+    const invocation = await buildCliInvocation(attachIntent, {
+      continuation,
+      suppressInitialPrompt: true,
+    })
+    const launchCwd = await resolveDispatchCwd(invocation.cwd, attachIntent)
 
     const tmuxPane = requireTmuxPane(runtime)
     const launchId = `launch-${randomUUID()}`
@@ -3354,7 +3359,7 @@ class HrcServerInstance implements HrcServer {
       provider: runtime.provider,
       argv: invocation.argv,
       env: launchEnv,
-      cwd: invocation.cwd,
+      cwd: launchCwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
@@ -6585,9 +6590,11 @@ function parseTmuxVersion(
 function formatDmAddress(addr: HrcMessageAddress): string {
   if (addr.kind === 'entity') return addr.entity
   try {
-    const laneIdx = addr.sessionRef.indexOf('/lane:')
-    const scopeRef = laneIdx >= 0 ? addr.sessionRef.slice(0, laneIdx) : addr.sessionRef
-    return formatScopeHandle(parseScopeRef(scopeRef))
+    const { scopeRef, laneRef } = parseSessionRef(normalizeSessionRef(addr.sessionRef))
+    return formatSessionHandle({
+      scopeRef,
+      laneRef: laneRef === 'main' ? 'main' : `lane:${laneRef}`,
+    })
   } catch {
     return addr.sessionRef
   }
@@ -6599,7 +6606,11 @@ function formatDmAddress(addr: HrcMessageAddress): string {
  * --wait on the sender side and for clean thread history).
  *
  *   [DM #<seq> <from> → <to>]: <content>
- *     # reply_cmd if reply requested: hrcchat dm <from> --reply-to <id> "<your reply>"
+ *
+ *     reply_cmd if reply requested:
+ *     hrcchat dm <from> --reply-to <id> - <<'__HRC_REPLY__'
+ *     <your reply>
+ *     __HRC_REPLY__
  */
 function formatDmPayload(
   from: HrcMessageAddress,
@@ -6616,8 +6627,13 @@ function formatDmPayload(
     const suffix = `… (truncated; hrcchat show ${messageSeq})`
     content = content.slice(0, maxChars - suffix.length) + suffix
   }
-  const replyHint = `reply_cmd if reply requested: hrcchat dm ${fromDisplay} --reply-to ${messageId} "<your reply>"`
-  return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}  # ${replyHint}`
+  const replyHint = [
+    'reply_cmd if reply requested:',
+    `hrcchat dm ${fromDisplay} --reply-to ${messageId} - <<'__HRC_REPLY__'`,
+    '<your reply>',
+    '__HRC_REPLY__',
+  ].join('\n')
+  return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}\n\n${replyHint}`
 }
 
 function normalizeTargetLane(laneRef: string | undefined): string | undefined {
@@ -7830,7 +7846,7 @@ async function buildDispatchInvocation(
       ...(options.continuation ? { continuation: options.continuation } : {}),
     })
     env = invocation.env
-    cwd = invocation.cwd
+    cwd = await resolveDispatchCwd(invocation.cwd, intent)
     interactionMode = invocation.interactionMode
     ioMode = invocation.ioMode
     if (await isLaunchCommandAvailable(invocation.argv[0])) {
@@ -7891,6 +7907,30 @@ async function buildDispatchInvocation(
     interactionMode,
     ioMode,
   }
+}
+
+async function resolveDispatchCwd(preferredCwd: string, intent: HrcRuntimeIntent): Promise<string> {
+  const preferredStats = await stat(preferredCwd).catch(() => null)
+  if (preferredStats?.isDirectory()) {
+    return preferredCwd
+  }
+
+  if (intent.placement.dryRun !== true) {
+    return preferredCwd
+  }
+
+  const fallbackCwd = process.cwd()
+  const fallbackStats = await stat(fallbackCwd).catch(() => null)
+  if (fallbackStats?.isDirectory()) {
+    writeServerLog('WARN', 'dispatch.invocation.cwd_missing_dry_run_fallback', {
+      preferredCwd,
+      fallbackCwd,
+      provider: intent.harness.provider,
+    })
+    return fallbackCwd
+  }
+
+  return preferredCwd
 }
 
 function buildLaunchCommand(launchArtifactPath: string): string {

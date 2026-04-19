@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'no tests yet'"
+    "test": "bun test"
   },
   "dependencies": {
     "agent-scope": "*",

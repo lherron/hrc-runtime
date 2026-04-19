@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { resolveScopeInput } from 'agent-scope'
 import chalk from 'chalk'
 
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, resolveDatabasePath } from 'hrc-core'
 import type {
   HrcLifecycleEvent,
   HrcRuntimeIntent,
@@ -17,6 +17,7 @@ import type {
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 import {
   type TargetDefinition,
   buildRuntimeBundleRef,
@@ -34,9 +35,11 @@ import {
   collectServerRuntimeStatus,
   collectTmuxStatus,
   daemonizeAndWait,
+  detectLaunchdOwner,
   execProcess,
   formatServerRuntimeStatus,
   formatTmuxStatus,
+  launchctlKickstart,
   resolveServerMode,
   resolveServerPaths,
   stopServerProcess,
@@ -78,6 +81,8 @@ function createClient(): HrcClient {
   const socketPath = discoverSocket()
   return new HrcClient(socketPath)
 }
+
+const EVENT_FOLLOW_POLL_MS = 250
 
 function createDefaultRuntimeIntent(
   provider: 'anthropic' | 'openai',
@@ -499,6 +504,8 @@ async function cmdServer(args: string[]): Promise<void> {
   switch (subcommand) {
     case 'start':
       return cmdServerStart(args.slice(1), 'foreground')
+    case 'serve':
+      return cmdServerServe(args.slice(1))
     case 'stop':
       return cmdServerStop(args.slice(1))
     case 'restart':
@@ -514,6 +521,19 @@ async function cmdServer(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * Run the HRC server in the foreground without probing launchd. Intended
+ * for supervisors (launchd, systemd) that invoke hrc directly; user-facing
+ * `hrc server start` delegates to launchctl when a Launch Agent is loaded.
+ */
+async function cmdServerServe(_args: string[]): Promise<void> {
+  const status = await collectServerRuntimeStatus()
+  if (status.running) {
+    fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
+  }
+  return serverForeground()
+}
+
 async function cmdServerStart(args: string[], defaultMode: 'foreground' | 'daemon'): Promise<void> {
   const mode = resolveServerMode(args, defaultMode)
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
@@ -521,6 +541,13 @@ async function cmdServerStart(args: string[], defaultMode: 'foreground' | 'daemo
 
   if (status.running) {
     fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
+  }
+
+  const owner = await detectLaunchdOwner()
+  if (owner) {
+    await launchctlKickstart(owner)
+    process.stderr.write(`hrc: daemon started via launchd (${owner.serviceTarget})\n`)
+    return
   }
 
   if (mode === 'daemon') {
@@ -541,6 +568,14 @@ async function cmdServerStop(args: string[]): Promise<void> {
     return
   }
 
+  const owner = await detectLaunchdOwner()
+  if (owner) {
+    fatal(
+      `daemon is supervised by launchd (${owner.serviceTarget}); launchd will respawn it. ` +
+        `To stop permanently: launchctl unload -w ~/Library/LaunchAgents/${owner.label}.plist`
+    )
+  }
+
   await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
   process.stderr.write('hrc: daemon stopped\n')
 }
@@ -549,6 +584,13 @@ async function cmdServerRestart(args: string[]): Promise<void> {
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
+
+  const owner = await detectLaunchdOwner()
+  if (owner) {
+    await launchctlKickstart(owner, { kill: true })
+    process.stderr.write(`hrc: daemon restarted via launchd (${owner.serviceTarget})\n`)
+    return
+  }
 
   await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
   if (mode === 'daemon') {
@@ -700,9 +742,40 @@ async function cmdEvents(args: string[]): Promise<void> {
     fatal('--from-seq must be a positive integer')
   }
 
-  const client = createClient()
-  for await (const event of client.watch({ fromSeq, follow })) {
+  for await (const event of watchLocalEvents({ fromSeq, follow })) {
     process.stdout.write(pretty ? formatWatchEvent(event) : `${JSON.stringify(event)}\n`)
+  }
+}
+
+async function* watchLocalEvents(options: {
+  fromSeq?: number | undefined
+  follow: boolean
+}): AsyncIterable<HrcLifecycleEvent> {
+  const db = openHrcDatabase(resolveDatabasePath())
+  let nextSeq = options.fromSeq ?? 1
+
+  try {
+    while (true) {
+      const events = db.hrcEvents.listFromHrcSeq(nextSeq)
+      if (events.length === 0) {
+        if (!options.follow) {
+          return
+        }
+        await Bun.sleep(EVENT_FOLLOW_POLL_MS)
+        continue
+      }
+
+      for (const event of events) {
+        yield event
+        nextSeq = event.hrcSeq + 1
+      }
+
+      if (!options.follow) {
+        return
+      }
+    }
+  } finally {
+    db.close()
   }
 }
 
@@ -2186,6 +2259,7 @@ Usage: hrc <command> [options]
 Commands:
   info                                Show HRC orientation and first-contact guidance
   server [start] [--foreground|--daemon]     Start the HRC server (foreground by default)
+  server serve                               Run the server in the foreground (for launchd/systemd)
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
   server status [--json]                     Show daemon/socket/pid state without requiring the API

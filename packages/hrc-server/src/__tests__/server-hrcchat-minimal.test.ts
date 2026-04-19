@@ -7,6 +7,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { TmuxManager } from '../tmux'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -165,5 +166,129 @@ exit 0
     }
 
     expect(execLog).toContain('exec:')
+  })
+
+  it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {
+    const tmux = new TmuxManager(fixture.tmuxSocketPath)
+    await tmux.initialize()
+
+    const scopeRef = 'agent:clod:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    const runtimeId = `rt-live-dm-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        tmuxJson: pane,
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'preserve markdown literally',
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(100)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('reply_cmd if reply requested:')) {
+        break
+      }
+    }
+
+    const compactCapture = captured.replaceAll('\n', '')
+
+    expect(captured).toContain('reply_cmd if reply requested:')
+    expect(compactCapture).toContain(
+      `hrcchat dm human --reply-to ${dm.request.messageId} - <<'__HRC_REPLY__'`
+    )
+    expect(captured).toContain('<your reply>')
+    expect(captured).not.toContain('"<your reply>"')
+  })
+
+  it('includes non-main sender lanes in live tmux reply hints', async () => {
+    const tmux = new TmuxManager(fixture.tmuxSocketPath)
+    await tmux.initialize()
+
+    const recipientScopeRef = 'agent:cody:project:agent-spaces:task:T-09999'
+    const recipientSessionRef = `${recipientScopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(recipientScopeRef)
+    const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    const runtimeId = `rt-live-dm-reply-lane-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef: recipientScopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        tmuxJson: pane,
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: {
+        kind: 'session',
+        sessionRef: 'agent:clod:project:agent-spaces:task:T-01128/lane:repair',
+      },
+      to: { kind: 'session', sessionRef: recipientSessionRef },
+      body: 'preserve the sender lane',
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(100)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('reply_cmd if reply requested:')) {
+        break
+      }
+    }
+
+    const compactCapture = captured.replaceAll('\n', '')
+
+    expect(compactCapture).toContain(
+      `hrcchat dm clod@agent-spaces:T-01128~repair --reply-to ${dm.request.messageId} - <<'__HRC_REPLY__'`
+    )
   })
 })

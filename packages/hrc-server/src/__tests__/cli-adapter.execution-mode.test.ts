@@ -172,4 +172,43 @@ describe('buildCliInvocation execution mode mapping', () => {
     expect(capturedRequest?.interactionMode).toBe('headless')
     expect(capturedRequest?.ioMode).toBe('pipes')
   })
+
+  it('suppresses the stored initial prompt when attach resume asks to skip priming', async () => {
+    let capturedRequest: BuildProcessInvocationSpecRequest | undefined
+
+    const result = await buildCliInvocation(
+      makeIntent(
+        {
+          harness: {
+            provider: 'openai',
+            interactive: true,
+          },
+          initialPrompt: 'Seed before attach',
+        },
+        {}
+      ),
+      {
+        continuation: { provider: 'openai', key: 'thread-123' },
+        suppressInitialPrompt: true,
+        specBuilder: async (req) => {
+          capturedRequest = req
+          return {
+            spec: {
+              argv: req.prompt
+                ? ['codex', 'resume', 'thread-123', req.prompt]
+                : ['codex', 'resume', 'thread-123'],
+              env: {
+                PATH: '/usr/bin',
+              },
+              cwd: '/tmp/materialized',
+            },
+          }
+        },
+      }
+    )
+
+    expect(capturedRequest?.prompt).toBe('')
+    expect(result.argv).toEqual(['codex', 'resume', 'thread-123'])
+    expect(result.argv).not.toContain('Seed before attach')
+  })
 })

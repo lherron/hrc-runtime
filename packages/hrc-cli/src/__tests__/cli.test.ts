@@ -269,6 +269,7 @@ beforeEach(async () => {
   originalPath = process.env.PATH
   originalClaudePath = process.env.ASP_CLAUDE_PATH
   process.env.PATH = `${CLAUDE_SHIM_DIR}:${CODEX_SHIM_DIR}:${originalPath ?? ''}`
+  process.env.HRC_ALLOW_HARNESS_SHIM = '1'
 })
 
 afterEach(async () => {
@@ -1950,6 +1951,58 @@ describe('hrc events', () => {
     expect(result.stdout).toContain('| text : Chunk ID: 384f38')
     expect(result.stdout).toContain('|        Wall time: 0.0000 seconds')
     expect(result.stdout).toContain('|        Process exited with code 3')
+  })
+
+  it('follows newly appended lifecycle events from the local store after idle', async () => {
+    const resolveResult = await runCli(
+      ['session', 'resolve', '--scope', testProjectScope('watchfollowlocal')],
+      cliEnv()
+    )
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+    }
+
+    const proc = Bun.spawn(['bun', 'run', CLI_PATH, 'events', '--follow'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        ...process.env,
+        ...cliEnv(),
+      },
+    })
+    const stdoutPromise = new Response(proc.stdout).text()
+    const stderrPromise = new Response(proc.stderr).text()
+
+    await Bun.sleep(1_200)
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: new Date().toISOString(),
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: testProjectScope('watchfollowlocal'),
+        laneRef: 'default',
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.completed',
+        payload: {
+          success: true,
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    await Bun.sleep(400)
+    proc.kill()
+    await proc.exited
+
+    const stdout = await stdoutPromise
+    const stderr = await stderrPromise
+
+    expect(stdout).toContain('"eventKind":"turn.completed"')
+    expect(stderr).not.toContain('socket connection was closed unexpectedly')
   })
 })
 

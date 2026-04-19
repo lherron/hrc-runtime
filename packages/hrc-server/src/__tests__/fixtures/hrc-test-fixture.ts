@@ -62,6 +62,12 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   await mkdir(stateRoot, { recursive: true })
   await mkdir(spoolDir, { recursive: true })
 
+  // Opt tests into the integration-test harness shim so buildDispatchInvocation
+  // can fall back when the real claude/codex binaries aren't on PATH. Production
+  // contexts must leave this unset so failures surface instead of silently
+  // running a placeholder.
+  process.env['HRC_ALLOW_HARNESS_SHIM'] = '1'
+
   function now(): string {
     return new Date().toISOString()
   }

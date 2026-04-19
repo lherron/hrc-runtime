@@ -400,6 +400,53 @@ exit 0
     expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
   })
 
+  it('POST /v1/runtimes/attach resumes codex without replaying the original priming prompt', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-attach-no-reprime')
+    const hsid = await resolveSession('lifecycle-attach-no-reprime')
+    const primingPrompt = 'Seed before attach'
+
+    const startRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: interactiveCliIntent('openai', {
+        preferredMode: 'headless',
+        pathPrepend: [fakeCodex.binDir],
+        initialPrompt: primingPrompt,
+      }),
+    })
+    expect(startRes.status).toBe(200)
+    const startData = (await startRes.json()) as any
+
+    const attachRes = await postJson('/v1/runtimes/attach', {
+      runtimeId: startData.runtimeId,
+    })
+    expect(attachRes.status).toBe(200)
+    const attachData = (await attachRes.json()) as any
+    expect(attachData.bindingFence.runtimeId).toBeString()
+    expect(attachData.bindingFence.runtimeId).not.toBe(startData.runtimeId)
+
+    let launchArtifactPath = ''
+    const db = openHrcDatabase(dbPath)
+    try {
+      const attachedRuntime = db.runtimes.getByRuntimeId(String(attachData.bindingFence.runtimeId))
+      expect(attachedRuntime).not.toBeNull()
+      expect(attachedRuntime?.launchId).toBeString()
+      const launch = db.launches.getByLaunchId(String(attachedRuntime?.launchId))
+      expect(launch).not.toBeNull()
+      launchArtifactPath = String(launch?.launchArtifactPath)
+    } finally {
+      db.close()
+    }
+
+    const launchArtifact = JSON.parse(await readFile(launchArtifactPath, 'utf-8')) as {
+      argv: string[]
+      lifecycleAction?: string
+    }
+    expect(launchArtifact.lifecycleAction).toBe('attach')
+    expect(launchArtifact.argv).not.toContain(primingPrompt)
+
+    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
+  })
+
   it('POST /v1/runtimes/attach prefers tmux sessionId when stored sessionName is stale', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-stale-session-name')
     const hsid = await resolveSession('lifecycle-attach-stale-session-name')
