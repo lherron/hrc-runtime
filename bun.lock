@@ -177,6 +177,7 @@
         "hrc-events": "*",
         "hrc-sdk": "*",
         "hrc-server": "*",
+        "hrc-store-sqlite": "*",
         "spaces-config": "*",
       },
       "devDependencies": {
