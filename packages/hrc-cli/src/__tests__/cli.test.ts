@@ -894,7 +894,8 @@ describe('hrc start', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('provider:     openai')
-    expect(result.stdout).toContain('argv:     codex exec')
+    expect(result.stdout).toContain('── command ──')
+    expect(result.stdout).toContain('codex exec')
     expect(result.stdout).toContain('--json')
   })
 

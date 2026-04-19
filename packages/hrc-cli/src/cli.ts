@@ -30,6 +30,7 @@ import {
   resolveAgentPrimingPrompt,
   resolveHarnessProvider,
 } from 'spaces-config'
+import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
 import { fatal, hasFlag, parseFlag, parseIntegerFlag, printJson, requireArg } from './cli-args.js'
 import {
   collectServerRuntimeStatus,
@@ -1518,55 +1519,79 @@ async function printLocalRunPreview(
 ): Promise<void> {
   const w = (s: string) => process.stdout.write(`${s}\n`)
 
-  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)\n`)
-  w(`  sessionRef:   ${sessionRef}`)
-  w(`  restartStyle: ${restartStyle}`)
-  w(`  agentRoot:    ${intent.placement.agentRoot}`)
-  w(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
-  w(`  cwd:          ${intent.placement.cwd}`)
-  w(`  provider:     ${intent.harness.provider}`)
-  w(`  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`)
+  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
 
-  const envOverrides = intent.launch?.env
-  if (envOverrides && Object.keys(envOverrides).length > 0) {
-    w('  env overrides:')
-    for (const key of Object.keys(envOverrides).sort()) {
-      const val = envOverrides[key]
-      if (val === undefined) continue
-      const display = val.length > 120 ? `${val.slice(0, 117)}...` : val
-      w(`    ${key}=${display}`)
-    }
-  }
-
-  // Build the actual argv/env that the harness would launch with. This
-  // invokes the same spec-builder the server uses on a real run, which
-  // materializes spaces, writes praesidium context into CODEX_HOME/AGENTS.md,
-  // resolves the harness binary, and produces the final command.
-  w('')
-  w('Harness invocation:')
+  // Build the actual argv/env that the harness would launch with, then render
+  // it through the shared display module so this matches `asp run --dry-run`
+  // and `hrc launch exec` runtime output: framed system prompt + priming, then
+  // metadata, env block, and a command line with `<N chars>` placeholders.
   try {
     const invocation = await buildCliInvocation(intent)
-    const display = formatHarnessCommand(invocation.argv)
-    w(`  cwd:      ${invocation.cwd}`)
-    w(`  provider: ${invocation.provider}`)
-    w(`  frontend: ${invocation.frontend}`)
-    w(`  argv:     ${display}`)
-    const envKeys = Object.keys(invocation.env).sort()
-    if (envKeys.length > 0) {
-      w('  env:')
-      for (const key of envKeys) {
-        const val = invocation.env[key] ?? ''
-        const shown = val.length > 160 ? `${val.slice(0, 157)}...` : val
-        w(`    ${key}=${shown}`)
+    const sysPrompt = extractSystemPromptFromArgv(invocation.argv)
+    const primingPrompt = extractPrimingFromArgv(invocation.argv)
+    const envEntries = Object.keys(invocation.env)
+      .sort()
+      .map((k): [string, string] => {
+        const val = invocation.env[k] ?? ''
+        return [k, val.length > 160 ? `${val.slice(0, 157)}...` : val]
+      })
+    const envBlock = renderKeyValueSection('env', envEntries)
+    const argvHead = invocation.argv[0] ?? ''
+    const display = formatDisplayCommand(argvHead, invocation.argv.slice(1))
+
+    // Metadata lives below the framed prompts: scope/session info first,
+    // then the resolved invocation context, then env overrides if any.
+    const betweenLines: string[] = []
+    betweenLines.push('')
+    betweenLines.push(`  sessionRef:   ${sessionRef}`)
+    betweenLines.push(`  restartStyle: ${restartStyle}`)
+    betweenLines.push(`  agentRoot:    ${intent.placement.agentRoot}`)
+    betweenLines.push(`  projectRoot:  ${intent.placement.projectRoot ?? '(none)'}`)
+    betweenLines.push(`  cwd:          ${intent.placement.cwd}`)
+    betweenLines.push(`  provider:     ${intent.harness.provider}`)
+    betweenLines.push(
+      `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`
+    )
+    betweenLines.push('')
+    betweenLines.push(`  invocation cwd:      ${invocation.cwd}`)
+    betweenLines.push(`  invocation provider: ${invocation.provider}`)
+    betweenLines.push(`  invocation frontend: ${invocation.frontend}`)
+
+    const envOverrides = intent.launch?.env
+    if (envOverrides && Object.keys(envOverrides).length > 0) {
+      betweenLines.push('')
+      betweenLines.push('  env overrides:')
+      for (const key of Object.keys(envOverrides).sort()) {
+        const val = envOverrides[key]
+        if (val === undefined) continue
+        const valDisplay = val.length > 120 ? `${val.slice(0, 117)}...` : val
+        betweenLines.push(`    ${key}=${valDisplay}`)
       }
     }
+
+    if (envBlock.length > 0) {
+      betweenLines.push('')
+      betweenLines.push(...envBlock)
+    }
+
+    await displayPrompts({
+      systemPrompt: sysPrompt?.content,
+      systemPromptMode: sysPrompt?.mode,
+      primingPrompt,
+      betweenLines,
+      command: display,
+      showCommand: true,
+    })
+
     if (invocation.warnings && invocation.warnings.length > 0) {
+      w('')
       w('  warnings:')
       for (const warning of invocation.warnings) {
         w(`    - ${warning}`)
       }
     }
   } catch (err) {
+    w('')
     w(`  (spec build failed: ${err instanceof Error ? err.message : String(err)})`)
   }
 
@@ -1576,10 +1601,32 @@ async function printLocalRunPreview(
   w('  Run without --dry-run to execute.')
 }
 
-function formatHarnessCommand(argv: readonly string[]): string {
-  return argv
-    .map((arg) => (/^[\w./:=@+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`))
-    .join(' ')
+/**
+ * Extract the system prompt from a harness argv. Mirrors the logic in
+ * `hrc-server/launch/exec.ts` so dry-run output matches runtime output.
+ */
+function extractSystemPromptFromArgv(
+  argv: readonly string[]
+): { content: string; mode: 'append' | 'replace' } | undefined {
+  const appendIdx = argv.indexOf('--append-system-prompt')
+  if (appendIdx !== -1 && argv[appendIdx + 1] !== undefined) {
+    return { content: argv[appendIdx + 1] as string, mode: 'append' }
+  }
+  const replaceIdx = argv.indexOf('--system-prompt')
+  if (replaceIdx !== -1 && argv[replaceIdx + 1] !== undefined) {
+    return { content: argv[replaceIdx + 1] as string, mode: 'replace' }
+  }
+  return undefined
+}
+
+/**
+ * Extract the priming prompt: convention is the value after `--`.
+ */
+function extractPrimingFromArgv(argv: readonly string[]): string | undefined {
+  const dashIdx = argv.indexOf('--')
+  if (dashIdx === -1) return undefined
+  const value = argv[dashIdx + 1]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {

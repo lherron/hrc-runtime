@@ -5,6 +5,8 @@ import { delimiter, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
+import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
+
 import { postCallback } from './callback-client.js'
 import { injectCodexOtelConfig } from './codex-otel.js'
 import { scrubInheritedEnv } from './env.js'
@@ -24,7 +26,7 @@ async function callbackOrSpool(
   }
 }
 
-function printLaunchSummary(artifact: {
+interface LaunchPrintArtifact {
   launchId: string
   runtimeId: string
   runId?: string | undefined
@@ -32,68 +34,99 @@ function printLaunchSummary(artifact: {
   argv: string[]
   env: Record<string, string>
   cwd: string
-}): void {
-  const w = (s: string) => process.stdout.write(`${s}\n`)
+}
+
+/**
+ * Pull the system prompt out of argv. Claude uses --append-system-prompt;
+ * other harnesses use --system-prompt. Returned along with the mode so the
+ * framed section can label it correctly.
+ */
+function extractSystemPrompt(
+  argv: string[]
+): { content: string; mode: 'append' | 'replace' } | undefined {
+  const appendIdx = argv.indexOf('--append-system-prompt')
+  if (appendIdx !== -1 && argv[appendIdx + 1] !== undefined) {
+    return { content: argv[appendIdx + 1] as string, mode: 'append' }
+  }
+  const replaceIdx = argv.indexOf('--system-prompt')
+  if (replaceIdx !== -1 && argv[replaceIdx + 1] !== undefined) {
+    return { content: argv[replaceIdx + 1] as string, mode: 'replace' }
+  }
+  return undefined
+}
+
+/**
+ * Pull the priming prompt: convention is the value after `--`.
+ */
+function extractPrimingPrompt(argv: string[]): string | undefined {
+  const dashIdx = argv.indexOf('--')
+  if (dashIdx === -1) {
+    return undefined
+  }
+  const value = argv[dashIdx + 1]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Print the launch header + framed prompt sections + env block.
+ * The harness command is printed separately (after the agentchat
+ * register printout) by `printLaunchCommand`.
+ */
+async function printLaunchHeader(artifact: LaunchPrintArtifact): Promise<void> {
   const dim = (s: string) => `\x1b[2m${s}\x1b[0m`
   const bold = (s: string) => `\x1b[1m${s}\x1b[0m`
-  const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`
 
-  // Extract system prompt and priming prompt from argv
-  const sysIdx = artifact.argv.indexOf('--system-prompt')
-  const systemPrompt = sysIdx !== -1 ? artifact.argv[sysIdx + 1] : undefined
-  const dashIdx = artifact.argv.indexOf('--')
-  const primingPrompt = dashIdx !== -1 ? artifact.argv[dashIdx + 1] : undefined
-  const resumeId = extractCodexResumeId(artifact.harness, artifact.argv)
-  const codexCommand =
-    artifact.harness === 'codex-cli' ? formatShellCommand(artifact.argv) : undefined
+  // Title prints above the framed prompts; launch metadata (IDs, cwd,
+  // env vars) lives below them so the prompts get visual priority.
+  const titleLines: string[] = ['']
+  titleLines.push(bold(`hrc launch ${artifact.env['AGENTCHAT_ID'] ?? artifact.launchId}`))
 
-  w('')
-  w(bold(`hrc launch ${artifact.env['AGENTCHAT_ID'] ?? artifact.launchId}`))
-  w(dim(`  launch:   ${artifact.launchId}`))
-  w(dim(`  runtime:  ${artifact.runtimeId}`))
-  if (artifact.runId) w(dim(`  run:      ${artifact.runId}`))
-  w(dim(`  cwd:      ${artifact.cwd}`))
+  const sysPrompt = extractSystemPrompt(artifact.argv)
+  const primingPrompt = extractPrimingPrompt(artifact.argv)
+
+  const metadataLines: string[] = ['']
+  metadataLines.push(dim(`  launch:   ${artifact.launchId}`))
+  metadataLines.push(dim(`  runtime:  ${artifact.runtimeId}`))
+  if (artifact.runId) metadataLines.push(dim(`  run:      ${artifact.runId}`))
+  metadataLines.push(dim(`  cwd:      ${artifact.cwd}`))
   if (artifact.harness === 'codex-cli' && artifact.env['CODEX_HOME']) {
-    w(dim(`  codex home: ${artifact.env['CODEX_HOME']}`))
+    metadataLines.push(dim(`  codex home: ${artifact.env['CODEX_HOME']}`))
   }
+  const resumeId = extractCodexResumeId(artifact.harness, artifact.argv)
   if (resumeId) {
-    w(dim(`  resuming session: ${resumeId}`))
-  }
-  w('')
-
-  if (systemPrompt) {
-    w(cyan('── system prompt ──'))
-    // Show first ~20 lines to keep output manageable
-    const lines = systemPrompt.split('\n')
-    const preview = lines.slice(0, 20)
-    for (const line of preview) w(`  ${line}`)
-    if (lines.length > 20) w(dim(`  ... (${lines.length - 20} more lines)`))
-    w('')
+    metadataLines.push(dim(`  resuming session: ${resumeId}`))
   }
 
-  if (primingPrompt) {
-    w(cyan('── priming prompt ──'))
-    const lines = primingPrompt.split('\n')
-    const preview = lines.slice(0, 20)
-    for (const line of preview) w(`  ${line}`)
-    if (lines.length > 20) w(dim(`  ... (${lines.length - 20} more lines)`))
-    w('')
-  }
-
-  // Show key env vars
   const keyVars = ['AGENTCHAT_ID', 'ASP_PROJECT', 'AGENTCHAT_TRANSPORT']
-  const envDisplay = keyVars.filter((k) => artifact.env[k]).map((k) => `${k}=${artifact.env[k]}`)
-  if (envDisplay.length > 0) {
-    w(cyan('── env ──'))
-    for (const e of envDisplay) w(`  ${e}`)
-    w('')
+  const envEntries: Array<[string, string]> = keyVars
+    .filter((k) => artifact.env[k])
+    .map((k) => [k, artifact.env[k] as string])
+  const envBlock = renderKeyValueSection('env', envEntries)
+  if (envBlock.length > 0) {
+    metadataLines.push('')
+    metadataLines.push(...envBlock)
   }
 
-  if (codexCommand) {
-    w(cyan('── command ──'))
-    w(`  ${codexCommand}`)
-    w('')
-  }
+  await displayPrompts({
+    headerLines: titleLines,
+    systemPrompt: sysPrompt?.content,
+    systemPromptMode: sysPrompt?.mode,
+    primingPrompt,
+    betweenLines: metadataLines,
+  })
+}
+
+/**
+ * Print the resolved harness command line (with `<N chars>` placeholders
+ * for long prompt args). Called after the agentchat register printout.
+ */
+function printLaunchCommand(artifact: LaunchPrintArtifact): void {
+  const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`
+  const command = formatDisplayCommand(artifact.argv[0] as string, artifact.argv.slice(1))
+  process.stdout.write('\n')
+  process.stdout.write(`${cyan('── command ──')}\n`)
+  process.stdout.write(`${command}\n`)
+  process.stdout.write('\n')
 }
 
 function extractCodexResumeId(harness: string, argv: string[]): string | undefined {
@@ -112,18 +145,6 @@ function extractCodexResumeId(harness: string, argv: string[]): string | undefin
   }
 
   return resumeId
-}
-
-function formatShellCommand(argv: string[]): string {
-  return argv.map((arg) => quoteShellArg(arg)).join(' ')
-}
-
-function quoteShellArg(arg: string): string {
-  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(arg)) {
-    return arg
-  }
-
-  return `'${arg.replace(/'/g, `'\"'\"'`)}'`
 }
 
 function formatError(err: unknown): string {
@@ -303,8 +324,10 @@ async function main(): Promise<void> {
 
   await applyLaunchCodexConfig(artifact)
 
-  // Display launch summary before spawning the harness.
-  printLaunchSummary(artifact)
+  // Print launch header + framed prompts before agentchat register so the
+  // user sees what is about to run. The resolved harness command is printed
+  // separately, after the agentchat register printout.
+  await printLaunchHeader(artifact)
 
   // POST wrapper-started
   await callbackOrSpool(
@@ -350,6 +373,11 @@ async function main(): Promise<void> {
       )
     }
   }
+
+  // Print resolved harness command after the agentchat printout so the
+  // user sees exactly what is about to be spawned (long prompt args are
+  // collapsed to `<N chars>` placeholders).
+  printLaunchCommand(artifact)
 
   // Spawn child
   const resolvedCommand = resolveExecutable(command, env['PATH'])

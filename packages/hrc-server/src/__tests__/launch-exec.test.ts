@@ -308,7 +308,7 @@ describe('hrc-launch exec crash paths', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('── command ──')
     expect(result.stdout).toContain(
-      `  ${process.execPath} -e 'process.exit(0)' resume abcd-efgh-ijkl`
+      `${process.execPath} -e 'process.exit(0)' resume abcd-efgh-ijkl`
     )
     expect(result.stdout).toContain('resuming session: abcd-efgh-ijkl')
   })

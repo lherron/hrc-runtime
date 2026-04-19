@@ -55,7 +55,7 @@
     },
     "packages/cli": {
       "name": "@lherron/agent-spaces",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "bin": {
         "asp": "./bin/asp.js",
       },
@@ -188,6 +188,7 @@
         "hrc-server": "*",
         "hrc-store-sqlite": "*",
         "spaces-config": "*",
+        "spaces-execution": "*",
       },
       "devDependencies": {
         "@types/bun": "latest",

@@ -21,7 +21,8 @@
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*",
-    "spaces-config": "*"
+    "spaces-config": "*",
+    "spaces-execution": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",
