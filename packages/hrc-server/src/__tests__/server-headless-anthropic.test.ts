@@ -88,6 +88,16 @@ function getRuntime(runtimeId: string): any {
   }
 }
 
+function getRunEvents(runId: string): any[] {
+  if (!fixture) throw new Error('fixture not initialized')
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.events.listFromSeq(1, { runId })
+  } finally {
+    db.close()
+  }
+}
+
 function seedHeadlessRuntime(
   hostSessionId: string,
   scopeRef: string,
@@ -176,6 +186,9 @@ cmd="\${1:-}"
 if [ "$cmd" = "exec" ]; then
   printf 'exec:%s\\n' "$*" >> "$log_path"
   printf '{"type":"thread.started","thread_id":"thread-openai-headless"}\\n'
+  printf '{"type":"turn.started"}\\n'
+  printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\\n'
+  printf '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\\n'
   exit 0
 fi
 printf 'interactive:%s\\n' "$*" >> "$log_path"
@@ -368,6 +381,16 @@ describe('E. Regression', () => {
     expect(session.continuation).toEqual({
       provider: 'openai',
       key: 'thread-openai-headless',
+    })
+
+    const messageEnd = getRunEvents(data.runId).find((event) => event.eventKind === 'message_end')
+    expect(messageEnd).toBeDefined()
+    expect(messageEnd?.eventJson).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+      },
     })
   })
 })

@@ -389,6 +389,7 @@ describe('n-37: Error-path integration (T-00985)', () => {
     const artifact = makeArtifact({
       launchId: 'launch-spawn-fail-int',
       argv: ['/nonexistent/binary/that/does/not/exist'],
+      cwd: tmpDir,
       callbackSocketPath: join(tmpDir, 'missing.sock'),
       spoolDir,
     })

@@ -306,6 +306,10 @@ type LaunchContinuationPayload = {
   timestamp?: string | undefined
 }
 
+type LaunchEventPayload = Record<string, unknown> & {
+  type: string
+}
+
 type HookEnvelope = {
   launchId: string
   hostSessionId: string
@@ -636,6 +640,15 @@ class HrcServerInstance implements HrcServer {
           .slice('/v1/internal/launches/'.length)
           .replace('/child-started', '')
         return await this.handleChildStarted(launchId, request)
+      }
+
+      if (
+        request.method === 'POST' &&
+        pathname.startsWith('/v1/internal/launches/') &&
+        pathname.endsWith('/event')
+      ) {
+        const launchId = pathname.slice('/v1/internal/launches/'.length).replace('/event', '')
+        return await this.handleLaunchEvent(launchId, request)
       }
 
       if (
@@ -3927,6 +3940,45 @@ class HrcServerInstance implements HrcServer {
     return json({ ok: true })
   }
 
+  private async handleLaunchEvent(launchId: string, request: Request): Promise<Response> {
+    const body = parseLaunchEventPayload(await parseJsonBody(request))
+    const launch = this.db.launches.getByLaunchId(launchId)
+    if (!launch) {
+      return new Response('launch not found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    const session = requireSession(this.db, launch.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'event')
+    if (rejection) {
+      this.notifyEvent(rejection.event)
+      throw rejection.error
+    }
+
+    const now = timestamp()
+    const runtime = launch.runtimeId ? this.db.runtimes.getByRuntimeId(launch.runtimeId) : null
+    const runId = runtime ? findLatestRunForRuntime(this.db, runtime.runtimeId)?.runId : undefined
+    const appendedEvent = this.db.events.append({
+      ts: now,
+      hostSessionId: launch.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: launch.generation,
+      ...(runId ? { runId } : {}),
+      ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+      source: 'hrc',
+      eventKind: body.type,
+      eventJson: body,
+    })
+    if (runtime) {
+      this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    }
+    this.notifyEvent(appendedEvent)
+    return json({ ok: true })
+  }
+
   private async handleExited(launchId: string, request: Request): Promise<Response> {
     const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'exited')
     const session = requireSession(this.db, body.hostSessionId)
@@ -6004,6 +6056,40 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     return
   }
 
+  if (endpoint.startsWith('/v1/internal/launches/') && endpoint.endsWith('/event')) {
+    const launchId = endpoint.slice('/v1/internal/launches/'.length).replace('/event', '')
+    const body = parseLaunchEventPayload(replayPayload)
+    const launch = db.launches.getByLaunchId(launchId)
+    if (!launch) {
+      return
+    }
+    const session = requireSession(db, launch.hostSessionId)
+    const rejection = buildStaleLaunchCallbackRejection(db, session, launchId, 'event', true)
+    if (rejection) {
+      return
+    }
+
+    const now = timestamp()
+    const runtime = launch.runtimeId ? db.runtimes.getByRuntimeId(launch.runtimeId) : null
+    const runId = runtime ? findLatestRunForRuntime(db, runtime.runtimeId)?.runId : undefined
+    db.events.append({
+      ts: now,
+      hostSessionId: launch.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: launch.generation,
+      ...(runId ? { runId } : {}),
+      ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+      source: 'hrc',
+      eventKind: body.type,
+      eventJson: body,
+    })
+    if (runtime) {
+      db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    }
+    return
+  }
+
   if (endpoint.startsWith('/v1/internal/launches/') && endpoint.endsWith('/exited')) {
     const launchId = endpoint.slice('/v1/internal/launches/'.length).replace('/exited', '')
     const body = parseLaunchLifecyclePayload(replayPayload, 'exited')
@@ -7350,7 +7436,13 @@ function buildStaleLaunchCallbackRejection(
   db: HrcDatabase,
   session: HrcSessionRecord,
   launchId: string,
-  callbackKind: 'child_started' | 'continuation' | 'exited' | 'hook_ingest' | 'wrapper_started',
+  callbackKind:
+    | 'child_started'
+    | 'continuation'
+    | 'event'
+    | 'exited'
+    | 'hook_ingest'
+    | 'wrapper_started',
   replayed = false
 ): { event: HrcLifecycleEvent; error: HrcConflictError } | null {
   const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
@@ -8109,6 +8201,24 @@ function parseLaunchContinuationPayload(input: unknown): LaunchContinuationPaylo
   }
 
   return base
+}
+
+function parseLaunchEventPayload(input: unknown): LaunchEventPayload {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const type = input['type']
+  if (typeof type !== 'string' || type.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'type is required', {
+      field: 'type',
+    })
+  }
+
+  return {
+    ...input,
+    type: type.trim(),
+  }
 }
 
 function parseHookEnvelope(input: unknown): HookEnvelope {

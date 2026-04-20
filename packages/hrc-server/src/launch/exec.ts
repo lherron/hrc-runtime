@@ -216,20 +216,24 @@ async function pumpHeadlessCodexOutput(
         continue
       }
 
-      if (deliveredContinuation) {
-        continue
-      }
-
       try {
         const parsed = JSON.parse(trimmed) as {
           event?: string
           type?: string
           thread_id?: string
           threadId?: string
+          item?: {
+            type?: string
+            text?: string
+          }
         }
         const eventName = parsed.event ?? parsed.type
         const threadId = parsed.thread_id ?? parsed.threadId
-        if (eventName === 'thread.started' && typeof threadId === 'string') {
+        if (
+          !deliveredContinuation &&
+          eventName === 'thread.started' &&
+          typeof threadId === 'string'
+        ) {
           deliveredContinuation = true
           await callbackOrSpool(
             artifact.callbackSocketPath,
@@ -242,6 +246,27 @@ async function pumpHeadlessCodexOutput(
               },
               harnessSessionJson: {
                 threadId,
+              },
+            },
+            artifact.spoolDir,
+            artifact.launchId
+          )
+          continue
+        }
+
+        if (
+          eventName === 'item.completed' &&
+          parsed.item?.type === 'agent_message' &&
+          typeof parsed.item.text === 'string'
+        ) {
+          await callbackOrSpool(
+            artifact.callbackSocketPath,
+            `/v1/internal/launches/${artifact.launchId}/event`,
+            {
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: parsed.item.text }],
               },
             },
             artifact.spoolDir,

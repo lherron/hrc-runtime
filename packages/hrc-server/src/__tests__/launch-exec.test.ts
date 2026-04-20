@@ -215,6 +215,80 @@ describe('hrc-launch exec crash paths', () => {
     ).toBe(true)
   })
 
+  it('posts assistant message_end callbacks for codex agent_message JSONL events', async () => {
+    const launchId = 'launch-headless-agent-message-real-codex'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            "process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'thread-123'}) + '\\n')",
+            "process.stdout.write(JSON.stringify({type:'turn.started'}) + '\\n')",
+            "process.stdout.write(JSON.stringify({type:'item.completed',item:{id:'item_0',type:'agent_message',text:'ok'}}) + '\\n')",
+            "process.stdout.write(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}) + '\\n')",
+            'process.exit(0)',
+          ].join('\n'),
+        ],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(received.map((entry) => entry.url)).toEqual([
+      `/v1/internal/launches/${launchId}/wrapper-started`,
+      `/v1/internal/launches/${launchId}/child-started`,
+      `/v1/internal/launches/${launchId}/continuation`,
+      `/v1/internal/launches/${launchId}/event`,
+      `/v1/internal/launches/${launchId}/exited`,
+    ])
+    expect(received[2]?.body).toEqual({
+      hostSessionId: 'hsid-exec-test-001',
+      continuation: {
+        provider: 'openai',
+        key: 'thread-123',
+      },
+      harnessSessionJson: {
+        threadId: 'thread-123',
+      },
+    })
+    expect(received[3]?.body).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+      },
+    })
+  })
+
   it('prints CODEX_HOME in the summary for codex launches', async () => {
     const codexHome = join(tmpDir, 'codex-home')
     const result = await runExec(
