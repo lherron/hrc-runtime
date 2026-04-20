@@ -151,6 +151,7 @@ function resolveCliFrontend(intent: HrcRuntimeIntent): CliFrontend {
 function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string, string> {
   const env: Record<string, string> = {}
   const correlation = intent.placement?.correlation
+  const taskContext = intent.taskContext
 
   if (correlation?.sessionRef) {
     env['HRC_SESSION_REF'] = `${correlation.sessionRef.scopeRef}/${correlation.sessionRef.laneRef}`
@@ -162,6 +163,26 @@ function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string, string
 
   if (correlation?.runId) {
     env['HRC_RUN_ID'] = correlation.runId
+  }
+
+  if (taskContext?.taskId) {
+    env['HRC_TASK_ID'] = taskContext.taskId
+  }
+
+  if (taskContext?.phase) {
+    env['HRC_TASK_PHASE'] = taskContext.phase
+  }
+
+  if (taskContext?.role) {
+    env['HRC_TASK_ROLE'] = taskContext.role
+  }
+
+  if (taskContext?.requiredEvidenceKinds) {
+    env['HRC_TASK_REQUIRED_EVIDENCE'] = taskContext.requiredEvidenceKinds.join(',')
+  }
+
+  if (taskContext?.hintsText) {
+    env['HRC_TASK_HINTS'] = taskContext.hintsText
   }
 
   return env

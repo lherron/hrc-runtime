@@ -60,6 +60,13 @@ describe('buildCliInvocation execution mode mapping', () => {
     const result = await buildCliInvocation(
       makeIntent({
         initialPrompt: 'ship it',
+        taskContext: {
+          taskId: 'T-01139',
+          phase: 'green',
+          role: 'tester',
+          requiredEvidenceKinds: ['test_report', 'qa_signoff'],
+          hintsText: 'Phase: green\nObjective: verify the fix',
+        },
         launch: {
           env: { EXTRA_ENV: 'from-launch', BASE_ENV: 'overridden' },
           unsetEnv: ['REMOVE_ME'],
@@ -88,9 +95,26 @@ describe('buildCliInvocation execution mode mapping', () => {
       HRC_HOST_SESSION_ID: 'hsid-mode-test',
       HRC_RUN_ID: 'run-mode-test',
       HRC_SESSION_REF: 'agent:rex:project:agent-spaces:task:T-01104/lane:main',
+      HRC_TASK_ID: 'T-01139',
+      HRC_TASK_PHASE: 'green',
+      HRC_TASK_ROLE: 'tester',
+      HRC_TASK_REQUIRED_EVIDENCE: 'test_report,qa_signoff',
+      HRC_TASK_HINTS: 'Phase: green\nObjective: verify the fix',
     })
     expect(result.env.PATH).toBe('/custom/bin:/usr/bin')
     expect(result.env.REMOVE_ME).toBeUndefined()
+  })
+
+  it('omits HRC_TASK_* env vars when taskContext is absent', async () => {
+    const result = await buildCliInvocation(makeIntent(), {
+      specBuilder: async () => makeResponse(),
+    })
+
+    expect(result.env.HRC_TASK_ID).toBeUndefined()
+    expect(result.env.HRC_TASK_PHASE).toBeUndefined()
+    expect(result.env.HRC_TASK_ROLE).toBeUndefined()
+    expect(result.env.HRC_TASK_REQUIRED_EVIDENCE).toBeUndefined()
+    expect(result.env.HRC_TASK_HINTS).toBeUndefined()
   })
 
   it('maps explicit interactive mode to interactive + pty', async () => {

@@ -83,12 +83,21 @@ export type HrcLaunchEnvConfig = {
   pathPrepend?: string[] | undefined
 }
 
+export type HrcTaskContext = {
+  taskId: string
+  phase: string
+  role: string
+  requiredEvidenceKinds: string[]
+  hintsText: string
+}
+
 export type HrcRuntimeIntent = {
   placement: RuntimePlacement
   harness: HrcHarnessIntent
   execution?: HrcExecutionIntent | undefined
   launch?: HrcLaunchEnvConfig | undefined
   initialPrompt?: string | undefined
+  taskContext?: HrcTaskContext | undefined
 }
 
 export type HrcAppSessionRef = {
