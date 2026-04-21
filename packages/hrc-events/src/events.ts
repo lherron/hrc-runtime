@@ -27,6 +27,24 @@ export interface ToolResult {
   details?: Record<string, unknown> | undefined
 }
 
+export interface UserPromptEvent {
+  type: 'message_end'
+  message: {
+    role: 'user'
+    content: string | ContentBlock[]
+  }
+  truncated?: boolean | undefined
+}
+
+export interface AgentMessageEvent {
+  type: 'message_end'
+  message: {
+    role: 'assistant'
+    content: string | ContentBlock[]
+  }
+  truncated?: boolean | undefined
+}
+
 // ============================================================================
 // Hook-derived event interfaces
 // ============================================================================

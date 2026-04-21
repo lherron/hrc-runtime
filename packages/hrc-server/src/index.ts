@@ -93,7 +93,17 @@ import {
   getSdkInflightCapability,
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
+import {
+  appendHrcEvent,
+  createUserPromptPayload,
+  deriveSemanticTurnEventFromHookDerivedEvent,
+  deriveSemanticTurnEventFromLaunchEvent,
+  deriveSemanticTurnEventFromSdkEvent,
+  deriveSemanticTurnMessageFromHookPayload,
+  deriveSemanticTurnUserPromptFromCodexOtelRecord,
+  deriveSemanticTurnUserPromptFromHookPayload,
+  shouldSuppressDuplicateCodexInitialUserPrompt,
+} from './hrc-event-helper.js'
 import { readLaunchArtifact, readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
@@ -1778,6 +1788,20 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(acceptedEvent)
 
+    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      launchId,
+      transport: 'tmux',
+      payload: createUserPromptPayload(prompt),
+    })
+    this.notifyEvent(userPromptEvent)
+
     const startedAt = timestamp()
     this.db.runs.update(runId, {
       status: 'started',
@@ -1864,6 +1888,18 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(acceptedEvent)
 
+    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      payload: createUserPromptPayload(prompt),
+    })
+    this.notifyEvent(userPromptEvent)
+
     const startedAt = timestamp()
     this.db.runs.update(runId, {
       status: 'started',
@@ -1941,11 +1977,27 @@ class HrcServerInstance implements HrcServer {
       onHrcEvent: (event) => {
         const appended = this.db.events.append(event)
         this.notifyEvent(appended)
+        const semanticEvent = deriveSemanticTurnEventFromSdkEvent(event.eventKind, event.eventJson)
+        if (semanticEvent) {
+          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+            ts: event.ts,
+            hostSessionId: event.hostSessionId,
+            scopeRef: event.scopeRef,
+            laneRef: event.laneRef,
+            generation: event.generation,
+            runId: event.runId,
+            runtimeId: event.runtimeId,
+            transport: 'sdk',
+            payload: semanticEvent.payload,
+          })
+          this.notifyEvent(appendedSemanticEvent)
+        }
         this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
       },
       onBuffer: (text) => {
         this.db.runtimeBuffers.append({
           runtimeId: runtime.runtimeId,
+          runId,
           chunkSeq,
           text,
           createdAt: timestamp(),
@@ -3137,6 +3189,21 @@ class HrcServerInstance implements HrcServer {
       onHrcEvent: (event) => {
         const appended = this.db.events.append(event)
         this.notifyEvent(appended)
+        const semanticEvent = deriveSemanticTurnEventFromSdkEvent(event.eventKind, event.eventJson)
+        if (semanticEvent) {
+          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+            ts: event.ts,
+            hostSessionId: event.hostSessionId,
+            scopeRef: event.scopeRef,
+            laneRef: event.laneRef,
+            generation: event.generation,
+            runId: event.runId,
+            runtimeId: event.runtimeId,
+            transport: 'sdk',
+            payload: semanticEvent.payload,
+          })
+          this.notifyEvent(appendedSemanticEvent)
+        }
         this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
       },
     })
@@ -3976,6 +4043,21 @@ class HrcServerInstance implements HrcServer {
       this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
     }
     this.notifyEvent(appendedEvent)
+    const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
+    if (semanticEvent) {
+      const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+        ts: now,
+        hostSessionId: launch.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: launch.generation,
+        ...(runId ? { runId } : {}),
+        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+        launchId,
+        payload: semanticEvent.payload,
+      })
+      this.notifyEvent(appendedSemanticEvent)
+    }
     return json({ ok: true })
   }
 
@@ -4137,6 +4219,39 @@ class HrcServerInstance implements HrcServer {
       const appendedEvent = this.db.events.append(eventInput)
       this.notifyEvent(appendedEvent)
 
+      const semanticUserPrompt = deriveSemanticTurnUserPromptFromCodexOtelRecord(record)
+      const codexPrompt =
+        typeof record.logRecord.attributes?.['prompt'] === 'string'
+          ? record.logRecord.attributes['prompt']
+          : undefined
+      if (
+        semanticUserPrompt &&
+        codexPrompt &&
+        !shouldSuppressDuplicateCodexInitialUserPrompt({
+          db: this.db,
+          launchId: ctx.launchId,
+          artifact: ctx.artifact,
+          hostSessionId: eventInput.hostSessionId,
+          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
+          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
+          prompt: codexPrompt,
+          currentEventSeq: appendedEvent.seq,
+        })
+      ) {
+        const appendedSemanticEvent = appendHrcEvent(this.db, semanticUserPrompt.eventKind, {
+          ts: eventInput.ts,
+          hostSessionId: eventInput.hostSessionId,
+          scopeRef: eventInput.scopeRef,
+          laneRef: eventInput.laneRef,
+          generation: eventInput.generation,
+          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
+          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
+          launchId: ctx.launchId,
+          payload: semanticUserPrompt.payload,
+        })
+        this.notifyEvent(appendedSemanticEvent)
+      }
+
       // Codex sessions emit typed lifecycle events via OTEL; Claude Code
       // sessions emit them via hooks. Those paths are disjoint per session
       // today, so we append both the raw audit row and any derived typed rows.
@@ -4155,6 +4270,21 @@ class HrcServerInstance implements HrcServer {
           eventJson: typedEvent,
         })
         this.notifyEvent(appendedTypedEvent)
+        const semanticEvent = deriveSemanticTurnEventFromHookDerivedEvent(typedEvent)
+        if (semanticEvent) {
+          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+            ts: eventInput.ts,
+            hostSessionId: eventInput.hostSessionId,
+            scopeRef: eventInput.scopeRef,
+            laneRef: eventInput.laneRef,
+            generation: eventInput.generation,
+            ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
+            ...(eventInput.runId ? { runId: eventInput.runId } : {}),
+            launchId: ctx.launchId,
+            payload: semanticEvent.payload,
+          })
+          this.notifyEvent(appendedSemanticEvent)
+        }
       }
     }
 
@@ -4426,13 +4556,13 @@ class HrcServerInstance implements HrcServer {
       const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
 
       let finalOutput: string | undefined
-      if (transport === 'sdk') {
-        const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
-        if (rt) {
-          finalOutput = this.db.runtimeBuffers
-            .listByRuntimeId(rt.runtimeId)
-            .map((chunk) => chunk.text)
-            .join('')
+      if (transport !== 'tmux') {
+        const bufferedOutput = this.db.runtimeBuffers
+          .listByRunId(turnBody.runId)
+          .map((chunk) => chunk.text)
+          .join('')
+        if (bufferedOutput.length > 0) {
+          finalOutput = bufferedOutput
         }
       }
 
@@ -4861,6 +4991,19 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(acceptedEvent)
 
+    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'sdk',
+      payload: createUserPromptPayload(prompt),
+    })
+    this.notifyEvent(userPromptEvent)
+
     const startedAt = timestamp()
     this.db.runs.update(run.runId, {
       status: 'started',
@@ -4896,11 +5039,27 @@ class HrcServerInstance implements HrcServer {
       onHrcEvent: (event) => {
         const appended = this.db.events.append(event)
         this.notifyEvent(appended)
+        const semanticEvent = deriveSemanticTurnEventFromSdkEvent(event.eventKind, event.eventJson)
+        if (semanticEvent) {
+          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+            ts: event.ts,
+            hostSessionId: event.hostSessionId,
+            scopeRef: event.scopeRef,
+            laneRef: event.laneRef,
+            generation: event.generation,
+            runId: event.runId,
+            runtimeId: event.runtimeId,
+            transport: 'sdk',
+            payload: semanticEvent.payload,
+          })
+          this.notifyEvent(appendedSemanticEvent)
+        }
         this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
       },
       onBuffer: (text) => {
         this.db.runtimeBuffers.append({
           runtimeId: runtime.runtimeId,
+          runId,
           chunkSeq,
           text,
           createdAt: timestamp(),
@@ -5288,6 +5447,25 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(event)
 
+    if (
+      runtime.harness === 'codex-cli' &&
+      body['enter'] !== false &&
+      (body['text'] as string).trim().length > 0
+    ) {
+      const promptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
+        transport: 'tmux',
+        payload: createUserPromptPayload(body['text'] as string),
+      })
+      this.notifyEvent(promptEvent)
+    }
+
     const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
     return json({
       delivered: true,
@@ -5375,13 +5553,13 @@ class HrcServerInstance implements HrcServer {
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
 
     let finalOutput: string | undefined
-    if (transport === 'sdk') {
-      const rt = findLatestSessionRuntime(this.db, session.hostSessionId)
-      if (rt) {
-        finalOutput = this.db.runtimeBuffers
-          .listByRuntimeId(rt.runtimeId)
-          .map((chunk) => chunk.text)
-          .join('')
+    if (transport !== 'tmux') {
+      const bufferedOutput = this.db.runtimeBuffers
+        .listByRunId(turnBody.runId)
+        .map((chunk) => chunk.text)
+        .join('')
+      if (bufferedOutput.length > 0) {
+        finalOutput = bufferedOutput
       }
     }
 
@@ -6086,6 +6264,21 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     })
     if (runtime) {
       db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    }
+    const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
+    if (semanticEvent) {
+      appendHrcEvent(db, semanticEvent.eventKind, {
+        ts: now,
+        hostSessionId: launch.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: launch.generation,
+        ...(runId ? { runId } : {}),
+        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+        launchId,
+        replayed: true,
+        payload: semanticEvent.payload,
+      })
     }
     return
   }
@@ -7586,6 +7779,23 @@ function applyHookLifecycleEnvelope(
   }
 
   if (isRecord(envelope.hookData)) {
+    const userPromptEvent = deriveSemanticTurnUserPromptFromHookPayload(envelope.hookData)
+    if (userPromptEvent) {
+      events.push(
+        appendHrcEvent(db, userPromptEvent.eventKind, {
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: envelope.generation,
+          runtimeId: envelope.runtimeId,
+          launchId: envelope.launchId,
+          replayed: options.replayed,
+          payload: userPromptEvent.payload,
+        })
+      )
+    }
+
     const normalized = normalizeClaudeHook(envelope.hookData)
     for (const event of normalized.events) {
       events.push(
@@ -7599,6 +7809,39 @@ function applyHookLifecycleEnvelope(
           source: 'hook',
           eventKind: event.type,
           eventJson: event,
+        })
+      )
+      const semanticEvent = deriveSemanticTurnEventFromHookDerivedEvent(event)
+      if (semanticEvent) {
+        events.push(
+          appendHrcEvent(db, semanticEvent.eventKind, {
+            ts: now,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: envelope.generation,
+            runtimeId: envelope.runtimeId,
+            launchId: envelope.launchId,
+            replayed: options.replayed,
+            payload: semanticEvent.payload,
+          })
+        )
+      }
+    }
+
+    const completionMessage = deriveSemanticTurnMessageFromHookPayload(envelope.hookData)
+    if (completionMessage) {
+      events.push(
+        appendHrcEvent(db, completionMessage.eventKind, {
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: envelope.generation,
+          runtimeId: envelope.runtimeId,
+          launchId: envelope.launchId,
+          replayed: options.replayed,
+          payload: completionMessage.payload,
         })
       )
     }

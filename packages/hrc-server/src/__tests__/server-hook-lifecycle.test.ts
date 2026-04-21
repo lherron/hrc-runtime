@@ -12,6 +12,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -234,14 +237,190 @@ describe('manual turn lifecycle', () => {
     const events = await getAllEvents()
     const ingested = events.filter((e) => e.eventKind === 'hook.ingested')
     const toolStarts = events.filter((e) => e.eventKind === 'tool_execution_start')
+    const hrcEvents = await getAllHrcEvents()
+    const turnToolCalls = hrcEvents.filter((e) => e.eventKind === 'turn.tool_call')
 
     expect(ingested.length).toBe(1)
     expect(toolStarts.length).toBe(1)
+    expect(turnToolCalls.length).toBe(1)
     expect(toolStarts[0].eventJson).toEqual({
       type: 'tool_execution_start',
       toolUseId: 'toolu_123',
       toolName: 'Bash',
       input: { command: 'pwd' },
+    })
+    expect(turnToolCalls[0].payload).toEqual({
+      type: 'tool_execution_start',
+      toolUseId: 'toolu_123',
+      toolName: 'Bash',
+      input: { command: 'pwd' },
+    })
+  })
+
+  it('appends semantic turn.user_prompt for UserPromptSubmit hooks', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-userprompt-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'ready', launchId })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        kind: 'turn.started',
+        hookEvent: {
+          hook_event_name: 'UserPromptSubmit',
+          prompt: "What's the current cwd?",
+          transcript_path: '/tmp/fake-transcript.jsonl',
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+
+    const hrcEvents = await getAllHrcEvents()
+    const turnPrompts = hrcEvents.filter((e) => e.eventKind === 'turn.user_prompt')
+    expect(turnPrompts.length).toBe(1)
+    expect(turnPrompts[0].payload).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'user',
+        content: "What's the current cwd?",
+      },
+    })
+  })
+
+  it('appends semantic turn.tool_result for PostToolUse', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-posttool-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'busy', launchId })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        hook_event_name: 'PostToolUse',
+        tool_use_id: 'toolu_456',
+        tool_name: 'Bash',
+        tool_input: { command: 'pwd' },
+        tool_response: { stdout: '/tmp\n' },
+      },
+    })
+
+    expect(res.status).toBe(200)
+
+    const hrcEvents = await getAllHrcEvents()
+    const turnToolResults = hrcEvents.filter((e) => e.eventKind === 'turn.tool_result')
+    expect(turnToolResults.length).toBe(1)
+    expect(turnToolResults[0].payload).toEqual({
+      type: 'tool_execution_end',
+      toolUseId: 'toolu_456',
+      toolName: 'Bash',
+      result: {
+        content: [{ type: 'text', text: '/tmp\n' }],
+        details: { stdout: '/tmp\n' },
+      },
+      isError: false,
+    })
+  })
+
+  it('appends semantic turn.message for Stop hooks with transcript_path', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-stop-message-${randomUUID()}`
+    const transcriptDir = await mkdtemp(join(tmpdir(), 'hrc-hook-stop-'))
+    const transcriptPath = join(transcriptDir, 'transcript.jsonl')
+
+    await writeFile(
+      transcriptPath,
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'final assistant reply' }],
+        },
+      }),
+      'utf-8'
+    )
+
+    try {
+      fixture.seedSession(hsid, scope)
+      fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'busy', launchId })
+      seedLaunch(hsid, rtId, launchId, 'child_started')
+
+      const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+        launchId,
+        hostSessionId: hsid,
+        generation: 1,
+        runtimeId: rtId,
+        hookData: {
+          hook_event_name: 'Stop',
+          transcript_path: transcriptPath,
+        },
+      })
+
+      expect(res.status).toBe(200)
+
+      const hrcEvents = await getAllHrcEvents()
+      const turnMessages = hrcEvents.filter((e) => e.eventKind === 'turn.message')
+      expect(turnMessages.length).toBe(1)
+      expect(turnMessages[0].payload).toEqual({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: 'final assistant reply',
+        },
+      })
+    } finally {
+      await rm(transcriptDir, { recursive: true, force: true })
+    }
+  })
+
+  it('appends semantic turn.message for Codex Stop hooks with last_assistant_message', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-codex-stop-message-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'busy', launchId })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        hook_event_name: 'Stop',
+        last_assistant_message: 'final codex reply',
+      },
+    })
+
+    expect(res.status).toBe(200)
+
+    const hrcEvents = await getAllHrcEvents()
+    const turnMessages = hrcEvents.filter((e) => e.eventKind === 'turn.message')
+    expect(turnMessages.length).toBe(1)
+    expect(turnMessages[0].payload).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: 'final codex reply',
+      },
     })
   })
 })

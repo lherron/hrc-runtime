@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import type { HrcLaunchArtifact } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { createUserPromptPayload } from '../hrc-event-helper'
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -115,6 +116,7 @@ type SeedParams = {
   runtimeId?: string
   exitedAt?: string
   withOtelBlock?: boolean
+  argv?: string[]
 }
 
 type SeedResult = {
@@ -146,7 +148,7 @@ async function seedCodexLaunch(params: SeedParams = {}): Promise<SeedResult> {
     runtimeId,
     harness: 'codex-cli',
     provider: 'openai',
-    argv: ['codex'],
+    argv: params.argv ?? ['codex'],
     env: {},
     cwd: '/tmp',
     callbackSocketPath: fixture.socketPath,
@@ -227,6 +229,15 @@ async function getAllEvents(): Promise<unknown[]> {
   const db = openHrcDatabase(fixture.dbPath)
   try {
     return db.events.listFromSeq(1)
+  } finally {
+    db.close()
+  }
+}
+
+async function getAllHrcEvents(): Promise<unknown[]> {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents.listFromHrcSeq(1)
   } finally {
     db.close()
   }
@@ -629,6 +640,7 @@ describe('OTLP/HTTP JSON ingest', () => {
 
       const rawEvent = events[0] as any
       const typedEvent = events[1] as any
+      const hrcEvents = await getAllHrcEvents()
       expectMatchingOtelMetadata(rawEvent, typedEvent, seed)
       expect(rawEvent.eventJson?.codex?.eventName).toBe('codex.tool_decision')
       expect(typedEvent.eventJson).toEqual({
@@ -637,6 +649,7 @@ describe('OTLP/HTTP JSON ingest', () => {
         toolName: 'exec_command',
         input: { cmd: 'ls', workdir: '/tmp' },
       })
+      expect(hrcEvents.some((e: any) => e.eventKind === 'turn.tool_call')).toBe(true)
     })
 
     it('derives tool_execution_end from successful codex.tool_result events', async () => {
@@ -662,6 +675,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect(res.status).toBe(200)
 
       const events = (await getAllEvents()).filter((e: any) => e.source === 'otel')
+      const hrcEvents = await getAllHrcEvents()
       expect(events.map((e: any) => e.eventKind)).toEqual([
         'codex.tool_result',
         'tool_execution_end',
@@ -673,6 +687,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect(typedEvent.eventJson?.toolName).toBe('exec_command')
       expect(typedEvent.eventJson?.isError).toBe(false)
       expect(typedEvent.eventJson?.result?.content?.[0]?.text).toBe('hello world')
+      expect(hrcEvents.some((e: any) => e.eventKind === 'turn.tool_result')).toBe(true)
     })
 
     it('marks derived tool_execution_end as an error when codex.tool_result reports success=false', async () => {
@@ -705,7 +720,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect((events[1] as any).eventJson?.isError).toBe(true)
     })
 
-    it('derives a notice from codex.user_prompt while preserving the raw audit row', async () => {
+    it('derives a semantic turn.user_prompt from codex.user_prompt while preserving raw rows', async () => {
       const started = await startServer()
       server = started.server
       const seed = await seedCodexLaunch()
@@ -732,6 +747,64 @@ describe('OTLP/HTTP JSON ingest', () => {
         level: 'info',
       })
       expect((events[1] as any).eventJson?.message).toContain(prompt)
+
+      const hrcEvents = await getAllHrcEvents()
+      const turnPrompts = hrcEvents.filter((e: any) => e.eventKind === 'turn.user_prompt')
+      expect(turnPrompts).toHaveLength(1)
+      expect(turnPrompts[0]?.payload).toEqual({
+        type: 'message_end',
+        message: {
+          role: 'user',
+          content: prompt,
+        },
+      })
+    })
+
+    it('suppresses the duplicated initial Codex prompt when dispatch already emitted it', async () => {
+      const started = await startServer()
+      server = started.server
+
+      const prompt = 'Reply READY'
+      const seed = await seedCodexLaunch({
+        argv: ['codex', prompt, '--model', 'gpt-5.4'],
+      })
+
+      const db = openHrcDatabase(fixture.dbPath)
+      try {
+        db.hrcEvents.append({
+          ts: fixture.now(),
+          hostSessionId: seed.hostSessionId,
+          scopeRef: seed.scopeRef,
+          laneRef: seed.laneRef,
+          generation: 1,
+          runtimeId: seed.runtimeId,
+          launchId: seed.launchId,
+          category: 'turn',
+          eventKind: 'turn.user_prompt',
+          payload: createUserPromptPayload(prompt),
+        })
+      } finally {
+        db.close()
+      }
+
+      const res = await postOtlp(
+        started.endpoint,
+        makeOtlpLogsBody([
+          {
+            eventName: 'codex.user_prompt',
+            attributes: {
+              prompt,
+            },
+          },
+        ]),
+        { 'x-hrc-launch-auth': seed.authHeader }
+      )
+      expect(res.status).toBe(200)
+
+      const hrcEvents = await getAllHrcEvents()
+      const turnPrompts = hrcEvents.filter((e: any) => e.eventKind === 'turn.user_prompt')
+      expect(turnPrompts).toHaveLength(1)
+      expect(turnPrompts[0]?.payload).toEqual(createUserPromptPayload(prompt))
     })
 
     it('does not append a typed event for codex.api_request', async () => {
@@ -758,7 +831,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect((events[0] as any).eventKind).toBe('codex.api_request')
     })
 
-    it('does not fan out derived OTEL events to hrc-only followers', async () => {
+    it('fans out semantic turn events derived from OTEL to hrc-only followers', async () => {
       const started = await startServer()
       server = started.server
       const seed = await seedCodexLaunch()
@@ -783,7 +856,7 @@ describe('OTLP/HTTP JSON ingest', () => {
       expect(res.status).toBe(200)
 
       const streamed = await followerPromise
-      expect(streamed).toEqual([])
+      expect(streamed.map((event: any) => event.eventKind)).toEqual(['turn.tool_call'])
     })
   })
 })

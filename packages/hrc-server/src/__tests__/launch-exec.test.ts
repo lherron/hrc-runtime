@@ -352,7 +352,7 @@ describe('hrc-launch exec crash paths', () => {
 
     const otel = parsed['otel'] as Record<string, unknown>
     expect(otel['environment']).toBe('hrc')
-    expect(otel['log_user_prompt']).toBe(false)
+    expect(otel['log_user_prompt']).toBe(true)
     expect(otel['metrics_exporter']).toBe('none')
     expect(otel['trace_exporter']).toBe('none')
 

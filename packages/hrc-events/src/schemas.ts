@@ -33,6 +33,24 @@ export const ToolResultSchema = z.object({
   details: z.record(z.unknown()).optional(),
 })
 
+export const UserPromptEventSchema = z.object({
+  type: z.literal('message_end'),
+  message: z.object({
+    role: z.literal('user'),
+    content: z.union([z.string(), z.array(ContentBlockSchema)]),
+  }),
+  truncated: z.boolean().optional(),
+})
+
+export const AgentMessageEventSchema = z.object({
+  type: z.literal('message_end'),
+  message: z.object({
+    role: z.literal('assistant'),
+    content: z.union([z.string(), z.array(ContentBlockSchema)]),
+  }),
+  truncated: z.boolean().optional(),
+})
+
 // ============================================================================
 // Hook-derived event schemas
 // ============================================================================

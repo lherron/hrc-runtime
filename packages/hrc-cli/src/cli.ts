@@ -3,8 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { resolveScopeInput } from 'agent-scope'
-import chalk from 'chalk'
+import { ancestorScopeRefs, resolveScopeInput } from 'agent-scope'
 
 import { HrcDomainError, HrcErrorCode, resolveDatabasePath } from 'hrc-core'
 import type {
@@ -46,6 +45,11 @@ import {
   stopServerProcess,
   writeServerProcessLog,
 } from './cli-runtime.js'
+import {
+  type EventsOutputFormat,
+  createEventsRenderer,
+  resolveDefaultFormat,
+} from './events-render.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -734,23 +738,35 @@ async function cmdSession(args: string[]): Promise<void> {
 }
 
 async function cmdEvents(args: string[]): Promise<void> {
-  const fromSeqRaw = parseFlag(args, '--from-seq')
-  const follow = hasFlag(args, '--follow')
-  const pretty = hasFlag(args, '--pretty')
+  const parsedArgs = parseEventsArgs(args)
+  if (parsedArgs.help) {
+    printEventsUsage()
+    return
+  }
+
+  const { follow, format, scopeRef, maxLines, scopeWidth } = parsedArgs
+  const fromSeqRaw = parsedArgs.fromSeqRaw
 
   const fromSeq = fromSeqRaw !== undefined ? Number.parseInt(fromSeqRaw, 10) : undefined
   if (fromSeqRaw !== undefined && (!Number.isFinite(fromSeq) || (fromSeq ?? 0) < 1)) {
     fatal('--from-seq must be a positive integer')
   }
 
-  for await (const event of watchLocalEvents({ fromSeq, follow })) {
-    process.stdout.write(pretty ? formatWatchEvent(event) : `${JSON.stringify(event)}\n`)
+  const renderer = createEventsRenderer(format, { maxLines, scopeWidth })
+  try {
+    for await (const event of watchLocalEvents({ fromSeq, follow, scopeRef })) {
+      process.stdout.write(renderer.push(event))
+    }
+  } finally {
+    const tail = renderer.flush()
+    if (tail.length > 0) process.stdout.write(tail)
   }
 }
 
 async function* watchLocalEvents(options: {
   fromSeq?: number | undefined
   follow: boolean
+  scopeRef?: string | undefined
 }): AsyncIterable<HrcLifecycleEvent> {
   const db = openHrcDatabase(resolveDatabasePath())
   let nextSeq = options.fromSeq ?? 1
@@ -767,8 +783,11 @@ async function* watchLocalEvents(options: {
       }
 
       for (const event of events) {
-        yield event
         nextSeq = event.hrcSeq + 1
+        if (options.scopeRef && !matchesEventScopeSelection(event.scopeRef, options.scopeRef)) {
+          continue
+        }
+        yield event
       }
 
       if (!options.follow) {
@@ -780,309 +799,173 @@ async function* watchLocalEvents(options: {
   }
 }
 
-function formatWatchEvent(event: HrcLifecycleEvent): string {
-  const theme = getWatchTheme(event.eventKind)
-  const agent = formatAgentBadge(event.scopeRef)
-  const kindSuffix = event.eventKind.includes('.')
-    ? event.eventKind.split('.').slice(1).join('.')
-    : event.eventKind
-  const header = [
-    agent
-      ? `${chalk.bgWhite.black.bold(` ${agent} `)} ${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)}`
-      : `${theme.badge(` ${theme.label} `)} ${theme.accent.bold(kindSuffix)} ${theme.dim(event.scopeRef)}`,
-    chalk.dim(`#${event.hrcSeq} @${event.streamSeq} ${formatWatchTimestamp(event.ts)}`),
-  ].join(' ')
+function printEventsUsage(): void {
+  process.stdout.write(`Usage: hrc events [scope] [--from-seq <n>] [--follow] [--format <mode>]
 
-  const meta = [
-    `${chalk.dim('cat:')}${theme.dim(event.category)}`,
-    `${chalk.dim('g:')}${chalk.white(String(event.generation))}`,
-    event.runtimeId ? `${chalk.dim('rt:')}${theme.dim(event.runtimeId)}` : undefined,
-    event.runId ? `${chalk.dim('run:')}${theme.dim(event.runId)}` : undefined,
-    event.launchId ? `${chalk.dim('launch:')}${theme.dim(event.launchId)}` : undefined,
-    event.transport ? `${chalk.dim('transport:')}${theme.dim(event.transport)}` : undefined,
-    event.errorCode ? `${chalk.dim('error:')}${chalk.red(event.errorCode)}` : undefined,
-    event.appSessionKey ? `${chalk.dim('app:')}${theme.dim(event.appSessionKey)}` : undefined,
-    event.replayed ? chalk.dim('replayed') : undefined,
-  ].filter((part): part is string => part !== undefined)
+Stream HRC lifecycle events from the local state database.
 
-  const prettyValue = sanitizePrettyValue(event.payload, undefined, event.eventKind)
-  const inlineDetails = renderInlinePrettyValue(prettyValue, theme)
-  const details = inlineDetails ? [] : renderPrettyValue(prettyValue, '', theme)
-  const summary = inlineDetails ? [...meta, inlineDetails] : meta
-  const metaLine = summary.join(chalk.dim(' \u2502 '))
-  const lines = [header, `  ${metaLine}`]
-  if (details.length > 0) {
-    lines.push(...details.map((line) => `  ${line}`))
-  }
-  lines.push('')
-  return `${lines.join('\n')}\n`
+Arguments:
+  scope                 Optional scope selector. Accepts the usual HRC handle forms:
+                        <agentId>
+                        <agentId>@<projectId>
+                        <agentId>@<projectId>:<taskId>
+
+Filtering:
+  agent@project         Includes that project scope and all descendant threads/tasks.
+  agent@project:task    Includes only that task scope and descendant task roles.
+
+Options:
+  --from-seq <n>        Start at HRC sequence number <n>.
+  --follow              Keep polling for new events.
+  --format <mode>       Output mode: tree (default when TTY), compact, verbose, json, ndjson.
+  --pretty              Alias for --format=tree (legacy flag).
+  --max-lines <n>       Tree mode: truncate each body block to <n> lines (default 10, 0=unlimited).
+  --scope-width <n>     Tree mode: per-row scoperef badge width in chars (default 20).
+  --help, -h            Show this help.
+
+Examples:
+  hrc events
+  hrc events candice@agent-spaces --pretty
+  hrc events alice@test:sometask --follow
+  hrc events --format=compact
+  hrc events --format=verbose
+  hrc events --max-lines=0                # show full body for every event
+  hrc events --scope-width=12 --pretty    # tighter badges for narrow terminals
+`)
 }
 
-function formatAgentBadge(scopeRef: string): string | undefined {
-  const match = scopeRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
-  if (!match?.[1]) return undefined
-  return match[2] ? `${match[1]}@${match[2]}` : match[1]
-}
+function parseEventsArgs(args: string[]): {
+  fromSeqRaw?: string | undefined
+  follow: boolean
+  format: EventsOutputFormat
+  help: boolean
+  scopeRef?: string | undefined
+  maxLines?: number | undefined
+  scopeWidth?: number | undefined
+} {
+  let fromSeqRaw: string | undefined
+  let follow = false
+  let explicitFormat: EventsOutputFormat | undefined
+  let pretty = false
+  let help = false
+  let selectorInput: string | undefined
+  let maxLines: number | undefined
+  let scopeWidth: number | undefined
 
-function formatFriendlyScopeLane(scopeRef: string, laneRef: string): string {
-  const match = scopeRef.match(/^agent:([^:/]+)(?::project:([^:/]+))?/)
-  if (!match?.[1]) return `${scopeRef}/lane:${laneRef}`
-  return match[2] ? `${match[1]}@${match[2]}:${laneRef}` : `${match[1]}:${laneRef}`
-}
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === undefined) continue
 
-function formatFriendlySessionRef(sessionRef: string): string {
-  const match = sessionRef.match(/^(.+)\/lane:([^/]+)$/)
-  if (!match?.[1] || !match[2]) return sessionRef
-  return formatFriendlyScopeLane(match[1], match[2])
-}
-
-function formatWatchTimestamp(ts: string): string {
-  return ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z')
-}
-
-const STRIPPED_KEYS = new Set(['hostSessionId', 'launchId', 'replayed'])
-
-function sanitizePrettyValue(value: unknown, key?: string, eventKind?: string): unknown {
-  if (key !== undefined && STRIPPED_KEYS.has(key)) return undefined
-  if (key === 'type' && eventKind !== undefined && value === eventKind) return undefined
-  if (typeof value === 'string' && key === 'sessionRef') {
-    return formatFriendlySessionRef(value)
-  }
-  if (Array.isArray(value)) {
-    return value
-      .filter((item) => item !== undefined)
-      .map((item) => sanitizePrettyValue(item, undefined, eventKind))
-  }
-  if (!value || typeof value !== 'object') {
-    return value
-  }
-
-  return Object.fromEntries(
-    Object.entries(value)
-      .map(
-        ([childKey, childValue]) =>
-          [childKey, sanitizePrettyValue(childValue, childKey, eventKind)] as const
-      )
-      .filter(([, childValue]) => childValue !== undefined)
-  )
-}
-
-function renderPrettyValue(
-  value: unknown,
-  indent = '',
-  theme: WatchTheme = getWatchTheme('generic')
-): string[] {
-  if (value === undefined) return []
-  if (Array.isArray(value)) {
-    if (value.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
-
-    return value.flatMap((item, index) => {
-      const marker = `${theme.gutter(`${indent}|`)} ${chalk.dim(`[${index + 1}]`)}`
-      if (!isPrettyPrimitive(item)) {
-        return [marker, ...renderPrettyValue(item, `${indent}  `, theme)]
+    if (arg === '--help' || arg === '-h') {
+      help = true
+      continue
+    }
+    if (arg === '--follow') {
+      follow = true
+      continue
+    }
+    if (arg === '--pretty') {
+      pretty = true
+      continue
+    }
+    if (arg === '--format') {
+      const value = args[i + 1]
+      if (value === undefined) {
+        fatal('--format requires a value')
       }
-
-      const lines = formatPrettyPrimitiveLines(item)
-      return [
-        `${marker} ${lines[0]}`,
-        ...lines
-          .slice(1)
-          .map(
-            (line) => `${theme.gutter(`${indent}|`)} ${' '.repeat(`[${index + 1}]`.length)} ${line}`
-          ),
-      ]
-    })
-  }
-
-  if (isPrettyPrimitive(value)) {
-    return formatPrettyPrimitiveLines(value).map((line) => `${indent}${line}`)
-  }
-
-  const entries = Object.entries(value)
-  if (entries.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
-  const keyWidth = Math.min(16, Math.max(...entries.map(([key]) => key.length)))
-
-  return entries.flatMap(([key, childValue]) => {
-    if (!isPrettyPrimitive(childValue)) {
-      return [
-        `${theme.gutter(`${indent}|`)} ${theme.key(key.toUpperCase())}`,
-        ...renderPrettyValue(childValue, `${indent}  `, theme),
-      ]
+      explicitFormat = parseEventsFormat(value)
+      i += 1
+      continue
     }
+    if (arg.startsWith('--format=')) {
+      explicitFormat = parseEventsFormat(arg.slice('--format='.length))
+      continue
+    }
+    if (arg === '--from-seq') {
+      const value = args[i + 1]
+      if (value === undefined) {
+        fatal('--from-seq requires a value')
+      }
+      fromSeqRaw = value
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--from-seq=')) {
+      fromSeqRaw = arg.slice('--from-seq='.length)
+      continue
+    }
+    if (arg === '--max-lines') {
+      const value = args[i + 1]
+      if (value === undefined) fatal('--max-lines requires a value')
+      maxLines = parseNonNegativeInt(value, '--max-lines')
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--max-lines=')) {
+      maxLines = parseNonNegativeInt(arg.slice('--max-lines='.length), '--max-lines')
+      continue
+    }
+    if (arg === '--scope-width') {
+      const value = args[i + 1]
+      if (value === undefined) fatal('--scope-width requires a value')
+      scopeWidth = parseNonNegativeInt(value, '--scope-width')
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--scope-width=')) {
+      scopeWidth = parseNonNegativeInt(arg.slice('--scope-width='.length), '--scope-width')
+      continue
+    }
+    if (arg.startsWith('-')) {
+      fatal(`unknown option for events: ${arg}`)
+    }
+    if (selectorInput !== undefined) {
+      fatal('events accepts at most one scope selector')
+    }
+    selectorInput = arg
+  }
 
-    const lines = formatPrettyPrimitiveLines(childValue)
-    return [
-      `${theme.gutter(`${indent}|`)} ${theme.key(key.padEnd(keyWidth))} ${chalk.dim(':')} ${lines[0]}`,
-      ...lines
-        .slice(1)
-        .map((line) => `${theme.gutter(`${indent}|`)} ${' '.repeat(keyWidth)}   ${line}`),
-    ]
-  })
+  let scopeRef: string | undefined
+  if (selectorInput !== undefined) {
+    scopeRef = resolveScopeInput(selectorInput).scopeRef
+  }
+
+  const format =
+    explicitFormat ?? (pretty ? 'tree' : resolveDefaultFormat(Boolean(process.stdout.isTTY)))
+
+  return { fromSeqRaw, follow, format, help, scopeRef, maxLines, scopeWidth }
 }
 
-function renderInlinePrettyValue(value: unknown, theme: WatchTheme): string | undefined {
-  if (value === undefined) return undefined
-  if (isPrettyPrimitive(value)) {
-    if (typeof value === 'string' && value.includes('\n')) return undefined
-    return `${chalk.dim('VALUE')} ${formatPrettyPrimitive(value)}`
+function parseNonNegativeInt(raw: string, flagName: string): number {
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n) || n < 0) {
+    fatal(`${flagName} must be a non-negative integer (got "${raw}")`)
   }
-  if (Array.isArray(value) || !value || typeof value !== 'object') {
-    return undefined
-  }
-
-  const entries = Object.entries(value)
-  if (entries.length === 0 || entries.length > 3) return undefined
-  if (entries.some(([, childValue]) => !isPrettyPrimitive(childValue))) return undefined
-  if (
-    entries.some(([, childValue]) => typeof childValue === 'string' && childValue.includes('\n'))
-  ) {
-    return undefined
-  }
-
-  return entries
-    .map(([key, childValue]) => `${theme.key(key)} ${formatPrettyPrimitive(childValue)}`)
-    .join(chalk.dim('  /  '))
+  return n
 }
 
-function isPrettyPrimitive(value: unknown): value is string | number | boolean | null {
-  return (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  )
+function parseEventsFormat(raw: string): EventsOutputFormat {
+  switch (raw) {
+    case 'tree':
+    case 'compact':
+    case 'verbose':
+    case 'json':
+    case 'ndjson':
+      return raw
+    default:
+      fatal(`--format must be one of: tree, compact, verbose, json, ndjson (got "${raw}")`)
+      return 'ndjson' // unreachable
+  }
 }
 
-function formatPrettyPrimitive(value: string | number | boolean | null): string {
-  if (value === null) return chalk.dim('null')
-  if (typeof value === 'boolean') return value ? chalk.green('true') : chalk.red('false')
-  if (typeof value === 'number') return chalk.white(String(value))
-  return chalk.white(value)
-}
-
-function formatPrettyPrimitiveLines(value: string | number | boolean | null): string[] {
-  if (typeof value !== 'string' || !value.includes('\n')) {
-    return [formatPrettyPrimitive(value)]
+function matchesEventScopeSelection(eventScopeRef: string, selectedScopeRef: string): boolean {
+  if (eventScopeRef === selectedScopeRef) {
+    return true
   }
-  return value.split('\n').map((line) => chalk.white(line))
-}
-
-type WatchTheme = {
-  label: string
-  badge: (text: string) => string
-  accent: typeof chalk
-  dim: (text: string) => string
-  gutter: (text: string) => string
-  key: (text: string) => string
-}
-
-function getWatchTheme(eventKind: string): WatchTheme {
-  // TURN — hero events: bold white-on-blue, high contrast
-  if (eventKind.startsWith('turn.')) {
-    return {
-      label: '\u25B6 TURN',
-      badge: chalk.bgBlueBright.white.bold,
-      accent: chalk.blueBright,
-      dim: chalk.blue,
-      gutter: chalk.blueBright.dim,
-      key: chalk.whiteBright,
-    }
-  }
-  // SESSION — lifecycle: green tones
-  if (eventKind.startsWith('session.')) {
-    return {
-      label: 'SESSION',
-      badge: chalk.bgGreen.black,
-      accent: chalk.greenBright,
-      dim: chalk.green,
-      gutter: chalk.green.dim,
-      key: chalk.greenBright,
-    }
-  }
-  // RUNTIME — infrastructure: cyan tones
-  if (eventKind.startsWith('runtime.')) {
-    return {
-      label: 'RUNTIME',
-      badge: chalk.bgCyan.black,
-      accent: chalk.cyanBright,
-      dim: chalk.cyan.dim,
-      gutter: chalk.cyan.dim,
-      key: chalk.cyanBright,
-    }
-  }
-  // LAUNCH — subdued infrastructure: dim magenta, fg-only badge
-  if (eventKind.startsWith('launch.')) {
-    return {
-      label: 'launch',
-      badge: chalk.magenta.dim,
-      accent: chalk.magenta.dim,
-      dim: chalk.magenta.dim,
-      gutter: chalk.magenta.dim,
-      key: chalk.magenta,
-    }
-  }
-  // BRIDGE — messaging: blue tones
-  if (eventKind.startsWith('bridge.')) {
-    return {
-      label: 'BRIDGE',
-      badge: chalk.bgBlue.white,
-      accent: chalk.blue,
-      dim: chalk.blue.dim,
-      gutter: chalk.blue.dim,
-      key: chalk.blueBright,
-    }
-  }
-  // INFLIGHT — transient: dim, fg-only
-  if (eventKind.startsWith('inflight.')) {
-    return {
-      label: 'inflight',
-      badge: chalk.gray,
-      accent: chalk.white.dim,
-      dim: chalk.gray,
-      gutter: chalk.gray,
-      key: chalk.white,
-    }
-  }
-  // SURFACE — system plumbing: dim, fg-only
-  if (eventKind.startsWith('surface.')) {
-    return {
-      label: 'surface',
-      badge: chalk.gray,
-      accent: chalk.gray,
-      dim: chalk.gray,
-      gutter: chalk.gray,
-      key: chalk.white,
-    }
-  }
-  // CONTEXT — system: dim, fg-only
-  if (eventKind.startsWith('context.')) {
-    return {
-      label: 'context',
-      badge: chalk.gray,
-      accent: chalk.gray,
-      dim: chalk.gray,
-      gutter: chalk.gray,
-      key: chalk.white,
-    }
-  }
-  // APP-SESSION — app lifecycle: dim green, fg-only
-  if (eventKind.startsWith('app-session.')) {
-    return {
-      label: 'app',
-      badge: chalk.green.dim,
-      accent: chalk.green.dim,
-      dim: chalk.green.dim,
-      gutter: chalk.green.dim,
-      key: chalk.green,
-    }
-  }
-  return {
-    label: 'EVENT',
-    badge: chalk.bgWhite.black,
-    accent: chalk.white,
-    dim: chalk.gray,
-    gutter: chalk.gray,
-    key: chalk.whiteBright,
+  try {
+    return ancestorScopeRefs(eventScopeRef).includes(selectedScopeRef)
+  } catch {
+    return false
   }
 }
 
@@ -2318,7 +2201,7 @@ Commands:
   session get <hostSessionId>         Get a session by host session ID
   session clear-context <hostSessionId> [--relaunch]
   status [--json]                     Show server status and capabilities
-  events [--from-seq <n>] [--follow] [--pretty]
+  events [scope] [--from-seq <n>] [--follow] [--pretty]
                                      Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--host-session-id <id>]  List runtimes

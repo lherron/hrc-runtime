@@ -639,6 +639,29 @@ const legacyHrcEventsBackfillMigration: HrcMigration = {
   },
 }
 
+const runtimeBuffersScopedByRunMigration: HrcMigration = {
+  id: '0010_runtime_buffers_scoped_by_run',
+  apply(db) {
+    db.exec(`
+      DROP TABLE IF EXISTS runtime_buffers;
+
+      CREATE TABLE runtime_buffers (
+        runtime_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        chunk_seq INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, chunk_seq),
+        FOREIGN KEY (runtime_id) REFERENCES runtimes(runtime_id),
+        FOREIGN KEY (run_id) REFERENCES runs(run_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_buffers_runtime_id
+        ON runtime_buffers(runtime_id, created_at, chunk_seq);
+    `)
+  },
+}
+
 const hrcchatMessagesMigration: HrcMigration = {
   id: '0007_hrcchat_messages',
   apply(db) {
@@ -701,6 +724,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   hrcchatMessagesMigration,
   hrcEventsMigration,
   legacyHrcEventsBackfillMigration,
+  runtimeBuffersScopedByRunMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

@@ -606,6 +606,10 @@ describe('appendHrcEvent helper', () => {
       '../../../hrc-server/src/hrc-event-helper'
     )
     expect(categoryForEventKind('turn.accepted')).toBe('turn')
+    expect(categoryForEventKind('turn.user_prompt')).toBe('turn')
+    expect(categoryForEventKind('turn.tool_call')).toBe('turn')
+    expect(categoryForEventKind('turn.tool_result')).toBe('turn')
+    expect(categoryForEventKind('turn.message')).toBe('turn')
     expect(categoryForEventKind('runtime.restarted')).toBe('runtime')
     expect(categoryForEventKind('launch.orphaned')).toBe('launch')
     expect(categoryForEventKind('app-session.literal-input')).toBe('app_session')
@@ -626,6 +630,24 @@ describe('appendHrcEvent helper', () => {
       expect(e.category).toBe('turn')
       expect(e.eventKind).toBe('turn.accepted')
       expect(e.runId).toBe('run-h')
+
+      const semantic = appendHrcEvent(db, 'turn.message', {
+        ts: ts(),
+        hostSessionId: 'hsid-h',
+        scopeRef: scopeRef('h'),
+        laneRef: 'default',
+        generation: 1,
+        runId: 'run-h',
+        payload: {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            content: 'ok',
+          },
+        },
+      })
+      expect(semantic.category).toBe('turn')
+      expect(semantic.eventKind).toBe('turn.message')
     } finally {
       db.close()
     }

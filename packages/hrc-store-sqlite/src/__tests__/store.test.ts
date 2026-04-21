@@ -1070,26 +1070,61 @@ describe('RuntimeBufferRepository', () => {
         createdAt: now,
         updatedAt: now,
       })
+      db.runs.insert({
+        runId: 'run-buf-1',
+        hostSessionId: 'hsid-buf-1',
+        runtimeId: 'rt-buf-1',
+        scopeRef: testScopeRef('scope-buf'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'sdk',
+        status: 'completed',
+        acceptedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      })
+      db.runs.insert({
+        runId: 'run-buf-2',
+        hostSessionId: 'hsid-buf-1',
+        runtimeId: 'rt-buf-1',
+        scopeRef: testScopeRef('scope-buf'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'sdk',
+        status: 'completed',
+        acceptedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      })
 
       db.runtimeBuffers.append({
         runtimeId: 'rt-buf-1',
+        runId: 'run-buf-1',
         chunkSeq: 1,
         text: 'Hello ',
         createdAt: now,
       })
       db.runtimeBuffers.append({
         runtimeId: 'rt-buf-1',
-        chunkSeq: 2,
+        runId: 'run-buf-2',
+        chunkSeq: 1,
         text: 'World',
         createdAt: now,
       })
 
       const chunks = db.runtimeBuffers.listByRuntimeId('rt-buf-1')
       expect(chunks.length).toBe(2)
+      expect(chunks[0].runId).toBe('run-buf-1')
+      expect(chunks[1].runId).toBe('run-buf-2')
       expect(chunks[0].chunkSeq).toBe(1)
-      expect(chunks[1].chunkSeq).toBe(2)
+      expect(chunks[1].chunkSeq).toBe(1)
       expect(chunks[0].text).toBe('Hello ')
       expect(chunks[1].text).toBe('World')
+
+      const runOneChunks = db.runtimeBuffers.listByRunId('run-buf-1')
+      const runTwoChunks = db.runtimeBuffers.listByRunId('run-buf-2')
+      expect(runOneChunks.map((chunk) => chunk.text)).toEqual(['Hello '])
+      expect(runTwoChunks.map((chunk) => chunk.text)).toEqual(['World'])
     } finally {
       db.close()
     }

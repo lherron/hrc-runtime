@@ -291,4 +291,77 @@ exit 0
       `hrcchat dm clod@agent-spaces:T-01128~repair --reply-to ${dm.request.messageId} - <<'__HRC_REPLY__'`
     )
   })
+
+  it('appends semantic turn.user_prompt for Codex tmux literal sends', async () => {
+    const tmux = new TmuxManager(fixture.tmuxSocketPath)
+    await tmux.initialize()
+
+    const scopeRef = 'agent:larry:project:agent-spaces:task:T-01156-codex-literal'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    const runtimeId = `rt-codex-literal-${Date.now()}`
+    const launchId = `launch-codex-literal-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        tmuxJson: pane,
+        supportsInflightInput: false,
+        adopted: false,
+        launchId,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const res = await fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef },
+      text: 'What is 3+4?',
+      enter: true,
+    })
+    expect(res.status).toBe(200)
+
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(50)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('What is 3+4?')) {
+        break
+      }
+    }
+    expect(captured).toContain('What is 3+4?')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const turnPrompts = verifyDb.hrcEvents.listByScope(scopeRef, {
+        eventKind: 'turn.user_prompt',
+      })
+      expect(turnPrompts).toHaveLength(1)
+      expect(turnPrompts[0]?.launchId).toBe(launchId)
+      expect(turnPrompts[0]?.transport).toBe('tmux')
+      expect(turnPrompts[0]?.payload).toEqual({
+        type: 'message_end',
+        message: {
+          role: 'user',
+          content: 'What is 3+4?',
+        },
+      })
+    } finally {
+      verifyDb.close()
+    }
+  })
 })

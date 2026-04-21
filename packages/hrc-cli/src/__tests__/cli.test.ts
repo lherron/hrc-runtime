@@ -1695,6 +1695,15 @@ describe('hrc events', () => {
     server = await createHrcServer(serverOpts())
   })
 
+  it('prints command help for events', async () => {
+    const result = await runCli(['events', '--help'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('Usage: hrc events [scope]')
+    expect(result.stdout).toContain('--format')
+    expect(result.stdout).toContain('agent@project')
+    expect(result.stdout).toContain('agent@project:task')
+  })
+
   it('outputs NDJSON events to stdout (non-follow mode)', async () => {
     // Create events first
     await runCli(['session', 'resolve', '--scope', testProjectScope('watchcli')], cliEnv())
@@ -1746,6 +1755,177 @@ describe('hrc events', () => {
     for (const ev of filteredEvents) {
       expect(ev.hrcSeq).toBeGreaterThanOrEqual(fromSeq)
     }
+  })
+
+  it('filters events by project scope and includes descendant task threads', async () => {
+    const projectScope = 'agent:candice:project:agent-spaces'
+    const taskScope = `${projectScope}:task:T-01156`
+    const otherTaskScope = `${projectScope}:task:T-02222`
+    const otherProjectScope = 'agent:candice:project:other-project:task:T-99999'
+
+    const projectResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', projectScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+    const taskResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', taskScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+    const otherTaskResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', otherTaskScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+    const otherProjectResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', otherProjectScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: projectResolved.hostSessionId,
+        scopeRef: projectScope,
+        laneRef: 'default',
+        generation: projectResolved.generation,
+        category: 'session',
+        eventKind: 'session.created',
+        payload: { sessionRef: `${projectScope}/lane:default` },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: taskResolved.hostSessionId,
+        scopeRef: taskScope,
+        laneRef: 'default',
+        generation: taskResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        payload: {
+          type: 'message_end',
+          message: { role: 'user', content: 'project thread event' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: otherTaskResolved.hostSessionId,
+        scopeRef: otherTaskScope,
+        laneRef: 'default',
+        generation: otherTaskResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        payload: {
+          type: 'message_end',
+          message: { role: 'user', content: 'other thread same project' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: otherProjectResolved.hostSessionId,
+        scopeRef: otherProjectScope,
+        laneRef: 'default',
+        generation: otherProjectResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        payload: {
+          type: 'message_end',
+          message: { role: 'user', content: 'wrong project' },
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events', 'candice@agent-spaces'], cliEnv())
+    expect(result.exitCode).toBe(0)
+
+    const events = result.stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map(
+        (line) =>
+          JSON.parse(line) as { scopeRef: string; payload: { message?: { content?: string } } }
+      )
+
+    expect(events.some((event) => event.scopeRef === projectScope)).toBe(true)
+    expect(events.some((event) => event.scopeRef === taskScope)).toBe(true)
+    expect(events.some((event) => event.scopeRef === otherTaskScope)).toBe(true)
+    expect(events.some((event) => event.scopeRef === otherProjectScope)).toBe(false)
+  })
+
+  it('filters events by task scope only', async () => {
+    const wantedTaskScope = 'agent:alice:project:test:task:sometask'
+    const siblingTaskScope = 'agent:alice:project:test:task:othertask'
+    const otherAgentTaskScope = 'agent:bob:project:test:task:sometask'
+
+    const wantedResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', wantedTaskScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+    const siblingResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', siblingTaskScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+    const otherAgentResolved = JSON.parse(
+      (await runCli(['session', 'resolve', '--scope', otherAgentTaskScope], cliEnv())).stdout.trim()
+    ) as { hostSessionId: string; generation: number }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: wantedResolved.hostSessionId,
+        scopeRef: wantedTaskScope,
+        laneRef: 'default',
+        generation: wantedResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        payload: {
+          type: 'message_end',
+          message: { role: 'assistant', content: 'wanted task' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: siblingResolved.hostSessionId,
+        scopeRef: siblingTaskScope,
+        laneRef: 'default',
+        generation: siblingResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        payload: {
+          type: 'message_end',
+          message: { role: 'assistant', content: 'sibling task' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: otherAgentResolved.hostSessionId,
+        scopeRef: otherAgentTaskScope,
+        laneRef: 'default',
+        generation: otherAgentResolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        payload: {
+          type: 'message_end',
+          message: { role: 'assistant', content: 'other agent task' },
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events', 'alice@test:sometask'], cliEnv())
+    expect(result.exitCode).toBe(0)
+
+    const events = result.stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map(
+        (line) =>
+          JSON.parse(line) as { scopeRef: string; payload: { message?: { content?: string } } }
+      )
+
+    expect(events.some((event) => event.scopeRef === wantedTaskScope)).toBe(true)
+    expect(events.some((event) => event.scopeRef === siblingTaskScope)).toBe(false)
+    expect(events.some((event) => event.scopeRef === otherAgentTaskScope)).toBe(false)
   })
 
   it('shows only hrc lifecycle rows on /v1/events', async () => {
@@ -1860,10 +2040,102 @@ describe('hrc events', () => {
     const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('test@watchpretty')
-    expect(result.stdout).toContain('SESSION')
-    expect(result.stdout).toContain('created')
+    expect(result.stdout).toContain('session created')
     expect(result.stdout).not.toContain('hostSessionId')
     expect(result.stdout).toContain('\u001b[')
+  })
+
+  it('renders semantic turn content kinds in pretty output', async () => {
+    const taskScope = 'agent:test:project:watchprettyturncontent:task:T-12345'
+    const resolveResult = await runCli(['session', 'resolve', '--scope', taskScope], cliEnv())
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+    }
+
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: taskScope,
+        laneRef: 'default',
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        payload: {
+          type: 'message_end',
+          message: {
+            role: 'user',
+            content: 'Investigate this runtime',
+          },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: taskScope,
+        laneRef: 'default',
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.tool_call',
+        payload: {
+          type: 'tool_execution_start',
+          toolUseId: 'toolu_cli',
+          toolName: 'Bash',
+          input: { command: 'pwd' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: taskScope,
+        laneRef: 'default',
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.tool_result',
+        payload: {
+          type: 'tool_execution_end',
+          toolUseId: 'toolu_cli',
+          toolName: 'Bash',
+          result: {
+            content: [{ type: 'text', text: '/tmp' }],
+          },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: taskScope,
+        laneRef: 'default',
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        payload: {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            content: 'Done.',
+          },
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['events', '--pretty'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    // Tree mode: prose-formatted message bodies, semantic glyphs.
+    expect(result.stdout).toContain('test@watchprettyturncontent:T-12345')
+    expect(result.stdout).toContain('user')
+    expect(result.stdout).toContain('Investigate this runtime')
+    // Tool-call folded with tool_result (bash toolName rendered lower-case).
+    expect(result.stdout).toContain('bash')
+    expect(result.stdout).toContain('$ pwd')
+    expect(result.stdout).toContain('/tmp')
+    expect(result.stdout).toContain('assistant')
+    expect(result.stdout).toContain('Done.')
   })
 
   it('supports pretty rendering for lifecycle event metadata and payload', async () => {
@@ -1902,8 +2174,8 @@ describe('hrc events', () => {
 
     const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('BRIDGE')
-    expect(result.stdout).toContain('delivered')
+    // Generic bridge event falls through to the attribute line.
+    expect(result.stdout).toContain('bridge delivered')
     expect(result.stdout).toContain('bridgeId')
     expect(result.stdout).toContain('bridge-pretty')
     expect(result.stdout).toContain('smokey-pane@test')
@@ -1948,10 +2220,11 @@ describe('hrc events', () => {
 
     const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '0' }))
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('Chunk ID: 384f38')
-    expect(result.stdout).toContain('| text : Chunk ID: 384f38')
-    expect(result.stdout).toContain('|        Wall time: 0.0000 seconds')
-    expect(result.stdout).toContain('|        Process exited with code 3')
+    // Tree mode: multi-line body text aligned under the event glyph (14-col indent).
+    const body = '              '
+    expect(result.stdout).toContain(`${body}Chunk ID: 384f38`)
+    expect(result.stdout).toContain(`${body}Wall time: 0.0000 seconds`)
+    expect(result.stdout).toContain(`${body}Process exited with code 3`)
   })
 
   it('follows newly appended lifecycle events from the local store after idle', async () => {

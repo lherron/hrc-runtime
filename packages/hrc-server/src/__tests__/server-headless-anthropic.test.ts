@@ -98,6 +98,39 @@ function getRunEvents(runId: string): any[] {
   }
 }
 
+function getRunHrcEvents(runId: string): any[] {
+  if (!fixture) throw new Error('fixture not initialized')
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents.listByRun(runId)
+  } finally {
+    db.close()
+  }
+}
+
+function getRun(runId: string): any {
+  if (!fixture) throw new Error('fixture not initialized')
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.runs.getByRunId(runId)
+  } finally {
+    db.close()
+  }
+}
+
+function getRunBufferText(runId: string): string {
+  if (!fixture) throw new Error('fixture not initialized')
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.runtimeBuffers
+      .listByRunId(runId)
+      .map((chunk) => chunk.text)
+      .join('')
+  } finally {
+    db.close()
+  }
+}
+
 function seedHeadlessRuntime(
   hostSessionId: string,
   scopeRef: string,
@@ -243,6 +276,46 @@ describe('A. Anthropic headless dispatch', () => {
     expect(runtime?.provider).toBe('anthropic')
     expect(runtime?.tmuxJson).toBeUndefined()
   })
+
+  it('reuses a headless Anthropic runtime across turns without runtime_buffer collisions', async () => {
+    await createTestServer()
+
+    const selector = { sessionRef: 'agent:rex:project:agent-spaces/lane:main' }
+
+    const firstRes = await fixture!.postJson('/v1/turns/by-selector', {
+      selector,
+      prompt: 'Prompt A',
+      runtimeIntent: headlessIntent('anthropic'),
+      createIfMissing: true,
+    })
+    expect(firstRes.status).toBe(200)
+    const first = (await firstRes.json()) as any
+    expect(first.transport).toBe('headless')
+    expect(first.status).toBe('completed')
+    expect(first.finalOutput).toBe('Dry run SDK response for: Prompt A')
+
+    const secondRes = await fixture!.postJson('/v1/turns/by-selector', {
+      selector,
+      prompt: 'Prompt B',
+      runtimeIntent: headlessIntent('anthropic'),
+      createIfMissing: true,
+    })
+    expect(secondRes.status).toBe(200)
+    const second = (await secondRes.json()) as any
+    expect(second.transport).toBe('headless')
+    expect(second.status).toBe('completed')
+    expect(second.runtimeId).toBe(first.runtimeId)
+    expect(second.finalOutput).toBe('Dry run SDK response for: Prompt B')
+
+    expect(getRun(first.runId)?.status).toBe('completed')
+    expect(getRun(second.runId)?.status).toBe('completed')
+    expect(getRunBufferText(first.runId)).toBe('Dry run SDK response for: Prompt A')
+    expect(getRunBufferText(second.runId)).toBe('Dry run SDK response for: Prompt B')
+
+    const runtime = getRuntime(String(second.runtimeId))
+    expect(runtime?.status).toBe('ready')
+    expect(runtime?.activeRunId).toBeUndefined()
+  })
 })
 
 describe('B. Anthropic headless start', () => {
@@ -384,6 +457,7 @@ describe('E. Regression', () => {
     })
 
     const messageEnd = getRunEvents(data.runId).find((event) => event.eventKind === 'message_end')
+    const hrcKinds = getRunHrcEvents(data.runId).map((event) => event.eventKind)
     expect(messageEnd).toBeDefined()
     expect(messageEnd?.eventJson).toEqual({
       type: 'message_end',
@@ -392,6 +466,8 @@ describe('E. Regression', () => {
         content: [{ type: 'text', text: 'ok' }],
       },
     })
+    expect(hrcKinds).toContain('turn.user_prompt')
+    expect(hrcKinds).toContain('turn.message')
   })
 })
 

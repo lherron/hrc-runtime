@@ -2,6 +2,8 @@
 export type {
   ContentBlock,
   ToolResult,
+  UserPromptEvent,
+  AgentMessageEvent,
   ToolExecutionStartEvent,
   ToolExecutionUpdateEvent,
   ToolExecutionEndEvent,
@@ -17,6 +19,8 @@ export { isHookDerivedEvent } from './events.js'
 export {
   ContentBlockSchema,
   ToolResultSchema,
+  UserPromptEventSchema,
+  AgentMessageEventSchema,
   ToolExecutionStartEventSchema,
   ToolExecutionUpdateEventSchema,
   ToolExecutionEndEventSchema,

@@ -70,6 +70,15 @@ function listRawEvents(): any[] {
   }
 }
 
+function listHrcEvents(): any[] {
+  const db = openHrcDatabase(dbPath)
+  try {
+    return db.hrcEvents.listFromHrcSeq(1)
+  } finally {
+    db.close()
+  }
+}
+
 /** Resolve a session and return the hostSessionId */
 async function resolveSession(scope: string): Promise<string> {
   const canonical = scope.startsWith('agent:') ? scope : `agent:${scope}`
@@ -775,6 +784,50 @@ describe('SDK events in raw ledger', () => {
     const kinds = sdkEvents.map((e: any) => e.eventKind)
     expect(kinds).toContain('sdk.running')
     expect(kinds).toContain('sdk.complete')
+  })
+
+  it('emits semantic turn.user_prompt and turn.message rows for SDK turns', async () => {
+    const hsid = await resolveSession('sdk-test-semantic')
+
+    await postJson('/v1/turns', {
+      hostSessionId: hsid,
+      prompt: 'Semantic SDK turn',
+      runtimeIntent: sdkIntent(),
+    })
+
+    await new Promise((r) => setTimeout(r, 1000))
+
+    const hrcEvents = listHrcEvents()
+    const eventKinds = hrcEvents.map((event: any) => event.eventKind)
+    const eventsRes = await fetchSocket('/v1/events?fromSeq=1')
+    const streamedKinds = (await eventsRes.text())
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).eventKind)
+
+    expect(eventKinds).toContain('turn.user_prompt')
+    expect(eventKinds).toContain('turn.message')
+    expect(streamedKinds).toContain('turn.user_prompt')
+    expect(streamedKinds).toContain('turn.message')
+
+    const userPrompt = hrcEvents.find((event: any) => event.eventKind === 'turn.user_prompt')
+    const message = hrcEvents.find((event: any) => event.eventKind === 'turn.message')
+
+    expect(userPrompt?.payload).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'user',
+        content: 'Semantic SDK turn',
+      },
+    })
+    expect(message?.payload).toEqual({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: 'Dry run SDK response for: Semantic SDK turn',
+      },
+    })
   })
 })
 

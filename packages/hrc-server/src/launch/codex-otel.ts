@@ -15,7 +15,7 @@ export function injectCodexOtelConfig(configToml: string, otel: CodexOtelLaunchC
   const otelConfig = isTomlTable(config['otel']) ? { ...config['otel'] } : {}
 
   otelConfig['environment'] = 'hrc'
-  otelConfig['log_user_prompt'] = false
+  otelConfig['log_user_prompt'] = true
   otelConfig['metrics_exporter'] = 'none'
   otelConfig['trace_exporter'] = 'none'
   otelConfig['exporter'] = {

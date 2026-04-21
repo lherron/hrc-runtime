@@ -21,6 +21,7 @@ import {
 
 export type HrcRuntimeBufferRecord = {
   runtimeId: string
+  runId: string
   chunkSeq: number
   text: string
   createdAt: string
@@ -210,6 +211,7 @@ type HrcEventRow = {
 
 type RuntimeBufferRow = {
   runtime_id: string
+  run_id: string
   chunk_seq: number
   text: string
   created_at: string
@@ -477,6 +479,7 @@ const SURFACE_BINDING_COLUMNS = `
 
 const RUNTIME_BUFFER_COLUMNS = `
   runtime_id,
+  run_id,
   chunk_seq,
   text,
   created_at`
@@ -721,6 +724,7 @@ function allocateStreamSeq(db: Database): number {
 function mapRuntimeBufferRow(row: RuntimeBufferRow): HrcRuntimeBufferRecord {
   return {
     runtimeId: row.runtime_id,
+    runId: row.run_id,
     chunkSeq: row.chunk_seq,
     text: row.text,
     createdAt: row.created_at,
@@ -2451,27 +2455,29 @@ export class RuntimeBufferRepository {
       `
         INSERT INTO runtime_buffers (
           runtime_id,
+          run_id,
           chunk_seq,
           text,
           created_at
-        ) VALUES (?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?)
       `,
       entry.runtimeId,
+      entry.runId,
       entry.chunkSeq,
       entry.text,
       entry.createdAt
     )
 
     const row = this.db
-      .query<RuntimeBufferRow, [string, number]>(
+      .query<RuntimeBufferRow, [string, string, number]>(
         `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
-          WHERE runtime_id = ? AND chunk_seq = ?`
+          WHERE runtime_id = ? AND run_id = ? AND chunk_seq = ?`
       )
-      .get(entry.runtimeId, entry.chunkSeq)
+      .get(entry.runtimeId, entry.runId, entry.chunkSeq)
 
     if (!row) {
       throw new Error(
-        `failed to reload runtime buffer chunk ${entry.chunkSeq} for ${entry.runtimeId}`
+        `failed to reload runtime buffer chunk ${entry.chunkSeq} for ${entry.runtimeId}/${entry.runId}`
       )
     }
 
@@ -2483,9 +2489,21 @@ export class RuntimeBufferRepository {
       .query<RuntimeBufferRow, [string]>(
         `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
           WHERE runtime_id = ?
-          ORDER BY chunk_seq ASC`
+          ORDER BY created_at ASC, chunk_seq ASC`
       )
       .all(runtimeId)
+
+    return rows.map(mapRuntimeBufferRow)
+  }
+
+  listByRunId(runId: string): HrcRuntimeBufferRecord[] {
+    const rows = this.db
+      .query<RuntimeBufferRow, [string]>(
+        `SELECT ${RUNTIME_BUFFER_COLUMNS} FROM runtime_buffers
+          WHERE run_id = ?
+          ORDER BY chunk_seq ASC`
+      )
+      .all(runId)
 
     return rows.map(mapRuntimeBufferRow)
   }
