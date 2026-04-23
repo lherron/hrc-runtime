@@ -344,7 +344,7 @@ describe('OTLP/HTTP JSON ingest', () => {
     const res = await postOtlp(
       started.endpoint,
       makeOtlpLogsBody([
-        { eventName: 'codex.api_request', conversationId: 'conv-1', model: 'gpt-5.4' },
+        { eventName: 'codex.api_request', conversationId: 'conv-1', model: 'gpt-5.5' },
       ]),
       { 'x-hrc-launch-auth': seed.authHeader }
     )
@@ -766,7 +766,7 @@ describe('OTLP/HTTP JSON ingest', () => {
 
       const prompt = 'Reply READY'
       const seed = await seedCodexLaunch({
-        argv: ['codex', prompt, '--model', 'gpt-5.4'],
+        argv: ['codex', prompt, '--model', 'gpt-5.5'],
       })
 
       const db = openHrcDatabase(fixture.dbPath)

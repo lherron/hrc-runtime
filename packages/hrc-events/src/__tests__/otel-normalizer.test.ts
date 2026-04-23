@@ -16,7 +16,7 @@ function makeRecord(
         'event.name': eventName,
         'conversation.id': 'conv-test-123',
         'app.version': '0.121.0',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         ...extraAttrs,
       },
     },
@@ -225,7 +225,7 @@ describe('normalizeCodexOtelEvent', () => {
       expect(event.type).toBe('notice')
       if (event.type === 'notice') {
         expect(event.level).toBe('info')
-        expect(event.message).toContain('openai/gpt-5.4')
+        expect(event.message).toContain('openai/gpt-5.5')
       }
     })
 
@@ -233,7 +233,7 @@ describe('normalizeCodexOtelEvent', () => {
       const result = normalizeCodexOtelEvent(makeRecord('codex.conversation_starts', {}))
 
       if (result.events[0]!.type === 'notice') {
-        expect(result.events[0]!.message).toContain('gpt-5.4')
+        expect(result.events[0]!.message).toContain('gpt-5.5')
         expect(result.events[0]!.message).not.toContain('/')
       }
     })

@@ -314,7 +314,7 @@ describe('hrc-launch exec crash paths', () => {
     await Bun.write(
       join(codexHome, 'config.toml'),
       [
-        'model = "gpt-5.4"',
+        'model = "gpt-5.5"',
         'approval_policy = "never"',
         '',
         '[projects."/tmp/workspace"]',
@@ -347,7 +347,7 @@ describe('hrc-launch exec crash paths', () => {
 
     const configRaw = await readFile(join(codexHome, 'config.toml'), 'utf-8')
     const parsed = TOML.parse(configRaw) as Record<string, unknown>
-    expect(parsed['model']).toBe('gpt-5.4')
+    expect(parsed['model']).toBe('gpt-5.5')
     expect(parsed['approval_policy']).toBe('never')
 
     const otel = parsed['otel'] as Record<string, unknown>

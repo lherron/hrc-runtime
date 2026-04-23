@@ -39,7 +39,7 @@ describe('hrc semantic turn helpers', () => {
     expect(
       extractLaunchPrimingPrompt({
         harness: 'codex-cli',
-        argv: ['codex', 'Reply READY', '--model', 'gpt-5.4'],
+        argv: ['codex', 'Reply READY', '--model', 'gpt-5.5'],
       })
     ).toBe('Reply READY')
 
