@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join, resolve as resolvePath } from 'node:path'
 
 import { ancestorScopeRefs, resolveScopeInput } from 'agent-scope'
 
@@ -18,8 +18,10 @@ import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import {
+  PROJECT_MARKER_FILENAME,
   type TargetDefinition,
   buildRuntimeBundleRef,
+  findProjectMarker,
   getAgentsRoot,
   inferProjectIdFromCwd,
   mergeAgentWithProjectTarget,
@@ -162,6 +164,8 @@ type ManagedScopeContext = {
   projectId?: string | undefined
   scopeRef: string
   sessionRef: string
+  /** Explicit projectRoot override (from --project-root or inferred from --project-id + cwd). */
+  projectRootOverride?: string | undefined
 }
 
 type ExecAttachDescriptor = {
@@ -169,8 +173,35 @@ type ExecAttachDescriptor = {
   env?: Record<string, string> | undefined
 }
 
-function resolveManagedScopeContext(scopeInput: string): ManagedScopeContext {
+interface ResolveManagedScopeOptions {
+  /** Explicit projectId override (from --project-id). Takes precedence over inference. */
+  projectIdOverride?: string | undefined
+  /**
+   * Explicit projectRoot override (from --project-root). When set, the placement
+   * resolver uses this path directly. When --project-id is set without
+   * --project-root, projectRoot defaults to process.cwd().
+   */
+  projectRootOverride?: string | undefined
+  /**
+   * Registration policy for first-run in an unmarked dir:
+   * - 'prompt' — if TTY and cwd is outside the agents root, ask whether to write
+   *   asp-targets.toml; on Y, write it and re-infer.
+   * - 'never'  — never prompt; fall through with no projectId.
+   */
+  registerPolicy?: 'prompt' | 'never'
+}
+
+function resolveManagedScopeContext(
+  scopeInput: string,
+  options: ResolveManagedScopeOptions = {}
+): ManagedScopeContext {
   let { parsed, scopeRef, laneRef } = resolveScopeInput(scopeInput)
+
+  if (!parsed.projectId && options.projectIdOverride) {
+    ;({ parsed, scopeRef, laneRef } = resolveScopeInput(
+      `${scopeInput}@${options.projectIdOverride}`
+    ))
+  }
 
   if (!parsed.projectId) {
     const inferredProject = inferProjectIdFromCwd()
@@ -179,13 +210,106 @@ function resolveManagedScopeContext(scopeInput: string): ManagedScopeContext {
     }
   }
 
+  if (!parsed.projectId && (options.registerPolicy ?? 'never') === 'prompt') {
+    const registered = maybePromptToRegisterProject()
+    if (registered) {
+      ;({ parsed, scopeRef, laneRef } = resolveScopeInput(`${scopeInput}@${registered}`))
+    }
+  }
+
+  // If user explicitly overrode projectId (via --project-id) without also
+  // giving --project-root, treat cwd as the project root. This matches the
+  // intent of "I'm declaring cwd is project X".
+  const projectRootOverride =
+    options.projectRootOverride ??
+    (options.projectIdOverride ? resolvePath(process.cwd()) : undefined)
+
   const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
   return {
     agentId: parsed.agentId,
     projectId: parsed.projectId,
     scopeRef,
     sessionRef: `${scopeRef}/lane:${laneId}`,
+    ...(projectRootOverride ? { projectRootOverride } : {}),
   }
+}
+
+/**
+ * Interactive first-run hook: if cwd is a plausible project root (not inside the
+ * agents root, TTY available) and has no asp-targets.toml marker, ask the user
+ * whether to register it. On yes, write a minimal marker and return its id.
+ *
+ * Returns undefined (silent fallback to current behavior) when:
+ * - stdin/stdout isn't a TTY
+ * - cwd is at or inside the configured agents root
+ * - a marker already exists on the walk-up path (should have been caught upstream)
+ * - user declines
+ */
+function maybePromptToRegisterProject(): string | undefined {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined
+
+  const cwd = resolvePath(process.cwd())
+  const agentsRoot = getAgentsRoot()
+  if (agentsRoot) {
+    const agentsRootResolved = resolvePath(agentsRoot)
+    if (cwd === agentsRootResolved || cwd.startsWith(`${agentsRootResolved}/`)) {
+      return undefined
+    }
+  }
+
+  // Marker already exists somewhere on the walk-up path — shouldn't reach here,
+  // but guard anyway.
+  if (findProjectMarker(cwd, { agentsRoot })) return undefined
+
+  const id = basename(cwd)
+  process.stderr.write(
+    `\nNo project marker found for ${cwd}.\n` +
+      `Register as project '${id}' (writes ${PROJECT_MARKER_FILENAME} here)? [Y/n] `
+  )
+
+  // Use synchronous read so we don't have to thread async through every caller.
+  const answer = readLineSync().trim().toLowerCase()
+  if (answer !== '' && answer !== 'y' && answer !== 'yes') {
+    process.stderr.write('Skipping project registration.\n\n')
+    return undefined
+  }
+
+  const markerPath = join(cwd, PROJECT_MARKER_FILENAME)
+  try {
+    writeFileSync(
+      markerPath,
+      `# asp-targets.toml — project marker for ${id}\n# Add [targets.<name>] tables to define run targets.\nschema = 1\n`
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`Failed to write ${markerPath}: ${msg}\n`)
+    return undefined
+  }
+
+  process.stderr.write(`Wrote ${markerPath}\n\n`)
+  return id
+}
+
+/**
+ * Minimal synchronous stdin read for the registration prompt.
+ * Reads bytes until newline or EOF. Blocking; TTY-only caller.
+ */
+function readLineSync(): string {
+  const buf = Buffer.alloc(1)
+  const chars: string[] = []
+  const fd = 0 // stdin
+  try {
+    while (true) {
+      const n = readSync(fd, buf, 0, 1, null)
+      if (n === 0) break
+      const ch = buf.toString('utf8', 0, 1)
+      if (ch === '\n') break
+      chars.push(ch)
+    }
+  } catch {
+    // fall through with whatever we collected
+  }
+  return chars.join('')
 }
 
 function buildManagedRuntimeIntent(
@@ -213,8 +337,11 @@ function buildManagedRuntimeIntent(
 
   const paths = resolveAgentPlacementPaths({
     agentId: scope.agentId,
-    projectId: scope.projectId,
+    ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
     agentRoot,
+    ...(scope.projectRootOverride !== undefined
+      ? { projectRoot: scope.projectRootOverride, cwd: scope.projectRootOverride }
+      : {}),
   })
   const projectRoot = paths.projectRoot
   const cwd = paths.cwd ?? agentRoot
@@ -306,6 +433,11 @@ async function parseScopePrompt(
     if (!arg) continue
 
     if (options.passthroughFlags.includes(arg)) {
+      // Value-taking passthrough flags must also consume their value.
+      if (arg === '--project-id' || arg === '--project-root') {
+        if (args[i + 1] === undefined) fatal(`${arg} requires a value`)
+        i += 1
+      }
       continue
     }
 
@@ -1268,6 +1400,9 @@ Options:
   --force-restart      Replace any existing runtime with a fresh PTY
 ${noAttachOption}${newSessionOption}  --dry-run            Local plan preview — no server calls, no side effects
   --debug              Keep tmux shell alive after harness exits
+  --project-id <id>    Override the inferred project id (cwd is treated as its root)
+  --project-root <dir> Override project root (defaults to cwd when --project-id is set)
+  --no-register        Don't prompt to register cwd as a project marker
   -p <text>            Initial prompt to send to the harness
   --prompt-file <path> Read initial prompt from a file
 `)
@@ -1284,14 +1419,29 @@ async function cmdRun(args: string[]): Promise<void> {
   const noAttach = hasFlag(args, '--no-attach')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
+  const noRegister = hasFlag(args, '--no-register')
+  const projectIdOverride = parseFlag(args, '--project-id')
+  const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
     command: 'run',
-    passthroughFlags: ['--force-restart', '--no-attach', '--dry-run', '--debug'],
+    passthroughFlags: [
+      '--force-restart',
+      '--no-attach',
+      '--dry-run',
+      '--debug',
+      '--no-register',
+      '--project-id',
+      '--project-root',
+    ],
   })
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(scopeInput)
+    const scope = resolveManagedScopeContext(scopeInput, {
+      projectIdOverride,
+      projectRootOverride,
+      registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
+    })
     sessionRef = scope.sessionRef
     const intent = buildManagedRunIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
@@ -1349,14 +1499,29 @@ async function cmdStart(args: string[]): Promise<void> {
   const newSession = hasFlag(args, '--new-session')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
+  const noRegister = hasFlag(args, '--no-register')
+  const projectIdOverride = parseFlag(args, '--project-id')
+  const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
     command: 'start',
-    passthroughFlags: ['--force-restart', '--new-session', '--dry-run', '--debug'],
+    passthroughFlags: [
+      '--force-restart',
+      '--new-session',
+      '--dry-run',
+      '--debug',
+      '--no-register',
+      '--project-id',
+      '--project-root',
+    ],
   })
 
   let sessionRef: string | undefined
   try {
-    const scope = resolveManagedScopeContext(scopeInput)
+    const scope = resolveManagedScopeContext(scopeInput, {
+      projectIdOverride,
+      projectRootOverride,
+      registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
+    })
     sessionRef = scope.sessionRef
     const intent = buildManagedStartIntent(scope, { prompt, debug })
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'

@@ -18,3 +18,28 @@ projects/
 integration-tests/projects/
 packages/hrc-cli/projects/
 packages/hrc-server/projects/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS cruft
+._*
+Thumbs.db
+
+# Claude / agent-local files
+.claude/
+
+# Env files (any flavor)
+.env
+.env.*
+!.env.example
+
+# Coverage output
+coverage/
+
+# Stray ~ expansion mishaps (e.g. copy to literal "~")
+/~/

@@ -804,12 +804,13 @@ function formatShellCommand(
 
 function wrapShellScript(script: string, width: number): string[] {
   const lines = script.split('\n')
-  if (lines.length === 1 && lines[0]!.length <= width) return [lines[0]!]
+  const firstLine = lines[0] ?? ''
+  if (lines.length === 1 && firstLine.length <= width) return [firstLine]
   // For multi-line scripts, preserve line structure; for single long line, break at spaces.
   if (lines.length > 1) return lines
   const parts: string[] = []
   let current = ''
-  for (const token of lines[0]!.split(/(\s+)/)) {
+  for (const token of firstLine.split(/(\s+)/)) {
     if ((current + token).length > width && current.length > 0) {
       parts.push(`${current.trimEnd()} \\`)
       current = token.trimStart()
@@ -873,8 +874,8 @@ function wrapBody(text: string, indent: string): string[] {
   if (text.length === 0) return []
   // Strip leading/trailing blank lines; a lone trailing \n is common in shell output.
   const lines = text.split('\n')
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop()
-  while (lines.length > 0 && lines[0]!.trim() === '') lines.shift()
+  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
+  while (lines.length > 0 && lines[0]?.trim() === '') lines.shift()
   return lines.map((line) => `${indent}${chalk.white(line)}`)
 }
 
@@ -887,8 +888,8 @@ function wrapBody(text: string, indent: string): string[] {
 function wrapRoleBody(text: string, indent: string, role: 'user' | 'assistant'): string[] {
   if (text.length === 0) return []
   const lines = text.split('\n')
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop()
-  while (lines.length > 0 && lines[0]!.trim() === '') lines.shift()
+  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
+  while (lines.length > 0 && lines[0]?.trim() === '') lines.shift()
   if (role === 'user') {
     const bar = chalk.greenBright('▎')
     return lines.map((line) => `${indent}${bar} ${chalk.whiteBright(line)}`)

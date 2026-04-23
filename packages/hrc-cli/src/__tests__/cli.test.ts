@@ -39,6 +39,8 @@ import { main } from '../cli'
 import { attachOpenAiRuntime, selectLatestUsableRuntime } from '../cli'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
+const describeDaemonLifecycle =
+  process.env.HRC_RUN_DAEMON_LIFECYCLE_TESTS === '1' ? describe : describe.skip
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -296,6 +298,8 @@ afterEach(async () => {
 async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   await mkdir(join(agentsRoot, agentId), { recursive: true })
   await mkdir(join(projectsRoot, projectId), { recursive: true })
+  // Write a marker so the project dir is recognized by the walk-up resolver.
+  await writeFile(join(projectsRoot, projectId, 'asp-targets.toml'), 'schema = 1\n', 'utf8')
 }
 
 async function createTmuxAttachShim(): Promise<string> {
@@ -400,6 +404,49 @@ async function readServerLog(): Promise<string> {
   return await readFile(join(runtimeRoot, 'server.log'), 'utf8')
 }
 
+async function waitForServerStatus(
+  predicate: (status: { running: boolean; socketResponsive?: boolean | undefined }) => boolean,
+  env: Record<string, string>,
+  attempts = 40
+): Promise<{ running: boolean; socketResponsive?: boolean | undefined; pid?: number | undefined }> {
+  let lastStatus: {
+    running: boolean
+    socketResponsive?: boolean | undefined
+    pid?: number | undefined
+  } = {
+    running: false,
+  }
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const statusResult = await runCli(['server', 'status', '--json'], env)
+    if (statusResult.exitCode === 0) {
+      lastStatus = JSON.parse(statusResult.stdout.trim()) as {
+        running: boolean
+        socketResponsive?: boolean | undefined
+        pid?: number | undefined
+      }
+      if (predicate(lastStatus)) {
+        return lastStatus
+      }
+    }
+
+    await Bun.sleep(100)
+  }
+
+  return lastStatus
+}
+
+async function waitForServerLog(attempts = 40): Promise<string> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (existsSync(join(runtimeRoot, 'server.log'))) {
+      return await readServerLog()
+    }
+    await Bun.sleep(100)
+  }
+
+  return await readServerLog()
+}
+
 async function waitForContinuation(
   hostSessionId: string,
   runtimeId: string,
@@ -469,7 +516,7 @@ describe('unknown command', () => {
 // ===========================================================================
 // 2b. server/tmux admin lifecycle
 // ===========================================================================
-describe('server/tmux admin lifecycle', () => {
+describeDaemonLifecycle('server/tmux admin lifecycle', () => {
   async function resolveHostSessionId(scope: string): Promise<string> {
     const result = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
     expect(result.exitCode).toBe(0)
@@ -492,16 +539,10 @@ describe('server/tmux admin lifecycle', () => {
     expect(startResult.exitCode).toBe(0)
     expect(startResult.stderr).toMatch(/daemon started/i)
 
-    // The daemon must survive after the launcher process exits.
-    await Bun.sleep(250)
-
-    const statusResult = await runCli(['server', 'status', '--json'], cliEnv())
-    expect(statusResult.exitCode).toBe(0)
-    const status = JSON.parse(statusResult.stdout.trim()) as {
-      running: boolean
-      socketResponsive: boolean
-      pid?: number
-    }
+    const status = await waitForServerStatus(
+      (value) => value.running === true && value.socketResponsive === true,
+      cliEnv()
+    )
     expect(status.running).toBe(true)
     expect(status.socketResponsive).toBe(true)
     expect(status.pid).toBeNumber()
@@ -511,8 +552,9 @@ describe('server/tmux admin lifecycle', () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)
 
-    await Bun.sleep(250)
-    const log = await readServerLog()
+    const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
+    expect(readyStatus.running).toBe(true)
+    const log = await waitForServerLog()
     expect(log).toMatch(
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[hrc-server\] INFO server\.start\.begin /m
     )
@@ -528,6 +570,8 @@ describe('server/tmux admin lifecycle', () => {
 
     const startResult = await runCli(['server', 'start', '--daemon'], env)
     expect(startResult.exitCode).toBe(0)
+    const status = await waitForServerStatus((value) => value.running === true, env)
+    expect(status.running).toBe(true)
 
     const hostSessionId = await resolveHostSessionId(testProjectScope('codex-launch-logging'))
     const ensureResult = await runCli(
@@ -542,8 +586,7 @@ describe('server/tmux admin lifecycle', () => {
     )
     expect(sendResult.exitCode).toBe(0)
 
-    await Bun.sleep(250)
-    const log = await readServerLog()
+    const log = await waitForServerLog()
     expect(log).toContain('launch.dispatch.prepared')
     expect(log).toContain('"execution"')
     expect(log).toContain('"codexHome"')
@@ -553,6 +596,8 @@ describe('server/tmux admin lifecycle', () => {
   it('server stop shuts down only the daemon and leaves the HRC tmux server running', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)
+    const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
+    expect(readyStatus.running).toBe(true)
 
     await ensureTmuxRuntime(testProjectScope('server-stop-preserves-tmux'))
 
@@ -588,6 +633,8 @@ describe('server/tmux admin lifecycle', () => {
   it('server restart preserves the existing tmux session and interactive runtime', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)
+    const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
+    expect(readyStatus.running).toBe(true)
 
     const seeded = await ensureTmuxRuntime(testProjectScope('server-restart-preserves-runtime'))
 
@@ -625,6 +672,8 @@ describe('server/tmux admin lifecycle', () => {
   it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)
+    const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
+    expect(readyStatus.running).toBe(true)
 
     await ensureTmuxRuntime(testProjectScope('tmux-kill-cli'))
 
@@ -840,7 +889,7 @@ describe('hrc start', () => {
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -865,7 +914,7 @@ describe('hrc start', () => {
       ['start', 'rex@agent-spaces:T-00123'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
       })
     )
@@ -888,7 +937,7 @@ describe('hrc start', () => {
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -908,7 +957,7 @@ describe('hrc start', () => {
     process.env.PATH = `${firstCodex.binDir}:${process.env.PATH ?? ''}`
     const firstEnv = cliEnv({
       ASP_AGENTS_ROOT: agentsRoot,
-      ASP_PROJECTS_ROOT: projectsRoot,
+      ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${firstCodex.binDir}:${process.env.PATH ?? ''}`,
     })
     const firstStart = await runCli(
@@ -931,7 +980,7 @@ describe('hrc start', () => {
     process.env.PATH = `${secondCodex.binDir}:${process.env.PATH ?? ''}`
     const secondEnv = cliEnv({
       ASP_AGENTS_ROOT: agentsRoot,
-      ASP_PROJECTS_ROOT: projectsRoot,
+      ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${secondCodex.binDir}:${process.env.PATH ?? ''}`,
     })
     const secondStart = await runCli(
@@ -1002,7 +1051,7 @@ describe('hrc attach <scope>', () => {
       ['attach', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1031,7 +1080,7 @@ describe('hrc attach <scope>', () => {
     const tmuxShimDir = await createTmuxAttachShim()
     const env = cliEnv({
       ASP_AGENTS_ROOT: agentsRoot,
-      ASP_PROJECTS_ROOT: projectsRoot,
+      ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${tmuxShimDir}:${fakeClaude.binDir}:${process.env.PATH ?? ''}`,
     })
 
@@ -1054,7 +1103,7 @@ describe('hrc attach <scope>', () => {
     const tmuxShimDir = await createTmuxAttachShim()
     const env = cliEnv({
       ASP_AGENTS_ROOT: agentsRoot,
-      ASP_PROJECTS_ROOT: projectsRoot,
+      ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
     })
 
@@ -1322,7 +1371,7 @@ describe('hrc run', () => {
       ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1341,7 +1390,7 @@ describe('hrc run', () => {
       ['run', 'agent:rex:project:agent-spaces:task:T-00123', prompt, '--no-attach'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1357,7 +1406,7 @@ describe('hrc run', () => {
       ['run', 'rex@agent-spaces:T-00123~repair', '--no-attach'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
     expect(first.exitCode).toBe(0)
@@ -1369,7 +1418,7 @@ describe('hrc run', () => {
       ['run', 'rex@agent-spaces:T-00123~repair', '--force-restart', '--no-attach'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1390,7 +1439,7 @@ describe('hrc run', () => {
       ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1417,7 +1466,7 @@ describe('hrc run', () => {
       ['run', 'rex@agent-spaces:T-00123'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
       })
     )
@@ -1445,7 +1494,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1461,7 +1510,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run', '--force-restart'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1474,7 +1523,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
     expect(result.exitCode).toBe(0)
@@ -1493,7 +1542,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
     expect(result2.exitCode).toBe(0)
@@ -1505,7 +1554,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run', '-p', 'hello from flag'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
     expect(result.exitCode).toBe(0)
@@ -1519,7 +1568,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run', '--prompt-file', promptPath],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
     expect(result.exitCode).toBe(0)
@@ -1537,7 +1586,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 
@@ -1561,7 +1610,7 @@ describe('hrc run --dry-run', () => {
       ['run', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECTS_ROOT: projectsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
 

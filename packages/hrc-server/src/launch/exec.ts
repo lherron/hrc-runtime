@@ -342,7 +342,7 @@ async function main(): Promise<void> {
   }
   if (!existsSync(cwd)) {
     process.stderr.write(
-      `hrc-launch exec: launch cwd does not exist: ${cwd}\n  The launch artifact specified a cwd that is not present on disk.\n  Check the project's configured root (asp config / projects-root).\n`
+      `hrc-launch exec: launch cwd does not exist: ${cwd}\n  The launch artifact specified a cwd that is not present on disk.\n  Check the invocation cwd or the project marker (asp-targets.toml).\n`
     )
     process.exit(1)
   }
