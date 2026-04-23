@@ -85,7 +85,7 @@ export type HrcLaunchEnvConfig = {
 
 export type HrcTaskContext = {
   taskId: string
-  phase: string
+  phase: string | null
   role: string
   requiredEvidenceKinds: string[]
   hintsText: string
