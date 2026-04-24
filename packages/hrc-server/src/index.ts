@@ -372,6 +372,22 @@ export type HrcServerOptions = {
    */
   otelEndpoint?: string | undefined
   tmuxSocketPath?: string | undefined
+  /**
+   * Auto-rotation policy: a session whose `createdAt` exceeds this age (in
+   * seconds) will be rotated to a new generation before dispatch, unless the
+   * caller passes `allowStaleGeneration: true`. Default = 24h. Set to `0` to
+   * disable the check (equivalent to `staleGenerationEnabled: false`).
+   *
+   * Env override: `HRC_STALE_GENERATION_HOURS` (hours, floating-point allowed).
+   */
+  staleGenerationThresholdSec?: number | undefined
+  /**
+   * Kill-switch for the stale-generation auto-rotation feature. When `false`,
+   * sessions are never auto-rotated regardless of age. Default = `true`.
+   *
+   * Env override: `HRC_STALE_GENERATION_ENABLED` (`0`/`false` disables).
+   */
+  staleGenerationEnabled?: boolean | undefined
 }
 
 export type HrcServer = {
@@ -414,6 +430,33 @@ const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
 const OTEL_AUTH_HEADER_NAME = 'x-hrc-launch-auth'
 const OTLP_CONTENT_TYPE_JSON = 'application/json'
 
+// Default stale-generation threshold: sessions older than 24 hours are
+// auto-rotated to a fresh generation unless the caller opts out.
+const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
+
+function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
+  if (typeof options.staleGenerationEnabled === 'boolean') {
+    return options.staleGenerationEnabled
+  }
+  const raw = process.env['HRC_STALE_GENERATION_ENABLED']
+  if (raw === undefined) return true
+  const normalized = raw.trim().toLowerCase()
+  return !(normalized === '0' || normalized === 'false' || normalized === 'no')
+}
+
+function resolveStaleGenerationThresholdSec(options: HrcServerOptions): number {
+  if (typeof options.staleGenerationThresholdSec === 'number') {
+    return Math.max(0, Math.floor(options.staleGenerationThresholdSec))
+  }
+  const raw = process.env['HRC_STALE_GENERATION_HOURS']
+  if (raw === undefined) return DEFAULT_STALE_GENERATION_THRESHOLD_SEC
+  const hours = Number.parseFloat(raw)
+  if (!Number.isFinite(hours) || hours < 0) {
+    return DEFAULT_STALE_GENERATION_THRESHOLD_SEC
+  }
+  return Math.floor(hours * 60 * 60)
+}
+
 type MessageSubscriber = (record: HrcMessageRecord) => void
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
@@ -430,6 +473,11 @@ class HrcServerInstance implements HrcServer {
   public readonly otelEndpoint: string | undefined
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  // Stale-generation auto-rotation policy. Resolved once at construction
+  // from options + env; callers can override per-request via
+  // `allowStaleGeneration: true`.
+  private readonly staleGenerationEnabled: boolean
+  private readonly staleGenerationThresholdSec: number
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
@@ -526,6 +574,9 @@ class HrcServerInstance implements HrcServer {
         return this.handleRequest(request)
       },
     })
+
+    this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
+    this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
       // Test-only override: caller supplies a fixed endpoint, no listener started.
@@ -1599,7 +1650,11 @@ class HrcServerInstance implements HrcServer {
 
   private async handleStartRuntime(request: Request): Promise<Response> {
     const body = parseStartRuntimeRequest(await parseJsonBody(request))
-    const session = requireSession(this.db, body.hostSessionId)
+    const requested = requireSession(this.db, body.hostSessionId)
+    const { session } = await this.maybeAutoRotateStaleSession(requested, {
+      allowStaleGeneration: body.allowStaleGeneration,
+      trigger: 'runtime-start',
+    })
     const runtime = await this.startRuntimeForSession(
       session,
       body.intent,
@@ -1622,7 +1677,14 @@ class HrcServerInstance implements HrcServer {
       throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, fence.message, fence.detail)
     }
 
-    const session = requireSession(this.db, fence.resolvedHostSessionId)
+    const resolved = requireSession(this.db, fence.resolvedHostSessionId)
+    // Stale-generation guard runs after fence validation so that a caller
+    // pinning a specific generation via `fences` gets a predictable
+    // STALE_CONTEXT error instead of silent rotation.
+    const { session } = await this.maybeAutoRotateStaleSession(resolved, {
+      allowStaleGeneration: body.allowStaleGeneration,
+      trigger: 'dispatch-turn',
+    })
     const runId = `run-${randomUUID()}`
     const intent = normalizeDispatchIntent(
       body.runtimeIntent ?? session.lastAppliedIntentJson,
@@ -1642,6 +1704,7 @@ class HrcServerInstance implements HrcServer {
     options: {
       runId?: string | undefined
       ensureInteractiveRuntime?: boolean | undefined
+      waitForCompletion?: boolean | undefined
     } = {}
   ): Promise<Response> {
     const runId = options.runId ?? `run-${randomUUID()}`
@@ -1649,7 +1712,9 @@ class HrcServerInstance implements HrcServer {
     const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
 
     if (shouldUseHeadlessTransport(intent)) {
-      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId)
+      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
+        waitForCompletion: options.waitForCompletion,
+      })
     }
 
     if (shouldUseSdkTransport(intent)) {
@@ -1838,7 +1903,10 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
-    runId: string
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    } = {}
   ): Promise<Response> {
     const runtime =
       getReusableHeadlessRuntimeForSession(
@@ -1922,8 +1990,19 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(startedEvent)
 
-    if (intent.harness.provider === 'anthropic') {
-      return await this.executeHeadlessSdkTurn(
+    const execute = async (): Promise<Response> => {
+      if (intent.harness.provider === 'anthropic') {
+        return await this.executeHeadlessSdkTurn(
+          session,
+          runtime,
+          intent,
+          prompt,
+          runId,
+          continuation
+        )
+      }
+
+      return await this.executeHeadlessCliTurn(
         session,
         runtime,
         intent,
@@ -1933,7 +2012,87 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
-    return await this.executeHeadlessCliTurn(session, runtime, intent, prompt, runId, continuation)
+    if (options.waitForCompletion === false) {
+      void execute().catch((err: unknown) => {
+        try {
+          this.recordDetachedHeadlessTurnFailure(session, runtime.runtimeId, runId, err)
+        } catch (failureErr) {
+          writeServerLog('WARN', 'headless.detached_turn_failure_record_failed', {
+            hostSessionId: session.hostSessionId,
+            runtimeId: runtime.runtimeId,
+            runId,
+            error: failureErr instanceof Error ? failureErr.message : String(failureErr),
+          })
+        }
+      })
+
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'headless',
+        status: 'started',
+        supportsInFlightInput: false,
+      } satisfies DispatchTurnResponse)
+    }
+
+    return await execute()
+  }
+
+  private recordDetachedHeadlessTurnFailure(
+    session: HrcSessionRecord,
+    runtimeId: string,
+    runId: string,
+    err: unknown
+  ): void {
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    writeServerLog('WARN', 'headless.detached_turn_failed', {
+      hostSessionId: session.hostSessionId,
+      runtimeId,
+      runId,
+      error: errorMessage,
+    })
+
+    const run = this.db.runs.getByRunId(runId)
+    if (!run || !isRunActive(run)) {
+      return
+    }
+
+    const now = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage,
+    })
+
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime?.activeRunId === runId) {
+      this.db.runtimes.updateRunId(runtimeId, undefined, now)
+      this.db.runtimes.update(runtimeId, {
+        status: 'ready',
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+    }
+
+    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      payload: {
+        success: false,
+        transport: 'headless',
+      },
+    })
+    this.notifyEvent(completedEvent)
   }
 
   /**
@@ -3683,6 +3842,93 @@ class HrcServerInstance implements HrcServer {
     return { managed, session, runtime }
   }
 
+  /**
+   * Enforce the stale-generation auto-rotation policy on a session before
+   * dispatch. If the session's `createdAt` is older than the configured
+   * threshold and the caller did not opt in to stale reuse, the session is
+   * rotated (new generation, continuation dropped) and the fresh session is
+   * returned. Emits a `session.generation_auto_rotated` HRC event so the
+   * rotation is visible in dashboards/audit.
+   *
+   * Callers pass the session they originally resolved; on return, they MUST
+   * use the returned `session` for downstream work because the host session
+   * ID may have changed.
+   */
+  private async maybeAutoRotateStaleSession(
+    session: HrcSessionRecord,
+    options: {
+      allowStaleGeneration?: boolean | undefined
+      trigger: string
+    }
+  ): Promise<{
+    session: HrcSessionRecord
+    rotated: boolean
+    ageSec: number
+    thresholdSec: number
+    priorGeneration?: number | undefined
+    priorHostSessionId?: string | undefined
+  }> {
+    const createdAtMs = Date.parse(session.createdAt)
+    const ageSec = Number.isFinite(createdAtMs)
+      ? Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000))
+      : 0
+    const thresholdSec = this.staleGenerationThresholdSec
+
+    if (
+      !this.staleGenerationEnabled ||
+      thresholdSec <= 0 ||
+      options.allowStaleGeneration === true ||
+      ageSec < thresholdSec
+    ) {
+      return { session, rotated: false, ageSec, thresholdSec }
+    }
+
+    const priorGeneration = session.generation
+    const priorHostSessionId = session.hostSessionId
+    writeServerLog('INFO', 'session.generation_auto_rotating', {
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      priorHostSessionId,
+      priorGeneration,
+      ageSec,
+      thresholdSec,
+      trigger: options.trigger,
+    })
+
+    const rotation = await this.rotateSessionContext(session, {
+      relaunch: false,
+      dropContinuation: true,
+      reason: 'stale-generation-auto-rotate',
+    })
+
+    const next = requireSession(this.db, rotation.hostSessionId)
+    appendHrcEvent(this.db, 'session.generation_auto_rotated', {
+      ts: timestamp(),
+      hostSessionId: next.hostSessionId,
+      scopeRef: next.scopeRef,
+      laneRef: next.laneRef,
+      generation: next.generation,
+      payload: {
+        priorHostSessionId,
+        priorGeneration,
+        nextHostSessionId: next.hostSessionId,
+        nextGeneration: next.generation,
+        ageSec,
+        thresholdSec,
+        trigger: options.trigger,
+      },
+    })
+
+    return {
+      session: next,
+      rotated: true,
+      ageSec,
+      thresholdSec,
+      priorGeneration,
+      priorHostSessionId,
+    }
+  }
+
   private async rotateSessionContext(
     session: HrcSessionRecord,
     options: {
@@ -4452,6 +4698,15 @@ class HrcServerInstance implements HrcServer {
       }
 
       if (session) {
+        // Rotate before delivery if the target session is stale and the
+        // caller did not opt in to stale reuse. This both prevents DMs from
+        // silently dispatching into corrupted legacy sessions and keeps the
+        // tmux-literal path using a fresh continuation for future turns.
+        const rotationResult = await this.maybeAutoRotateStaleSession(session, {
+          allowStaleGeneration: body.allowStaleGeneration,
+          trigger: 'semantic-dm',
+        })
+        session = rotationResult.session
         // If the target has a live interactive tmux runtime, deliver via
         // literal send-keys instead of dispatching a new turn. This lets dm
         // reach agents whether they are mid-turn or idle in an interactive session.
@@ -4492,7 +4747,9 @@ class HrcServerInstance implements HrcServer {
         }
 
         if (!tmuxDelivered) {
-          const result = await this.executeSemanticTurn(session, body, record, respondTo)
+          const result = await this.executeSemanticTurn(session, body, record, respondTo, {
+            waitForCompletion: body.wait?.enabled === true,
+          })
           execution = result.execution
           reply = result.reply
         }
@@ -4531,7 +4788,10 @@ class HrcServerInstance implements HrcServer {
       to: HrcMessageAddress
     },
     record: HrcMessageRecord,
-    respondTo: HrcMessageAddress
+    respondTo: HrcMessageAddress,
+    options: {
+      waitForCompletion?: boolean | undefined
+    } = {}
   ): Promise<{
     execution?: DispatchTurnBySelectorResponse
     reply?: HrcMessageRecord | undefined
@@ -4551,6 +4811,7 @@ class HrcServerInstance implements HrcServer {
       )
       const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
         runId,
+        waitForCompletion: options.waitForCompletion,
       })
       const turnBody = (await turnResponse.json()) as DispatchTurnResponse
       const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -7085,6 +7346,7 @@ function parseSemanticDmRequest(input: unknown): {
   createIfMissing?: boolean | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
+  allowStaleGeneration?: boolean | undefined
 } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -7141,6 +7403,11 @@ function parseSemanticDmRequest(input: unknown): {
         }
       : undefined
 
+  const allowStaleGeneration =
+    typeof input['allowStaleGeneration'] === 'boolean'
+      ? (input['allowStaleGeneration'] as boolean)
+      : undefined
+
   return {
     from: parseMessageAddress(input['from'], 'from'),
     to: parseMessageAddress(input['to'], 'to'),
@@ -7152,6 +7419,7 @@ function parseSemanticDmRequest(input: unknown): {
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
     ...(wait !== undefined ? { wait } : {}),
+    ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
   }
 }
 

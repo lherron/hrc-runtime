@@ -18,6 +18,7 @@ import type { HrcDatabase, HrcLifecycleEventInput } from 'hrc-store-sqlite'
 const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'session.created': 'session',
   'session.resolved': 'session',
+  'session.generation_auto_rotated': 'session',
   'app-session.created': 'app_session',
   'app-session.removed': 'app_session',
   'app-session.literal-input': 'app_session',

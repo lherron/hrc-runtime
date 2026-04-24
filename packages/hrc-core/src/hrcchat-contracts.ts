@@ -233,6 +233,12 @@ export type SemanticDmRequest = {
         timeoutMs?: number | undefined
       }
     | undefined
+  /**
+   * Opt out of the server's stale-generation auto-rotation policy when
+   * delivering to a session target. Defaults to `false` (auto-rotate when
+   * session age exceeds the server's stale threshold).
+   */
+  allowStaleGeneration?: boolean | undefined
 }
 
 export type SemanticDmResponse = {

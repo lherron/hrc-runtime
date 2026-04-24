@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -203,11 +203,15 @@ exit 0
   return { binDir, logPath }
 }
 
-async function installFakeCodex(dirName: string): Promise<{ binDir: string; logPath: string }> {
+async function installFakeCodex(
+  dirName: string,
+  options: { execDelayMs?: number } = {}
+): Promise<{ binDir: string; logPath: string }> {
   if (!fixture) throw new Error('fixture not initialized')
   const binDir = join(fixture.tmpDir, dirName)
   const logPath = join(binDir, 'codex.log')
   const scriptPath = join(binDir, 'codex')
+  const execDelaySeconds = ((options.execDelayMs ?? 0) / 1000).toFixed(3)
 
   await mkdir(binDir, { recursive: true })
   await writeFile(
@@ -216,8 +220,19 @@ async function installFakeCodex(dirName: string): Promise<{ binDir: string; logP
 set -eu
 log_path=${JSON.stringify(logPath)}
 cmd="\${1:-}"
+if [ "$cmd" = "--version" ]; then
+  printf 'codex 99.0.0\\n'
+  exit 0
+fi
+if [ "$cmd" = "app-server" ]; then
+  printf 'codex app-server help\\n'
+  exit 0
+fi
 if [ "$cmd" = "exec" ]; then
   printf 'exec:%s\\n' "$*" >> "$log_path"
+  if [ ${JSON.stringify(execDelaySeconds)} != "0.000" ]; then
+    /bin/sleep ${JSON.stringify(execDelaySeconds)}
+  fi
   printf '{"type":"thread.started","thread_id":"thread-openai-headless"}\\n'
   printf '{"type":"turn.started"}\\n'
   printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\\n'
@@ -230,6 +245,9 @@ exit 0
     'utf-8'
   )
   await chmod(scriptPath, 0o755)
+  process.env['PATH'] = `${binDir}:${process.env['PATH'] ?? ''}`
+  process.env['ASP_CODEX_PATH'] = scriptPath
+  process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = '1'
 
   return { binDir, logPath }
 }
@@ -419,14 +437,80 @@ describe('D. DM fallback', () => {
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(dm.execution?.transport).toBe('headless')
     expect(dm.execution?.mode).toBe('headless')
+    expect(dm.execution?.status).toBe('started')
     expect(dm.execution?.runtimeId).toBeString()
-    expect(dm.execution?.continuationUpdated).toBe(true)
+    expect(dm.execution?.continuationUpdated).toBe(false)
 
     const runtime = getRuntime(String(dm.execution?.runtimeId))
     expect(runtime).not.toBeNull()
     expect(runtime?.transport).toBe('headless')
     expect(runtime?.provider).toBe('anthropic')
     expect(runtime?.tmuxJson).toBeUndefined()
+  })
+
+  it('returns from non-wait headless DM after dispatch starts instead of turn completion', async () => {
+    await createTestServer()
+
+    const fakeCodex = await installFakeCodex('fake-codex-slow-dm', { execDelayMs: 2_000 })
+    const startedAt = performance.now()
+    const dmRes = await fixture!.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:slow-dm:project:agent-spaces/lane:main' },
+      body: 'slow headless dm should not block',
+      runtimeIntent: headlessIntent('openai', {
+        pathPrepend: [fakeCodex.binDir],
+      }),
+    })
+    const elapsedMs = performance.now() - startedAt
+
+    expect(dmRes.status).toBe(200)
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    expect(elapsedMs).toBeLessThan(1_200)
+    expect(dm.execution?.transport).toBe('headless')
+    expect(dm.execution?.status).toBe('started')
+    expect(dm.execution?.continuationUpdated).toBe(false)
+    expect(dm.reply).toBeUndefined()
+    expect(dm.waited).toBeUndefined()
+
+    let execLog = ''
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        execLog = await readFile(fakeCodex.logPath, 'utf-8')
+      } catch {
+        execLog = ''
+      }
+      if (execLog.includes('exec:')) {
+        break
+      }
+      await Bun.sleep(100)
+    }
+    expect(execLog).toContain('exec:')
+  })
+
+  it('waits for a headless DM response timeout when wait is explicitly requested', async () => {
+    await createTestServer()
+
+    const fakeCodex = await installFakeCodex('fake-codex-wait-dm')
+    const startedAt = performance.now()
+    const dmRes = await fixture!.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:wait-dm:project:agent-spaces/lane:main' },
+      body: 'wait for headless reply',
+      runtimeIntent: headlessIntent('openai', {
+        pathPrepend: [fakeCodex.binDir],
+      }),
+      wait: { enabled: true, timeoutMs: 300 },
+    })
+    const elapsedMs = performance.now() - startedAt
+
+    expect(dmRes.status).toBe(200)
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    expect(elapsedMs).toBeGreaterThanOrEqual(250)
+    expect(dm.execution?.transport).toBe('headless')
+    expect(dm.execution?.status).toBe('completed')
+    expect(dm.execution?.continuationUpdated).toBe(true)
+    expect(dm.reply).toBeUndefined()
+    expect(dm.waited).toEqual({ matched: false, reason: 'timeout' })
   })
 })
 

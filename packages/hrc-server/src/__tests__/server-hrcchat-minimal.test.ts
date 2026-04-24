@@ -37,6 +37,14 @@ describe('hrcchat minimal server routes', () => {
 set -eu
 log_path=${JSON.stringify(logPath)}
 cmd="\${1:-}"
+if [ "$cmd" = "--version" ]; then
+  printf 'codex 99.0.0\\n'
+  exit 0
+fi
+if [ "$cmd" = "app-server" ]; then
+  printf 'codex app-server help\\n'
+  exit 0
+fi
 if [ "$cmd" = "exec" ]; then
   printf 'exec:%s\\n' "$*" >> "$log_path"
   printf '{"type":"thread.started","thread_id":"thread-dm"}\\n'
@@ -48,6 +56,9 @@ exit 0
       'utf-8'
     )
     await chmod(scriptPath, 0o755)
+    process.env['PATH'] = `${binDir}:${process.env['PATH'] ?? ''}`
+    process.env['ASP_CODEX_PATH'] = scriptPath
+    process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = '1'
 
     return { binDir, logPath }
   }
@@ -138,8 +149,9 @@ exit 0
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(dm.execution?.transport).toBe('headless')
     expect(dm.execution?.mode).toBe('headless')
+    expect(dm.execution?.status).toBe('started')
     expect(dm.execution?.runtimeId).toBeString()
-    expect(dm.execution?.continuationUpdated).toBe(true)
+    expect(dm.execution?.continuationUpdated).toBe(false)
 
     const db = openHrcDatabase(fixture.dbPath)
     try {

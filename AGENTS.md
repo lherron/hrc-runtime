@@ -16,6 +16,26 @@ Run these after implementing to get immediate feedback:
 - Typecheck: `bun run typecheck` (run `bun run build` first if workspace typings are missing)
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 
+## Ops Dashboard
+
+When the user refers to the "ops dashboard", they mean the ACP ops web dashboard in `packages/acp-ops-web`.
+Always open the ops dashboard in the Codex in-app browser when asked to start, inspect, or verify it.
+
+Run it from `packages/acp-ops-web`:
+
+```bash
+bun run dev -- --host 127.0.0.1
+```
+
+Then open `http://127.0.0.1:5173/` in the in-app browser. If port `5173` is already serving the dashboard, reuse it instead of starting another server.
+
+Operational notes from dashboard work:
+
+- The real snapshot endpoint is `/v1/ops/session-dashboard/snapshot`.
+- A successful real snapshot can contain sessions with `events: 0`; an empty event stream/timeline is not automatically a rendering bug.
+- Dev demo data should only appear when the dashboard snapshot request fails in development, not before a successful real snapshot replaces it.
+- For package-scoped validation after ops dashboard changes, prefer `bun run --filter acp-ops-web typecheck` and `bun run --filter acp-ops-web test`.
+
 ## Project Structure
 
 ```

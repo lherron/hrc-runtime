@@ -63,6 +63,10 @@ install:
     cd packages/acp-cli && bun link
     cd packages/acp-server && bun link
 
+# Serve the ACP Session Dashboard (acp-ops-web) against the local dev stack
+serve-dashboard:
+    cd packages/acp-ops-web && bun run dev
+
 # Run control-plane interface test with rex-home target
 cp-test prompt="List skills available. Use only what is in your context, no tools.":
     ASP_HOME=/Users/lherron/praesidium/var/spaces-repo bun scripts/cp-interface-test.ts \

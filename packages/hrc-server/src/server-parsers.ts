@@ -735,10 +735,20 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
     )
   }
 
+  const allowStaleGeneration = input['allowStaleGeneration']
+  if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'allowStaleGeneration must be a boolean',
+      { field: 'allowStaleGeneration' }
+    )
+  }
+
   return {
     hostSessionId: hostSessionId.trim(),
     intent: parseRuntimeIntent(intent),
     restartStyle,
+    ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
   }
 }
 
@@ -766,6 +776,14 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
 
   const runtimeIntent = input['runtimeIntent']
   const fences = input['fences']
+  const allowStaleGeneration = input['allowStaleGeneration']
+  if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'allowStaleGeneration must be a boolean',
+      { field: 'allowStaleGeneration' }
+    )
+  }
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -774,6 +792,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
       ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
       : {}),
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
+    ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
   }
 }
 

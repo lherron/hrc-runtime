@@ -57,6 +57,16 @@ export type EnsureRuntimeRequest = {
   hostSessionId: string
   intent: HrcRuntimeIntent
   restartStyle?: RestartStyle | undefined
+  /**
+   * Opt out of the server's stale-generation auto-rotation policy.
+   *
+   * When unset or `false` (default), HRC auto-rotates the session to a new
+   * generation (dropping provider continuation) if the active session's
+   * `createdAt` exceeds `HRC_STALE_GENERATION_HOURS` (default 24). Set to
+   * `true` to keep the existing generation and provider continuation even
+   * when stale — useful for explicit "resume my old conversation" flows.
+   */
+  allowStaleGeneration?: boolean | undefined
 }
 
 export type EnsureRuntimeResponse = {
@@ -109,6 +119,11 @@ export type DispatchTurnRequest = {
   prompt: string
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
+  /**
+   * Opt out of the server's stale-generation auto-rotation policy.
+   * See {@link EnsureRuntimeRequest.allowStaleGeneration}.
+   */
+  allowStaleGeneration?: boolean | undefined
 }
 
 export type DispatchTurnResponse = {
