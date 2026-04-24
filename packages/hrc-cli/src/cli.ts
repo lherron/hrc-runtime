@@ -12,6 +12,9 @@ import type {
   HrcRuntimeSnapshot,
   HrcStatusResponse,
   HrcStatusSessionView,
+  InspectRuntimeResponse,
+  SweepRuntimesRequest,
+  SweepRuntimesResponse,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
@@ -509,6 +512,22 @@ function isHrcDomainErrorLike(
   )
 }
 
+function printHrcDomainErrorBody(err: unknown): boolean {
+  if (!isHrcDomainErrorLike(err)) {
+    return false
+  }
+
+  fatal(
+    JSON.stringify({
+      error: {
+        code: err.code,
+        message: err.message,
+        detail: err.detail ?? {},
+      },
+    })
+  )
+}
+
 export function selectLatestUsableRuntime(
   runtimes: HrcRuntimeSnapshot[]
 ): HrcRuntimeSnapshot | undefined {
@@ -847,6 +866,18 @@ async function cmdSessionGet(args: string[]): Promise<void> {
   printJson(session)
 }
 
+async function cmdSessionDropContinuation(args: string[]): Promise<void> {
+  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const reason = parseFlag(args, '--reason')
+
+  const client = createClient()
+  const result = await client.dropContinuation({
+    hostSessionId,
+    ...(reason ? { reason } : {}),
+  })
+  printJson(result)
+}
+
 async function cmdSession(args: string[]): Promise<void> {
   const subcommand = args[0]
   const rest = args.slice(1)
@@ -860,11 +891,13 @@ async function cmdSession(args: string[]): Promise<void> {
       return cmdSessionGet(rest)
     case 'clear-context':
       return cmdSessionClearContext(rest)
+    case 'drop-continuation':
+      return cmdSessionDropContinuation(rest)
     default:
       fatal(
         subcommand
           ? `unknown session subcommand: ${subcommand}`
-          : 'session subcommand required (resolve, list, get, clear-context)'
+          : 'session subcommand required (resolve, list, get, clear-context, drop-continuation)'
       )
   }
 }
@@ -1279,9 +1312,161 @@ async function cmdTmuxKill(args: string[]): Promise<void> {
 
 async function cmdRuntimeList(args: string[]): Promise<void> {
   const hostSessionId = parseFlag(args, '--host-session-id')
+  const transport = parseFlag(args, '--transport')
+  if (
+    transport !== undefined &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'sdk'
+  ) {
+    fatal('--transport must be one of: tmux, headless, sdk')
+  }
+  const status = parseFlag(args, '--status')
+  const olderThan = parseFlag(args, '--older-than')
+  const scope = parseFlag(args, '--scope')
+  const jsonOutput = hasFlag(args, '--json')
   const client = createClient()
-  const runtimes = await client.listRuntimes(hostSessionId ? { hostSessionId } : undefined)
+  const runtimes = await client.listRuntimes({
+    ...(hostSessionId ? { hostSessionId } : {}),
+    ...(transport ? { transport } : {}),
+    ...(status
+      ? {
+          status: status
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0),
+        }
+      : {}),
+    ...(hasFlag(args, '--stale') ? { stale: true } : {}),
+    ...(olderThan ? { olderThan } : {}),
+    ...(scope ? { scope } : {}),
+    ...(jsonOutput ? { json: true } : {}),
+  })
   printJson(runtimes)
+}
+
+async function cmdRuntimeInspect(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const jsonOutput = hasFlag(args, '--json')
+  const client = createClient()
+  const result = await client.inspectRuntime({ runtimeId })
+
+  if (jsonOutput) {
+    printJson(result)
+    return
+  }
+
+  printRuntimeInspect(result)
+}
+
+function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
+  const continuation = runtime.continuation
+    ? `${runtime.continuation.provider}:${runtime.continuation.key ?? '(none)'}${
+        runtime.continuationStale ? ' (stale)' : ''
+      }`
+    : '(none)'
+  const lines = [
+    `runtime ${runtime.runtimeId}`,
+    `  scope         ${runtime.scopeRef}`,
+    `  lane          ${runtime.laneRef}`,
+    `  generation    ${runtime.generation}`,
+    `  transport     ${runtime.transport}`,
+    `  harness       ${runtime.harness}`,
+    `  provider      ${runtime.provider}`,
+    `  status        ${runtime.status}`,
+    `  createdAt     ${runtime.createdAt} (age: ${formatAgeSec(runtime.createdAgeSec)})`,
+    `  lastActivity  ${runtime.lastActivityAt ?? '(none)'} (age: ${
+      runtime.lastActivityAgeSec === null ? '(none)' : formatAgeSec(runtime.lastActivityAgeSec)
+    })`,
+    `  activeRunId   ${runtime.activeRunId ?? '(none)'}`,
+    `  wrapperPid    ${runtime.wrapperPid ?? '(none)'}`,
+    `  childPid      ${runtime.childPid ?? '(none)'}`,
+    `  continuation  ${continuation}`,
+  ]
+  process.stdout.write(`${lines.join('\n')}\n`)
+}
+
+function formatAgeSec(totalSec: number): string {
+  const seconds = Math.max(0, Math.floor(totalSec))
+  const days = Math.floor(seconds / 86_400)
+  const hours = Math.floor((seconds % 86_400) / 3_600)
+  const minutes = Math.floor((seconds % 3_600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m`
+  return `${seconds}s`
+}
+
+async function cmdRuntimeSweep(args: string[]): Promise<void> {
+  const transport = parseFlag(args, '--transport')
+  if (
+    transport !== undefined &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'sdk'
+  ) {
+    fatal('--transport must be one of: tmux, headless, sdk')
+  }
+
+  const dryRunFlag = hasFlag(args, '--dry-run')
+  const yes = hasFlag(args, '--yes')
+  const jsonOutput = hasFlag(args, '--json')
+  if (!dryRunFlag && !yes && !process.stdout.isTTY) {
+    fatal('runtime sweep requires --yes to mutate when stdout is not a TTY')
+  }
+  if (transport === 'tmux' && !yes && !dryRunFlag) {
+    fatal('runtime sweep --transport tmux requires --yes')
+  }
+
+  const statusRaw = parseFlag(args, '--status')
+  const scope = parseFlag(args, '--scope')
+  const request: SweepRuntimesRequest = {
+    ...(transport ? { transport } : {}),
+    olderThan: parseFlag(args, '--older-than') ?? '24h',
+    ...(statusRaw
+      ? {
+          status: statusRaw
+            .split(',')
+            .map((status) => status.trim())
+            .filter((status) => status.length > 0),
+        }
+      : {}),
+    ...(scope ? { scope } : {}),
+    ...(hasFlag(args, '--drop-continuation') ? { dropContinuation: true } : {}),
+    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    ...(yes ? { yes } : {}),
+  }
+
+  const client = createClient()
+  const result = await client.sweepRuntimes(request)
+  if (jsonOutput) {
+    printSweepNdjson(result)
+    return
+  }
+
+  printSweepHuman(result, request.dryRun === true)
+}
+
+function printSweepNdjson(result: SweepRuntimesResponse): void {
+  for (const row of result.results) {
+    process.stdout.write(`${JSON.stringify(row)}\n`)
+  }
+  process.stdout.write(`${JSON.stringify(result.summary)}\n`)
+}
+
+function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
+  process.stdout.write(`runtime sweep${dryRun ? ' (dry-run)' : ''}\n`)
+  for (const row of result.results) {
+    const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
+    process.stdout.write(
+      `  ${row.status.padEnd(10)} ${row.runtimeId} ${row.transport} dropContinuation=${
+        row.droppedContinuation
+      }${suffix}\n`
+    )
+  }
+  process.stdout.write(
+    `summary matched=${result.summary.matched} terminated=${result.summary.terminated} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+  )
 }
 
 async function cmdLaunchList(args: string[]): Promise<void> {
@@ -1298,8 +1483,15 @@ async function cmdLaunchList(args: string[]): Promise<void> {
 async function cmdAdopt(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
-  const result = await client.adoptRuntime(runtimeId)
-  printJson(result)
+  try {
+    const result = await client.adoptRuntime(runtimeId)
+    printJson(result)
+  } catch (err) {
+    if (printHrcDomainErrorBody(err)) {
+      return
+    }
+    throw err
+  }
 }
 
 /**
@@ -1713,6 +1905,10 @@ async function cmdRuntime(args: string[]): Promise<void> {
       return cmdRuntimeEnsure(args.slice(1))
     case 'list':
       return cmdRuntimeList(args.slice(1))
+    case 'inspect':
+      return cmdRuntimeInspect(args.slice(1))
+    case 'sweep':
+      return cmdRuntimeSweep(args.slice(1))
     case 'capture':
       return cmdCapture(args.slice(1))
     case 'interrupt':
@@ -1725,7 +1921,7 @@ async function cmdRuntime(args: string[]): Promise<void> {
       fatal(
         subcommand
           ? `unknown runtime subcommand: ${subcommand}`
-          : 'runtime subcommand required (ensure, list, capture, interrupt, terminate, adopt)'
+          : 'runtime subcommand required (ensure, list, inspect, sweep, capture, interrupt, terminate, adopt)'
       )
   }
 }
@@ -1855,10 +2051,17 @@ async function cmdSessionClearContext(args: string[]): Promise<void> {
 async function cmdCapture(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
-  const result = await client.capture(runtimeId)
-  process.stdout.write(result.text)
-  if (!result.text.endsWith('\n')) {
-    process.stdout.write('\n')
+  try {
+    const result = await client.capture(runtimeId)
+    process.stdout.write(result.text)
+    if (!result.text.endsWith('\n')) {
+      process.stdout.write('\n')
+    }
+  } catch (err) {
+    if (printHrcDomainErrorBody(err)) {
+      return
+    }
+    throw err
   }
 }
 
@@ -1943,14 +2146,30 @@ async function cmdAttach(args: string[]): Promise<void> {
 async function cmdInterrupt(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
-  const result = await client.interrupt(runtimeId)
-  printJson(result)
+  try {
+    const result = await client.interrupt(runtimeId)
+    printJson(result)
+  } catch (err) {
+    if (printHrcDomainErrorBody(err)) {
+      return
+    }
+    throw err
+  }
 }
 
 async function cmdTerminate(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const dropContinuation = hasFlag(args, '--drop-continuation')
+  const noDropContinuation = hasFlag(args, '--no-drop-continuation')
+  if (dropContinuation && noDropContinuation) {
+    fatal('--drop-continuation and --no-drop-continuation are mutually exclusive')
+  }
+
   const client = createClient()
-  const result = await client.terminate(runtimeId)
+  const result = await client.terminate(runtimeId, {
+    ...(dropContinuation ? { dropContinuation: true } : {}),
+    ...(noDropContinuation ? { dropContinuation: false } : {}),
+  })
   printJson(result)
 }
 
@@ -2365,14 +2584,20 @@ Commands:
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
   session clear-context <hostSessionId> [--relaunch]
+  session drop-continuation <hostSessionId> [--reason <text>]
   status [--json]                     Show server status and capabilities
   events [scope] [--from-seq <n>] [--follow] [--pretty]
                                      Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
-  runtime list [--host-session-id <id>]  List runtimes
+  runtime list [--host-session-id <id>] [--transport <transport>] [--status <csv>] [--stale] [--older-than <duration>] [--scope <prefix>] [--json]
+                                     List runtimes
+  runtime inspect <runtimeId> [--json] Inspect one runtime
+  runtime sweep [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--drop-continuation] [--dry-run|--yes] [--json]
+                                     Sweep stale runtimes
   runtime capture <runtimeId>         Capture tmux pane text
-  runtime interrupt <runtimeId>       Send Ctrl-C to a runtime pane
-  runtime terminate <runtimeId>       Terminate a runtime session
+  runtime interrupt <runtimeId>       Interrupt a runtime
+  runtime terminate <runtimeId> [--drop-continuation|--no-drop-continuation]
+                                     Terminate a runtime session
   runtime adopt <runtimeId>           Adopt a dead/stale runtime
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]

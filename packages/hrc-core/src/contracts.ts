@@ -40,7 +40,7 @@ export type HrcEventCategory =
   | 'context'
   | 'app_session'
 
-export type HrcLifecycleTransport = 'sdk' | 'tmux'
+export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
 
 export type HrcLifecycleEvent = {
   hrcSeq: number

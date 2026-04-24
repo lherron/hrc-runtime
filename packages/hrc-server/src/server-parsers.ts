@@ -15,6 +15,7 @@ import type {
   DeliverBridgeRequest,
   DispatchAppHarnessTurnRequest,
   DispatchTurnRequest,
+  DropContinuationRequest,
   EnsureAppSessionRequest,
   EnsureRuntimeRequest,
   HrcAppSessionRef,
@@ -22,12 +23,16 @@ import type {
   HrcCommandLaunchSpec,
   HrcProvider,
   HrcRuntimeIntent,
+  InspectRuntimeRequest,
   InterruptAppSessionRequest,
   RestartStyle,
   SendAppHarnessInFlightInputRequest,
   SendLiteralInputRequest,
   StartRuntimeRequest,
+  SweepRuntimeTransport,
+  SweepRuntimesRequest,
   TerminateAppSessionRequest,
+  TerminateRuntimeRequest,
   UnbindSurfaceRequest,
 } from 'hrc-core'
 import { parseAgentProfile, resolveHarnessProvider } from 'spaces-config'
@@ -76,6 +81,17 @@ export type DeliverTextRequest = {
   oobSuffix?: string | undefined
   expectedHostSessionId?: string | undefined
   expectedGeneration?: number | undefined
+}
+
+export type ListRuntimesFilter = {
+  hostSessionId?: string | undefined
+  transport?: 'tmux' | 'headless' | 'sdk' | undefined
+  status?: string[] | undefined
+  scope?: string | undefined
+  stale?: boolean | undefined
+  olderThan?: string | undefined
+  olderThanMs?: number | undefined
+  json?: boolean | undefined
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -161,6 +177,97 @@ export function normalizeOptionalQuery(value: string | null): string | undefined
 
   const normalized = value.trim()
   return normalized.length > 0 ? normalized : undefined
+}
+
+export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
+  const transport = normalizeOptionalQuery(url.searchParams.get('transport'))
+  if (
+    transport !== undefined &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'sdk'
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'transport must be one of: tmux, headless, sdk',
+      { field: 'transport', value: transport }
+    )
+  }
+
+  const statusRaw = normalizeOptionalQuery(url.searchParams.get('status'))
+  const status = statusRaw
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+  const stale = parseOptionalBooleanQuery(url.searchParams.get('stale'), 'stale')
+  const json = parseOptionalBooleanQuery(url.searchParams.get('json'), 'json')
+  const olderThan = normalizeOptionalQuery(url.searchParams.get('olderThan'))
+
+  return {
+    ...(normalizeOptionalQuery(url.searchParams.get('hostSessionId'))
+      ? { hostSessionId: normalizeOptionalQuery(url.searchParams.get('hostSessionId')) }
+      : {}),
+    ...(transport !== undefined ? { transport } : {}),
+    ...(status !== undefined && status.length > 0 ? { status } : {}),
+    ...(normalizeOptionalQuery(url.searchParams.get('scope'))
+      ? { scope: normalizeOptionalQuery(url.searchParams.get('scope')) }
+      : {}),
+    ...(stale !== undefined ? { stale } : {}),
+    ...(olderThan !== undefined ? { olderThan, olderThanMs: parseDurationMs(olderThan) } : {}),
+    ...(json !== undefined ? { json } : {}),
+  }
+}
+
+function parseOptionalBooleanQuery(raw: string | null, field: string): boolean | undefined {
+  const normalized = normalizeOptionalQuery(raw)
+  if (normalized === undefined) {
+    return undefined
+  }
+
+  if (normalized === 'true' || normalized === '1') {
+    return true
+  }
+  if (normalized === 'false' || normalized === '0') {
+    return false
+  }
+
+  throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a boolean`, {
+    field,
+    value: normalized,
+  })
+}
+
+function parseDurationMs(input: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(input.trim())
+  if (!match) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'olderThan must be a duration like 30m, 2h, or 24h',
+      { field: 'olderThan', value: input }
+    )
+  }
+
+  const amount = Number.parseFloat(match[1] ?? '')
+  const unit = match[2]
+  const multiplier =
+    unit === 'ms'
+      ? 1
+      : unit === 's'
+        ? 1000
+        : unit === 'm'
+          ? 60 * 1000
+          : unit === 'h'
+            ? 60 * 60 * 1000
+            : 24 * 60 * 60 * 1000
+  const durationMs = amount * multiplier
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'olderThan must be positive', {
+      field: 'olderThan',
+      value: input,
+    })
+  }
+  return Math.floor(durationMs)
 }
 
 function parseApplyAppSessionInput(input: unknown, index: number): ApplyAppSessionInput {
@@ -886,6 +993,132 @@ export function parseRuntimeActionBody(input: unknown): { runtimeId: string } {
 
   return {
     runtimeId: runtimeId.trim(),
+  }
+}
+
+export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRequest {
+  const body = parseRuntimeActionBody(input)
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const dropContinuation = input['dropContinuation']
+  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'dropContinuation must be a boolean',
+      {
+        field: 'dropContinuation',
+      }
+    )
+  }
+
+  return {
+    runtimeId: body.runtimeId,
+    ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
+  }
+}
+
+export function parseInspectRuntimeRequest(input: unknown): InspectRuntimeRequest {
+  return parseRuntimeActionBody(input)
+}
+
+export function parseDropContinuationRequest(input: unknown): DropContinuationRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  return {
+    hostSessionId: requireTrimmedStringField(input, 'hostSessionId'),
+    ...readOptionalStringField(input, 'reason'),
+  }
+}
+
+export function parseSweepRuntimesRequest(input: unknown): SweepRuntimesRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const transport = input['transport']
+  if (
+    transport !== undefined &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'sdk'
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'transport must be one of: tmux, headless, sdk',
+      { field: 'transport' }
+    )
+  }
+
+  const status = input['status']
+  if (status !== undefined && !Array.isArray(status)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'status must be an array', {
+      field: 'status',
+    })
+  }
+  const parsedStatus = status?.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `status[${index}] must be a non-empty string`,
+        { field: `status[${index}]` }
+      )
+    }
+    return entry.trim()
+  })
+
+  const olderThan = input['olderThan']
+  if (olderThan !== undefined && (typeof olderThan !== 'string' || olderThan.trim().length === 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'olderThan must be a non-empty string',
+      { field: 'olderThan' }
+    )
+  }
+
+  const scope = input['scope']
+  if (scope !== undefined && (typeof scope !== 'string' || scope.trim().length === 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'scope must be a non-empty string',
+      { field: 'scope' }
+    )
+  }
+
+  const dropContinuation = input['dropContinuation']
+  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'dropContinuation must be a boolean',
+      { field: 'dropContinuation' }
+    )
+  }
+
+  const dryRun = input['dryRun']
+  if (dryRun !== undefined && typeof dryRun !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'dryRun must be a boolean', {
+      field: 'dryRun',
+    })
+  }
+
+  const yes = input['yes']
+  if (yes !== undefined && typeof yes !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'yes must be a boolean', {
+      field: 'yes',
+    })
+  }
+
+  return {
+    ...(transport ? { transport: transport as SweepRuntimeTransport } : {}),
+    ...(olderThan ? { olderThan: olderThan.trim() } : {}),
+    ...(parsedStatus ? { status: parsedStatus } : {}),
+    ...(scope ? { scope: scope.trim() } : {}),
+    ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
+    ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
+    ...(typeof yes === 'boolean' ? { yes } : {}),
   }
 }
 

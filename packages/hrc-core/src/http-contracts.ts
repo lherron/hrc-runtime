@@ -6,8 +6,11 @@ import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
+  HrcContinuationRef,
+  HrcHarness,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
+  HrcProvider,
   HrcRuntimeIntent,
   HrcSessionRecord,
   HrcStatusResponse,
@@ -181,6 +184,91 @@ export type RuntimeActionResponse = {
   ok: true
   hostSessionId: string
   runtimeId: string
+  warning?: string | undefined
+}
+
+export type TerminateRuntimeRequest = {
+  runtimeId: string
+  dropContinuation?: boolean | undefined
+}
+
+export type TerminateRuntimeResponse = RuntimeActionResponse & {
+  droppedContinuation: boolean
+}
+
+export type InspectRuntimeRequest = {
+  runtimeId: string
+}
+
+export type InspectRuntimeResponse = {
+  runtimeId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  transport: 'tmux' | 'headless' | 'sdk' | string
+  harness: HrcHarness
+  provider: HrcProvider
+  status: string
+  createdAt: string
+  createdAgeSec: number
+  lastActivityAt: string | null
+  lastActivityAgeSec: number | null
+  activeRunId: string | null
+  wrapperPid: number | null
+  childPid: number | null
+  continuation: HrcContinuationRef | null
+  continuationKey: string | null
+  continuationStale: boolean
+}
+
+export type DropContinuationRequest = {
+  hostSessionId: string
+  reason?: string | undefined
+}
+
+export type DropContinuationResponse = {
+  ok: true
+  hostSessionId: string
+  dropped: boolean
+  previousContinuationKey: string | null
+}
+
+export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk'
+
+export type SweepRuntimesRequest = {
+  transport?: SweepRuntimeTransport | undefined
+  olderThan?: string | undefined
+  status?: string[] | undefined
+  scope?: string | undefined
+  dropContinuation?: boolean | undefined
+  dryRun?: boolean | undefined
+  yes?: boolean | undefined
+}
+
+export type SweepRuntimeResult = {
+  type: 'runtime'
+  runtimeId: string
+  hostSessionId: string
+  transport: SweepRuntimeTransport
+  status: 'terminated' | 'skipped' | 'error'
+  droppedContinuation: boolean
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type SweepRuntimesSummary = {
+  type: 'summary'
+  matched: number
+  terminated: number
+  skipped: number
+  errors: number
+}
+
+export type SweepRuntimesResponse = {
+  ok: true
+  results: SweepRuntimeResult[]
+  summary: SweepRuntimesSummary
 }
 
 export type SendWindowLiteralInputRequest = {

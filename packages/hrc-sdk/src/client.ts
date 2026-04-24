@@ -33,6 +33,8 @@ import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  DropContinuationRequest,
+  DropContinuationResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   EnsureTargetRequest,
@@ -41,6 +43,8 @@ import type {
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
+  InspectRuntimeRequest,
+  InspectRuntimeResponse,
   LaunchListFilter,
   ListMessagesResponse,
   RegisterBridgeTargetRequest,
@@ -58,7 +62,11 @@ import type {
   StartRuntimeResponse,
   StatusResponse,
   SurfaceListFilter,
+  SweepRuntimesRequest,
+  SweepRuntimesResponse,
   TargetListFilter,
+  TerminateRuntimeRequest,
+  TerminateRuntimeResponse,
   UnbindSurfaceRequest,
   WaitMessageRequest,
   WaitMessageResponse,
@@ -191,8 +199,23 @@ export class HrcClient {
     return this.postJson<RuntimeActionResponse>('/v1/interrupt', { runtimeId })
   }
 
-  async terminate(runtimeId: string): Promise<RuntimeActionResponse> {
-    return this.postJson<RuntimeActionResponse>('/v1/terminate', { runtimeId })
+  async terminate(
+    runtimeId: string,
+    options: Omit<TerminateRuntimeRequest, 'runtimeId'> = {}
+  ): Promise<TerminateRuntimeResponse> {
+    return this.postJson<TerminateRuntimeResponse>('/v1/terminate', { runtimeId, ...options })
+  }
+
+  async inspectRuntime(request: InspectRuntimeRequest): Promise<InspectRuntimeResponse> {
+    return this.postJson<InspectRuntimeResponse>('/v1/runtimes/inspect', request)
+  }
+
+  async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {
+    return this.postJson<SweepRuntimesResponse>('/v1/runtimes/sweep', request)
+  }
+
+  async dropContinuation(request: DropContinuationRequest): Promise<DropContinuationResponse> {
+    return this.postJson<DropContinuationResponse>('/v1/sessions/drop-continuation', request)
   }
 
   async bindSurface(request: BindSurfaceRequest): Promise<SurfaceBindingRecord> {
@@ -260,6 +283,12 @@ export class HrcClient {
   async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
     const params = new URLSearchParams()
     if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
+    if (filter?.transport) params.set('transport', filter.transport)
+    if (filter?.status && filter.status.length > 0) params.set('status', filter.status.join(','))
+    if (filter?.stale !== undefined) params.set('stale', String(filter.stale))
+    if (filter?.olderThan) params.set('olderThan', filter.olderThan)
+    if (filter?.scope) params.set('scope', filter.scope)
+    if (filter?.json !== undefined) params.set('json', String(filter.json))
     const qs = params.toString()
     const path = qs ? `/v1/runtimes?${qs}` : '/v1/runtimes'
     return this.getJson<RuntimeRecord[]>(path)

@@ -13,6 +13,8 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  DropContinuationRequest,
+  DropContinuationResponse,
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
@@ -28,8 +30,14 @@ export type {
   RestartStyle,
   StartRuntimeRequest,
   StartRuntimeResponse,
+  InspectRuntimeRequest,
+  InspectRuntimeResponse,
   RuntimeActionResponse,
   StatusResponse,
+  SweepRuntimesRequest,
+  SweepRuntimesResponse,
+  TerminateRuntimeRequest,
+  TerminateRuntimeResponse,
   UnbindSurfaceRequest,
 } from 'hrc-core'
 
@@ -85,6 +93,12 @@ export type BridgeListFilter = {
 
 export type RuntimeListFilter = {
   hostSessionId?: string | undefined
+  transport?: 'tmux' | 'headless' | 'sdk' | undefined
+  status?: string[] | undefined
+  stale?: boolean | undefined
+  olderThan?: string | undefined
+  scope?: string | undefined
+  json?: boolean | undefined
 }
 
 export type LaunchListFilter = {

@@ -8,14 +8,13 @@
  *   - runtime_buffers populated during SDK dispatch
  *   - Continuation persisted on session after SDK turn
  *   - Provider mismatch returns 422
- *   - Capture on SDK runtime reads from runtime_buffers
  *   - Attach on SDK runtime returns error
  *
  * Pass conditions for Larry (T-00967):
  *   1. POST /v1/turns with { harness: { interactive: false } } returns transport='sdk' in response
  *   2. Runtime record created by SDK dispatch has transport='sdk', no tmux_json
  *   3. Events with source='agent-spaces' appear in the raw events ledger during SDK dispatch
- *   4. GET /v1/capture on SDK runtime returns text from runtime_buffers
+ *   4. GET /v1/capture on SDK runtime is refused; operators should use events
  *   5. Continuation from SDK turn is persisted on session record
  *   6. POST /v1/turns with provider mismatch on existing runtime returns 422
  *   7. GET /v1/attach on SDK runtime returns error (attach not supported)
@@ -832,10 +831,10 @@ describe('SDK events in raw ledger', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. Capture on SDK runtime reads from runtime_buffers
+// 4. Capture on SDK runtime is refused
 // ---------------------------------------------------------------------------
 describe('capture on SDK runtime', () => {
-  it('returns text from runtime_buffers instead of tmux', async () => {
+  it('returns a helpful error instead of tmux pane text', async () => {
     const hsid = await resolveSession('sdk-test-4')
 
     const turnRes = await postJson('/v1/turns', {
@@ -849,10 +848,13 @@ describe('capture on SDK runtime', () => {
     await new Promise((r) => setTimeout(r, 1000))
 
     const captureRes = await fetchSocket(`/v1/capture?runtimeId=${turnData.runtimeId}`)
-    expect(captureRes.status).toBe(200)
+    expect(captureRes.status).toBe(400)
     const captureData = (await captureRes.json()) as any
-    expect(captureData.text).toBeString()
-    expect(captureData.text.length).toBeGreaterThan(0)
+    expect(captureData.error.message).toContain('use the runtime event stream')
+    expect(captureData.error.detail).toMatchObject({
+      runtimeId: turnData.runtimeId,
+      transport: 'sdk',
+    })
   })
 })
 

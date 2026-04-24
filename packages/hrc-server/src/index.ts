@@ -36,6 +36,7 @@ import type {
   DeliverLiteralBySelectorResponse,
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
+  DropContinuationResponse,
   EnsureAppSessionDryRunPlan,
   EnsureAppSessionRequest,
   EnsureAppSessionResponse,
@@ -69,6 +70,7 @@ import type {
   HrcTargetRuntimeView,
   HrcTargetState,
   HrcTargetView,
+  InspectRuntimeResponse,
   ListMessagesResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
@@ -80,7 +82,12 @@ import type {
   SendAppHarnessInFlightInputResponse,
   SendLiteralInputResponse,
   StartRuntimeResponse,
+  SweepRuntimeResult,
+  SweepRuntimeTransport,
+  SweepRuntimesResponse,
+  SweepRuntimesSummary,
   TargetCapabilityView,
+  TerminateRuntimeResponse,
   WaitMessageResponse,
 } from 'hrc-core'
 import { normalizeClaudeHook, normalizeCodexOtelEvent } from 'hrc-events'
@@ -120,6 +127,7 @@ import {
   type BridgeTargetRequest,
   type DeliverTextRequest,
   type InFlightInputRequest,
+  type ListRuntimesFilter,
   isRecord,
   normalizeOptionalQuery,
   parseAppHarnessInFlightInputRequest,
@@ -136,19 +144,24 @@ import {
   parseDeliverTextRequest,
   parseDispatchAppHarnessTurnRequest,
   parseDispatchTurnRequest,
+  parseDropContinuationRequest,
   parseEnsureAppSessionRequest,
   parseEnsureRuntimeRequest,
   parseFromSeq,
   parseInFlightInputRequest,
+  parseInspectRuntimeRequest,
   parseInterruptAppSessionRequest,
   parseJsonBody,
+  parseListRuntimesFilter,
   parseRemoveAppSessionRequest,
   parseResolveSessionRequest,
   parseRuntimeActionBody,
   parseSendLiteralInputRequest,
   parseSessionRef,
   parseStartRuntimeRequest,
+  parseSweepRuntimesRequest,
   parseTerminateAppSessionRequest,
+  parseTerminateRuntimeRequest,
   parseUnbindSurfaceRequest,
 } from './server-parsers.js'
 
@@ -489,6 +502,9 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/attach')]: (request) => this.handleAttachRuntime(request),
+    [exactRouteKey('POST', '/v1/runtimes/inspect')]: (request) =>
+      this.handleInspectRuntime(request),
+    [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/in-flight-input')]: (request) => this.handleInFlightInput(request),
     [exactRouteKey('GET', '/v1/capture')]: (_request, url) => this.handleCapture(url),
@@ -510,6 +526,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/clear-context')]: (request) => this.handleClearContext(request),
     [exactRouteKey('POST', '/v1/sessions/clear-context')]: (request) =>
       this.handleClearContext(request),
+    [exactRouteKey('POST', '/v1/sessions/drop-continuation')]: (request) =>
+      this.handleDropContinuation(request),
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       this.handleHookIngest(request),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
@@ -2944,19 +2962,258 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async handleTerminate(request: Request): Promise<Response> {
-    const body = parseRuntimeActionBody(await parseJsonBody(request))
+    const body = parseTerminateRuntimeRequest(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
-    return await this.terminateRuntime(runtime)
+    return await this.terminateRuntime(runtime, { dropContinuation: body.dropContinuation })
+  }
+
+  private async handleInspectRuntime(request: Request): Promise<Response> {
+    const body = parseInspectRuntimeRequest(await parseJsonBody(request))
+    const runtime = this.db.runtimes.getByRuntimeId(body.runtimeId)
+    if (!runtime) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_RUNTIME,
+        `unknown runtime "${body.runtimeId}"`,
+        { runtimeId: body.runtimeId }
+      )
+    }
+
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const nowMs = Date.now()
+    const createdAtMs = Date.parse(runtime.createdAt)
+    const lastActivityAt = runtime.lastActivityAt ?? null
+    const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
+    const continuation = runtime.continuation ?? session.continuation ?? null
+    const sessionCreatedAtMs = Date.parse(session.createdAt)
+    const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
+      ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
+      : 0
+
+    return json({
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      transport: runtime.transport,
+      harness: runtime.harness,
+      provider: runtime.provider,
+      status: runtime.status,
+      createdAt: runtime.createdAt,
+      createdAgeSec: Number.isFinite(createdAtMs)
+        ? Math.max(0, Math.floor((nowMs - createdAtMs) / 1000))
+        : 0,
+      lastActivityAt,
+      lastActivityAgeSec: Number.isFinite(lastActivityAtMs)
+        ? Math.max(0, Math.floor((nowMs - lastActivityAtMs) / 1000))
+        : null,
+      activeRunId: runtime.activeRunId ?? null,
+      wrapperPid: runtime.wrapperPid ?? null,
+      childPid: runtime.childPid ?? null,
+      continuation,
+      continuationKey: continuation?.key ?? null,
+      continuationStale:
+        continuation !== null &&
+        this.staleGenerationEnabled &&
+        this.staleGenerationThresholdSec > 0 &&
+        continuationAgeSec > this.staleGenerationThresholdSec,
+    } satisfies InspectRuntimeResponse)
+  }
+
+  private async handleDropContinuation(request: Request): Promise<Response> {
+    const body = parseDropContinuationRequest(await parseJsonBody(request))
+    const session = requireSession(this.db, body.hostSessionId)
+    const previousContinuationKey = session.continuation?.key ?? null
+
+    if (session.continuation === undefined) {
+      return json({
+        ok: true,
+        hostSessionId: session.hostSessionId,
+        dropped: false,
+        previousContinuationKey,
+      } satisfies DropContinuationResponse)
+    }
+
+    const now = timestamp()
+    this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    const event = appendHrcEvent(this.db, 'session.continuation_dropped', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      payload: {
+        hostSessionId: session.hostSessionId,
+        previousContinuationKey,
+        ...(body.reason ? { reason: body.reason } : {}),
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      dropped: true,
+      previousContinuationKey,
+    } satisfies DropContinuationResponse)
+  }
+
+  private async handleSweepRuntimes(request: Request): Promise<Response> {
+    const body = parseSweepRuntimesRequest(await parseJsonBody(request))
+    const statuses = body.status ?? ['ready', 'busy']
+    const nowMs = Date.now()
+    const cutoffMs = nowMs - parseSweepDurationMs(body.olderThan ?? '24h')
+    const matched = this.db.runtimes.listAll().filter((runtime) =>
+      runtimeMatchesSweepRequest(runtime, {
+        cutoffMs,
+        includeRecentUnavailable: body.status === undefined,
+        nowMs,
+        scope: body.scope,
+        statuses,
+        transport: body.transport,
+      })
+    )
+
+    const results: SweepRuntimeResult[] = []
+    if (body.dryRun !== true) {
+      for (const runtime of matched) {
+        const droppedContinuation =
+          body.dropContinuation ?? (runtime.transport !== 'tmux' && runtime.activeRunId != null)
+        if (!this.claimRuntimeForSweep(runtime.runtimeId, statuses, timestamp())) {
+          results.push({
+            type: 'runtime',
+            runtimeId: runtime.runtimeId,
+            hostSessionId: runtime.hostSessionId,
+            transport: runtime.transport as SweepRuntimeTransport,
+            status: 'skipped',
+            droppedContinuation: false,
+          })
+          continue
+        }
+
+        try {
+          const response = await this.terminateRuntime(runtime, {
+            dropContinuation: droppedContinuation,
+          })
+          const terminated = (await response.json()) as TerminateRuntimeResponse
+          results.push({
+            type: 'runtime',
+            runtimeId: runtime.runtimeId,
+            hostSessionId: runtime.hostSessionId,
+            transport: runtime.transport as SweepRuntimeTransport,
+            status: 'terminated',
+            droppedContinuation: terminated.droppedContinuation,
+          })
+        } catch (err) {
+          results.push({
+            type: 'runtime',
+            runtimeId: runtime.runtimeId,
+            hostSessionId: runtime.hostSessionId,
+            transport: runtime.transport as SweepRuntimeTransport,
+            status: 'error',
+            droppedContinuation: false,
+            errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+    } else {
+      for (const runtime of matched) {
+        results.push({
+          type: 'runtime',
+          runtimeId: runtime.runtimeId,
+          hostSessionId: runtime.hostSessionId,
+          transport: runtime.transport as SweepRuntimeTransport,
+          status: 'skipped',
+          droppedContinuation: false,
+        })
+      }
+    }
+
+    const summary: SweepRuntimesSummary = {
+      type: 'summary',
+      matched: matched.length,
+      terminated: results.filter((result) => result.status === 'terminated').length,
+      skipped: results.filter((result) => result.status === 'skipped').length,
+      errors: results.filter((result) => result.status === 'error').length,
+    }
+
+    if (body.dryRun !== true) {
+      this.appendSweepCompletedEvent(summary, matched)
+    }
+
+    return json({
+      ok: true,
+      results,
+      summary,
+    } satisfies SweepRuntimesResponse)
+  }
+
+  private claimRuntimeForSweep(runtimeId: string, statuses: string[], now: string): boolean {
+    const placeholders = statuses.map(() => '?').join(', ')
+    const statement = this.db.sqlite.query(
+      `UPDATE runtimes SET status = ?, updated_at = ? WHERE runtime_id = ? AND status IN (${placeholders})`
+    )
+    const result = statement.run('terminating', now, runtimeId, ...statuses) as { changes?: number }
+    return (result.changes ?? 0) > 0
+  }
+
+  private appendSweepCompletedEvent(
+    summary: SweepRuntimesSummary,
+    matched: HrcRuntimeSnapshot[]
+  ): void {
+    const session = this.resolveSweepSummarySession(matched)
+    const event = appendHrcEvent(this.db, 'runtime.sweep_completed', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      payload: summary,
+    })
+    this.notifyEvent(event)
+  }
+
+  private resolveSweepSummarySession(matched: HrcRuntimeSnapshot[]): HrcSessionRecord {
+    const firstRuntimeSession = matched
+      .map((runtime) => this.db.sessions.getByHostSessionId(runtime.hostSessionId))
+      .find((session): session is HrcSessionRecord => session !== null)
+    if (firstRuntimeSession) {
+      return firstRuntimeSession
+    }
+
+    const hostSessionId = 'hrc-sweep-summary'
+    const existing = this.db.sessions.getByHostSessionId(hostSessionId)
+    if (existing) {
+      return existing
+    }
+
+    const now = timestamp()
+    return this.db.sessions.insert({
+      hostSessionId,
+      scopeRef: 'system:hrc/sweep',
+      laneRef: 'default',
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: [],
+    })
   }
 
   private async captureRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
-    const text =
-      runtime.transport === 'sdk' || runtime.transport === 'headless'
-        ? this.db.runtimeBuffers
-            .listByRuntimeId(runtime.runtimeId)
-            .map((chunk) => chunk.text)
-            .join('')
-        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
+    if (runtime.transport !== 'tmux') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'cannot capture a non-tmux runtime; use the runtime event stream instead',
+        {
+          runtimeId: runtime.runtimeId,
+          transport: runtime.transport,
+        }
+      )
+    }
+
+    const text = await this.tmux.capture(requireTmuxPane(runtime).paneId)
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
@@ -3651,6 +3908,14 @@ class HrcServerInstance implements HrcServer {
       return await this.terminateRuntime(runtime)
     }
 
+    if (runtime.transport !== 'tmux') {
+      return this.interruptHeadlessRuntime(runtime)
+    }
+
+    return await this.interruptTmuxRuntime(runtime)
+  }
+
+  private async interruptTmuxRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
@@ -3667,6 +3932,7 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
       payload: {
+        transport: 'tmux',
         paneId: tmux.paneId,
       },
     })
@@ -3679,7 +3945,67 @@ class HrcServerInstance implements HrcServer {
     } satisfies RuntimeActionResponse)
   }
 
-  private async terminateRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
+  private interruptHeadlessRuntime(runtime: HrcRuntimeSnapshot): Response {
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const transport = runtime.transport === 'headless' ? 'headless' : 'sdk'
+
+    if (runtime.activeRunId === undefined) {
+      return json({
+        ok: true,
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        warning: 'no active run to interrupt',
+      } satisfies RuntimeActionResponse)
+    }
+
+    const now = timestamp()
+    this.db.runs.markCompleted(runtime.activeRunId, {
+      status: 'cancelled',
+      completedAt: now,
+      updatedAt: now,
+    })
+    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'ready',
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+    const event = appendHrcEvent(this.db, 'runtime.interrupted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      runId: runtime.activeRunId,
+      transport,
+      payload: {
+        transport,
+        runId: runtime.activeRunId,
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+    } satisfies RuntimeActionResponse)
+  }
+
+  private async terminateRuntime(
+    runtime: HrcRuntimeSnapshot,
+    opts: { dropContinuation?: boolean | undefined } = {}
+  ): Promise<Response> {
+    if (runtime.transport === 'tmux') {
+      return await this.terminateTmuxRuntime(runtime)
+    }
+
+    const dropContinuation = opts.dropContinuation ?? runtime.activeRunId != null
+    return await this.terminateHeadlessRuntime(runtime, { dropContinuation })
+  }
+
+  private async terminateTmuxRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
@@ -3699,7 +4025,9 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
       payload: {
+        transport: 'tmux',
         sessionName: tmux.sessionName,
+        droppedContinuation: false,
       },
     })
     this.notifyEvent(event)
@@ -3708,7 +4036,44 @@ class HrcServerInstance implements HrcServer {
       ok: true,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
-    } satisfies RuntimeActionResponse)
+      droppedContinuation: false,
+    } satisfies TerminateRuntimeResponse)
+  }
+
+  private async terminateHeadlessRuntime(
+    runtime: HrcRuntimeSnapshot,
+    opts: { dropContinuation: boolean }
+  ): Promise<Response> {
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const now = timestamp()
+
+    if (opts.dropContinuation) {
+      this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    }
+
+    finalizeRuntimeTermination(this.db, runtime, now)
+    const transport = runtime.transport === 'headless' ? 'headless' : 'sdk'
+    const event = appendHrcEvent(this.db, 'runtime.terminated', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport,
+      payload: {
+        transport,
+        droppedContinuation: opts.dropContinuation,
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      droppedContinuation: opts.dropContinuation,
+    } satisfies TerminateRuntimeResponse)
   }
 
   private async ensureCommandRuntimeForSession(
@@ -4892,13 +5257,14 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async handleListRuntimes(url: URL): Promise<Response> {
-    const hostSessionId = url.searchParams.get('hostSessionId') ?? undefined
-    const runtimes = hostSessionId
-      ? this.db.runtimes.listByHostSessionId(hostSessionId)
+    const filter = parseListRuntimesFilter(url)
+    const runtimes = filter.hostSessionId
+      ? this.db.runtimes.listByHostSessionId(filter.hostSessionId)
       : this.db.runtimes.listAll()
-    return json(
-      await Promise.all(runtimes.map((runtime) => this.reconcileTmuxRuntimeLiveness(runtime)))
+    const reconciled = await Promise.all(
+      runtimes.map((runtime) => this.reconcileTmuxRuntimeLiveness(runtime))
     )
+    return json(filterRuntimes(reconciled, filter))
   }
 
   private handleListLaunches(url: URL): Response {
@@ -4924,6 +5290,16 @@ class HrcServerInstance implements HrcServer {
     const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
     if (!runtime) {
       throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
+    }
+    if (runtime.transport !== 'tmux') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'cannot adopt a non-tmux runtime: no attachable pane/process exists',
+        {
+          runtimeId,
+          transport: runtime.transport,
+        }
+      )
     }
     if (runtime.status !== 'dead' && runtime.status !== 'stale') {
       throw new HrcConflictError(
@@ -7470,6 +7846,120 @@ function requireLatestSessionRuntime(db: HrcDatabase, hostSessionId: string): Hr
 
 function isRuntimeUnavailableStatus(status: string): boolean {
   return status === 'terminated' || status === 'dead' || status === 'stale'
+}
+
+function parseSweepDurationMs(raw: string): number {
+  const match = raw.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/)
+  if (!match) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'olderThan must be a duration', {
+      field: 'olderThan',
+    })
+  }
+
+  const value = Number.parseFloat(match[1] as string)
+  const unit = match[2] ?? 'ms'
+  const multiplier =
+    unit === 'ms'
+      ? 1
+      : unit === 's'
+        ? 1000
+        : unit === 'm'
+          ? 60 * 1000
+          : unit === 'h'
+            ? 60 * 60 * 1000
+            : 24 * 60 * 60 * 1000
+  return Math.max(0, Math.floor(value * multiplier))
+}
+
+function runtimeMatchesSweepRequest(
+  runtime: HrcRuntimeSnapshot,
+  filters: {
+    cutoffMs: number
+    includeRecentUnavailable: boolean
+    nowMs: number
+    scope?: string | undefined
+    statuses: string[]
+    transport?: SweepRuntimeTransport | undefined
+  }
+): boolean {
+  if (!isSweepRuntimeTransport(runtime.transport)) {
+    return false
+  }
+  if (filters.transport !== undefined && runtime.transport !== filters.transport) {
+    return false
+  }
+  const updatedAtMs = Date.parse(runtime.updatedAt)
+  const recentUnavailable =
+    filters.includeRecentUnavailable &&
+    isRuntimeUnavailableStatus(runtime.status) &&
+    Number.isFinite(updatedAtMs) &&
+    filters.nowMs - updatedAtMs <= 30_000
+  if (!filters.statuses.includes(runtime.status) && !recentUnavailable) {
+    return false
+  }
+  if (filters.scope !== undefined && !runtime.scopeRef.startsWith(filters.scope)) {
+    return false
+  }
+
+  const createdAtMs = Date.parse(runtime.createdAt)
+  return Number.isFinite(createdAtMs) && createdAtMs <= filters.cutoffMs
+}
+
+function isSweepRuntimeTransport(transport: string): transport is SweepRuntimeTransport {
+  return transport === 'tmux' || transport === 'headless' || transport === 'sdk'
+}
+
+function filterRuntimes(
+  runtimes: HrcRuntimeSnapshot[],
+  filter: ListRuntimesFilter
+): HrcRuntimeSnapshot[] {
+  const explicitStatuses = filter.status !== undefined && filter.status.length > 0
+  const statusSet = explicitStatuses ? new Set(filter.status) : null
+  const staleThresholdMs = filter.olderThanMs ?? resolveListStaleThresholdMs()
+  const staleBefore = Date.now() - staleThresholdMs
+
+  const filtered = runtimes.filter((runtime) => {
+    if (filter.transport !== undefined && runtime.transport !== filter.transport) {
+      return false
+    }
+    if (statusSet && !statusSet.has(runtime.status)) {
+      return false
+    }
+    if (filter.scope !== undefined && !runtime.scopeRef.startsWith(filter.scope)) {
+      return false
+    }
+    if (filter.stale === true) {
+      if (!explicitStatuses && (runtime.status === 'terminated' || runtime.status === 'dead')) {
+        return false
+      }
+      const createdAt = Date.parse(runtime.createdAt)
+      if (!Number.isFinite(createdAt) || createdAt > staleBefore) {
+        return false
+      }
+    }
+    return true
+  })
+
+  if (explicitStatuses && filter.status && filter.status.length > 1) {
+    const statusOrder = new Map(filter.status.map((status, index) => [status, index] as const))
+    return [...filtered].sort(
+      (left, right) => (statusOrder.get(left.status) ?? 0) - (statusOrder.get(right.status) ?? 0)
+    )
+  }
+
+  return filtered
+}
+
+function resolveListStaleThresholdMs(): number {
+  const raw = process.env['HRC_STALE_GENERATION_HOURS']
+  if (raw === undefined) {
+    return DEFAULT_STALE_GENERATION_THRESHOLD_SEC * 1000
+  }
+  const hours = Number.parseFloat(raw)
+  if (!Number.isFinite(hours) || hours < 0) {
+    return DEFAULT_STALE_GENERATION_THRESHOLD_SEC * 1000
+  }
+  return Math.floor(hours * 60 * 60 * 1000)
 }
 
 /**
