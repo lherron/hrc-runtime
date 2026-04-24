@@ -7901,8 +7901,9 @@ function runtimeMatchesSweepRequest(
     return false
   }
 
-  const createdAtMs = Date.parse(runtime.createdAt)
-  return Number.isFinite(createdAtMs) && createdAtMs <= filters.cutoffMs
+  const activityTs = runtime.lastActivityAt ?? runtime.createdAt
+  const activityMs = Date.parse(activityTs)
+  return Number.isFinite(activityMs) && activityMs <= filters.cutoffMs
 }
 
 function isSweepRuntimeTransport(transport: string): transport is SweepRuntimeTransport {
@@ -7932,8 +7933,9 @@ function filterRuntimes(
       if (!explicitStatuses && (runtime.status === 'terminated' || runtime.status === 'dead')) {
         return false
       }
-      const createdAt = Date.parse(runtime.createdAt)
-      if (!Number.isFinite(createdAt) || createdAt > staleBefore) {
+      const activityTs = runtime.lastActivityAt ?? runtime.createdAt
+      const activityMs = Date.parse(activityTs)
+      if (!Number.isFinite(activityMs) || activityMs > staleBefore) {
         return false
       }
     }

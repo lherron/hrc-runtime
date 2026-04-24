@@ -333,7 +333,12 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(getRuntime('rt-status-ready')?.status).toBe('ready')
   })
 
-  it('reports skipped for a second concurrent sweep when atomic guards lose the race', async () => {
+  it('second concurrent sweep sees no matches once the first sweep has bumped lastActivityAt', async () => {
+    // Under lastActivityAt-based staleness, once the first sweep terminates a row
+    // its activity timestamp is refreshed to "now", so a subsequent sweep's match
+    // phase naturally excludes it. The within-iteration atomic claim guard (see
+    // claimRuntimeForSweep) remains in place for the narrower race where both
+    // sweeps' match phases interleave with their termination loops.
     for (const suffix of ['one', 'two']) {
       seedRuntime({
         runtimeId: `rt-race-${suffix}`,
@@ -352,7 +357,7 @@ describe('POST /v1/runtimes/sweep', () => {
       (left, right) => right.terminated - left.terminated
     )
     expect(summaries[0]).toMatchObject({ matched: 2, terminated: 2, skipped: 0, errors: 0 })
-    expect(summaries[1]).toMatchObject({ matched: 2, terminated: 0, skipped: 2, errors: 0 })
+    expect(summaries[1]).toMatchObject({ matched: 0, terminated: 0, skipped: 0, errors: 0 })
     expect(listRuntimeEvents('runtime.terminated')).toHaveLength(2)
     expect(listRuntimeEvents('runtime.sweep_completed')).toHaveLength(2)
   })
