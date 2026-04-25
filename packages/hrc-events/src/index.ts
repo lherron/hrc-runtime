@@ -38,6 +38,14 @@ export { normalizeClaudeHook, formatToolSummary } from './hook-normalizer.js'
 export type { OtelLogRecordInput, NormalizeOtelResult } from './otel-normalizer.js'
 export { normalizeCodexOtelEvent } from './otel-normalizer.js'
 
+// Hook normalizer (Pi)
+export type {
+  PiHookEnvelopeInput,
+  PiSemanticEvent,
+  NormalizePiHookResult,
+} from './pi-normalizer.js'
+export { normalizePiHookEvent } from './pi-normalizer.js'
+
 // Tool output formatter
 export type { ToolOutputFormatResult } from './tool-output-formatter.js'
 export { formatToolOutput } from './tool-output-formatter.js'
