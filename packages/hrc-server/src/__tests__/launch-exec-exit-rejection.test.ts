@@ -46,12 +46,13 @@ afterEach(async () => {
 })
 
 function makeArtifact(overrides: Partial<HrcLaunchArtifact> = {}): HrcLaunchArtifact {
-  return {
+  const artifact: HrcLaunchArtifact = {
     launchId: 'launch-exit-rej-001',
     hostSessionId: 'hsid-exit-rej',
     generation: 1,
     runtimeId: 'rt-exit-rej',
     harness: 'claude-code',
+    frontend: 'claude-code',
     provider: 'anthropic',
     argv: ['/bin/sh', '-c', 'exit 42'],
     env: {},
@@ -63,6 +64,10 @@ function makeArtifact(overrides: Partial<HrcLaunchArtifact> = {}): HrcLaunchArti
       HRC_GENERATION: '1',
     },
     ...overrides,
+  }
+  return {
+    ...artifact,
+    frontend: overrides.frontend ?? (artifact.harness === 'pi' ? 'pi-cli' : artifact.harness),
   }
 }
 

@@ -7,6 +7,7 @@ import { ancestorScopeRefs, resolveScopeInput } from 'agent-scope'
 
 import { HrcDomainError, HrcErrorCode, resolveDatabasePath } from 'hrc-core'
 import type {
+  HrcHarness,
   HrcLifecycleEvent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -28,6 +29,7 @@ import {
   getAgentsRoot,
   inferProjectIdFromCwd,
   mergeAgentWithProjectTarget,
+  normalizeHarnessFrontend,
   parseAgentProfile,
   parseTargetsToml,
   resolveAgentPlacementPaths,
@@ -132,14 +134,28 @@ function resolveProviderForHarness(harness: string | undefined): 'anthropic' | '
   return resolveHarnessProvider(harness) ?? 'anthropic'
 }
 
-function resolveProviderFromAgent(
+type AgentHarnessResolution = {
+  provider: 'anthropic' | 'openai'
+  harness: string | undefined
+}
+
+export function harnessStringToHarnessId(harness: string | undefined): HrcHarness | undefined {
+  return normalizeHarnessFrontend(harness) as HrcHarness | undefined
+}
+
+export function resolveAgentHarness(
   agentRoot: string,
   agentName: string,
   projectRoot?: string
-): 'anthropic' | 'openai' {
+): AgentHarnessResolution {
   const projectTarget = loadProjectTarget(projectRoot, agentName)
   const profilePath = join(agentRoot, 'agent-profile.toml')
-  if (!existsSync(profilePath)) return resolveProviderForHarness(projectTarget?.harness)
+  if (!existsSync(profilePath)) {
+    return {
+      provider: resolveProviderForHarness(projectTarget?.harness),
+      harness: projectTarget?.harness,
+    }
+  }
   try {
     const source = readFileSync(profilePath, 'utf8').replace(
       /^(\s*)schema_version(\s*=)/m,
@@ -155,11 +171,17 @@ function resolveProviderFromAgent(
       projectTarget,
       'task'
     )
-    return resolveProviderForHarness(effective.harness)
+    return {
+      provider: resolveProviderForHarness(effective.harness),
+      harness: effective.harness,
+    }
   } catch {
     // Profile parse failed — fall back to default
   }
-  return resolveProviderForHarness(projectTarget?.harness)
+  return {
+    provider: resolveProviderForHarness(projectTarget?.harness),
+    harness: projectTarget?.harness,
+  }
 }
 
 type ManagedScopeContext = {
@@ -353,7 +375,12 @@ function buildManagedRuntimeIntent(
     agentRoot,
     projectRoot,
   })
-  const provider = resolveProviderFromAgent(agentRoot, scope.agentId, projectRoot)
+  const { provider, harness: harnessString } = resolveAgentHarness(
+    agentRoot,
+    scope.agentId,
+    projectRoot
+  )
+  const harnessId = harnessStringToHarnessId(harnessString)
 
   return {
     placement: {
@@ -366,6 +393,7 @@ function buildManagedRuntimeIntent(
     harness: {
       provider,
       interactive: true,
+      ...(harnessId !== undefined ? { id: harnessId } : {}),
     },
     execution: {
       preferredMode: options.preferredMode ?? ('interactive' as const),

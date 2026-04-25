@@ -6,7 +6,7 @@ import type {
 } from 'agent-spaces'
 import type { HrcRuntimeIntent } from 'hrc-core'
 
-import { buildCliInvocation } from '../agent-spaces-adapter/cli-adapter'
+import { SUPPORTED_CLI_HARNESSES, buildCliInvocation } from '../agent-spaces-adapter/cli-adapter'
 
 function makeIntent(
   overrides: Partial<HrcRuntimeIntent> = {},
@@ -54,6 +54,55 @@ function makeResponse(): BuildProcessInvocationSpecResponse {
 }
 
 describe('buildCliInvocation execution mode mapping', () => {
+  it('advertises pi-cli as a supported interactive CLI frontend', () => {
+    expect(SUPPORTED_CLI_HARNESSES.has('pi-cli')).toBeTrue()
+  })
+
+  it('resolves explicit pi harness intent to pi-cli rather than codex-cli', async () => {
+    let capturedRequest: BuildProcessInvocationSpecRequest | undefined
+
+    const result = await buildCliInvocation(
+      makeIntent({
+        harness: {
+          id: 'pi',
+          provider: 'openai',
+          interactive: true,
+        },
+      }),
+      {
+        specBuilder: async (req) => {
+          capturedRequest = req
+          return makeResponse()
+        },
+      }
+    )
+
+    expect(capturedRequest?.frontend).toBe('pi-cli')
+    expect(result.frontend).toBe('pi-cli')
+  })
+
+  it('keeps explicit codex CLI intent on codex-cli', async () => {
+    let capturedRequest: BuildProcessInvocationSpecRequest | undefined
+
+    await buildCliInvocation(
+      makeIntent({
+        harness: {
+          id: 'codex-cli',
+          provider: 'openai',
+          interactive: true,
+        },
+      }),
+      {
+        specBuilder: async (req) => {
+          capturedRequest = req
+          return makeResponse()
+        },
+      }
+    )
+
+    expect(capturedRequest?.frontend).toBe('codex-cli')
+  })
+
   it('defaults to interactive + pty and preserves prompt/env plumbing', async () => {
     let capturedRequest: BuildProcessInvocationSpecRequest | undefined
 

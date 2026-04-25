@@ -50,6 +50,7 @@ function makeArtifact(overrides: Partial<HrcLaunchArtifact> = {}): HrcLaunchArti
     generation: 1,
     runtimeId: 'rt-test-001',
     harness: 'claude-code',
+    frontend: 'claude-code',
     provider: 'anthropic',
     argv: ['/usr/bin/claude', '--session', 'test'],
     env: { HOME: '/Users/test', HRC_LAUNCH_ID: 'launch-test-001' },
@@ -129,6 +130,20 @@ describe('Launch artifact IO', () => {
     const read = await readLaunchArtifact(path)
 
     expect(read.otel).toEqual(artifact.otel)
+  })
+
+  it('requires launch artifacts to persist both internal harness and public frontend', async () => {
+    const path = join(tmpDir, 'missing-frontend.json')
+    const { frontend: _frontend, ...artifactWithoutFrontend } = makeArtifact({
+      launchId: 'missing-frontend',
+      harness: 'pi',
+      provider: 'openai',
+    })
+    await writeFile(path, JSON.stringify(artifactWithoutFrontend, null, 2), 'utf-8')
+
+    await expect(readLaunchArtifact(path)).rejects.toThrow(
+      "Launch artifact missing required field 'frontend'"
+    )
   })
 
   it('throws on readLaunchArtifact for non-existent file', async () => {

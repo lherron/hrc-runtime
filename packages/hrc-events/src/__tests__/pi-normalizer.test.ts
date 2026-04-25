@@ -119,4 +119,44 @@ describe('normalizePiHookEvent', () => {
       },
     ])
   })
+
+  it('surfaces continuation with sessionFile path as the key when both are present', () => {
+    const result = normalizePiHookEvent(
+      piEnvelope({
+        eventName: 'session_start',
+        reason: 'startup',
+        sessionId: 'test-pi-session-fixture',
+        sessionFile: '/Users/x/.pi/agent/sessions/abc/2026-04-25T18-00-00-019dc5c3.jsonl',
+      })
+    )
+
+    expect(result.source).toBe('hook')
+    expect(result.eventName).toBe('session_start')
+    expect(result.continuation).toEqual({
+      provider: 'openai',
+      key: '/Users/x/.pi/agent/sessions/abc/2026-04-25T18-00-00-019dc5c3.jsonl',
+      sessionFile: '/Users/x/.pi/agent/sessions/abc/2026-04-25T18-00-00-019dc5c3.jsonl',
+    })
+  })
+
+  it('falls back to sessionId when sessionFile is missing', () => {
+    const result = normalizePiHookEvent(
+      piEnvelope({
+        eventName: 'session_start',
+        reason: 'startup',
+        sessionId: 'test-pi-session-fixture',
+      })
+    )
+    expect(result.continuation).toEqual({
+      provider: 'openai',
+      key: 'test-pi-session-fixture',
+    })
+  })
+
+  it('omits continuation when session_start lacks both sessionId and sessionFile', () => {
+    const result = normalizePiHookEvent(
+      piEnvelope({ eventName: 'session_start', reason: 'reload' })
+    )
+    expect(result.continuation).toBeUndefined()
+  })
 })

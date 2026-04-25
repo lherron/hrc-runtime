@@ -147,6 +147,7 @@ async function seedCodexLaunch(params: SeedParams = {}): Promise<SeedResult> {
     generation: 1,
     runtimeId,
     harness: 'codex-cli',
+    frontend: 'codex-cli',
     provider: 'openai',
     argv: params.argv ?? ['codex'],
     env: {},

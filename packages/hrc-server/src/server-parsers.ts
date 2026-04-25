@@ -21,6 +21,7 @@ import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
+  HrcHarness,
   HrcProvider,
   HrcRuntimeIntent,
   InspectRuntimeRequest,
@@ -434,6 +435,8 @@ function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
         return {
           provider: provider as HrcProvider,
           interactive,
+          ...(typeof harness['id'] === 'string' ? { id: harness['id'] as HrcHarness } : {}),
+          ...(typeof harness['fallback'] === 'string' ? { fallback: harness['fallback'] } : {}),
           ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
           ...(harness['yolo'] === true ? { yolo: true } : {}),
         }

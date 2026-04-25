@@ -90,7 +90,7 @@ import type {
   TerminateRuntimeResponse,
   WaitMessageResponse,
 } from 'hrc-core'
-import { normalizeClaudeHook, normalizeCodexOtelEvent } from 'hrc-events'
+import { normalizeClaudeHook, normalizeCodexOtelEvent, normalizePiHookEvent } from 'hrc-events'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
@@ -1770,7 +1770,11 @@ class HrcServerInstance implements HrcServer {
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const cliInvocation = await buildDispatchInvocation(dispatchIntent)
+    const continuationForDispatch = runtime.continuation ?? session.continuation
+    const cliInvocation = await buildDispatchInvocation(
+      dispatchIntent,
+      continuationForDispatch ? { continuation: continuationForDispatch } : undefined
+    )
     const tmuxPane = requireTmuxPane(runtime)
     const launchEnv = {
       ...cliInvocation.env,
@@ -1786,6 +1790,7 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       runId,
       harness: runtime.harness,
+      frontend: cliInvocation.frontend,
       provider: runtime.provider,
       argv: cliInvocation.argv,
       env: launchEnv,
@@ -2274,6 +2279,7 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       runId,
       harness: runtime.harness,
+      frontend: cliInvocation.frontend,
       provider: runtime.provider,
       argv: cliInvocation.argv,
       env: cliInvocation.env,
@@ -3479,6 +3485,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       harness: runtime.harness,
+      frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
       env: launchEnv,
@@ -3676,6 +3683,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       harness: runtime.harness,
+      frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
       env: invocation.env,
@@ -3772,7 +3780,7 @@ class HrcServerInstance implements HrcServer {
       laneRef: session.laneRef,
       generation: session.generation,
       transport: 'headless',
-      harness: deriveInteractiveHarness(intent.harness.provider),
+      harness: deriveInteractiveHarness(intent.harness),
       provider: intent.harness.provider,
       status: 'ready',
       continuation: session.continuation,
@@ -3856,6 +3864,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       harness: runtime.harness,
+      frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
       env: launchEnv,
@@ -5510,7 +5519,7 @@ class HrcServerInstance implements HrcServer {
     }
 
     const now = timestamp()
-    const harness = deriveInteractiveHarness(intent.harness.provider)
+    const harness = deriveInteractiveHarness(intent.harness)
     const tmuxJson = toTmuxJson(tmuxPane)
 
     this.db.sessions.updateIntent(session.hostSessionId, intent, now)
@@ -7234,8 +7243,16 @@ function validateEnsureRuntimeIntent(intent: HrcRuntimeIntent): void {
   }
 }
 
-function deriveInteractiveHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
-  return resolveHarnessFrontendForProvider(provider, 'cli') ?? 'claude-code'
+function deriveInteractiveHarness(
+  harness: HrcRuntimeIntent['harness']
+): HrcRuntimeSnapshot['harness'] {
+  if (harness.id === 'pi') {
+    return 'pi'
+  }
+  if (harness.id === 'pi-cli' || harness.id === 'codex-cli' || harness.id === 'claude-code') {
+    return harness.id
+  }
+  return harness.provider === 'openai' ? 'codex-cli' : 'claude-code'
 }
 
 function deriveSdkHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
@@ -8560,23 +8577,35 @@ function applyHookLifecycleEnvelope(
       )
     }
 
-    const normalized = normalizeClaudeHook(envelope.hookData)
-    for (const event of normalized.events) {
-      events.push(
-        db.events.append({
-          ts: now,
-          hostSessionId: session.hostSessionId,
-          scopeRef: session.scopeRef,
-          laneRef: session.laneRef,
-          generation: envelope.generation,
-          runtimeId: envelope.runtimeId,
-          source: 'hook',
-          eventKind: event.type,
-          eventJson: event,
-        })
-      )
-      const semanticEvent = deriveSemanticTurnEventFromHookDerivedEvent(event)
-      if (semanticEvent) {
+    const isPiHookPayload =
+      typeof (envelope.hookData as Record<string, unknown>)['eventName'] === 'string'
+
+    if (isPiHookPayload) {
+      const piResult = normalizePiHookEvent({
+        launchId: envelope.launchId,
+        hostSessionId: session.hostSessionId,
+        generation: envelope.generation,
+        ...(envelope.runtimeId !== undefined ? { runtimeId: envelope.runtimeId } : {}),
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        hookData: envelope.hookData,
+      })
+      for (const event of piResult.events) {
+        events.push(
+          db.events.append({
+            ts: now,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: envelope.generation,
+            runtimeId: envelope.runtimeId,
+            source: 'hook',
+            eventKind: event.type,
+            eventJson: event,
+          })
+        )
+      }
+      for (const semanticEvent of piResult.semanticEvents) {
         events.push(
           appendHrcEvent(db, semanticEvent.eventKind, {
             ts: now,
@@ -8590,6 +8619,74 @@ function applyHookLifecycleEnvelope(
             payload: semanticEvent.payload,
           })
         )
+      }
+      // When session_start surfaces a sessionId, persist it as the runtime
+      // continuation so the next launch can resume via `--session <key>`.
+      if (piResult.continuation && envelope.runtimeId) {
+        const continuationRef = {
+          provider: piResult.continuation.provider,
+          key: piResult.continuation.key,
+        }
+        db.runtimes.update(envelope.runtimeId, {
+          continuation: continuationRef,
+          ...(piResult.continuation.sessionFile
+            ? { harnessSessionJson: { sessionFile: piResult.continuation.sessionFile } }
+            : {}),
+          updatedAt: now,
+          lastActivityAt: now,
+        })
+        db.sessions.updateContinuation(session.hostSessionId, continuationRef, now)
+        events.push(
+          appendHrcEvent(db, 'launch.continuation_captured', {
+            ts: now,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: envelope.generation,
+            runtimeId: envelope.runtimeId,
+            launchId: envelope.launchId,
+            replayed: options.replayed,
+            payload: {
+              continuation: continuationRef,
+              ...(piResult.continuation.sessionFile
+                ? { harnessSessionJson: { sessionFile: piResult.continuation.sessionFile } }
+                : {}),
+            },
+          })
+        )
+      }
+    } else {
+      const normalized = normalizeClaudeHook(envelope.hookData)
+      for (const event of normalized.events) {
+        events.push(
+          db.events.append({
+            ts: now,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: envelope.generation,
+            runtimeId: envelope.runtimeId,
+            source: 'hook',
+            eventKind: event.type,
+            eventJson: event,
+          })
+        )
+        const semanticEvent = deriveSemanticTurnEventFromHookDerivedEvent(event)
+        if (semanticEvent) {
+          events.push(
+            appendHrcEvent(db, semanticEvent.eventKind, {
+              ts: now,
+              hostSessionId: session.hostSessionId,
+              scopeRef: session.scopeRef,
+              laneRef: session.laneRef,
+              generation: envelope.generation,
+              runtimeId: envelope.runtimeId,
+              launchId: envelope.launchId,
+              replayed: options.replayed,
+              payload: semanticEvent.payload,
+            })
+          )
+        }
       }
     }
 
@@ -8929,6 +9026,7 @@ async function buildDispatchInvocation(
   argv: string[]
   env: Record<string, string>
   cwd: string
+  frontend: HrcHarness
   interactionMode: 'headless' | 'interactive'
   ioMode: 'inherit' | 'pipes' | 'pty'
 }> {
@@ -8949,7 +9047,14 @@ async function buildDispatchInvocation(
     interactionMode = invocation.interactionMode
     ioMode = invocation.ioMode
     if (await isLaunchCommandAvailable(invocation.argv[0])) {
-      return { argv: invocation.argv, env, cwd, interactionMode, ioMode }
+      return {
+        argv: invocation.argv,
+        env,
+        cwd,
+        frontend: invocation.frontend,
+        interactionMode,
+        ioMode,
+      }
     }
     unavailableCommand = invocation.argv[0]
     writeServerLog('WARN', 'dispatch.invocation.command_unavailable', {
@@ -9003,6 +9108,10 @@ async function buildDispatchInvocation(
     argv: [shimPath],
     env,
     cwd,
+    frontend:
+      intent.harness.id === 'pi' || intent.harness.id === 'pi-cli'
+        ? 'pi-cli'
+        : deriveInteractiveHarness(intent.harness),
     interactionMode,
     ioMode,
   }

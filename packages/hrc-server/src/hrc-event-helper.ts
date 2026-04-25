@@ -149,8 +149,13 @@ function extractCodexPrimingPrompt(argv: readonly string[]): string | undefined 
 }
 
 export function extractLaunchPrimingPrompt(
-  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'>
+  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'> & Partial<Pick<HrcLaunchArtifact, 'env'>>
 ): string | undefined {
+  if (artifact.harness === 'pi') {
+    const prompt = artifact.env?.['ASP_PRIMING_PROMPT']
+    return typeof prompt === 'string' && prompt.length > 0 ? prompt : undefined
+  }
+
   if (artifact.harness === 'codex-cli') {
     return extractCodexPrimingPrompt(artifact.argv)
   }

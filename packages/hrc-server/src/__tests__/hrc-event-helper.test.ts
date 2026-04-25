@@ -58,6 +58,18 @@ describe('hrc semantic turn helpers', () => {
     ).toBe('Ship it')
   })
 
+  it('extracts Pi priming prompt from ASP_PRIMING_PROMPT env instead of argv separator', () => {
+    expect(
+      extractLaunchPrimingPrompt({
+        harness: 'pi',
+        argv: ['pi', '--model', 'gpt-5.5'],
+        env: {
+          ASP_PRIMING_PROMPT: 'Prime Pi from env',
+        },
+      })
+    ).toBe('Prime Pi from env')
+  })
+
   it('maps SDK message/tool events into semantic turn events', () => {
     expect(
       deriveSemanticTurnEventFromSdkEvent('sdk.message', {

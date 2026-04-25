@@ -27,12 +27,20 @@ import { type ResolvedRuntimeBundle, getAspHome } from 'spaces-config'
 // ---------------------------------------------------------------------------
 
 /** Phase 1 supported interactive CLI harnesses */
-const SUPPORTED_CLI_HARNESSES: ReadonlySet<HrcHarness> = new Set<HrcHarness>([
+export const SUPPORTED_CLI_HARNESSES: ReadonlySet<HrcHarness> = new Set<HrcHarness>([
   'claude-code',
   'codex-cli',
+  'pi-cli',
 ])
 
-type CliFrontend = 'claude-code' | 'codex-cli'
+type CliFrontend = 'claude-code' | 'codex-cli' | 'pi-cli'
+
+const HARNESS_ID_TO_FRONTEND: Partial<Record<HrcHarness, CliFrontend>> = {
+  'claude-code': 'claude-code',
+  'codex-cli': 'codex-cli',
+  pi: 'pi-cli',
+  'pi-cli': 'pi-cli',
+}
 
 /** Map provider → CLI frontend for interactive mode */
 const PROVIDER_TO_FRONTEND: Record<HrcProvider, CliFrontend> = {
@@ -134,6 +142,14 @@ export function mergeEnv(
 function resolveCliFrontend(intent: HrcRuntimeIntent): CliFrontend {
   if (!intent.harness.interactive) {
     throw new UnsupportedHarnessError('non-interactive')
+  }
+
+  if (intent.harness.id) {
+    const frontend = HARNESS_ID_TO_FRONTEND[intent.harness.id]
+    if (!frontend || !SUPPORTED_CLI_HARNESSES.has(frontend)) {
+      throw new UnsupportedHarnessError(intent.harness.id)
+    }
+    return frontend
   }
 
   const frontend = PROVIDER_TO_FRONTEND[intent.harness.provider]

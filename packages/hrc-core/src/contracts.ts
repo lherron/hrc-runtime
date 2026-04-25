@@ -6,7 +6,7 @@ import type { HrcSessionRef } from './selectors.js'
 import type { AttachmentRef } from 'acp-core'
 
 export type HrcProvider = 'anthropic' | 'openai'
-export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-sdk'
+export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
 export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
@@ -68,6 +68,7 @@ export type HrcLifecycleEvent = {
 export type HrcHarnessIntent = {
   provider: HrcProvider
   interactive: boolean
+  id?: HrcHarness | undefined
   fallback?: string | undefined
   model?: string | undefined
   yolo?: boolean | undefined
@@ -169,6 +170,7 @@ export type HrcLaunchArtifact = {
   runtimeId: string
   runId?: string | undefined
   harness: HrcHarness
+  frontend: HrcHarness
   provider: HrcProvider
   argv: string[]
   env: Record<string, string>

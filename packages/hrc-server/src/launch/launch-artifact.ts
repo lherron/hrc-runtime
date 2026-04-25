@@ -9,6 +9,7 @@ const REQUIRED_FIELDS = [
   'generation',
   'runtimeId',
   'harness',
+  'frontend',
   'provider',
   'argv',
   'env',
