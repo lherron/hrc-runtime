@@ -1,3 +1,5 @@
+import type { AttachmentRef } from 'acp-core'
+
 /**
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
  * Canonical source for R-3 deduplication (T-00990).
@@ -120,6 +122,7 @@ export type EnsureWindowResponse = EnsureRuntimeResponse & {
 export type DispatchTurnRequest = {
   hostSessionId: string
   prompt: string
+  attachments?: AttachmentRef[] | undefined
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   /**

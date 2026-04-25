@@ -410,6 +410,7 @@ function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
   const harness = input['harness']
   const launch = input['launch']
   const initialPrompt = input['initialPrompt']
+  const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const resolvedHarness = isRecord(harness)
     ? (() => {
         const provider = requireTrimmedStringField(harness, 'provider')
@@ -445,6 +446,79 @@ function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIntent {
     ...(isRecord(execution) ? { execution: execution as HrcRuntimeIntent['execution'] } : {}),
     ...(isRecord(launch) ? { launch: launch as HrcRuntimeIntent['launch'] } : {}),
     ...(typeof initialPrompt === 'string' ? { initialPrompt } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
+  }
+}
+
+function parseOptionalAttachmentRefs(
+  input: Record<string, unknown>,
+  field: string
+): HrcRuntimeIntent['attachments'] | undefined {
+  const value = input[field]
+  if (value === undefined) {
+    return undefined
+  }
+  if (!Array.isArray(value)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be an array`, {
+      field,
+    })
+  }
+  return value.map((entry, index) => parseAttachmentRef(entry, `${field}[${index}]`))
+}
+
+function parseAttachmentRef(
+  input: unknown,
+  field: string
+): NonNullable<HrcRuntimeIntent['attachments']>[number] {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be an object`, {
+      field,
+    })
+  }
+  const kind = input['kind']
+  if (kind !== 'url' && kind !== 'file') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field}.kind must be "url" or "file"`,
+      { field: `${field}.kind` }
+    )
+  }
+
+  const url = readOptionalNonEmptyStringField(input, 'url')
+  const path = readOptionalNonEmptyStringField(input, 'path')
+  if (kind === 'url' && url === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field}.url is required for url attachments`,
+      { field: `${field}.url` }
+    )
+  }
+  if (kind === 'file' && path === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field}.path is required for file attachments`,
+      { field: `${field}.path` }
+    )
+  }
+
+  const filename = readOptionalNonEmptyStringField(input, 'filename')
+  const contentType = readOptionalNonEmptyStringField(input, 'contentType')
+  const sizeBytes = input['sizeBytes']
+  if (sizeBytes !== undefined && (!Number.isSafeInteger(sizeBytes) || (sizeBytes as number) < 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field}.sizeBytes must be a non-negative safe integer`,
+      { field: `${field}.sizeBytes` }
+    )
+  }
+
+  return {
+    kind,
+    ...(url !== undefined ? { url } : {}),
+    ...(path !== undefined ? { path } : {}),
+    ...(filename !== undefined ? { filename } : {}),
+    ...(contentType !== undefined ? { contentType } : {}),
+    ...(sizeBytes !== undefined ? { sizeBytes: sizeBytes as number } : {}),
   }
 }
 
@@ -882,6 +956,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   }
 
   const runtimeIntent = input['runtimeIntent']
+  const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
   const allowStaleGeneration = input['allowStaleGeneration']
   if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
@@ -895,6 +970,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   return {
     hostSessionId: hostSessionId.trim(),
     prompt: prompt.trim(),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(runtimeIntent && isRecord(runtimeIntent)
       ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
       : {}),

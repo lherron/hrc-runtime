@@ -265,6 +265,9 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
     frontend,
     model: options.intent.harness.model,
     prompt: options.prompt,
+    ...(options.intent.attachments !== undefined
+      ? { attachments: options.intent.attachments }
+      : {}),
     runId: options.runId,
     hostSessionId: options.hostSessionId,
     ...(options.continuation ? { continuation: options.continuation } : {}),

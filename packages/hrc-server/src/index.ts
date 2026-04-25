@@ -1704,11 +1704,15 @@ class HrcServerInstance implements HrcServer {
       trigger: 'dispatch-turn',
     })
     const runId = `run-${randomUUID()}`
-    const intent = normalizeDispatchIntent(
+    const parsedIntent = normalizeDispatchIntent(
       body.runtimeIntent ?? session.lastAppliedIntentJson,
       session,
       runId
     )
+    const intent =
+      body.attachments !== undefined
+        ? { ...parsedIntent, attachments: body.attachments }
+        : parsedIntent
 
     return await this.dispatchTurnForSession(session, intent, body.prompt, {
       runId,

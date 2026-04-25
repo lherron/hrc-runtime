@@ -407,6 +407,7 @@
       "name": "hrc-core",
       "version": "0.1.0",
       "dependencies": {
+        "acp-core": "*",
         "agent-scope": "*",
         "spaces-config": "*",
       },

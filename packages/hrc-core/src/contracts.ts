@@ -3,6 +3,8 @@ import type { RuntimePlacement } from 'spaces-config'
 import type { HrcErrorCode } from './errors.js'
 import type { HrcSessionRef } from './selectors.js'
 
+import type { AttachmentRef } from 'acp-core'
+
 export type HrcProvider = 'anthropic' | 'openai'
 export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-sdk'
 export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux'
@@ -97,6 +99,7 @@ export type HrcRuntimeIntent = {
   execution?: HrcExecutionIntent | undefined
   launch?: HrcLaunchEnvConfig | undefined
   initialPrompt?: string | undefined
+  attachments?: AttachmentRef[] | undefined
   taskContext?: HrcTaskContext | undefined
 }
 
