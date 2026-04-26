@@ -27,6 +27,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveScopeInput } from 'agent-scope'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot, StatusResponse } from 'hrc-core'
 
@@ -343,6 +344,14 @@ set -eu
 cmd="\${1:-}"
 log_path=${JSON.stringify(logPath)}
 resume_path=${JSON.stringify(resumePath)}
+if [ "$cmd" = "--version" ]; then
+  printf 'codex-cli 0.124.0\\n'
+  exit 0
+fi
+if [ "$cmd" = "app-server" ] && [ "\${2:-}" = "--help" ]; then
+  printf 'Usage: codex app-server\\n'
+  exit 0
+fi
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
@@ -498,6 +507,532 @@ describe('no args / help', () => {
     expect(result.stdout).toContain('cody@agent-spaces~repair')
     expect(result.stdout).not.toContain('\n  info              ')
     expect(result.stderr).toBe('')
+  })
+})
+
+// ===========================================================================
+// 1b. status help / scoped path scaffold (T-01265)
+// ===========================================================================
+describe('status help and scoped path scaffold', () => {
+  it('hrc status --help prints usage without contacting the daemon', async () => {
+    const result = await runCli(['status', '--help'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Usage: hrc status [scopeRef]')
+    expect(result.stdout).toContain('--json')
+    expect(result.stdout).toContain('--all')
+    expect(result.stdout).toContain('--verbose')
+    expect(result.stdout).toContain('--events <n>')
+  })
+
+  it('hrc status -h prints usage without contacting the daemon', async () => {
+    const result = await runCli(['status', '-h'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Usage: hrc status [scopeRef]')
+  })
+
+  it('hrc status <scope> renders a scoped status screen without an active session', async () => {
+    server = await createHrcServer(serverOpts())
+    const result = await runCli(['status', 'clod@agent-spaces'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Scope: agent:clod:project:agent-spaces')
+    expect(result.stdout).toContain('Session:    (not found)')
+    expect(result.stdout).toContain('Runtime:    (no active runtime)')
+    expect(result.stdout).toContain('Recent events: (none)')
+    expect(result.stdout).toContain('Next:')
+    expect(result.stdout).toContain(
+      'hrc events agent:clod:project:agent-spaces --from-seq 1 --follow'
+    )
+  })
+
+  it('hrc status <invalid-scope> exits non-zero with a parser error', async () => {
+    const result = await runCli(['status', 'invalid-scope!!'], cliEnv())
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('Invalid scope input "invalid-scope!!"')
+  })
+})
+
+// ===========================================================================
+// 1c. scoped status read path (T-01266)
+// ===========================================================================
+describe('scoped status read path', () => {
+  beforeEach(async () => {
+    server = await createHrcServer(serverOpts())
+  })
+
+  async function resolveTestSession(scope: string): Promise<{
+    hostSessionId: string
+    generation: number
+    laneRef: string
+  }> {
+    const resolveResult = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
+    expect(resolveResult.exitCode).toBe(0)
+    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+      hostSessionId: string
+      generation: number
+      session: { laneRef: string }
+    }
+    return {
+      hostSessionId: resolved.hostSessionId,
+      generation: resolved.generation,
+      laneRef: resolved.session.laneRef,
+    }
+  }
+
+  it('renders session, no-runtime, placeholders, and compact recent events', async () => {
+    const scope = testProjectScope('status-scoped-no-runtime')
+    const resolved = await resolveTestSession(scope)
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain(`Scope: ${scope}`)
+    expect(result.stdout).toContain(`Session:    ${resolved.hostSessionId} (active)`)
+    expect(result.stdout).toContain(`gen ${resolved.generation}`)
+    expect(result.stdout).toContain('Runtime:    (no active runtime)')
+    expect(result.stdout).toContain('Turn:       IDLE — no completed turn')
+    expect(result.stdout).not.toContain('Continuation:')
+    expect(result.stdout).toContain('Surfaces:    (no active surfaces)')
+    expect(result.stdout).toContain('Last failure: (none in last 50 events)')
+    expect(result.stdout).toContain('Recent events (10):')
+    expect(result.stdout).toContain('session.created')
+  })
+
+  it('skips empty bridges when runtime and surfaces are otherwise empty', async () => {
+    const scope = testProjectScope('status-scoped-runtime-empty-bindings')
+    const resolved = await resolveTestSession(scope)
+    const runtimeId = `rt-status-empty-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        wrapperPid: null,
+        childPid: null,
+        continuation: null,
+        supportsInflightInput: true,
+        adopted: false,
+        activeRunId: null,
+        lastActivityAt: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain(`Runtime:    ${runtimeId} / claude-code / headless / ready`)
+    expect(result.stdout).toContain('[LIVE]')
+    expect(result.stdout).toContain('Surfaces:    (no active surfaces)')
+    expect(result.stdout).not.toContain('Bridges:')
+    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
+  })
+
+  it('renders runtime, continuation, surfaces, bridges, and compact recent events', async () => {
+    const scope = testProjectScope('status-scoped-active')
+    const resolved = await resolveTestSession(scope)
+    const runtimeId = `rt-status-scoped-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'busy',
+        wrapperPid: process.pid,
+        childPid: null,
+        continuation: { provider: 'anthropic', key: 'continuation-key-1234567890' }, // gitleaks:allow
+        supportsInflightInput: true,
+        adopted: false,
+        activeRunId: 'run-status-scoped',
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      db.surfaceBindings.bind({
+        surfaceKind: 'ghostty',
+        surfaceId: 'status-surface-1',
+        hostSessionId: resolved.hostSessionId,
+        runtimeId,
+        generation: resolved.generation,
+        boundAt: now,
+      })
+      db.localBridges.create({
+        bridgeId: 'bridge-status-scoped',
+        hostSessionId: resolved.hostSessionId,
+        runtimeId,
+        transport: 'tmux',
+        target: 'other-agent@status',
+        createdAt: now,
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        runtimeId,
+        runId: 'run-status-scoped',
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        transport: 'headless',
+        payload: {
+          type: 'message_end',
+          message: { role: 'user', content: 'status scoped prompt' },
+        },
+      })
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: `${scope}:task:T-01266`,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        runtimeId,
+        runId: 'run-status-scoped',
+        category: 'turn',
+        eventKind: 'turn.tool_call',
+        transport: 'headless',
+        payload: { toolUseId: 'tool-status', toolName: 'Read', input: { file_path: 'x' } },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain(
+      `Runtime:    ${runtimeId} / claude-code / headless / busy   [LIVE]`
+    )
+    expect(result.stdout).toContain(`wrapperPid ${process.pid}`)
+    expect(result.stdout).toContain('childPid (none)')
+    expect(result.stdout).toContain('activeRunId run-status-scoped')
+    expect(result.stdout).toContain('Turn:       IN PROGRESS — run-status-scoped')
+    expect(result.stdout).toContain('1 tool calls')
+    expect(result.stdout).toContain('last: Read')
+    expect(result.stdout).toContain('user prompt: "status scoped prompt"')
+    expect(result.stdout).toContain('Continuation: anthropic:continuation-...')
+    expect(result.stdout).toContain('Surfaces:    ghostty:status-surface-1 (bound)')
+    expect(result.stdout).toContain('Bridges:     bridge-status...')
+    expect(result.stdout).toContain('other-agent@status')
+    expect(result.stdout).toContain('Recent events (10):')
+    expect(result.stdout).toContain('turn.user_prompt')
+    expect(result.stdout).toContain('status scoped prompt')
+    expect(result.stdout).toContain('turn.tool_call')
+    expect(result.stdout).toContain('tool:Read')
+    expect(result.stdout).toContain('Next:')
+    expect(result.stdout).toContain('hrc events ')
+    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
+    expect(result.stdout).not.toContain('hrc runtime sweep')
+  })
+
+  it('renders stale liveness and recovery hints when a runtime pid is gone', async () => {
+    const scope = testProjectScope('status-scoped-stale-runtime')
+    const resolved = await resolveTestSession(scope)
+    const runtimeId = `rt-status-stale-${randomUUID()}`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'busy',
+        wrapperPid: 999999,
+        childPid: null,
+        continuation: null,
+        supportsInflightInput: true,
+        adopted: false,
+        activeRunId: null,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain(
+      `Runtime:    ${runtimeId} / claude-code / headless / busy   [STALE]`
+    )
+    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
+    expect(result.stdout).toContain(`hrc runtime sweep --status busy --scope ${scope}`)
+    expect(result.stdout).toContain(`hrc runtime adopt ${runtimeId}`)
+  })
+
+  it('renders idle turn state when the latest turn completed', async () => {
+    const scope = testProjectScope('status-scoped-idle-turn')
+    const resolved = await resolveTestSession(scope)
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        runId: 'run-status-idle',
+        category: 'turn',
+        eventKind: 'turn.completed',
+        transport: 'headless',
+        payload: { success: true },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Turn:       IDLE — last turn ended')
+  })
+
+  it('renders the latest derived failure from the last 50 scoped events', async () => {
+    const scope = testProjectScope('status-scoped-failure')
+    const resolved = await resolveTestSession(scope)
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        launchId: 'launch-status-failed',
+        category: 'launch',
+        eventKind: 'launch.exited',
+        transport: 'headless',
+        payload: { exitCode: 1, signal: null },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Last failure:')
+    expect(result.stdout).toContain('launch.exited')
+    expect(result.stdout).toContain('seq=')
+    expect(result.stdout).toContain('exitCode=1')
+  })
+
+  it('hrc status <scope> --events 0 suppresses the recent-events section', async () => {
+    const scope = testProjectScope('status-scoped-events-zero')
+    await resolveTestSession(scope)
+
+    const result = await runCli(['status', scope, '--events', '0'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).not.toContain('Recent events')
+    expect(result.stdout).toContain('Last failure: (none in last 50 events)')
+    expect(result.stdout).toContain('Next:')
+  })
+
+  it('hrc status <scope> --events <n> changes the recent-events tail length', async () => {
+    const scope = testProjectScope('status-scoped-events-limit')
+    const resolved = await resolveTestSession(scope)
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: '2026-04-26T17:00:01.000Z',
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        transport: 'headless',
+        payload: { message: { role: 'assistant', content: 'older status event' } },
+      })
+      db.hrcEvents.append({
+        ts: '2026-04-26T17:00:02.000Z',
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        transport: 'headless',
+        payload: { message: { role: 'assistant', content: 'newer status event' } },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope, '--events', '1'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Recent events (1):')
+    expect(result.stdout).toContain('newer status event')
+    expect(result.stdout).not.toContain('older status event')
+  })
+
+  it('hrc status <scope> --verbose includes event payload details in the tail', async () => {
+    const scope = testProjectScope('status-scoped-verbose-events')
+    const resolved = await resolveTestSession(scope)
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: '2026-04-26T17:00:03.000Z',
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        runId: 'run-verbose-status',
+        category: 'turn',
+        eventKind: 'turn.tool_call',
+        transport: 'headless',
+        payload: {
+          toolUseId: 'tool-verbose-status',
+          toolName: 'Read',
+          input: { file_path: 'verbose-marker.txt' },
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope, '--verbose'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Recent events (10):')
+    expect(result.stdout).toContain('tool_call')
+    expect(result.stdout).toContain('file_path')
+    expect(result.stdout).toContain('verbose-marker.txt')
+  })
+
+  it('hrc status <scope> --json emits the stable scoped status object shape', async () => {
+    const scope = testProjectScope('status-scoped-json')
+    const resolved = await resolveTestSession(scope)
+    const runtimeId = `rt-status-json-${randomUUID()}`
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: scope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        transport: 'headless',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        wrapperPid: process.pid,
+        childPid: null,
+        continuation: { provider: 'anthropic', key: 'json-continuation-key' },
+        supportsInflightInput: true,
+        adopted: false,
+        activeRunId: null,
+        lastActivityAt: null,
+        createdAt: '2026-04-26T17:00:04.000Z',
+        updatedAt: '2026-04-26T17:00:04.000Z',
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(['status', scope, '--json', '--events', '0'], cliEnv())
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    const body = JSON.parse(result.stdout.trim()) as Record<string, unknown>
+    expect(Object.keys(body)).toEqual([
+      'scope',
+      'session',
+      'runtime',
+      'liveness',
+      'turn',
+      'continuation',
+      'surfaces',
+      'bridges',
+      'lastFailure',
+      'recentEvents',
+      'nextCommands',
+    ])
+    expect(body.scope).toEqual({ scopeRef: scope })
+    expect(body.liveness).toEqual({ verdict: 'live' })
+    expect(body.turn).toEqual({ state: 'idle', lastCompletedAgeSec: null })
+    expect(body.continuation).toEqual({
+      value: { provider: 'anthropic', key: 'json-continuation-key' },
+      stale: false,
+    })
+    expect(body.recentEvents).toEqual([])
+    expect(body.nextCommands).toEqual([
+      `hrc events ${scope} --from-seq 2 --follow`,
+      `hrc runtime inspect ${runtimeId}`,
+    ])
+  })
+
+  it('scoped status selector resolves the same shorthand as hrc events', async () => {
+    const handle = 'test@status-selector-shared'
+    const scope = resolveScopeInput(handle).scopeRef
+    const descendantScope = `${scope}:task:T-status-selector`
+    const resolved = await resolveTestSession(scope)
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.hrcEvents.append({
+        ts: '2026-04-26T17:00:05.000Z',
+        hostSessionId: resolved.hostSessionId,
+        scopeRef: descendantScope,
+        laneRef: resolved.laneRef,
+        generation: resolved.generation,
+        category: 'turn',
+        eventKind: 'turn.message',
+        transport: 'headless',
+        payload: { message: { role: 'assistant', content: 'shared selector event' } },
+      })
+    } finally {
+      db.close()
+    }
+
+    const statusResult = await runCli(['status', handle, '--json', '--events', '1'], cliEnv())
+    expect(statusResult.exitCode).toBe(0)
+    const statusBody = JSON.parse(statusResult.stdout.trim()) as {
+      scope: { scopeRef: string }
+      recentEvents: Array<{ scopeRef: string; eventKind: string }>
+    }
+
+    const eventsResult = await runCli(['events', handle, '--format', 'ndjson'], cliEnv())
+    expect(eventsResult.exitCode).toBe(0)
+    const eventLines = eventsResult.stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0)
+    const eventBodies = eventLines.map((line) => JSON.parse(line) as { scopeRef: string })
+
+    expect(statusBody.scope.scopeRef).toBe(scope)
+    expect(statusBody.recentEvents.at(-1)?.scopeRef).toBe(descendantScope)
+    expect(eventBodies.some((event) => event.scopeRef === descendantScope)).toBe(true)
   })
 })
 
@@ -1150,7 +1685,7 @@ describe('hrc attach <scope>', () => {
       await Bun.sleep(100)
     }
     expect(attachArtifact?.lifecycleAction).toBe('attach')
-    expect(attachArtifact?.argv?.[0]).toBe('codex')
+    expect(attachArtifact?.argv?.[0]?.split('/').pop()).toBe('codex')
     expect(attachArtifact?.argv).toContain('resume')
     expect(attachArtifact?.argv).toContain('thread-123')
 

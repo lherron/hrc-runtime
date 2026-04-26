@@ -18,6 +18,7 @@ projects/
 integration-tests/projects/
 packages/hrc-cli/projects/
 packages/hrc-server/projects/
+packages/acp-server/state/
 
 # IDE / editor
 .vscode/
