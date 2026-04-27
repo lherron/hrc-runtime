@@ -220,6 +220,7 @@ function createPollingReader(): HrcMonitorConditionEngineReader {
           selector: request.selector,
           follow: false,
           fromSeq: nextSeq,
+          includeCorrelatedMessageResponses: request.includeCorrelatedMessageResponses,
         })) {
           yielded = true
           const seq = numberField(event, 'seq')
@@ -340,6 +341,8 @@ function toMessageResponseEvent(message: {
   messageSeq: number
   messageId: string
   createdAt: string
+  replyToMessageId?: string | undefined
+  rootMessageId: string
   execution: {
     sessionRef?: string | undefined
     hostSessionId?: string | undefined
@@ -362,6 +365,8 @@ function toMessageResponseEvent(message: {
     ...(message.execution.runtimeId ? { runtimeId: message.execution.runtimeId } : {}),
     ...(message.execution.runId ? { turnId: message.execution.runId } : {}),
     messageId: message.messageId,
+    ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
+    rootMessageId: message.rootMessageId,
     messageSeq: message.messageSeq,
     result: 'response',
   }
@@ -370,6 +375,8 @@ function toMessageResponseEvent(message: {
 function toMonitorMessage(message: {
   messageSeq: number
   messageId: string
+  replyToMessageId?: string | undefined
+  rootMessageId: string
   execution: {
     sessionRef?: string | undefined
     hostSessionId?: string | undefined
@@ -380,6 +387,8 @@ function toMonitorMessage(message: {
   return {
     messageId: message.messageId,
     messageSeq: message.messageSeq,
+    ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
+    rootMessageId: message.rootMessageId,
     ...(message.execution.sessionRef ? { sessionRef: message.execution.sessionRef } : {}),
     ...(message.execution.hostSessionId ? { hostSessionId: message.execution.hostSessionId } : {}),
     ...(message.execution.runtimeId ? { runtimeId: message.execution.runtimeId } : {}),

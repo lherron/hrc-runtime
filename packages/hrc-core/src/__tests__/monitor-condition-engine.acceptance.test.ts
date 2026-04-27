@@ -298,6 +298,28 @@ describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL sectio
     )
   })
 
+  test('resolves response-or-idle when reply messageSeq is below the monitor event cursor', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: 'turn-captured' }),
+        event(2, 'message.response', {
+          messageId: 'msg-inbound-reply',
+          replyToMessageId: 'msg-f1b',
+          messageSeq: 1289,
+          turnId: 'turn-captured',
+          result: 'response',
+        }),
+      ],
+    })
+
+    await expect(waitForCondition(state, 'response-or-idle', 'msg:msg-f1b')).resolves.toMatchObject(
+      {
+        result: 'response',
+        exitCode: 0,
+      }
+    )
+  })
+
   test('ignores uncorrelated message.response events while waiting for a msg selector response', async () => {
     const [{ createMonitorReader }, { createMonitorConditionEngine }] = await Promise.all([
       loadMonitorReaderModule(),

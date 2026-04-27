@@ -92,6 +92,7 @@ type EvaluationContext = {
 const DEAD_RUNTIME_STATUSES = new Set(['dead', 'stopped', 'crashed', 'exited', 'terminated'])
 const CONTEXT_CHANGED_REASONS = new Set(['session_rebound', 'generation_changed', 'cleared'])
 const FAILURE_KINDS = new Set(['model', 'tool', 'process', 'runtime', 'cancelled', 'unknown'])
+const IDLE_RUNTIME_STATUSES = new Set(['idle', 'ready'])
 
 export function createMonitorConditionEngine(
   reader: HrcMonitorConditionEngineReader
@@ -122,6 +123,8 @@ export function createMonitorConditionEngine(
         selector: request.selector,
         follow: true,
         fromSeq: capture.streamCursorSeq,
+        includeCorrelatedMessageResponses:
+          request.condition === 'response' || request.condition === 'response-or-idle',
       })
       const iterator = iterable[Symbol.asyncIterator]()
       let stallDeadline = deadlineFromNow(request.stallAfterMs)
@@ -181,7 +184,7 @@ function evaluateStartSnapshot(
         ? { result: 'no_active_turn', exitCode: 0 }
         : null
     case 'idle':
-      return runtimeStatus === 'idle' ? { result: 'already_idle', exitCode: 0 } : null
+      return isIdleRuntimeStatus(runtimeStatus) ? { result: 'already_idle', exitCode: 0 } : null
     case 'busy':
       return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: 0 } : null
     case 'runtime-dead':
@@ -246,7 +249,7 @@ function evaluateResponse(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
-  if (eventKind(event) === 'message.response') {
+  if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
     return { result: 'response', exitCode: 0 }
   }
   if (isCapturedTurnIdleOrFinished(context, event)) {
@@ -259,7 +262,7 @@ function evaluateResponseOrIdle(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
-  if (eventKind(event) === 'message.response') {
+  if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
     return { result: 'response', exitCode: 0 }
   }
   if (isCapturedTurnIdleOrFinished(context, event)) {
@@ -353,6 +356,26 @@ function sameCapturedTurn(context: EvaluationContext, event: MonitorOutputEvent)
 function sameRuntime(context: EvaluationContext, event: MonitorOutputEvent): boolean {
   const runtimeId = unknownString(event, 'runtimeId')
   return runtimeId === undefined || runtimeId === context.capture.runtimeId
+}
+
+function messageResponseMatchesSelector(
+  context: EvaluationContext,
+  event: MonitorOutputEvent
+): boolean {
+  switch (context.selector.kind) {
+    case 'message': {
+      const messageId = context.selector.messageId
+      return (
+        unknownString(event, 'messageId') === messageId ||
+        unknownString(event, 'replyToMessageId') === messageId ||
+        unknownString(event, 'rootMessageId') === messageId
+      )
+    }
+    case 'message-seq':
+      return unknownNumber(event, 'messageSeq') === context.selector.messageSeq
+    default:
+      return false
+  }
 }
 
 function resultValue(
@@ -473,6 +496,10 @@ function unknownNumber(event: MonitorOutputEvent, key: string): number | undefin
 
 function isDeadRuntimeStatus(status: string | undefined): boolean {
   return status !== undefined && DEAD_RUNTIME_STATUSES.has(status)
+}
+
+function isIdleRuntimeStatus(status: string | undefined): boolean {
+  return status !== undefined && IDLE_RUNTIME_STATUSES.has(status)
 }
 
 function isCapture(

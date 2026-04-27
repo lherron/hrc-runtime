@@ -402,6 +402,7 @@ async function* pollingWatch(
       selector: request.selector,
       follow: false,
       fromSeq: nextSeq,
+      includeCorrelatedMessageResponses: request.includeCorrelatedMessageResponses,
     })) {
       yielded = true
       const seq = numberField(event, 'seq')

@@ -23,6 +23,8 @@ export type HrcMonitorRuntimeState = {
 export type HrcMonitorMessageState = {
   messageId: string
   messageSeq: number
+  replyToMessageId?: string | undefined
+  rootMessageId?: string | undefined
   sessionRef?: string | undefined
   hostSessionId?: string | undefined
   runtimeId?: string | undefined
@@ -41,6 +43,8 @@ export type HrcMonitorEvent = {
   runtimeId?: string | undefined
   turnId?: string | undefined
   messageId?: string | undefined
+  replyToMessageId?: string | undefined
+  rootMessageId?: string | undefined
   messageSeq?: number | undefined
   [key: string]: unknown
 }
@@ -96,6 +100,7 @@ export type HrcMonitorWatchRequest = {
   selector?: HrcSelector | undefined
   follow?: boolean | undefined
   fromSeq?: number | undefined
+  includeCorrelatedMessageResponses?: boolean | undefined
 }
 
 export type HrcMonitorCaptureOptions = {
@@ -342,7 +347,13 @@ async function* watchEvents(
   const fromSeq = request.fromSeq
   const replay =
     fromSeq !== undefined
-      ? matching.filter((event) => event.seq >= fromSeq)
+      ? matching.filter(
+          (event) =>
+            event.seq >= fromSeq ||
+            (request.includeCorrelatedMessageResponses === true && selector
+              ? isCorrelatedMessageResponse(event, selector)
+              : false)
+        )
       : follow
         ? []
         : matching.slice(-100)
@@ -386,6 +397,25 @@ function eventMatchesSelector(
   }
 }
 
+function isCorrelatedMessageResponse(event: HrcMonitorEvent, selector: HrcSelector): boolean {
+  if (event.event !== 'message.response') {
+    return false
+  }
+
+  switch (selector.kind) {
+    case 'message':
+      return (
+        event.messageId === selector.messageId ||
+        event.replyToMessageId === selector.messageId ||
+        event.rootMessageId === selector.messageId
+      )
+    case 'message-seq':
+      return event.messageSeq === selector.messageSeq
+    default:
+      return false
+  }
+}
+
 function messageEventMatches(
   state: HrcMonitorState,
   event: HrcMonitorEvent,
@@ -394,6 +424,14 @@ function messageEventMatches(
   const message = state.messages?.find((candidate) => candidate.messageId === messageId)
   if (!message) {
     return false
+  }
+  if (event.replyToMessageId !== undefined) {
+    return event.replyToMessageId === message.messageId
+  }
+  if (event.rootMessageId !== undefined) {
+    return (
+      event.rootMessageId === message.rootMessageId || event.rootMessageId === message.messageId
+    )
   }
   if (event.messageId !== undefined) {
     return event.messageId === message.messageId
