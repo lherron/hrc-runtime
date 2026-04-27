@@ -24,11 +24,11 @@ QUICK START
   Query durable messages involving a target:
   hrcchat messages cody@agentchat --limit 50
 
-  Follow new replies to the current caller:
-  hrcchat watch --responses-to me --follow --timeout 10m
+  Follow monitor events for a target:
+  hrc monitor watch cody@agentchat --follow --timeout 10m
 
-  Wait for a response on the same thread:
-  hrcchat wait --responses-to human --thread msg_01J... --timeout 15m
+  Wait for a response to a sent message:
+  hrc monitor wait msg:msg_01J... --until response-or-idle --timeout 15m
 
 PROJECT RESOLUTION
   hrcchat resolves project context in this order:
@@ -53,9 +53,6 @@ COMMANDS
   show              Show one durable message by seq or message ID
   peek              Capture live output from a currently bound runtime
   messages          Query durable directed message history
-  watch             Stream matching durable messages
-  wait              Block until one matching durable message arrives
-  status            Show server or per-target status
   doctor            Run connectivity and target health checks
 `
 

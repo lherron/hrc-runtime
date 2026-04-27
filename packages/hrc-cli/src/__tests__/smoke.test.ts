@@ -129,18 +129,20 @@ afterEach(async () => {
 })
 
 describe('hrc-cli commander migration smoke fixtures', () => {
-  it('status --json exposes status counters and session/runtime shape', async () => {
+  it('monitor show --json exposes snapshot counters', async () => {
     server = await createHrcServer(serverOpts())
 
-    const result = await runCli(['status', '--json'], cliEnv())
+    const result = await runCli(['monitor', 'show', '--json'], cliEnv())
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
     expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      sessionCount: expect.any(Number),
-      runtimeCount: expect.any(Number),
-      sessions: expect.any(Array),
+      kind: 'monitor.snapshot',
+      daemon: { status: 'healthy' },
+      counts: {
+        sessions: expect.any(Number),
+        runtimes: expect.any(Number),
+      },
     })
   })
 
@@ -153,8 +155,7 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     for (const command of [
       'server',
       'session',
-      'status',
-      'events',
+      'monitor',
       'runtime',
       'launch',
       'start',
@@ -167,24 +168,12 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     }
   })
 
-  it('events accepts integer tail options without requiring event rows', async () => {
-    const result = await runCli(
-      [
-        'events',
-        '--from-seq',
-        '1',
-        '--max-lines',
-        '0',
-        '--scope-width',
-        '12',
-        '--format',
-        'compact',
-      ],
-      cliEnv()
-    )
+  it('monitor watch validates replay cursor before reading monitor state', async () => {
+    const result = await runCli(['monitor', 'watch', '--from-seq', '-1'], cliEnv())
 
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBe(2)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('positive integer')
   })
 
   it('runtime list accepts duration filters', async () => {

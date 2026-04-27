@@ -47,7 +47,10 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(result.stderr).toBe('')
     expect(result.stdout).toContain('COMMANDS')
     expect(result.stdout).toContain('dm')
-    expect(result.stdout).toContain('wait')
+    expect(result.stdout).toContain('hrc monitor wait')
+    expect(result.stdout).not.toContain('\n  watch             ')
+    expect(result.stdout).not.toContain('\n  wait              ')
+    expect(result.stdout).not.toContain('\n  status            ')
   })
 
   it('hrcchat dm <target> "msg" exits 0 with a structured response', async () => {
@@ -230,26 +233,13 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(result.stderr).toContain('<target>')
   })
 
-  it('hrcchat dm <target> --timeout 30s parses duration and succeeds', async () => {
-    const client = createDmClient()
-    const opts: DmOptions = { timeout: 30_000, json: true }
-    const result = await runCommand(() => cmdDm(client.client, opts, ['human', 'hello']))
-
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.json).toMatchObject({ request: { body: 'hello' } })
-    expect(client.requests[0]?.wait).toEqual({ enabled: true, timeoutMs: 30_000 })
-  })
-
-  it('hrcchat dm <target> --timeout invalid exits 2 (usage error) with error envelope', async () => {
-    // Duration parsing now happens at the commander layer via parseDuration.
-    // Invalid input throws CliUsageError which the central handler maps to exit 2.
-    const result = await runMain(['dm', 'human', 'hello', '--timeout', 'invalid'])
+  it('legacy dm wait flag exits 2 after removal', async () => {
+    const result = await runMain(['dm', 'human', 'hello', '--wait'])
 
     expect(result.exitCode).toBe(2)
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('invalid duration')
-    expect(result.stderr).toContain('expected')
+    expect(result.stderr).toContain('unknown option')
+    expect(result.stderr).toContain('--wait')
   })
 
   it('hrcchat <unknown-verb> exits 2 (usage error) and mentions the command', async () => {

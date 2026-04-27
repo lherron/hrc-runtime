@@ -3,20 +3,15 @@ import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join, resolve as resolvePath } from 'node:path'
 
-import { ancestorScopeRefs, resolveScopeInput } from 'agent-scope'
+import { resolveScopeInput } from 'agent-scope'
 import { CliUsageError, exitWithError, parseIntegerValue } from 'cli-kit'
 import { Command, CommanderError } from 'commander'
 
-import { HrcDomainError, HrcErrorCode, resolveDatabasePath } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcHarness,
-  HrcLifecycleEvent,
-  HrcLocalBridgeRecord,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
-  HrcStatusResponse,
-  HrcStatusSessionView,
-  HrcStatusTmuxView,
   InspectRuntimeResponse,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
@@ -24,7 +19,6 @@ import type {
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 import { buildCliInvocation } from 'hrc-server'
-import { openHrcDatabase } from 'hrc-store-sqlite'
 import {
   PROJECT_MARKER_FILENAME,
   type TargetDefinition,
@@ -55,24 +49,10 @@ import {
   stopServerProcess,
   writeServerProcessLog,
 } from './cli-runtime.js'
-import {
-  type EventsOutputFormat,
-  createEventsRenderer,
-  resolveDefaultFormat,
-} from './events-render.js'
 import { cmdMonitorShow } from './monitor-show.js'
 import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
 import { cmdMonitorWatch } from './monitor-watch.js'
 import { printJson } from './print.js'
-import {
-  type DerivedFailure,
-  type DerivedTurnStatus,
-  type RuntimeLiveness,
-  type ScopedStatusJson,
-  deriveLastFailure,
-  deriveRuntimeLiveness,
-  deriveTurnStatus,
-} from './status-derive.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -296,8 +276,6 @@ function toLegacyArgvForScopeCommand(
 
   return out
 }
-
-const EVENT_FOLLOW_POLL_MS = 250
 
 function createDefaultRuntimeIntent(
   provider: 'anthropic' | 'openai',
@@ -975,12 +953,6 @@ async function cmdServerStatus(args: string[]): Promise<void> {
   }
 }
 
-async function cmdServerHealth(_args: string[]): Promise<void> {
-  const client = createClient()
-  const result = await client.getHealth()
-  printJson(result)
-}
-
 async function serverForeground(): Promise<void> {
   const { createHrcServer } = await import('hrc-server')
 
@@ -1067,887 +1039,6 @@ async function cmdSessionDropContinuation(args: string[]): Promise<void> {
     ...(reason ? { reason } : {}),
   })
   printJson(result)
-}
-
-async function cmdEvents(args: string[]): Promise<void> {
-  const parsedArgs = parseEventsArgs(args)
-  if (parsedArgs.help) {
-    printEventsUsage()
-    return
-  }
-
-  const { follow, format, scopeRef, maxLines, scopeWidth } = parsedArgs
-  const fromSeqRaw = parsedArgs.fromSeqRaw
-
-  const fromSeq = fromSeqRaw !== undefined ? Number.parseInt(fromSeqRaw, 10) : undefined
-  if (fromSeqRaw !== undefined && (!Number.isFinite(fromSeq) || (fromSeq ?? 0) < 1)) {
-    fatal('--from-seq must be a positive integer')
-  }
-
-  const renderer = createEventsRenderer(format, { maxLines, scopeWidth })
-  try {
-    for await (const event of watchLocalEvents({ fromSeq, follow, scopeRef })) {
-      process.stdout.write(renderer.push(event))
-    }
-  } finally {
-    const tail = renderer.flush()
-    if (tail.length > 0) process.stdout.write(tail)
-  }
-}
-
-async function* watchLocalEvents(options: {
-  fromSeq?: number | undefined
-  follow: boolean
-  scopeRef?: string | undefined
-}): AsyncIterable<HrcLifecycleEvent> {
-  const db = openHrcDatabase(resolveDatabasePath())
-  let nextSeq = options.fromSeq ?? 1
-
-  try {
-    while (true) {
-      const events = db.hrcEvents.listFromHrcSeq(nextSeq)
-      if (events.length === 0) {
-        if (!options.follow) {
-          return
-        }
-        await Bun.sleep(EVENT_FOLLOW_POLL_MS)
-        continue
-      }
-
-      for (const event of events) {
-        nextSeq = event.hrcSeq + 1
-        if (options.scopeRef && !matchesEventScopeSelection(event.scopeRef, options.scopeRef)) {
-          continue
-        }
-        yield event
-      }
-
-      if (!options.follow) {
-        return
-      }
-    }
-  } finally {
-    db.close()
-  }
-}
-
-function printEventsUsage(): void {
-  process.stdout.write(`Usage: hrc events [scope] [--from-seq <n>] [--follow] [--format <mode>]
-
-Stream HRC lifecycle events from the local state database.
-
-Arguments:
-  scope                 Optional scope selector. Accepts the usual HRC handle forms:
-                        <agentId>
-                        <agentId>@<projectId>
-                        <agentId>@<projectId>:<taskId>
-
-Filtering:
-  agent@project         Includes that project scope and all descendant threads/tasks.
-  agent@project:task    Includes only that task scope and descendant task roles.
-
-Options:
-  --from-seq <n>        Start at HRC sequence number <n>.
-  --follow              Keep polling for new events.
-  --format <mode>       Output mode: tree (default when TTY), compact, verbose, json, ndjson.
-  --pretty              Alias for --format=tree (legacy flag).
-  --max-lines <n>       Tree mode: truncate each body block to <n> lines (default 10, 0=unlimited).
-  --scope-width <n>     Tree mode: per-row scoperef badge width in chars (default 20).
-  --help, -h            Show this help.
-
-Examples:
-  hrc events
-  hrc events candice@agent-spaces --pretty
-  hrc events alice@test:sometask --follow
-  hrc events --format=compact
-  hrc events --format=verbose
-  hrc events --max-lines=0                # show full body for every event
-  hrc events --scope-width=12 --pretty    # tighter badges for narrow terminals
-`)
-}
-
-function parseEventsArgs(args: string[]): {
-  fromSeqRaw?: string | undefined
-  follow: boolean
-  format: EventsOutputFormat
-  help: boolean
-  scopeRef?: string | undefined
-  maxLines?: number | undefined
-  scopeWidth?: number | undefined
-} {
-  let fromSeqRaw: string | undefined
-  let follow = false
-  let explicitFormat: EventsOutputFormat | undefined
-  let pretty = false
-  let help = false
-  let selectorInput: string | undefined
-  let maxLines: number | undefined
-  let scopeWidth: number | undefined
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (arg === undefined) continue
-
-    if (arg === '--help' || arg === '-h') {
-      help = true
-      continue
-    }
-    if (arg === '--follow') {
-      follow = true
-      continue
-    }
-    if (arg === '--pretty') {
-      pretty = true
-      continue
-    }
-    if (arg === '--format') {
-      const value = args[i + 1]
-      if (value === undefined) {
-        fatal('--format requires a value')
-      }
-      explicitFormat = parseEventsFormat(value)
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--format=')) {
-      explicitFormat = parseEventsFormat(arg.slice('--format='.length))
-      continue
-    }
-    if (arg === '--from-seq') {
-      const value = args[i + 1]
-      if (value === undefined) {
-        fatal('--from-seq requires a value')
-      }
-      fromSeqRaw = value
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--from-seq=')) {
-      fromSeqRaw = arg.slice('--from-seq='.length)
-      continue
-    }
-    if (arg === '--max-lines') {
-      const value = args[i + 1]
-      if (value === undefined) fatal('--max-lines requires a value')
-      maxLines = parseNonNegativeInt(value, '--max-lines')
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--max-lines=')) {
-      maxLines = parseNonNegativeInt(arg.slice('--max-lines='.length), '--max-lines')
-      continue
-    }
-    if (arg === '--scope-width') {
-      const value = args[i + 1]
-      if (value === undefined) fatal('--scope-width requires a value')
-      scopeWidth = parseNonNegativeInt(value, '--scope-width')
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--scope-width=')) {
-      scopeWidth = parseNonNegativeInt(arg.slice('--scope-width='.length), '--scope-width')
-      continue
-    }
-    if (arg.startsWith('-')) {
-      fatal(`unknown option for events: ${arg}`)
-    }
-    if (selectorInput !== undefined) {
-      fatal('events accepts at most one scope selector')
-    }
-    selectorInput = arg
-  }
-
-  let scopeRef: string | undefined
-  if (selectorInput !== undefined) {
-    scopeRef = resolveScopeInput(selectorInput).scopeRef
-  }
-
-  const format =
-    explicitFormat ?? (pretty ? 'tree' : resolveDefaultFormat(Boolean(process.stdout.isTTY)))
-
-  return { fromSeqRaw, follow, format, help, scopeRef, maxLines, scopeWidth }
-}
-
-function parseNonNegativeInt(raw: string, flagName: string): number {
-  const n = Number.parseInt(raw, 10)
-  if (!Number.isFinite(n) || n < 0) {
-    fatal(`${flagName} must be a non-negative integer (got "${raw}")`)
-  }
-  return n
-}
-
-function parseEventsFormat(raw: string): EventsOutputFormat {
-  switch (raw) {
-    case 'tree':
-    case 'compact':
-    case 'verbose':
-    case 'json':
-    case 'ndjson':
-      return raw
-    default:
-      fatal(`--format must be one of: tree, compact, verbose, json, ndjson (got "${raw}")`)
-      return 'ndjson' // unreachable
-  }
-}
-
-function matchesEventScopeSelection(eventScopeRef: string, selectedScopeRef: string): boolean {
-  if (eventScopeRef === selectedScopeRef) {
-    return true
-  }
-  try {
-    return ancestorScopeRefs(eventScopeRef).includes(selectedScopeRef)
-  } catch {
-    return false
-  }
-}
-
-// -- Status capability display (T-00998) ---------------------------------------
-
-// -- Session-centric status helpers (T-01025) ---------------------------------
-
-/**
- * Format tmux identifiers: "sessionName / paneId" or "(none)".
- */
-function formatTmuxRef(sessionName?: string, paneId?: string): string {
-  if (!sessionName && !paneId) return '(none)'
-  const parts: string[] = []
-  if (sessionName) parts.push(sessionName)
-  if (paneId) parts.push(paneId)
-  return parts.join(' / ')
-}
-
-/**
- * Render one session entry from the unified status response into lines.
- */
-function pushSessionBlock(lines: string[], entry: HrcStatusSessionView): void {
-  const s = entry.session
-  const label = s.scopeRef || s.hostSessionId
-  lines.push(`  ${label} [${s.hostSessionId}] (${s.status})`)
-
-  const ar = entry.activeRuntime
-  if (!ar) {
-    lines.push('    runtime:  (no active runtime)')
-    lines.push('    surfaces: (no active surfaces)')
-    return
-  }
-
-  const rt = ar.runtime
-  const rtParts = [rt.runtimeId, rt.harness, rt.transport].filter(Boolean)
-  if (rt.status) rtParts.push(rt.status)
-  lines.push(`    runtime:  ${rtParts.join(' / ')}`)
-
-  if (ar.tmux) {
-    lines.push(`    tmux:     ${formatTmuxRef(ar.tmux.sessionName, ar.tmux.paneId)}`)
-  }
-
-  if (ar.surfaceBindings.length > 0) {
-    const surfStr = ar.surfaceBindings.map((b) => `${b.surfaceKind}:${b.surfaceId}`).join(', ')
-    lines.push(`    surfaces: ${surfStr}`)
-  } else {
-    lines.push('    surfaces: (no active surfaces)')
-  }
-}
-
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  if (m < 60) return `${m}m ${s}s`
-  const h = Math.floor(m / 60)
-  const rm = m % 60
-  return `${h}h ${rm}m ${s}s`
-}
-
-function formatCapabilityValue(value: unknown): string {
-  if (typeof value === 'boolean') return value ? 'yes' : 'no'
-  if (Array.isArray(value)) return value.length > 0 ? value.join(', ') : '(none)'
-  return String(value)
-}
-
-function printCapabilityGroup(
-  lines: string[],
-  title: string,
-  entries: Record<string, unknown>
-): void {
-  lines.push('')
-  lines.push(`Capabilities: ${title}`)
-  for (const [key, val] of Object.entries(entries)) {
-    lines.push(`  ${key}: ${formatCapabilityValue(val)}`)
-  }
-}
-
-function printStatusHuman(status: HrcStatusResponse): void {
-  const lines: string[] = []
-
-  lines.push('HRC Server Status')
-  lines.push(`  uptime:     ${formatUptime(status.uptime)}`)
-  lines.push(`  started:    ${status.startedAt}`)
-  if (status.apiVersion) {
-    lines.push(`  apiVersion: ${status.apiVersion}`)
-  }
-  lines.push(`  socket:     ${status.socketPath}`)
-  lines.push(`  database:   ${status.dbPath}`)
-
-  // -- Per-session view (T-01025) -------------------------------------------
-  if (status.sessions && status.sessions.length > 0) {
-    lines.push('')
-    lines.push(`Sessions: (${status.sessions.length})`)
-    for (const entry of status.sessions) {
-      pushSessionBlock(lines, entry)
-    }
-  } else {
-    lines.push(`  sessions:   ${status.sessionCount}`)
-    lines.push(`  runtimes:   ${status.runtimeCount}`)
-  }
-
-  // -- Capabilities ---------------------------------------------------------
-  if (status.capabilities) {
-    const caps = status.capabilities
-
-    if (caps.semanticCore) {
-      printCapabilityGroup(lines, 'Semantic Core', caps.semanticCore)
-    }
-
-    if (caps.platform) {
-      printCapabilityGroup(lines, 'Platform', caps.platform)
-    }
-
-    if (caps.bridgeDelivery) {
-      printCapabilityGroup(lines, 'Bridge Delivery', caps.bridgeDelivery)
-    }
-
-    lines.push('')
-    lines.push('Capabilities: Backend')
-    if (caps.backend?.tmux) {
-      const tmux = caps.backend.tmux
-      const ver = tmux.version ? ` (${tmux.version})` : ''
-      lines.push(`  tmux: ${tmux.available ? 'available' : 'unavailable'}${ver}`)
-    } else {
-      lines.push('  tmux: unavailable')
-    }
-  }
-
-  lines.push('')
-  process.stdout.write(lines.join('\n'))
-}
-
-function printStatusUsage(): void {
-  process.stdout.write(`Usage: hrc status [scopeRef] [--json] [--all] [--verbose] [--events <n>]
-
-Show HRC daemon status, sessions, and capabilities.
-
-Arguments:
-  scopeRef              Optional scope selector. Accepts the usual HRC handle forms:
-                        <agentId>
-                        <agentId>@<projectId>
-                        <agentId>@<projectId>:<taskId>
-
-Options:
-  --json                Output structured JSON.
-  --all                 Include archived sessions in aggregate status.
-  --verbose             Scoped status: include event payloads in the recent-events tail.
-  --events <n>          Scoped status: recent event count (default 10, 0=suppress).
-  --help, -h            Show this help.
-
-Examples:
-  hrc status
-  hrc status --json
-  hrc status --all
-  hrc status clod@agent-spaces
-  hrc status clod@agent-spaces --events 20
-`)
-}
-
-function parseStatusScopeRef(args: string[]): string | undefined {
-  let selectorInput: string | undefined
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (arg === undefined) continue
-
-    if (arg === '--events') {
-      if (args[i + 1] === undefined) {
-        fatal('--events requires a value')
-      }
-      i += 1
-      continue
-    }
-    if (arg === '--json' || arg === '--all' || arg === '--verbose' || arg.startsWith('--events=')) {
-      continue
-    }
-    if (arg.startsWith('-')) {
-      continue
-    }
-    if (selectorInput !== undefined) {
-      fatal('status accepts at most one scope selector')
-    }
-    selectorInput = arg
-  }
-
-  return selectorInput === undefined ? undefined : resolveScopeInput(selectorInput).scopeRef
-}
-
-type ScopedStatusOptions = {
-  json: boolean
-  verbose: boolean
-  eventLimit: number
-}
-
-function parseScopedStatusOptions(args: string[]): ScopedStatusOptions {
-  return {
-    json: hasFlag(args, '--json'),
-    verbose: hasFlag(args, '--verbose'),
-    eventLimit: parseIntegerFlag(args, '--events', { defaultValue: 10, min: 0 }),
-  }
-}
-
-async function cmdStatusForScope(scopeRef: string, args: string[]): Promise<void> {
-  const options = parseScopedStatusOptions(args)
-  const client = createClient()
-  const status = (await client.getStatus()) as HrcStatusResponse
-  const session = findStatusSession(status, scopeRef)
-  const runtimeId = session?.activeRuntime?.runtime.runtimeId
-  const runtime = runtimeId ? await client.inspectRuntime({ runtimeId }) : undefined
-  const bridges = runtimeId ? await client.listBridges({ runtimeId }) : []
-  const tmuxProbe = runtime
-    ? await probeRuntimeTmuxPane(runtime, session?.activeRuntime?.tmux)
-    : undefined
-  const liveness = runtime
-    ? deriveRuntimeLiveness(runtime, { tmuxPaneExists: tmuxProbe?.paneExists })
-    : undefined
-
-  const db = openHrcDatabase(status.dbPath)
-  let scopedEvents: HrcLifecycleEvent[]
-  try {
-    scopedEvents = listScopedEvents(scopeRef, db.hrcEvents.listFromHrcSeq(1))
-  } finally {
-    db.close()
-  }
-  const recentEvents = tailEvents(scopedEvents, options.eventLimit)
-  const failureEvents = tailEvents(scopedEvents, 50)
-  const now = new Date()
-  const renderInput: ScopedStatusRenderInput = {
-    scopeRef,
-    session,
-    runtime: runtime
-      ? {
-          runtime,
-          liveness,
-          ...(tmuxProbe?.note ? { livenessNote: tmuxProbe.note } : {}),
-        }
-      : undefined,
-    bridges,
-    turnStatus: deriveTurnStatus(runtime, scopedEvents, now),
-    lastFailure: deriveLastFailure(failureEvents),
-    recentEvents,
-    eventLimit: options.eventLimit,
-    verboseEvents: options.verbose,
-    nextEventSeq: nextHrcSeq(scopedEvents),
-  }
-
-  if (options.json) {
-    printJson(toScopedStatusJson(renderInput))
-    return
-  }
-
-  process.stdout.write(renderScopedStatus(renderInput))
-}
-
-type ScopedRuntimeStatus = {
-  runtime: InspectRuntimeResponse
-  liveness?: RuntimeLiveness | undefined
-  livenessNote?: string | undefined
-}
-
-type ScopedStatusRenderInput = {
-  scopeRef: string
-  session?: HrcStatusSessionView | undefined
-  runtime?: ScopedRuntimeStatus | undefined
-  bridges: HrcLocalBridgeRecord[]
-  turnStatus: DerivedTurnStatus
-  lastFailure?: DerivedFailure | undefined
-  recentEvents: HrcLifecycleEvent[]
-  eventLimit: number
-  verboseEvents: boolean
-  nextEventSeq: number
-}
-
-function findStatusSession(
-  status: HrcStatusResponse,
-  scopeRef: string
-): HrcStatusSessionView | undefined {
-  const exactMatches = status.sessions.filter((entry) => entry.session.scopeRef === scopeRef)
-  const candidates =
-    exactMatches.length > 0
-      ? exactMatches
-      : status.sessions.filter((entry) =>
-          matchesEventScopeSelection(entry.session.scopeRef, scopeRef)
-        )
-
-  return candidates.sort((a, b) => statusSessionScore(b) - statusSessionScore(a))[0]
-}
-
-function statusSessionScore(entry: HrcStatusSessionView): number {
-  const activeRuntimeScore = entry.activeRuntime ? 1_000_000 : 0
-  const activeSessionScore = entry.session.status === 'active' ? 100_000 : 0
-  return activeRuntimeScore + activeSessionScore + entry.session.generation
-}
-
-function listScopedEvents(scopeRef: string, events: HrcLifecycleEvent[]): HrcLifecycleEvent[] {
-  return events.filter((event) => matchesEventScopeSelection(event.scopeRef, scopeRef))
-}
-
-function tailEvents(events: HrcLifecycleEvent[], limit: number): HrcLifecycleEvent[] {
-  if (limit <= 0) return []
-  return events.slice(-limit)
-}
-
-function nextHrcSeq(events: HrcLifecycleEvent[]): number {
-  const lastSeq = events.reduce((max, event) => Math.max(max, event.hrcSeq), 0)
-  return lastSeq + 1
-}
-
-function renderScopedStatus(input: ScopedStatusRenderInput): string {
-  const lines: string[] = []
-  const session = input.session?.session
-  const runtime = input.runtime?.runtime
-  const surfaces = input.session?.activeRuntime?.surfaceBindings ?? []
-
-  lines.push(`Scope: ${input.scopeRef}`)
-  if (session) {
-    lines.push(
-      `Session:    ${session.hostSessionId} (${session.status}) · gen ${session.generation} · lane ${formatLaneForStatus(session.laneRef)}`
-    )
-  } else {
-    lines.push('Session:    (not found)')
-  }
-
-  if (input.runtime) {
-    pushScopedRuntimeLines(lines, input.runtime)
-  } else {
-    lines.push('Runtime:    (no active runtime)')
-  }
-
-  lines.push('')
-  pushTurnStatusLines(lines, input.turnStatus)
-
-  if (runtime) {
-    lines.push(`Continuation: ${formatScopedContinuation(runtime)}`)
-  }
-
-  lines.push(`Surfaces:    ${formatScopedSurfaces(surfaces)}`)
-  if (runtime && (input.bridges.length > 0 || surfaces.length > 0)) {
-    lines.push(`Bridges:     ${formatScopedBridges(input.bridges)}`)
-  }
-  lines.push(formatLastFailure(input.lastFailure))
-
-  lines.push('')
-  pushRecentEventLines(lines, input.recentEvents, input.eventLimit, input.verboseEvents)
-
-  lines.push('')
-  pushNextHintLines(lines, input)
-
-  return `${lines.join('\n')}\n`
-}
-
-function pushTurnStatusLines(lines: string[], turnStatus: DerivedTurnStatus): void {
-  if (turnStatus.state === 'idle') {
-    if (turnStatus.lastCompletedAgeSec === null) {
-      lines.push('Turn:       IDLE — no completed turn')
-    } else {
-      lines.push(
-        `Turn:       IDLE — last turn ended ${formatAgeSec(turnStatus.lastCompletedAgeSec)} ago`
-      )
-    }
-    return
-  }
-
-  lines.push(
-    `Turn:       IN PROGRESS — ${turnStatus.runId} · ${turnStatus.launchId ?? '(unknown launch)'}`
-  )
-  lines.push(
-    `            started ${formatTurnAge(turnStatus.ageSec)} · ${turnStatus.toolCallCount} tool calls · last: ${formatLastTool(turnStatus.lastTool)}`
-  )
-  if (turnStatus.userPrompt !== undefined && turnStatus.userPrompt.length > 0) {
-    lines.push(`            user prompt: "${clipStatusText(turnStatus.userPrompt, 80)}"`)
-  }
-}
-
-function formatTurnAge(ageSec: number | null): string {
-  return ageSec === null ? '(unknown)' : `${formatAgeSec(ageSec)} ago`
-}
-
-function formatLastTool(lastTool: { name: string; ageSec: number } | undefined): string {
-  if (!lastTool) return '(none)'
-  return `${lastTool.name} (${formatAgeSec(lastTool.ageSec)} ago)`
-}
-
-function formatLastFailure(failure: DerivedFailure | undefined): string {
-  if (!failure) return 'Last failure: (none in last 50 events)'
-  return `Last failure: ${failure.event.ts} ${failure.event.eventKind} seq=${failure.event.hrcSeq} — ${failure.reason}`
-}
-
-function clipStatusText(value: string, maxLength: number): string {
-  const oneLine = value.replace(/\s+/g, ' ').trim()
-  if (oneLine.length <= maxLength) return oneLine
-  return `${oneLine.slice(0, maxLength - 3)}...`
-}
-
-function pushScopedRuntimeLines(lines: string[], runtimeStatus: ScopedRuntimeStatus): void {
-  const runtime = runtimeStatus.runtime
-  const verdict = runtimeStatus.liveness ? `   [${runtimeStatus.liveness.toUpperCase()}]` : ''
-  lines.push(
-    `Runtime:    ${runtime.runtimeId} / ${runtime.harness} / ${runtime.transport} / ${runtime.status}${verdict}`
-  )
-  lines.push(
-    `            wrapperPid ${runtime.wrapperPid ?? '(none)'} · childPid ${runtime.childPid ?? '(none)'}`
-  )
-  lines.push(
-    `            last_activity ${formatRelativeAge(runtime.lastActivityAgeSec)} · activeRunId ${runtime.activeRunId ?? '(none)'}`
-  )
-  if (runtimeStatus.livenessNote) {
-    lines.push(`            ${runtimeStatus.livenessNote}`)
-  }
-}
-
-function formatLaneForStatus(laneRef: string): string {
-  return laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
-}
-
-function formatRelativeAge(ageSec: number | null): string {
-  return ageSec === null ? '(none)' : `${formatAgeSec(ageSec)} ago`
-}
-
-function formatScopedContinuation(runtime: InspectRuntimeResponse): string {
-  const continuation = runtime.continuation
-  if (!continuation) return '(none)'
-  const key = continuation.key ? truncateStatusToken(continuation.key, 16) : '(none)'
-  return `${continuation.provider}:${key}${runtime.continuationStale ? ' (stale)' : ''}`
-}
-
-function truncateStatusToken(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  if (maxLength <= 3) return value.slice(0, maxLength)
-  return `${value.slice(0, maxLength - 3)}...`
-}
-
-function formatScopedSurfaces(
-  surfaces: NonNullable<HrcStatusSessionView['activeRuntime']>['surfaceBindings']
-): string {
-  if (surfaces.length === 0) return '(no active surfaces)'
-  return surfaces.map((surface) => `${surface.surfaceKind}:${surface.surfaceId} (bound)`).join(', ')
-}
-
-function formatScopedBridges(bridges: HrcLocalBridgeRecord[]): string {
-  if (bridges.length === 0) return '(no active bridges)'
-  return bridges
-    .map((bridge) => {
-      const id = truncateStatusToken(bridge.bridgeId, 16)
-      const runtime = bridge.runtimeId
-        ? ` · runtime ${truncateStatusToken(bridge.runtimeId, 16)}`
-        : ''
-      return `${id} -> ${bridge.target} (${bridge.transport}${runtime})`
-    })
-    .join(', ')
-}
-
-function pushRecentEventLines(
-  lines: string[],
-  events: HrcLifecycleEvent[],
-  eventLimit: number,
-  verbose: boolean
-): void {
-  if (eventLimit === 0) return
-  if (events.length === 0) {
-    lines.push('Recent events: (none)')
-    return
-  }
-
-  lines.push(`Recent events (${eventLimit}):`)
-  const renderer = createEventsRenderer(verbose ? 'verbose' : 'compact')
-  for (const event of events) {
-    for (const line of renderer.push(event).split('\n')) {
-      if (line.length > 0) lines.push(`  ${line}`)
-    }
-  }
-  const tail = renderer.flush()
-  if (tail.length > 0) {
-    for (const line of tail.split('\n')) {
-      if (line.length > 0) lines.push(`  ${line}`)
-    }
-  }
-}
-
-function pushNextHintLines(lines: string[], input: ScopedStatusRenderInput): void {
-  lines.push('Next:')
-  for (const command of scopedStatusNextCommands(input)) {
-    lines.push(`  ${command}`)
-  }
-}
-
-function scopedStatusNextCommands(input: ScopedStatusRenderInput): string[] {
-  const commands = [`hrc events ${input.scopeRef} --from-seq ${input.nextEventSeq} --follow`]
-  const runtimeStatus = input.runtime
-  if (!runtimeStatus) return commands
-
-  const runtime = runtimeStatus.runtime
-  commands.push(`hrc runtime inspect ${runtime.runtimeId}`)
-
-  if (runtime.transport === 'tmux' && runtimeStatus.liveness === 'live') {
-    commands.push(`hrc attach ${input.scopeRef}`)
-  }
-
-  if (runtimeStatus.liveness === 'stale') {
-    commands.push(`hrc runtime sweep --status busy --scope ${input.scopeRef}`)
-    commands.push(`hrc runtime adopt ${runtime.runtimeId}`)
-  }
-
-  if (
-    runtimeStatus.liveness === 'exited' &&
-    runtime.continuation !== null &&
-    !runtime.continuationStale
-  ) {
-    commands.push(`hrc start ${input.scopeRef}`)
-  }
-
-  return commands
-}
-
-function toScopedStatusJson(input: ScopedStatusRenderInput): ScopedStatusJson {
-  const runtime = input.runtime?.runtime ?? null
-  return {
-    scope: { scopeRef: input.scopeRef },
-    session: input.session?.session ?? null,
-    runtime,
-    liveness:
-      input.runtime?.liveness !== undefined
-        ? {
-            verdict: input.runtime.liveness,
-            ...(input.runtime.livenessNote ? { note: input.runtime.livenessNote } : {}),
-          }
-        : null,
-    turn: input.turnStatus,
-    continuation: runtime
-      ? {
-          value: runtime.continuation,
-          stale: runtime.continuationStale,
-        }
-      : null,
-    surfaces: input.session?.activeRuntime?.surfaceBindings ?? [],
-    bridges: input.bridges,
-    lastFailure: input.lastFailure ?? null,
-    recentEvents: input.recentEvents,
-    nextCommands: scopedStatusNextCommands(input),
-  }
-}
-
-type TmuxPaneProbeResult =
-  | { paneExists: boolean; note?: undefined }
-  | { paneExists?: undefined; note: string }
-
-async function probeRuntimeTmuxPane(
-  runtime: InspectRuntimeResponse,
-  tmux: HrcStatusTmuxView | undefined
-): Promise<TmuxPaneProbeResult | undefined> {
-  if (runtime.transport !== 'tmux') return undefined
-
-  const socketPath = tmux?.socketPath
-  const paneId = tmux?.paneId
-  if (!socketPath || !paneId) {
-    return { note: 'tmux probe unavailable: missing tmux socket or pane id' }
-  }
-
-  try {
-    const result = await execProcessTimed(
-      ['tmux', '-S', socketPath, 'display-message', '-p', '-t', paneId, '#{pane_id}'],
-      1_500
-    )
-    if (result.timedOut) {
-      return { note: 'tmux probe unavailable: timed out' }
-    }
-    if (result.exitCode === 0) {
-      return { paneExists: true }
-    }
-
-    const detail = `${result.stderr}\n${result.stdout}`.trim()
-    if (isTmuxMissingPane(detail)) {
-      return { paneExists: false }
-    }
-    return { note: `tmux probe unavailable${detail ? `: ${clipStatusText(detail, 120)}` : ''}` }
-  } catch (error) {
-    debugStatusProbe(`tmux probe failed for ${runtime.runtimeId}: ${formatUnknownError(error)}`)
-    return { note: `tmux probe unavailable: ${clipStatusText(formatUnknownError(error), 120)}` }
-  }
-}
-
-function isTmuxMissingPane(output: string): boolean {
-  const normalized = output.toLowerCase()
-  return (
-    normalized.includes("can't find pane") ||
-    normalized.includes("can't find window") ||
-    normalized.includes("can't find session") ||
-    normalized.includes('no such pane')
-  )
-}
-
-async function execProcessTimed(
-  argv: string[],
-  timeoutMs: number
-): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
-  const proc = Bun.spawn(argv, {
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-    env: { ...process.env },
-  })
-
-  const stdoutPromise = new Response(proc.stdout).text()
-  const stderrPromise = new Response(proc.stderr).text()
-  const timeout = Bun.sleep(timeoutMs).then(() => null)
-  const exitCode = await Promise.race([proc.exited, timeout])
-  const timedOut = exitCode === null
-
-  if (timedOut) {
-    proc.kill()
-    await proc.exited.catch(() => undefined)
-  }
-
-  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
-  return { stdout, stderr, exitCode, timedOut }
-}
-
-function debugStatusProbe(message: string): void {
-  if (process.env['HRC_DEBUG'] === '1') {
-    process.stderr.write(`hrc status debug: ${message}\n`)
-  }
-}
-
-function formatUnknownError(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-async function cmdStatus(args: string[]): Promise<void> {
-  if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
-    printStatusUsage()
-    return
-  }
-
-  const scopeRef = parseStatusScopeRef(args)
-  if (scopeRef !== undefined) {
-    return cmdStatusForScope(scopeRef, args)
-  }
-
-  const jsonFlag = hasFlag(args, '--json')
-  const allFlag = hasFlag(args, '--all')
-  const client = createClient()
-  const result = await client.getStatus(allFlag ? { includeArchived: true } : undefined)
-
-  if (jsonFlag) {
-    printJson(result)
-  } else {
-    printStatusHuman(result as HrcStatusResponse)
-  }
 }
 
 async function cmdTmuxStatus(args: string[]): Promise<void> {
@@ -3070,7 +2161,7 @@ COMMON CONTROL FLOWS
     hrc capture <runtimeId>
 
   Stream lifecycle events:
-    hrc events --pretty
+    hrc monitor watch
 
   Clear continuity / rotate generation:
     hrc session clear-context <hostSessionId>
@@ -3100,9 +2191,7 @@ ENVIRONMENT
 
 COMMANDS
   server            Daemon lifecycle, health, and tmux backend control
-  status            API status, sessions, capabilities
   monitor           Show, watch, and wait on HRC monitor snapshots/events
-  events            Stream HRC event envelopes
   session           Resolve, list, and inspect sessions
   runtime           Ensure, inspect, and control runtimes
   launch            List launches
@@ -3135,7 +2224,6 @@ Commands:
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
   server status [--json]                     Show daemon/socket/API health state
-  server health                       Check daemon health through the API
   server tmux status [--json]         Show HRC tmux socket/session state
   server tmux kill --yes              Kill the HRC tmux server and all interactive runtimes
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
@@ -3143,12 +2231,11 @@ Commands:
   session get <hostSessionId>         Get a session by host session ID
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
-  status [--json]                     Show server status and capabilities
   monitor show [selector] [--json]    Show current HRC monitor snapshot
+  monitor watch [selector] [--from-seq <n>] [--follow] [--json]
+                                     Watch HRC monitor event stream
   monitor wait <selector> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
-  events [scope] [--from-seq <n>] [--follow] [--pretty]
-                                     Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--host-session-id <id>] [--transport <transport>] [--status <csv>] [--stale] [--older-than <duration>] [--scope <prefix>] [--json]
                                      List runtimes
@@ -3205,6 +2292,9 @@ function buildProgram(): Command {
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .action(async (_opts, cmd: Command) => {
+      if (cmd.args.length > 0) {
+        fatal(`unknown command: server ${cmd.args[0]}`)
+      }
       // No-verb fallthrough: bare `hrc server` starts in foreground
       // (preserves legacy behavior where `hrc server [flags]` delegates to start)
       await cmdServerStart(cmd.args, 'foreground')
@@ -3280,13 +2370,6 @@ Exit codes:
         booleans: ['json'],
       })
       await cmdServerStatus(args)
-    })
-
-  server
-    .command('health')
-    .description('check daemon API health')
-    .action(async () => {
-      await cmdServerHealth([])
     })
 
   const serverTmux = server.command('tmux').description('tmux backend control')
@@ -3381,44 +2464,6 @@ Exit codes:
         booleans: [],
       })
       await cmdSessionDropContinuation(args)
-    })
-
-  // -- top-level commands (commander, Phase 6 T2b) -----------------------------
-
-  program
-    .command('status')
-    .description('API status, sessions, and capabilities')
-    .argument('[scope]', 'scope selector (agent, agent@project, agent@project:task)')
-    .option('--json', 'output structured JSON')
-    .option('--all', 'include archived sessions')
-    .option('--verbose', 'scoped status: include event payloads')
-    .option('--events <n>', 'scoped status: recent event count (default 10, 0=suppress)')
-    .action(async (scope, _opts, cmd: Command) => {
-      const positionals = scope !== undefined ? [scope] : []
-      const args = toLegacyArgv(positionals, cmd.opts(), {
-        strings: ['events'],
-        booleans: ['json', 'all', 'verbose'],
-      })
-      await cmdStatus(args)
-    })
-
-  program
-    .command('events')
-    .description('stream HRC event envelopes')
-    .argument('[scope]', 'scope selector (agent@project, agent@project:task)')
-    .option('--from-seq <n>', 'start at HRC sequence number')
-    .option('--follow', 'keep polling for new events')
-    .option('--format <mode>', 'output mode: tree, compact, verbose, json, ndjson')
-    .option('--pretty', 'alias for --format=tree (legacy)')
-    .option('--max-lines <n>', 'tree mode: truncate body blocks to n lines')
-    .option('--scope-width <n>', 'tree mode: per-row scope badge width in chars')
-    .action(async (scope, _opts, cmd: Command) => {
-      const positionals = scope !== undefined ? [scope] : []
-      const args = toLegacyArgv(positionals, cmd.opts(), {
-        strings: ['from-seq', 'format', 'max-lines', 'scope-width'],
-        booleans: ['follow', 'pretty'],
-      })
-      await cmdEvents(args)
     })
 
   // -- monitor group (MONITOR_PROPOSAL F2a) ----------------------------------

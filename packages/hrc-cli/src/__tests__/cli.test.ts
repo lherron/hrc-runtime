@@ -15,7 +15,7 @@
  *   5. `hrc session resolve --scope <scopeRef>` outputs JSON to stdout
  *   6. `hrc session list` outputs JSON array to stdout
  *   7. `hrc session get <hostSessionId>` outputs JSON to stdout
- *   8. `hrc events` outputs NDJSON events to stdout
+ *   8. monitor commands expose snapshots and event streams
  *   9. All structured output is valid JSON on stdout; all errors on stderr
  *  10. Exit code 0 on success, 1 on error
  *
@@ -28,9 +28,8 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveScopeInput } from 'agent-scope'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
-import type { HrcRuntimeSnapshot, StatusResponse } from 'hrc-core'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 
 // RED GATE: cli.ts must exist as the bin entry point
 // This import will fail until Curly implements the CLI module
@@ -60,35 +59,6 @@ class CliExit extends Error {
   }
 }
 
-type UnifiedStatusSessionView = {
-  session: {
-    hostSessionId: string
-    scopeRef: string
-    laneRef: string
-    generation: number
-  }
-  activeRuntime?: {
-    runtime: {
-      runtimeId: string
-      transport: string
-      status: string
-    }
-    tmux?: {
-      sessionId?: string
-      windowId?: string
-      paneId?: string
-    }
-    surfaceBindings: Array<{
-      surfaceKind: string
-      surfaceId: string
-    }>
-  }
-}
-
-type UnifiedStatusResponse = StatusResponse & {
-  sessions: UnifiedStatusSessionView[]
-}
-
 /**
  * Run the CLI as a subprocess and capture output.
  * Uses `bun run` to execute the TypeScript CLI entry point directly.
@@ -104,10 +74,6 @@ function shouldUseSubprocess(args: string[]): boolean {
   const command = args[0]
   if (!command || command === '--help' || command === '-h' || command === 'info') {
     return false
-  }
-
-  if (command === 'events' && args.includes('--pretty')) {
-    return true
   }
 
   switch (command) {
@@ -512,51 +478,6 @@ describe('no args / help', () => {
 })
 
 // ===========================================================================
-// 1b. status help / scoped path scaffold (T-01265)
-// ===========================================================================
-describe('status help and scoped path scaffold', () => {
-  it('hrc status --help prints usage without contacting the daemon', async () => {
-    const result = await runCli(['status', '--help'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toMatch(/usage:\s+hrc status/i)
-    expect(result.stdout).toContain('--json')
-    expect(result.stdout).toContain('--all')
-    expect(result.stdout).toContain('--verbose')
-    expect(result.stdout).toContain('--events <n>')
-  })
-
-  it('hrc status -h prints usage without contacting the daemon', async () => {
-    const result = await runCli(['status', '-h'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toMatch(/usage:\s+hrc status/i)
-  })
-
-  it('hrc status <scope> renders a scoped status screen without an active session', async () => {
-    server = await createHrcServer(serverOpts())
-    const result = await runCli(['status', 'clod@agent-spaces'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Scope: agent:clod:project:agent-spaces')
-    expect(result.stdout).toContain('Session:    (not found)')
-    expect(result.stdout).toContain('Runtime:    (no active runtime)')
-    expect(result.stdout).toContain('Recent events: (none)')
-    expect(result.stdout).toContain('Next:')
-    expect(result.stdout).toContain(
-      'hrc events agent:clod:project:agent-spaces --from-seq 1 --follow'
-    )
-  })
-
-  it('hrc status <invalid-scope> exits non-zero with a parser error', async () => {
-    const result = await runCli(['status', 'invalid-scope!!'], cliEnv())
-    expect(result.exitCode).toBe(1)
-    expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('Invalid scope input "invalid-scope!!"')
-  })
-})
-
-// ===========================================================================
 // 1b½. server group commander help (Phase 6 T1, T-01280)
 // ===========================================================================
 describe('server group commander help', () => {
@@ -569,7 +490,7 @@ describe('server group commander help', () => {
     expect(output).toContain('stop')
     expect(output).toContain('restart')
     expect(output).toContain('status')
-    expect(output).toContain('health')
+    expect(output).not.toMatch(/\n\s+health\b/)
     expect(output).toContain('tmux')
   })
 
@@ -586,6 +507,34 @@ describe('server group commander help', () => {
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
+  })
+})
+
+describe('legacy monitor command removal', () => {
+  it('top-level help lists monitor group and omits removed status/events entries', async () => {
+    const result = await runCli(['--help'])
+    const output = result.stdout + result.stderr
+    expect(result.exitCode).toBe(0)
+    expect(output).toContain('monitor')
+    expect(output).not.toMatch(/\n\s+status\s/)
+    expect(output).not.toMatch(/\n\s+events\s/)
+  })
+
+  it('removed legacy hrc commands exit as unknown commands', async () => {
+    for (const args of [['status'], ['events'], ['server', 'health']]) {
+      const result = await runCli(args, cliEnv())
+      expect(result.exitCode).toBe(2)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toMatch(/unknown command/i)
+    }
+  })
+
+  it('monitor subcommand help covers show, watch, and wait', async () => {
+    const result = await runCli(['monitor', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('show')
+    expect(result.stdout).toContain('watch')
+    expect(result.stdout).toContain('wait')
   })
 })
 
@@ -793,489 +742,6 @@ describe('top-level commander help (Phase 6 T2b)', () => {
 })
 
 // ===========================================================================
-// 1c. scoped status read path (T-01266)
-// ===========================================================================
-describe('scoped status read path', () => {
-  beforeEach(async () => {
-    server = await createHrcServer(serverOpts())
-  })
-
-  async function resolveTestSession(scope: string): Promise<{
-    hostSessionId: string
-    generation: number
-    laneRef: string
-  }> {
-    const resolveResult = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
-    expect(resolveResult.exitCode).toBe(0)
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-      session: { laneRef: string }
-    }
-    return {
-      hostSessionId: resolved.hostSessionId,
-      generation: resolved.generation,
-      laneRef: resolved.session.laneRef,
-    }
-  }
-
-  it('renders session, no-runtime, placeholders, and compact recent events', async () => {
-    const scope = testProjectScope('status-scoped-no-runtime')
-    const resolved = await resolveTestSession(scope)
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain(`Scope: ${scope}`)
-    expect(result.stdout).toContain(`Session:    ${resolved.hostSessionId} (active)`)
-    expect(result.stdout).toContain(`gen ${resolved.generation}`)
-    expect(result.stdout).toContain('Runtime:    (no active runtime)')
-    expect(result.stdout).toContain('Turn:       IDLE — no completed turn')
-    expect(result.stdout).not.toContain('Continuation:')
-    expect(result.stdout).toContain('Surfaces:    (no active surfaces)')
-    expect(result.stdout).toContain('Last failure: (none in last 50 events)')
-    expect(result.stdout).toContain('Recent events (10):')
-    expect(result.stdout).toContain('session.created')
-  })
-
-  it('skips empty bridges when runtime and surfaces are otherwise empty', async () => {
-    const scope = testProjectScope('status-scoped-runtime-empty-bindings')
-    const resolved = await resolveTestSession(scope)
-    const runtimeId = `rt-status-empty-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.insert({
-        runtimeId,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        transport: 'headless',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        wrapperPid: null,
-        childPid: null,
-        continuation: null,
-        supportsInflightInput: true,
-        adopted: false,
-        activeRunId: null,
-        lastActivityAt: null,
-        createdAt: now,
-        updatedAt: now,
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain(`Runtime:    ${runtimeId} / claude-code / headless / ready`)
-    expect(result.stdout).toContain('[LIVE]')
-    expect(result.stdout).toContain('Surfaces:    (no active surfaces)')
-    expect(result.stdout).not.toContain('Bridges:')
-    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
-  })
-
-  it('renders runtime, continuation, surfaces, bridges, and compact recent events', async () => {
-    const scope = testProjectScope('status-scoped-active')
-    const resolved = await resolveTestSession(scope)
-    const runtimeId = `rt-status-scoped-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.insert({
-        runtimeId,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        transport: 'headless',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'busy',
-        wrapperPid: process.pid,
-        childPid: null,
-        continuation: { provider: 'anthropic', key: 'continuation-key-1234567890' }, // gitleaks:allow
-        supportsInflightInput: true,
-        adopted: false,
-        activeRunId: 'run-status-scoped',
-        lastActivityAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      db.surfaceBindings.bind({
-        surfaceKind: 'ghostty',
-        surfaceId: 'status-surface-1',
-        hostSessionId: resolved.hostSessionId,
-        runtimeId,
-        generation: resolved.generation,
-        boundAt: now,
-      })
-      db.localBridges.create({
-        bridgeId: 'bridge-status-scoped',
-        hostSessionId: resolved.hostSessionId,
-        runtimeId,
-        transport: 'tmux',
-        target: 'other-agent@status',
-        createdAt: now,
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        runtimeId,
-        runId: 'run-status-scoped',
-        category: 'turn',
-        eventKind: 'turn.user_prompt',
-        transport: 'headless',
-        payload: {
-          type: 'message_end',
-          message: { role: 'user', content: 'status scoped prompt' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: `${scope}:task:T-01266`,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        runtimeId,
-        runId: 'run-status-scoped',
-        category: 'turn',
-        eventKind: 'turn.tool_call',
-        transport: 'headless',
-        payload: { toolUseId: 'tool-status', toolName: 'Read', input: { file_path: 'x' } },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain(
-      `Runtime:    ${runtimeId} / claude-code / headless / busy   [LIVE]`
-    )
-    expect(result.stdout).toContain(`wrapperPid ${process.pid}`)
-    expect(result.stdout).toContain('childPid (none)')
-    expect(result.stdout).toContain('activeRunId run-status-scoped')
-    expect(result.stdout).toContain('Turn:       IN PROGRESS — run-status-scoped')
-    expect(result.stdout).toContain('1 tool calls')
-    expect(result.stdout).toContain('last: Read')
-    expect(result.stdout).toContain('user prompt: "status scoped prompt"')
-    expect(result.stdout).toContain('Continuation: anthropic:continuation-...')
-    expect(result.stdout).toContain('Surfaces:    ghostty:status-surface-1 (bound)')
-    expect(result.stdout).toContain('Bridges:     bridge-status...')
-    expect(result.stdout).toContain('other-agent@status')
-    expect(result.stdout).toContain('Recent events (10):')
-    expect(result.stdout).toContain('turn.user_prompt')
-    expect(result.stdout).toContain('status scoped prompt')
-    expect(result.stdout).toContain('turn.tool_call')
-    expect(result.stdout).toContain('tool:Read')
-    expect(result.stdout).toContain('Next:')
-    expect(result.stdout).toContain('hrc events ')
-    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
-    expect(result.stdout).not.toContain('hrc runtime sweep')
-  })
-
-  it('renders stale liveness and recovery hints when a runtime pid is gone', async () => {
-    const scope = testProjectScope('status-scoped-stale-runtime')
-    const resolved = await resolveTestSession(scope)
-    const runtimeId = `rt-status-stale-${randomUUID()}`
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.insert({
-        runtimeId,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        transport: 'headless',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'busy',
-        wrapperPid: 999999,
-        childPid: null,
-        continuation: null,
-        supportsInflightInput: true,
-        adopted: false,
-        activeRunId: null,
-        lastActivityAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain(
-      `Runtime:    ${runtimeId} / claude-code / headless / busy   [STALE]`
-    )
-    expect(result.stdout).toContain(`hrc runtime inspect ${runtimeId}`)
-    expect(result.stdout).toContain(`hrc runtime sweep --status busy --scope ${scope}`)
-    expect(result.stdout).toContain(`hrc runtime adopt ${runtimeId}`)
-  })
-
-  it('renders idle turn state when the latest turn completed', async () => {
-    const scope = testProjectScope('status-scoped-idle-turn')
-    const resolved = await resolveTestSession(scope)
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        runId: 'run-status-idle',
-        category: 'turn',
-        eventKind: 'turn.completed',
-        transport: 'headless',
-        payload: { success: true },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Turn:       IDLE — last turn ended')
-  })
-
-  it('renders the latest derived failure from the last 50 scoped events', async () => {
-    const scope = testProjectScope('status-scoped-failure')
-    const resolved = await resolveTestSession(scope)
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        launchId: 'launch-status-failed',
-        category: 'launch',
-        eventKind: 'launch.exited',
-        transport: 'headless',
-        payload: { exitCode: 1, signal: null },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Last failure:')
-    expect(result.stdout).toContain('launch.exited')
-    expect(result.stdout).toContain('seq=')
-    expect(result.stdout).toContain('exitCode=1')
-  })
-
-  it('hrc status <scope> --events 0 suppresses the recent-events section', async () => {
-    const scope = testProjectScope('status-scoped-events-zero')
-    await resolveTestSession(scope)
-
-    const result = await runCli(['status', scope, '--events', '0'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).not.toContain('Recent events')
-    expect(result.stdout).toContain('Last failure: (none in last 50 events)')
-    expect(result.stdout).toContain('Next:')
-  })
-
-  it('hrc status <scope> --events <n> changes the recent-events tail length', async () => {
-    const scope = testProjectScope('status-scoped-events-limit')
-    const resolved = await resolveTestSession(scope)
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: '2026-04-26T17:00:01.000Z',
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        transport: 'headless',
-        payload: { message: { role: 'assistant', content: 'older status event' } },
-      })
-      db.hrcEvents.append({
-        ts: '2026-04-26T17:00:02.000Z',
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        transport: 'headless',
-        payload: { message: { role: 'assistant', content: 'newer status event' } },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope, '--events', '1'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Recent events (1):')
-    expect(result.stdout).toContain('newer status event')
-    expect(result.stdout).not.toContain('older status event')
-  })
-
-  it('hrc status <scope> --verbose includes event payload details in the tail', async () => {
-    const scope = testProjectScope('status-scoped-verbose-events')
-    const resolved = await resolveTestSession(scope)
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: '2026-04-26T17:00:03.000Z',
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        runId: 'run-verbose-status',
-        category: 'turn',
-        eventKind: 'turn.tool_call',
-        transport: 'headless',
-        payload: {
-          toolUseId: 'tool-verbose-status',
-          toolName: 'Read',
-          input: { file_path: 'verbose-marker.txt' },
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope, '--verbose'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Recent events (10):')
-    expect(result.stdout).toContain('tool_call')
-    expect(result.stdout).toContain('file_path')
-    expect(result.stdout).toContain('verbose-marker.txt')
-  })
-
-  it('hrc status <scope> --json emits the stable scoped status object shape', async () => {
-    const scope = testProjectScope('status-scoped-json')
-    const resolved = await resolveTestSession(scope)
-    const runtimeId = `rt-status-json-${randomUUID()}`
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.insert({
-        runtimeId,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: scope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        transport: 'headless',
-        harness: 'claude-code',
-        provider: 'anthropic',
-        status: 'ready',
-        wrapperPid: process.pid,
-        childPid: null,
-        continuation: { provider: 'anthropic', key: 'json-continuation-key' },
-        supportsInflightInput: true,
-        adopted: false,
-        activeRunId: null,
-        lastActivityAt: null,
-        createdAt: '2026-04-26T17:00:04.000Z',
-        updatedAt: '2026-04-26T17:00:04.000Z',
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['status', scope, '--json', '--events', '0'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stderr).toBe('')
-    const body = JSON.parse(result.stdout.trim()) as Record<string, unknown>
-    expect(Object.keys(body)).toEqual([
-      'scope',
-      'session',
-      'runtime',
-      'liveness',
-      'turn',
-      'continuation',
-      'surfaces',
-      'bridges',
-      'lastFailure',
-      'recentEvents',
-      'nextCommands',
-    ])
-    expect(body.scope).toEqual({ scopeRef: scope })
-    expect(body.liveness).toEqual({ verdict: 'live' })
-    expect(body.turn).toEqual({ state: 'idle', lastCompletedAgeSec: null })
-    expect(body.continuation).toEqual({
-      value: { provider: 'anthropic', key: 'json-continuation-key' },
-      stale: false,
-    })
-    expect(body.recentEvents).toEqual([])
-    expect(body.nextCommands).toEqual([
-      `hrc events ${scope} --from-seq 2 --follow`,
-      `hrc runtime inspect ${runtimeId}`,
-    ])
-  })
-
-  it('scoped status selector resolves the same shorthand as hrc events', async () => {
-    const handle = 'test@status-selector-shared'
-    const scope = resolveScopeInput(handle).scopeRef
-    const descendantScope = `${scope}:task:T-status-selector`
-    const resolved = await resolveTestSession(scope)
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: '2026-04-26T17:00:05.000Z',
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: descendantScope,
-        laneRef: resolved.laneRef,
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        transport: 'headless',
-        payload: { message: { role: 'assistant', content: 'shared selector event' } },
-      })
-    } finally {
-      db.close()
-    }
-
-    const statusResult = await runCli(['status', handle, '--json', '--events', '1'], cliEnv())
-    expect(statusResult.exitCode).toBe(0)
-    const statusBody = JSON.parse(statusResult.stdout.trim()) as {
-      scope: { scopeRef: string }
-      recentEvents: Array<{ scopeRef: string; eventKind: string }>
-    }
-
-    const eventsResult = await runCli(['events', handle, '--format', 'ndjson'], cliEnv())
-    expect(eventsResult.exitCode).toBe(0)
-    const eventLines = eventsResult.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-    const eventBodies = eventLines.map((line) => JSON.parse(line) as { scopeRef: string })
-
-    expect(statusBody.scope.scopeRef).toBe(scope)
-    expect(statusBody.recentEvents.at(-1)?.scopeRef).toBe(descendantScope)
-    expect(eventBodies.some((event) => event.scopeRef === descendantScope)).toBe(true)
-  })
-})
-
-// ===========================================================================
-// 2. Unknown command
-// ===========================================================================
 describe('unknown command', () => {
   it('prints error to stderr and exits 2 for unknown command', async () => {
     const result = await runCli(['nonexistent-command'])
@@ -1431,14 +897,18 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(after.running).toBe(true)
     expect(after.sessions).toEqual(before.sessions)
 
-    const statusResult = await runCli(['status', '--json'], cliEnv())
-    expect(statusResult.exitCode).toBe(0)
-    const status = JSON.parse(statusResult.stdout.trim()) as UnifiedStatusResponse
-    const joined = status.sessions.find(
-      (entry) => entry.session.hostSessionId === seeded.hostSessionId
+    const monitorResult = await runCli(
+      ['monitor', 'show', testProjectScope('server-restart-preserves-runtime'), '--json'],
+      cliEnv()
     )
-    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(seeded.runtimeId)
-    expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
+    expect(monitorResult.exitCode).toBe(0)
+    const monitor = JSON.parse(monitorResult.stdout.trim()) as {
+      session?: { hostSessionId: string }
+      runtime?: { runtimeId: string; transport: string }
+    }
+    expect(monitor.session?.hostSessionId).toBe(seeded.hostSessionId)
+    expect(monitor.runtime?.runtimeId).toBe(seeded.runtimeId)
+    expect(monitor.runtime?.transport).toBe('tmux')
   })
 
   it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
@@ -2509,625 +1979,11 @@ describe('hrc session get', () => {
 })
 
 // ===========================================================================
-// 8. hrc events — NDJSON output
-// ===========================================================================
-describe('hrc events', () => {
-  beforeEach(async () => {
-    server = await createHrcServer(serverOpts())
-  })
-
-  it('prints command help for events', async () => {
-    const result = await runCli(['events', '--help'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/usage:\s+hrc events/i)
-    expect(result.stdout).toContain('--format')
-    expect(result.stdout).toContain('agent@project')
-    expect(result.stdout).toContain('agent@project:task')
-  })
-
-  it('outputs NDJSON events to stdout (non-follow mode)', async () => {
-    // Create events first
-    await runCli(['session', 'resolve', '--scope', testProjectScope('watchcli')], cliEnv())
-
-    // Watch without follow — should return events and exit
-    const result = await runCli(['events'], cliEnv())
-    expect(result.exitCode).toBe(0)
-
-    const lines = result.stdout
-      .trim()
-      .split('\n')
-      .filter((l) => l.length > 0)
-    expect(lines.length).toBeGreaterThanOrEqual(1)
-
-    // Each line must be valid JSON
-    for (const line of lines) {
-      const event = JSON.parse(line)
-      expect(typeof event.hrcSeq).toBe('number')
-      expect(typeof event.streamSeq).toBe('number')
-      expect(typeof event.eventKind).toBe('string')
-    }
-  })
-
-  it('supports --from-seq flag', async () => {
-    // Create multiple events
-    await runCli(['session', 'resolve', '--scope', testProjectScope('fromseqcli1')], cliEnv())
-    await runCli(['session', 'resolve', '--scope', testProjectScope('fromseqcli2')], cliEnv())
-
-    // Get all events
-    const allResult = await runCli(['events'], cliEnv())
-    const allLines = allResult.stdout
-      .trim()
-      .split('\n')
-      .filter((l) => l.length > 0)
-    expect(allLines.length).toBeGreaterThanOrEqual(2)
-
-    const allEvents = allLines.map((l) => JSON.parse(l))
-    const fromSeq = allEvents[1].hrcSeq
-
-    // Watch from second event's seq
-    const result = await runCli(['events', '--from-seq', String(fromSeq)], cliEnv())
-    expect(result.exitCode).toBe(0)
-
-    const filteredLines = result.stdout
-      .trim()
-      .split('\n')
-      .filter((l) => l.length > 0)
-    const filteredEvents = filteredLines.map((l) => JSON.parse(l))
-    for (const ev of filteredEvents) {
-      expect(ev.hrcSeq).toBeGreaterThanOrEqual(fromSeq)
-    }
-  })
-
-  it('filters events by project scope and includes descendant task threads', async () => {
-    const projectScope = 'agent:candice:project:agent-spaces'
-    const taskScope = `${projectScope}:task:T-01156`
-    const otherTaskScope = `${projectScope}:task:T-02222`
-    const otherProjectScope = 'agent:candice:project:other-project:task:T-99999'
-
-    const projectResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', projectScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-    const taskResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', taskScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-    const otherTaskResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', otherTaskScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-    const otherProjectResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', otherProjectScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: projectResolved.hostSessionId,
-        scopeRef: projectScope,
-        laneRef: 'default',
-        generation: projectResolved.generation,
-        category: 'session',
-        eventKind: 'session.created',
-        payload: { sessionRef: `${projectScope}/lane:default` },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: taskResolved.hostSessionId,
-        scopeRef: taskScope,
-        laneRef: 'default',
-        generation: taskResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.user_prompt',
-        payload: {
-          type: 'message_end',
-          message: { role: 'user', content: 'project thread event' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: otherTaskResolved.hostSessionId,
-        scopeRef: otherTaskScope,
-        laneRef: 'default',
-        generation: otherTaskResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.user_prompt',
-        payload: {
-          type: 'message_end',
-          message: { role: 'user', content: 'other thread same project' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: otherProjectResolved.hostSessionId,
-        scopeRef: otherProjectScope,
-        laneRef: 'default',
-        generation: otherProjectResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.user_prompt',
-        payload: {
-          type: 'message_end',
-          message: { role: 'user', content: 'wrong project' },
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events', 'candice@agent-spaces'], cliEnv())
-    expect(result.exitCode).toBe(0)
-
-    const events = result.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map(
-        (line) =>
-          JSON.parse(line) as { scopeRef: string; payload: { message?: { content?: string } } }
-      )
-
-    expect(events.some((event) => event.scopeRef === projectScope)).toBe(true)
-    expect(events.some((event) => event.scopeRef === taskScope)).toBe(true)
-    expect(events.some((event) => event.scopeRef === otherTaskScope)).toBe(true)
-    expect(events.some((event) => event.scopeRef === otherProjectScope)).toBe(false)
-  })
-
-  it('filters events by task scope only', async () => {
-    const wantedTaskScope = 'agent:alice:project:test:task:sometask'
-    const siblingTaskScope = 'agent:alice:project:test:task:othertask'
-    const otherAgentTaskScope = 'agent:bob:project:test:task:sometask'
-
-    const wantedResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', wantedTaskScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-    const siblingResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', siblingTaskScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-    const otherAgentResolved = JSON.parse(
-      (await runCli(['session', 'resolve', '--scope', otherAgentTaskScope], cliEnv())).stdout.trim()
-    ) as { hostSessionId: string; generation: number }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: wantedResolved.hostSessionId,
-        scopeRef: wantedTaskScope,
-        laneRef: 'default',
-        generation: wantedResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        payload: {
-          type: 'message_end',
-          message: { role: 'assistant', content: 'wanted task' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: siblingResolved.hostSessionId,
-        scopeRef: siblingTaskScope,
-        laneRef: 'default',
-        generation: siblingResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        payload: {
-          type: 'message_end',
-          message: { role: 'assistant', content: 'sibling task' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: otherAgentResolved.hostSessionId,
-        scopeRef: otherAgentTaskScope,
-        laneRef: 'default',
-        generation: otherAgentResolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        payload: {
-          type: 'message_end',
-          message: { role: 'assistant', content: 'other agent task' },
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events', 'alice@test:sometask'], cliEnv())
-    expect(result.exitCode).toBe(0)
-
-    const events = result.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map(
-        (line) =>
-          JSON.parse(line) as { scopeRef: string; payload: { message?: { content?: string } } }
-      )
-
-    expect(events.some((event) => event.scopeRef === wantedTaskScope)).toBe(true)
-    expect(events.some((event) => event.scopeRef === siblingTaskScope)).toBe(false)
-    expect(events.some((event) => event.scopeRef === otherAgentTaskScope)).toBe(false)
-  })
-
-  it('shows only hrc lifecycle rows on /v1/events', async () => {
-    const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('watchfilter')],
-      cliEnv()
-    )
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-    }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfilter'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'runtime',
-        transport: 'tmux',
-        eventKind: 'runtime.created',
-        payload: {
-          harness: 'claude-code',
-        },
-      })
-      db.events.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfilter'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        source: 'hook',
-        eventKind: 'hook.ingested',
-        eventJson: {
-          hookData: { kind: 'PreToolUse' },
-        },
-      })
-      db.events.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfilter'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        source: 'hook',
-        eventKind: 'tool_execution_start',
-        eventJson: {
-          type: 'tool_execution_start',
-          toolUseId: 'toolu_visible',
-          toolName: 'Bash',
-          input: { command: 'pwd' },
-        },
-      })
-      db.events.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfilter'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        source: 'otel',
-        eventKind: 'codex.conversation.message',
-        eventJson: {
-          otel: {
-            logRecord: {
-              body: {
-                stringValue: 'assistant response',
-              },
-            },
-          },
-        },
-      })
-      db.events.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfilter'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        source: 'otel',
-        eventKind: 'notice',
-        eventJson: {
-          type: 'notice',
-          level: 'info',
-          message: 'Codex conversation started',
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events'], cliEnv())
-    expect(result.exitCode).toBe(0)
-
-    const events = result.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line))
-
-    expect(events.some((event) => event.eventKind === 'runtime.created')).toBe(true)
-    expect(events.every((event) => event.category)).toBe(true)
-    expect(events.every((event) => event.hrcSeq >= 1)).toBe(true)
-    expect(events.some((event) => event.eventKind === 'hook.ingested')).toBe(false)
-    expect(events.some((event) => event.eventKind === 'tool_execution_start')).toBe(false)
-    expect(events.some((event) => event.eventKind === 'notice')).toBe(false)
-  })
-
-  it('supports --pretty with colored human-readable output and hides hostSessionId', async () => {
-    await runCli(['session', 'resolve', '--scope', testProjectScope('watchpretty')], cliEnv())
-
-    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('test@watchpretty')
-    expect(result.stdout).toContain('session created')
-    expect(result.stdout).not.toContain('hostSessionId')
-    expect(result.stdout).toContain('\u001b[')
-  })
-
-  it('renders semantic turn content kinds in pretty output', async () => {
-    const taskScope = 'agent:test:project:watchprettyturncontent:task:T-12345'
-    const resolveResult = await runCli(['session', 'resolve', '--scope', taskScope], cliEnv())
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-    }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: taskScope,
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.user_prompt',
-        payload: {
-          type: 'message_end',
-          message: {
-            role: 'user',
-            content: 'Investigate this runtime',
-          },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: taskScope,
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.tool_call',
-        payload: {
-          type: 'tool_execution_start',
-          toolUseId: 'toolu_cli',
-          toolName: 'Bash',
-          input: { command: 'pwd' },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: taskScope,
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.tool_result',
-        payload: {
-          type: 'tool_execution_end',
-          toolUseId: 'toolu_cli',
-          toolName: 'Bash',
-          result: {
-            content: [{ type: 'text', text: '/tmp' }],
-          },
-        },
-      })
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: taskScope,
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.message',
-        payload: {
-          type: 'message_end',
-          message: {
-            role: 'assistant',
-            content: 'Done.',
-          },
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events', '--pretty'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    // Tree mode: prose-formatted message bodies, semantic glyphs.
-    expect(result.stdout).toContain('test@watchprettyturncontent:T-12345')
-    expect(result.stdout).toContain('user')
-    expect(result.stdout).toContain('Investigate this runtime')
-    // Tool-call folded with tool_result (bash toolName rendered lower-case).
-    expect(result.stdout).toContain('bash')
-    expect(result.stdout).toContain('$ pwd')
-    expect(result.stdout).toContain('/tmp')
-    expect(result.stdout).toContain('assistant')
-    expect(result.stdout).toContain('Done.')
-  })
-
-  it('supports pretty rendering for lifecycle event metadata and payload', async () => {
-    const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('watchprettybridge')],
-      cliEnv()
-    )
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-    }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchprettybridge'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'bridge',
-        runtimeId: 'rt-pretty',
-        transport: 'tmux',
-        eventKind: 'bridge.delivered',
-        payload: {
-          bridgeId: 'bridge-pretty',
-          target: 'smokey-pane@test',
-          payloadLength: 3,
-          enter: true,
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '1' }))
-    expect(result.exitCode).toBe(0)
-    // Generic bridge event falls through to the attribute line.
-    expect(result.stdout).toContain('bridge delivered')
-    expect(result.stdout).toContain('bridgeId')
-    expect(result.stdout).toContain('bridge-pretty')
-    expect(result.stdout).toContain('smokey-pane@test')
-  })
-
-  it('keeps multiline pretty output aligned inside the gutter', async () => {
-    const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('watchprettymultiline')],
-      cliEnv()
-    )
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-    }
-
-    const now = new Date().toISOString()
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: now,
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchprettymultiline'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.completed',
-        payload: {
-          success: false,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: 'Chunk ID: 384f38\nWall time: 0.0000 seconds\nProcess exited with code 3',
-              },
-            ],
-          },
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    const result = await runCli(['events', '--pretty'], cliEnv({ FORCE_COLOR: '0' }))
-    expect(result.exitCode).toBe(0)
-    // Tree mode: multi-line body text aligned under the event glyph (14-col indent).
-    const body = '              '
-    expect(result.stdout).toContain(`${body}Chunk ID: 384f38`)
-    expect(result.stdout).toContain(`${body}Wall time: 0.0000 seconds`)
-    expect(result.stdout).toContain(`${body}Process exited with code 3`)
-  })
-
-  it('follows newly appended lifecycle events from the local store after idle', async () => {
-    const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('watchfollowlocal')],
-      cliEnv()
-    )
-    const resolved = JSON.parse(resolveResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-    }
-
-    const proc = Bun.spawn(['bun', 'run', CLI_PATH, 'events', '--follow'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: {
-        ...process.env,
-        ...cliEnv(),
-      },
-    })
-    const stdoutPromise = new Response(proc.stdout).text()
-    const stderrPromise = new Response(proc.stderr).text()
-
-    await Bun.sleep(1_200)
-
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.hrcEvents.append({
-        ts: new Date().toISOString(),
-        hostSessionId: resolved.hostSessionId,
-        scopeRef: testProjectScope('watchfollowlocal'),
-        laneRef: 'default',
-        generation: resolved.generation,
-        category: 'turn',
-        eventKind: 'turn.completed',
-        payload: {
-          success: true,
-        },
-      })
-    } finally {
-      db.close()
-    }
-
-    await Bun.sleep(400)
-    proc.kill()
-    await proc.exited
-
-    const stdout = await stdoutPromise
-    const stderr = await stderrPromise
-
-    expect(stdout).toContain('"eventKind":"turn.completed"')
-    expect(stderr).not.toContain('socket connection was closed unexpectedly')
-  })
-})
-
-// ===========================================================================
 // 9. Phase 6 diagnostics CLI commands (T-00973 / T-00974)
-//
-// RED GATE: These tests call CLI commands that do not exist yet:
-//   hrc server health, hrc status, hrc runtime list, hrc launch list, hrc runtime adopt
-//
-// Pass conditions for Curly (T-00973):
-//   1. `hrc server health` → exit 0, stdout JSON with { ok: true }
-//   2. `hrc status` → exit 0, stdout JSON with uptime (number), startedAt, socketPath, dbPath
-//   3. `hrc runtime list` → exit 0, stdout JSON array
-//   4. `hrc runtime list --host-session-id <id>` → exit 0, filtered JSON array
-//   5. `hrc launch list` → exit 0, stdout JSON array
-//   6. `hrc launch list --runtime-id <id>` → exit 0, filtered JSON array
-//   7. `hrc runtime adopt <runtimeId>` on dead runtime → exit 0, stdout JSON with status='adopted'
-//   8. `hrc runtime adopt <runtimeId>` on active runtime → exit 1 (CONFLICT)
-//   9. `hrc runtime adopt <unknownId>` → exit 1 (UNKNOWN_RUNTIME)
 // ===========================================================================
 describe('Phase 6 diagnostics CLI', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
-  })
-
-  it('hrc server health prints { ok: true } and exits 0', async () => {
-    const result = await runCli(['server', 'health'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body).toEqual({ ok: true })
   })
 
   describe('T-01292 server status acceptance', () => {
@@ -3232,17 +2088,13 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.error).toMatch(/ENOTDIR|not a directory|diagnostic/i)
     })
 
-    it('includes server health output in status JSON and human output', async () => {
+    it('includes API health output in server status JSON and human output', async () => {
       server = await createHrcServer(serverOpts())
-
-      const health = await runCli(['server', 'health'], cliEnv())
-      expect(health.exitCode).toBe(0)
-      const healthBody = JSON.parse(health.stdout.trim())
 
       const statusJson = await runCli(['server', 'status', '--json'], cliEnv())
       expect(statusJson.exitCode).toBe(0)
       const statusBody = JSON.parse(statusJson.stdout.trim())
-      expect(statusBody.apiHealth).toEqual(healthBody)
+      expect(statusBody.apiHealth).toEqual({ ok: true })
 
       const statusHuman = await runCli(['server', 'status'], cliEnv())
       expect(statusHuman.exitCode).toBe(0)
@@ -3252,19 +2104,18 @@ describe('Phase 6 diagnostics CLI', () => {
     })
   })
 
-  it('hrc status --json prints status JSON with uptime and exits 0', async () => {
-    // Updated for T-00998: default output is now human-readable; --json for raw JSON
-    const result = await runCli(['status', '--json'], cliEnv())
+  it('hrc monitor show --json prints snapshot JSON with daemon status and exits 0', async () => {
+    const result = await runCli(['monitor', 'show', '--json'], cliEnv())
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
-    expect(body.ok).toBe(true)
-    expect(typeof body.uptime).toBe('number')
-    expect(body.uptime).toBeGreaterThanOrEqual(0)
-    expect(typeof body.startedAt).toBe('string')
-    expect(typeof body.socketPath).toBe('string')
-    expect(typeof body.dbPath).toBe('string')
-    expect(typeof body.sessionCount).toBe('number')
-    expect(typeof body.runtimeCount).toBe('number')
+    expect(body.kind).toBe('monitor.snapshot')
+    expect(body.daemon.status).toBe('healthy')
+    expect(typeof body.daemon.uptime).toBe('number')
+    expect(body.daemon.uptime).toBeGreaterThanOrEqual(0)
+    expect(typeof body.daemon.startedAt).toBe('string')
+    expect(typeof body.daemon.socketPath).toBe('string')
+    expect(typeof body.counts.sessions).toBe('number')
+    expect(typeof body.counts.runtimes).toBe('number')
   })
 
   it('hrc runtime list prints empty JSON array and exits 0', async () => {
@@ -3384,212 +2235,6 @@ describe('Phase 6 diagnostics CLI', () => {
   })
 })
 
-// ===========================================================================
-// 10. Status capability display (T-00998)
-//
-// RED GATE: These tests will fail until:
-//   - Larry lands HrcCapabilityStatus in hrc-core and server returns capabilities
-//   - Curly updates cmdStatus() to render a human-readable capabilities section
-//   - CLI adds --json flag for raw JSON backwards compatibility
-//
-// Pass conditions:
-//   1. `hrc status` exits 0 and stdout includes a "Capabilities" section
-//   2. Capabilities section lists backend.tmux with available status
-//   3. Unimplemented capabilities (appOwnedSessions, etc.) show as unavailable
-//   4. `hrc status --json` outputs raw JSON with capabilities object (backwards compat)
-//   5. JSON output includes apiVersion field
-// ===========================================================================
-describe('status capability display (T-00998)', () => {
-  it('hrc status displays human-readable Capabilities section', async () => {
-    server = await createHrcServer(serverOpts())
-    // RED: cmdStatus() currently just calls printJson(result) — no capability display
-    const result = await runCli(['status'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    // Output must include a "Capabilities" header/section (not just raw JSON)
-    expect(result.stdout).toMatch(/[Cc]apabilit/i)
-  })
-
-  it('hrc status shows tmux backend as available', async () => {
-    server = await createHrcServer(serverOpts())
-    // RED: no capability rendering in CLI
-    const result = await runCli(['status'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    // Should display tmux availability in the capabilities section
-    expect(result.stdout).toMatch(/tmux/i)
-    // Should indicate it's available (not "unavailable" or "false")
-    expect(result.stdout).toMatch(/tmux.*(?:available|true|yes|✓)/i)
-  })
-
-  it('hrc status shows unimplemented capabilities as unavailable', async () => {
-    server = await createHrcServer(serverOpts())
-    // RED: no capability rendering in CLI
-    const result = await runCli(['status'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    // Phase 1 canonical capabilities — all unimplemented, should appear in output
-    expect(result.stdout).toMatch(
-      /appOwnedSessions|appHarnessSessions|commandSessions|literalInput|surfaceBindings|legacyLocalBridges/i
-    )
-  })
-
-  it('hrc status --json outputs raw JSON with capabilities object', async () => {
-    server = await createHrcServer(serverOpts())
-    // RED: --json flag does not exist on status command yet
-    const result = await runCli(['status', '--json'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.ok).toBe(true)
-    expect(body.capabilities).toBeDefined()
-    expect(typeof body.capabilities).toBe('object')
-    expect(typeof body.apiVersion).toBe('string')
-  })
-
-  it('hrc status --json preserves all existing fields for backwards compat', async () => {
-    server = await createHrcServer(serverOpts())
-    // RED: --json flag does not exist on status command yet
-    const result = await runCli(['status', '--json'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    // All pre-existing fields must still be present
-    expect(body.ok).toBe(true)
-    expect(typeof body.uptime).toBe('number')
-    expect(typeof body.startedAt).toBe('string')
-    expect(typeof body.socketPath).toBe('string')
-    expect(typeof body.dbPath).toBe('string')
-    expect(typeof body.sessionCount).toBe('number')
-    expect(typeof body.runtimeCount).toBe('number')
-    // Plus new capability fields
-    expect(body.apiVersion).toBeDefined()
-    expect(body.capabilities).toBeDefined()
-  })
-})
-
-// ===========================================================================
-// 11. Unified status session/runtime/surface view (T-01025)
-//
-// RED GATE for wrkq T-01025:
-//   `hrc status` still renders aggregate server state only, and `/v1/status`
-//   still returns counts/capabilities without a joined per-session view.
-//
-// Pass conditions:
-//   1. Default `hrc status` renders session-centric blocks, not counts only
-//   2. Session blocks join session -> active runtime -> tmux -> active surfaces
-//   3. `hrc status --json` exposes a machine-readable `sessions[]` joined view
-//   4. Sessions with no active runtime render explicitly
-//   5. Active runtimes with no active surfaces render explicitly
-// ===========================================================================
-describe('unified status session/runtime/surface view (T-01025)', () => {
-  beforeEach(async () => {
-    server = await createHrcServer(serverOpts())
-  })
-
-  async function resolveSession(scope: string): Promise<{
-    hostSessionId: string
-    generation: number
-    scopeRef: string
-    laneRef: string
-  }> {
-    const resolveResult = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
-    expect(resolveResult.exitCode).toBe(0)
-    const { hostSessionId } = JSON.parse(resolveResult.stdout.trim()) as { hostSessionId: string }
-    const sessionResult = await runCli(['session', 'get', hostSessionId], cliEnv())
-    expect(sessionResult.exitCode).toBe(0)
-    const session = JSON.parse(sessionResult.stdout.trim()) as {
-      hostSessionId: string
-      generation: number
-      scopeRef: string
-      laneRef: string
-    }
-    return {
-      hostSessionId,
-      generation: session.generation,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-    }
-  }
-
-  async function ensureTmuxRuntime(scope: string): Promise<{
-    hostSessionId: string
-    runtimeId: string
-    paneId?: string
-  }> {
-    const session = await resolveSession(scope)
-    const ensureResult = await runCli(['runtime', 'ensure', session.hostSessionId], cliEnv())
-    expect(ensureResult.exitCode).toBe(0)
-    const runtime = JSON.parse(ensureResult.stdout.trim()) as {
-      runtimeId: string
-      tmuxJson?: {
-        paneId?: string
-      }
-    }
-    return {
-      hostSessionId: session.hostSessionId,
-      runtimeId: runtime.runtimeId,
-      paneId: runtime.tmuxJson?.paneId,
-    }
-  }
-
-  it('hrc status renders session-centric human output with joined runtime/tmux/surface details', async () => {
-    const seeded = await ensureTmuxRuntime(testProjectScope('status-human-joined'))
-    const bindResult = await runCli(
-      ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-human-1'],
-      cliEnv()
-    )
-    expect(bindResult.exitCode).toBe(0)
-
-    const result = await runCli(['status'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain(seeded.hostSessionId)
-    expect(result.stdout).toContain(testProjectScope('status-human-joined'))
-    expect(result.stdout).toContain(seeded.runtimeId)
-    expect(result.stdout).toMatch(/tmux/i)
-    if (seeded.paneId) {
-      expect(result.stdout).toContain(seeded.paneId)
-    }
-    expect(result.stdout).toContain('ghostty-status-human-1')
-  })
-
-  it('hrc status renders explicit no-runtime and no-surface states without overfitting spacing', async () => {
-    await resolveSession(testProjectScope('status-no-runtime'))
-    await ensureTmuxRuntime(testProjectScope('status-no-surfaces'))
-
-    const result = await runCli(['status'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain(testProjectScope('status-no-runtime'))
-    expect(result.stdout).toContain(testProjectScope('status-no-surfaces'))
-    expect(result.stdout).toMatch(/no active runtime/i)
-    expect(result.stdout).toMatch(/no active surfaces/i)
-  })
-
-  it('hrc status --json exposes joined sessions with activeRuntime tmux and activeSurfaces', async () => {
-    const seeded = await ensureTmuxRuntime(testProjectScope('status-json-joined'))
-    const bindResult = await runCli(
-      ['surface', 'bind', seeded.runtimeId, '--kind', 'ghostty', '--id', 'ghostty-status-json-1'],
-      cliEnv()
-    )
-    expect(bindResult.exitCode).toBe(0)
-
-    const result = await runCli(['status', '--json'], cliEnv())
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim()) as UnifiedStatusResponse
-    expect(Array.isArray(body.sessions)).toBe(true)
-
-    const joined = body.sessions.find(
-      (session) => session.session.hostSessionId === seeded.hostSessionId
-    )
-    expect(joined).toBeDefined()
-    expect(joined?.session.scopeRef).toBe(testProjectScope('status-json-joined'))
-    expect(joined?.activeRuntime?.runtime.runtimeId).toBe(seeded.runtimeId)
-    expect(joined?.activeRuntime?.runtime.transport).toBe('tmux')
-    expect(joined?.activeRuntime?.tmux?.paneId).toBeString()
-    expect(Array.isArray(joined?.activeRuntime?.surfaceBindings)).toBe(true)
-    expect(joined?.activeRuntime?.surfaceBindings).toHaveLength(1)
-    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceKind).toBe('ghostty')
-    expect(joined?.activeRuntime?.surfaceBindings[0]?.surfaceId).toBe('ghostty-status-json-1')
-  })
-})
-
-// ===========================================================================
-// 12. Error output format
 // ===========================================================================
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {

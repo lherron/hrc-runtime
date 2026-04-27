@@ -9,8 +9,6 @@ export type DmOptions = {
   respondTo?: string
   replyTo?: string
   mode?: 'auto' | 'headless' | 'nonInteractive'
-  wait?: boolean
-  timeout?: number // milliseconds (parsed by parseDuration in main.ts)
   file?: string
   json?: boolean | undefined
   project?: string | undefined
@@ -38,8 +36,6 @@ export async function cmdDm(
 
   const respondTo = opts.respondTo ? resolveAddress(opts.respondTo, callerSessionRef) : undefined
 
-  const timeoutMs = opts.timeout
-
   // Resolve runtimeIntent for session targets so auto-summon works
   const runtimeIntent =
     to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined
@@ -53,7 +49,6 @@ export async function cmdDm(
     replyToMessageId: opts.replyTo,
     runtimeIntent,
     createIfMissing: true,
-    wait: opts.wait || timeoutMs !== undefined ? { enabled: true, timeoutMs } : undefined,
   })
 
   if (opts.json) {
@@ -66,16 +61,6 @@ export async function cmdDm(
     process.stdout.write(result.reply.body)
     if (!result.reply.body.endsWith('\n')) {
       process.stdout.write('\n')
-    }
-  } else if (result.waited) {
-    if (result.waited.matched) {
-      process.stdout.write(result.waited.record.body)
-      if (!result.waited.record.body.endsWith('\n')) {
-        process.stdout.write('\n')
-      }
-    } else {
-      process.stderr.write('hrcchat: wait timed out\n')
-      process.exit(124)
     }
   } else {
     const toStr = formatAddress(to)
@@ -104,7 +89,6 @@ export type DmHandoffEnvelope = {
   request: SemanticDmResponse['request']
   execution?: SemanticDmResponse['execution']
   reply?: SemanticDmResponse['reply']
-  waited?: SemanticDmResponse['waited']
 }
 
 function buildHandoffEnvelope(
@@ -135,6 +119,5 @@ function buildHandoffEnvelope(
     request: result.request,
     ...(result.execution ? { execution: result.execution } : {}),
     ...(result.reply ? { reply: result.reply } : {}),
-    ...(result.waited ? { waited: result.waited } : {}),
   }
 }

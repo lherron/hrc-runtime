@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { CliUsageError, attachJsonOption, exitWithError, parseDuration } from 'cli-kit'
+import { CliUsageError, attachJsonOption, exitWithError } from 'cli-kit'
 import { Command, CommanderError } from 'commander'
 import { HrcDomainError } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
@@ -14,10 +14,7 @@ import { cmdMessages } from './commands/messages.js'
 import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
 import { cmdShow } from './commands/show.js'
-import { cmdStatus } from './commands/status.js'
 import { cmdSummon } from './commands/summon.js'
-import { cmdWait } from './commands/wait.js'
-import { cmdWatch } from './commands/watch.js'
 import { cmdWho } from './commands/who.js'
 
 // -- .env.local loading -------------------------------------------------------
@@ -118,8 +115,6 @@ program
   .option('--respond-to <kind>', 'human|agent|system')
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--mode <mode>', 'auto|headless|nonInteractive')
-  .option('--wait', 'wait for a reply')
-  .option('--timeout <duration>', 'e.g. 30s, 5m', parseDuration)
   .option('--file <path>', 'read body from file')
   .action(async (target, message, opts) => {
     const client = createClient()
@@ -176,40 +171,6 @@ program
     await cmdMessages(client, { ...opts, json: globalOpts().json }, target ? [target] : [])
   })
 
-// -- watch --------------------------------------------------------------------
-
-program
-  .command('watch')
-  .description('stream matching durable messages')
-  .argument('[target]', 'filter by target participant')
-  .option('--follow', 'keep watching for new messages')
-  .option('--to <address>', 'filter by recipient')
-  .option('--responses-to <address>', 'alias for --to')
-  .option('--from <address>', 'filter by sender')
-  .option('--thread <id>', 'filter by thread root message ID')
-  .option('--after <seq>', 'messages after this seq number')
-  .option('--timeout <duration>', 'e.g. 30s, 5m', parseDuration)
-  .action(async (target, opts) => {
-    const client = createClient()
-    await cmdWatch(client, { ...opts, json: globalOpts().json }, target ? [target] : [])
-  })
-
-// -- wait ---------------------------------------------------------------------
-
-program
-  .command('wait')
-  .description('block until one matching message arrives')
-  .option('--to <address>', 'filter by recipient')
-  .option('--responses-to <address>', 'alias for --to')
-  .option('--from <address>', 'filter by sender')
-  .option('--thread <id>', 'filter by thread root message ID')
-  .option('--after <seq>', 'messages after this seq number')
-  .option('--timeout <duration>', 'e.g. 30s, 5m', parseDuration)
-  .action(async (opts) => {
-    const client = createClient()
-    await cmdWait(client, { ...opts, json: globalOpts().json })
-  })
-
 // -- peek ---------------------------------------------------------------------
 
 program
@@ -220,17 +181,6 @@ program
   .action(async (target, opts) => {
     const client = createClient()
     await cmdPeek(client, { ...opts, json: globalOpts().json }, [target])
-  })
-
-// -- status -------------------------------------------------------------------
-
-program
-  .command('status')
-  .description('show server or per-target status')
-  .argument('[target]', 'target handle')
-  .action(async (target) => {
-    const client = createClient()
-    await cmdStatus(client, { json: globalOpts().json }, target ? [target] : [])
   })
 
 // -- doctor -------------------------------------------------------------------

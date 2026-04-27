@@ -52,11 +52,11 @@ Server infrastructure added:
 - Buffered subscriber pattern in watch/wait (mirrors `handleEvents` replay/high-water to avoid race)
 
 Enhanced `handleSemanticDm`:
-- Parses full `SemanticDmRequest` (respondTo, runtimeIntent, createIfMissing, parsedScopeJson, wait)
+- Parses full `SemanticDmRequest` (respondTo, runtimeIntent, createIfMissing, parsedScopeJson)
 - Auto-summons discoverable targets when runtimeIntent is provided
 - Dispatches semantic turn and creates automatic reply from finalOutput
 - Updates request record execution fields via `updateExecution()`
-- Supports `--wait` with server-side blocking
+- Emits a JSON handoff envelope for `hrc monitor wait msg:<messageId>`
 - Propagates actual turn status from dispatch (not hardcoded)
 
 ### Layer 4: hrc-sdk client methods (`packages/hrc-sdk/src/client.ts`)
@@ -71,9 +71,9 @@ Enhanced `handleSemanticDm`:
 - `src/cli-args.ts` — flag/arg parsing, duration parsing, body consumption
 - `src/normalize.ts` — address resolution (human/system/me/target -> HrcMessageAddress)
 - `src/resolve-intent.ts` — runtime intent resolution from agent profiles
-- 10 command modules in `src/commands/`:
+- 7 command modules in `src/commands/`:
   - `who.ts`, `summon.ts`, `dm.ts`, `send.ts`, `messages.ts`
-  - `watch.ts`, `wait.ts`, `peek.ts`, `status.ts`, `doctor.ts`
+  - `peek.ts`, `doctor.ts`
 - `dm.ts` resolves and sends `runtimeIntent` for session targets (enables auto-summon)
 - Added to workspace build order in root `package.json`
 - Added to justfile install recipe (`bun link`)
@@ -89,10 +89,10 @@ Enhanced `handleSemanticDm`:
 | `hrcchat send <target> <msg>` | **working** | Live tmux literal injection; correct `runtime_unavailable` for dormant |
 | `hrcchat peek <target>` | **working** | Captures live output; correct `runtime_unavailable` for dormant |
 | `hrcchat messages` | **working** | Query with all filters, human + JSON output |
-| `hrcchat watch` | **working** | NDJSON streaming with follow, replay/high-water race protection |
-| `hrcchat wait` | **working** | Server-side blocking; timeout returns exit 124 |
+| `hrc monitor watch` | **working** | Canonical monitor event stream |
+| `hrc monitor wait` | **working** | Canonical monitor condition wait |
 | `hrcchat show <seq>` | **working** | View individual message by seq or message-id |
-| `hrcchat status` | **working** | General + per-target, JSON mode |
+| `hrc monitor show` | **working** | General + per-target, JSON mode |
 | `hrcchat doctor` | **working** | Connectivity + tmux health checks |
 | `hrcchat info` | **working** | Usage, examples, env vars, command list |
 
