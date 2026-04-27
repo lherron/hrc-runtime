@@ -485,3 +485,45 @@ Result: green for the remaining gate items. Combined F3pre gate is now 11/11 pas
 ```text
 monitor.completed selector=msg:msg-558d7704-4c12-4721-b53f-927a8286cf21 condition=response-or-idle result=response exitCode=0
 ```
+
+## F4 Live E2E Smoke (post-T-01300)
+
+Date: 2026-04-27
+Coordinator: clod
+HRC daemon socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
+Capture directory: `/tmp/hrc-monitor-F4-clod-smoke`
+
+### Removed surfaces (must reject)
+
+| Command | Result |
+| --- | --- |
+| `hrc status` | `error: unknown command 'status'` ✓ |
+| `hrc events` | `error: unknown command 'events'` ✓ |
+| `hrc server health` | `unknown command: server health` ✓ |
+| `hrcchat dm --wait foo bar` | `error: unknown option '--wait'` ✓ |
+
+### Replacement surfaces (must succeed)
+
+| # | Command | Exit | Result |
+| --- | --- | ---: | --- |
+| 1 | `hrc server status` | 0 | healthy daemon snapshot (pid, socket, tmux, uptime) |
+| 2 | `hrc server status --json` | 0 | JSON with `status: "healthy"` |
+| 3 | `hrc monitor show` | 0 | aggregate snapshot (daemon/socket/tmux/sessions/runtimes) |
+| 4 | `hrc monitor show clod@agent-spaces` | 0 | scoped snapshot with sessionRef + runtime + status |
+| 5 | `hrc monitor show --json clod@agent-spaces` | 0 | canonical JSON snapshot |
+| 6 | `hrc monitor watch --follow --until idle agent-minder@agent-spaces --timeout 5s` | 0 | `result=already_idle` (T-01299 at-start short-circuit verified) |
+| 7 | `hrcchat dm --json agent-minder@agent-spaces - <<<…` | 0 | envelope with messageId, runtimeId, turnId, sessionRef |
+| 8 | `hrc monitor wait msg:<id> --until response-or-idle --timeout 60s` | 0 | `result=response` (T-01299 reply correlation verified) |
+
+### Defect filed during F4
+
+**T-01301 — `hrcchat dm --json` emits literal LF in body field (intermittent)**
+
+Observed in `/tmp/hrc-monitor-F4-clod-smoke/07_dm_json_envelope.out`: the `body` string contains an unescaped U+000A control character, producing invalid JSON per RFC 8259 §7. Subsequent dispatches in the same shell with similar input produced valid JSON, so the bug is intermittent. Workaround during F4 smoke: extract `messageId` via grep instead of jq; the rest of the handoff flow then completed cleanly with `monitor wait msg:<id> --until response-or-idle`.
+
+This does NOT block F3/F4 closure — the replacement contract is structurally correct and the e2e flow works. The defect is a JSON serialization bug in the envelope writer that should be addressed separately.
+
+### Result
+
+F4 e2e smoke: **GREEN** (all replacements work end-to-end against canonical paths).
+One non-blocking defect filed as T-01301.
