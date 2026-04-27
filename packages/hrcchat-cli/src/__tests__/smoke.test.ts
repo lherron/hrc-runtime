@@ -222,6 +222,33 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(payload.turnId).toBeNull()
   })
 
+  it('hrcchat dm --json emits one parseable envelope line for multi-line bodies', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01301/lane:main'
+    const states: HrcMessageRecord['execution'][] = [
+      { state: 'started', sessionRef, runtimeId: 'rt-started', runId: 'run-started' },
+      { state: 'failed', sessionRef, errorMessage: 'fixture dispatch failure' },
+      { state: 'accepted', sessionRef },
+    ]
+
+    for (const execution of states) {
+      const client = createDmClient({ requestExecution: execution })
+      const result = await runCommand(() =>
+        cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01301', 'line one\nline two\n'])
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout.endsWith('\n')).toBe(true)
+      expect(result.stdout.slice(0, -1)).not.toContain('\n')
+      expect(result.json).toMatchObject({
+        request: {
+          body: 'line one\nline two\n',
+          execution,
+        },
+      })
+    }
+  })
+
   it('hrcchat dm with no args exits 2 (usage error) and reports usage context', async () => {
     const client = createDmClient()
     const opts: DmOptions = {}

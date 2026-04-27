@@ -2,7 +2,7 @@ import { CliUsageError, consumeBody } from 'cli-kit'
 import type { HrcMessageAddress, SemanticDmResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
-import { printJson } from '../print.js'
+import { printJsonLine } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
 export type DmOptions = {
@@ -52,7 +52,7 @@ export async function cmdDm(
   })
 
   if (opts.json) {
-    printJson(buildHandoffEnvelope(result, to))
+    printJsonLine(buildHandoffEnvelope(result, to))
     return
   }
 
