@@ -74,6 +74,7 @@ done
     const serialized = result.stdout.slice(0, -1)
     expect(serialized).not.toContain('\n')
     expect(serialized).toContain(String.raw`line 1\nline 2\nline 3\n`)
+    await expectJqParses(serialized)
 
     const envelope = JSON.parse(serialized) as Record<string, unknown>
     const request = envelope['request'] as Record<string, unknown>
@@ -182,4 +183,26 @@ async function runDmJson(
   ])
 
   return { exitCode, stdout, stderr }
+}
+
+async function expectJqParses(input: string): Promise<void> {
+  const proc = Bun.spawn({
+    cmd: ['jq', '-e', '.'],
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  proc.stdin.write(input)
+  proc.stdin.end()
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+
+  expect({ exitCode, stdout, stderr }).toMatchObject({
+    exitCode: 0,
+    stderr: '',
+  })
 }
