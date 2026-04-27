@@ -60,6 +60,7 @@ import {
   createEventsRenderer,
   resolveDefaultFormat,
 } from './events-render.js'
+import { cmdMonitorShow } from './monitor-show.js'
 import { printJson } from './print.js'
 import {
   type DerivedFailure,
@@ -3098,6 +3099,7 @@ ENVIRONMENT
 COMMANDS
   server            Daemon lifecycle, health, and tmux backend control
   status            API status, sessions, capabilities
+  monitor           Show, watch, and wait on HRC monitor snapshots/events
   events            Stream HRC event envelopes
   session           Resolve, list, and inspect sessions
   runtime           Ensure, inspect, and control runtimes
@@ -3140,6 +3142,7 @@ Commands:
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
   status [--json]                     Show server status and capabilities
+  monitor show [selector] [--json]    Show current HRC monitor snapshot
   events [scope] [--from-seq <n>] [--follow] [--pretty]
                                      Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
@@ -3412,6 +3415,26 @@ Exit codes:
         booleans: ['follow', 'pretty'],
       })
       await cmdEvents(args)
+    })
+
+  // -- monitor group (MONITOR_PROPOSAL F2a) ----------------------------------
+
+  const monitor = program
+    .command('monitor')
+    .description('show, watch, and wait on HRC monitor state')
+
+  monitor
+    .command('show')
+    .description('show current HRC monitor snapshot')
+    .argument('[selector]', 'monitor selector')
+    .option('--json', 'output structured JSON')
+    .action(async (selector, _opts, cmd: Command) => {
+      const positionals = selector !== undefined ? [selector] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdMonitorShow(args)
     })
 
   // -- runtime group (commander, Phase 6 T2) ----------------------------------
