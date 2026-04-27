@@ -1,7 +1,11 @@
 import { HrcDomainError } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, printJson } from '../cli-args.js'
 import { resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
+
+export type DoctorOptions = {
+  json?: boolean | undefined
+}
 
 type Check = {
   name: string
@@ -9,9 +13,12 @@ type Check = {
   detail?: string | undefined
 }
 
-export async function cmdDoctor(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const targetInput = args[0] && !args[0].startsWith('-') ? args[0] : undefined
+export async function cmdDoctor(
+  client: HrcClient,
+  opts: DoctorOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
 
   const checks: Check[] = []
 
@@ -112,7 +119,7 @@ export async function cmdDoctor(client: HrcClient, args: string[]): Promise<void
     }
   }
 
-  if (json) {
+  if (opts.json) {
     printJson(checks)
     return
   }

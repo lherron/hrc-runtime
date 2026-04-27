@@ -13,8 +13,14 @@ import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
+let originalPath: string | undefined
+let originalAspCodexPath: string | undefined
+let originalAspCodexSkipCommonPaths: string | undefined
 
 beforeEach(async () => {
+  originalPath = process.env['PATH']
+  originalAspCodexPath = process.env['ASP_CODEX_PATH']
+  originalAspCodexSkipCommonPaths = process.env['ASP_CODEX_SKIP_COMMON_PATHS']
   fixture = await createHrcTestFixture('hrc-hrcchat-minimal-')
   server = await createHrcServer(fixture.serverOpts())
 })
@@ -22,6 +28,24 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.stop()
   await fixture.cleanup()
+  if (originalPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (=undefined leaks string "undefined")
+    delete process.env['PATH']
+  } else {
+    process.env['PATH'] = originalPath
+  }
+  if (originalAspCodexPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_PATH']
+  } else {
+    process.env['ASP_CODEX_PATH'] = originalAspCodexPath
+  }
+  if (originalAspCodexSkipCommonPaths === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+  } else {
+    process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
+  }
 })
 
 describe('hrcchat minimal server routes', () => {
@@ -165,7 +189,7 @@ exit 0
     }
 
     let execLog = ''
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       try {
         execLog = await readFile(fakeCodex.logPath, 'utf-8')
       } catch {

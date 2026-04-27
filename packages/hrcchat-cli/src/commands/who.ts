@@ -1,19 +1,23 @@
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, printJson } from '../cli-args.js'
 import { resolveProjectId } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdWho(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const discover = hasFlag(args, '--discover')
-  const allProjects = hasFlag(args, '--all-projects')
-  const projectId = allProjects ? undefined : resolveProjectId(args)
+export type WhoOptions = {
+  discover?: boolean
+  allProjects?: boolean
+  json?: boolean | undefined
+  project?: string | undefined
+}
+
+export async function cmdWho(client: HrcClient, opts: WhoOptions): Promise<void> {
+  const projectId = opts.allProjects ? undefined : resolveProjectId(opts.project)
 
   const targets = await client.listTargets({
     projectId,
-    discover,
+    discover: opts.discover,
   })
 
-  if (json) {
+  if (opts.json) {
     printJson(targets)
     return
   }

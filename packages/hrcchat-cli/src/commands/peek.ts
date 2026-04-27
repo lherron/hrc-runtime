@@ -1,11 +1,21 @@
+import { CliUsageError } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, parseIntegerFlag, printJson, requireArg } from '../cli-args.js'
 import { resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdPeek(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const targetInput = requireArg(args, 0, '<target>', ['--lines', '--project'])
-  const lines = parseIntegerFlag(args, '--lines', { defaultValue: 80, min: 1 })
+export type PeekOptions = {
+  lines?: string
+  json?: boolean | undefined
+}
+
+export async function cmdPeek(
+  client: HrcClient,
+  opts: PeekOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
+  if (!targetInput) throw new CliUsageError('peek requires <target>')
+  const lines = Number.parseInt(opts.lines ?? '80', 10)
   const sessionRef = resolveTargetToSessionRef(targetInput)
 
   const result = await client.captureBySelector({
@@ -13,7 +23,7 @@ export async function cmdPeek(client: HrcClient, args: string[]): Promise<void> 
     lines,
   })
 
-  if (json) {
+  if (opts.json) {
     printJson(result)
     return
   }

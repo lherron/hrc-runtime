@@ -1,20 +1,30 @@
+import { CliUsageError, consumeBody } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { consumeBody, fatal, hasFlag, printJson, requireArg } from '../cli-args.js'
 import { resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
 
-const SEND_VALUE_FLAGS = ['--file', '--project']
+export type SendOptions = {
+  enter?: boolean
+  file?: string
+  json?: boolean | undefined
+}
 
-export async function cmdSend(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const targetInput = requireArg(args, 0, '<target>', SEND_VALUE_FLAGS)
-  const body = consumeBody(args, 1, SEND_VALUE_FLAGS)
+export async function cmdSend(
+  client: HrcClient,
+  opts: SendOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
+  if (!targetInput) throw new CliUsageError('send requires <target>')
+  const body = consumeBody({ positional: positionals[1], file: opts.file })
 
   if (!body) {
-    fatal('send requires text (positional, -, or --file)')
+    throw new CliUsageError('send requires text (positional, -, or --file)')
   }
 
   const sessionRef = resolveTargetToSessionRef(targetInput)
-  const enter = !hasFlag(args, '--no-enter')
+  // Commander's --no-enter sets opts.enter to false; default is true
+  const enter = opts.enter !== false
 
   const result = await client.deliverLiteralBySelector({
     selector: { sessionRef },
@@ -22,7 +32,7 @@ export async function cmdSend(client: HrcClient, args: string[]): Promise<void> 
     enter,
   })
 
-  if (json) {
+  if (opts.json) {
     printJson(result)
     return
   }

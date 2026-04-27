@@ -14,7 +14,7 @@ import {
 import type { HrcStatusResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
-import { fatal, hasFlag } from './cli-args.js'
+import { fatal, hasFlag } from './runtime-args.js'
 
 export type ServerPaths = {
   runtimeRoot: string

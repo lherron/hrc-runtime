@@ -7,10 +7,10 @@
  *
  * Pass conditions for Curly (T-00957):
  *   1. `hrc` with no args prints help text to stderr and exits 1
- *   2. `hrc unknowncmd` prints error to stderr and exits 1
+ *   2. `hrc unknowncmd` prints error to stderr and exits 2
  *   3. `hrc turn send` and `hrc session clear-context` validate args and dispatch
  *      through hrc-sdk
- *      to stderr and exit 1
+ *      to stderr and exit 2
  *   4. `hrc server` starts the daemon (tested via createHrcServer delegation)
  *   5. `hrc session resolve --scope <scopeRef>` outputs JSON to stdout
  *   6. `hrc session list` outputs JSON array to stdout
@@ -518,7 +518,7 @@ describe('status help and scoped path scaffold', () => {
     const result = await runCli(['status', '--help'], cliEnv())
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Usage: hrc status [scopeRef]')
+    expect(result.stdout).toMatch(/usage:\s+hrc status/i)
     expect(result.stdout).toContain('--json')
     expect(result.stdout).toContain('--all')
     expect(result.stdout).toContain('--verbose')
@@ -529,7 +529,7 @@ describe('status help and scoped path scaffold', () => {
     const result = await runCli(['status', '-h'], cliEnv())
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('Usage: hrc status [scopeRef]')
+    expect(result.stdout).toMatch(/usage:\s+hrc status/i)
   })
 
   it('hrc status <scope> renders a scoped status screen without an active session', async () => {
@@ -552,6 +552,242 @@ describe('status help and scoped path scaffold', () => {
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toBe('')
     expect(result.stderr).toContain('Invalid scope input "invalid-scope!!"')
+  })
+})
+
+// ===========================================================================
+// 1b½. server group commander help (Phase 6 T1, T-01280)
+// ===========================================================================
+describe('server group commander help', () => {
+  it('hrc server --help exits 0 with Usage and lists all subcommands', async () => {
+    const result = await runCli(['server', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('start')
+    expect(output).toContain('stop')
+    expect(output).toContain('restart')
+    expect(output).toContain('status')
+    expect(output).toContain('health')
+    expect(output).toContain('tmux')
+  })
+
+  it('hrc server start --help exits 0 with Usage and --timeout-ms', async () => {
+    const result = await runCli(['server', 'start', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('--timeout-ms')
+  })
+
+  it('hrc server tmux --help exits 0 with Usage', async () => {
+    const result = await runCli(['server', 'tmux', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+  })
+})
+
+// ===========================================================================
+// 1b¾. nested group commander help (Phase 6 T2, T-01281)
+// ===========================================================================
+describe('nested group commander help (Phase 6 T2)', () => {
+  // -- session group --
+  it('hrc session --help exits 0 with Usage and lists all subcommands', async () => {
+    const result = await runCli(['session', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('resolve')
+    expect(output).toContain('list')
+    expect(output).toContain('get')
+    expect(output).toContain('clear-context')
+    expect(output).toContain('drop-continuation')
+  })
+
+  it('hrc session resolve --help exits 0 with Usage', async () => {
+    const result = await runCli(['session', 'resolve', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--scope')
+  })
+
+  // -- runtime group --
+  it('hrc runtime --help exits 0 with Usage and lists all subcommands', async () => {
+    const result = await runCli(['runtime', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('ensure')
+    expect(output).toContain('list')
+    expect(output).toContain('inspect')
+    expect(output).toContain('sweep')
+    expect(output).toContain('capture')
+    expect(output).toContain('interrupt')
+    expect(output).toContain('terminate')
+    expect(output).toContain('adopt')
+  })
+
+  it('hrc runtime sweep --help exits 0 with Usage and flags', async () => {
+    const result = await runCli(['runtime', 'sweep', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--dry-run')
+    expect(result.stdout).toContain('--transport')
+  })
+
+  // -- launch group --
+  it('hrc launch --help exits 0 with Usage and lists subcommands', async () => {
+    const result = await runCli(['launch', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('list')
+  })
+
+  it('hrc launch list --help exits 0 with Usage', async () => {
+    const result = await runCli(['launch', 'list', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+  })
+
+  // -- turn group --
+  it('hrc turn --help exits 0 with Usage and lists subcommands', async () => {
+    const result = await runCli(['turn', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('send')
+  })
+
+  it('hrc turn send --help exits 0 with Usage', async () => {
+    const result = await runCli(['turn', 'send', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--prompt')
+  })
+
+  // -- inflight group --
+  it('hrc inflight --help exits 0 with Usage and lists subcommands', async () => {
+    const result = await runCli(['inflight', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('send')
+  })
+
+  it('hrc inflight send --help exits 0 with Usage', async () => {
+    const result = await runCli(['inflight', 'send', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--run-id')
+  })
+
+  // -- surface group --
+  it('hrc surface --help exits 0 with Usage and lists subcommands', async () => {
+    const result = await runCli(['surface', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('bind')
+    expect(output).toContain('unbind')
+    expect(output).toContain('list')
+  })
+
+  it('hrc surface bind --help exits 0 with Usage', async () => {
+    const result = await runCli(['surface', 'bind', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--kind')
+  })
+
+  // -- bridge group --
+  it('hrc bridge --help exits 0 with Usage and lists all subcommands', async () => {
+    const result = await runCli(['bridge', '--help'])
+    expect(result.exitCode).toBe(0)
+    const output = result.stdout
+    expect(output).toMatch(/Usage:/)
+    expect(output).toContain('target')
+    expect(output).toContain('deliver-text')
+    expect(output).toContain('register')
+    expect(output).toContain('deliver')
+    expect(output).toContain('list')
+    expect(output).toContain('close')
+  })
+
+  it('hrc bridge deliver-text --help exits 0 with Usage', async () => {
+    const result = await runCli(['bridge', 'deliver-text', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--bridge')
+    expect(result.stdout).toContain('--text')
+  })
+
+  // -- runtime terminate negated-flag conflict --
+  it('hrc runtime terminate with both --drop-continuation and --no-drop-continuation exits non-zero', async () => {
+    const result = await runCli([
+      'runtime',
+      'terminate',
+      'rt-x',
+      '--drop-continuation',
+      '--no-drop-continuation',
+    ])
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('mutually exclusive')
+  })
+})
+
+// ===========================================================================
+// 1b⅞. top-level commander help (Phase 6 T2b, T-01282)
+// ===========================================================================
+describe('top-level commander help (Phase 6 T2b)', () => {
+  it('hrc start --help exits 0 with Usage', async () => {
+    const result = await runCli(['start', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--force-restart')
+    expect(result.stdout).toContain('--dry-run')
+    expect(result.stdout).toContain('--project-id')
+  })
+
+  it('hrc run --help exits 0 with Usage', async () => {
+    const result = await runCli(['run', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--force-restart')
+    expect(result.stdout).toContain('--no-attach')
+    expect(result.stdout).toContain('--dry-run')
+  })
+
+  it('hrc capture --help exits 0 with Usage', async () => {
+    const result = await runCli(['capture', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+  })
+
+  it('hrc attach --help exits 0 with Usage', async () => {
+    const result = await runCli(['attach', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--dry-run')
+  })
+
+  it('hrc start (no args) exits 0 with usage banner', async () => {
+    const result = await runCli(['start'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/usage:\s+hrc start/i)
+  })
+
+  it('hrc run (no args) exits 0 with usage banner', async () => {
+    const result = await runCli(['run'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/usage:\s+hrc run/i)
+  })
+
+  it('hrc attach (no args) exits 0 with usage banner', async () => {
+    const result = await runCli(['attach'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/usage:\s+hrc attach/i)
   })
 })
 
@@ -1040,9 +1276,9 @@ describe('scoped status read path', () => {
 // 2. Unknown command
 // ===========================================================================
 describe('unknown command', () => {
-  it('prints error to stderr and exits 1 for unknown command', async () => {
+  it('prints error to stderr and exits 2 for unknown command', async () => {
     const result = await runCli(['nonexistent-command'])
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.length).toBeGreaterThan(0)
     expect(result.stderr.toLowerCase()).toMatch(/unknown|unrecognized|invalid/i)
   })
@@ -1240,9 +1476,9 @@ describe('turn send / session clear-context', () => {
     return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
 
-  it('turn send exits 1 when hostSessionId is missing', async () => {
+  it('turn send exits 2 when hostSessionId is missing', async () => {
     const result = await runCli(['turn', 'send'], cliEnv())
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.toLowerCase()).toContain('missing required argument')
   })
 
@@ -1263,9 +1499,9 @@ describe('turn send / session clear-context', () => {
     expect(body.status).toBe('started')
   })
 
-  it('session clear-context exits 1 when hostSessionId is missing', async () => {
+  it('session clear-context exits 2 when hostSessionId is missing', async () => {
     const result = await runCli(['session', 'clear-context'], cliEnv())
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.toLowerCase()).toContain('missing required argument')
   })
 
@@ -2187,9 +2423,9 @@ describe('hrc session resolve', () => {
     expect(body.session.laneRef).toBe('default')
   })
 
-  it('exits 1 when --scope is missing', async () => {
+  it('exits 2 when --scope is missing', async () => {
     const result = await runCli(['session', 'resolve'], cliEnv())
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 })
@@ -2265,9 +2501,9 @@ describe('hrc session get', () => {
     expect(result.stderr.length).toBeGreaterThan(0)
   })
 
-  it('exits 1 when hostSessionId argument is missing', async () => {
+  it('exits 2 when hostSessionId argument is missing', async () => {
     const result = await runCli(['session', 'get'], cliEnv())
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
   })
 })
 
@@ -2282,7 +2518,7 @@ describe('hrc events', () => {
   it('prints command help for events', async () => {
     const result = await runCli(['events', '--help'], cliEnv())
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('Usage: hrc events [scope]')
+    expect(result.stdout).toMatch(/usage:\s+hrc events/i)
     expect(result.stdout).toContain('--format')
     expect(result.stdout).toContain('agent@project')
     expect(result.stdout).toContain('agent@project:task')
@@ -3235,7 +3471,7 @@ describe('unified status session/runtime/surface view (T-01025)', () => {
 describe('error output', () => {
   it('errors go to stderr, not stdout', async () => {
     const result = await runCli(['nonexistent'])
-    expect(result.exitCode).toBe(1)
+    expect(result.exitCode).toBe(2)
     // stdout should be empty or minimal; error text on stderr
     expect(result.stderr.length).toBeGreaterThan(0)
   })

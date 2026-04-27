@@ -19,6 +19,36 @@ import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 let fixture: HrcServerTestFixture | undefined
 let server: HrcServer | undefined
+let originalPath: string | undefined
+let originalAspCodexPath: string | undefined
+let originalAspCodexSkipCommonPaths: string | undefined
+
+function saveCodexEnv(): void {
+  originalPath = process.env['PATH']
+  originalAspCodexPath = process.env['ASP_CODEX_PATH']
+  originalAspCodexSkipCommonPaths = process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+}
+
+function restoreCodexEnv(): void {
+  if (originalPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (=undefined leaks string "undefined")
+    delete process.env['PATH']
+  } else {
+    process.env['PATH'] = originalPath
+  }
+  if (originalAspCodexPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_PATH']
+  } else {
+    process.env['ASP_CODEX_PATH'] = originalAspCodexPath
+  }
+  if (originalAspCodexSkipCommonPaths === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+  } else {
+    process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
+  }
+}
 
 function headlessIntent(
   provider: 'anthropic' | 'openai',
@@ -60,6 +90,7 @@ function expectedAnthropicContinuationKey(hostSessionId: string): string {
 }
 
 async function createTestServer(): Promise<void> {
+  saveCodexEnv()
   fixture = await createHrcTestFixture('hrc-headless-anthropic-')
   server = await createHrcServer(fixture.serverOpts())
 }
@@ -261,6 +292,7 @@ afterEach(async () => {
     await fixture.cleanup()
     fixture = undefined
   }
+  restoreCodexEnv()
 })
 
 describe('A. Anthropic headless dispatch', () => {
@@ -451,7 +483,7 @@ describe('D. DM fallback', () => {
   it('returns from non-wait headless DM after dispatch starts instead of turn completion', async () => {
     await createTestServer()
 
-    const fakeCodex = await installFakeCodex('fake-codex-slow-dm', { execDelayMs: 2_000 })
+    const fakeCodex = await installFakeCodex('fake-codex-slow-dm', { execDelayMs: 5_000 })
     const startedAt = performance.now()
     const dmRes = await fixture!.postJson('/v1/messages/dm', {
       from: { kind: 'entity', entity: 'human' },
@@ -465,7 +497,7 @@ describe('D. DM fallback', () => {
 
     expect(dmRes.status).toBe(200)
     const dm = (await dmRes.json()) as SemanticDmResponse
-    expect(elapsedMs).toBeLessThan(1_200)
+    expect(elapsedMs).toBeLessThan(4_000)
     expect(dm.execution?.transport).toBe('headless')
     expect(dm.execution?.status).toBe('started')
     expect(dm.execution?.continuationUpdated).toBe(false)

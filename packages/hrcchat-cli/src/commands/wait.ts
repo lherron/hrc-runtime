@@ -1,32 +1,37 @@
 import type { WaitMessageRequest } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, parseDuration, parseFlag, printJson } from '../cli-args.js'
 import { formatAddress, resolveAddress } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdWait(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
+export type WaitOptions = {
+  to?: string
+  responsesTo?: string
+  from?: string
+  thread?: string
+  after?: string
+  timeout?: number // milliseconds (parsed by parseDuration in main.ts)
+  json?: boolean | undefined
+}
+
+export async function cmdWait(client: HrcClient, opts: WaitOptions): Promise<void> {
   const callerSessionRef = process.env['HRC_SESSION_REF']
 
   const request: WaitMessageRequest = {}
 
-  const toRaw = parseFlag(args, '--to') ?? parseFlag(args, '--responses-to')
+  const toRaw = opts.to ?? opts.responsesTo
   if (toRaw) request.to = resolveAddress(toRaw, callerSessionRef)
 
-  const fromRaw = parseFlag(args, '--from')
-  if (fromRaw) request.from = resolveAddress(fromRaw, callerSessionRef)
+  if (opts.from) request.from = resolveAddress(opts.from, callerSessionRef)
 
-  const threadRaw = parseFlag(args, '--thread')
-  if (threadRaw) request.thread = { rootMessageId: threadRaw }
+  if (opts.thread) request.thread = { rootMessageId: opts.thread }
 
-  const afterRaw = parseFlag(args, '--after')
-  if (afterRaw) request.afterSeq = Number.parseInt(afterRaw, 10)
+  if (opts.after) request.afterSeq = Number.parseInt(opts.after, 10)
 
-  const timeoutRaw = parseFlag(args, '--timeout')
-  if (timeoutRaw) request.timeoutMs = parseDuration(timeoutRaw)
+  if (opts.timeout !== undefined) request.timeoutMs = opts.timeout
 
   const result = await client.waitMessage(request)
 
-  if (json) {
+  if (opts.json) {
     printJson(result)
     return
   }

@@ -43,6 +43,10 @@ let spoolDir: string
 let dbPath: string
 let tmuxSocketPath: string
 let server: HrcServer | undefined
+let projectRoot: string
+let originalPath: string | undefined
+let originalAspCodexPath: string | undefined
+let originalAspCodexSkipCommonPaths: string | undefined
 
 async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`http://localhost${path}`, {
@@ -119,8 +123,8 @@ function interactiveCliIntent(
   return {
     placement: {
       agentRoot: '/tmp/agent',
-      projectRoot: '/tmp/project',
-      cwd: '/tmp/project',
+      projectRoot,
+      cwd: projectRoot,
       runMode: 'task',
       bundle: { kind: 'agent-default' },
       dryRun: true,
@@ -144,6 +148,10 @@ function interactiveCliIntent(
 }
 
 beforeEach(async () => {
+  originalPath = process.env['PATH']
+  originalAspCodexPath = process.env['ASP_CODEX_PATH']
+  originalAspCodexSkipCommonPaths = process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
   stateRoot = join(tmpDir, 'state')
@@ -152,10 +160,12 @@ beforeEach(async () => {
   spoolDir = join(runtimeRoot, 'spool')
   dbPath = join(stateRoot, 'state.sqlite')
   tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
+  projectRoot = join(tmpDir, 'project')
 
   await mkdir(runtimeRoot, { recursive: true })
   await mkdir(stateRoot, { recursive: true })
   await mkdir(spoolDir, { recursive: true })
+  await mkdir(projectRoot, { recursive: true })
 
   server = await createHrcServer({
     runtimeRoot,
@@ -169,6 +179,25 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  if (originalPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (=undefined leaks string "undefined")
+    delete process.env['PATH']
+  } else {
+    process.env['PATH'] = originalPath
+  }
+  if (originalAspCodexPath === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_PATH']
+  } else {
+    process.env['ASP_CODEX_PATH'] = originalAspCodexPath
+  }
+  if (originalAspCodexSkipCommonPaths === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+  } else {
+    process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
+  }
+
   if (server) {
     await server.stop()
     server = undefined
@@ -208,6 +237,14 @@ set -eu
 cmd="\${1:-}"
 log_path=${JSON.stringify(logPath)}
 resume_path=${JSON.stringify(resumePath)}
+if [ "$cmd" = "--version" ]; then
+  printf 'codex 0.124.0\\n'
+  exit 0
+fi
+if [ "$cmd" = "app-server" ] && [ "\${2:-}" = "--help" ]; then
+  printf 'Usage: codex app-server\\n'
+  exit 0
+fi
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
@@ -227,6 +264,9 @@ exit 0
       'utf-8'
     )
     await chmod(scriptPath, 0o755)
+    process.env['PATH'] = `${binDir}:${process.env['PATH'] ?? ''}`
+    process.env['ASP_CODEX_PATH'] = scriptPath
+    process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = '1'
     return { binDir, logPath, resumePath }
   }
 

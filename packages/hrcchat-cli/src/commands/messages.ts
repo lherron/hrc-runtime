@@ -1,33 +1,43 @@
 import type { HrcMessageFilter, HrcMessageRecord } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, parseFlag, parseIntegerFlag, printJson } from '../cli-args.js'
 import { formatAddress, resolveAddress } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdMessages(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
+export type MessagesOptions = {
+  to?: string
+  responsesTo?: string
+  from?: string
+  thread?: string
+  after?: string
+  limit?: string
+  json?: boolean | undefined
+}
+
+export async function cmdMessages(
+  client: HrcClient,
+  opts: MessagesOptions,
+  positionals: string[]
+): Promise<void> {
   const callerSessionRef = process.env['HRC_SESSION_REF']
 
   const filter: HrcMessageFilter = {}
 
   // Positional target = participant filter
-  const firstArg = args[0]
-  if (firstArg && !firstArg.startsWith('-')) {
-    filter.participant = resolveAddress(firstArg, callerSessionRef)
+  const targetInput = positionals[0]
+  if (targetInput) {
+    filter.participant = resolveAddress(targetInput, callerSessionRef)
   }
 
-  const toRaw = parseFlag(args, '--to') ?? parseFlag(args, '--responses-to')
+  const toRaw = opts.to ?? opts.responsesTo
   if (toRaw) filter.to = resolveAddress(toRaw, callerSessionRef)
 
-  const fromRaw = parseFlag(args, '--from')
-  if (fromRaw) filter.from = resolveAddress(fromRaw, callerSessionRef)
+  if (opts.from) filter.from = resolveAddress(opts.from, callerSessionRef)
 
-  const threadRaw = parseFlag(args, '--thread')
-  if (threadRaw) filter.thread = { rootMessageId: threadRaw }
+  if (opts.thread) filter.thread = { rootMessageId: opts.thread }
 
-  const afterRaw = parseFlag(args, '--after')
-  if (afterRaw) filter.afterSeq = Number.parseInt(afterRaw, 10)
+  if (opts.after) filter.afterSeq = Number.parseInt(opts.after, 10)
 
-  filter.limit = parseIntegerFlag(args, '--limit', { defaultValue: 50, min: 1 })
+  filter.limit = Number.parseInt(opts.limit ?? '50', 10)
 
   // Without an --after cursor, tail: fetch the latest N in descending order
   // then reverse so the display is oldest-first within the window.
@@ -37,7 +47,7 @@ export async function cmdMessages(client: HrcClient, args: string[]): Promise<vo
   const result = await client.listMessages(filter)
   const messages = tailMode ? [...result.messages].reverse() : result.messages
 
-  if (json) {
+  if (opts.json) {
     printJson({ ...result, messages })
     return
   }

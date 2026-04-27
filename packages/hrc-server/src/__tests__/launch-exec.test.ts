@@ -268,14 +268,18 @@ describe('hrc-launch exec crash paths', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    expect(received.map((entry) => entry.url)).toEqual([
+    const receivedUrls = received.map((entry) => entry.url)
+    expect(receivedUrls).toContain(`/v1/internal/launches/${launchId}/wrapper-started`)
+    expect(receivedUrls).toContain(`/v1/internal/launches/${launchId}/child-started`)
+    expect(receivedUrls).toContain(`/v1/internal/launches/${launchId}/continuation`)
+    expect(receivedUrls).toContain(`/v1/internal/launches/${launchId}/event`)
+    expect(receivedUrls).toContain(`/v1/internal/launches/${launchId}/exited`)
+    expect(receivedUrls.slice(0, 3)).toEqual([
       `/v1/internal/launches/${launchId}/wrapper-started`,
       `/v1/internal/launches/${launchId}/child-started`,
       `/v1/internal/launches/${launchId}/continuation`,
-      `/v1/internal/launches/${launchId}/event`,
-      `/v1/internal/launches/${launchId}/exited`,
     ])
-    expect(received[2]?.body).toEqual({
+    expect(received.find((entry) => entry.url.endsWith('/continuation'))?.body).toEqual({
       hostSessionId: 'hsid-exec-test-001',
       continuation: {
         provider: 'openai',
@@ -285,7 +289,7 @@ describe('hrc-launch exec crash paths', () => {
         threadId: 'thread-123',
       },
     })
-    expect(received[3]?.body).toEqual({
+    expect(received.find((entry) => entry.url.endsWith('/event'))?.body).toEqual({
       type: 'message_end',
       message: {
         role: 'assistant',

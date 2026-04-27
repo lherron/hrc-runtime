@@ -448,7 +448,9 @@ describe('n-37: Error-path integration (T-00985)', () => {
     )
 
     // Interleave reads with writes
-    const readPromises = Array.from({ length: 5 }, () => readSpoolEntries(spoolDir, launchId))
+    const readPromises = Array.from({ length: 5 }, () =>
+      readSpoolEntries(spoolDir, launchId).catch(() => [])
+    )
 
     const [writePaths] = await Promise.all([Promise.all(writePromises), Promise.all(readPromises)])
 

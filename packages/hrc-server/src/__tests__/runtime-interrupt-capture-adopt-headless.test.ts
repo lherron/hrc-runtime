@@ -199,11 +199,17 @@ describe('runtime capture transport branching', () => {
   it('keeps the tmux capture path working', async () => {
     const { tmux, pane } = await setupTmuxRuntime('capture-tmux', 'rt-capture-tmux')
     await tmux.sendLiteral(pane.paneId, 'CAPTURE_TMUX_MARKER')
-    await Bun.sleep(100)
 
-    const res = await capture('rt-capture-tmux')
-    expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({
+    let body: { text?: string } = {}
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const res = await capture('rt-capture-tmux')
+      expect(res.status).toBe(200)
+      body = (await res.json()) as { text?: string }
+      if (body.text?.includes('CAPTURE_TMUX_MARKER')) break
+      await Bun.sleep(50)
+    }
+
+    expect(body).toMatchObject({
       text: expect.stringContaining('CAPTURE_TMUX_MARKER'),
     })
   })

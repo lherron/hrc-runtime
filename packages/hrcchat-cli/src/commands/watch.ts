@@ -1,34 +1,42 @@
 import type { HrcMessageFilter } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, parseDuration, parseFlag } from '../cli-args.js'
 import { formatAddress, resolveAddress } from '../normalize.js'
 
-export async function cmdWatch(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const follow = hasFlag(args, '--follow')
+export type WatchOptions = {
+  follow?: boolean
+  to?: string
+  responsesTo?: string
+  from?: string
+  thread?: string
+  after?: string
+  timeout?: number // milliseconds (parsed by parseDuration in main.ts)
+  json?: boolean | undefined
+}
+
+export async function cmdWatch(
+  client: HrcClient,
+  opts: WatchOptions,
+  positionals: string[]
+): Promise<void> {
   const callerSessionRef = process.env['HRC_SESSION_REF']
 
   const filter: HrcMessageFilter = {}
 
-  const firstArg = args[0]
-  if (firstArg && !firstArg.startsWith('-')) {
-    filter.participant = resolveAddress(firstArg, callerSessionRef)
+  const targetInput = positionals[0]
+  if (targetInput) {
+    filter.participant = resolveAddress(targetInput, callerSessionRef)
   }
 
-  const toRaw = parseFlag(args, '--to') ?? parseFlag(args, '--responses-to')
+  const toRaw = opts.to ?? opts.responsesTo
   if (toRaw) filter.to = resolveAddress(toRaw, callerSessionRef)
 
-  const fromRaw = parseFlag(args, '--from')
-  if (fromRaw) filter.from = resolveAddress(fromRaw, callerSessionRef)
+  if (opts.from) filter.from = resolveAddress(opts.from, callerSessionRef)
 
-  const threadRaw = parseFlag(args, '--thread')
-  if (threadRaw) filter.thread = { rootMessageId: threadRaw }
+  if (opts.thread) filter.thread = { rootMessageId: opts.thread }
 
-  const afterRaw = parseFlag(args, '--after')
-  if (afterRaw) filter.afterSeq = Number.parseInt(afterRaw, 10)
+  if (opts.after) filter.afterSeq = Number.parseInt(opts.after, 10)
 
-  const timeoutRaw = parseFlag(args, '--timeout')
-  const timeoutMs = timeoutRaw ? parseDuration(timeoutRaw) : undefined
+  const timeoutMs = opts.timeout
 
   const ac = new AbortController()
   process.on('SIGINT', () => ac.abort())
@@ -36,11 +44,11 @@ export async function cmdWatch(client: HrcClient, args: string[]): Promise<void>
   try {
     for await (const msg of client.watchMessages({
       filter,
-      follow,
+      follow: opts.follow,
       timeoutMs,
       signal: ac.signal,
     })) {
-      if (json) {
+      if (opts.json) {
         process.stdout.write(`${JSON.stringify(msg)}\n`)
       } else {
         const from = formatAddress(msg.from)

@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { resolveScopeInput } from 'agent-scope'
+import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import {
   type TargetDefinition,
@@ -21,7 +22,6 @@ import {
   resolveAgentPrimingPrompt,
   resolveHarnessProvider,
 } from 'spaces-config'
-import { fatal } from './cli-args.js'
 
 function loadProjectTarget(
   projectRoot: string | undefined,
@@ -77,12 +77,14 @@ export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIn
 
   const agentsRoot = getAgentsRoot()
   if (!agentsRoot) {
-    fatal('cannot resolve agent placement — set ASP_AGENTS_ROOT or configure agents-root')
+    throw new CliUsageError(
+      'cannot resolve agent placement — set ASP_AGENTS_ROOT or configure agents-root'
+    )
   }
 
   const agentRoot = join(agentsRoot, scope.agentId)
   if (!existsSync(agentRoot)) {
-    fatal(`agent "${scope.agentId}" not found at ${agentRoot}`)
+    throw new CliUsageError(`agent "${scope.agentId}" not found at ${agentRoot}`)
   }
 
   const paths = resolveAgentPlacementPaths({

@@ -74,14 +74,10 @@ export function resolveCallerAddress(): HrcMessageAddress {
 }
 
 /**
- * Infer project ID from --project flag, ASP_PROJECT env, or cwd.
+ * Resolve project ID from explicit value, ASP_PROJECT env, or cwd.
  */
-export function resolveProjectId(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--project' && args[i + 1]) {
-      return args[i + 1]
-    }
-  }
+export function resolveProjectId(explicit?: string): string | undefined {
+  if (explicit) return explicit
   return process.env['ASP_PROJECT'] ?? undefined
 }
 

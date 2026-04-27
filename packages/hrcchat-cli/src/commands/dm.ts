@@ -1,39 +1,43 @@
+import { CliUsageError, consumeBody } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import {
-  consumeBody,
-  fatal,
-  hasFlag,
-  parseDuration,
-  parseFlag,
-  printJson,
-  requireArg,
-} from '../cli-args.js'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
+import { printJson } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
-const DM_VALUE_FLAGS = ['--file', '--respond-to', '--reply-to', '--mode', '--timeout', '--project']
+export type DmOptions = {
+  respondTo?: string
+  replyTo?: string
+  mode?: 'auto' | 'headless' | 'nonInteractive'
+  wait?: boolean
+  timeout?: number // milliseconds (parsed by parseDuration in main.ts)
+  file?: string
+  json?: boolean | undefined
+  project?: string | undefined
+}
 
-export async function cmdDm(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const wait = hasFlag(args, '--wait')
-  const targetInput = requireArg(args, 0, '<target>', DM_VALUE_FLAGS)
-  const body = consumeBody(args, 1, DM_VALUE_FLAGS)
+export async function cmdDm(
+  client: HrcClient,
+  opts: DmOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
+  if (!targetInput) {
+    throw new CliUsageError('missing required argument: <target>')
+  }
+
+  const body = consumeBody({ positional: positionals[1], file: opts.file })
 
   if (!body) {
-    fatal('dm requires a message body (positional, -, or --file)')
+    throw new CliUsageError('dm requires a message body (positional, -, or --file)')
   }
 
   const callerSessionRef = process.env['HRC_SESSION_REF']
   const from = resolveCallerAddress()
   const to = resolveAddress(targetInput, callerSessionRef)
 
-  const respondToRaw = parseFlag(args, '--respond-to')
-  const respondTo = respondToRaw ? resolveAddress(respondToRaw, callerSessionRef) : undefined
+  const respondTo = opts.respondTo ? resolveAddress(opts.respondTo, callerSessionRef) : undefined
 
-  const replyToMessageId = parseFlag(args, '--reply-to')
-  const modeRaw = parseFlag(args, '--mode') as 'auto' | 'headless' | 'nonInteractive' | undefined
-  const timeoutRaw = parseFlag(args, '--timeout')
-  const timeoutMs = timeoutRaw ? parseDuration(timeoutRaw) : undefined
+  const timeoutMs = opts.timeout
 
   // Resolve runtimeIntent for session targets so auto-summon works
   const runtimeIntent =
@@ -43,15 +47,15 @@ export async function cmdDm(client: HrcClient, args: string[]): Promise<void> {
     from,
     to,
     body,
-    mode: modeRaw,
+    mode: opts.mode,
     respondTo,
-    replyToMessageId,
+    replyToMessageId: opts.replyTo,
     runtimeIntent,
     createIfMissing: true,
-    wait: wait || timeoutMs !== undefined ? { enabled: true, timeoutMs } : undefined,
+    wait: opts.wait || timeoutMs !== undefined ? { enabled: true, timeoutMs } : undefined,
   })
 
-  if (json) {
+  if (opts.json) {
     printJson(result)
     return
   }

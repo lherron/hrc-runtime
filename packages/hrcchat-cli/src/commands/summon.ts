@@ -1,11 +1,20 @@
+import { CliUsageError } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, printJson, requireArg } from '../cli-args.js'
 import { resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
-export async function cmdSummon(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const targetInput = requireArg(args, 0, '<target>', ['--project'])
+export type SummonOptions = {
+  json?: boolean | undefined
+}
+
+export async function cmdSummon(
+  client: HrcClient,
+  opts: SummonOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
+  if (!targetInput) throw new CliUsageError('summon requires <target>')
   const sessionRef = resolveTargetToSessionRef(targetInput)
 
   const runtimeIntent = await resolveRuntimeIntentForTarget(targetInput)
@@ -15,7 +24,7 @@ export async function cmdSummon(client: HrcClient, args: string[]): Promise<void
     runtimeIntent,
   })
 
-  if (json) {
+  if (opts.json) {
     printJson(result)
     return
   }

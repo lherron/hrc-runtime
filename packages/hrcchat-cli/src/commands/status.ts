@@ -1,17 +1,24 @@
 import type { HrcClient } from 'hrc-sdk'
-import { hasFlag, printJson } from '../cli-args.js'
 import { formatAddress, resolveCallerAddress, resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdStatus(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const targetInput = args[0] && !args[0].startsWith('-') ? args[0] : undefined
+export type StatusOptions = {
+  json?: boolean | undefined
+}
+
+export async function cmdStatus(
+  client: HrcClient,
+  opts: StatusOptions,
+  positionals: string[]
+): Promise<void> {
+  const targetInput = positionals[0]
 
   if (targetInput) {
     // Target-specific status
     const sessionRef = resolveTargetToSessionRef(targetInput)
     const target = await client.getTarget(sessionRef)
 
-    if (json) {
+    if (opts.json) {
       printJson(target)
       return
     }
@@ -42,7 +49,7 @@ export async function cmdStatus(client: HrcClient, args: string[]): Promise<void
   const health = await client.getHealth()
   const status = await client.getStatus()
 
-  if (json) {
+  if (opts.json) {
     printJson({ health, status })
     return
   }

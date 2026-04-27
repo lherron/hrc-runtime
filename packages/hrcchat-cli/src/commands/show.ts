@@ -1,10 +1,19 @@
+import { CliUsageError } from 'cli-kit'
 import type { HrcClient } from 'hrc-sdk'
-import { fatal, hasFlag, printJson, requireArg } from '../cli-args.js'
 import { formatAddress } from '../normalize.js'
+import { printJson } from '../print.js'
 
-export async function cmdShow(client: HrcClient, args: string[]): Promise<void> {
-  const json = hasFlag(args, '--json')
-  const seqOrId = requireArg(args, 0, '<seq|message-id>', ['--project'])
+export type ShowOptions = {
+  json?: boolean | undefined
+}
+
+export async function cmdShow(
+  client: HrcClient,
+  opts: ShowOptions,
+  positionals: string[]
+): Promise<void> {
+  const seqOrId = positionals[0]
+  if (!seqOrId) throw new CliUsageError('show requires <seq-or-id>')
 
   // Try as numeric seq first, then as message ID
   const seq = Number(seqOrId)
@@ -18,11 +27,10 @@ export async function cmdShow(client: HrcClient, args: string[]): Promise<void> 
     : result.messages.find((m) => m.messageId === seqOrId)
 
   if (!record) {
-    fatal(`message not found: ${seqOrId}`)
-    return // unreachable but satisfies TS
+    throw new CliUsageError(`message not found: ${seqOrId}`)
   }
 
-  if (json) {
+  if (opts.json) {
     printJson(record)
     return
   }

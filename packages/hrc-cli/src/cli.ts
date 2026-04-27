@@ -4,6 +4,8 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join, resolve as resolvePath } from 'node:path'
 
 import { ancestorScopeRefs, resolveScopeInput } from 'agent-scope'
+import { CliUsageError, exitWithError, parseIntegerValue } from 'cli-kit'
+import { Command, CommanderError } from 'commander'
 
 import { HrcDomainError, HrcErrorCode, resolveDatabasePath } from 'hrc-core'
 import type {
@@ -39,7 +41,6 @@ import {
   resolveHarnessProvider,
 } from 'spaces-config'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
-import { fatal, hasFlag, parseFlag, parseIntegerFlag, printJson, requireArg } from './cli-args.js'
 import {
   collectServerRuntimeStatus,
   collectTmuxStatus,
@@ -59,6 +60,7 @@ import {
   createEventsRenderer,
   resolveDefaultFormat,
 } from './events-render.js'
+import { printJson } from './print.js'
 import {
   type DerivedFailure,
   type DerivedTurnStatus,
@@ -103,6 +105,186 @@ loadDotEnvLocal()
 function createClient(): HrcClient {
   const socketPath = discoverSocket()
   return new HrcClient(socketPath)
+}
+
+function fatal(message: string): never {
+  throw new CliUsageError(message)
+}
+
+function requireArg(args: string[], index: number, name: string): string {
+  const value = args[index]
+  if (value === undefined) {
+    fatal(`missing required argument: ${name}`)
+  }
+  return value
+}
+
+function parseFlag(args: string[], flag: string): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === flag) {
+      const value = args[i + 1]
+      if (value === undefined) {
+        fatal(`${flag} requires a value`)
+      }
+      return value
+    }
+    if (arg?.startsWith(`${flag}=`)) {
+      return arg.slice(flag.length + 1)
+    }
+  }
+  return undefined
+}
+
+function hasFlag(args: string[], flag: string): boolean {
+  return args.includes(flag)
+}
+
+function parseIntegerFlag(
+  args: string[],
+  flag: string,
+  options: {
+    defaultValue: number
+    min?: number | undefined
+  }
+): number {
+  const raw = parseFlag(args, flag)
+  if (raw === undefined) {
+    return options.defaultValue
+  }
+
+  return parseIntegerValue(flag, raw, { min: options.min ?? 0 })
+}
+
+// -- toLegacyArgv (transitional glue for commander → legacy handler bridge) ---
+
+type LegacyArgvSchema = {
+  strings: string[]
+  booleans: string[]
+  negatedBooleans?: string[]
+}
+
+/**
+ * Build a legacy-style `string[]` argv from commander-parsed positionals and
+ * opts, so existing `(args: string[]): Promise<void>` handlers can be called
+ * unchanged.
+ *
+ * Positionals come BEFORE flags in the emitted array (preserves the
+ * runtimeId / hostSessionId positional contract that other groups rely on).
+ *
+ * `negatedBooleans` are detected from the raw `argv` slice (NOT from `opts`)
+ * because commander's auto-negation collapses `--flag` and `--no-flag` into
+ * the same attribute, destroying mutual-exclusion checks.
+ *
+ * @param positionals  Positional arguments forwarded verbatim.
+ * @param opts         Parsed options from `cmd.opts()`.
+ * @param schema       Declares which flags to emit and how.
+ * @param rawArgv      The raw argv slice for the active command (used only for
+ *                     negatedBooleans detection). Falls back to `process.argv`.
+ */
+function toLegacyArgv(
+  positionals: string[],
+  opts: Record<string, unknown>,
+  schema: LegacyArgvSchema,
+  rawArgv?: string[]
+): string[] {
+  const out: string[] = [...positionals]
+
+  // String flags: --flag value
+  for (const flag of schema.strings) {
+    const key = camelCase(flag)
+    const value = opts[key]
+    if (value !== undefined && value !== null) {
+      out.push(`--${flag}`, String(value))
+    }
+  }
+
+  // Boolean flags: --flag (emit only when truthy)
+  for (const flag of schema.booleans) {
+    const key = camelCase(flag)
+    if (opts[key]) {
+      out.push(`--${flag}`)
+    }
+  }
+
+  // Negated booleans: detect from raw argv, not from opts.
+  // Commander's auto-negation collapses --X and --no-X into one attribute,
+  // so we scan the raw argv slice to preserve mutual-exclusion semantics.
+  // Both the positive and negated forms are emitted when present in rawArgv,
+  // enabling handlers to enforce mutual-exclusion checks.
+  if (schema.negatedBooleans && schema.negatedBooleans.length > 0) {
+    const argv = rawArgv ?? process.argv
+    for (const flag of schema.negatedBooleans) {
+      if (argv.includes(`--${flag}`)) {
+        out.push(`--${flag}`)
+      }
+      if (argv.includes(`--no-${flag}`)) {
+        out.push(`--no-${flag}`)
+      }
+    }
+  }
+
+  return out
+}
+
+/** Convert a kebab-case flag name to camelCase (e.g. "timeout-ms" → "timeoutMs"). */
+function camelCase(flag: string): string {
+  return flag.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+}
+
+/**
+ * Build legacy argv for "scope commands" (start, run) that accept a
+ * positional prompt and short flags like `-p`.
+ *
+ * These commands use `parseScopePrompt` which handles `-p <text>`,
+ * `--prompt-file <path>`, and positional prompt text.  Commander
+ * consumes declared options from `cmd.args`, so we must reconstruct
+ * the complete legacy argv from both parsed positionals and opts,
+ * while preserving `-p` (single-dash short flag) rather than `--p`.
+ */
+function toLegacyArgvForScopeCommand(
+  positionals: string[],
+  opts: Record<string, unknown>,
+  rawArgv: string[],
+  schema: LegacyArgvSchema
+): string[] {
+  const out: string[] = [...positionals]
+
+  // String flags: --flag value
+  for (const flag of schema.strings) {
+    const key = camelCase(flag)
+    const value = opts[key]
+    if (value !== undefined && value !== null) {
+      out.push(`--${flag}`, String(value))
+    }
+  }
+
+  // Boolean flags: --flag (emit only when truthy)
+  for (const flag of schema.booleans) {
+    const key = camelCase(flag)
+    if (opts[key]) {
+      out.push(`--${flag}`)
+    }
+  }
+
+  // Negated booleans: detect from raw argv, not from opts.
+  if (schema.negatedBooleans && schema.negatedBooleans.length > 0) {
+    for (const flag of schema.negatedBooleans) {
+      if (rawArgv.includes(`--${flag}`)) {
+        out.push(`--${flag}`)
+      }
+      if (rawArgv.includes(`--no-${flag}`)) {
+        out.push(`--no-${flag}`)
+      }
+    }
+  }
+
+  // Short option: -p <text> (must emit as -p, NOT --p)
+  if (opts['p'] !== undefined && opts['p'] !== null) {
+    out.push('-p', String(opts['p']))
+  }
+
+  return out
 }
 
 const EVENT_FOLLOW_POLL_MS = 250
@@ -556,7 +738,7 @@ function printHrcDomainErrorBody(err: unknown): boolean {
     return false
   }
 
-  fatal(
+  throw new Error(
     JSON.stringify({
       error: {
         code: err.code,
@@ -689,33 +871,6 @@ function execAttachCommand(argv: string[], env?: Record<string, string> | undefi
 
 // -- Command handlers ---------------------------------------------------------
 
-async function cmdServer(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  if (!subcommand || subcommand.startsWith('-')) {
-    return cmdServerStart(args, 'foreground')
-  }
-
-  switch (subcommand) {
-    case 'start':
-      return cmdServerStart(args.slice(1), 'foreground')
-    case 'serve':
-      return cmdServerServe(args.slice(1))
-    case 'stop':
-      return cmdServerStop(args.slice(1))
-    case 'restart':
-      return cmdServerRestart(args.slice(1))
-    case 'status':
-      return cmdServerStatus(args.slice(1))
-    case 'health':
-      return cmdServerHealth(args.slice(1))
-    case 'tmux':
-      return cmdServerTmux(args.slice(1))
-    default:
-      fatal(`unknown server subcommand: ${subcommand}`)
-  }
-}
-
 /**
  * Run the HRC server in the foreground without probing launchd. Intended
  * for supervisors (launchd, systemd) that invoke hrc directly; user-facing
@@ -813,22 +968,6 @@ async function cmdServerHealth(_args: string[]): Promise<void> {
   printJson(result)
 }
 
-async function cmdServerTmux(args: string[]): Promise<void> {
-  const subcommand = args[0]
-  switch (subcommand) {
-    case 'status':
-      return cmdTmuxStatus(args.slice(1))
-    case 'kill':
-      return cmdTmuxKill(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown server tmux subcommand: ${subcommand}`
-          : 'server tmux subcommand required (status, kill)'
-      )
-  }
-}
-
 async function serverForeground(): Promise<void> {
   const { createHrcServer } = await import('hrc-server')
 
@@ -915,30 +1054,6 @@ async function cmdSessionDropContinuation(args: string[]): Promise<void> {
     ...(reason ? { reason } : {}),
   })
   printJson(result)
-}
-
-async function cmdSession(args: string[]): Promise<void> {
-  const subcommand = args[0]
-  const rest = args.slice(1)
-
-  switch (subcommand) {
-    case 'resolve':
-      return cmdSessionResolve(rest)
-    case 'list':
-      return cmdSessionList(rest)
-    case 'get':
-      return cmdSessionGet(rest)
-    case 'clear-context':
-      return cmdSessionClearContext(rest)
-    case 'drop-continuation':
-      return cmdSessionDropContinuation(rest)
-    default:
-      fatal(
-        subcommand
-          ? `unknown session subcommand: ${subcommand}`
-          : 'session subcommand required (resolve, list, get, clear-context, drop-continuation)'
-      )
-  }
 }
 
 async function cmdEvents(args: string[]): Promise<void> {
@@ -2146,7 +2261,7 @@ ${noAttachOption}${newSessionOption}  --dry-run            Local plan preview �
 }
 
 async function cmdRun(args: string[]): Promise<void> {
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+  if (args.length === 0) {
     printManagedScopeUsage('run')
     return
   }
@@ -2226,7 +2341,7 @@ async function cmdRun(args: string[]): Promise<void> {
 }
 
 async function cmdStart(args: string[]): Promise<void> {
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+  if (args.length === 0) {
     printManagedScopeUsage('start')
     return
   }
@@ -2442,35 +2557,6 @@ async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   printJson(result)
 }
 
-async function cmdRuntime(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'ensure':
-      return cmdRuntimeEnsure(args.slice(1))
-    case 'list':
-      return cmdRuntimeList(args.slice(1))
-    case 'inspect':
-      return cmdRuntimeInspect(args.slice(1))
-    case 'sweep':
-      return cmdRuntimeSweep(args.slice(1))
-    case 'capture':
-      return cmdCapture(args.slice(1))
-    case 'interrupt':
-      return cmdInterrupt(args.slice(1))
-    case 'terminate':
-      return cmdTerminate(args.slice(1))
-    case 'adopt':
-      return cmdAdopt(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown runtime subcommand: ${subcommand}`
-          : 'runtime subcommand required (ensure, list, inspect, sweep, capture, interrupt, terminate, adopt)'
-      )
-  }
-}
-
 async function cmdTurnSend(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const prompt = parseFlag(args, '--prompt')
@@ -2513,34 +2599,6 @@ async function cmdTurnSend(args: string[]): Promise<void> {
   printJson(result)
 }
 
-async function cmdTurn(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'send':
-      return cmdTurnSend(args.slice(1))
-    default:
-      fatal(
-        subcommand ? `unknown turn subcommand: ${subcommand}` : 'turn subcommand required (send)'
-      )
-  }
-}
-
-async function cmdLaunch(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'list':
-      return cmdLaunchList(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown launch subcommand: ${subcommand}`
-          : 'launch subcommand required (list)'
-      )
-  }
-}
-
 async function cmdInflightSend(args: string[]): Promise<void> {
   const runtimeId = requireArg(args, 0, '<runtimeId>')
   const runId = parseFlag(args, '--run-id')
@@ -2564,21 +2622,6 @@ async function cmdInflightSend(args: string[]): Promise<void> {
     ...(inputType ? { inputType } : {}),
   })
   printJson(result)
-}
-
-async function cmdInflight(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'send':
-      return cmdInflightSend(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown inflight subcommand: ${subcommand}`
-          : 'inflight subcommand required (send)'
-      )
-  }
 }
 
 async function cmdSessionClearContext(args: string[]): Promise<void> {
@@ -2634,7 +2677,7 @@ async function printLocalAttachPreview(scope: string, sessionRef: string): Promi
 }
 
 async function cmdAttach(args: string[]): Promise<void> {
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+  if (args.length === 0) {
     printAttachUsage()
     return
   }
@@ -2766,25 +2809,6 @@ async function cmdSurfaceList(args: string[]): Promise<void> {
   const client = createClient()
   const result = await client.listSurfaces({ runtimeId })
   printJson(result)
-}
-
-async function cmdSurface(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'bind':
-      return cmdSurfaceBind(args.slice(1))
-    case 'unbind':
-      return cmdSurfaceUnbind(args.slice(1))
-    case 'list':
-      return cmdSurfaceList(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown surface subcommand: ${subcommand}`
-          : 'surface subcommand required (bind, unbind, list)'
-      )
-  }
 }
 
 async function cmdBridgeRegister(args: string[]): Promise<void> {
@@ -2954,31 +2978,6 @@ async function cmdBridgeDeliverText(args: string[]): Promise<void> {
     ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
   })
   printJson(result)
-}
-
-async function cmdBridge(args: string[]): Promise<void> {
-  const subcommand = args[0]
-
-  switch (subcommand) {
-    case 'target':
-      return cmdBridgeTarget(args.slice(1))
-    case 'deliver-text':
-      return cmdBridgeDeliverText(args.slice(1))
-    case 'register':
-      return cmdBridgeRegister(args.slice(1))
-    case 'deliver':
-      return cmdBridgeDeliver(args.slice(1))
-    case 'list':
-      return cmdBridgeList(args.slice(1))
-    case 'close':
-      return cmdBridgeClose(args.slice(1))
-    default:
-      fatal(
-        subcommand
-          ? `unknown bridge subcommand: ${subcommand}`
-          : 'bridge subcommand required (target, deliver-text, register, deliver, list, close)'
-      )
-  }
 }
 
 // -- Usage --------------------------------------------------------------------
@@ -3164,62 +3163,737 @@ Commands:
 `)
 }
 
-// -- Main dispatch ------------------------------------------------------------
+// -- Commander dispatch -------------------------------------------------------
 
-export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
-  const command = args[0]
-  const rest = args.slice(1)
+function buildProgram(): Command {
+  const program = new Command()
+    .name('hrc')
+    .description('HRC operator CLI')
+    .exitOverride((err) => {
+      throw err
+    })
 
-  if (command === 'info') {
-    printInfo()
-    return
+  program
+    .command('info')
+    .description('show HRC orientation and first-contact guidance')
+    .action(() => {
+      printInfo()
+    })
+
+  // -- server group (commander, Phase 6 T1) -----------------------------------
+
+  const server = program
+    .command('server')
+    .description('daemon lifecycle, health, and tmux backend control')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (_opts, cmd: Command) => {
+      // No-verb fallthrough: bare `hrc server` starts in foreground
+      // (preserves legacy behavior where `hrc server [flags]` delegates to start)
+      await cmdServerStart(cmd.args, 'foreground')
+    })
+
+  server
+    .command('start')
+    .description('start the HRC server')
+    .option('--timeout-ms <n>', 'startup timeout in milliseconds')
+    .option('--daemon', 'run as background daemon')
+    .option('--foreground', 'run in foreground (default)')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['timeout-ms'],
+        booleans: ['daemon', 'foreground'],
+      })
+      await cmdServerStart(args, 'foreground')
+    })
+
+  server
+    .command('serve')
+    .description('run the server in the foreground for supervisors')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), { strings: [], booleans: [] })
+      await cmdServerServe(args)
+    })
+
+  server
+    .command('stop')
+    .description('stop the HRC daemon')
+    .option('--timeout-ms <n>', 'shutdown timeout in milliseconds')
+    .option('--force', 'force stop')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['timeout-ms'],
+        booleans: ['force'],
+      })
+      await cmdServerStop(args)
+    })
+
+  server
+    .command('restart')
+    .description('restart the HRC daemon')
+    .option('--timeout-ms <n>', 'timeout in milliseconds')
+    .option('--force', 'force restart')
+    .option('--daemon', 'restart as background daemon')
+    .option('--foreground', 'restart in foreground')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['timeout-ms'],
+        booleans: ['force', 'daemon', 'foreground'],
+      })
+      await cmdServerRestart(args)
+    })
+
+  server
+    .command('status')
+    .description('show daemon/socket/pid state')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdServerStatus(args)
+    })
+
+  server
+    .command('health')
+    .description('check daemon API health')
+    .action(async () => {
+      await cmdServerHealth([])
+    })
+
+  const serverTmux = server.command('tmux').description('tmux backend control')
+
+  serverTmux
+    .command('status')
+    .description('show tmux socket/session state')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdTmuxStatus(args)
+    })
+
+  serverTmux
+    .command('kill')
+    .description('kill the HRC tmux server')
+    .option('--yes', 'confirm destructive operation')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [],
+        booleans: ['yes'],
+      })
+      await cmdTmuxKill(args)
+    })
+
+  // -- session group (commander, Phase 6 T2) ---------------------------------
+
+  const session = program.command('session').description('resolve, list, and inspect sessions')
+
+  session
+    .command('resolve')
+    .description('resolve a session')
+    .option('--scope <scope>', 'scope reference')
+    .option('--lane <lane>', 'lane reference')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['scope', 'lane'],
+        booleans: [],
+      })
+      await cmdSessionResolve(args)
+    })
+
+  session
+    .command('list')
+    .description('list sessions')
+    .option('--scope <scope>', 'scope reference')
+    .option('--lane <lane>', 'lane reference')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['scope', 'lane'],
+        booleans: [],
+      })
+      await cmdSessionList(args)
+    })
+
+  session
+    .command('get')
+    .description('get a session by ID')
+    .argument('<hostSessionId>', 'host session ID')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdSessionGet(args)
+    })
+
+  session
+    .command('clear-context')
+    .description('clear session context')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--relaunch', 'relaunch after clearing')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: [],
+        booleans: ['relaunch'],
+      })
+      await cmdSessionClearContext(args)
+    })
+
+  session
+    .command('drop-continuation')
+    .description('drop stored continuation')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--reason <reason>', 'reason for dropping')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: ['reason'],
+        booleans: [],
+      })
+      await cmdSessionDropContinuation(args)
+    })
+
+  // -- top-level commands (commander, Phase 6 T2b) -----------------------------
+
+  program
+    .command('status')
+    .description('API status, sessions, and capabilities')
+    .argument('[scope]', 'scope selector (agent, agent@project, agent@project:task)')
+    .option('--json', 'output structured JSON')
+    .option('--all', 'include archived sessions')
+    .option('--verbose', 'scoped status: include event payloads')
+    .option('--events <n>', 'scoped status: recent event count (default 10, 0=suppress)')
+    .action(async (scope, _opts, cmd: Command) => {
+      const positionals = scope !== undefined ? [scope] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: ['events'],
+        booleans: ['json', 'all', 'verbose'],
+      })
+      await cmdStatus(args)
+    })
+
+  program
+    .command('events')
+    .description('stream HRC event envelopes')
+    .argument('[scope]', 'scope selector (agent@project, agent@project:task)')
+    .option('--from-seq <n>', 'start at HRC sequence number')
+    .option('--follow', 'keep polling for new events')
+    .option('--format <mode>', 'output mode: tree, compact, verbose, json, ndjson')
+    .option('--pretty', 'alias for --format=tree (legacy)')
+    .option('--max-lines <n>', 'tree mode: truncate body blocks to n lines')
+    .option('--scope-width <n>', 'tree mode: per-row scope badge width in chars')
+    .action(async (scope, _opts, cmd: Command) => {
+      const positionals = scope !== undefined ? [scope] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: ['from-seq', 'format', 'max-lines', 'scope-width'],
+        booleans: ['follow', 'pretty'],
+      })
+      await cmdEvents(args)
+    })
+
+  // -- runtime group (commander, Phase 6 T2) ----------------------------------
+
+  const runtime = program.command('runtime').description('ensure, inspect, and control runtimes')
+
+  runtime
+    .command('ensure')
+    .description('ensure a runtime')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--provider <provider>', 'provider (anthropic|openai)')
+    .option('--restart-style <style>', 'restart style (reuse_pty|fresh_pty)')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: ['provider', 'restart-style'],
+        booleans: [],
+      })
+      await cmdRuntimeEnsure(args)
+    })
+
+  runtime
+    .command('list')
+    .description('list runtimes')
+    .option('--host-session-id <id>', 'filter by host session')
+    .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
+    .option('--status <status>', 'filter by status')
+    .option('--older-than <duration>', 'filter by age')
+    .option('--scope <scope>', 'filter by scope')
+    .option('--json', 'output as JSON')
+    .option('--stale', 'show only stale runtimes')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['host-session-id', 'transport', 'status', 'older-than', 'scope'],
+        booleans: ['json', 'stale'],
+      })
+      await cmdRuntimeList(args)
+    })
+
+  runtime
+    .command('inspect')
+    .description('inspect a runtime')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--json', 'output as JSON')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdRuntimeInspect(args)
+    })
+
+  runtime
+    .command('sweep')
+    .description('sweep stale runtimes')
+    .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
+    .option('--status <status>', 'filter by status')
+    .option('--scope <scope>', 'filter by scope')
+    .option('--older-than <duration>', 'filter by age')
+    .option('--dry-run', 'preview without mutating')
+    .option('--yes', 'confirm destructive operation')
+    .option('--json', 'output as JSON')
+    .option('--drop-continuation', 'drop continuation on sweep')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['transport', 'status', 'scope', 'older-than'],
+        booleans: ['dry-run', 'yes', 'json', 'drop-continuation'],
+      })
+      await cmdRuntimeSweep(args)
+    })
+
+  runtime
+    .command('capture')
+    .description('capture live runtime output')
+    .argument('<runtimeId>', 'runtime ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdCapture(args)
+    })
+
+  runtime
+    .command('interrupt')
+    .description('interrupt a runtime')
+    .argument('<runtimeId>', 'runtime ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdInterrupt(args)
+    })
+
+  runtime
+    .command('terminate')
+    .description('terminate a runtime')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--drop-continuation', 'drop continuation on terminate')
+    .option('--no-drop-continuation', 'explicitly preserve continuation')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      // Scope the negated-flag scan to the active command path's raw argv,
+      // not the full process.argv, to avoid surprise matches from globals.
+      // Walk up to the root command and slice from 'terminate' onward.
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const terminateIdx = fullRaw.indexOf('terminate')
+      const rawArgv = terminateIdx >= 0 ? fullRaw.slice(terminateIdx) : fullRaw
+      const args = toLegacyArgv(
+        [runtimeId],
+        cmd.opts(),
+        {
+          strings: [],
+          booleans: [],
+          negatedBooleans: ['drop-continuation'],
+        },
+        rawArgv
+      )
+      await cmdTerminate(args)
+    })
+
+  runtime
+    .command('adopt')
+    .description('adopt a dead/stale runtime')
+    .argument('<runtimeId>', 'runtime ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdAdopt(args)
+    })
+
+  // -- launch group (commander, Phase 6 T2) -----------------------------------
+
+  const launch = program.command('launch').description('list launches')
+
+  launch
+    .command('list')
+    .description('list launches')
+    .option('--host-session-id <id>', 'filter by host session')
+    .option('--runtime-id <id>', 'filter by runtime')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['host-session-id', 'runtime-id'],
+        booleans: [],
+      })
+      await cmdLaunchList(args)
+    })
+
+  // -- top-level commands (commander, Phase 6 T2b) -----------------------------
+
+  program
+    .command('start')
+    .description('start a managed runtime')
+    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+    .allowExcessArguments(true)
+    .allowUnknownOption(true)
+    .option('--force-restart', 'replace existing runtime with a fresh PTY')
+    .option('--new-session', 'rotate to a fresh host session before starting')
+    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--debug', 'keep tmux shell alive after harness exits')
+    .option('--no-register', 'do not prompt to register cwd as a project marker')
+    .option('--project-id <id>', 'override the inferred project id')
+    .option('--project-root <path>', 'override project root')
+    .option('-p <text>', 'initial prompt to send to the harness')
+    .option('--prompt-file <path>', 'read initial prompt from a file')
+    .action(async (_scope, _opts, cmd: Command) => {
+      // cmdStart/cmdRun use parseScopePrompt which handles positional
+      // prompts, -p, and --prompt-file.  Reconstruct the full legacy
+      // argv from commander's parsed positionals + options.
+      const positionals: string[] = cmd.args
+      const opts = cmd.opts()
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const verbIdx = fullRaw.indexOf('start')
+      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
+      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
+        strings: ['project-id', 'project-root', 'prompt-file'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug'],
+        negatedBooleans: ['register'],
+      })
+      await cmdStart(args)
+    })
+
+  program
+    .command('run')
+    .description('launch or reattach and attach')
+    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+    .allowExcessArguments(true)
+    .allowUnknownOption(true)
+    .option('--force-restart', 'replace existing runtime with a fresh PTY')
+    .option('--no-attach', 'start/ensure without attaching to the tmux session')
+    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--debug', 'keep tmux shell alive after harness exits')
+    .option('--no-register', 'do not prompt to register cwd as a project marker')
+    .option('--project-id <id>', 'override the inferred project id')
+    .option('--project-root <path>', 'override project root')
+    .option('-p <text>', 'initial prompt to send to the harness')
+    .option('--prompt-file <path>', 'read initial prompt from a file')
+    .action(async (_scope, _opts, cmd: Command) => {
+      const positionals: string[] = cmd.args
+      const opts = cmd.opts()
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const verbIdx = fullRaw.indexOf('run')
+      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
+      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
+        strings: ['project-id', 'project-root', 'prompt-file'],
+        booleans: ['force-restart', 'dry-run', 'debug'],
+        negatedBooleans: ['attach', 'register'],
+      })
+      await cmdRun(args)
+    })
+
+  // -- turn group (commander, Phase 6 T2) -------------------------------------
+
+  const turn = program.command('turn').description('dispatch turns to a session')
+
+  turn
+    .command('send')
+    .description('send a turn')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--prompt <prompt>', 'prompt text')
+    .option('--provider <provider>', 'provider (anthropic|openai)')
+    .option('--expected-host-session-id <id>', 'expected host session ID')
+    .option('--expected-generation <n>', 'expected generation')
+    .option('--follow-latest', 'follow latest session')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: ['prompt', 'provider', 'expected-host-session-id', 'expected-generation'],
+        booleans: ['follow-latest'],
+      })
+      await cmdTurnSend(args)
+    })
+
+  // -- inflight group (commander, Phase 6 T2) ---------------------------------
+
+  const inflight = program.command('inflight').description('send in-flight runtime input')
+
+  inflight
+    .command('send')
+    .description('send input to a run')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--run-id <id>', 'run ID')
+    .option('--input <input>', 'input text')
+    .option('--input-type <type>', 'input type')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: ['run-id', 'input', 'input-type'],
+        booleans: [],
+      })
+      await cmdInflightSend(args)
+    })
+
+  // -- top-level commands (commander, Phase 6 T2b) -----------------------------
+
+  program
+    .command('capture')
+    .description('capture live runtime output')
+    .argument('[runtimeId]', 'runtime ID to capture')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const positionals = runtimeId !== undefined ? [runtimeId] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdCapture(args)
+    })
+
+  program
+    .command('attach')
+    .description('attach to a live runtime')
+    .argument('[scope]', 'scope or runtime ID to attach to')
+    .option('--dry-run', 'local plan preview — no server calls')
+    .action(async (scope, _opts, cmd: Command) => {
+      const positionals = scope !== undefined ? [scope] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: [],
+        booleans: ['dry-run'],
+      })
+      await cmdAttach(args)
+    })
+
+  // -- surface group (commander, Phase 6 T2) ----------------------------------
+
+  const surface = program.command('surface').description('manage surface bindings')
+
+  surface
+    .command('bind')
+    .description('bind a surface')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--kind <kind>', 'surface kind')
+    .option('--id <id>', 'surface ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: ['kind', 'id'],
+        booleans: [],
+      })
+      await cmdSurfaceBind(args)
+    })
+
+  surface
+    .command('unbind')
+    .description('unbind a surface')
+    .option('--kind <kind>', 'surface kind')
+    .option('--id <id>', 'surface ID')
+    .option('--reason <reason>', 'reason for unbinding')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['kind', 'id', 'reason'],
+        booleans: [],
+      })
+      await cmdSurfaceUnbind(args)
+    })
+
+  surface
+    .command('list')
+    .description('list surface bindings')
+    .argument('<runtimeId>', 'runtime ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdSurfaceList(args)
+    })
+
+  // -- bridge group (commander, Phase 6 T2) -----------------------------------
+
+  const bridge = program.command('bridge').description('manage low-level local bridge delivery')
+
+  bridge
+    .command('target')
+    .description('acquire bridge target')
+    .option('--bridge <bridge>', 'convenience alias for --transport tmux --target <value>')
+    .option('--host-session <id>', 'host session selector')
+    .option('--session-ref <ref>', 'session ref selector')
+    .option('--transport <transport>', 'bridge transport')
+    .option('--target <target>', 'bridge target')
+    .option('--runtime-id <id>', 'runtime ID')
+    .option('--expected-host-session-id <id>', 'expected host session ID')
+    .option('--expected-generation <n>', 'expected generation')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [
+          'bridge',
+          'host-session',
+          'session-ref',
+          'transport',
+          'target',
+          'runtime-id',
+          'expected-host-session-id',
+          'expected-generation',
+        ],
+        booleans: [],
+      })
+      await cmdBridgeTarget(args)
+    })
+
+  bridge
+    .command('deliver-text')
+    .description('deliver text to a bridge')
+    .option('--bridge <bridge>', 'bridge ID')
+    .option('--text <text>', 'text to deliver')
+    .option('--oob-suffix <suffix>', 'out-of-band suffix')
+    .option('--expected-host-session-id <id>', 'expected host session ID')
+    .option('--expected-generation <n>', 'expected generation')
+    .option('--enter', 'send enter after text')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [
+          'bridge',
+          'text',
+          'oob-suffix',
+          'expected-host-session-id',
+          'expected-generation',
+        ],
+        booleans: ['enter'],
+      })
+      await cmdBridgeDeliverText(args)
+    })
+
+  bridge
+    .command('register')
+    .description('register a bridge')
+    .argument('<hostSessionId>', 'host session ID')
+    .option('--transport <transport>', 'bridge transport')
+    .option('--target <target>', 'bridge target')
+    .option('--runtime-id <id>', 'runtime ID')
+    .option('--expected-host-session-id <id>', 'expected host session ID')
+    .option('--expected-generation <n>', 'expected generation')
+    .action(async (hostSessionId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
+        strings: [
+          'transport',
+          'target',
+          'runtime-id',
+          'expected-host-session-id',
+          'expected-generation',
+        ],
+        booleans: [],
+      })
+      await cmdBridgeRegister(args)
+    })
+
+  bridge
+    .command('deliver')
+    .description('deliver to a bridge')
+    .argument('<bridgeId>', 'bridge ID')
+    .option('--text <text>', 'text to deliver')
+    .option('--expected-host-session-id <id>', 'expected host session ID')
+    .option('--expected-generation <n>', 'expected generation')
+    .action(async (bridgeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([bridgeId], cmd.opts(), {
+        strings: ['text', 'expected-host-session-id', 'expected-generation'],
+        booleans: [],
+      })
+      await cmdBridgeDeliver(args)
+    })
+
+  bridge
+    .command('list')
+    .description('list bridges')
+    .argument('<runtimeId>', 'runtime ID')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdBridgeList(args)
+    })
+
+  bridge
+    .command('close')
+    .description('close a bridge')
+    .argument('<bridgeId>', 'bridge ID')
+    .action(async (bridgeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([bridgeId], cmd.opts(), {
+        strings: [],
+        booleans: [],
+      })
+      await cmdBridgeClose(args)
+    })
+
+  return program
+}
+
+function normalizeCommanderError(err: CommanderError): Error {
+  const unknownCommandMatch = err.message.match(/^error: unknown command '(.+)'$/)
+  if (unknownCommandMatch?.[1]) {
+    return new CliUsageError(`unknown command: ${unknownCommandMatch[1]}`)
   }
+  return new CliUsageError(err.message)
+}
 
-  if (!command || command === '--help' || command === '-h') {
-    printUsage()
-    if (!command) process.exit(1)
-    return
-  }
+function handleCliError(err: unknown, program: Command): never {
+  const json = program.opts<{ json?: boolean | undefined }>().json ?? false
 
-  try {
-    switch (command) {
-      case 'server':
-        return await cmdServer(rest)
-      case 'session':
-        return await cmdSession(rest)
-      case 'events':
-        return await cmdEvents(rest)
-      case 'status':
-        return await cmdStatus(rest)
-      case 'runtime':
-        return await cmdRuntime(rest)
-      case 'launch':
-        return await cmdLaunch(rest)
-      case 'start':
-        return await cmdStart(rest)
-      case 'run':
-        return await cmdRun(rest)
-      case 'turn':
-        return await cmdTurn(rest)
-      case 'inflight':
-        return await cmdInflight(rest)
-      case 'capture':
-        return await cmdCapture(rest)
-      case 'attach':
-        return await cmdAttach(rest)
-      case 'surface':
-        return await cmdSurface(rest)
-      case 'bridge':
-        return await cmdBridge(rest)
-      default:
-        fatal(`unknown command: ${command}`)
+  if (err instanceof CommanderError) {
+    if (
+      err.code === 'commander.helpDisplayed' ||
+      err.code === 'commander.help' ||
+      err.code === 'commander.version'
+    ) {
+      process.exit(0)
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    fatal(message)
+    exitWithError(normalizeCommanderError(err), { json, binName: 'hrc' })
+  }
+
+  if (err instanceof CliUsageError) {
+    exitWithError(err, { json, binName: 'hrc' })
+  }
+
+  if (err instanceof HrcDomainError) {
+    exitWithError(new Error(`[${err.code}] ${err.message}`), { json, binName: 'hrc' })
+  }
+
+  exitWithError(err, { json, binName: 'hrc' })
+}
+
+async function runProgram(argv: string[]): Promise<void> {
+  if (argv.length <= 2) {
+    printUsage()
+    process.exit(1)
+  }
+
+  const program = buildProgram()
+  try {
+    await program.parseAsync(argv)
+  } catch (err) {
+    handleCliError(err, program)
   }
 }
 
+export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
+  await runProgram(['node', 'hrc', ...args])
+}
+
 if (import.meta.main) {
-  main()
+  await runProgram(process.argv)
 }
