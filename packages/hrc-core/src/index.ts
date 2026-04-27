@@ -206,7 +206,18 @@ export type {
   SemanticDmResponse,
 } from './hrcchat-contracts.js'
 
+export { createMonitorConditionEngine } from './monitor/condition-engine.js'
 export { createMonitorReader } from './monitor/index.js'
+export type {
+  HrcMonitorCondition,
+  HrcMonitorConditionEngine,
+  HrcMonitorConditionEngineReader,
+  HrcMonitorConditionOutcome,
+  HrcMonitorConditionResult,
+  HrcMonitorConditionWaitRequest,
+  HrcMonitorContextChangedReason,
+  HrcMonitorFailureKind,
+} from './monitor/condition-engine.js'
 export type {
   HrcMonitorCapture,
   HrcMonitorCaptureOptions,
