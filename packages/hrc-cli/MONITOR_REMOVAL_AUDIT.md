@@ -422,3 +422,66 @@ Verified facts:
 Inference: monitor/message selector resolution is selecting or persisting an older active session generation for `clod@agent-spaces` while runtime status and hrcchat target status point at generation 4. This is consistent with the known message-selector response-correlation failure class, but it also affects smoke items 4, 5, 6, 8, 10, and 11.
 
 Escalation required before F3: fix monitor selector/session correlation for live `clod@agent-spaces` and rerun all 11 smoke items.
+
+## Re-smoke After T-01299
+
+Date: 2026-04-27
+Capture directory: `/tmp/hrc-monitor-t01299-resmoke-T-01294`
+Fixes verified: `7550245` red regression coverage, `38edf23` green fix.
+
+Scope: F3pre re-ran the two remaining red state-dependent items against
+`agent-minder@agent-spaces`, per coordinator decision after T-01297, T-01298,
+and T-01299 closed. Earlier final re-smoke had already passed items 1-7, 9,
+and 10, with item 10 returning a non-null `runtimeId`.
+
+Result: green for the remaining gate items. Combined F3pre gate is now 11/11 pass under the approved target plan.
+
+| # | Command | Exit | Result |
+| ---: | --- | ---: | --- |
+| 8 | `hrc monitor watch --follow --until idle agent-minder@agent-spaces --timeout 10s` | 0 | `already_idle` |
+| 11a | `hrcchat dm --json agent-minder@agent-spaces -` | 0 | captured `msg-558d7704-4c12-4721-b53f-927a8286cf21`, `runtimeId=rt-e372069d-6b33-4ffe-a9cb-cd0d1567b546`, `turnId=run-1c48452a-68b7-4d5f-b362-741ab7af0d4f` |
+| 11 | `hrc monitor wait msg:msg-558d7704-4c12-4721-b53f-927a8286cf21 --until response-or-idle --timeout 5m` | 0 | `response` |
+
+### Output
+
+#### 8. `hrc monitor watch --follow --until idle agent-minder@agent-spaces --timeout 10s`
+
+```json
+{"event":"monitor.completed","selector":"session:agent:agent-minder:project:agent-spaces/lane:main","replayed":false,"ts":"2026-04-27T19:26:10.219Z","result":"already_idle","exitCode":0,"condition":"idle"}
+```
+
+#### 11a. `hrcchat dm --json agent-minder@agent-spaces -`
+
+```json
+{
+  "messageId": "msg-558d7704-4c12-4721-b53f-927a8286cf21",
+  "seq": 872,
+  "to": "agent-minder@agent-spaces",
+  "sessionRef": "agent:agent-minder:project:agent-spaces/lane:main",
+  "runtimeId": "rt-e372069d-6b33-4ffe-a9cb-cd0d1567b546",
+  "turnId": "run-1c48452a-68b7-4d5f-b362-741ab7af0d4f",
+  "request": {
+    "messageSeq": 872,
+    "messageId": "msg-558d7704-4c12-4721-b53f-927a8286cf21",
+    "createdAt": "2026-04-27T19:26:10.309Z",
+    "kind": "dm",
+    "phase": "request",
+    "execution": {
+      "state": "started",
+      "mode": "headless",
+      "sessionRef": "agent:agent-minder:project:agent-spaces/lane:main",
+      "hostSessionId": "hsid-830ff461-49e7-4d8e-83e4-ab420d387da2",
+      "generation": 2,
+      "runtimeId": "rt-e372069d-6b33-4ffe-a9cb-cd0d1567b546",
+      "runId": "run-1c48452a-68b7-4d5f-b362-741ab7af0d4f",
+      "transport": "headless"
+    }
+  }
+}
+```
+
+#### 11. `hrc monitor wait msg:<captured-messageId> --until response-or-idle --timeout 5m`
+
+```text
+monitor.completed selector=msg:msg-558d7704-4c12-4721-b53f-927a8286cf21 condition=response-or-idle result=response exitCode=0
+```
