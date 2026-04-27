@@ -61,6 +61,7 @@ import {
   resolveDefaultFormat,
 } from './events-render.js'
 import { cmdMonitorShow } from './monitor-show.js'
+import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
 import { printJson } from './print.js'
 import {
   type DerivedFailure,
@@ -3143,6 +3144,8 @@ Commands:
   session drop-continuation <hostSessionId> [--reason <text>]
   status [--json]                     Show server status and capabilities
   monitor show [selector] [--json]    Show current HRC monitor snapshot
+  monitor wait <selector> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
+                                     Wait for a monitor condition and exit with its result
   events [scope] [--from-seq <n>] [--follow] [--pretty]
                                      Watch HRC event stream (NDJSON or pretty)
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
@@ -3435,6 +3438,23 @@ Exit codes:
         booleans: ['json'],
       })
       await cmdMonitorShow(args)
+    })
+
+  monitor
+    .command('wait')
+    .description('wait for a monitor condition')
+    .argument('[selector]', 'monitor selector')
+    .option('--until <condition>', 'condition to wait for')
+    .option('--timeout <duration>', 'maximum wait duration')
+    .option('--stall-after <duration>', 'stall threshold duration')
+    .option('--json', 'output structured JSON')
+    .action(async (selector, _opts, cmd: Command) => {
+      const positionals = selector !== undefined ? [selector] : []
+      const args = toLegacyArgv(positionals, cmd.opts(), {
+        strings: ['until', 'timeout', 'stall-after'],
+        booleans: ['json'],
+      })
+      await cmdMonitorWait(args)
     })
 
   // -- runtime group (commander, Phase 6 T2) ----------------------------------
@@ -3913,6 +3933,10 @@ function handleCliError(err: unknown, program: Command): never {
   }
 
   if (err instanceof CliStatusExit) {
+    process.exit(err.code)
+  }
+
+  if (err instanceof MonitorWaitExit) {
     process.exit(err.code)
   }
 
