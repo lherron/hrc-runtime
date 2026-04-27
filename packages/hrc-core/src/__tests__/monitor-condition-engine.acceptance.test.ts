@@ -103,6 +103,7 @@ type MonitorFixtureEvent = {
   runtimeId: string
   turnId?: string | undefined
   messageId?: string | undefined
+  replyToMessageId?: string | undefined
   messageSeq?: number | undefined
   result?: string | undefined
   reason?: string | undefined
@@ -266,6 +267,35 @@ describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL sectio
       result: 'response',
       exitCode: 0,
     })
+  })
+
+  test('resolves response-or-idle when an inbound reply points at the outbound msg selector', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: 'turn-captured' }),
+        event(101, 'message.response', {
+          messageId: 'msg-inbound-reply',
+          replyToMessageId: 'msg-f1b',
+          messageSeq: 1289,
+          turnId: 'turn-captured',
+          result: 'response',
+        }),
+      ],
+    })
+
+    await expect(waitForCondition(state, 'response-or-idle', 'msg:msg-f1b')).resolves.toMatchObject(
+      {
+        result: 'response',
+        exitCode: 0,
+        eventStream: expect.arrayContaining([
+          expect.objectContaining({
+            event: 'message.response',
+            messageId: 'msg-inbound-reply',
+            replyToMessageId: 'msg-f1b',
+          }),
+        ]),
+      }
+    )
   })
 
   test('ignores uncorrelated message.response events while waiting for a msg selector response', async () => {

@@ -51,7 +51,7 @@ type MonitorFixtureState = {
   runtimes: Array<{
     runtimeId: string
     hostSessionId: string
-    status: 'busy' | 'idle' | 'dead'
+    status: 'busy' | 'idle' | 'ready' | 'dead'
     transport: 'tmux'
     activeTurnId: string | null
   }>
@@ -681,6 +681,36 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
         expectValidMonitorEvent(payload)
       }
     }
+  })
+
+  test('--follow --until idle against an already-idle ready runtime exits already_idle quickly', async () => {
+    const alreadyIdleState = createFixtureState({
+      runtimeStatus: 'ready',
+      activeTurnId: null,
+      events: [event(100, 'turn.finished', { turnId: TURN_ID, result: 'turn_succeeded' })],
+    })
+
+    const startedAt = performance.now()
+    const cli = await invokeWatch(
+      {
+        selector: SELECTOR,
+        follow: true,
+        until: 'idle',
+        timeoutMs: 250,
+      },
+      alreadyIdleState
+    )
+    const elapsedMs = performance.now() - startedAt
+
+    expect(cli.exitCode).toBe(0)
+    expect(cli.events.at(-1)).toMatchObject({
+      event: 'monitor.completed',
+      selector: SELECTOR,
+      condition: 'idle',
+      result: 'already_idle',
+      exitCode: 0,
+    })
+    expect(elapsedMs).toBeLessThan(1000)
   })
 
   test('polling reader still respects --timeout when condition never satisfies', async () => {
