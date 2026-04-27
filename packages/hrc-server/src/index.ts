@@ -1774,7 +1774,7 @@ class HrcServerInstance implements HrcServer {
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const continuationForDispatch = runtime.continuation ?? session.continuation
+    const continuationForDispatch = runtime.continuation
     const cliInvocation = await buildDispatchInvocation(
       dispatchIntent,
       continuationForDispatch ? { continuation: continuationForDispatch } : undefined
@@ -3512,7 +3512,7 @@ class HrcServerInstance implements HrcServer {
       harness: runtime.harness,
       provider: runtime.provider,
       launchArtifactPath,
-      continuation: runtime.continuation ?? session.continuation,
+      continuation: runtime.continuation,
       status: 'accepted',
       createdAt: now,
       updatedAt: now,
@@ -3520,7 +3520,7 @@ class HrcServerInstance implements HrcServer {
     this.db.runtimes.update(runtime.runtimeId, {
       launchId,
       status: 'starting',
-      continuation: runtime.continuation ?? session.continuation,
+      continuation: runtime.continuation,
       updatedAt: now,
       lastActivityAt: now,
     })
