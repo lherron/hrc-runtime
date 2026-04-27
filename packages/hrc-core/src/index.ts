@@ -17,6 +17,9 @@ export {
 export type { HrcHttpError, HrcHttpStatus } from './errors.js'
 
 export {
+  formatCanonicalScopeRef,
+  formatCanonicalSessionRef,
+  formatSelector,
   isConcreteSelector,
   isStableSelector,
   normalizeSessionRef,
@@ -25,9 +28,17 @@ export {
 } from './selectors.js'
 export type {
   HrcConcreteSelector,
+  HrcHostSelector,
+  HrcMessageSelector,
+  HrcMessageSeqSelector,
+  HrcMonitorSelector,
+  HrcRuntimeSelector,
+  HrcScopeSelector,
   HrcSelector,
   HrcSessionRef,
+  HrcSessionSelector,
   HrcStableSelector,
+  HrcTargetSelector,
 } from './selectors.js'
 
 export { parseFence, validateFence } from './fences.js'
