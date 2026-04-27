@@ -49,3 +49,17 @@ export { normalizePiHookEvent } from './pi-normalizer.js'
 // Tool output formatter
 export type { ToolOutputFormatResult } from './tool-output-formatter.js'
 export { formatToolOutput } from './tool-output-formatter.js'
+
+// Monitor-domain event schema (§10 output contract)
+export type { MonitorEvent } from './monitor-schema.js'
+export {
+  MonitorResult,
+  MonitorResultSchema,
+  MonitorFailureKind,
+  MonitorFailureKindSchema,
+  ContextChangedReason,
+  ContextChangedReasonSchema,
+  MonitorEventName,
+  MonitorEventNameSchema,
+  MonitorEventSchema,
+} from './monitor-schema.js'
