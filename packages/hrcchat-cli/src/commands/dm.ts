@@ -1,4 +1,5 @@
 import { CliUsageError, consumeBody } from 'cli-kit'
+import type { HrcMessageAddress, SemanticDmResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
 import { printJson } from '../print.js'
@@ -56,7 +57,7 @@ export async function cmdDm(
   })
 
   if (opts.json) {
-    printJson(result)
+    printJson(buildHandoffEnvelope(result, to))
     return
   }
 
@@ -79,5 +80,61 @@ export async function cmdDm(
   } else {
     const toStr = formatAddress(to)
     process.stdout.write(`dm sent to ${toStr} (seq: ${result.request.messageSeq})\n`)
+  }
+}
+
+// -- Handoff envelope ---------------------------------------------------------
+
+/**
+ * Build the monitor-handoff JSON envelope from a SemanticDmResponse.
+ *
+ * Required fields: messageId, seq, to (handle form), sessionRef (canonical).
+ * Nullable fields: runtimeId, turnId (null when target not yet executing).
+ *
+ * This envelope is the stable contract consumed by `hrc monitor wait msg:<id>`.
+ */
+export type DmHandoffEnvelope = {
+  messageId: string
+  seq: number
+  to: string
+  sessionRef: string
+  runtimeId: string | null
+  turnId: string | null
+  /** Full response preserved for backward compatibility and debugging. */
+  request: SemanticDmResponse['request']
+  execution?: SemanticDmResponse['execution']
+  reply?: SemanticDmResponse['reply']
+  waited?: SemanticDmResponse['waited']
+}
+
+function buildHandoffEnvelope(
+  result: SemanticDmResponse,
+  toAddr: HrcMessageAddress
+): DmHandoffEnvelope {
+  const { request, execution } = result
+
+  // sessionRef: prefer execution response (most fresh), then message execution field, then target address
+  const sessionRef =
+    execution?.sessionRef ??
+    request.execution.sessionRef ??
+    (toAddr.kind === 'session' ? toAddr.sessionRef : '')
+
+  // runtimeId: prefer execution response, fall back to persisted execution
+  const runtimeId = execution?.runtimeId ?? request.execution.runtimeId ?? null
+
+  // turnId: mapped from runId in the execution layer
+  const turnId = execution?.runId ?? request.execution.runId ?? null
+
+  return {
+    messageId: request.messageId,
+    seq: request.messageSeq,
+    to: formatAddress(toAddr),
+    sessionRef,
+    runtimeId,
+    turnId,
+    request: result.request,
+    ...(result.execution ? { execution: result.execution } : {}),
+    ...(result.reply ? { reply: result.reply } : {}),
+    ...(result.waited ? { waited: result.waited } : {}),
   }
 }

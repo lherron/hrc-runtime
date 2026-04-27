@@ -1657,7 +1657,11 @@ class HrcServerInstance implements HrcServer {
 
   private async handleEnsureRuntime(request: Request): Promise<Response> {
     const body = parseEnsureRuntimeRequest(await parseJsonBody(request))
-    const session = requireSession(this.db, body.hostSessionId)
+    const requested = requireSession(this.db, body.hostSessionId)
+    const { session } = await this.maybeAutoRotateStaleSession(requested, {
+      allowStaleGeneration: body.allowStaleGeneration,
+      trigger: 'runtime-ensure',
+    })
     const runtime = await this.ensureRuntimeForSession(
       session,
       body.intent,
@@ -5085,6 +5089,17 @@ class HrcServerInstance implements HrcServer {
           trigger: 'semantic-dm',
         })
         session = rotationResult.session
+
+        // Durable correlation join (F2e): persist session-level correlation at
+        // insert time so that `hrc monitor wait msg:<id>` can resolve the
+        // target session even if no turn is dispatched (e.g. unsummoned target,
+        // no runtimeIntent). This survives the originating dm-process exit.
+        this.db.messages.updateExecution(record.messageId, {
+          sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+          hostSessionId: session.hostSessionId,
+          generation: session.generation,
+        })
+
         // If the target has a live interactive tmux runtime, deliver via
         // literal send-keys instead of dispatching a new turn. This lets dm
         // reach agents whether they are mid-turn or idle in an interactive session.
