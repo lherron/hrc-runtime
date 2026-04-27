@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveScopeInput } from 'agent-scope'
@@ -3127,6 +3128,128 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(result.exitCode).toBe(0)
     const body = JSON.parse(result.stdout.trim())
     expect(body).toEqual({ ok: true })
+  })
+
+  describe('T-01292 server status acceptance', () => {
+    beforeEach(async () => {
+      if (server) {
+        await server.stop()
+        server = null
+      }
+    })
+
+    afterEach(async () => {
+      if (server) {
+        await server.stop()
+        server = null
+      }
+    })
+
+    it('exits 0 when healthy and --json reports the full diagnostic shape', async () => {
+      server = await createHrcServer(serverOpts())
+
+      const result = await runCli(['server', 'status', '--json'], cliEnv())
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toBe('')
+
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.ok).toBe(true)
+      expect(body.status).toBe('healthy')
+      expect(body.exitCode).toBe(0)
+      expect(body.daemon.running).toBe(true)
+      expect(typeof body.daemon.pidAlive).toBe('boolean')
+      expect(body.daemon.pidPath).toBe(join(runtimeRoot, 'server.pid'))
+      expect(body.socket.path).toBe(socketPath)
+      expect(body.socket.responsive).toBe(true)
+      expect(body.apiHealth).toEqual({ ok: true })
+      expect(typeof body.api.startedAt).toBe('string')
+      expect(typeof body.api.uptime).toBe('number')
+      expect(body.tmux.socketPath).toBe(tmuxSocketPath)
+    })
+
+    it('exits 1 and reports not-running when the daemon is down', async () => {
+      const result = await runCli(['server', 'status', '--json'], cliEnv())
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toBe('')
+
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.ok).toBe(false)
+      expect(body.status).toBe('not-running')
+      expect(body.exitCode).toBe(1)
+      expect(body.daemon.running).toBe(false)
+      expect(body.socket.path).toBe(socketPath)
+      expect(body.socket.responsive).toBe(false)
+      expect(body.apiHealth).toEqual({ ok: false, error: 'daemon not running' })
+    })
+
+    it('exits 2 for usage errors before probing daemon state', async () => {
+      const result = await runCli(['server', 'status', '--bogus-flag'], cliEnv())
+      expect(result.exitCode).toBe(2)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toMatch(/unknown option|bogus-flag/i)
+    })
+
+    it('exits 2 and reports degraded when a socket responds but the API health probe fails', async () => {
+      const fakeDaemon = createServer((conn) => {
+        conn.destroy()
+      })
+      await new Promise<void>((resolve, reject) => {
+        fakeDaemon.once('error', reject)
+        fakeDaemon.listen(socketPath, resolve)
+      })
+
+      try {
+        const result = await runCli(['server', 'status', '--json'], cliEnv())
+        expect(result.exitCode).toBe(2)
+
+        const body = JSON.parse(result.stdout.trim())
+        expect(body.ok).toBe(false)
+        expect(body.status).toBe('degraded')
+        expect(body.exitCode).toBe(2)
+        expect(body.socket.responsive).toBe(true)
+        expect(body.apiHealth.ok).toBe(false)
+        expect(body.apiHealth.error).toMatch(/health|api|status|socket/i)
+      } finally {
+        await new Promise<void>((resolve) => fakeDaemon.close(() => resolve()))
+        await rm(socketPath, { force: true })
+      }
+    })
+
+    it('exits 3 when local filesystem diagnostics fail', async () => {
+      const runtimeFile = join(tmpDir, 'runtime-as-file')
+      await writeFile(runtimeFile, 'not a directory', 'utf8')
+
+      const result = await runCli(['server', 'status', '--json'], {
+        HRC_RUNTIME_DIR: runtimeFile,
+        HRC_STATE_DIR: stateRoot,
+      })
+      expect(result.exitCode).toBe(3)
+
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.ok).toBe(false)
+      expect(body.status).toBe('probe-failed')
+      expect(body.exitCode).toBe(3)
+      expect(body.error).toMatch(/ENOTDIR|not a directory|diagnostic/i)
+    })
+
+    it('includes server health output in status JSON and human output', async () => {
+      server = await createHrcServer(serverOpts())
+
+      const health = await runCli(['server', 'health'], cliEnv())
+      expect(health.exitCode).toBe(0)
+      const healthBody = JSON.parse(health.stdout.trim())
+
+      const statusJson = await runCli(['server', 'status', '--json'], cliEnv())
+      expect(statusJson.exitCode).toBe(0)
+      const statusBody = JSON.parse(statusJson.stdout.trim())
+      expect(statusBody.apiHealth).toEqual(healthBody)
+
+      const statusHuman = await runCli(['server', 'status'], cliEnv())
+      expect(statusHuman.exitCode).toBe(0)
+      expect(statusHuman.stdout).toContain('HRC Daemon Status')
+      expect(statusHuman.stdout).toMatch(/api health:\s+ok/i)
+      expect(statusHuman.stdout).toMatch(/running:\s+yes/i)
+    })
   })
 
   it('hrc status --json prints status JSON with uptime and exits 0', async () => {
