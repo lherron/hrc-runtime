@@ -23,6 +23,7 @@ import { CliUsageError, parseDuration } from 'cli-kit'
 import {
   HrcDomainError,
   type HrcMonitorCondition,
+  type HrcMonitorConditionEngineReader,
   type HrcMonitorConditionOutcome,
   type HrcMonitorEvent,
   type HrcMonitorState,
@@ -80,6 +81,7 @@ const VALID_CONDITIONS = new Set<string>([
 const MSG_REQUIRED_CONDITIONS = new Set<string>(['response', 'response-or-idle'])
 const VALID_RESULTS = new Set<string>(MonitorResult)
 const DEFAULT_REPLAY_LIMIT = 100
+const POLL_MS = 100
 
 // -- Public entry point -------------------------------------------------------
 
@@ -178,7 +180,11 @@ async function runConditionWatch(
   const condition = args.until as HrcMonitorCondition
   const selectorStr = formatSelector(selector)
 
-  const reader = createMonitorReader(state)
+  // Use polling reader only when a timeout or stall-after is set, so new events
+  // arriving after the initial snapshot can be observed. Without any deadline the
+  // static reader drains and lets the condition engine return monitor_error (exit 3).
+  const hasDeadline = args.timeoutMs !== undefined || args.stallAfterMs !== undefined
+  const reader = hasDeadline ? createPollingConditionReader(state, io) : createMonitorReader(state)
   const engine = createMonitorConditionEngine(reader)
 
   let outcome: HrcMonitorConditionOutcome
@@ -333,6 +339,85 @@ function writeJsonEvent(
   if (messageSeq !== undefined) output['messageSeq'] = messageSeq
 
   stdout.write(`${JSON.stringify(output)}\n`)
+}
+
+// -- Polling condition reader (follow + until) --------------------------------
+
+/**
+ * Creates a condition engine reader that polls for new events by re-building
+ * monitor state on each cycle. This is necessary for --follow --until mode
+ * against live systems where new events (runtime.idle, turn.finished) arrive
+ * after the initial state snapshot.
+ *
+ * The initial snapshot and capture use the pre-built state for consistency.
+ * The watch() generator polls by re-reading state every POLL_MS when no new
+ * events are available.
+ */
+function createPollingConditionReader(
+  initialState: HrcMonitorState,
+  io: MonitorWatchDeps
+): HrcMonitorConditionEngineReader {
+  return {
+    snapshot(selector) {
+      return createMonitorReader(initialState).snapshot(selector)
+    },
+    captureStart(selector, options) {
+      return createMonitorReader(initialState).captureStart(selector, options)
+    },
+    watch(request) {
+      return pollingWatch(request, io)
+    },
+  }
+}
+
+async function* pollingWatch(
+  request: HrcMonitorWatchRequest,
+  io: MonitorWatchDeps
+): AsyncIterable<HrcMonitorEvent | Record<string, unknown>> {
+  // Yield the initial snapshot from the first state read
+  const firstState = await io.buildMonitorState()
+  const firstReader = createMonitorReader(firstState)
+  const snapshotRequest: HrcMonitorWatchRequest = {
+    selector: request.selector,
+    follow: true,
+    fromSeq: request.fromSeq,
+  }
+  // The first reader.watch() with follow=true yields the snapshot event first
+  let nextSeq = request.fromSeq ?? 1
+  for await (const event of firstReader.watch(snapshotRequest)) {
+    yield event
+    const seq = numberField(event, 'seq')
+    if (seq !== undefined) {
+      nextSeq = Math.max(nextSeq, seq + 1)
+    }
+  }
+
+  // Poll for new events
+  if (!request.follow) return
+  while (true) {
+    const state = await io.buildMonitorState()
+    const reader = createMonitorReader(state)
+    let yielded = false
+    for await (const event of reader.watch({
+      selector: request.selector,
+      follow: false,
+      fromSeq: nextSeq,
+    })) {
+      yielded = true
+      const seq = numberField(event, 'seq')
+      if (seq !== undefined) {
+        nextSeq = Math.max(nextSeq, seq + 1)
+      }
+      yield event
+    }
+    if (!yielded) {
+      await sleep(POLL_MS)
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // -- Default deps (live mode) -------------------------------------------------

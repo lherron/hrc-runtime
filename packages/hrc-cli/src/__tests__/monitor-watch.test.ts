@@ -579,3 +579,163 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     })
   })
 })
+
+// -- Polling condition reader (T-01297) ----------------------------------------
+
+describe('polling condition reader for --follow --until with deadline (T-01297)', () => {
+  /**
+   * Exercises the polling path: buildMonitorState is called multiple times and
+   * the idle event appears only on a subsequent poll cycle. Without the polling
+   * reader this would exit 3 (monitor_error) because the static reader drains
+   * immediately and never sees the new event.
+   */
+  test('--follow --until idle with --timeout polls for new events and exits 0', async () => {
+    const busyState = createFixtureState({
+      runtimeStatus: 'busy',
+      activeTurnId: TURN_ID,
+      events: [event(100, 'turn.started', { turnId: TURN_ID })],
+    })
+
+    const idleState = createFixtureState({
+      runtimeStatus: 'idle',
+      activeTurnId: null,
+      events: [
+        event(100, 'turn.started', { turnId: TURN_ID }),
+        event(101, 'runtime.idle', { turnId: TURN_ID, result: 'idle' }),
+      ],
+    })
+
+    // First call returns busy (no idle event yet).
+    // Subsequent calls return the idle state with the runtime.idle event.
+    let callCount = 0
+    const dynamicBuildState = async () => {
+      callCount++
+      return callCount <= 1 ? busyState : idleState
+    }
+
+    const stdoutChunks: string[] = []
+    const stderrChunks: string[] = []
+
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        json: true,
+        selector: SELECTOR,
+        follow: true,
+        until: 'idle',
+        timeoutMs: 5000,
+      },
+      {
+        buildMonitorState: dynamicBuildState,
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: {
+          write(chunk: string) {
+            stderrChunks.push(chunk)
+            return true
+          },
+        },
+      }
+    )
+
+    expect(exitCode).toBe(0)
+    expect(stderrChunks.join('')).toBe('')
+
+    const events = parseJsonLines(stdoutChunks.join(''))
+
+    // Should have polled buildMonitorState more than once
+    expect(callCount).toBeGreaterThan(1)
+
+    // First event should be monitor.snapshot (follow mode always starts with snapshot)
+    expect(events[0]).toMatchObject({
+      event: 'monitor.snapshot',
+      selector: SELECTOR,
+      replayed: false,
+    })
+
+    // Final event should be monitor.completed with idle
+    expect(events.at(-1)).toMatchObject({
+      event: 'monitor.completed',
+      result: 'idle',
+      condition: 'idle',
+      exitCode: 0,
+    })
+
+    // Validate non-terminal events against schema (terminal events use
+    // condition-engine result values like 'idle' which are outside MonitorResult)
+    for (const payload of events) {
+      const ev = payload['event'] as string
+      if (ev !== 'monitor.completed' && ev !== 'monitor.stalled') {
+        expectValidMonitorEvent(payload)
+      }
+    }
+  })
+
+  test('polling reader still respects --timeout when condition never satisfies', async () => {
+    // State never transitions to idle — polls forever until timeout fires
+    const busyState = createFixtureState({
+      runtimeStatus: 'busy',
+      activeTurnId: TURN_ID,
+      events: [event(100, 'turn.started', { turnId: TURN_ID })],
+    })
+
+    const stdoutChunks: string[] = []
+    const stderrChunks: string[] = []
+
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        json: true,
+        selector: SELECTOR,
+        follow: true,
+        until: 'idle',
+        timeoutMs: 200,
+      },
+      {
+        buildMonitorState: async () => busyState,
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: {
+          write(chunk: string) {
+            stderrChunks.push(chunk)
+            return true
+          },
+        },
+      }
+    )
+
+    expect(exitCode).toBe(1)
+
+    const events = parseJsonLines(stdoutChunks.join(''))
+    expect(events.at(-1)).toMatchObject({
+      event: 'monitor.completed',
+      result: 'timeout',
+      exitCode: 1,
+      condition: 'idle',
+    })
+  })
+})
