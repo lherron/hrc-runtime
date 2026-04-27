@@ -1,4 +1,4 @@
-import { existsSync, openSync, readFileSync } from 'node:fs'
+import { existsSync, openSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -28,16 +28,36 @@ export type ServerPaths = {
 }
 
 export type ServerRuntimeStatus = {
+  ok: boolean
+  status: 'healthy' | 'not-running' | 'degraded' | 'probe-failed'
+  exitCode: 0 | 1 | 2 | 3
   running: boolean
   pid?: number | undefined
   pidAlive: boolean
   pidPath: string
+  daemon: {
+    running: boolean
+    pid?: number | undefined
+    pidAlive: boolean
+    pidPath: string
+    pidFileExists: boolean
+  }
   socketPath: string
   socketResponsive: boolean
+  socket: {
+    path: string
+    responsive: boolean
+  }
   lockPath: string
   lockExists: boolean
   tmuxSocketPath: string
+  apiHealth: { ok: true } | { ok: false; error: string }
+  api?:
+    | Pick<HrcStatusResponse, 'startedAt' | 'uptime' | 'apiVersion' | 'socketPath' | 'dbPath'>
+    | undefined
+  tmux: TmuxStatus
   serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+  error?: string | undefined
 }
 
 export type TmuxStatus = {
@@ -83,6 +103,18 @@ function readPidFile(pidPath: string): number | undefined {
     return Number.isFinite(pid) && pid > 0 ? pid : undefined
   } catch {
     return undefined
+  }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function validateDiagnosticRoot(path: string, label: string): void {
+  if (!existsSync(path)) return
+  const stat = statSync(path)
+  if (!stat.isDirectory()) {
+    throw new Error(`${label} is not a directory: ${path}`)
   }
 }
 
@@ -195,35 +227,122 @@ export async function launchctlKickstart(
 }
 
 export async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus> {
-  const paths = resolveServerPaths()
-  const pid = readPidFile(paths.pidPath)
-  const pidAlive = pid !== undefined ? isLiveProcess(pid) : false
-  const socketResponsive = await isUnixSocketResponsive(paths.socketPath)
-  let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+  try {
+    const paths = resolveServerPaths()
+    validateDiagnosticRoot(paths.runtimeRoot, 'runtime root')
+    validateDiagnosticRoot(paths.stateRoot, 'state root')
 
-  if (socketResponsive) {
-    try {
-      const status = await new HrcClient(paths.socketPath).getStatus()
-      serverStatus = {
-        startedAt: status.startedAt,
-        apiVersion: status.apiVersion,
+    const pidFileExists = existsSync(paths.pidPath)
+    const pid = readPidFile(paths.pidPath)
+    const pidAlive = pid !== undefined ? isLiveProcess(pid) : false
+    const socketResponsive = await isUnixSocketResponsive(paths.socketPath)
+    const tmux = await collectTmuxStatus()
+    let apiHealth: ServerRuntimeStatus['apiHealth'] = { ok: false, error: 'daemon not running' }
+    let api: ServerRuntimeStatus['api']
+    let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
+
+    if (socketResponsive) {
+      const client = new HrcClient(paths.socketPath)
+      try {
+        apiHealth = await client.getHealth()
+      } catch (error) {
+        apiHealth = { ok: false, error: `API health probe failed: ${formatError(error)}` }
       }
-    } catch {
-      // Treat the daemon as responsive even if the status request fails mid-restart.
-    }
-  }
 
-  return {
-    running: socketResponsive && (pid === undefined || pidAlive),
-    ...(pid !== undefined ? { pid } : {}),
-    pidAlive,
-    pidPath: paths.pidPath,
-    socketPath: paths.socketPath,
-    socketResponsive,
-    lockPath: paths.lockPath,
-    lockExists: existsSync(paths.lockPath),
-    tmuxSocketPath: paths.tmuxSocketPath,
-    ...(serverStatus ? { serverStatus } : {}),
+      try {
+        const status = await client.getStatus()
+        api = {
+          startedAt: status.startedAt,
+          uptime: status.uptime,
+          apiVersion: status.apiVersion,
+          socketPath: status.socketPath,
+          dbPath: status.dbPath,
+        }
+        serverStatus = {
+          startedAt: status.startedAt,
+          apiVersion: status.apiVersion,
+        }
+      } catch (error) {
+        if (apiHealth.ok) {
+          apiHealth = { ok: false, error: `API status probe failed: ${formatError(error)}` }
+        }
+      }
+    }
+
+    const running = socketResponsive && apiHealth.ok
+    const degraded = socketResponsive || pidAlive || pidFileExists
+    const status = running ? 'healthy' : degraded ? 'degraded' : 'not-running'
+    const exitCode = status === 'healthy' ? 0 : status === 'not-running' ? 1 : 2
+
+    return {
+      ok: status === 'healthy',
+      status,
+      exitCode,
+      running,
+      ...(pid !== undefined ? { pid } : {}),
+      pidAlive,
+      pidPath: paths.pidPath,
+      daemon: {
+        running,
+        ...(pid !== undefined ? { pid } : {}),
+        pidAlive,
+        pidPath: paths.pidPath,
+        pidFileExists,
+      },
+      socketPath: paths.socketPath,
+      socketResponsive,
+      socket: {
+        path: paths.socketPath,
+        responsive: socketResponsive,
+      },
+      lockPath: paths.lockPath,
+      lockExists: existsSync(paths.lockPath),
+      tmuxSocketPath: paths.tmuxSocketPath,
+      apiHealth,
+      ...(api ? { api } : {}),
+      tmux,
+      ...(serverStatus ? { serverStatus } : {}),
+    }
+  } catch (error) {
+    const message = formatError(error)
+    let paths: ServerPaths | undefined
+    try {
+      paths = resolveServerPaths()
+    } catch {}
+
+    return {
+      ok: false,
+      status: 'probe-failed',
+      exitCode: 3,
+      running: false,
+      pidAlive: false,
+      pidPath: paths?.pidPath ?? '',
+      daemon: {
+        running: false,
+        pidAlive: false,
+        pidPath: paths?.pidPath ?? '',
+        pidFileExists: paths ? existsSync(paths.pidPath) : false,
+      },
+      socketPath: paths?.socketPath ?? '',
+      socketResponsive: false,
+      socket: {
+        path: paths?.socketPath ?? '',
+        responsive: false,
+      },
+      lockPath: paths?.lockPath ?? '',
+      lockExists: paths ? existsSync(paths.lockPath) : false,
+      tmuxSocketPath: paths?.tmuxSocketPath ?? '',
+      apiHealth: { ok: false, error: 'status diagnostic failed' },
+      tmux: {
+        available: false,
+        socketPath: paths?.tmuxSocketPath ?? '',
+        running: false,
+        sessionCount: 0,
+        sessions: [],
+        error: 'status diagnostic failed',
+      },
+      error: message,
+    }
   }
 }
 
@@ -231,17 +350,34 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
   const lines = [
     'HRC Daemon Status',
     `  running:      ${status.running ? 'yes' : 'no'}`,
+    `  status:       ${status.status}`,
     `  pid:          ${status.pid ?? '(none)'}`,
     `  pid alive:    ${status.pidAlive ? 'yes' : 'no'}`,
     `  pid file:     ${status.pidPath}`,
     `  socket:       ${status.socketPath}${status.socketResponsive ? ' (responsive)' : ' (down)'}`,
+    `  api health:   ${status.apiHealth.ok ? 'ok' : `failed (${status.apiHealth.error})`}`,
     `  lock:         ${status.lockPath}${status.lockExists ? ' (present)' : ' (missing)'}`,
+    `  tmux:         ${
+      status.tmux.available
+        ? status.tmux.running
+          ? `running (${status.tmux.sessionCount} session(s))`
+          : 'available (not running)'
+        : `unavailable${status.tmux.error ? ` (${status.tmux.error})` : ''}`
+    }`,
     `  tmux socket:  ${status.tmuxSocketPath}`,
   ]
 
-  if (status.serverStatus) {
+  if (status.api) {
+    lines.push(`  uptime:       ${status.api.uptime}s`)
+    lines.push(`  started:      ${status.api.startedAt}`)
+    lines.push(`  apiVersion:   ${status.api.apiVersion}`)
+  } else if (status.serverStatus) {
     lines.push(`  started:      ${status.serverStatus.startedAt}`)
     lines.push(`  apiVersion:   ${status.serverStatus.apiVersion}`)
+  }
+
+  if (status.error) {
+    lines.push(`  error:        ${status.error}`)
   }
 
   return `${lines.join('\n')}\n`

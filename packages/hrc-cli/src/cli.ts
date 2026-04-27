@@ -111,6 +111,13 @@ function fatal(message: string): never {
   throw new CliUsageError(message)
 }
 
+class CliStatusExit extends Error {
+  constructor(readonly code: number) {
+    super(`exit ${code}`)
+    this.name = 'CliStatusExit'
+  }
+}
+
 function requireArg(args: string[], index: number, name: string): string {
   const value = args[index]
   if (value === undefined) {
@@ -957,9 +964,12 @@ async function cmdServerStatus(args: string[]): Promise<void> {
   const status = await collectServerRuntimeStatus()
   if (jsonFlag) {
     printJson(status)
-    return
+  } else {
+    process.stdout.write(formatServerRuntimeStatus(status))
   }
-  process.stdout.write(formatServerRuntimeStatus(status))
+  if (status.exitCode !== 0) {
+    throw new CliStatusExit(status.exitCode)
+  }
 }
 
 async function cmdServerHealth(_args: string[]): Promise<void> {
@@ -3120,7 +3130,7 @@ Commands:
   server serve                               Run the server in the foreground (for launchd/systemd)
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
-  server status [--json]                     Show daemon/socket/pid state without requiring the API
+  server status [--json]                     Show daemon/socket/API health state
   server health                       Check daemon health through the API
   server tmux status [--json]         Show HRC tmux socket/session state
   server tmux kill --yes              Kill the HRC tmux server and all interactive runtimes
@@ -3245,8 +3255,18 @@ function buildProgram(): Command {
 
   server
     .command('status')
-    .description('show daemon/socket/pid state')
+    .description('show daemon/socket/API health state')
     .option('--json', 'output as JSON')
+    .addHelpText(
+      'after',
+      `
+Exit codes:
+  0  healthy: daemon socket responds and API health passes
+  1  not running: no live daemon process or socket
+  2  usage error, or degraded/stale daemon state
+  3  local status probe failed
+`
+    )
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
         strings: [],
@@ -3867,6 +3887,10 @@ function handleCliError(err: unknown, program: Command): never {
 
   if (err instanceof CliUsageError) {
     exitWithError(err, { json, binName: 'hrc' })
+  }
+
+  if (err instanceof CliStatusExit) {
+    process.exit(err.code)
   }
 
   if (err instanceof HrcDomainError) {
