@@ -62,6 +62,7 @@ import {
 } from './events-render.js'
 import { cmdMonitorShow } from './monitor-show.js'
 import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
+import { cmdMonitorWatch } from './monitor-watch.js'
 import { printJson } from './print.js'
 import {
   type DerivedFailure,
@@ -3901,6 +3902,24 @@ Exit codes:
         booleans: [],
       })
       await cmdBridgeClose(args)
+    })
+
+  monitor
+    .command('watch')
+    .description('stream monitor events')
+    .argument('[selector]', 'target selector')
+    .option('--from-seq <n>', 'replay from sequence number')
+    .option('--follow', 'stream live events after replay')
+    .option('--until <condition>', 'exit when condition is met (requires --follow)')
+    .option('--timeout <duration>', 'exit after duration without condition match')
+    .option('--stall-after <duration>', 'exit after duration of inactivity')
+    .option('--json', 'output JSON lines')
+    .action(async (selector, _opts, cmd: Command) => {
+      const args = toLegacyArgv(selector ? [selector] : [], cmd.opts(), {
+        strings: ['from-seq', 'until', 'timeout', 'stall-after'],
+        booleans: ['follow', 'json'],
+      })
+      await cmdMonitorWatch(args)
     })
 
   return program
