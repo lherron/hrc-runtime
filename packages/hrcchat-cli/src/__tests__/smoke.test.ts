@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import type { HrcMessageRecord, SemanticDmRequest, SemanticDmResponse } from 'hrc-core'
+import {
+  type HrcMessageRecord,
+  type SemanticDmRequest,
+  type SemanticDmResponse,
+  parseSelector,
+} from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 import { join } from 'node:path'
@@ -63,6 +68,78 @@ describe('hrcchat CLI smoke fixture', () => {
       to: { kind: 'entity', entity: 'human' },
       createIfMissing: true,
     })
+  })
+
+  it('hrcchat dm --json emits required monitor handoff fields at top level', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01293/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'started',
+        sessionRef,
+        runtimeId: 'rt-json-handoff',
+        runId: 'turn-json-handoff',
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.json).toBeObject()
+
+    const payload = result.json as Record<string, unknown>
+    expect(Object.hasOwn(payload, 'messageId')).toBe(true)
+    expect(Object.hasOwn(payload, 'seq')).toBe(true)
+    expect(Object.hasOwn(payload, 'to')).toBe(true)
+    expect(Object.hasOwn(payload, 'sessionRef')).toBe(true)
+
+    expect(payload.messageId).toBe('msg-request')
+    expect(payload.seq).toBe(42)
+    expect(payload.to).toBe('cody@agent-spaces:T-01293')
+    expect(payload.sessionRef).toBe(sessionRef)
+    expect(payload.runtimeId).toBe('rt-json-handoff')
+    expect(payload.turnId).toBe('turn-json-handoff')
+  })
+
+  it('hrcchat dm --json sessionRef parses through F0 monitor selector grammar', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01293/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'accepted',
+        sessionRef,
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+    )
+
+    const payload = result.json as Record<string, unknown>
+    expect(typeof payload.sessionRef).toBe('string')
+    expect(() => parseSelector(`session:${payload.sessionRef}`)).not.toThrow()
+    expect(parseSelector(`session:${payload.sessionRef}`)).toMatchObject({
+      kind: 'session',
+      sessionRef,
+    })
+  })
+
+  it('hrcchat dm --json includes null runtimeId and turnId for unsummoned targets', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01293/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'accepted',
+        sessionRef,
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+    )
+
+    const payload = result.json as Record<string, unknown>
+    expect(Object.hasOwn(payload, 'runtimeId')).toBe(true)
+    expect(Object.hasOwn(payload, 'turnId')).toBe(true)
+    expect(payload.runtimeId).toBeNull()
+    expect(payload.turnId).toBeNull()
   })
 
   it('hrcchat dm with no args exits 2 (usage error) and reports usage context', async () => {
@@ -199,7 +276,10 @@ function withJson(result: Omit<CliResult, 'json'>): CliResult {
   return { ...result, json: JSON.parse(trimmed) as unknown }
 }
 
-function createDmClient(): { client: HrcClient; requests: SemanticDmRequest[] } {
+function createDmClient(options: { requestExecution?: HrcMessageRecord['execution'] } = {}): {
+  client: HrcClient
+  requests: SemanticDmRequest[]
+} {
   const requests: SemanticDmRequest[] = []
   return {
     requests,
@@ -211,6 +291,7 @@ function createDmClient(): { client: HrcClient; requests: SemanticDmRequest[] } 
             body: request.body,
             from: request.from,
             to: request.to,
+            execution: options.requestExecution,
           }),
         }
       },
@@ -219,7 +300,9 @@ function createDmClient(): { client: HrcClient; requests: SemanticDmRequest[] } 
 }
 
 function makeMessageRecord(
-  overrides: Pick<HrcMessageRecord, 'body' | 'from' | 'to'>
+  overrides: Pick<HrcMessageRecord, 'body' | 'from' | 'to'> & {
+    execution?: HrcMessageRecord['execution'] | undefined
+  }
 ): HrcMessageRecord {
   return {
     messageSeq: 42,
@@ -232,6 +315,6 @@ function makeMessageRecord(
     rootMessageId: 'msg-request',
     body: overrides.body,
     bodyFormat: 'text/plain',
-    execution: { status: 'queued' },
+    execution: overrides.execution ?? { status: 'queued' },
   }
 }

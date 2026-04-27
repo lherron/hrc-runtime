@@ -140,6 +140,38 @@ exit 0
     expect(listed.messages[0]?.body).toBe('ping from cody')
   })
 
+  it('persists message-to-session correlation for dm records before any runtime exists', async () => {
+    const scopeRef = 'agent:cody:project:agent-spaces:task:T-01293'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'correlate this message before summon',
+      createIfMissing: false,
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    const messageId = dm.request.messageId
+
+    // Re-open the store to model a later hrc monitor process resolving msg:<messageId>
+    // after the originating hrcchat dm process has exited.
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const persisted = db.messages.getById(messageId)
+      expect(persisted).not.toBeUndefined()
+      expect(persisted?.execution.sessionRef).toBe(sessionRef)
+      expect(persisted?.execution.hostSessionId).toBe(hostSessionId)
+      expect(persisted?.execution.generation).toBe(generation)
+      expect(persisted?.execution.runtimeId).toBeUndefined()
+      expect(persisted?.execution.runId).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
   it('uses headless transport for openai nonInteractive dm fallback', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-dm-fallback')
 
