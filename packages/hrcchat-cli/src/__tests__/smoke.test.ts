@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
+  type DispatchTurnBySelectorResponse,
   type HrcMessageRecord,
   type SemanticDmRequest,
   type SemanticDmResponse,
@@ -121,6 +122,82 @@ describe('hrcchat CLI smoke fixture', () => {
       kind: 'session',
       sessionRef,
     })
+  })
+
+  it('hrcchat dm --json includes runtimeId for live summoned targets', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01298/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'started',
+        sessionRef,
+        runtimeId: 'rt-live-summoned',
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+
+    const payload = result.json as Record<string, unknown>
+    expect(payload.runtimeId).toBeString()
+    expect(payload.runtimeId).toBe('rt-live-summoned')
+  })
+
+  it('hrcchat dm --json populates runtimeId from request.execution for live summoned target', async () => {
+    // Simulates the tmux-delivery path: no top-level execution response, but the
+    // server re-reads the record so request.execution.runtimeId is populated.
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01298/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'completed',
+        sessionRef,
+        hostSessionId: 'hsid-live-target',
+        generation: 4,
+        runtimeId: 'rt-live-summoned',
+        transport: 'tmux',
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    const payload = result.json as Record<string, unknown>
+    expect(payload.runtimeId).toBe('rt-live-summoned')
+    expect(payload.turnId).toBeNull() // turnId not assigned at message-create time
+  })
+
+  it('hrcchat dm --json populates runtimeId from execution response (SDK dispatch)', async () => {
+    // Simulates the SDK dispatch path: request.execution has no runtimeId,
+    // but the top-level execution response provides it.
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01298/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'started',
+        sessionRef,
+      },
+      execution: {
+        runId: 'run-sdk-dispatch',
+        sessionRef,
+        hostSessionId: 'hsid-sdk-dispatch',
+        generation: 2,
+        runtimeId: 'rt-sdk-dispatch',
+        transport: 'sdk',
+        mode: 'headless',
+        status: 'started',
+        continuationUpdated: false,
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    const payload = result.json as Record<string, unknown>
+    expect(payload.runtimeId).toBe('rt-sdk-dispatch')
+    expect(payload.turnId).toBe('run-sdk-dispatch')
   })
 
   it('hrcchat dm --json includes null runtimeId and turnId for unsummoned targets', async () => {
@@ -276,7 +353,12 @@ function withJson(result: Omit<CliResult, 'json'>): CliResult {
   return { ...result, json: JSON.parse(trimmed) as unknown }
 }
 
-function createDmClient(options: { requestExecution?: HrcMessageRecord['execution'] } = {}): {
+function createDmClient(
+  options: {
+    requestExecution?: HrcMessageRecord['execution']
+    execution?: DispatchTurnBySelectorResponse
+  } = {}
+): {
   client: HrcClient
   requests: SemanticDmRequest[]
 } {
@@ -293,6 +375,7 @@ function createDmClient(options: { requestExecution?: HrcMessageRecord['executio
             to: request.to,
             execution: options.requestExecution,
           }),
+          ...(options.execution ? { execution: options.execution } : {}),
         }
       },
     } as HrcClient,

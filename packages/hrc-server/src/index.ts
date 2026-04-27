@@ -5164,8 +5164,13 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
+    // Re-read the record to pick up execution updates written by the durable
+    // correlation join and tmux-literal delivery path (updateExecution calls
+    // modify the DB but not the in-memory record object).
+    const freshRecord = this.db.messages.getById(record.messageId) ?? record
+
     return json({
-      request: record,
+      request: freshRecord,
       ...(execution ? { execution } : {}),
       ...(reply ? { reply } : {}),
       ...(waited ? { waited } : {}),
