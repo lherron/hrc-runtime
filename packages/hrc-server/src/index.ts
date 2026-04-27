@@ -8071,27 +8071,45 @@ function findContinuitySession(db: HrcDatabase, sessionRef: string): HrcSessionR
 
 function findTargetSession(db: HrcDatabase, sessionRef: string): HrcSessionRecord | null {
   const { scopeRef, laneRef } = parseSessionRef(normalizeTargetSessionRef(sessionRef))
+  const candidates: HrcSessionRecord[] = []
 
   for (const candidateLaneRef of targetLaneCandidates(laneRef)) {
     const continuity = db.continuities.getByKey(scopeRef, candidateLaneRef)
-    if (!continuity) {
-      continue
-    }
-
-    const session = db.sessions.getByHostSessionId(continuity.activeHostSessionId)
-    if (session) {
-      return session
+    if (continuity) {
+      const session = db.sessions.getByHostSessionId(continuity.activeHostSessionId)
+      if (session) {
+        candidates.push(session)
+      }
     }
   }
 
   for (const candidateLaneRef of targetLaneCandidates(laneRef)) {
-    const session = db.sessions.listByScopeRef(scopeRef, candidateLaneRef).at(-1)
-    if (session) {
-      return session
-    }
+    candidates.push(...db.sessions.listByScopeRef(scopeRef, candidateLaneRef))
   }
 
-  return null
+  return selectLatestTargetSession(candidates)
+}
+
+function selectLatestTargetSession(sessions: HrcSessionRecord[]): HrcSessionRecord | null {
+  return (
+    sessions.reduce<HrcSessionRecord | undefined>((latest, candidate) => {
+      if (!latest) {
+        return candidate
+      }
+
+      const latestActive = latest.status === 'active'
+      const candidateActive = candidate.status === 'active'
+      if (latestActive !== candidateActive) {
+        return candidateActive ? candidate : latest
+      }
+
+      if (candidate.generation !== latest.generation) {
+        return candidate.generation > latest.generation ? candidate : latest
+      }
+
+      return candidate.updatedAt >= latest.updatedAt ? candidate : latest
+    }, undefined) ?? null
+  )
 }
 
 function isActiveTargetSession(db: HrcDatabase, session: HrcSessionRecord): boolean {

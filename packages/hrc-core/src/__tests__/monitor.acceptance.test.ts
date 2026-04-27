@@ -209,6 +209,78 @@ describe('monitor acceptance: selector resolver (T-01286 / MONITOR_PROPOSAL sect
     }
   })
 
+  test('resolves target and message selectors to the latest generation when a target was re-summoned', async () => {
+    const { createMonitorReader } = await loadMonitorModule()
+    const scopeRef = 'agent:clod:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const state = createFixtureState()
+    state.sessions = [
+      {
+        sessionRef,
+        scopeRef,
+        laneRef: 'main',
+        hostSessionId: 'host-session-gen-1',
+        generation: 1,
+        runtimeId: 'runtime-gen-1',
+        status: 'active',
+        activeTurnId: null,
+      },
+      {
+        sessionRef,
+        scopeRef,
+        laneRef: 'main',
+        hostSessionId: 'host-session-gen-4',
+        generation: 4,
+        runtimeId: 'runtime-gen-4',
+        status: 'active',
+        activeTurnId: 'turn-gen-4',
+      },
+    ]
+    state.runtimes = [
+      {
+        runtimeId: 'runtime-gen-1',
+        hostSessionId: 'host-session-gen-1',
+        status: 'idle',
+        transport: 'tmux',
+        activeTurnId: null,
+      },
+      {
+        runtimeId: 'runtime-gen-4',
+        hostSessionId: 'host-session-gen-4',
+        status: 'busy',
+        transport: 'tmux',
+        activeTurnId: 'turn-gen-4',
+      },
+    ]
+    state.messages = [
+      {
+        messageId: 'msg-live-gen',
+        messageSeq: 832,
+        sessionRef,
+        hostSessionId: 'host-session-gen-4',
+        runtimeId: 'runtime-gen-4',
+        runId: 'turn-gen-4',
+      },
+    ]
+
+    const reader = createMonitorReader(state)
+
+    expect(reader.resolve(parseSelector('clod@agent-spaces'))).toMatchObject({
+      sessionRef,
+      hostSessionId: 'host-session-gen-4',
+      generation: 4,
+      runtimeId: 'runtime-gen-4',
+      activeTurnId: 'turn-gen-4',
+    })
+    expect(reader.resolve(parseSelector('msg:msg-live-gen'))).toMatchObject({
+      sessionRef,
+      hostSessionId: 'host-session-gen-4',
+      generation: 4,
+      runtimeId: 'runtime-gen-4',
+      activeTurnId: 'turn-gen-4',
+    })
+  })
+
   test('returns structured not-found errors without throwing away selector kind or requested id', async () => {
     const { createMonitorReader } = await loadMonitorModule()
     const reader = createMonitorReader(createFixtureState())

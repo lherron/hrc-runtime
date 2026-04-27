@@ -181,17 +181,9 @@ function resolveParts(state: HrcMonitorState, selector: HrcSelector): ResolvedPa
     case 'stable':
     case 'target':
     case 'session':
-      return partsFromSession(
-        state,
-        state.sessions.find((session) => session.sessionRef === selector.sessionRef)
-      )
+      return partsFromSession(state, latestSessionBySessionRef(state, selector.sessionRef))
     case 'scope':
-      return partsFromSession(
-        state,
-        state.sessions.find(
-          (session) => session.scopeRef === selector.scopeRef && session.status === 'active'
-        ) ?? state.sessions.find((session) => session.scopeRef === selector.scopeRef)
-      )
+      return partsFromSession(state, latestSessionByScopeRef(state, selector.scopeRef))
     case 'concrete':
       return partsFromSession(
         state,
@@ -253,12 +245,10 @@ function partsFromMessage(
   message: HrcMonitorMessageState
 ): ResolvedParts | null {
   const session =
-    (message.sessionRef
-      ? state.sessions.find((candidate) => candidate.sessionRef === message.sessionRef)
-      : undefined) ??
     (message.hostSessionId
       ? state.sessions.find((candidate) => candidate.hostSessionId === message.hostSessionId)
-      : undefined)
+      : undefined) ??
+    (message.sessionRef ? latestSessionBySessionRef(state, message.sessionRef) : undefined)
 
   if (!session) {
     return null
@@ -271,6 +261,38 @@ function partsFromMessage(
     state.runtimes.filter((candidate) => candidate.hostSessionId === session.hostSessionId).at(-1)
 
   return runtime ? { session, runtime } : null
+}
+
+function latestSessionBySessionRef(
+  state: HrcMonitorState,
+  sessionRef: string
+): HrcMonitorSessionState | undefined {
+  return selectLatestSession(state.sessions.filter((session) => session.sessionRef === sessionRef))
+}
+
+function latestSessionByScopeRef(
+  state: HrcMonitorState,
+  scopeRef: string
+): HrcMonitorSessionState | undefined {
+  return selectLatestSession(state.sessions.filter((session) => session.scopeRef === scopeRef))
+}
+
+function selectLatestSession(
+  sessions: HrcMonitorSessionState[]
+): HrcMonitorSessionState | undefined {
+  return sessions.reduce<HrcMonitorSessionState | undefined>((latest, candidate) => {
+    if (!latest) {
+      return candidate
+    }
+
+    const latestActive = latest.status === 'active'
+    const candidateActive = candidate.status === 'active'
+    if (latestActive !== candidateActive) {
+      return candidateActive ? candidate : latest
+    }
+
+    return candidate.generation >= latest.generation ? candidate : latest
+  }, undefined)
 }
 
 function snapshotState(
@@ -373,12 +395,14 @@ function messageEventMatches(
   if (!message) {
     return false
   }
-  return (
-    event.messageId === message.messageId ||
-    event.messageSeq === message.messageSeq ||
-    event.runtimeId === message.runtimeId ||
-    event.turnId === message.runId
-  )
+  if (event.messageId !== undefined) {
+    return event.messageId === message.messageId
+  }
+  if (event.messageSeq !== undefined) {
+    return event.messageSeq === message.messageSeq
+  }
+
+  return event.runtimeId === message.runtimeId || event.turnId === message.runId
 }
 
 function messageSeqEventMatches(

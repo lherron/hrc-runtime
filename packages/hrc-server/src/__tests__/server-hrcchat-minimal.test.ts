@@ -172,6 +172,67 @@ exit 0
     }
   })
 
+  it('persists dm correlation against the latest generation when continuity still points at an older generation', async () => {
+    const scopeRef = 'agent:clod:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const now = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sessions.insert({
+        hostSessionId: 'hsid-dm-correlation-gen-1',
+        scopeRef,
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.sessions.insert({
+        hostSessionId: 'hsid-dm-correlation-gen-4',
+        scopeRef,
+        laneRef: 'default',
+        generation: 4,
+        status: 'active',
+        priorHostSessionId: 'hsid-dm-correlation-gen-1',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.continuities.upsert({
+        scopeRef,
+        laneRef: 'default',
+        activeHostSessionId: 'hsid-dm-correlation-gen-1',
+        updatedAt: now,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'correlate against current generation',
+      createIfMissing: false,
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const persisted = verifyDb.messages.getById(dm.request.messageId)
+      expect(persisted).not.toBeUndefined()
+      expect(persisted?.execution.sessionRef).toBe(sessionRef)
+      expect(persisted?.execution.hostSessionId).toBe('hsid-dm-correlation-gen-4')
+      expect(persisted?.execution.generation).toBe(4)
+      expect(persisted?.execution.runtimeId).toBeUndefined()
+      expect(persisted?.execution.runId).toBeUndefined()
+    } finally {
+      verifyDb.close()
+    }
+  })
+
   it('uses headless transport for openai nonInteractive dm fallback', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-dm-fallback')
 
