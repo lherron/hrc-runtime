@@ -268,6 +268,57 @@ describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL sectio
     })
   })
 
+  test('ignores uncorrelated message.response events while waiting for a msg selector response', async () => {
+    const [{ createMonitorReader }, { createMonitorConditionEngine }] = await Promise.all([
+      loadMonitorReaderModule(),
+      loadMonitorConditionEngineModule(),
+    ])
+    const state = createFixtureState()
+    const reader = createMonitorReader(state)
+    const originalCaptureStart = reader.captureStart
+    reader.captureStart = async (selector, options) => {
+      return originalCaptureStart(selector, {
+        ...options,
+        afterSnapshot: () => {
+          options?.afterSnapshot?.()
+          state.events.push(
+            event(101, 'message.response', {
+              messageId: 'msg-other',
+              messageSeq: 999,
+              turnId: 'turn-other',
+              result: 'response',
+            }),
+            event(102, 'message.response', {
+              messageId: 'msg-f1b',
+              messageSeq: 1288,
+              turnId: 'turn-captured',
+              result: 'response',
+            })
+          )
+        },
+      })
+    }
+    const engine = createMonitorConditionEngine(reader)
+
+    const result = await engine.wait({
+      selector: parseSelector('msg:msg-f1b'),
+      condition: 'response',
+      timeoutMs: 25,
+    })
+
+    expect(result).toMatchObject({
+      result: 'response',
+      exitCode: 0,
+    })
+    expect(result.eventStream).toContainEqual(
+      expect.objectContaining({
+        event: 'message.response',
+        messageId: 'msg-f1b',
+        messageSeq: 1288,
+      })
+    )
+  })
+
   test.each([
     [
       'response-or-idle',
@@ -387,6 +438,126 @@ describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL sectio
           condition,
           selectorKind: 'session',
         }),
+      })
+    }
+  )
+
+  test.each([
+    [
+      'success',
+      createFixtureState({ activeTurnId: null, events: [] }),
+      'turn-finished',
+      0,
+      'no_active_turn',
+    ],
+    [
+      'timeout',
+      createFixtureState({ events: [event(100, 'turn.started', { turnId: 'turn-captured' })] }),
+      'turn-finished',
+      1,
+      'timeout',
+    ],
+    [
+      'turn failure',
+      createFixtureState({
+        events: [
+          event(100, 'turn.started', { turnId: 'turn-captured' }),
+          event(101, 'turn.finished', {
+            turnId: 'turn-captured',
+            result: 'turn_failed',
+            failureKind: 'model',
+          }),
+        ],
+      }),
+      'turn-finished',
+      2,
+      'turn_failed',
+    ],
+    [
+      'monitor infrastructure error',
+      createFixtureState({
+        events: [event(100, 'turn.started', { turnId: 'turn-captured' })],
+      }),
+      'turn-finished',
+      3,
+      'monitor_error',
+    ],
+    [
+      'context changed',
+      createFixtureState({
+        events: [
+          event(100, 'turn.started', { turnId: 'turn-captured' }),
+          event(101, 'session.cleared'),
+        ],
+      }),
+      'turn-finished',
+      4,
+      'context_changed',
+    ],
+  ] as const)(
+    'covers MONITOR_PROPOSAL §7.3 wait exit mapping for %s',
+    async (_label, state, condition, exitCode, result) => {
+      const [{ createMonitorReader }, { createMonitorConditionEngine }] = await Promise.all([
+        loadMonitorReaderModule(),
+        loadMonitorConditionEngineModule(),
+      ])
+      const engine = createMonitorConditionEngine(createMonitorReader(state))
+
+      await expect(
+        engine.wait({
+          selector: parseSelector('session:agent:cody:project:agent-spaces:task:T-01288/lane:main'),
+          condition,
+          timeoutMs: exitCode === 3 ? undefined : 5,
+        })
+      ).resolves.toMatchObject({
+        result,
+        exitCode,
+      })
+    }
+  )
+
+  test.each([
+    [
+      'turn failure',
+      'turn-finished',
+      event(101, 'turn.finished', {
+        turnId: 'turn-captured',
+        result: 'turn_failed',
+        failureKind: 'tool',
+      }),
+      'turn_failed',
+      'tool',
+    ],
+    [
+      'runtime failure',
+      'idle',
+      event(101, 'runtime.dead', {
+        turnId: 'turn-captured',
+        result: 'runtime_dead',
+        failureKind: 'process',
+      }),
+      'runtime_dead',
+      'process',
+    ],
+  ] as const)(
+    'returns exit 2 and failureKind discriminator for %s',
+    async (_label, condition, failureEvent, result, failureKind) => {
+      const state = createFixtureState({
+        events: [event(100, 'turn.started', { turnId: 'turn-captured' }), failureEvent],
+      })
+
+      await expect(waitForCondition(state, condition)).resolves.toMatchObject({
+        result,
+        exitCode: 2,
+        failureKind,
+        eventStream: expect.arrayContaining([
+          expect.objectContaining({
+            event: 'monitor.completed',
+            result,
+            exitCode: 2,
+            failureKind,
+          }),
+        ]),
       })
     }
   )
