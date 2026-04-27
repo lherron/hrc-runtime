@@ -205,3 +205,19 @@ export type {
   SemanticDmRequest,
   SemanticDmResponse,
 } from './hrcchat-contracts.js'
+
+export { createMonitorReader } from './monitor/index.js'
+export type {
+  HrcMonitorCapture,
+  HrcMonitorCaptureOptions,
+  HrcMonitorEvent,
+  HrcMonitorMessageState,
+  HrcMonitorResolution,
+  HrcMonitorResolutionResult,
+  HrcMonitorResolvedSelector,
+  HrcMonitorRuntimeState,
+  HrcMonitorSessionState,
+  HrcMonitorSnapshot,
+  HrcMonitorState,
+  HrcMonitorWatchRequest,
+} from './monitor/index.js'
