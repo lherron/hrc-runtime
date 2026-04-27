@@ -149,12 +149,12 @@ describe('monitor schema acceptance', () => {
 
     for (const harness of ['Claude', 'Codex', 'Pi', 'tmux']) {
       const section = audit.match(
-        new RegExp(`^##+\\s+${harness}\\b(?<body>[\\s\\S]*?)(?=^##+\\s+|\\z)`, 'm')
+        new RegExp(`^##\\s+${harness}\\b(?<body>[\\s\\S]*?)(?=^##\\s|(?![\\s\\S]))`, 'm')
       )?.groups?.body
 
       expect(section, `${harness} section is missing`).toBeString()
 
-      const gaps = section?.match(/(^###+\s+Gaps\b(?<body>[\s\S]*?)(?=^###+\s+|^##+\s+|\z))/m)
+      const gaps = section?.match(/(^###\s+Gaps\b(?<body>[\s\S]*?)(?=^###\s+|^##\s+|(?![\s\S])))/m)
         ?.groups?.body
 
       expect(gaps, `${harness} Gaps subsection is missing`).toBeString()
