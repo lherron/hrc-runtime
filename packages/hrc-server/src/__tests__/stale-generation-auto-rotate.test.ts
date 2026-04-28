@@ -5,7 +5,7 @@
  * `HRC_STALE_GENERATION_HOURS` (default 24h) before dispatching a turn or
  * starting a runtime, so callers never silently reuse a stale continuation
  * key. These tests cover:
- *   - the rotation fires from semantic DM, dispatchTurn, and startRuntime
+ *   - the rotation fires from semantic DM, dispatchTurn, ensureRuntime, and startRuntime
  *   - callers can opt out with `allowStaleGeneration: true`
  *   - the kill-switch (`staleGenerationEnabled: false`) suppresses rotation
  *   - fresh sessions pass through untouched
@@ -199,6 +199,180 @@ describe('stale-generation auto-rotate on /v1/runtimes/start', () => {
     ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600)
 
     await fixture.postJson('/v1/runtimes/start', {
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'headless' },
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active!.generation).toBe(1)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+describe('stale-generation auto-rotate on /v1/runtimes/ensure', () => {
+  it('rotates the session when age exceeds the threshold', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: true,
+        staleGenerationThresholdSec: 60,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+    ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600) // 1 hour old
+
+    const res = await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'headless' },
+      },
+    })
+
+    // The rotation itself must succeed even if the downstream ensure fails;
+    // what we care about is that the session record moved to generation 2.
+    expect([200, 503]).toContain(res.status)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      expect(continuity).toBeDefined()
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active).toBeDefined()
+      expect(active!.generation).toBe(2)
+      expect(active!.hostSessionId).not.toBe(resolved.hostSessionId)
+      expect(active!.priorHostSessionId).toBe(resolved.hostSessionId)
+
+      // Rotation event must be recorded.
+      const events = db.hrcEvents.listFromHrcSeq(1)
+      const rotated = events.find((e) => e.eventKind === 'session.generation_auto_rotated')
+      expect(rotated).toBeDefined()
+      const payload = rotated!.payload as Record<string, unknown>
+      expect(payload['trigger']).toBe('runtime-ensure')
+      expect(payload['priorGeneration']).toBe(1)
+      expect(payload['nextGeneration']).toBe(2)
+      expect(typeof payload['ageSec']).toBe('number')
+      expect((payload['ageSec'] as number) >= 3600).toBe(true)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('leaves fresh sessions untouched', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: true,
+        staleGenerationThresholdSec: 3600,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+
+    await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'headless' },
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active!.generation).toBe(1)
+      expect(active!.hostSessionId).toBe(resolved.hostSessionId)
+
+      const events = db.hrcEvents.listFromHrcSeq(1)
+      expect(events.some((e) => e.eventKind === 'session.generation_auto_rotated')).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('respects allowStaleGeneration: true', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: true,
+        staleGenerationThresholdSec: 60,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+    ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600)
+
+    await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: resolved.hostSessionId,
+      allowStaleGeneration: true,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'headless' },
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active!.generation).toBe(1)
+      expect(active!.hostSessionId).toBe(resolved.hostSessionId)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('respects the kill-switch (staleGenerationEnabled: false)', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: false,
+        staleGenerationThresholdSec: 60,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+    ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600)
+
+    await fixture.postJson('/v1/runtimes/ensure', {
       hostSessionId: resolved.hostSessionId,
       intent: {
         placement: {
