@@ -132,6 +132,27 @@ describe('Launch artifact IO', () => {
     expect(read.otel).toEqual(artifact.otel)
   })
 
+  it('round-trips structured prompt material on launch artifacts', async () => {
+    const prompts = {
+      system: {
+        content: 'system prompt preserved in artifact',
+        mode: 'append' as const,
+        deliveredVia: 'agents-md' as const,
+        sourcePath: '/tmp/codex-home/AGENTS.md',
+      },
+      priming: {
+        content: 'priming prompt preserved in artifact',
+        deliveredVia: 'argv-flag' as const,
+      },
+    }
+    const artifact = makeArtifact({ prompts } as Partial<HrcLaunchArtifact>)
+
+    const path = await writeLaunchArtifact(artifact, tmpDir)
+    const read = await readLaunchArtifact(path)
+
+    expect(read.prompts).toEqual(prompts)
+  })
+
   it('requires launch artifacts to persist both internal harness and public frontend', async () => {
     const path = join(tmpDir, 'missing-frontend.json')
     const { frontend: _frontend, ...artifactWithoutFrontend } = makeArtifact({

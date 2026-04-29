@@ -1836,6 +1836,27 @@ describe('hrc run --dry-run', () => {
     expect(result.stdout).toContain('provider:     openai')
   })
 
+  it('renders codex dry-run system prompt from structured prompt fields when argv has no prompt flag', async () => {
+    await writeFile(
+      join(agentsRoot, 'rex', 'agent-profile.toml'),
+      'schemaVersion = 2\n\n[identity]\ndisplay = "Rex"\nrole = "worker"\nharness = "codex"\n',
+      'utf8'
+    )
+    await writeFile(join(agentsRoot, 'rex', 'SOUL.md'), 'Cody structured prompt marker\n', 'utf8')
+
+    const result = await runCli(
+      ['run', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('System Prompt')
+    expect(result.stdout).toContain('Cody structured prompt marker')
+  })
+
   it('prefers project target harness over agent profile harness for provider inference', async () => {
     await writeFile(
       join(agentsRoot, 'rex', 'agent-profile.toml'),

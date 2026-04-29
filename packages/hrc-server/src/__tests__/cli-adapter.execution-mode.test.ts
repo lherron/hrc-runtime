@@ -103,6 +103,33 @@ describe('buildCliInvocation execution mode mapping', () => {
     expect(capturedRequest?.frontend).toBe('codex-cli')
   })
 
+  it('threads structured prompt material from ProcessInvocationSpec into CliInvocationResult', async () => {
+    const prompts = {
+      system: {
+        content: 'system prompt from materialization',
+        mode: 'append' as const,
+        deliveredVia: 'agents-md' as const,
+        sourcePath: '/tmp/codex-home/AGENTS.md',
+      },
+      priming: {
+        content: 'initial priming prompt',
+        deliveredVia: 'argv-flag' as const,
+      },
+    }
+
+    const result = await buildCliInvocation(makeIntent(), {
+      specBuilder: async () => ({
+        ...makeResponse(),
+        spec: {
+          ...makeResponse().spec,
+          prompts,
+        } as BuildProcessInvocationSpecResponse['spec'],
+      }),
+    })
+
+    expect(result.prompts).toEqual(prompts)
+  })
+
   it('defaults to interactive + pty and preserves prompt/env plumbing', async () => {
     let capturedRequest: BuildProcessInvocationSpecRequest | undefined
 

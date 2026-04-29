@@ -106,6 +106,26 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
 }
 
 describe('hrc-launch exec crash paths', () => {
+  it('prints system prompt from structured artifact prompts even when argv has no prompt flags', async () => {
+    const result = await runExec(
+      makeArtifact({
+        argv: [process.execPath, '-e', 'process.exit(0)'],
+        prompts: {
+          system: {
+            content: 'structured codex system prompt',
+            mode: 'append',
+            deliveredVia: 'agents-md',
+            sourcePath: join(tmpDir, 'codex-home', 'AGENTS.md'),
+          },
+        },
+      } as Partial<HrcLaunchArtifact>)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('System Prompt')
+    expect(result.stdout).toContain('structured codex system prompt')
+  })
+
   it('posts a continuation callback when headless codex emits legacy event-based thread.started JSONL', async () => {
     const launchId = 'launch-headless-continuation'
     const socketPath = join(tmpDir, 'callbacks.sock')
