@@ -38,6 +38,13 @@ import {
 import { MonitorResult } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  type MonitorOutputFormat,
+  createMonitorRenderer,
+  parseMonitorOutputFormat,
+  resolveMonitorOutputFormat,
+  toMonitorJsonEvent,
+} from './monitor-render.js'
 
 // -- Types -------------------------------------------------------------------
 
@@ -47,11 +54,16 @@ type MonitorOutputEvent = HrcMonitorEvent | Record<string, unknown>
 export type MonitorWatchArgs = {
   selector?: string | undefined
   json?: boolean | undefined
+  pretty?: boolean | undefined
+  format?: MonitorOutputFormat | undefined
   follow?: boolean | undefined
   fromSeq?: number | undefined
+  last?: number | undefined
   until?: string | undefined
   timeoutMs?: number | undefined
   stallAfterMs?: number | undefined
+  maxLines?: number | undefined
+  scopeWidth?: number | undefined
   signal?: AbortSignal | undefined
 }
 
@@ -125,12 +137,29 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   const follow = args.follow ?? false
   const until = args.until
   const signal = args.signal
+  const format = resolveMonitorOutputFormat({
+    format: args.format,
+    pretty: args.pretty,
+    json: args.json,
+  })
 
   // Validate condition
   if (until !== undefined && !VALID_CONDITIONS.has(until)) {
     throw new CliUsageError(
       `invalid condition: ${until} (valid: ${[...VALID_CONDITIONS].join(', ')})`
     )
+  }
+
+  if (args.last !== undefined) {
+    if (!Number.isInteger(args.last) || args.last < 1) {
+      throw new CliUsageError('--last must be a positive integer')
+    }
+    if (args.fromSeq !== undefined) {
+      throw new CliUsageError('--last cannot be used with --from-seq')
+    }
+    if (until !== undefined) {
+      throw new CliUsageError('--last cannot be used with --until')
+    }
   }
 
   // Parse selector
@@ -160,9 +189,9 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   const state = await io.buildMonitorState()
 
   if (until && follow) {
-    return runConditionWatch(state, args, selector, io)
+    return runConditionWatch(state, args, selector, io, format)
   }
-  return runReplayOrFollow(state, args, selector, io)
+  return runReplayOrFollow(state, args, selector, io, format)
 }
 
 // -- Condition-based watch (--follow --until) ---------------------------------
@@ -171,7 +200,8 @@ async function runConditionWatch(
   state: HrcMonitorState,
   args: MonitorWatchArgs,
   selector: HrcSelector | undefined,
-  io: MonitorWatchDeps
+  io: MonitorWatchDeps,
+  format: MonitorOutputFormat
 ): Promise<number> {
   if (!selector) {
     throw new CliUsageError('--until requires a selector')
@@ -208,6 +238,7 @@ async function runConditionWatch(
   //   - Override replayed to false (all events are "live" from the CLI perspective)
   //   - Enrich the final completed/stalled event with runtimeId/turnId from context.
   if (outcome.eventStream) {
+    const writer = createEventWriter(io.stdout, selectorStr, args, format)
     // Extract runtimeId/turnId from the last non-terminal event
     let lastRuntimeId: string | undefined
     let lastTurnId: string | undefined
@@ -235,8 +266,9 @@ async function runConditionWatch(
         if (lastRuntimeId && !stringField(event, 'runtimeId')) enriched['runtimeId'] = lastRuntimeId
         if (lastTurnId && !stringField(event, 'turnId')) enriched['turnId'] = lastTurnId
       }
-      writeJsonEvent(io.stdout, enriched, selectorStr)
+      writer.write(enriched)
     }
+    writer.flush()
   }
 
   return outcome.exitCode
@@ -248,12 +280,18 @@ async function runReplayOrFollow(
   state: HrcMonitorState,
   args: MonitorWatchArgs,
   selector: HrcSelector | undefined,
-  io: MonitorWatchDeps
+  io: MonitorWatchDeps,
+  format: MonitorOutputFormat
 ): Promise<number> {
   const follow = args.follow ?? false
   const selectorStr = selector ? formatSelector(selector) : ''
+  const writer = createEventWriter(io.stdout, selectorStr, args, format)
 
   const reader = createMonitorReader(state)
+
+  if (follow) {
+    return runPollingFollow(state, args, selector, io, writer)
+  }
 
   const request: HrcMonitorWatchRequest = {
     selector,
@@ -267,78 +305,135 @@ async function runReplayOrFollow(
   }
 
   // For non-follow mode: apply default replay limit (last 100 per Q3 FROZEN)
-  const output =
-    !follow && events.length > DEFAULT_REPLAY_LIMIT ? events.slice(-DEFAULT_REPLAY_LIMIT) : events
+  const replayLimit = args.last ?? DEFAULT_REPLAY_LIMIT
+  const output = !follow && events.length > replayLimit ? events.slice(-replayLimit) : events
 
   for (const event of output) {
     // Mark all non-follow events as replayed
     const enriched: Record<string, unknown> = { ...event, replayed: !follow }
-    writeJsonEvent(io.stdout, enriched, selectorStr)
+    writer.write(enriched)
   }
+  writer.flush()
 
   return 0
 }
 
-// -- Event output -------------------------------------------------------------
-
-function writeJsonEvent(
-  stdout: { write(chunk: string): boolean },
-  event: MonitorOutputEvent,
-  selectorStr: string
-): void {
-  const ts = stringField(event, 'ts') ?? new Date().toISOString()
-  const eventName = stringField(event, 'event') ?? 'unknown'
-  const replayed = event['replayed'] === true
-
-  const output: Record<string, unknown> = {
-    event: eventName,
-    selector: stringField(event, 'selector') ?? selectorStr,
-    replayed,
-    ts,
+async function runPollingFollow(
+  initialState: HrcMonitorState,
+  args: MonitorWatchArgs,
+  selector: HrcSelector | undefined,
+  io: MonitorWatchDeps,
+  writer: EventWriter
+): Promise<number> {
+  if (args.signal?.aborted) {
+    return 130
   }
 
-  // Preserve seq if present
-  const seq = numberField(event, 'seq')
-  if (seq !== undefined) output['seq'] = seq
+  const initialReader = createMonitorReader(initialState)
+  const snapshot = initialReader.snapshot(selector)
+  writer.write({
+    seq: snapshot.eventHighWaterSeq,
+    event: 'monitor.snapshot',
+    replayed: false,
+    snapshot,
+  })
 
-  // Optional fields
-  const runtimeId = stringField(event, 'runtimeId')
-  if (runtimeId) output['runtimeId'] = runtimeId
+  let nextSeq = Math.max(1, snapshot.eventHighWaterSeq + 1)
+  if (args.fromSeq !== undefined || args.last !== undefined) {
+    let replayHighWater = snapshot.eventHighWaterSeq
+    const replayEvents: MonitorOutputEvent[] = []
+    for await (const event of initialReader.watch({
+      selector,
+      follow: false,
+      fromSeq: args.fromSeq,
+    })) {
+      replayEvents.push(event)
+    }
+    const output =
+      args.last !== undefined && replayEvents.length > args.last
+        ? replayEvents.slice(-args.last)
+        : replayEvents
+    for (const event of output) {
+      const enriched: Record<string, unknown> = { ...event, replayed: true }
+      writer.write(enriched)
+      const seq = numberField(enriched, 'seq')
+      if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
+    }
+    nextSeq = replayHighWater + 1
+  }
 
-  const turnId = stringField(event, 'turnId')
-  if (turnId) output['turnId'] = turnId
-
-  const result = stringField(event, 'result')
-  // Only include result if it's a valid MonitorResult OR if it's a terminal event
-  // (monitor.completed/monitor.stalled use HrcMonitorConditionResult values)
-  if (result) {
-    const isTerminal = eventName === 'monitor.completed' || eventName === 'monitor.stalled'
-    if (isTerminal || VALID_RESULTS.has(result)) {
-      output['result'] = result
+  while (!args.signal?.aborted) {
+    const state = await io.buildMonitorState()
+    const reader = createMonitorReader(state)
+    let yielded = false
+    for await (const event of reader.watch({
+      selector,
+      follow: false,
+      fromSeq: nextSeq,
+    })) {
+      yielded = true
+      const enriched: Record<string, unknown> = { ...event, replayed: false }
+      writer.write(enriched)
+      const seq = numberField(enriched, 'seq')
+      if (seq !== undefined) {
+        nextSeq = Math.max(nextSeq, seq + 1)
+      }
+    }
+    if (!yielded) {
+      await sleep(POLL_MS)
     }
   }
 
-  const failureKind = stringField(event, 'failureKind')
-  if (failureKind) output['failureKind'] = failureKind
+  writer.flush()
+  return 130
+}
 
-  const reason = stringField(event, 'reason')
-  if (reason) output['reason'] = reason
+// -- Event output -------------------------------------------------------------
 
-  const exitCode = numberField(event, 'exitCode')
-  if (exitCode !== undefined) output['exitCode'] = exitCode
+type EventWriter = {
+  write(event: MonitorOutputEvent): void
+  flush(): void
+}
 
-  // Include condition if present (for completed events)
-  const condition = stringField(event, 'condition')
-  if (condition) output['condition'] = condition
+function createEventWriter(
+  stdout: { write(chunk: string): boolean },
+  selectorStr: string,
+  args: MonitorWatchArgs,
+  format: MonitorOutputFormat
+): EventWriter {
+  if (format === 'json' || format === 'ndjson') {
+    return {
+      write(event) {
+        const replayed = event['replayed'] === true
+        const output = toMonitorJsonEvent(event, selectorStr, replayed)
+        const eventName = stringField(output, 'event') ?? 'unknown'
+        const result = stringField(output, 'result')
+        if (result && eventName !== 'monitor.completed' && eventName !== 'monitor.stalled') {
+          if (!VALID_RESULTS.has(result)) {
+            output['result'] = undefined
+          }
+        }
+        stdout.write(`${JSON.stringify(output)}\n`)
+      },
+      flush() {},
+    }
+  }
 
-  // Include messageId/messageSeq if present
-  const messageId = stringField(event, 'messageId')
-  if (messageId) output['messageId'] = messageId
-
-  const messageSeq = numberField(event, 'messageSeq')
-  if (messageSeq !== undefined) output['messageSeq'] = messageSeq
-
-  stdout.write(`${JSON.stringify(output)}\n`)
+  const renderer = createMonitorRenderer(format, {
+    maxLines: args.maxLines,
+    scopeWidth: args.scopeWidth,
+  })
+  return {
+    write(event) {
+      if (stringField(event, 'event') === 'monitor.snapshot') {
+        return
+      }
+      stdout.write(renderer.push(event))
+    },
+    flush() {
+      stdout.write(renderer.flush())
+    },
+  }
 }
 
 // -- Polling condition reader (follow + until) --------------------------------
@@ -473,15 +568,24 @@ async function buildLiveMonitorState(): Promise<HrcMonitorState> {
       const payload = e.payload as Record<string, unknown> | null | undefined
       return {
         seq: e.hrcSeq,
+        hrcSeq: e.hrcSeq,
+        streamSeq: e.streamSeq,
         ts: e.ts,
         event: e.eventKind,
+        eventKind: e.eventKind,
         sessionRef: `${e.scopeRef}/lane:${e.laneRef ?? 'main'}`,
         scopeRef: e.scopeRef,
         laneRef: e.laneRef,
         hostSessionId: e.hostSessionId,
         generation: e.generation,
+        category: e.category,
         runtimeId: e.runtimeId,
         turnId: e.runId,
+        runId: e.runId,
+        launchId: e.launchId,
+        transport: e.transport,
+        errorCode: e.errorCode,
+        payload: e.payload,
         ...(payload && typeof payload === 'object' && 'messageId' in payload
           ? { messageId: String(payload['messageId']) }
           : {}),
@@ -535,11 +639,16 @@ async function loadMessages(client: HrcClient): Promise<HrcMonitorState['message
 function parseArgv(args: string[]): MonitorWatchArgs {
   let selector: string | undefined
   let fromSeq: number | undefined
+  let last: number | undefined
   let follow = false
   let until: string | undefined
   let timeout: string | undefined
   let stallAfter: string | undefined
   let json = false
+  let pretty = false
+  let format: MonitorOutputFormat | undefined
+  let maxLines: number | undefined
+  let scopeWidth: number | undefined
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -554,6 +663,17 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       }
       fromSeq = parsed
       i += 1
+      continue
+    }
+    if (arg === '--last') {
+      const val = args[i + 1]
+      if (val === undefined) throw new CliUsageError('--last requires a value')
+      last = parsePositiveInteger('--last', val)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--last=')) {
+      last = parsePositiveInteger('--last', arg.slice('--last='.length))
       continue
     }
     if (arg === '--follow') {
@@ -585,6 +705,53 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       json = true
       continue
     }
+    if (arg === '--pretty') {
+      pretty = true
+      continue
+    }
+    if (arg === '--format') {
+      const val = args[i + 1]
+      if (val === undefined) throw new CliUsageError('--format requires a value')
+      try {
+        format = parseMonitorOutputFormat(val)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new CliUsageError(message)
+      }
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--format=')) {
+      try {
+        format = parseMonitorOutputFormat(arg.slice('--format='.length))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new CliUsageError(message)
+      }
+      continue
+    }
+    if (arg === '--max-lines') {
+      const val = args[i + 1]
+      if (val === undefined) throw new CliUsageError('--max-lines requires a value')
+      maxLines = parseNonNegativeInteger('--max-lines', val)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--max-lines=')) {
+      maxLines = parseNonNegativeInteger('--max-lines', arg.slice('--max-lines='.length))
+      continue
+    }
+    if (arg === '--scope-width') {
+      const val = args[i + 1]
+      if (val === undefined) throw new CliUsageError('--scope-width requires a value')
+      scopeWidth = parseNonNegativeInteger('--scope-width', val)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--scope-width=')) {
+      scopeWidth = parseNonNegativeInteger('--scope-width', arg.slice('--scope-width='.length))
+      continue
+    }
     if (arg.startsWith('-')) {
       throw new CliUsageError(`unknown option: ${arg}`)
     }
@@ -597,13 +764,34 @@ function parseArgv(args: string[]): MonitorWatchArgs {
   return {
     selector,
     fromSeq,
+    last,
     follow,
     until,
     json,
+    pretty,
+    format,
+    maxLines,
+    scopeWidth,
     // Convert duration strings to ms for the internal API
     ...(timeout ? { timeoutMs: parseDuration(timeout) } : {}),
     ...(stallAfter ? { stallAfterMs: parseDuration(stallAfter) } : {}),
   }
+}
+
+function parsePositiveInteger(flagName: string, raw: string): number {
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new CliUsageError(`${flagName} must be a positive integer`)
+  }
+  return parsed
+}
+
+function parseNonNegativeInteger(flagName: string, raw: string): number {
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new CliUsageError(`${flagName} must be a non-negative integer`)
+  }
+  return parsed
 }
 
 // -- Helpers ------------------------------------------------------------------

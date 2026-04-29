@@ -2232,7 +2232,7 @@ Commands:
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
   monitor show [selector] [--json]    Show current HRC monitor snapshot
-  monitor watch [selector] [--from-seq <n>] [--follow] [--json]
+  monitor watch [selector] [--from-seq <n>|--last <n>] [--follow] [--json|--pretty]
                                      Watch HRC monitor event stream
   monitor wait <selector> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
@@ -2954,15 +2954,29 @@ Exit codes:
     .description('stream monitor events')
     .argument('[selector]', 'target selector')
     .option('--from-seq <n>', 'replay from sequence number')
+    .option('--last <n>', 'replay the last n matching events')
     .option('--follow', 'stream live events after replay')
     .option('--until <condition>', 'exit when condition is met (requires --follow)')
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
     .option('--json', 'output JSON lines')
+    .option('--format <mode>', 'output mode: tree, compact, verbose, json, ndjson')
+    .option('--pretty', 'alias for --format=tree')
+    .option('--max-lines <n>', 'tree mode: truncate body blocks to n lines')
+    .option('--scope-width <n>', 'tree mode: per-row scope badge width in chars')
     .action(async (selector, _opts, cmd: Command) => {
       const args = toLegacyArgv(selector ? [selector] : [], cmd.opts(), {
-        strings: ['from-seq', 'until', 'timeout', 'stall-after'],
-        booleans: ['follow', 'json'],
+        strings: [
+          'from-seq',
+          'last',
+          'until',
+          'timeout',
+          'stall-after',
+          'format',
+          'max-lines',
+          'scope-width',
+        ],
+        booleans: ['follow', 'json', 'pretty'],
       })
       await cmdMonitorWatch(args)
     })

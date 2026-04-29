@@ -14,11 +14,16 @@ type MonitorCondition =
 type MonitorWatchArgs = {
   selector?: string | undefined
   json?: boolean | undefined
+  pretty?: boolean | undefined
+  format?: 'tree' | 'compact' | 'verbose' | 'json' | 'ndjson' | undefined
   follow?: boolean | undefined
   fromSeq?: number | undefined
+  last?: number | undefined
   until?: MonitorCondition | undefined
   timeoutMs?: number | undefined
   stallAfterMs?: number | undefined
+  maxLines?: number | undefined
+  scopeWidth?: number | undefined
   signal?: AbortSignal | undefined
 }
 
@@ -68,20 +73,28 @@ type MonitorFixtureState = {
 
 type MonitorFixtureEvent = {
   seq: number
+  hrcSeq?: number | undefined
+  streamSeq?: number | undefined
   ts: string
   event: string
+  eventKind?: string | undefined
   sessionRef: string
   scopeRef: string
   laneRef: string
   hostSessionId: string
   generation: number
+  category?: string | undefined
   runtimeId: string
   turnId?: string | undefined
+  runId?: string | undefined
+  launchId?: string | undefined
+  transport?: string | undefined
   messageId?: string | undefined
   messageSeq?: number | undefined
   result?: string | undefined
   reason?: string | undefined
   failureKind?: string | undefined
+  payload?: unknown
 }
 
 type InvokeResult = {
@@ -189,6 +202,43 @@ async function invokeWatch(
   }
 }
 
+async function invokeWatchText(
+  args: MonitorWatchArgs,
+  state: MonitorFixtureState
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const stdoutChunks: string[] = []
+  const stderrChunks: string[] = []
+  const result = await (
+    cmdMonitorWatch as unknown as (
+      args: MonitorWatchArgs,
+      deps: {
+        buildMonitorState: () => Promise<MonitorFixtureState>
+        stdout: { write(chunk: string): boolean }
+        stderr: { write(chunk: string): boolean }
+      }
+    ) => Promise<number | undefined>
+  )(args, {
+    buildMonitorState: async () => state,
+    stdout: {
+      write(chunk: string) {
+        stdoutChunks.push(chunk)
+        return true
+      },
+    },
+    stderr: {
+      write(chunk: string) {
+        stderrChunks.push(chunk)
+        return true
+      },
+    },
+  })
+  return {
+    stdout: stdoutChunks.join(''),
+    stderr: stderrChunks.join(''),
+    exitCode: result ?? 0,
+  }
+}
+
 function createFixtureState(
   overrides: {
     runtimeStatus?: MonitorFixtureState['runtimes'][number]['status'] | undefined
@@ -256,13 +306,17 @@ function event(
 ): MonitorFixtureEvent {
   return {
     seq,
+    hrcSeq: seq,
+    streamSeq: seq,
     ts: TS,
     event: name,
+    eventKind: name,
     sessionRef: SESSION_REF,
     scopeRef: SCOPE_REF,
     laneRef: 'main',
     hostSessionId: HOST_SESSION_ID,
     generation: 12,
+    category: name.split('.')[0],
     runtimeId: RUNTIME_ID,
     ...overrides,
   }
@@ -305,6 +359,23 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     }
   })
 
+  test('--last replays the last n matching events and marks them replayed', async () => {
+    const events = Array.from({ length: 12 }, (_, index) =>
+      event(index + 1, index % 2 === 0 ? 'runtime.idle' : 'runtime.busy', {
+        result: index % 2 === 0 ? 'idle' : 'busy',
+      })
+    )
+    const result = await invokeWatch(
+      { selector: SELECTOR, last: 3 },
+      createFixtureState({ events })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.events.map((payload) => payload.seq)).toEqual([10, 11, 12])
+    expect(result.events.every((payload) => payload.replayed === true)).toBe(true)
+  })
+
   test('non-follow replay exits 0 when zero events match', async () => {
     const state = createFixtureState({
       events: [event(101, 'runtime.idle', { runtimeId: 'other-runtime' })],
@@ -329,6 +400,16 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.events.map((payload) => payload.seq)).toEqual([8, 9, 10, 11, 12])
     expect(result.events.every((payload) => payload.replayed === true)).toBe(true)
+  })
+
+  test('--last and --from-seq are mutually exclusive', async () => {
+    const result = await invokeWatch(
+      { selector: SELECTOR, last: 3, fromSeq: 8 },
+      createFixtureState()
+    )
+
+    expect(result.exitCode).toBe(2)
+    expect(result.stderr).toContain('--last cannot be used with --from-seq')
   })
 
   test('--follow emits initial monitor.snapshot from the high-water mark and streams live events', async () => {
@@ -529,6 +610,197 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     })
   })
 
+  test('--pretty uses the tree renderer with lifecycle payload details', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.message', {
+          turnId: TURN_ID,
+          runId: TURN_ID,
+          payload: {
+            type: 'message_end',
+            message: { role: 'assistant', content: 'pretty restored' },
+          },
+        }),
+      ],
+    })
+
+    const stdoutChunks: string[] = []
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        selector: SELECTOR,
+        pretty: true,
+      },
+      {
+        buildMonitorState: async () => state,
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: {
+          write() {
+            return true
+          },
+        },
+      }
+    )
+
+    const output = stdoutChunks.join('')
+    expect(exitCode).toBe(0)
+    expect(output).toContain('assistant')
+    expect(output).toContain('pretty restored')
+    expect(output).toContain('cody@agent-spaces:T-01290')
+    expect(() => JSON.parse(output.split('\n')[0] ?? '')).toThrow()
+  })
+
+  test('--pretty renders orphan Bash result stdout as structured output', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.tool_result', {
+          payload: {
+            type: 'tool_execution_end',
+            toolUseId: 'toolu-bash',
+            toolName: 'Bash',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: '{"event":"monitor.completed","condition":"response-or-idle","result":"response","exitCode":0}',
+                },
+              ],
+              details: {
+                stdout:
+                  '{"event":"monitor.completed","condition":"response-or-idle","result":"response","exitCode":0}',
+                stderr: '',
+                interrupted: false,
+              },
+            },
+            isError: false,
+          },
+        }),
+      ],
+    })
+
+    const stdoutChunks: string[] = []
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        selector: SELECTOR,
+        pretty: true,
+      },
+      {
+        buildMonitorState: async () => state,
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            return true
+          },
+        },
+        stderr: {
+          write() {
+            return true
+          },
+        },
+      }
+    )
+
+    const output = stdoutChunks.join('')
+    expect(exitCode).toBe(0)
+    expect(output).toContain('Bash result')
+    expect(output).toContain('stdout')
+    expect(output).toContain('event')
+    expect(output).toContain('monitor.completed')
+    expect(output).toContain('exitCode')
+    expect(output).not.toContain('{"event":"monitor.completed"')
+  })
+
+  test('--pretty renders tool descriptions and compact edit inputs', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.tool_call', {
+          payload: {
+            type: 'tool_execution_start',
+            toolUseId: 'toolu-bash',
+            toolName: 'Bash',
+            input: {
+              command: 'bun test',
+              description: 'Run focused unit tests',
+            },
+          },
+        }),
+        event(101, 'turn.tool_result', {
+          payload: {
+            type: 'tool_execution_end',
+            toolUseId: 'toolu-bash',
+            toolName: 'Bash',
+            result: { content: [{ type: 'text', text: 'ok' }] },
+            isError: false,
+          },
+        }),
+        event(102, 'turn.tool_call', {
+          payload: {
+            type: 'tool_execution_start',
+            toolUseId: 'toolu-edit',
+            toolName: 'Edit',
+            input: {
+              file_path: '/Users/lherron/praesidium/agent-spaces/JOB_E2E_PLAN.md',
+              old_string: 'old text',
+              new_string: 'new text',
+            },
+          },
+        }),
+      ],
+    })
+
+    const result = await invokeWatchText({ selector: SELECTOR, pretty: true }, state)
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('Bash - Run focused unit tests')
+    expect(result.stdout).toContain('$ bun test')
+    expect(result.stdout).toContain('-> ok')
+    expect(result.stdout).toContain('Edit - ')
+    expect(result.stdout).toContain('JOB_E2E_PLAN.md')
+    expect(result.stdout).toContain('replace one block')
+    expect(result.stdout).toContain('old: 1 line')
+    expect(result.stdout).not.toContain('"old_string"')
+  })
+
+  test('--pretty includes event sequence and replay marker', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.message', {
+          payload: {
+            type: 'message_end',
+            message: { role: 'assistant', content: 'sequenced' },
+          },
+        }),
+      ],
+    })
+
+    const result = await invokeWatchText({ selector: SELECTOR, pretty: true }, state)
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('#100 replayed')
+  })
+
   test('emits final monitor.completed before exiting when --until resolves', async () => {
     const cli = await invokeWatch(
       { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 25 },
@@ -583,6 +855,244 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
 // -- Polling condition reader (T-01297) ----------------------------------------
 
 describe('polling condition reader for --follow --until with deadline (T-01297)', () => {
+  test('plain --follow polls for events after the initial snapshot', async () => {
+    const initialState = createFixtureState({
+      events: [event(100, 'turn.started', { turnId: TURN_ID })],
+    })
+    const nextState = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: TURN_ID }),
+        event(101, 'turn.message', {
+          turnId: TURN_ID,
+          messageId: MESSAGE_ID,
+          messageSeq: 1290,
+        }),
+      ],
+    })
+
+    const abort = new AbortController()
+    let callCount = 0
+    const stdoutChunks: string[] = []
+
+    const exitPromise = (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        json: true,
+        selector: SELECTOR,
+        follow: true,
+        signal: abort.signal,
+      },
+      {
+        buildMonitorState: async () => {
+          callCount++
+          return callCount <= 1 ? initialState : nextState
+        },
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            if (stdoutChunks.some((line) => line.includes('"seq":101'))) {
+              abort.abort()
+            }
+            return true
+          },
+        },
+        stderr: {
+          write() {
+            return true
+          },
+        },
+      }
+    )
+
+    const exitCode = await exitPromise
+    const events = parseJsonLines(stdoutChunks.join(''))
+
+    expect(exitCode).toBe(130)
+    expect(callCount).toBeGreaterThan(1)
+    expect(events[0]).toMatchObject({
+      event: 'monitor.snapshot',
+      selector: SELECTOR,
+      replayed: false,
+      seq: 100,
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.message',
+        selector: SELECTOR,
+        replayed: false,
+        seq: 101,
+      })
+    )
+  })
+
+  test('--follow --last replays the last n events before polling live events', async () => {
+    const initialState = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: TURN_ID }),
+        event(101, 'turn.tool_call', { turnId: TURN_ID }),
+        event(102, 'turn.tool_result', { turnId: TURN_ID }),
+      ],
+    })
+    const nextState = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: TURN_ID }),
+        event(101, 'turn.tool_call', { turnId: TURN_ID }),
+        event(102, 'turn.tool_result', { turnId: TURN_ID }),
+        event(103, 'turn.message', {
+          turnId: TURN_ID,
+          messageId: MESSAGE_ID,
+          messageSeq: 1290,
+        }),
+      ],
+    })
+
+    const abort = new AbortController()
+    let callCount = 0
+    const stdoutChunks: string[] = []
+
+    const exitPromise = (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        json: true,
+        selector: SELECTOR,
+        follow: true,
+        last: 2,
+        signal: abort.signal,
+      },
+      {
+        buildMonitorState: async () => {
+          callCount++
+          return callCount <= 1 ? initialState : nextState
+        },
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            if (stdoutChunks.some((line) => line.includes('"seq":103'))) {
+              abort.abort()
+            }
+            return true
+          },
+        },
+        stderr: {
+          write() {
+            return true
+          },
+        },
+      }
+    )
+
+    const exitCode = await exitPromise
+    const events = parseJsonLines(stdoutChunks.join(''))
+
+    expect(exitCode).toBe(130)
+    expect(callCount).toBeGreaterThan(1)
+    expect(events.map((payload) => payload.seq)).toEqual([102, 101, 102, 103])
+    expect(events[0]).toMatchObject({ event: 'monitor.snapshot', replayed: false })
+    expect(events[1]).toMatchObject({ event: 'turn.tool_call', replayed: true })
+    expect(events[2]).toMatchObject({ event: 'turn.tool_result', replayed: true })
+    expect(events[3]).toMatchObject({ event: 'turn.message', replayed: false })
+  })
+
+  test('--pretty --follow --last marks replay and live boundary', async () => {
+    const initialState = createFixtureState({
+      events: [
+        event(100, 'turn.message', {
+          turnId: TURN_ID,
+          payload: {
+            type: 'message_end',
+            message: { role: 'assistant', content: 'replayed reply' },
+          },
+        }),
+      ],
+    })
+    const nextState = createFixtureState({
+      events: [
+        event(100, 'turn.message', {
+          turnId: TURN_ID,
+          payload: {
+            type: 'message_end',
+            message: { role: 'assistant', content: 'replayed reply' },
+          },
+        }),
+        event(101, 'turn.message', {
+          turnId: TURN_ID,
+          payload: {
+            type: 'message_end',
+            message: { role: 'assistant', content: 'live reply' },
+          },
+        }),
+      ],
+    })
+
+    const abort = new AbortController()
+    let callCount = 0
+    const stdoutChunks: string[] = []
+
+    const exitPromise = (
+      cmdMonitorWatch as unknown as (
+        args: MonitorWatchArgs,
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number | undefined>
+    )(
+      {
+        selector: SELECTOR,
+        pretty: true,
+        follow: true,
+        last: 1,
+        signal: abort.signal,
+      },
+      {
+        buildMonitorState: async () => {
+          callCount++
+          return callCount <= 1 ? initialState : nextState
+        },
+        stdout: {
+          write(chunk: string) {
+            stdoutChunks.push(chunk)
+            if (chunk.includes('live reply')) {
+              abort.abort()
+            }
+            return true
+          },
+        },
+        stderr: {
+          write() {
+            return true
+          },
+        },
+      }
+    )
+
+    const exitCode = await exitPromise
+    const output = stdoutChunks.join('')
+
+    expect(exitCode).toBe(130)
+    expect(output).toContain('#100 replayed')
+    expect(output).toContain('live events')
+    expect(output).toContain('#101')
+    expect(output).toContain('live reply')
+  })
+
   /**
    * Exercises the polling path: buildMonitorState is called multiple times and
    * the idle event appears only on a subsequent poll cycle. Without the polling
