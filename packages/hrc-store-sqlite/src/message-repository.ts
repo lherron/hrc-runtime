@@ -229,6 +229,16 @@ export class MessageRepository {
       values.push(filter.thread.rootMessageId)
     }
 
+    if (filter.hostSessionId !== undefined) {
+      where.push('host_session_id = ?')
+      values.push(filter.hostSessionId)
+    }
+
+    if (filter.generation !== undefined) {
+      where.push('generation = ?')
+      values.push(filter.generation)
+    }
+
     if (filter.afterSeq !== undefined) {
       where.push('message_seq > ?')
       values.push(filter.afterSeq)

@@ -7,6 +7,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 /** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
+type HrcEventsRouteFilters = Omit<
+  HrcLifecycleQueryFilters,
+  'fromHrcSeq' | 'fromStreamSeq' | 'limit' | 'launchId'
+>
+
 import { formatSessionHandle } from 'agent-scope'
 import {
   HRC_API_VERSION,
@@ -46,11 +51,13 @@ import type {
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
   HrcContinuationRef,
+  HrcEventCategory,
   HrcEventEnvelope,
   HrcFence,
   HrcHarness,
   HrcHttpError,
   HrcLaunchArtifact,
+  HrcLaunchPromptMaterial,
   HrcLaunchRecord,
   HrcLifecycleEvent,
   HrcLocalBridgeRecord,
@@ -92,7 +99,11 @@ import type {
 } from 'hrc-core'
 import { normalizeClaudeHook, normalizeCodexOtelEvent, normalizePiHookEvent } from 'hrc-events'
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
+import type {
+  AppManagedSessionRecord,
+  HrcDatabase,
+  HrcLifecycleQueryFilters,
+} from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
 import {
   buildCliInvocation,
@@ -1569,12 +1580,42 @@ class HrcServerInstance implements HrcServer {
     return await this.terminateRuntime(runtime)
   }
 
+  private parseEventsRouteFilters(searchParams: URLSearchParams): HrcEventsRouteFilters {
+    const generation = parseOptionalIntegerQuery(searchParams.get('generation'), 'generation')
+
+    return {
+      ...(normalizeOptionalQuery(searchParams.get('hostSessionId')) !== undefined
+        ? { hostSessionId: normalizeOptionalQuery(searchParams.get('hostSessionId')) }
+        : {}),
+      ...(generation !== undefined ? { generation } : {}),
+      ...(normalizeOptionalQuery(searchParams.get('scopeRef')) !== undefined
+        ? { scopeRef: normalizeOptionalQuery(searchParams.get('scopeRef')) }
+        : {}),
+      ...(normalizeOptionalQuery(searchParams.get('laneRef')) !== undefined
+        ? { laneRef: normalizeOptionalQuery(searchParams.get('laneRef')) }
+        : {}),
+      ...(normalizeOptionalQuery(searchParams.get('runtimeId')) !== undefined
+        ? { runtimeId: normalizeOptionalQuery(searchParams.get('runtimeId')) }
+        : {}),
+      ...(normalizeOptionalQuery(searchParams.get('runId')) !== undefined
+        ? { runId: normalizeOptionalQuery(searchParams.get('runId')) }
+        : {}),
+      ...(normalizeOptionalQuery(searchParams.get('category')) !== undefined
+        ? { category: normalizeOptionalQuery(searchParams.get('category')) as HrcEventCategory }
+        : {}),
+      ...(normalizeOptionalQuery(searchParams.get('eventKind')) !== undefined
+        ? { eventKind: normalizeOptionalQuery(searchParams.get('eventKind')) }
+        : {}),
+    }
+  }
+
   private handleEvents(url: URL, request: Request): Response {
     const fromSeq = parseFromSeq(url.searchParams.get('fromSeq'))
     const follow = url.searchParams.get('follow') === 'true'
+    const filters = this.parseEventsRouteFilters(url.searchParams)
 
     if (!follow) {
-      const events = this.db.hrcEvents.listFromHrcSeq(fromSeq)
+      const events = this.db.hrcEvents.listFromHrcSeq(fromSeq, filters)
       return new Response(events.map(serializeEvent).join(''), {
         status: 200,
         headers: NDJSON_HEADERS,
@@ -1586,6 +1627,9 @@ class HrcServerInstance implements HrcServer {
     let replayHighWater = fromSeq - 1
     const subscriber: FollowSubscriber = (event) => {
       if (!('hrcSeq' in event) || event.hrcSeq < fromSeq) {
+        return
+      }
+      if (!matchesHrcLifecycleEventFilter(event, filters)) {
         return
       }
 
@@ -1621,7 +1665,7 @@ class HrcServerInstance implements HrcServer {
 
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const replayEvents = this.db.hrcEvents.listFromHrcSeq(fromSeq)
+        const replayEvents = this.db.hrcEvents.listFromHrcSeq(fromSeq, filters)
         replayHighWater = replayEvents.at(-1)?.hrcSeq ?? replayHighWater
         controllerRef = controller
         controller.enqueue(keepaliveBytes)
@@ -1802,6 +1846,7 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
+      ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -2293,6 +2338,7 @@ class HrcServerInstance implements HrcServer {
       correlationEnv: extractCorrelationEnv(cliInvocation.env),
       interactionMode: cliInvocation.interactionMode,
       ioMode: cliInvocation.ioMode,
+      ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -3500,6 +3546,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
+      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -3698,6 +3745,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
+      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -3879,6 +3927,7 @@ class HrcServerInstance implements HrcServer {
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'attach',
+      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -7682,6 +7731,20 @@ function parseMessageFilterList<T extends string>(
   })
 }
 
+function parseOptionalIntegerBodyField(input: unknown, field: string): number | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (typeof input !== 'number' || !Number.isInteger(input) || input < 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field} must be a non-negative integer`,
+      { field }
+    )
+  }
+  return input
+}
+
 function parseMessageFilter(input: unknown): HrcMessageFilter {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -7734,6 +7797,13 @@ function parseMessageFilter(input: unknown): HrcMessageFilter {
     'response',
     'oneway',
   ] as const)
+  const hostSessionId = input['hostSessionId']
+  if (hostSessionId !== undefined && typeof hostSessionId !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'hostSessionId must be a string', {
+      field: 'hostSessionId',
+    })
+  }
+  const generation = parseOptionalIntegerBodyField(input['generation'], 'generation')
 
   return {
     ...(input['participant'] !== undefined
@@ -7744,6 +7814,8 @@ function parseMessageFilter(input: unknown): HrcMessageFilter {
     ...(thread !== undefined
       ? { thread: { rootMessageId: thread['rootMessageId'] as string } }
       : {}),
+    ...(hostSessionId !== undefined ? { hostSessionId } : {}),
+    ...(generation !== undefined ? { generation } : {}),
     ...(afterSeq !== undefined ? { afterSeq } : {}),
     ...(kinds !== undefined ? { kinds } : {}),
     ...(phases !== undefined ? { phases } : {}),
@@ -7860,6 +7932,15 @@ function matchesMessageFilter(record: HrcMessageRecord, filter: HrcMessageFilter
     }
   }
   if (filter.thread && record.rootMessageId !== filter.thread.rootMessageId) return false
+  if (
+    filter.hostSessionId !== undefined &&
+    record.execution.hostSessionId !== filter.hostSessionId
+  ) {
+    return false
+  }
+  if (filter.generation !== undefined && record.execution.generation !== filter.generation) {
+    return false
+  }
   if (filter.kinds && !filter.kinds.includes(record.kind)) return false
   if (filter.phases && !filter.phases.includes(record.phase)) return false
   return true
@@ -9067,11 +9148,13 @@ async function buildDispatchInvocation(
   frontend: HrcHarness
   interactionMode: 'headless' | 'interactive'
   ioMode: 'inherit' | 'pipes' | 'pty'
+  prompts?: HrcLaunchPromptMaterial | undefined
 }> {
   let env: Record<string, string> = {}
   let cwd = intent.placement.cwd ?? process.cwd()
   let interactionMode: 'headless' | 'interactive' = 'interactive'
   let ioMode: 'inherit' | 'pipes' | 'pty' = 'pty'
+  let prompts: HrcLaunchPromptMaterial | undefined
 
   let buildError: unknown
   let unavailableCommand: string | undefined
@@ -9084,6 +9167,7 @@ async function buildDispatchInvocation(
     cwd = await resolveDispatchCwd(invocation.cwd, intent)
     interactionMode = invocation.interactionMode
     ioMode = invocation.ioMode
+    prompts = invocation.prompts
     if (await isLaunchCommandAvailable(invocation.argv[0])) {
       return {
         argv: invocation.argv,
@@ -9092,6 +9176,7 @@ async function buildDispatchInvocation(
         frontend: invocation.frontend,
         interactionMode,
         ioMode,
+        ...(prompts ? { prompts } : {}),
       }
     }
     unavailableCommand = invocation.argv[0]
@@ -9152,6 +9237,7 @@ async function buildDispatchInvocation(
         : deriveInteractiveHarness(intent.harness),
     interactionMode,
     ioMode,
+    ...(prompts ? { prompts } : {}),
   }
 }
 
@@ -9426,6 +9512,55 @@ function parseJsonValue<T>(value: string | null): T | undefined {
   }
 
   return JSON.parse(value) as T
+}
+
+function parseOptionalIntegerQuery(raw: string | null, field: string): number | undefined {
+  const normalized = normalizeOptionalQuery(raw)
+  if (normalized === undefined) {
+    return undefined
+  }
+
+  const parsed = Number(normalized)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field} must be a non-negative integer`,
+      { field }
+    )
+  }
+
+  return parsed
+}
+
+function matchesHrcLifecycleEventFilter(
+  event: HrcLifecycleEvent,
+  filters: HrcEventsRouteFilters
+): boolean {
+  if (filters.hostSessionId !== undefined && event.hostSessionId !== filters.hostSessionId) {
+    return false
+  }
+  if (filters.generation !== undefined && event.generation !== filters.generation) {
+    return false
+  }
+  if (filters.scopeRef !== undefined && event.scopeRef !== filters.scopeRef) {
+    return false
+  }
+  if (filters.laneRef !== undefined && event.laneRef !== filters.laneRef) {
+    return false
+  }
+  if (filters.runtimeId !== undefined && event.runtimeId !== filters.runtimeId) {
+    return false
+  }
+  if (filters.runId !== undefined && event.runId !== filters.runId) {
+    return false
+  }
+  if (filters.category !== undefined && event.category !== filters.category) {
+    return false
+  }
+  if (filters.eventKind !== undefined && event.eventKind !== filters.eventKind) {
+    return false
+  }
+  return true
 }
 
 function encodeNdjson(event: HrcLifecycleEvent | HrcMessageRecord): Uint8Array {

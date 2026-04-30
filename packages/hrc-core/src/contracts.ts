@@ -163,6 +163,23 @@ export type HrcHookBridgeConfig = {
   config?: Record<string, unknown> | undefined
 }
 
+export type HrcLaunchPromptMaterial = {
+  system?:
+    | {
+        content: string
+        mode?: 'append' | 'replace' | undefined
+        deliveredVia?: string | undefined
+        sourcePath?: string | undefined
+      }
+    | undefined
+  priming?:
+    | {
+        content: string
+        deliveredVia?: string | undefined
+      }
+    | undefined
+}
+
 export type HrcLaunchArtifact = {
   launchId: string
   hostSessionId: string
@@ -182,6 +199,7 @@ export type HrcLaunchArtifact = {
   ioMode?: HrcIoMode | undefined
   lifecycleAction?: 'attach' | 'start' | 'turn' | undefined
   launchEnv?: HrcLaunchEnvConfig | undefined
+  prompts?: HrcLaunchPromptMaterial | undefined
   hookBridge?: HrcHookBridgeConfig | undefined
   otel?:
     | {

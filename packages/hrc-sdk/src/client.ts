@@ -76,6 +76,45 @@ import type {
 
 const BASE_URL = 'http://hrc'
 
+function appendOptionalEventQueryParam(
+  params: URLSearchParams,
+  name: string,
+  value: string | number | undefined
+): void {
+  if (value !== undefined) {
+    params.set(name, String(value))
+  }
+}
+
+function matchesWatchOptions(event: HrcLifecycleEvent, options: WatchOptions | undefined): boolean {
+  if (!options) return true
+  if (options.hostSessionId !== undefined && event.hostSessionId !== options.hostSessionId) {
+    return false
+  }
+  if (options.generation !== undefined && event.generation !== options.generation) {
+    return false
+  }
+  if (options.scopeRef !== undefined && event.scopeRef !== options.scopeRef) {
+    return false
+  }
+  if (options.laneRef !== undefined && event.laneRef !== options.laneRef) {
+    return false
+  }
+  if (options.runtimeId !== undefined && event.runtimeId !== options.runtimeId) {
+    return false
+  }
+  if (options.runId !== undefined && event.runId !== options.runId) {
+    return false
+  }
+  if (options.category !== undefined && event.category !== options.category) {
+    return false
+  }
+  if (options.eventKind !== undefined && event.eventKind !== options.eventKind) {
+    return false
+  }
+  return true
+}
+
 export class HrcClient {
   private readonly socketPath: string
 
@@ -423,6 +462,14 @@ export class HrcClient {
     const params = new URLSearchParams()
     if (options?.fromSeq !== undefined) params.set('fromSeq', String(options.fromSeq))
     if (options?.follow) params.set('follow', 'true')
+    appendOptionalEventQueryParam(params, 'hostSessionId', options?.hostSessionId)
+    appendOptionalEventQueryParam(params, 'generation', options?.generation)
+    appendOptionalEventQueryParam(params, 'scopeRef', options?.scopeRef)
+    appendOptionalEventQueryParam(params, 'laneRef', options?.laneRef)
+    appendOptionalEventQueryParam(params, 'runtimeId', options?.runtimeId)
+    appendOptionalEventQueryParam(params, 'runId', options?.runId)
+    appendOptionalEventQueryParam(params, 'category', options?.category)
+    appendOptionalEventQueryParam(params, 'eventKind', options?.eventKind)
     const qs = params.toString()
     const path = qs ? `/v1/events?${qs}` : '/v1/events'
 
@@ -452,7 +499,10 @@ export class HrcClient {
         const trimmed = line.trim()
         if (trimmed.length === 0) continue
         try {
-          yield JSON.parse(trimmed) as HrcLifecycleEvent
+          const event = JSON.parse(trimmed) as HrcLifecycleEvent
+          if (matchesWatchOptions(event, options)) {
+            yield event
+          }
         } catch {
           // M-10: skip malformed NDJSON lines instead of crashing the generator
           continue
@@ -465,7 +515,10 @@ export class HrcClient {
     const remaining = buffer.trim()
     if (remaining.length > 0) {
       try {
-        yield JSON.parse(remaining) as HrcLifecycleEvent
+        const event = JSON.parse(remaining) as HrcLifecycleEvent
+        if (matchesWatchOptions(event, options)) {
+          yield event
+        }
       } catch {
         // M-10: skip malformed trailing content
       }

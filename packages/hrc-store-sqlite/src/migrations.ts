@@ -361,6 +361,9 @@ const hrcEventsMigration: HrcMigration = {
       CREATE INDEX IF NOT EXISTS idx_hrc_events_host_session_seq
         ON hrc_events(host_session_id, hrc_seq);
 
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_host_session_generation_seq
+        ON hrc_events(host_session_id, generation, hrc_seq);
+
       CREATE INDEX IF NOT EXISTS idx_hrc_events_scope_ref_seq
         ON hrc_events(scope_ref, hrc_seq);
 
@@ -707,6 +710,12 @@ const hrcchatMessagesMigration: HrcMigration = {
 
       CREATE INDEX IF NOT EXISTS idx_messages_session_seq
         ON messages(session_ref, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_host_session_seq
+        ON messages(host_session_id, message_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_messages_host_session_generation_seq
+        ON messages(host_session_id, generation, message_seq);
 
       CREATE INDEX IF NOT EXISTS idx_messages_run
         ON messages(run_id);

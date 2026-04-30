@@ -1,4 +1,4 @@
-import type { HrcMessageFilter } from 'hrc-core'
+import type { HrcEventCategory, HrcMessageFilter } from 'hrc-core'
 
 // Re-export shared wire DTOs from hrc-core (R-3 deduplication)
 export type {
@@ -51,6 +51,14 @@ export type SessionFilter = {
 export type WatchOptions = {
   fromSeq?: number | undefined
   follow?: boolean | undefined
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  category?: HrcEventCategory | undefined
+  eventKind?: string | undefined
   signal?: AbortSignal | undefined
 }
 

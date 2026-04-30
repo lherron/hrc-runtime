@@ -5,6 +5,7 @@ import { delimiter, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
+import type { HrcLaunchPromptMaterial } from 'hrc-core'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
 
 import { postCallback } from './callback-client.js'
@@ -34,6 +35,7 @@ interface LaunchPrintArtifact {
   argv: string[]
   env: Record<string, string>
   cwd: string
+  prompts?: HrcLaunchPromptMaterial | undefined
 }
 
 /**
@@ -67,6 +69,26 @@ function extractPrimingPrompt(argv: string[]): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function promptSystemFromArtifact(
+  prompts: HrcLaunchPromptMaterial | undefined
+): { content: string; mode: 'append' | 'replace' } | undefined {
+  const content = prompts?.system?.content
+  if (!content) {
+    return undefined
+  }
+  return {
+    content,
+    mode: prompts.system?.mode ?? 'append',
+  }
+}
+
+function promptPrimingFromArtifact(
+  prompts: HrcLaunchPromptMaterial | undefined
+): string | undefined {
+  const content = prompts?.priming?.content
+  return content && content.length > 0 ? content : undefined
+}
+
 /**
  * Print the launch header + framed prompt sections + env block.
  * The harness command is printed separately (after the agentchat
@@ -81,8 +103,9 @@ async function printLaunchHeader(artifact: LaunchPrintArtifact): Promise<void> {
   const titleLines: string[] = ['']
   titleLines.push(bold(`hrc launch ${artifact.env['AGENTCHAT_ID'] ?? artifact.launchId}`))
 
-  const sysPrompt = extractSystemPrompt(artifact.argv)
-  const primingPrompt = extractPrimingPrompt(artifact.argv)
+  const sysPrompt = promptSystemFromArtifact(artifact.prompts) ?? extractSystemPrompt(artifact.argv)
+  const primingPrompt =
+    promptPrimingFromArtifact(artifact.prompts) ?? extractPrimingPrompt(artifact.argv)
 
   const metadataLines: string[] = ['']
   metadataLines.push(dim(`  launch:   ${artifact.launchId}`))

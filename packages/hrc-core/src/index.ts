@@ -84,6 +84,7 @@ export type {
   HrcLifecycleEvent,
   HrcLifecycleTransport,
   HrcLaunchArtifact,
+  HrcLaunchPromptMaterial,
   HrcLaunchEnvConfig,
   HrcLaunchRecord,
   HrcLocalBridgeRecord,

@@ -34,6 +34,7 @@ export type ContinuityUpsertInput = Pick<
 
 export type EventQueryFilters = {
   hostSessionId?: string | undefined
+  generation?: number | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
   fromSeq?: number | undefined
@@ -1995,6 +1996,10 @@ export class EventRepository {
       where.push('host_session_id = ?')
       values.push(filters.hostSessionId)
     }
+    if (filters.generation !== undefined) {
+      where.push('generation = ?')
+      values.push(filters.generation)
+    }
     if (filters.runtimeId !== undefined) {
       where.push('runtime_id = ?')
       values.push(filters.runtimeId)
@@ -2032,6 +2037,10 @@ export class EventRepository {
       where.push('host_session_id = ?')
       values.push(filters.hostSessionId)
     }
+    if (filters.generation !== undefined) {
+      where.push('generation = ?')
+      values.push(filters.generation)
+    }
     if (filters.runtimeId !== undefined) {
       where.push('runtime_id = ?')
       values.push(filters.runtimeId)
@@ -2061,6 +2070,7 @@ export type HrcLifecycleEventInput = Omit<
 
 export type HrcLifecycleQueryFilters = {
   hostSessionId?: string | undefined
+  generation?: number | undefined
   scopeRef?: string | undefined
   laneRef?: string | undefined
   runtimeId?: string | undefined
@@ -2203,6 +2213,10 @@ export class HrcLifecycleEventRepository {
     if (filters.hostSessionId !== undefined) {
       where.push('host_session_id = ?')
       values.push(filters.hostSessionId)
+    }
+    if (filters.generation !== undefined) {
+      where.push('generation = ?')
+      values.push(filters.generation)
     }
     if (filters.scopeRef !== undefined) {
       where.push('scope_ref = ?')

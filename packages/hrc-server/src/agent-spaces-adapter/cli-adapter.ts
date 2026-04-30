@@ -17,6 +17,7 @@ import type {
   HrcHarness,
   HrcIoMode,
   HrcLaunchEnvConfig,
+  HrcLaunchPromptMaterial,
   HrcProvider,
   HrcRuntimeIntent,
 } from 'hrc-core'
@@ -74,6 +75,7 @@ export interface CliInvocationResult {
   interactionMode: 'headless' | 'interactive'
   ioMode: HrcIoMode
   resolvedBundle?: ResolvedRuntimeBundle | undefined
+  prompts?: HrcLaunchPromptMaterial | undefined
   warnings?: string[] | undefined
 }
 
@@ -283,29 +285,33 @@ export async function buildCliInvocation(
   }
 
   const response = await specBuilder(placementReq)
+  const responseSpec = response.spec as typeof response.spec & {
+    prompts?: HrcLaunchPromptMaterial | undefined
+  }
   const argv =
     frontend === 'codex-cli' &&
     interactionMode === 'headless' &&
-    !response.spec.argv.includes('--json')
-      ? [...response.spec.argv, '--json']
-      : response.spec.argv
+    !responseSpec.argv.includes('--json')
+      ? [...responseSpec.argv, '--json']
+      : responseSpec.argv
 
   // Build HRC correlation env vars from placement
   const correlationEnv = buildHrcCorrelationEnv(intent)
 
   // Merge: agent-spaces base env → HRC correlation → launch overrides/unset/pathPrepend
-  const envWithCorrelation = { ...response.spec.env, ...correlationEnv }
+  const envWithCorrelation = { ...responseSpec.env, ...correlationEnv }
   const finalEnv = mergeEnv(envWithCorrelation, intent.launch)
 
   return {
     argv,
     env: finalEnv,
-    cwd: response.spec.cwd,
+    cwd: responseSpec.cwd,
     provider: intent.harness.provider,
     frontend,
     interactionMode,
     ioMode,
     resolvedBundle: response.resolvedBundle,
+    prompts: responseSpec.prompts,
     warnings: response.warnings,
   }
 }
