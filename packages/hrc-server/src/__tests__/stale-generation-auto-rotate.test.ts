@@ -399,6 +399,131 @@ describe('stale-generation auto-rotate on /v1/runtimes/ensure', () => {
   })
 })
 
+describe('stale-generation auto-rotate skip when live tmux runtime exists', () => {
+  // Regression: a stale interactive session should NOT rotate while its
+  // tmux runtime is alive. Rotation calls invalidateHostContext() which
+  // tmux.terminate()s the pane out from under an active operator. The
+  // pane is the user-visible state of the agent — wall-clock age alone
+  // should not be enough to kill it.
+  function seedTmuxRuntime(hostSessionId: string, scopeRef: string, status: string): string {
+    const db = openHrcDatabase(fixture.dbPath)
+    const runtimeId = `rt-test-${hostSessionId}`
+    const now = new Date().toISOString()
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status,
+        tmuxJson: {
+          socketPath: fixture.tmuxSocketPath,
+          sessionName: `hrc-${hostSessionId.slice(5, 12)}`,
+          windowName: 'main',
+          sessionId: '$test',
+          windowId: '@test',
+          paneId: '%test',
+        },
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+    } finally {
+      db.close()
+    }
+    return runtimeId
+  }
+
+  it('does not rotate a stale session when a ready tmux runtime is alive', async () => {
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: true,
+        staleGenerationThresholdSec: 60,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+    ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600)
+    seedTmuxRuntime(resolved.hostSessionId, 'agent:clod', 'ready')
+
+    await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'openai', interactive: true },
+        execution: { preferredMode: 'interactive' },
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active!.generation).toBe(1)
+      expect(active!.hostSessionId).toBe(resolved.hostSessionId)
+
+      const events = db.hrcEvents.listFromHrcSeq(1)
+      expect(events.some((e) => e.eventKind === 'session.generation_auto_rotated')).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('still rotates when the only tmux runtime is terminated', async () => {
+    // The guard checks runtime status — a terminated/dead/stale runtime
+    // doesn't protect the session because the pane is gone anyway.
+    server = await createHrcServer(
+      fixture.serverOpts({
+        staleGenerationEnabled: true,
+        staleGenerationThresholdSec: 60,
+      })
+    )
+
+    const resolved = await fixture.resolveSession('clod')
+    ageSessionBy(fixture.dbPath, resolved.hostSessionId, 3600)
+    seedTmuxRuntime(resolved.hostSessionId, 'agent:clod', 'terminated')
+
+    await fixture.postJson('/v1/runtimes/ensure', {
+      hostSessionId: resolved.hostSessionId,
+      intent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: { provider: 'anthropic', interactive: true },
+        execution: { preferredMode: 'headless' },
+      },
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const continuity = db.continuities.getByKey('agent:clod', 'default')
+      const active = db.sessions.getByHostSessionId(continuity!.activeHostSessionId)
+      expect(active!.generation).toBe(2)
+      expect(active!.priorHostSessionId).toBe(resolved.hostSessionId)
+    } finally {
+      db.close()
+    }
+  })
+})
+
 describe('stale-generation parsing', () => {
   it('rejects non-boolean allowStaleGeneration', async () => {
     server = await createHrcServer(fixture.serverOpts())

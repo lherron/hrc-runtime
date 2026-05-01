@@ -4314,6 +4314,28 @@ class HrcServerInstance implements HrcServer {
       return { session, rotated: false, ageSec, thresholdSec }
     }
 
+    // Don't rotate sessions that have a live interactive tmux runtime — the
+    // pane is the user-visible state of the agent, and rotating would call
+    // invalidateHostContext() → tmux.terminate(), killing the REPL out from
+    // under an active operator. Stale-generation rotation is bookkeeping for
+    // dormant sessions; an actively-running interactive harness is not stale
+    // regardless of wall-clock age.
+    const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+      writeServerLog('INFO', 'session.generation_auto_rotate_skipped', {
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        ageSec,
+        thresholdSec,
+        trigger: options.trigger,
+        reason: 'live-tmux-runtime',
+        runtimeId: liveTmuxRuntime.runtimeId,
+      })
+      return { session, rotated: false, ageSec, thresholdSec }
+    }
+
     const priorGeneration = session.generation
     const priorHostSessionId = session.hostSessionId
     writeServerLog('INFO', 'session.generation_auto_rotating', {
