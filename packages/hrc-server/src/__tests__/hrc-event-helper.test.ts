@@ -183,6 +183,36 @@ describe('hrc semantic turn helpers', () => {
     })
   })
 
+  it('maps launch turn.completed callbacks into semantic turn completions', () => {
+    expect(
+      deriveSemanticTurnEventFromLaunchEvent({
+        type: 'turn.completed',
+        success: true,
+        transport: 'headless',
+        source: 'codex_jsonl',
+        usage: { input_tokens: 1, output_tokens: 2 },
+        finalOutput: 'final answer',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'final answer' }],
+        },
+      })
+    ).toEqual({
+      eventKind: 'turn.completed',
+      payload: {
+        success: true,
+        transport: 'headless',
+        source: 'codex_jsonl',
+        usage: { input_tokens: 1, output_tokens: 2 },
+        finalOutput: 'final answer',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'final answer' }],
+        },
+      },
+    })
+  })
+
   it('extracts assistant text from Stop hook transcript_path', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'hrc-hook-message-'))
     try {

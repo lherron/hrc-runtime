@@ -4753,6 +4753,7 @@ class HrcServerInstance implements HrcServer {
         ...(runId ? { runId } : {}),
         ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
         launchId,
+        ...(runtime?.transport === 'headless' ? { transport: 'headless' as const } : {}),
         payload: semanticEvent.payload,
       })
       this.notifyEvent(appendedSemanticEvent)
@@ -4802,6 +4803,15 @@ class HrcServerInstance implements HrcServer {
         lastActivityAt: now,
       })
       if (activeRunId) {
+        appendMissingHeadlessTurnCompleted(this.db, {
+          session,
+          runtime,
+          runId: activeRunId,
+          launchId,
+          exitCode: body.exitCode,
+          ts: now,
+          notify: (completedEvent) => this.notifyEvent(completedEvent),
+        })
         this.db.runs.markCompleted(activeRunId, {
           status: body.exitCode === 0 ? 'completed' : 'failed',
           completedAt: now,
@@ -6833,6 +6843,82 @@ async function replaySpool(options: HrcServerOptions, db: HrcDatabase): Promise<
   }
 }
 
+function appendMissingHeadlessTurnCompleted(
+  db: HrcDatabase,
+  input: {
+    session: HrcSessionRecord
+    runtime?: HrcRuntimeSnapshot | undefined
+    runId: string
+    launchId: string
+    exitCode?: number | undefined
+    ts: string
+    replayed?: boolean | undefined
+    notify?: ((event: HrcLifecycleEvent) => void) | undefined
+  }
+): void {
+  if (input.runtime?.transport !== 'headless') {
+    return
+  }
+  if (db.hrcEvents.listByRun(input.runId, { eventKind: 'turn.completed' }).length > 0) {
+    return
+  }
+
+  const completedEvent = appendHrcEvent(db, 'turn.completed', {
+    ts: input.ts,
+    hostSessionId: input.session.hostSessionId,
+    scopeRef: input.session.scopeRef,
+    laneRef: input.session.laneRef,
+    generation: input.session.generation,
+    runtimeId: input.runtime.runtimeId,
+    runId: input.runId,
+    launchId: input.launchId,
+    transport: 'headless',
+    ...(input.replayed === true ? { replayed: true } : {}),
+    ...(input.exitCode === 0 ? {} : { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE }),
+    payload: {
+      success: input.exitCode === 0,
+      transport: 'headless',
+      source: 'launch_exit_synthesized',
+    },
+  })
+  input.notify?.(completedEvent)
+}
+
+function appendReplaySemanticLaunchEvent(
+  db: HrcDatabase,
+  input: {
+    launch: HrcLaunchRecord
+    session: HrcSessionRecord
+    runtime?: HrcRuntimeSnapshot | null | undefined
+    runId?: string | undefined
+    launchId: string
+    ts: string
+    semanticEvent: NonNullable<ReturnType<typeof deriveSemanticTurnEventFromLaunchEvent>>
+  }
+): void {
+  const alreadyCompleted =
+    input.semanticEvent.eventKind === 'turn.completed' &&
+    input.runId !== undefined &&
+    db.hrcEvents.listByRun(input.runId, { eventKind: 'turn.completed' }).length > 0
+  if (alreadyCompleted) {
+    return
+  }
+
+  appendHrcEvent(db, input.semanticEvent.eventKind, {
+    ts: input.ts,
+    hostSessionId: input.launch.hostSessionId,
+    scopeRef: input.session.scopeRef,
+    laneRef: input.session.laneRef,
+    generation: input.launch.generation,
+    ...(input.runId ? { runId: input.runId } : {}),
+    ...(input.runtime ? { runtimeId: input.runtime.runtimeId } : {}),
+    launchId: input.launchId,
+    replayed: true,
+    ...(input.runtime?.transport === 'headless' ? { transport: 'headless' as const } : {}),
+    payload: input.semanticEvent.payload,
+  })
+}
+
 async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void> {
   if (!isRecord(payload)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spool entry must be an object')
@@ -7008,17 +7094,14 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
     }
     const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
     if (semanticEvent) {
-      appendHrcEvent(db, semanticEvent.eventKind, {
-        ts: now,
-        hostSessionId: launch.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: launch.generation,
-        ...(runId ? { runId } : {}),
-        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+      appendReplaySemanticLaunchEvent(db, {
+        launch,
+        session,
+        runtime,
+        runId,
         launchId,
-        replayed: true,
-        payload: semanticEvent.payload,
+        ts: now,
+        semanticEvent,
       })
     }
     return
@@ -7051,6 +7134,15 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         lastActivityAt: now,
       })
       if (activeRunId) {
+        appendMissingHeadlessTurnCompleted(db, {
+          session,
+          runtime,
+          runId: activeRunId,
+          launchId,
+          exitCode: body.exitCode,
+          ts: now,
+          replayed: true,
+        })
         db.runs.markCompleted(activeRunId, {
           status: body.exitCode === 0 ? 'completed' : 'failed',
           completedAt: now,

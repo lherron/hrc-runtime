@@ -100,6 +100,10 @@ type SemanticTurnEvent =
       eventKind: 'turn.tool_result'
       payload: ToolExecutionEndEvent
     }
+  | {
+      eventKind: 'turn.completed'
+      payload: Record<string, unknown>
+    }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -289,7 +293,31 @@ export function deriveSemanticTurnEventFromSdkEvent(
 export function deriveSemanticTurnEventFromLaunchEvent(
   payload: unknown
 ): SemanticTurnEvent | undefined {
-  if (!isRecord(payload) || payload['type'] !== 'message_end') {
+  if (!isRecord(payload)) {
+    return undefined
+  }
+
+  if (payload['type'] === 'turn.completed' || payload['type'] === 'turn_completed') {
+    const success = payload['success'] !== false
+    return {
+      eventKind: 'turn.completed',
+      payload: {
+        success,
+        transport: 'headless',
+        source:
+          typeof payload['source'] === 'string' && payload['source'].trim().length > 0
+            ? payload['source']
+            : 'launch_event',
+        ...(isRecord(payload['usage']) ? { usage: payload['usage'] } : {}),
+        ...(typeof payload['finalOutput'] === 'string'
+          ? { finalOutput: payload['finalOutput'] }
+          : {}),
+        ...(isRecord(payload['message']) ? { message: payload['message'] } : {}),
+      },
+    }
+  }
+
+  if (payload['type'] !== 'message_end') {
     return undefined
   }
 

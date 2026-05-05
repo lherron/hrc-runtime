@@ -573,7 +573,8 @@ describe('E. Regression', () => {
     })
 
     const messageEnd = getRunEvents(data.runId).find((event) => event.eventKind === 'message_end')
-    const hrcKinds = getRunHrcEvents(data.runId).map((event) => event.eventKind)
+    const hrcEvents = getRunHrcEvents(data.runId)
+    const hrcKinds = hrcEvents.map((event) => event.eventKind)
     expect(messageEnd).toBeDefined()
     expect(messageEnd?.eventJson).toEqual({
       type: 'message_end',
@@ -584,6 +585,13 @@ describe('E. Regression', () => {
     })
     expect(hrcKinds).toContain('turn.user_prompt')
     expect(hrcKinds).toContain('turn.message')
+    expect(hrcKinds).toContain('turn.completed')
+    expect(hrcEvents.find((event) => event.eventKind === 'turn.completed')?.payload).toMatchObject({
+      success: true,
+      transport: 'headless',
+      source: 'codex_jsonl',
+      finalOutput: 'ok',
+    })
   })
 })
 

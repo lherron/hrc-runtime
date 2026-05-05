@@ -16,6 +16,12 @@ Run these after implementing to get immediate feedback:
 - Typecheck: `bun run typecheck` (run `bun run build` first if workspace typings are missing)
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 
+## Discord Gateway Validation
+
+When changing Discord gateway behavior, smoke test with real Discord. Fake Discord clients, mocked channel objects, and in-process Discord substitutes are acceptable for automated tests, but they do not count as manual smoke validation.
+
+For gateway changes, verify the behavior in an actual Discord channel/thread using the installed gateway, real bot credentials, and ACP/HRC services. Report the real Discord smoke result when handing work back. If real Discord validation is blocked, say exactly what blocked it and do not present fake-client output as a successful smoke test.
+
 ## Ops Dashboard
 
 When the user refers to the "ops dashboard", they mean the ACP ops web dashboard in `packages/acp-ops-web`.

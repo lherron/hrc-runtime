@@ -211,6 +211,11 @@ function isHeadlessCodexLaunch(artifact: {
   )
 }
 
+type HeadlessCodexOutputState = {
+  turnCompleted: boolean
+  finalOutput?: string | undefined
+}
+
 async function pumpHeadlessCodexOutput(
   stream: NodeJS.ReadableStream | null,
   artifact: {
@@ -219,14 +224,16 @@ async function pumpHeadlessCodexOutput(
     launchId: string
     spoolDir: string
   }
-): Promise<void> {
+): Promise<HeadlessCodexOutputState> {
   if (!stream) {
-    return
+    return { turnCompleted: false }
   }
 
   const decoder = new TextDecoder()
   let buffer = ''
   let deliveredContinuation = false
+  let turnCompleted = false
+  let finalOutput: string | undefined
 
   for await (const chunk of stream) {
     buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
@@ -245,6 +252,7 @@ async function pumpHeadlessCodexOutput(
           type?: string
           thread_id?: string
           threadId?: string
+          usage?: unknown
           item?: {
             type?: string
             text?: string
@@ -295,12 +303,67 @@ async function pumpHeadlessCodexOutput(
             artifact.spoolDir,
             artifact.launchId
           )
+          finalOutput = parsed.item.text
+          continue
+        }
+
+        if (eventName === 'turn.completed') {
+          turnCompleted = true
+          await postHeadlessCodexTurnCompleted(artifact, {
+            success: true,
+            usage: parsed.usage,
+            finalOutput,
+            source: 'codex_jsonl',
+          })
         }
       } catch {
         // Ignore non-JSON output in headless mode.
       }
     }
   }
+
+  return {
+    turnCompleted,
+    ...(finalOutput !== undefined ? { finalOutput } : {}),
+  }
+}
+
+async function postHeadlessCodexTurnCompleted(
+  artifact: {
+    callbackSocketPath: string
+    hostSessionId: string
+    launchId: string
+    spoolDir: string
+  },
+  input: {
+    success: boolean
+    usage?: unknown
+    finalOutput?: string | undefined
+    source: 'codex_jsonl' | 'launch_exit_synthesized'
+  }
+): Promise<void> {
+  await callbackOrSpool(
+    artifact.callbackSocketPath,
+    `/v1/internal/launches/${artifact.launchId}/event`,
+    {
+      type: 'turn.completed',
+      success: input.success,
+      transport: 'headless',
+      source: input.source,
+      ...(input.usage !== undefined ? { usage: input.usage } : {}),
+      ...(input.finalOutput !== undefined
+        ? {
+            finalOutput: input.finalOutput,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: input.finalOutput }],
+            },
+          }
+        : {}),
+    },
+    artifact.spoolDir,
+    artifact.launchId
+  )
 }
 
 async function pumpToStderr(stream: NodeJS.ReadableStream | null): Promise<void> {
@@ -456,10 +519,10 @@ async function main(): Promise<void> {
     })
   }
 
-  const childStdout =
+  const childStdout: Promise<HeadlessCodexOutputState> =
     isHeadlessCodexLaunch(artifact) && child.stdout
       ? pumpHeadlessCodexOutput(child.stdout, artifact)
-      : Promise.resolve()
+      : Promise.resolve({ turnCompleted: false } satisfies HeadlessCodexOutputState)
   const childStderr =
     isHeadlessCodexLaunch(artifact) && child.stderr ? pumpToStderr(child.stderr) : Promise.resolve()
 
@@ -474,41 +537,24 @@ async function main(): Promise<void> {
     )
   }
 
-  // Wait for exit
-  const exitCode = await new Promise<number>((resolve) => {
+  // Wait for exit, then drain stdout/stderr before posting launch.exited. For
+  // headless Codex this guarantees message/turn callbacks are delivered before
+  // HRC marks the launch and active run complete.
+  const exit = await new Promise<{ exitCode: number; signal?: string | undefined }>((resolve) => {
     let settled = false
 
-    const resolveOnce = (code: number): void => {
+    const resolveOnce = (result: { exitCode: number; signal?: string | undefined }): void => {
       if (!settled) {
         settled = true
-        resolve(code)
+        resolve(result)
       }
     }
 
     const handleTerminalState = (code: number | null, signal: string | null): void => {
-      const resolvedCode = code ?? 1
-      const payload = {
-        launchId,
-        hostSessionId,
-        exitCode: code ?? undefined,
-        signal: signal ?? undefined,
-      }
-      callbackOrSpool(
-        callbackSocketPath,
-        `/v1/internal/launches/${launchId}/exited`,
-        payload,
-        spoolDir,
-        launchId
-      )
-        .then(() => {
-          resolveOnce(resolvedCode)
-        })
-        .catch((err: unknown) => {
-          process.stderr.write(
-            `hrc-launch exec: failed to post/spool exit callback: ${formatError(err)}\n`
-          )
-          resolveOnce(resolvedCode)
-        })
+      resolveOnce({
+        exitCode: code ?? 1,
+        ...(signal !== null ? { signal } : {}),
+      })
     }
 
     child.on('error', (err: Error) => {
@@ -521,7 +567,35 @@ async function main(): Promise<void> {
     })
   })
 
-  await Promise.all([childStdout, childStderr])
+  const [codexOutputState] = await Promise.all([childStdout, childStderr])
+
+  if (isHeadlessCodexLaunch(artifact) && !codexOutputState.turnCompleted) {
+    await postHeadlessCodexTurnCompleted(artifact, {
+      success: exit.exitCode === 0,
+      finalOutput: codexOutputState.finalOutput,
+      source: 'launch_exit_synthesized',
+    })
+  }
+
+  const exitPayload = {
+    launchId,
+    hostSessionId,
+    exitCode: exit.exitCode,
+    ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+  }
+  try {
+    await callbackOrSpool(
+      callbackSocketPath,
+      `/v1/internal/launches/${launchId}/exited`,
+      exitPayload,
+      spoolDir,
+      launchId
+    )
+  } catch (err: unknown) {
+    process.stderr.write(
+      `hrc-launch exec: failed to post/spool exit callback: ${formatError(err)}\n`
+    )
+  }
 
   // Deregister agent from agentchat on exit (best-effort).
   if (agentchatId && agentchatProject) {
@@ -533,7 +607,7 @@ async function main(): Promise<void> {
     })
   }
 
-  process.exit(exitCode)
+  process.exit(exit.exitCode)
 }
 
 main().catch((err: unknown) => {

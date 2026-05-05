@@ -316,6 +316,85 @@ describe('hrc-launch exec crash paths', () => {
         content: [{ type: 'text', text: 'ok' }],
       },
     })
+    const eventBodies = received
+      .filter((entry) => entry.url.endsWith('/event'))
+      .map((entry) => entry.body)
+    expect(eventBodies).toContainEqual({
+      type: 'turn.completed',
+      success: true,
+      transport: 'headless',
+      source: 'codex_jsonl',
+      usage: { input_tokens: 1, output_tokens: 1 },
+      finalOutput: 'ok',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+      },
+    })
+    expect(receivedUrls.lastIndexOf(`/v1/internal/launches/${launchId}/event`)).toBeLessThan(
+      receivedUrls.indexOf(`/v1/internal/launches/${launchId}/exited`)
+    )
+  })
+
+  it('synthesizes a turn.completed callback for headless codex when JSONL omits it', async () => {
+    const launchId = 'launch-headless-synthesized-turn-completed'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [
+          process.execPath,
+          '-e',
+          [
+            "process.stdout.write(JSON.stringify({type:'item.completed',item:{id:'item_0',type:'agent_message',text:'ok'}}) + '\\n')",
+            'process.exit(0)',
+          ].join('\n'),
+        ],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(0)
+    const synthesizedEvents = received.filter(
+      (entry) => entry.url === `/v1/internal/launches/${launchId}/event`
+    )
+    expect(synthesizedEvents[synthesizedEvents.length - 1]?.body).toEqual({
+      type: 'turn.completed',
+      success: true,
+      transport: 'headless',
+      source: 'launch_exit_synthesized',
+      finalOutput: 'ok',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+      },
+    })
   })
 
   it('prints CODEX_HOME in the summary for codex launches', async () => {
