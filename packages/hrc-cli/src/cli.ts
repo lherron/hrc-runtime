@@ -41,12 +41,15 @@ import {
   daemonizeAndWait,
   detectLaunchdOwner,
   execProcess,
+  formatInFlightWork,
   formatServerRuntimeStatus,
   formatTmuxStatus,
   launchctlKickstart,
+  listInFlightWork,
   resolveServerMode,
   resolveServerPaths,
   stopServerProcess,
+  waitForInFlightDrain,
   writeServerProcessLog,
 } from './cli-runtime.js'
 import { cmdMonitorShow } from './monitor-show.js'
@@ -896,6 +899,54 @@ async function cmdServerStart(args: string[], defaultMode: 'foreground' | 'daemo
   return serverForeground()
 }
 
+/**
+ * Block stop/restart when agent runs are still active. Default behaviour: list
+ * what's running and exit non-zero. `--force` skips the check (and is also the
+ * SIGTERM→SIGKILL escalation flag for the actual process kill). `--wait` polls
+ * up to `--wait-timeout-ms` for runs to drain on their own; if the timeout
+ * fires with work still in flight, we error out (no force fallback — the
+ * operator has to opt in to that explicitly).
+ */
+async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): Promise<void> {
+  if (hasFlag(args, '--force')) return
+  const wait = hasFlag(args, '--wait')
+  const waitTimeoutMs = parseIntegerFlag(args, '--wait-timeout-ms', {
+    defaultValue: 300_000,
+    min: 1,
+  })
+
+  let inFlight = listInFlightWork()
+  if (inFlight.length === 0) return
+
+  if (!wait) {
+    process.stderr.write(
+      `hrc: refusing to ${action}: ${inFlight.length} run(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+    )
+    throw new CliStatusExit(2)
+  }
+
+  process.stderr.write(
+    `hrc: waiting up to ${waitTimeoutMs}ms for ${inFlight.length} in-flight run(s) to drain...\n`
+  )
+  let lastReportedCount = inFlight.length
+  inFlight = await waitForInFlightDrain({
+    timeoutMs: waitTimeoutMs,
+    onTick: (items) => {
+      if (items.length !== lastReportedCount) {
+        process.stderr.write(`hrc: ${items.length} run(s) still in flight\n`)
+        lastReportedCount = items.length
+      }
+    },
+  })
+
+  if (inFlight.length > 0) {
+    process.stderr.write(
+      `hrc: drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} run(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+    )
+    throw new CliStatusExit(2)
+  }
+}
+
 async function cmdServerStop(args: string[]): Promise<void> {
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
@@ -905,6 +956,8 @@ async function cmdServerStop(args: string[]): Promise<void> {
     process.stderr.write('hrc: daemon is not running\n')
     return
   }
+
+  await gateOnInFlightWork(args, 'stop')
 
   const owner = await detectLaunchdOwner()
   if (owner) {
@@ -922,6 +975,8 @@ async function cmdServerRestart(args: string[]): Promise<void> {
   const mode = resolveServerMode(args, 'daemon')
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
+
+  await gateOnInFlightWork(args, 'restart')
 
   const owner = await detectLaunchdOwner()
   if (owner) {
@@ -2326,11 +2381,13 @@ function buildProgram(): Command {
     .command('stop')
     .description('stop the HRC daemon')
     .option('--timeout-ms <n>', 'shutdown timeout in milliseconds')
-    .option('--force', 'force stop')
+    .option('--force', 'force stop (skip in-flight check; SIGKILL if SIGTERM fails)')
+    .option('--wait', 'wait for in-flight runs to drain before stopping')
+    .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms'],
-        booleans: ['force'],
+        strings: ['timeout-ms', 'wait-timeout-ms'],
+        booleans: ['force', 'wait'],
       })
       await cmdServerStop(args)
     })
@@ -2339,13 +2396,15 @@ function buildProgram(): Command {
     .command('restart')
     .description('restart the HRC daemon')
     .option('--timeout-ms <n>', 'timeout in milliseconds')
-    .option('--force', 'force restart')
+    .option('--force', 'force restart (skip in-flight check; SIGKILL if SIGTERM fails)')
+    .option('--wait', 'wait for in-flight runs to drain before restarting')
+    .option('--wait-timeout-ms <n>', 'max time to wait for in-flight drain (default 300000)')
     .option('--daemon', 'restart as background daemon')
     .option('--foreground', 'restart in foreground')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['timeout-ms'],
-        booleans: ['force', 'daemon', 'foreground'],
+        strings: ['timeout-ms', 'wait-timeout-ms'],
+        booleans: ['force', 'wait', 'daemon', 'foreground'],
       })
       await cmdServerRestart(args)
     })

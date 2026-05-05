@@ -46,6 +46,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.tool_call': 'turn',
   'turn.tool_result': 'turn',
   'turn.message': 'turn',
+  'turn.message_segment': 'turn',
   'inflight.accepted': 'inflight',
   'inflight.rejected': 'inflight',
   'surface.bound': 'surface',
@@ -83,6 +84,24 @@ export type AppendHrcEventParams = {
 
 const TURN_TEXT_LIMIT = 16 * 1024
 
+/**
+ * Per-assistant-message slice of a multi-message turn. A turn that interleaves
+ * text and tool calls produces N of these (chronologically ordered, segmentIndex
+ * 0..N-1). Consumers can reduce them into a single rendered message; the
+ * existing `turn.message` event still carries the cumulative text for legacy
+ * single-message consumers.
+ */
+export interface AgentMessageSegmentEvent {
+  type: 'message_segment'
+  message: {
+    role: 'assistant'
+    content: string
+  }
+  segmentIndex: number
+  isLast: boolean
+  truncated?: boolean | undefined
+}
+
 type SemanticTurnEvent =
   | {
       eventKind: 'turn.user_prompt'
@@ -91,6 +110,10 @@ type SemanticTurnEvent =
   | {
       eventKind: 'turn.message'
       payload: AgentMessageEvent
+    }
+  | {
+      eventKind: 'turn.message_segment'
+      payload: AgentMessageSegmentEvent
     }
   | {
       eventKind: 'turn.tool_call'
@@ -112,8 +135,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 type TranscriptEntry = {
   type?: string
   message?: {
-    content?: Array<{ type?: string; text?: string }>
+    content?: string | Array<{ type?: string; text?: string }>
   }
+}
+
+/**
+ * A `type:'user'` transcript entry is either a genuine prompt from the human
+ * (string content, or content array with only text blocks) or the synthetic
+ * `tool_result` injection that Claude Code writes after each PostToolUse.
+ * Only the former marks a turn boundary.
+ */
+function isUserPromptEntry(entry: TranscriptEntry): boolean {
+  if (entry.type !== 'user') return false
+  const content = entry.message?.content
+  if (typeof content === 'string') return content.length > 0
+  if (!Array.isArray(content)) return false
+  // Array form is a prompt only if every block is text (no tool_result).
+  return content.every((block) => block?.type === 'text')
 }
 
 function truncateTurnText(text: string): { text: string; truncated?: true | undefined } {
@@ -367,37 +405,95 @@ function unwrapHookPayload(hook: unknown): Record<string, unknown> | undefined {
   return undefined
 }
 
-function extractLastAssistantResponse(transcriptPath: string): string | undefined {
+/**
+ * Walk the Claude Code transcript backwards from the end to the most recent
+ * `user` entry, collecting every `assistant` entry's text content along the
+ * way. Returns the segments in chronological order (oldest first). Each
+ * segment is the joined text-blocks of one assistant message; tool_use blocks
+ * are skipped. Empty assistant entries (tool-only rounds) are dropped.
+ *
+ * This is the source-of-truth for both `turn.message` (concatenate) and
+ * `turn.message_segment` (one event per segment).
+ */
+function extractAssistantSegmentsSinceLastUserPrompt(transcriptPath: string): string[] {
   if (!existsSync(transcriptPath)) {
-    return undefined
+    return []
   }
 
+  let lines: string[]
   try {
-    const content = readFileSync(transcriptPath, 'utf-8')
-    const lines = content.trim().split('\n').filter(Boolean)
-
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      try {
-        const line = lines[i]
-        if (!line) continue
-        const entry = JSON.parse(line) as TranscriptEntry
-        if (entry.type !== 'assistant') continue
-        const text = entry.message?.content
-          ?.filter((block) => block.type === 'text' && typeof block.text === 'string')
-          .map((block) => block.text as string)
-          .join('\n')
-        if (text && text.length > 0) {
-          return text
-        }
-      } catch {
-        // Ignore malformed transcript lines while walking backwards.
-      }
-    }
+    lines = readFileSync(transcriptPath, 'utf-8').trim().split('\n').filter(Boolean)
   } catch {
-    return undefined
+    return []
   }
 
-  return undefined
+  const segments: string[] = []
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]
+    if (!line) continue
+    let entry: TranscriptEntry
+    try {
+      entry = JSON.parse(line) as TranscriptEntry
+    } catch {
+      continue
+    }
+    if (isUserPromptEntry(entry)) {
+      // Reached the prompt boundary — everything we collected belongs to
+      // this turn. Walking backwards means segments[0] is the latest text;
+      // reverse so the caller sees chronological order.
+      break
+    }
+    if (entry.type !== 'assistant') continue
+    const content = entry.message?.content
+    if (!Array.isArray(content)) continue
+    const text = content
+      .filter((block) => block.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text as string)
+      .join('\n')
+    if (text && text.length > 0) {
+      segments.push(text)
+    }
+  }
+  return segments.reverse()
+}
+
+/**
+ * Resolve the chronological list of assistant text segments emitted in the
+ * turn that just stopped. Combines two sources:
+ *
+ *   1. `transcript_path` walked back to the last user prompt — gives us
+ *      every text segment in order.
+ *   2. The hook payload's `last_assistant_message` (or `last_response`) — the
+ *      authoritative final segment, used to patch over a transcript-flush
+ *      race where the file lags hundreds of ms behind the Stop hook fire.
+ *
+ * If both sources agree on the last segment, we keep one copy. If they
+ * disagree (the hook's text isn't yet in the transcript), we append it as
+ * the final segment.
+ */
+function resolveAssistantSegmentsForHook(unwrapped: Record<string, unknown>): string[] {
+  const transcriptPath =
+    typeof unwrapped['transcript_path'] === 'string' ? unwrapped['transcript_path'] : undefined
+  const lastAssistantText =
+    (typeof unwrapped['last_assistant_message'] === 'string'
+      ? unwrapped['last_assistant_message']
+      : undefined) ??
+    (typeof unwrapped['last_response'] === 'string' ? unwrapped['last_response'] : undefined)
+
+  const segments: string[] = transcriptPath
+    ? extractAssistantSegmentsSinceLastUserPrompt(transcriptPath)
+    : []
+
+  if (lastAssistantText && lastAssistantText.length > 0) {
+    if (
+      segments.length === 0 ||
+      segments[segments.length - 1]?.trim() !== lastAssistantText.trim()
+    ) {
+      segments.push(lastAssistantText)
+    }
+  }
+
+  return segments
 }
 
 export function deriveSemanticTurnMessageFromHookPayload(
@@ -413,27 +509,55 @@ export function deriveSemanticTurnMessageFromHookPayload(
     return undefined
   }
 
-  const transcriptPath =
-    typeof unwrapped['transcript_path'] === 'string' ? unwrapped['transcript_path'] : undefined
-  const lastResponse =
-    typeof unwrapped['last_response'] === 'string' ? unwrapped['last_response'] : undefined
-  const lastAssistantMessage =
-    typeof unwrapped['last_assistant_message'] === 'string'
-      ? unwrapped['last_assistant_message']
-      : undefined
-
-  const text =
-    (transcriptPath ? extractLastAssistantResponse(transcriptPath) : undefined) ??
-    lastAssistantMessage ??
-    lastResponse
-  if (!text || text.length === 0) {
+  const segments = resolveAssistantSegmentsForHook(unwrapped)
+  if (segments.length === 0) {
     return undefined
   }
-
+  // Cumulative text across the whole turn: every assistant message segment
+  // joined with a paragraph break. Keeps the single-string contract for
+  // legacy `turn.message` consumers while reflecting the full response.
   return {
     eventKind: 'turn.message',
-    payload: createAgentMessagePayload(text),
+    payload: createAgentMessagePayload(segments.join('\n\n')),
   }
+}
+
+/**
+ * Derive one `turn.message_segment` event per assistant text segment in the
+ * turn that just stopped. Used alongside `deriveSemanticTurnMessageFromHookPayload`
+ * — the cumulative `turn.message` keeps the single-message contract; these
+ * segments expose per-message fidelity so streaming UIs can render each
+ * round of `text → tool → text` independently.
+ *
+ * Returns an empty array if the hook isn't a Stop-class event, or if the
+ * transcript can't be read (in which case the caller falls back to the
+ * single cumulative `turn.message`).
+ */
+export function deriveSemanticTurnMessageSegmentsFromHookPayload(
+  hook: unknown
+): SemanticTurnEvent[] {
+  const unwrapped = unwrapHookPayload(hook)
+  if (!unwrapped) return []
+
+  const hookName = unwrapped['hook_event_name']
+  if (hookName !== 'Stop' && hookName !== 'SessionEnd' && hookName !== 'SubagentStop') {
+    return []
+  }
+
+  const segments = resolveAssistantSegmentsForHook(unwrapped)
+  if (segments.length === 0) return []
+
+  return segments.map((text, index) => {
+    const truncated = truncateTurnText(text)
+    const payload: AgentMessageSegmentEvent = {
+      type: 'message_segment',
+      message: { role: 'assistant', content: truncated.text },
+      segmentIndex: index,
+      isLast: index === segments.length - 1,
+      ...(truncated.truncated === true ? { truncated: true } : {}),
+    }
+    return { eventKind: 'turn.message_segment', payload }
+  })
 }
 
 export function deriveSemanticTurnUserPromptFromHookPayload(

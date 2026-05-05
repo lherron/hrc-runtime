@@ -118,6 +118,7 @@ import {
   deriveSemanticTurnEventFromLaunchEvent,
   deriveSemanticTurnEventFromSdkEvent,
   deriveSemanticTurnMessageFromHookPayload,
+  deriveSemanticTurnMessageSegmentsFromHookPayload,
   deriveSemanticTurnUserPromptFromCodexOtelRecord,
   deriveSemanticTurnUserPromptFromHookPayload,
   shouldSuppressDuplicateCodexInitialUserPrompt,
@@ -8936,6 +8937,22 @@ function applyHookLifecycleEnvelope(
           launchId: envelope.launchId,
           replayed: options.replayed,
           payload: completionMessage.payload,
+        })
+      )
+    }
+    const segments = deriveSemanticTurnMessageSegmentsFromHookPayload(envelope.hookData)
+    for (const segment of segments) {
+      events.push(
+        appendHrcEvent(db, segment.eventKind, {
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: envelope.generation,
+          runtimeId: envelope.runtimeId,
+          launchId: envelope.launchId,
+          replayed: options.replayed,
+          payload: segment.payload,
         })
       )
     }

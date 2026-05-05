@@ -22,6 +22,43 @@ When changing Discord gateway behavior, smoke test with real Discord. Fake Disco
 
 For gateway changes, verify the behavior in an actual Discord channel/thread using the installed gateway, real bot credentials, and ACP/HRC services. Report the real Discord smoke result when handing work back. If real Discord validation is blocked, say exactly what blocked it and do not present fake-client output as a successful smoke test.
 
+## ACP Discord Bindings
+
+Bindings map a Discord conversation to an ACP session scope. Manage them under `acp admin interface binding` (note: under `admin interface`, not bare `interface`).
+
+```bash
+acp admin interface binding list --json
+acp admin interface binding set --gateway <id> --conversation-ref channel:<discord-channel-id> \
+  --project <projectId> --scope-ref <scopeRef> --lane-ref main --json
+acp admin interface binding disable --binding <id>
+```
+
+Notes:
+
+- `binding set` upserts on `(gatewayId, conversationRef [, threadRef])`. Re-running `set` with the same channel keeps the same `bindingId` and just updates the scope/lane — that's the supported way to repoint a channel without churning binding IDs.
+- `conversationRef` for a channel is `channel:<id>`; for a thread, add `--thread-ref thread:<id>`. Use the numeric Discord ID, not the `#name`.
+- Discord channel ID lookup: `discord-chat channels list | jq -r '.data[] | select(.name=="<name>") | .id'`.
+- Standard dev gateway is `acp-discord-smoke`; bind `agent:<agent>:project:<project>:task:<task>` for task-scoped routing.
+
+Verifying a binding:
+
+```bash
+# 1. Send via the virtu bot (acts as a real user, not the gateway bot itself)
+CP_CHANNEL_ID=<channel-id> ./scripts/virtu-send.sh "ping"
+
+# 2. Confirm a run was created on the target scope
+acp session resolve --scope-ref <scopeRef> --lane-ref main --json     # -> sessionId
+acp session runs --session <sessionId> --json                         # check metadata.meta.interfaceSource.bindingId
+
+# 3. Read the reply from Discord (acp tail may return [] for headless runs)
+TOKEN=$(consul kv get cfg/dev/_global/discord/master_token)
+curl -sS -H "Authorization: Bot $TOKEN" \
+  "https://discord.com/api/v10/channels/<channel-id>/messages?limit=5" \
+  | jq -r '.[] | {author: .author.username, ts: .timestamp, content}'
+```
+
+The run's `metadata.meta.interfaceSource.bindingId` is the authoritative proof that a specific binding routed the inbound — match it against the binding you just created.
+
 ## Ops Dashboard
 
 When the user refers to the "ops dashboard", they mean the ACP ops web dashboard in `packages/acp-ops-web`.
