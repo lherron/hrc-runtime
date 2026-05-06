@@ -49,7 +49,12 @@ function seedEventsForSession(
   hostSessionId: string,
   key: string,
   generation: number,
-  events: Array<{ eventKind: string; tag: string }>
+  events: Array<{
+    eventKind: string
+    tag: string
+    laneRef?: string | undefined
+    runId?: string | undefined
+  }>
 ): void {
   const db = openHrcDatabase(fixture.dbPath)
   const timestamp = now()
@@ -77,10 +82,11 @@ function seedEventsForSession(
         ts: timestamp,
         hostSessionId,
         scopeRef: scope,
-        laneRef: 'default',
+        laneRef: evt.laneRef ?? 'default',
         generation,
         category: 'turn',
         eventKind: evt.eventKind,
+        ...(evt.runId !== undefined ? { runId: evt.runId } : {}),
         payload: { tag: evt.tag },
       })
     }
@@ -92,7 +98,10 @@ function seedEventsForSession(
 type ParsedEvent = {
   hrcSeq: number
   hostSessionId: string
+  scopeRef: string
+  laneRef: string
   generation: number
+  runId?: string | undefined
   eventKind: string
   payload: Record<string, unknown>
 }
@@ -186,5 +195,54 @@ describe('GET /v1/events hostSessionId + generation filtering', () => {
     expect(filtered[0]!.hostSessionId).toBe('hsid-combo-A')
     expect(filtered[0]!.generation).toBe(1)
     expect((filtered[0]!.payload as any).tag).toBe('A-g1')
+  })
+
+  it('filters events by scopeRef and laneRef query params', async () => {
+    const targetScope = scopeRef('scope-target')
+    seedEventsForSession('hsid-scope-main', 'scope-target', 1, [
+      { eventKind: 'turn.started', tag: 'target-main', laneRef: 'main' },
+      { eventKind: 'turn.completed', tag: 'target-repair', laneRef: 'repair' },
+    ])
+    seedEventsForSession('hsid-scope-other', 'scope-other', 1, [
+      { eventKind: 'turn.started', tag: 'other-main', laneRef: 'main' },
+    ])
+
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+
+    const filtered = await fetchEvents(
+      `fromSeq=1&scopeRef=${encodeURIComponent(targetScope)}&laneRef=main`
+    )
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0]).toMatchObject({
+      scopeRef: targetScope,
+      laneRef: 'main',
+    })
+    expect(filtered[0]?.payload.tag).toBe('target-main')
+  })
+
+  it('AND-narrows scopeRef, laneRef, runId, and generation filters', async () => {
+    const targetScope = scopeRef('and-target')
+    seedEventsForSession('hsid-and-target', 'and-target', 1, [
+      { eventKind: 'turn.started', tag: 'match', laneRef: 'main', runId: 'run-target' },
+      { eventKind: 'turn.started', tag: 'wrong-run', laneRef: 'main', runId: 'run-other' },
+      { eventKind: 'turn.started', tag: 'wrong-lane', laneRef: 'repair', runId: 'run-target' },
+    ])
+    seedEventsForSession('hsid-and-target-gen2', 'and-target', 2, [
+      { eventKind: 'turn.started', tag: 'wrong-generation', laneRef: 'main', runId: 'run-target' },
+    ])
+
+    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+
+    const filtered = await fetchEvents(
+      `fromSeq=1&scopeRef=${encodeURIComponent(targetScope)}&laneRef=main&runId=run-target&generation=1`
+    )
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0]).toMatchObject({
+      scopeRef: targetScope,
+      laneRef: 'main',
+      runId: 'run-target',
+      generation: 1,
+    })
+    expect(filtered[0]?.payload.tag).toBe('match')
   })
 })
