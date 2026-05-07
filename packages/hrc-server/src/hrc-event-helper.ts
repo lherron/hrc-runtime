@@ -169,8 +169,23 @@ function isNonFlagArg(value: string | undefined): value is string {
   return typeof value === 'string' && value.length > 0 && !value.startsWith('-')
 }
 
+function stripCodexGlobalArgs(args: readonly string[]): string[] {
+  const remaining: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]
+    if (flag === '--enable' || flag === '--disable') {
+      i += args[i + 1] === undefined ? 0 : 1
+      continue
+    }
+    if (flag !== undefined) {
+      remaining.push(flag)
+    }
+  }
+  return remaining
+}
+
 function extractCodexPrimingPrompt(argv: readonly string[]): string | undefined {
-  const [, ...args] = argv
+  const args = stripCodexGlobalArgs(argv.slice(1))
   const mode = args[0]
   if (!mode) {
     return undefined

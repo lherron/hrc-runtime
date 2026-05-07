@@ -53,7 +53,7 @@ describe('hrc semantic turn helpers', () => {
     expect(
       extractLaunchPrimingPrompt({
         harness: 'codex-cli',
-        argv: ['codex', 'exec', 'Ship it', '--json'],
+        argv: ['codex', 'exec', '--enable', 'goals', 'Ship it', '--json'],
       })
     ).toBe('Ship it')
   })

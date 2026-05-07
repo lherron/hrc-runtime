@@ -69,6 +69,11 @@ if [ "$cmd" = "app-server" ]; then
   printf 'codex app-server help\\n'
   exit 0
 fi
+while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
+  shift
+  shift
+  cmd="\${1:-}"
+done
 if [ "$cmd" = "exec" ]; then
   printf 'exec:%s\\n' "$*" >> "$log_path"
   printf '{"type":"thread.started","thread_id":"thread-dm"}\\n'

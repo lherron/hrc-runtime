@@ -282,6 +282,11 @@ if [ "$cmd" = "app-server" ] && [ "\${2:-}" = "--help" ]; then
   printf 'Usage: codex app-server\\n'
   exit 0
 fi
+while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
+  shift
+  shift
+  cmd="\${1:-}"
+done
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
@@ -289,7 +294,12 @@ if [ "$cmd" = "exec" ]; then
   exit 0
 fi
 if [ "$cmd" = "resume" ]; then
-  printf 'resume:%s\\n' "\${2:-}" >> "$resume_path"
+  shift
+  while [ "\${1:-}" = "--enable" ] || [ "\${1:-}" = "--disable" ]; do
+    shift
+    shift
+  done
+  printf 'resume:%s\\n' "\${1:-}" >> "$resume_path"
   /bin/sleep ${((behavior.resumeDelayMs ?? 0) / 1000).toFixed(3)}
   exit 0
 fi
