@@ -33,6 +33,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
+import { openHrcDatabase } from 'hrc-store-sqlite'
+
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -93,6 +95,62 @@ async function _dispatchBusySdkTurn(hsid: string, _runtimeId: string): Promise<{
   })
   const data = (await res.json()) as any
   return { runId: data.runId }
+}
+
+function seedSdkActiveRuntime(input: {
+  hostSessionId: string
+  scopeRef: string
+  runtimeId: string
+  runId: string
+  supportsInflightInput?: boolean | undefined
+  provider?: 'anthropic' | 'openai' | undefined
+}): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const timestamp = fixture.now()
+  try {
+    db.sessions.insert({
+      hostSessionId: input.hostSessionId,
+      scopeRef: input.scopeRef,
+      laneRef: 'default',
+      generation: 1,
+      status: 'active',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      ancestorScopeRefs: [],
+    })
+    db.runtimes.insert({
+      runtimeId: input.runtimeId,
+      hostSessionId: input.hostSessionId,
+      scopeRef: input.scopeRef,
+      laneRef: 'default',
+      generation: 1,
+      transport: 'sdk',
+      harness: 'agent-sdk',
+      provider: input.provider ?? 'anthropic',
+      status: 'busy',
+      supportsInflightInput: input.supportsInflightInput ?? true,
+      adopted: false,
+      activeRunId: input.runId,
+      lastActivityAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    db.runs.insert({
+      runId: input.runId,
+      hostSessionId: input.hostSessionId,
+      runtimeId: input.runtimeId,
+      scopeRef: input.scopeRef,
+      laneRef: 'default',
+      generation: 1,
+      transport: 'sdk',
+      status: 'running',
+      acceptedAt: timestamp,
+      startedAt: timestamp,
+      updatedAt: timestamp,
+    })
+  } finally {
+    db.close()
+  }
 }
 
 /** Get all events from the server */
@@ -441,5 +499,123 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
         capability: { supported: false },
       })
     )
+  })
+
+  it('marks the ledger ambiguous when enabled provider delivery throws after pending insert', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-active-ambiguous',
+      scopeRef: 'agent:active-contrib-ambiguous',
+      runtimeId: 'rt-active-ambiguous',
+      runId: 'hrc-active-ambiguous',
+    })
+
+    try {
+      const request = {
+        selector: { runtimeId: 'rt-active-ambiguous' },
+        expectedRunId: 'hrc-active-ambiguous',
+        inputAttemptId: 'ia_ambiguous',
+        inputApplicationId: 'iap_ambiguous',
+        idempotencyKey: 'ambiguous-once',
+        prompt: 'provider call should throw',
+      }
+
+      const first = await fixture.postJson('/v1/active-run-contributions', request)
+      const dbAfterFirst = openHrcDatabase(fixture.dbPath)
+      const rowAfterFirst =
+        dbAfterFirst.activeInputDeliveries.getByInputApplicationId('iap_ambiguous')
+      dbAfterFirst.close()
+      const duplicate = await fixture.postJson('/v1/active-run-contributions', request)
+      const queried = await fixture.fetchSocket('/v1/active-run-contributions/iap_ambiguous')
+      const db = openHrcDatabase(fixture.dbPath)
+      const row = db.activeInputDeliveries.getByInputApplicationId('iap_ambiguous')
+      db.close()
+
+      expect(first.status).toBe(200)
+      expect(duplicate.status).toBe(200)
+      expect(queried.status).toBe(200)
+      expect(row?.status).toBe('ambiguous')
+      expect(row?.errorCode).toBe('delivery_ambiguous')
+      expect(row?.updatedAt).toBe(rowAfterFirst?.updatedAt)
+
+      const firstPayload = (await first.json()) as any
+      expect(firstPayload).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          inputApplicationId: 'iap_ambiguous',
+          runtimeId: 'rt-active-ambiguous',
+          runId: 'hrc-active-ambiguous',
+          errorCode: 'delivery_ambiguous',
+          capability: expect.objectContaining({ supported: true }),
+        })
+      )
+      expect(await duplicate.json()).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          inputApplicationId: 'iap_ambiguous',
+          runtimeId: 'rt-active-ambiguous',
+          runId: 'hrc-active-ambiguous',
+          errorCode: 'delivery_ambiguous',
+        })
+      )
+      expect(await queried.json()).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          inputApplicationId: 'iap_ambiguous',
+          runtimeId: 'rt-active-ambiguous',
+          runId: 'hrc-active-ambiguous',
+          errorCode: 'delivery_ambiguous',
+        })
+      )
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
+  })
+
+  it('keeps contribution capability gated by sdk transport metadata, not provider name', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-active-capability',
+      scopeRef: 'agent:active-contrib-capability',
+      runtimeId: 'rt-active-capability',
+      runId: 'hrc-active-capability',
+      supportsInflightInput: false,
+      provider: 'anthropic',
+    })
+
+    try {
+      const res = await fixture.postJson('/v1/active-run-contributions', {
+        selector: { runtimeId: 'rt-active-capability' },
+        expectedRunId: 'hrc-active-capability',
+        inputAttemptId: 'ia_capability',
+        inputApplicationId: 'iap_capability',
+        prompt: 'provider name alone must not enable delivery',
+      })
+
+      expect(res.status).toBe(200)
+      const payload = (await res.json()) as any
+      expect(payload).toEqual(
+        expect.objectContaining({
+          status: 'rejected',
+          inputApplicationId: 'iap_capability',
+          runtimeId: 'rt-active-capability',
+          runId: 'hrc-active-capability',
+          errorCode: 'active_run_contribution_disabled',
+          capability: { supported: false },
+        })
+      )
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
   })
 })
