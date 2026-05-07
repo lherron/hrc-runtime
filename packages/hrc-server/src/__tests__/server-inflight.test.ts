@@ -618,4 +618,68 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
       }
     }
   })
+
+  it('accepts and idempotently replays AgentSpaces SDK provider contributions', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-active-accepted',
+      scopeRef: 'agent:active-contrib-accepted',
+      runtimeId: 'rt-active-accepted',
+      runId: 'hrc-active-accepted',
+      supportsInflightInput: true,
+      provider: 'anthropic',
+    })
+
+    try {
+      const request = {
+        selector: { runtimeId: 'rt-active-accepted' },
+        expectedRunId: 'hrc-active-accepted',
+        inputAttemptId: 'ia_accepted',
+        inputApplicationId: 'iap_accepted',
+        idempotencyKey: 'accepted-once',
+        prompt: 'provider should enqueue this as a sequential follow-up',
+      }
+
+      const first = await fixture.postJson('/v1/active-run-contributions', request)
+      const duplicate = await fixture.postJson('/v1/active-run-contributions', request)
+      const queried = await fixture.fetchSocket('/v1/active-run-contributions/iap_accepted')
+      const db = openHrcDatabase(fixture.dbPath)
+      const row = db.activeInputDeliveries.getByInputApplicationId('iap_accepted')
+      db.close()
+
+      expect(first.status).toBe(200)
+      expect(duplicate.status).toBe(200)
+      expect(queried.status).toBe(200)
+
+      const payload = (await first.json()) as any
+      expect(payload).toEqual(
+        expect.objectContaining({
+          status: 'accepted',
+          inputApplicationId: 'iap_accepted',
+          hostSessionId: 'hsid-active-accepted',
+          generation: 1,
+          runtimeId: 'rt-active-accepted',
+          runId: 'hrc-active-accepted',
+          capability: {
+            supported: true,
+            deliverySemantics: 'sequential_followup',
+            ackSemantics: 'accepted_only',
+            ordering: 'fifo',
+            supportsAttachments: false,
+          },
+        })
+      )
+      expect(await duplicate.json()).toEqual(payload)
+      expect(await queried.json()).toEqual(payload)
+      expect(row?.status).toBe('accepted')
+      expect(row?.response).toEqual(payload)
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
+  })
 })
