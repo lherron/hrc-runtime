@@ -39,6 +39,8 @@ import type {
   EnsureRuntimeResponse,
   EnsureTargetRequest,
   HealthResponse,
+  HrcActiveRunContributionRequest,
+  HrcActiveRunContributionResponse,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
@@ -216,6 +218,20 @@ export class HrcClient {
       ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
       ...(request.inputType !== undefined ? { inputType: request.inputType } : {}),
     })
+  }
+
+  async submitActiveRunContribution(
+    request: HrcActiveRunContributionRequest
+  ): Promise<HrcActiveRunContributionResponse> {
+    return this.postJson<HrcActiveRunContributionResponse>('/v1/active-run-contributions', request)
+  }
+
+  async getActiveRunContribution(
+    inputApplicationId: string
+  ): Promise<HrcActiveRunContributionResponse> {
+    return this.getJson<HrcActiveRunContributionResponse>(
+      `/v1/active-run-contributions/${encodeURIComponent(inputApplicationId)}`
+    )
   }
 
   async clearContext(request: ClearContextRequest): Promise<ClearContextResponse> {

@@ -47,6 +47,8 @@ import type {
   EnsureAppSessionResponse,
   EnsureRuntimeResponse,
   EnsureTargetResponse,
+  HrcActiveRunContributionRequest,
+  HrcActiveRunContributionResponse,
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcCommandLaunchSpec,
@@ -518,6 +520,8 @@ class HrcServerInstance implements HrcServer {
       this.handleInspectRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
+    [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
+      this.handleActiveRunContribution(request),
     [exactRouteKey('POST', '/v1/in-flight-input')]: (request) => this.handleInFlightInput(request),
     [exactRouteKey('GET', '/v1/capture')]: (_request, url) => this.handleCapture(url),
     [exactRouteKey('GET', '/v1/attach')]: (_request, url) => this.handleAttach(url),
@@ -698,6 +702,13 @@ class HrcServerInstance implements HrcServer {
       if (request.method === 'GET' && pathname.startsWith('/v1/sessions/by-host/')) {
         const hostSessionId = pathname.slice('/v1/sessions/by-host/'.length)
         return this.handleGetSessionByHost(hostSessionId)
+      }
+
+      if (request.method === 'GET' && pathname.startsWith('/v1/active-run-contributions/')) {
+        const inputApplicationId = decodeURIComponent(
+          pathname.slice('/v1/active-run-contributions/'.length)
+        )
+        return this.handleGetActiveRunContribution(inputApplicationId)
       }
 
       if (
@@ -2419,6 +2430,211 @@ class HrcServerInstance implements HrcServer {
     } satisfies DispatchTurnResponse)
   }
 
+  private async handleActiveRunContribution(request: Request): Promise<Response> {
+    const body = (await parseJsonBody(request)) as HrcActiveRunContributionRequest
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      typeof body.inputApplicationId !== 'string' ||
+      body.inputApplicationId.trim().length === 0 ||
+      typeof body.inputAttemptId !== 'string' ||
+      body.inputAttemptId.trim().length === 0 ||
+      typeof body.prompt !== 'string'
+    ) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'active-run contribution requires inputApplicationId, inputAttemptId, and prompt'
+      )
+    }
+
+    const existing = this.db.activeInputDeliveries.getByInputApplicationId(body.inputApplicationId)
+    if (existing?.response !== undefined) {
+      return json(existing.response)
+    }
+    if (existing !== null) {
+      return json({
+        status:
+          existing.status === 'ambiguous' || existing.status === 'failed'
+            ? 'pending'
+            : existing.status,
+        inputApplicationId: existing.inputApplicationId,
+        ...(existing.hostSessionId !== undefined ? { hostSessionId: existing.hostSessionId } : {}),
+        ...(existing.generation !== undefined ? { generation: existing.generation } : {}),
+        ...(existing.runtimeId !== undefined ? { runtimeId: existing.runtimeId } : {}),
+        ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+        ...(existing.errorCode !== undefined ? { errorCode: existing.errorCode } : {}),
+        ...(existing.errorMessage !== undefined ? { errorMessage: existing.errorMessage } : {}),
+      } satisfies HrcActiveRunContributionResponse)
+    }
+
+    const runtime =
+      typeof body.selector?.runtimeId === 'string'
+        ? this.db.runtimes.getByRuntimeId(body.selector.runtimeId)
+        : this.db.runtimes
+            .listAll()
+            .filter(
+              (candidate) =>
+                (body.selector?.hostSessionId === undefined ||
+                  candidate.hostSessionId === body.selector.hostSessionId) &&
+                (body.selector?.sessionRef === undefined ||
+                  (candidate.scopeRef === body.selector.sessionRef.scopeRef &&
+                    candidate.laneRef === body.selector.sessionRef.laneRef))
+            )
+            .at(-1)
+
+    this.db.activeInputDeliveries.createPending({
+      request: body,
+      now: timestamp(),
+      ...(runtime?.hostSessionId !== undefined ? { hostSessionId: runtime.hostSessionId } : {}),
+      ...(runtime?.generation !== undefined ? { generation: runtime.generation } : {}),
+      ...(runtime?.runtimeId !== undefined ? { runtimeId: runtime.runtimeId } : {}),
+      ...(runtime?.activeRunId !== undefined ? { runId: runtime.activeRunId } : {}),
+    })
+
+    let response: HrcActiveRunContributionResponse
+    if (runtime === null || runtime === undefined) {
+      response = {
+        status: 'rejected',
+        inputApplicationId: body.inputApplicationId,
+        capability: { supported: false },
+        errorCode: 'runtime_not_found',
+        errorMessage: 'no runtime matched active-run contribution selector',
+      }
+    } else if (runtime.activeRunId === undefined) {
+      response = {
+        status: 'rejected',
+        inputApplicationId: body.inputApplicationId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        runtimeId: runtime.runtimeId,
+        capability: { supported: false },
+        errorCode: 'no_active_run',
+        errorMessage: 'runtime has no active run',
+      }
+    } else if (body.expectedRunId !== undefined && body.expectedRunId !== runtime.activeRunId) {
+      response = {
+        status: 'rejected',
+        inputApplicationId: body.inputApplicationId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        runtimeId: runtime.runtimeId,
+        runId: runtime.activeRunId,
+        capability: { supported: false },
+        errorCode: 'run_mismatch',
+        errorMessage: 'expectedRunId does not match active run',
+      }
+    } else if (
+      process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] === '1' &&
+      runtime.transport === 'sdk' &&
+      runtime.supportsInflightInput
+    ) {
+      const session = requireSession(this.db, runtime.hostSessionId)
+      try {
+        const delivered = await this.deliverInFlightInputToRuntime(session, runtime, {
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          inputApplicationId: body.inputApplicationId,
+          ...(body.idempotencyKey !== undefined ? { idempotencyKey: body.idempotencyKey } : {}),
+          prompt: body.prompt,
+          ...(body.inputType !== undefined ? { inputType: body.inputType } : {}),
+        })
+        response = {
+          status: delivered.accepted ? 'accepted' : 'rejected',
+          inputApplicationId: body.inputApplicationId,
+          hostSessionId: runtime.hostSessionId,
+          generation: runtime.generation,
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          capability: {
+            supported: true,
+            deliverySemantics: 'sequential_followup',
+            ackSemantics: 'accepted_only',
+            ordering: 'fifo',
+            supportsAttachments: false,
+          },
+          ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
+          ...(delivered.accepted
+            ? {}
+            : {
+                errorCode: 'provider_rejected',
+                errorMessage: 'provider rejected active-run contribution',
+              }),
+        }
+      } catch (error) {
+        this.db.activeInputDeliveries.markAmbiguous(
+          body.inputApplicationId,
+          'delivery_ambiguous',
+          error instanceof Error ? error.message : String(error),
+          timestamp()
+        )
+        return json({
+          status: 'pending',
+          inputApplicationId: body.inputApplicationId,
+          hostSessionId: runtime.hostSessionId,
+          generation: runtime.generation,
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          capability: {
+            supported: true,
+            deliverySemantics: 'sequential_followup',
+            ackSemantics: 'accepted_only',
+            ordering: 'fifo',
+            supportsAttachments: false,
+          },
+          errorCode: 'delivery_ambiguous',
+          errorMessage: error instanceof Error ? error.message : String(error),
+        } satisfies HrcActiveRunContributionResponse)
+      }
+    } else {
+      response = {
+        status: 'rejected',
+        inputApplicationId: body.inputApplicationId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        runtimeId: runtime.runtimeId,
+        runId: runtime.activeRunId,
+        capability: { supported: false },
+        errorCode: 'active_run_contribution_disabled',
+        errorMessage: 'active-run contribution is disabled until provider capability is proven',
+      }
+    }
+
+    if (response.status === 'accepted' || response.status === 'duplicate') {
+      this.db.activeInputDeliveries.markAccepted(body.inputApplicationId, response, timestamp())
+    } else {
+      this.db.activeInputDeliveries.markRejected(body.inputApplicationId, response, timestamp())
+    }
+    return json(response)
+  }
+
+  private handleGetActiveRunContribution(inputApplicationId: string): Response {
+    const existing = this.db.activeInputDeliveries.getByInputApplicationId(inputApplicationId)
+    if (existing === null) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_RUNTIME,
+        'active-run contribution not found',
+        {
+          inputApplicationId,
+        }
+      )
+    }
+    return json(
+      existing.response ?? {
+        status:
+          existing.status === 'ambiguous' || existing.status === 'failed'
+            ? 'pending'
+            : existing.status,
+        inputApplicationId: existing.inputApplicationId,
+        ...(existing.hostSessionId !== undefined ? { hostSessionId: existing.hostSessionId } : {}),
+        ...(existing.generation !== undefined ? { generation: existing.generation } : {}),
+        ...(existing.runtimeId !== undefined ? { runtimeId: existing.runtimeId } : {}),
+        ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+        ...(existing.errorCode !== undefined ? { errorCode: existing.errorCode } : {}),
+        ...(existing.errorMessage !== undefined ? { errorMessage: existing.errorMessage } : {}),
+      }
+    )
+  }
+
   private async handleInFlightInput(request: Request): Promise<Response> {
     const body = parseInFlightInputRequest(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
@@ -2482,6 +2698,10 @@ class HrcServerInstance implements HrcServer {
             hostSessionId: runtime.hostSessionId,
             runId: body.runId,
             runtimeId: runtime.runtimeId,
+            ...(body.inputApplicationId !== undefined
+              ? { inputApplicationId: body.inputApplicationId }
+              : {}),
+            ...(body.idempotencyKey !== undefined ? { idempotencyKey: body.idempotencyKey } : {}),
             prompt: body.prompt,
             scopeRef: runtime.scopeRef,
             laneRef: runtime.laneRef,

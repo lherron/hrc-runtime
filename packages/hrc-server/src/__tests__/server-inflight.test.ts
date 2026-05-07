@@ -329,3 +329,117 @@ describe('POST /v1/in-flight-input — activity tracking', () => {
     expect(accepted!.ts >= beforeTs).toBe(true)
   })
 })
+
+describe('POST /v1/active-run-contributions — disabled rich contribution contract', () => {
+  it('rejects malformed contribution requests before ledger writes', async () => {
+    const res = await fixture.postJson('/v1/active-run-contributions', {
+      inputAttemptId: 'ia_missing_application',
+      prompt: 'missing application id',
+      selector: {},
+    })
+
+    expect(res.status).toBe(400)
+    const data = (await res.json()) as any
+    expect(data.error.code).toBe('malformed_request')
+  })
+
+  it('returns a queryable rejected ledger row when no active run exists', async () => {
+    const seeded = await fixture.ensureRuntime('active-contrib-no-run')
+    const request = {
+      selector: { runtimeId: seeded.runtimeId },
+      inputAttemptId: 'ia_no_active',
+      inputApplicationId: 'iap_no_active',
+      idempotencyKey: 'same-app',
+      prompt: 'try contributing',
+    }
+
+    const first = await fixture.postJson('/v1/active-run-contributions', request)
+    const duplicate = await fixture.postJson('/v1/active-run-contributions', request)
+    const queried = await fixture.fetchSocket('/v1/active-run-contributions/iap_no_active')
+
+    expect(first.status).toBe(200)
+    expect(duplicate.status).toBe(200)
+    expect(queried.status).toBe(200)
+
+    const payload = (await first.json()) as any
+    expect(payload).toEqual(
+      expect.objectContaining({
+        status: 'rejected',
+        inputApplicationId: 'iap_no_active',
+        runtimeId: seeded.runtimeId,
+        errorCode: 'no_active_run',
+        capability: { supported: false },
+      })
+    )
+    expect(await duplicate.json()).toEqual(payload)
+    expect(await queried.json()).toEqual(payload)
+  })
+
+  it('rejects expectedRunId mismatch against the active runtime run', async () => {
+    fixture.seedSession('hsid-active-contrib', 'active-contrib-mismatch')
+    fixture.seedTmuxRuntime('hsid-active-contrib', 'active-contrib-mismatch', 'rt-active-contrib', {
+      status: 'busy',
+      activeRunId: 'hrc-active-run',
+    })
+
+    const res = await fixture.postJson('/v1/active-run-contributions', {
+      selector: { runtimeId: 'rt-active-contrib' },
+      expectedRunId: 'hrc-other-run',
+      inputAttemptId: 'ia_mismatch',
+      inputApplicationId: 'iap_mismatch',
+      prompt: 'wrong run',
+    })
+
+    expect(res.status).toBe(200)
+    const payload = (await res.json()) as any
+    expect(payload).toEqual(
+      expect.objectContaining({
+        status: 'rejected',
+        inputApplicationId: 'iap_mismatch',
+        runtimeId: 'rt-active-contrib',
+        runId: 'hrc-active-run',
+        errorCode: 'run_mismatch',
+        capability: { supported: false },
+      })
+    )
+  })
+
+  it('keeps provider delivery disabled even when an active run matches', async () => {
+    fixture.seedSession('hsid-active-disabled', 'active-contrib-disabled')
+    fixture.seedTmuxRuntime(
+      'hsid-active-disabled',
+      'active-contrib-disabled',
+      'rt-active-disabled',
+      {
+        status: 'busy',
+        activeRunId: 'hrc-active-disabled',
+      }
+    )
+
+    const res = await fixture.postJson('/v1/active-run-contributions', {
+      selector: {
+        sessionRef: {
+          scopeRef: 'agent:active-contrib-disabled',
+          laneRef: 'default',
+        },
+      },
+      expectedRunId: 'hrc-active-disabled',
+      inputAttemptId: 'ia_disabled',
+      inputApplicationId: 'iap_disabled',
+      prompt: 'would contribute if enabled',
+    })
+
+    expect(res.status).toBe(200)
+    const payload = (await res.json()) as any
+    expect(payload).toEqual(
+      expect.objectContaining({
+        status: 'rejected',
+        inputApplicationId: 'iap_disabled',
+        runtimeId: 'rt-active-disabled',
+        runId: 'hrc-active-disabled',
+        errorCode: 'active_run_contribution_disabled',
+        capability: { supported: false },
+      })
+    )
+  })
+})

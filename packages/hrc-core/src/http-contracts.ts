@@ -142,6 +142,61 @@ export type DispatchTurnResponse = {
   supportsInFlightInput: boolean
 }
 
+export type ActiveRunContributionCapability = {
+  supported: boolean
+  deliverySemantics?:
+    | 'same_turn_append'
+    | 'interrupting_steer'
+    | 'next_iteration'
+    | 'sequential_followup'
+    | undefined
+  ackSemantics?: 'accepted_only' | 'observed_applied' | undefined
+  ordering?: 'fifo' | 'provider_defined' | undefined
+  maxPending?: number | undefined
+  supportsAttachments?: boolean | undefined
+  canInterruptTools?: boolean | undefined
+}
+
+export type HrcActiveRunContributionRequest = {
+  selector: {
+    sessionRef?:
+      | {
+          scopeRef: string
+          laneRef: string
+        }
+      | undefined
+    hostSessionId?: string | undefined
+    runtimeId?: string | undefined
+  }
+  expectedRunId?: string | undefined
+  fences?:
+    | {
+        expectedHostSessionId?: string | undefined
+        expectedGeneration?: number | undefined
+        followLatest?: boolean | undefined
+      }
+    | undefined
+  inputAttemptId: string
+  inputApplicationId: string
+  idempotencyKey?: string | undefined
+  prompt: string
+  inputType?: 'human' | 'system' | 'tool' | undefined
+  semantics?: 'append_context' | 'interrupt_and_continue' | undefined
+}
+
+export type HrcActiveRunContributionResponse = {
+  status: 'accepted' | 'duplicate' | 'rejected' | 'pending'
+  inputApplicationId: string
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  capability?: ActiveRunContributionCapability | undefined
+  pendingTurns?: number | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
 export type ClearContextRequest = {
   hostSessionId: string
   relaunch?: boolean | undefined

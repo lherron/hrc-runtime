@@ -68,6 +68,8 @@ export type SdkInflightInputClient = {
   queueInFlightInput(req: {
     hostSessionId: string
     runId: string
+    inputApplicationId?: string | undefined
+    idempotencyKey?: string | undefined
     prompt: string
   }): Promise<{ accepted: boolean; pendingTurns?: number }>
 }
@@ -76,6 +78,8 @@ export type SdkInflightInputOptions = {
   hostSessionId: string
   runId: string
   runtimeId: string
+  inputApplicationId?: string | undefined
+  idempotencyKey?: string | undefined
   prompt: string
   scopeRef: string
   laneRef: string
@@ -100,6 +104,10 @@ export async function deliverSdkInflightInput(
   const response = await client.queueInFlightInput({
     hostSessionId: options.hostSessionId,
     runId: options.runId,
+    ...(options.inputApplicationId !== undefined
+      ? { inputApplicationId: options.inputApplicationId }
+      : {}),
+    ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
     prompt: options.prompt,
   })
 

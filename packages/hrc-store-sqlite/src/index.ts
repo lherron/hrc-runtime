@@ -4,6 +4,7 @@ export type {
   AppManagedSessionRecord,
   AppManagedSessionFindOptions,
   EventAppendInput,
+  HrcActiveInputDeliveryRecord,
   HrcLifecycleEventInput,
   HrcLifecycleQueryFilters,
 } from './repositories.js'

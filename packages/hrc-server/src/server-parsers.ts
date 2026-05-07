@@ -41,6 +41,8 @@ import { parseAgentProfile, resolveHarnessProvider } from 'spaces-config'
 export type InFlightInputRequest = {
   runtimeId: string
   runId: string
+  inputApplicationId?: string | undefined
+  idempotencyKey?: string | undefined
   prompt: string
   inputType?: string | undefined
 }

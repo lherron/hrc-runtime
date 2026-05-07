@@ -13,6 +13,8 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  HrcActiveRunContributionRequest,
+  HrcActiveRunContributionResponse,
   DropContinuationRequest,
   DropContinuationResponse,
   EnsureRuntimeRequest,

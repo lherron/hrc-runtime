@@ -1586,8 +1586,18 @@ async function printLocalRunPreview(
   // metadata, env block, and a command line with `<N chars>` placeholders.
   try {
     const invocation = await buildCliInvocation(intent)
-    const sysPrompt = extractSystemPromptFromArgv(invocation.argv)
-    const primingPrompt = extractPrimingFromArgv(invocation.argv)
+    const structuredSystemPrompt =
+      invocation.prompts?.system?.content ?? readOptionalUtf8(invocation.systemPromptFile)
+    const sysPrompt =
+      extractSystemPromptFromArgv(invocation.argv) ??
+      (structuredSystemPrompt !== undefined
+        ? {
+            content: structuredSystemPrompt,
+            mode: invocation.prompts?.system?.mode ?? 'append',
+          }
+        : undefined)
+    const primingPrompt =
+      extractPrimingFromArgv(invocation.argv) ?? invocation.prompts?.priming?.content
     const envEntries = Object.keys(invocation.env)
       .sort()
       .map((k): [string, string] => {
@@ -1658,6 +1668,18 @@ async function printLocalRunPreview(
   w('  Note: this preview shows the request the client would send. Server-side')
   w('  details (existing runtime, PTY state, tmux session) are not consulted.')
   w('  Run without --dry-run to execute.')
+}
+
+function readOptionalUtf8(path: string | undefined): string | undefined {
+  if (path === undefined) {
+    return undefined
+  }
+  try {
+    const content = readFileSync(path, 'utf8')
+    return content.length > 0 ? content : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

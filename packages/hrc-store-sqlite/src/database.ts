@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
+  ActiveInputDeliveryRepository,
   AppManagedSessionRepository,
   AppSessionRepository,
   ContinuityRepository,
@@ -37,6 +38,7 @@ export type HrcDatabase = {
   localBridges: LocalBridgeRepository
   surfaceBindings: SurfaceBindingRepository
   runtimeBuffers: RuntimeBufferRepository
+  activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
 }
 
@@ -80,6 +82,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     localBridges: new LocalBridgeRepository(sqlite),
     surfaceBindings: new SurfaceBindingRepository(sqlite),
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
+    activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
   }
 }

@@ -76,6 +76,7 @@ export interface CliInvocationResult {
   ioMode: HrcIoMode
   resolvedBundle?: ResolvedRuntimeBundle | undefined
   prompts?: HrcLaunchPromptMaterial | undefined
+  systemPromptFile?: string | undefined
   warnings?: string[] | undefined
 }
 
@@ -287,6 +288,7 @@ export async function buildCliInvocation(
   const response = await specBuilder(placementReq)
   const responseSpec = response.spec as typeof response.spec & {
     prompts?: HrcLaunchPromptMaterial | undefined
+    systemPromptFile?: string | undefined
   }
   const argv =
     frontend === 'codex-cli' &&
@@ -312,6 +314,9 @@ export async function buildCliInvocation(
     ioMode,
     resolvedBundle: response.resolvedBundle,
     prompts: responseSpec.prompts,
+    ...(responseSpec.systemPromptFile !== undefined
+      ? { systemPromptFile: responseSpec.systemPromptFile }
+      : {}),
     warnings: response.warnings,
   }
 }

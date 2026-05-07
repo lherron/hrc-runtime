@@ -723,6 +723,33 @@ const hrcchatMessagesMigration: HrcMigration = {
   },
 }
 
+const activeInputDeliveriesMigration: HrcMigration = {
+  id: '0010_active_input_deliveries',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS active_input_deliveries (
+        input_application_id TEXT PRIMARY KEY,
+        input_attempt_id TEXT NOT NULL,
+        idempotency_key TEXT,
+        host_session_id TEXT,
+        generation INTEGER,
+        runtime_id TEXT,
+        run_id TEXT,
+        status TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        response_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_active_input_deliveries_runtime
+        ON active_input_deliveries(runtime_id, run_id, status);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -734,6 +761,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   hrcEventsMigration,
   legacyHrcEventsBackfillMigration,
   runtimeBuffersScopedByRunMigration,
+  activeInputDeliveriesMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

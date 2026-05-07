@@ -1,5 +1,7 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
 import {
+  type HrcActiveRunContributionRequest,
+  type HrcActiveRunContributionResponse,
   type HrcAppSessionRecord,
   type HrcAppSessionSpec,
   type HrcCommandLaunchSpec,
@@ -25,6 +27,23 @@ export type HrcRuntimeBufferRecord = {
   chunkSeq: number
   text: string
   createdAt: string
+}
+
+export type HrcActiveInputDeliveryRecord = {
+  inputApplicationId: string
+  inputAttemptId: string
+  idempotencyKey?: string | undefined
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  status: HrcActiveRunContributionResponse['status'] | 'ambiguous' | 'failed'
+  request: HrcActiveRunContributionRequest
+  response?: HrcActiveRunContributionResponse | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+  createdAt: string
+  updatedAt: string
 }
 
 export type ContinuityUpsertInput = Pick<
@@ -218,6 +237,23 @@ type RuntimeBufferRow = {
   created_at: string
 }
 
+type ActiveInputDeliveryRow = {
+  input_application_id: string
+  input_attempt_id: string
+  idempotency_key: string | null
+  host_session_id: string | null
+  generation: number | null
+  runtime_id: string | null
+  run_id: string | null
+  status: HrcActiveInputDeliveryRecord['status']
+  request_json: string
+  response_json: string | null
+  error_code: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
 type SurfaceBindingRow = {
   surface_kind: string
   surface_id: string
@@ -299,6 +335,14 @@ function parseJson<T>(value: string | null, column?: string): T | undefined {
     )
     return undefined
   }
+}
+
+function parseRequiredJson<T>(value: string, column: string): T {
+  const parsed = parseJson<T>(value, column)
+  if (parsed === undefined) {
+    throw new Error(`${column} is required`)
+  }
+  return parsed
 }
 
 function toSqliteBoolean(value: boolean): number {
@@ -484,6 +528,22 @@ const RUNTIME_BUFFER_COLUMNS = `
   chunk_seq,
   text,
   created_at`
+
+const ACTIVE_INPUT_DELIVERY_COLUMNS = `
+  input_application_id,
+  input_attempt_id,
+  idempotency_key,
+  host_session_id,
+  generation,
+  runtime_id,
+  run_id,
+  status,
+  request_json,
+  response_json,
+  error_code,
+  error_message,
+  created_at,
+  updated_at`
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
   db.prepare<never, SQLQueryBindings[]>(sql).run(...params)
@@ -729,6 +789,29 @@ function mapRuntimeBufferRow(row: RuntimeBufferRow): HrcRuntimeBufferRecord {
     chunkSeq: row.chunk_seq,
     text: row.text,
     createdAt: row.created_at,
+  }
+}
+
+function mapActiveInputDeliveryRow(row: ActiveInputDeliveryRow): HrcActiveInputDeliveryRecord {
+  return {
+    inputApplicationId: row.input_application_id,
+    inputAttemptId: row.input_attempt_id,
+    ...(row.idempotency_key !== null ? { idempotencyKey: row.idempotency_key } : {}),
+    ...(row.host_session_id !== null ? { hostSessionId: row.host_session_id } : {}),
+    ...(row.generation !== null ? { generation: row.generation } : {}),
+    ...(row.runtime_id !== null ? { runtimeId: row.runtime_id } : {}),
+    ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    status: row.status,
+    request: parseRequiredJson<HrcActiveRunContributionRequest>(row.request_json, 'request_json'),
+    ...(row.response_json !== null
+      ? {
+          response: parseJson<HrcActiveRunContributionResponse>(row.response_json, 'response_json'),
+        }
+      : {}),
+    ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
+    ...(row.error_message !== null ? { errorMessage: row.error_message } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -2457,6 +2540,178 @@ export class SurfaceBindingRepository {
       .all()
 
     return rows.map(mapSurfaceBindingRow)
+  }
+}
+
+export class ActiveInputDeliveryRepository {
+  constructor(private readonly db: Database) {}
+
+  createPending(input: {
+    request: HrcActiveRunContributionRequest
+    now: string
+    hostSessionId?: string | undefined
+    generation?: number | undefined
+    runtimeId?: string | undefined
+    runId?: string | undefined
+  }): HrcActiveInputDeliveryRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO active_input_deliveries (
+          input_application_id,
+          input_attempt_id,
+          idempotency_key,
+          host_session_id,
+          generation,
+          runtime_id,
+          run_id,
+          status,
+          request_json,
+          response_json,
+          error_code,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, ?)
+      `,
+      input.request.inputApplicationId,
+      input.request.inputAttemptId,
+      input.request.idempotencyKey ?? null,
+      input.hostSessionId ?? null,
+      input.generation ?? null,
+      input.runtimeId ?? null,
+      input.runId ?? null,
+      JSON.stringify(input.request),
+      input.now,
+      input.now
+    )
+
+    return requireRecord(
+      this.getByInputApplicationId(input.request.inputApplicationId),
+      `failed to reload active input delivery ${input.request.inputApplicationId}`
+    )
+  }
+
+  getByInputApplicationId(inputApplicationId: string): HrcActiveInputDeliveryRecord | null {
+    const row = this.db
+      .query<ActiveInputDeliveryRow, [string]>(
+        `SELECT ${ACTIVE_INPUT_DELIVERY_COLUMNS}
+           FROM active_input_deliveries
+          WHERE input_application_id = ?`
+      )
+      .get(inputApplicationId)
+
+    return row ? mapActiveInputDeliveryRow(row) : null
+  }
+
+  markAccepted(
+    inputApplicationId: string,
+    response: HrcActiveRunContributionResponse,
+    now: string
+  ): HrcActiveInputDeliveryRecord {
+    return this.markResponse(inputApplicationId, response, now)
+  }
+
+  markRejected(
+    inputApplicationId: string,
+    response: HrcActiveRunContributionResponse,
+    now: string
+  ): HrcActiveInputDeliveryRecord {
+    return this.markResponse(inputApplicationId, response, now)
+  }
+
+  markAmbiguous(
+    inputApplicationId: string,
+    errorCode: string,
+    errorMessage: string,
+    now: string
+  ): HrcActiveInputDeliveryRecord {
+    execute(
+      this.db,
+      `
+        UPDATE active_input_deliveries
+           SET status = 'ambiguous',
+               error_code = ?,
+               error_message = ?,
+               updated_at = ?
+         WHERE input_application_id = ?
+      `,
+      errorCode,
+      errorMessage,
+      now,
+      inputApplicationId
+    )
+
+    return requireRecord(
+      this.getByInputApplicationId(inputApplicationId),
+      `active input delivery not found: ${inputApplicationId}`
+    )
+  }
+
+  markFailed(
+    inputApplicationId: string,
+    errorCode: string,
+    errorMessage: string,
+    now: string
+  ): HrcActiveInputDeliveryRecord {
+    execute(
+      this.db,
+      `
+        UPDATE active_input_deliveries
+           SET status = 'failed',
+               error_code = ?,
+               error_message = ?,
+               updated_at = ?
+         WHERE input_application_id = ?
+      `,
+      errorCode,
+      errorMessage,
+      now,
+      inputApplicationId
+    )
+
+    return requireRecord(
+      this.getByInputApplicationId(inputApplicationId),
+      `active input delivery not found: ${inputApplicationId}`
+    )
+  }
+
+  private markResponse(
+    inputApplicationId: string,
+    response: HrcActiveRunContributionResponse,
+    now: string
+  ): HrcActiveInputDeliveryRecord {
+    execute(
+      this.db,
+      `
+        UPDATE active_input_deliveries
+           SET host_session_id = ?,
+               generation = ?,
+               runtime_id = ?,
+               run_id = ?,
+               status = ?,
+               response_json = ?,
+               error_code = ?,
+               error_message = ?,
+               updated_at = ?
+         WHERE input_application_id = ?
+      `,
+      response.hostSessionId ?? null,
+      response.generation ?? null,
+      response.runtimeId ?? null,
+      response.runId ?? null,
+      response.status,
+      JSON.stringify(response),
+      response.errorCode ?? null,
+      response.errorMessage ?? null,
+      now,
+      inputApplicationId
+    )
+
+    return requireRecord(
+      this.getByInputApplicationId(inputApplicationId),
+      `active input delivery not found: ${inputApplicationId}`
+    )
   }
 }
 
