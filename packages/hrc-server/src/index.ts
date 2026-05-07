@@ -108,6 +108,7 @@ import type {
 } from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
 import {
+  type SdkInflightInputClient,
   buildCliInvocation,
   deliverSdkInflightInput,
   getSdkInflightCapability,
@@ -415,6 +416,9 @@ export type HrcServerOptions = {
    * Env override: `HRC_STALE_GENERATION_ENABLED` (`0`/`false` disables).
    */
   staleGenerationEnabled?: boolean | undefined
+  sdkInflightInputClient?: SdkInflightInputClient | undefined
+  sdkInflightInputRetryDelayMs?: number | undefined
+  sdkInflightInputMissingActiveRunRetryMs?: number | undefined
 }
 
 export type HrcServer = {
@@ -1805,6 +1809,8 @@ class HrcServerInstance implements HrcServer {
       const liveTmuxRuntime = latestRuntime
       const tmuxAvailableAndIdle =
         liveTmuxRuntime &&
+        liveTmuxRuntime.transport === 'tmux' &&
+        liveTmuxRuntime.tmuxJson !== undefined &&
         !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
         liveTmuxRuntime.activeRunId === undefined
       if (!tmuxAvailableAndIdle) {
@@ -2706,6 +2712,22 @@ class HrcServerInstance implements HrcServer {
             scopeRef: runtime.scopeRef,
             laneRef: runtime.laneRef,
             generation: runtime.generation,
+            ...(this.options.sdkInflightInputClient !== undefined
+              ? { client: this.options.sdkInflightInputClient }
+              : {}),
+            ...(this.options.sdkInflightInputRetryDelayMs !== undefined
+              ? { retryDelayMs: this.options.sdkInflightInputRetryDelayMs }
+              : {}),
+            ...(this.options.sdkInflightInputMissingActiveRunRetryMs !== undefined
+              ? {
+                  missingActiveRunRetryMs: this.options.sdkInflightInputMissingActiveRunRetryMs,
+                }
+              : {}),
+            onHrcEvent: (event) => {
+              const appended = this.db.events.append(event)
+              this.notifyEvent(appended)
+              this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+            },
           })
         : { accepted: true, pendingTurns: 0 }
 
@@ -5901,6 +5923,8 @@ class HrcServerInstance implements HrcServer {
 
     this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
+    const sdkHarness = deriveSdkHarness(intent.harness)
+
     const runtime = this.db.runtimes.insert({
       runtimeId,
       runtimeKind: 'harness',
@@ -5909,11 +5933,11 @@ class HrcServerInstance implements HrcServer {
       laneRef: session.laneRef,
       generation: session.generation,
       transport: 'sdk',
-      harness: deriveSdkHarness(intent.harness.provider),
+      harness: sdkHarness,
       provider: intent.harness.provider,
       status: 'busy',
       continuation: session.continuation,
-      supportsInflightInput: getSdkInflightCapability(intent.harness.provider),
+      supportsInflightInput: getSdkInflightCapability(sdkHarness),
       adopted: false,
       activeRunId: runId,
       lastActivityAt: now,
@@ -7659,8 +7683,11 @@ function deriveInteractiveHarness(
   return harness.provider === 'openai' ? 'codex-cli' : 'claude-code'
 }
 
-function deriveSdkHarness(provider: HrcProvider): HrcRuntimeSnapshot['harness'] {
-  return resolveHarnessFrontendForProvider(provider, 'sdk') ?? 'agent-sdk'
+function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnapshot['harness'] {
+  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+    return harness.id
+  }
+  return resolveHarnessFrontendForProvider(harness.provider, 'sdk') ?? 'agent-sdk'
 }
 
 function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {

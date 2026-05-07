@@ -504,6 +504,14 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
   it('marks the ledger ambiguous when enabled provider delivery throws after pending insert', async () => {
     const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
     process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    if (server) {
+      await server.stop()
+    }
+    server = await createHrcServer(
+      fixture.serverOpts({
+        sdkInflightInputMissingActiveRunRetryMs: 0,
+      })
+    )
     seedSdkActiveRuntime({
       hostSessionId: 'hsid-active-ambiguous',
       scopeRef: 'agent:active-contrib-ambiguous',
@@ -622,6 +630,20 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
   it('accepts and idempotently replays AgentSpaces SDK provider contributions', async () => {
     const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
     process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    const providerCalls: unknown[] = []
+    if (server) {
+      await server.stop()
+    }
+    server = await createHrcServer(
+      fixture.serverOpts({
+        sdkInflightInputClient: {
+          queueInFlightInput: async (request) => {
+            providerCalls.push(request)
+            return { accepted: true, pendingTurns: 1 }
+          },
+        },
+      })
+    )
     seedSdkActiveRuntime({
       hostSessionId: 'hsid-active-accepted',
       scopeRef: 'agent:active-contrib-accepted',
@@ -674,6 +696,74 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
       expect(await queried.json()).toEqual(payload)
       expect(row?.status).toBe('accepted')
       expect(row?.response).toEqual(payload)
+      expect(providerCalls).toEqual([
+        expect.objectContaining({
+          hostSessionId: 'hsid-active-accepted',
+          runId: 'hrc-active-accepted',
+          inputApplicationId: 'iap_accepted',
+          idempotencyKey: 'accepted-once',
+          prompt: 'provider should enqueue this as a sequential follow-up',
+        }),
+      ])
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
+  })
+
+  it('retries a transient AgentSpaces SDK in-flight registry miss', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    let providerCalls = 0
+    if (server) {
+      await server.stop()
+    }
+    server = await createHrcServer(
+      fixture.serverOpts({
+        sdkInflightInputRetryDelayMs: 1,
+        sdkInflightInputMissingActiveRunRetryMs: 50,
+        sdkInflightInputClient: {
+          queueInFlightInput: async () => {
+            providerCalls += 1
+            if (providerCalls === 1) {
+              throw new Error('No active in-flight run for hostSessionId hsid-active-retry')
+            }
+            return { accepted: true, pendingTurns: 1 }
+          },
+        },
+      })
+    )
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-active-retry',
+      scopeRef: 'agent:active-contrib-retry',
+      runtimeId: 'rt-active-retry',
+      runId: 'hrc-active-retry',
+      supportsInflightInput: true,
+      provider: 'anthropic',
+    })
+
+    try {
+      const res = await fixture.postJson('/v1/active-run-contributions', {
+        selector: { runtimeId: 'rt-active-retry' },
+        expectedRunId: 'hrc-active-retry',
+        inputAttemptId: 'ia_retry',
+        inputApplicationId: 'iap_retry',
+        prompt: 'provider should enqueue after transient registry readiness',
+      })
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual(
+        expect.objectContaining({
+          status: 'accepted',
+          inputApplicationId: 'iap_retry',
+          runtimeId: 'rt-active-retry',
+          runId: 'hrc-active-retry',
+        })
+      )
+      expect(providerCalls).toBe(2)
     } finally {
       if (previousGate === undefined) {
         process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined

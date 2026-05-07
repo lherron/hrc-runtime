@@ -51,6 +51,7 @@
       },
       "dependencies": {
         "acp-core": "*",
+        "acp-ops-projection": "*",
         "acp-server": "*",
         "cli-kit": "*",
         "commander": "^14.0.0",
@@ -239,7 +240,7 @@
     },
     "packages/cli": {
       "name": "@lherron/agent-spaces",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "bin": {
         "asp": "./bin/asp.js",
       },
@@ -337,6 +338,7 @@
       },
       "dependencies": {
         "acp-core": "*",
+        "acp-ops-projection": "*",
         "discord.js": "^14.16.0",
         "spaces-runtime": "*",
       },

@@ -981,6 +981,28 @@ describe('SDK dispatch via dispatchTurn', () => {
     // The key Phase 2 assertion: transport should be 'sdk', not 'tmux'
     expect(data.transport).toBe('sdk')
   })
+
+  it('keeps follow-up SDK turns on SDK transport after an idle SDK runtime exists', async () => {
+    const hsid = await resolveSession('sdk-test-followup')
+
+    const firstRes = await postJson('/v1/turns', {
+      hostSessionId: hsid,
+      prompt: 'First SDK turn',
+      runtimeIntent: sdkIntent(),
+    })
+    expect(firstRes.status).toBe(200)
+    const firstData = (await firstRes.json()) as any
+    expect(firstData.transport).toBe('sdk')
+
+    const secondRes = await postJson('/v1/turns', {
+      hostSessionId: hsid,
+      prompt: 'Second SDK turn',
+      runtimeIntent: sdkIntent(),
+    })
+    expect(secondRes.status).toBe(200)
+    const secondData = (await secondRes.json()) as any
+    expect(secondData.transport).toBe('sdk')
+  })
 })
 
 // ---------------------------------------------------------------------------

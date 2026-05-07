@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import {
   type AgentEvent,
+  type AgentSpacesClient,
   type RunTurnNonInteractiveRequest,
   type RunTurnNonInteractiveResponse,
   createAgentSpacesClient,
@@ -10,6 +11,7 @@ import {
   type HrcContinuationRef,
   HrcErrorCode,
   type HrcEventEnvelope,
+  type HrcHarness,
   type HrcProvider,
   type HrcRuntimeIntent,
   HrcUnprocessableEntityError,
@@ -54,14 +56,19 @@ export type SdkTurnResult = {
   result: RunTurnNonInteractiveResponse['result']
 }
 
+const sharedAgentSpacesClient = createAgentSpacesClient()
+
+function getSharedAgentSpacesClient(): AgentSpacesClient {
+  return sharedAgentSpacesClient
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3: In-flight input capability and delivery
 // ---------------------------------------------------------------------------
 
-export function getSdkInflightCapability(provider: HrcProvider): boolean {
-  // agent-sdk (anthropic) supports in-flight input via queueInFlightInput
-  // pi-sdk (openai) does not
-  return provider === 'anthropic'
+export function getSdkInflightCapability(frontend: HrcHarness): boolean {
+  // agent-sdk supports in-flight input via queueInFlightInput; pi-sdk does not.
+  return frontend === 'agent-sdk'
 }
 
 export type SdkInflightInputClient = {
@@ -88,6 +95,8 @@ export type SdkInflightInputOptions = {
     | ((event: Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>) => void | Promise<void>)
     | undefined
   client?: SdkInflightInputClient | undefined
+  missingActiveRunRetryMs?: number | undefined
+  retryDelayMs?: number | undefined
 }
 
 export type SdkInflightInputResult = {
@@ -98,18 +107,31 @@ export type SdkInflightInputResult = {
 export async function deliverSdkInflightInput(
   options: SdkInflightInputOptions
 ): Promise<SdkInflightInputResult> {
-  const client = options.client ?? createAgentSpacesClient()
+  const client = options.client ?? getSharedAgentSpacesClient()
   const onHrcEvent = options.onHrcEvent ?? (() => {})
+  const retryUntil = Date.now() + (options.missingActiveRunRetryMs ?? 10_000)
+  const retryDelayMs = options.retryDelayMs ?? 250
 
-  const response = await client.queueInFlightInput({
-    hostSessionId: options.hostSessionId,
-    runId: options.runId,
-    ...(options.inputApplicationId !== undefined
-      ? { inputApplicationId: options.inputApplicationId }
-      : {}),
-    ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
-    prompt: options.prompt,
-  })
+  let response: Awaited<ReturnType<SdkInflightInputClient['queueInFlightInput']>>
+  for (;;) {
+    try {
+      response = await client.queueInFlightInput({
+        hostSessionId: options.hostSessionId,
+        runId: options.runId,
+        ...(options.inputApplicationId !== undefined
+          ? { inputApplicationId: options.inputApplicationId }
+          : {}),
+        ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
+        prompt: options.prompt,
+      })
+      break
+    } catch (error) {
+      if (!isMissingActiveRunError(error) || Date.now() >= retryUntil) {
+        throw error
+      }
+      await delay(retryDelayMs)
+    }
+  }
 
   await onHrcEvent({
     ts: new Date().toISOString(),
@@ -131,6 +153,14 @@ export async function deliverSdkInflightInput(
     accepted: response.accepted,
     pendingTurns: response.pendingTurns,
   }
+}
+
+function isMissingActiveRunError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('No active in-flight run')
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +265,7 @@ async function defaultRunner(
     }
   }
 
-  return createAgentSpacesClient().runTurnNonInteractive(request)
+  return getSharedAgentSpacesClient().runTurnNonInteractive(request)
 }
 
 export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult> {
