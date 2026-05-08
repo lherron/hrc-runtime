@@ -15,7 +15,7 @@
  *   3. The error should be logged with enough context to identify the broken record
  *   4. Other valid fields in the same row must still be returned correctly
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +24,7 @@ import { openHrcDatabase } from '../index'
 
 let tmpDir: string
 let dbPath: string
+let consoleErrorSpy: ReturnType<typeof spyOn<typeof console, 'error'>>
 
 function ts(): string {
   return new Date().toISOString()
@@ -36,9 +37,13 @@ function testScopeRef(scopeKey: string): string {
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-store-json-crash-'))
   dbPath = join(tmpDir, 'test.sqlite')
+  // Capture parseJson's corruption warnings so the harness output stays clean
+  // and we can assert the log carries enough context to identify the broken row.
+  consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(async () => {
+  consoleErrorSpy.mockRestore()
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -78,6 +83,9 @@ describe('C-2: parseJson crash guard', () => {
       expect(session!.hostSessionId).toBe('hsid-corrupt-1')
       // Corrupted JSON field should fall back to undefined, not crash
       expect(session!.parsedScopeJson).toBeUndefined()
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Corrupt JSON in column parsed_scope_json')
+      )
     } finally {
       db.close()
     }
@@ -96,6 +104,9 @@ describe('C-2: parseJson crash guard', () => {
       const session = db.sessions.getByHostSessionId('hsid-corrupt-2')
       expect(session).not.toBeNull()
       expect(session!.continuation).toBeUndefined()
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Corrupt JSON in column continuation_json')
+      )
     } finally {
       db.close()
     }
@@ -132,6 +143,9 @@ describe('C-2: parseJson crash guard', () => {
       expect(runtime).not.toBeNull()
       expect(runtime!.runtimeId).toBe('rt-corrupt-1')
       expect(runtime!.tmuxJson).toBeUndefined()
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Corrupt JSON in column tmux_json')
+      )
     } finally {
       db.close()
     }
@@ -164,6 +178,9 @@ describe('C-2: parseJson crash guard', () => {
       expect(events.length).toBe(1)
       expect(events[0].eventKind).toBe('test.event')
       expect(events[0].eventJson).toBeUndefined()
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Corrupt JSON in column event_json')
+      )
     } finally {
       db.close()
     }
@@ -193,6 +210,9 @@ describe('C-2: parseJson crash guard', () => {
       expect(found).not.toBeNull()
       expect(found!.appSessionKey).toBe('key-1')
       expect(found!.metadata).toBeUndefined()
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Corrupt JSON in column metadata_json')
+      )
     } finally {
       db.close()
     }
