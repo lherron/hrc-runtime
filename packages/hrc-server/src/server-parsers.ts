@@ -45,6 +45,7 @@ export type InFlightInputRequest = {
   idempotencyKey?: string | undefined
   prompt: string
   inputType?: string | undefined
+  semantics?: 'append_context' | 'interrupt_and_continue' | undefined
 }
 
 export type ParsedDispatchAppHarnessTurnRequest = DispatchAppHarnessTurnRequest & {

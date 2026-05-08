@@ -2543,6 +2543,7 @@ class HrcServerInstance implements HrcServer {
           ...(body.idempotencyKey !== undefined ? { idempotencyKey: body.idempotencyKey } : {}),
           prompt: body.prompt,
           ...(body.inputType !== undefined ? { inputType: body.inputType } : {}),
+          ...(body.semantics !== undefined ? { semantics: body.semantics } : {}),
         })
         response = {
           status: delivered.accepted ? 'accepted' : 'rejected',
@@ -2553,10 +2554,14 @@ class HrcServerInstance implements HrcServer {
           runId: runtime.activeRunId,
           capability: {
             supported: true,
-            deliverySemantics: 'sequential_followup',
+            deliverySemantics:
+              body.semantics === 'interrupt_and_continue'
+                ? 'interrupting_steer'
+                : 'sequential_followup',
             ackSemantics: 'accepted_only',
             ordering: 'fifo',
             supportsAttachments: false,
+            ...(body.semantics === 'interrupt_and_continue' ? { canInterruptTools: true } : {}),
           },
           ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
           ...(delivered.accepted
@@ -2709,6 +2714,7 @@ class HrcServerInstance implements HrcServer {
               : {}),
             ...(body.idempotencyKey !== undefined ? { idempotencyKey: body.idempotencyKey } : {}),
             prompt: body.prompt,
+            ...(body.semantics !== undefined ? { semantics: body.semantics } : {}),
             scopeRef: runtime.scopeRef,
             laneRef: runtime.laneRef,
             generation: runtime.generation,
@@ -2745,6 +2751,7 @@ class HrcServerInstance implements HrcServer {
       transport: 'sdk',
       payload: {
         prompt: body.prompt,
+        ...(body.semantics ? { semantics: body.semantics } : {}),
         ...(body.inputType ? { inputType: body.inputType } : {}),
         ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
       },

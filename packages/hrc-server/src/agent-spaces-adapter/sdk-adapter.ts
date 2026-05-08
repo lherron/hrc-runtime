@@ -77,6 +77,7 @@ export type SdkInflightInputClient = {
     runId: string
     inputApplicationId?: string | undefined
     idempotencyKey?: string | undefined
+    semantics?: 'append_context' | 'interrupt_and_continue' | undefined
     prompt: string
   }): Promise<{ accepted: boolean; pendingTurns?: number }>
 }
@@ -87,6 +88,7 @@ export type SdkInflightInputOptions = {
   runtimeId: string
   inputApplicationId?: string | undefined
   idempotencyKey?: string | undefined
+  semantics?: 'append_context' | 'interrupt_and_continue' | undefined
   prompt: string
   scopeRef: string
   laneRef: string
@@ -122,6 +124,7 @@ export async function deliverSdkInflightInput(
           ? { inputApplicationId: options.inputApplicationId }
           : {}),
         ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
+        ...(options.semantics !== undefined ? { semantics: options.semantics } : {}),
         prompt: options.prompt,
       })
       break
@@ -146,6 +149,7 @@ export async function deliverSdkInflightInput(
     eventJson: {
       prompt: options.prompt,
       accepted: response.accepted,
+      ...(options.semantics !== undefined ? { semantics: options.semantics } : {}),
     },
   })
 
