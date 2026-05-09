@@ -324,6 +324,27 @@ while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
   shift
   cmd="\${1:-}"
 done
+if [ "$cmd" = "app-server" ]; then
+  printf 'app-server\\n' >> "$log_path"
+  while IFS= read -r line; do
+    case "$line" in
+      *'"method":"initialize"'*|*'"method": "initialize"'*)
+        printf '{"jsonrpc":"2.0","id":1,"result":{}}\\n'
+        ;;
+      *'"method":"thread/start"'*|*'"method": "thread/start"'*)
+        printf '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"${behavior.execThreadId ?? 'thread-123'}"}}}\\n'
+        ;;
+      *'"method":"turn/start"'*|*'"method": "turn/start"'*)
+        printf '{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"turn-123"}}}\\n'
+        printf '{"jsonrpc":"2.0","method":"item/completed","params":{"turnId":"turn-123","item":{"type":"agentMessage","id":"msg-123","text":"ok"}}}\\n'
+        printf '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"${behavior.execThreadId ?? 'thread-123'}","turnId":"turn-123","tokenUsage":{"total":{"inputTokens":1,"outputTokens":1}}}}\\n'
+        printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"${behavior.execThreadId ?? 'thread-123'}","turn":{"id":"turn-123","status":"completed","items":[]}}}\\n'
+        exit 0
+        ;;
+    esac
+  done
+  exit 0
+fi
 if [ "$cmd" = "exec" ]; then
   printf 'exec\\n' >> "$log_path"
   /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
@@ -1182,7 +1203,7 @@ describe('hrc start', () => {
     expect(existsSync(join(tmuxShimDir, 'tmux-attach.json'))).toBe(false)
   })
 
-  it('uses detached codex exec for start previews when the agent harness is codex', async () => {
+  it('uses detached codex app-server for start previews when the agent harness is codex', async () => {
     await writeCodexAgentProfile('rex')
 
     const result = await runCli(
@@ -1196,8 +1217,8 @@ describe('hrc start', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('provider:     openai')
     expect(result.stdout).toContain('── command ──')
-    expect(result.stdout).toContain('exec --enable goals')
-    expect(result.stdout).toContain('--json')
+    expect(result.stdout).toContain('--enable goals app-server')
+    expect(result.stdout).not.toContain('--json')
   })
 
   it('rotates to a fresh headless session when start uses --new-session', async () => {

@@ -26,6 +26,7 @@
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
+    "spaces-harness-codex": "*",
     "spaces-execution": "*",
     "spaces-runtime": "*"
   },

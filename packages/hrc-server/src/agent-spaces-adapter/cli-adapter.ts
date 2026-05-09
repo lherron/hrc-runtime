@@ -10,6 +10,7 @@
 import {
   type BuildProcessInvocationSpecRequest,
   type BuildProcessInvocationSpecResponse,
+  type ProcessInvocationSpec,
   createAgentSpacesClient,
 } from 'agent-spaces'
 import type {
@@ -77,6 +78,7 @@ export interface CliInvocationResult {
   resolvedBundle?: ResolvedRuntimeBundle | undefined
   prompts?: HrcLaunchPromptMaterial | undefined
   systemPromptFile?: string | undefined
+  codexAppServer?: ProcessInvocationSpec['codexAppServer'] | undefined
   warnings?: string[] | undefined
 }
 
@@ -289,13 +291,9 @@ export async function buildCliInvocation(
   const responseSpec = response.spec as typeof response.spec & {
     prompts?: HrcLaunchPromptMaterial | undefined
     systemPromptFile?: string | undefined
+    codexAppServer?: ProcessInvocationSpec['codexAppServer'] | undefined
   }
-  const argv =
-    frontend === 'codex-cli' &&
-    interactionMode === 'headless' &&
-    !responseSpec.argv.includes('--json')
-      ? [...responseSpec.argv, '--json']
-      : responseSpec.argv
+  const argv = responseSpec.argv
 
   // Build HRC correlation env vars from placement
   const correlationEnv = buildHrcCorrelationEnv(intent)
@@ -316,6 +314,9 @@ export async function buildCliInvocation(
     prompts: responseSpec.prompts,
     ...(responseSpec.systemPromptFile !== undefined
       ? { systemPromptFile: responseSpec.systemPromptFile }
+      : {}),
+    ...(responseSpec.codexAppServer !== undefined
+      ? { codexAppServer: responseSpec.codexAppServer }
       : {}),
     warnings: response.warnings,
   }

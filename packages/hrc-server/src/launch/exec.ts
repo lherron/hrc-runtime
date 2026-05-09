@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util'
 
 import type { HrcLaunchPromptMaterial } from 'hrc-core'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
+import { runCodexAppServerOneShot } from 'spaces-harness-codex/codex-session'
 
 import { postCallback } from './callback-client.js'
 import { injectCodexOtelConfig } from './codex-otel.js'
@@ -216,6 +217,12 @@ type HeadlessCodexOutputState = {
   finalOutput?: string | undefined
 }
 
+function isHeadlessCodexAppServerLaunch(
+  artifact: Awaited<ReturnType<typeof readLaunchArtifact>>
+): boolean {
+  return isHeadlessCodexLaunch(artifact) && artifact.launchMode === 'app-server'
+}
+
 async function pumpHeadlessCodexOutput(
   stream: NodeJS.ReadableStream | null,
   artifact: {
@@ -339,7 +346,7 @@ async function postHeadlessCodexTurnCompleted(
     success: boolean
     usage?: unknown
     finalOutput?: string | undefined
-    source: 'codex_jsonl' | 'launch_exit_synthesized'
+    source: 'codex_jsonl' | 'codex_app_server' | 'launch_exit_synthesized'
   }
 ): Promise<void> {
   await callbackOrSpool(
@@ -364,6 +371,76 @@ async function postHeadlessCodexTurnCompleted(
     artifact.spoolDir,
     artifact.launchId
   )
+}
+
+async function driveHeadlessCodexAppServer(
+  child: ChildProcess,
+  artifact: Awaited<ReturnType<typeof readLaunchArtifact>>
+): Promise<HeadlessCodexOutputState> {
+  if (!artifact.codexAppServer) {
+    process.stderr.write('hrc-launch exec: codex app-server launch missing descriptor\n')
+    return { turnCompleted: false }
+  }
+
+  try {
+    const result = await runCodexAppServerOneShot({
+      proc: child as Parameters<typeof runCodexAppServerOneShot>[0]['proc'],
+      cwd: artifact.cwd,
+      prompt: artifact.codexAppServer.prompt ?? '',
+      resumeThreadId: artifact.codexAppServer.resumeThreadId,
+      model: artifact.codexAppServer.model,
+      modelReasoningEffort: artifact.codexAppServer.modelReasoningEffort,
+      approvalPolicy: artifact.codexAppServer.approvalPolicy ?? 'never',
+      sandboxMode: artifact.codexAppServer.sandboxMode,
+      imageAttachments: artifact.codexAppServer.imageAttachments,
+      onContinuation: async (threadId) => {
+        await callbackOrSpool(
+          artifact.callbackSocketPath,
+          `/v1/internal/launches/${artifact.launchId}/continuation`,
+          {
+            hostSessionId: artifact.hostSessionId,
+            continuation: {
+              provider: 'openai',
+              key: threadId,
+            },
+            harnessSessionJson: {
+              threadId,
+            },
+          },
+          artifact.spoolDir,
+          artifact.launchId
+        )
+      },
+      onEvent: async (event) => {
+        // These are represented by dedicated HRC callbacks in the wrapper.
+        if (event.type === 'turn_end' || event.type === 'agent_start') {
+          return
+        }
+        await callbackOrSpool(
+          artifact.callbackSocketPath,
+          `/v1/internal/launches/${artifact.launchId}/event`,
+          event,
+          artifact.spoolDir,
+          artifact.launchId
+        )
+      },
+    })
+
+    await postHeadlessCodexTurnCompleted(artifact, {
+      success: result.success,
+      usage: result.usage,
+      finalOutput: result.finalOutput,
+      source: 'codex_app_server',
+    })
+
+    return {
+      turnCompleted: result.turnCompleted,
+      ...(result.finalOutput !== undefined ? { finalOutput: result.finalOutput } : {}),
+    }
+  } catch (error) {
+    process.stderr.write(`hrc-launch exec: codex app-server driver failed: ${formatError(error)}\n`)
+    return { turnCompleted: false }
+  }
 }
 
 async function pumpToStderr(stream: NodeJS.ReadableStream | null): Promise<void> {
@@ -507,7 +584,11 @@ async function main(): Promise<void> {
       ...(runtimeId ? { HRC_RUNTIME_ID: runtimeId } : {}),
     },
     cwd: cwd,
-    stdio: isHeadlessCodexLaunch(artifact) ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: isHeadlessCodexAppServerLaunch(artifact)
+      ? ['pipe', 'pipe', 'pipe']
+      : isHeadlessCodexLaunch(artifact)
+        ? ['ignore', 'pipe', 'pipe']
+        : 'inherit',
   })
 
   // Trap SIGHUP/SIGTERM so the wrapper survives tmux session teardown long
@@ -519,13 +600,6 @@ async function main(): Promise<void> {
     })
   }
 
-  const childStdout: Promise<HeadlessCodexOutputState> =
-    isHeadlessCodexLaunch(artifact) && child.stdout
-      ? pumpHeadlessCodexOutput(child.stdout, artifact)
-      : Promise.resolve({ turnCompleted: false } satisfies HeadlessCodexOutputState)
-  const childStderr =
-    isHeadlessCodexLaunch(artifact) && child.stderr ? pumpToStderr(child.stderr) : Promise.resolve()
-
   // POST child-started
   if (child.pid !== undefined) {
     await callbackOrSpool(
@@ -536,6 +610,14 @@ async function main(): Promise<void> {
       launchId
     )
   }
+
+  const childStdout: Promise<HeadlessCodexOutputState> = isHeadlessCodexAppServerLaunch(artifact)
+    ? driveHeadlessCodexAppServer(child, artifact)
+    : isHeadlessCodexLaunch(artifact) && child.stdout
+      ? pumpHeadlessCodexOutput(child.stdout, artifact)
+      : Promise.resolve({ turnCompleted: false } satisfies HeadlessCodexOutputState)
+  const childStderr =
+    isHeadlessCodexLaunch(artifact) && child.stderr ? pumpToStderr(child.stderr) : Promise.resolve()
 
   // Wait for exit, then drain stdout/stderr before posting launch.exited. For
   // headless Codex this guarantees message/turn callbacks are delivered before

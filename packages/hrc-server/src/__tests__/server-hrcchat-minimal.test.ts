@@ -57,30 +57,89 @@ describe('hrcchat minimal server routes', () => {
     await mkdir(binDir, { recursive: true })
     await writeFile(
       scriptPath,
-      `#!/bin/sh
-set -eu
-log_path=${JSON.stringify(logPath)}
-cmd="\${1:-}"
-if [ "$cmd" = "--version" ]; then
-  printf 'codex 99.0.0\\n'
-  exit 0
-fi
-if [ "$cmd" = "app-server" ]; then
-  printf 'codex app-server help\\n'
-  exit 0
-fi
-while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
-  shift
-  shift
-  cmd="\${1:-}"
-done
-if [ "$cmd" = "exec" ]; then
-  printf 'exec:%s\\n' "$*" >> "$log_path"
-  printf '{"type":"thread.started","thread_id":"thread-dm"}\\n'
-  exit 0
-fi
-printf 'interactive:%s\\n' "$*" >> "$log_path"
-exit 0
+      `#!${process.execPath}
+import { appendFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+
+const logPath = ${JSON.stringify(logPath)}
+const args = process.argv.slice(2)
+
+function stripRootFlags(input) {
+  const args = [...input]
+  while (args.length > 0) {
+    const flag = args[0]
+    if (flag === '--enable' || flag === '--disable' || flag === '--model' || flag === '-m' || flag === '-c') {
+      args.splice(0, 2)
+      continue
+    }
+    break
+  }
+  return args
+}
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n')
+}
+
+function emitTurn(threadId) {
+  const turnId = 'turn-dm'
+  const item = { id: 'msg-dm', type: 'agentMessage', text: 'ok' }
+  write({ jsonrpc: '2.0', method: 'turn/started', params: { turn: { id: turnId } } })
+  write({ jsonrpc: '2.0', method: 'item/completed', params: { turnId, item } })
+  write({
+    jsonrpc: '2.0',
+    method: 'thread/tokenUsage/updated',
+    params: { tokenUsage: { input_tokens: 1, output_tokens: 1 } },
+  })
+  write({
+    jsonrpc: '2.0',
+    method: 'turn/completed',
+    params: { turn: { id: turnId, status: 'completed', items: [item] } },
+  })
+}
+
+if (args[0] === '--version') {
+  console.log('codex 99.0.0')
+  process.exit(0)
+}
+
+const commandArgs = stripRootFlags(args)
+const cmd = commandArgs[0] ?? ''
+if (cmd === 'app-server' && commandArgs[1] === '--help') {
+  console.log('codex app-server help')
+  process.exit(0)
+}
+
+if (cmd === 'app-server') {
+  appendFileSync(logPath, 'app-server:' + commandArgs.join(' ') + '\\n')
+  const rl = createInterface({ input: process.stdin })
+  rl.on('line', (line) => {
+    const message = JSON.parse(line)
+    if (!('id' in message)) return
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} })
+      return
+    }
+    if (message.method === 'thread/start') {
+      write({ jsonrpc: '2.0', id: message.id, result: { thread: { id: 'thread-dm' } } })
+      return
+    }
+    if (message.method === 'thread/resume') {
+      write({ jsonrpc: '2.0', id: message.id, result: { thread: { id: message.params?.threadId ?? 'thread-dm' } } })
+      return
+    }
+    if (message.method === 'turn/start') {
+      const threadId = message.params?.threadId ?? 'thread-dm'
+      write({ jsonrpc: '2.0', id: message.id, result: { turn: { id: 'turn-dm' } } })
+      emitTurn(threadId)
+      return
+    }
+  })
+  rl.on('close', () => process.exit(0))
+  setTimeout(() => {}, 60_000)
+} else {
+  appendFileSync(logPath, 'interactive:' + args.join(' ') + '\\n')
+}
 `,
       'utf-8'
     )
@@ -293,13 +352,13 @@ exit 0
       } catch {
         execLog = ''
       }
-      if (execLog.includes('exec:')) {
+      if (execLog.includes('app-server:')) {
         break
       }
       await Bun.sleep(100)
     }
 
-    expect(execLog).toContain('exec:')
+    expect(execLog).toContain('app-server:')
   })
 
   it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {

@@ -113,7 +113,7 @@ export type HrcManagedSessionKind = 'harness' | 'command'
 export type HrcRuntimeKind = 'harness' | 'command'
 
 export type HrcCommandLaunchSpec = {
-  launchMode?: 'shell' | 'exec' | undefined
+  launchMode?: 'shell' | 'exec' | 'app-server' | undefined
   argv?: string[] | undefined
   cwd?: string | undefined
   env?: Record<string, string> | undefined
@@ -195,12 +195,31 @@ export type HrcLaunchArtifact = {
   callbackSocketPath: string
   spoolDir: string
   correlationEnv: Record<string, string>
+  launchMode?: 'exec' | 'app-server' | undefined
   interactionMode?: 'headless' | 'interactive' | undefined
   ioMode?: HrcIoMode | undefined
   lifecycleAction?: 'attach' | 'start' | 'turn' | undefined
   launchEnv?: HrcLaunchEnvConfig | undefined
   prompts?: HrcLaunchPromptMaterial | undefined
   hookBridge?: HrcHookBridgeConfig | undefined
+  codexAppServer?:
+    | {
+        prompt?: string | undefined
+        resumeThreadId?: string | undefined
+        model?: string | undefined
+        modelReasoningEffort?: string | undefined
+        approvalPolicy?: 'untrusted' | 'on-failure' | 'on-request' | 'never' | undefined
+        sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access' | undefined
+        imageAttachments?: string[] | undefined
+        /**
+         * Argv-snapshot metadata used to launch `codex app-server`; the one-shot
+         * driver receives an already-started RPC child and must not reapply these.
+         */
+        profile?: string | undefined
+        featureFlags?: string[] | undefined
+        extraArgs?: string[] | undefined
+      }
+    | undefined
   otel?:
     | {
         transport: 'otlp-http-json'

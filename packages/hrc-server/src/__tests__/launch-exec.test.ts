@@ -336,6 +336,190 @@ describe('hrc-launch exec crash paths', () => {
     )
   })
 
+  it('drives headless codex app-server over JSON-RPC and posts parity callbacks', async () => {
+    const launchId = 'launch-headless-app-server'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const appServerScript = [
+      "const readline = require('node:readline')",
+      'const rl = readline.createInterface({ input: process.stdin })',
+      'function send(value) { process.stdout.write(JSON.stringify(value) + "\\n") }',
+      "rl.on('line', (line) => {",
+      '  const msg = JSON.parse(line)',
+      "  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })",
+      "  if (msg.method === 'thread/start') send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'thread-app-1' } } })",
+      "  if (msg.method === 'turn/start') {",
+      "    if (msg.params.sandboxPolicy?.type !== 'workspaceWrite') { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'bad sandboxPolicy' } }); return }",
+      "    send({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-app-1' } } })",
+      "    send({ jsonrpc: '2.0', method: 'item/started', params: { turnId: 'turn-app-1', item: { type: 'commandExecution', id: 'tool-1', command: 'pwd', cwd: '/tmp', aggregatedOutput: null, exitCode: null, durationMs: null } } })",
+      "    send({ jsonrpc: '2.0', method: 'item/completed', params: { turnId: 'turn-app-1', item: { type: 'commandExecution', id: 'tool-1', command: 'pwd', cwd: '/tmp', aggregatedOutput: '/tmp\\n', exitCode: 0, durationMs: 12 } } })",
+      "    send({ jsonrpc: '2.0', method: 'item/completed', params: { turnId: 'turn-app-1', item: { type: 'agentMessage', id: 'msg-1', text: 'app-server done' } } })",
+      "    send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: 'thread-app-1', turnId: 'turn-app-1', tokenUsage: { total: { inputTokens: 1, outputTokens: 2 } } } })",
+      "    send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-app-1', turn: { id: 'turn-app-1', status: 'completed', items: [] } } })",
+      '    setTimeout(() => process.exit(0), 10)',
+      '  }',
+      '})',
+    ].join('\n')
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        frontend: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [process.execPath, '-e', appServerScript],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+        launchMode: 'app-server',
+        codexAppServer: {
+          prompt: 'use app-server',
+          model: 'gpt-5.5',
+          approvalPolicy: 'never',
+          sandboxMode: 'workspace-write',
+        },
+      } as HrcLaunchArtifact),
+      4_000
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(
+      received.some(
+        (entry) =>
+          entry.url === `/v1/internal/launches/${launchId}/continuation` &&
+          (entry.body as { continuation?: { key?: string } }).continuation?.key === 'thread-app-1'
+      )
+    ).toBe(true)
+    expect(received.some((entry) => (entry.body as { type?: string }).type === 'message_end')).toBe(
+      true
+    )
+    expect(
+      received.some((entry) => (entry.body as { type?: string }).type === 'tool_execution_start')
+    ).toBe(true)
+    expect(
+      received.some(
+        (entry) =>
+          (entry.body as { type?: string; prompt?: string }).type === 'codex.user_prompt' &&
+          (entry.body as { prompt?: string }).prompt === 'use app-server'
+      )
+    ).toBe(true)
+    expect(
+      received.some((entry) => (entry.body as { type?: string }).type === 'tool_execution_end')
+    ).toBe(true)
+    const completed = received.find(
+      (entry) => (entry.body as { type?: string }).type === 'turn.completed'
+    )
+    expect(completed?.body).toMatchObject({
+      type: 'turn.completed',
+      success: true,
+      source: 'codex_app_server',
+      finalOutput: 'app-server done',
+    })
+  })
+
+  it('declines codex app-server approval requests defensively', async () => {
+    const launchId = 'launch-headless-app-server-approval'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const appServerScript = [
+      "const readline = require('node:readline')",
+      'const rl = readline.createInterface({ input: process.stdin })',
+      'function send(value) { process.stdout.write(JSON.stringify(value) + "\\n") }',
+      'const decisions = []',
+      "rl.on('line', (line) => {",
+      '  const msg = JSON.parse(line)',
+      "  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })",
+      "  if (msg.method === 'thread/start') send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'thread-approval-1' } } })",
+      "  if (msg.method === 'turn/start') {",
+      "    send({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-approval-1' } } })",
+      "    send({ jsonrpc: '2.0', id: 90, method: 'item/commandExecution/requestApproval', params: { turnId: 'turn-approval-1', itemId: 'cmd-1', command: 'touch denied' } })",
+      '  }',
+      '  if (msg.id === 90 && msg.result) {',
+      '    decisions.push(msg.result.decision)',
+      "    send({ jsonrpc: '2.0', id: 91, method: 'item/fileChange/requestApproval', params: { turnId: 'turn-approval-1', itemId: 'file-1' } })",
+      '  }',
+      '  if (msg.id === 91 && msg.result) {',
+      '    decisions.push(msg.result.decision)',
+      "    send({ jsonrpc: '2.0', method: 'item/completed', params: { turnId: 'turn-approval-1', item: { type: 'agentMessage', id: 'msg-approval-1', text: decisions.join(',') } } })",
+      "    send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-approval-1', turn: { id: 'turn-approval-1', status: 'completed', items: [] } } })",
+      '    setTimeout(() => process.exit(0), 10)',
+      '  }',
+      '})',
+    ].join('\n')
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        frontend: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [process.execPath, '-e', appServerScript],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+        launchMode: 'app-server',
+        codexAppServer: {
+          prompt: 'approval should be denied',
+          approvalPolicy: 'never',
+        },
+      } as HrcLaunchArtifact),
+      4_000
+    )
+
+    expect(result.exitCode).toBe(0)
+    const completed = received.find(
+      (entry) => (entry.body as { type?: string }).type === 'turn.completed'
+    )
+    expect(completed?.body).toMatchObject({
+      type: 'turn.completed',
+      success: true,
+      source: 'codex_app_server',
+      finalOutput: 'decline,decline',
+    })
+  })
+
   it('synthesizes a turn.completed callback for headless codex when JSONL omits it', async () => {
     const launchId = 'launch-headless-synthesized-turn-completed'
     const socketPath = join(tmpDir, 'callbacks.sock')

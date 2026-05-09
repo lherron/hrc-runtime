@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { openHrcDatabase } from 'hrc-store-sqlite'
+
 import {
   createAgentMessagePayload,
   createUserPromptPayload,
@@ -11,6 +13,7 @@ import {
   deriveSemanticTurnEventFromSdkEvent,
   deriveSemanticTurnMessageFromHookPayload,
   extractLaunchPrimingPrompt,
+  shouldSuppressDuplicateCodexInitialUserPrompt,
 } from '../hrc-event-helper'
 
 describe('hrc semantic turn helpers', () => {
@@ -211,6 +214,120 @@ describe('hrc semantic turn helpers', () => {
         },
       },
     })
+  })
+
+  it('maps codex app-server user prompt callbacks into semantic user prompts', () => {
+    expect(
+      deriveSemanticTurnEventFromLaunchEvent({
+        type: 'codex.user_prompt',
+        prompt: 'hello from app-server',
+      })
+    ).toEqual({
+      eventKind: 'turn.user_prompt',
+      payload: createUserPromptPayload('hello from app-server'),
+    })
+  })
+
+  it('suppresses app-server user prompt callbacks already recorded for the headless run', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'hrc-codex-prompt-dedupe-'))
+    const db = openHrcDatabase(join(tmp, 'hrc.sqlite'))
+    try {
+      const prompt = 'use app-server'
+      const hostSessionId = 'hsid-dedupe'
+      const runtimeId = 'rt-dedupe'
+      const runId = 'run-dedupe'
+      const launchId = 'launch-dedupe'
+      const now = new Date().toISOString()
+      const scopeRef = 'agent:cody:project:agent-spaces:task:T-01389'
+      const laneRef = 'appserver-dedupe'
+
+      db.sessions.insert({
+        hostSessionId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'busy',
+        supportsInflightInput: false,
+        adopted: false,
+        activeRunId: runId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      db.runs.insert({
+        runId,
+        hostSessionId,
+        runtimeId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        transport: 'headless',
+        status: 'started',
+        acceptedAt: now,
+        startedAt: now,
+        updatedAt: now,
+      })
+
+      const rawPrompt = db.events.append({
+        ts: now,
+        hostSessionId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        runtimeId,
+        runId,
+        source: 'hrc',
+        eventKind: 'codex.user_prompt',
+        eventJson: { type: 'codex.user_prompt', prompt },
+      })
+
+      db.hrcEvents.append({
+        ts: now,
+        hostSessionId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        runtimeId,
+        runId,
+        category: 'turn',
+        eventKind: 'turn.user_prompt',
+        transport: 'headless',
+        payload: createUserPromptPayload(prompt),
+      })
+
+      expect(
+        shouldSuppressDuplicateCodexInitialUserPrompt({
+          db,
+          launchId,
+          artifact: {
+            harness: 'codex-cli',
+            argv: ['codex', '--enable', 'goals', 'app-server'],
+            codexAppServer: { prompt },
+          },
+          hostSessionId,
+          runtimeId,
+          runId,
+          prompt,
+          currentEventSeq: rawPrompt.seq,
+        })
+      ).toBe(true)
+    } finally {
+      db.close()
+      await rm(tmp, { recursive: true, force: true })
+    }
   })
 
   it('extracts assistant text from Stop hook transcript_path', async () => {

@@ -206,7 +206,8 @@ function extractCodexPrimingPrompt(argv: readonly string[]): string | undefined 
 }
 
 export function extractLaunchPrimingPrompt(
-  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'> & Partial<Pick<HrcLaunchArtifact, 'env'>>
+  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'> &
+    Partial<Pick<HrcLaunchArtifact, 'env' | 'codexAppServer'>>
 ): string | undefined {
   if (artifact.harness === 'pi') {
     const prompt = artifact.env?.['ASP_PRIMING_PROMPT']
@@ -214,6 +215,10 @@ export function extractLaunchPrimingPrompt(
   }
 
   if (artifact.harness === 'codex-cli') {
+    const prompt = artifact.codexAppServer?.prompt
+    if (prompt && prompt.length > 0) {
+      return prompt
+    }
     return extractCodexPrimingPrompt(artifact.argv)
   }
 
@@ -348,6 +353,22 @@ export function deriveSemanticTurnEventFromLaunchEvent(
 ): SemanticTurnEvent | undefined {
   if (!isRecord(payload)) {
     return undefined
+  }
+
+  const hookDerived = deriveSemanticTurnEventFromHookDerivedEvent(payload)
+  if (hookDerived) {
+    return hookDerived
+  }
+
+  if (payload['type'] === 'codex.user_prompt') {
+    const prompt = typeof payload['prompt'] === 'string' ? payload['prompt'] : undefined
+    if (!prompt || prompt.length === 0) {
+      return undefined
+    }
+    return {
+      eventKind: 'turn.user_prompt',
+      payload: createUserPromptPayload(prompt),
+    }
   }
 
   if (payload['type'] === 'turn.completed' || payload['type'] === 'turn_completed') {
@@ -634,7 +655,8 @@ function payloadMatchesUserPrompt(payload: unknown, prompt: string): boolean {
 export function shouldSuppressDuplicateCodexInitialUserPrompt(params: {
   db: HrcDatabase
   launchId: string
-  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'>
+  artifact: Pick<HrcLaunchArtifact, 'harness' | 'argv'> &
+    Partial<Pick<HrcLaunchArtifact, 'env' | 'codexAppServer'>>
   hostSessionId: string
   runtimeId?: string | undefined
   runId?: string | undefined
@@ -659,9 +681,17 @@ export function shouldSuppressDuplicateCodexInitialUserPrompt(params: {
     return false
   }
 
-  return params.db.hrcEvents
-    .listByLaunch(params.launchId, { eventKind: 'turn.user_prompt' })
-    .some((event) => payloadMatchesUserPrompt(event.payload, params.prompt))
+  const priorPromptEvents =
+    params.runId || params.runtimeId
+      ? params.db.hrcEvents.listFromHrcSeq(1, {
+          hostSessionId: params.hostSessionId,
+          ...(params.runtimeId ? { runtimeId: params.runtimeId } : {}),
+          ...(params.runId ? { runId: params.runId } : {}),
+          eventKind: 'turn.user_prompt',
+        })
+      : params.db.hrcEvents.listByLaunch(params.launchId, { eventKind: 'turn.user_prompt' })
+
+  return priorPromptEvents.some((event) => payloadMatchesUserPrompt(event.payload, params.prompt))
 }
 
 export function appendHrcEvent(

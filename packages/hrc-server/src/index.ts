@@ -302,6 +302,8 @@ function buildLaunchLogDetails(
       correlationEnv: artifact.correlationEnv,
       ...(artifact.launchEnv ? { launchEnv: artifact.launchEnv } : {}),
       ...(artifact.hookBridge ? { hookBridge: artifact.hookBridge } : {}),
+      ...(artifact.launchMode ? { launchMode: artifact.launchMode } : {}),
+      ...(artifact.codexAppServer ? { codexAppServer: artifact.codexAppServer } : {}),
     },
   }
 }
@@ -309,9 +311,10 @@ function buildLaunchLogDetails(
 function buildLaunchOtelConfig(
   harness: HrcHarness,
   launchId: string,
-  endpoint: string | undefined
+  endpoint: string | undefined,
+  interactionMode?: 'headless' | 'interactive' | undefined
 ): HrcLaunchArtifact['otel'] {
-  if (harness !== 'codex-cli' || !endpoint) {
+  if (harness !== 'codex-cli' || !endpoint || interactionMode === 'headless') {
     return undefined
   }
 
@@ -1848,7 +1851,12 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
+    const launchOtel = buildLaunchOtelConfig(
+      runtime.harness,
+      launchId,
+      this.otelEndpoint,
+      cliInvocation.interactionMode
+    )
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -1864,7 +1872,9 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
+      ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
+      ...(cliInvocation.codexAppServer ? { codexAppServer: cliInvocation.codexAppServer } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -2338,7 +2348,12 @@ class HrcServerInstance implements HrcServer {
     const cliInvocation = await buildDispatchInvocation(turnIntent, { continuation })
     const launchCwd = await resolveDispatchCwd(cliInvocation.cwd, turnIntent)
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
+    const launchOtel = buildLaunchOtelConfig(
+      runtime.harness,
+      launchId,
+      this.otelEndpoint,
+      cliInvocation.interactionMode
+    )
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -2354,9 +2369,11 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(cliInvocation.env),
+      ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: cliInvocation.interactionMode,
       ioMode: cliInvocation.ioMode,
       ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
+      ...(cliInvocation.codexAppServer ? { codexAppServer: cliInvocation.codexAppServer } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -3778,7 +3795,12 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
+    const launchOtel = buildLaunchOtelConfig(
+      runtime.harness,
+      launchId,
+      this.otelEndpoint,
+      invocation.interactionMode
+    )
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -3793,10 +3815,12 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
+      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
       ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
+      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -3977,7 +4001,12 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
+    const launchOtel = buildLaunchOtelConfig(
+      runtime.harness,
+      launchId,
+      this.otelEndpoint,
+      invocation.interactionMode
+    )
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -3992,10 +4021,12 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(invocation.env),
+      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'start',
       ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
+      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -4159,7 +4190,12 @@ class HrcServerInstance implements HrcServer {
       AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(runtime.harness, launchId, this.otelEndpoint)
+    const launchOtel = buildLaunchOtelConfig(
+      runtime.harness,
+      launchId,
+      this.otelEndpoint,
+      invocation.interactionMode
+    )
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -4174,10 +4210,12 @@ class HrcServerInstance implements HrcServer {
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
       correlationEnv: extractCorrelationEnv(launchEnv),
+      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
       lifecycleAction: 'attach',
       ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
+      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
       ...(launchOtel ? { otel: launchOtel } : {}),
     } satisfies Parameters<typeof writeLaunchArtifact>[0]
 
@@ -4993,7 +5031,25 @@ class HrcServerInstance implements HrcServer {
     }
     this.notifyEvent(appendedEvent)
     const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
-    if (semanticEvent) {
+    let suppressSemanticUserPrompt = false
+    if (
+      semanticEvent?.eventKind === 'turn.user_prompt' &&
+      body.type === 'codex.user_prompt' &&
+      typeof body['prompt'] === 'string'
+    ) {
+      const artifact = await readLaunchArtifact(launch.launchArtifactPath)
+      suppressSemanticUserPrompt = shouldSuppressDuplicateCodexInitialUserPrompt({
+        db: this.db,
+        launchId,
+        artifact,
+        hostSessionId: launch.hostSessionId,
+        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
+        ...(runId ? { runId } : {}),
+        prompt: body['prompt'],
+        currentEventSeq: appendedEvent.seq,
+      })
+    }
+    if (semanticEvent && !suppressSemanticUserPrompt) {
       const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
         ts: now,
         hostSessionId: launch.hostSessionId,
@@ -9534,6 +9590,7 @@ async function buildDispatchInvocation(
   interactionMode: 'headless' | 'interactive'
   ioMode: 'inherit' | 'pipes' | 'pty'
   prompts?: HrcLaunchPromptMaterial | undefined
+  codexAppServer?: HrcLaunchArtifact['codexAppServer'] | undefined
 }> {
   let env: Record<string, string> = {}
   let cwd = intent.placement.cwd ?? process.cwd()
@@ -9562,6 +9619,7 @@ async function buildDispatchInvocation(
         interactionMode,
         ioMode,
         ...(prompts ? { prompts } : {}),
+        ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
       }
     }
     unavailableCommand = invocation.argv[0]

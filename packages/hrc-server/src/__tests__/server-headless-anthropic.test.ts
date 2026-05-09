@@ -242,41 +242,98 @@ async function installFakeCodex(
   const binDir = join(fixture.tmpDir, dirName)
   const logPath = join(binDir, 'codex.log')
   const scriptPath = join(binDir, 'codex')
-  const execDelaySeconds = ((options.execDelayMs ?? 0) / 1000).toFixed(3)
 
   await mkdir(binDir, { recursive: true })
   await writeFile(
     scriptPath,
-    `#!/bin/sh
-set -eu
-log_path=${JSON.stringify(logPath)}
-cmd="\${1:-}"
-if [ "$cmd" = "--version" ]; then
-  printf 'codex 99.0.0\\n'
-  exit 0
-fi
-if [ "$cmd" = "app-server" ]; then
-  printf 'codex app-server help\\n'
-  exit 0
-fi
-while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
-  shift
-  shift
-  cmd="\${1:-}"
-done
-if [ "$cmd" = "exec" ]; then
-  printf 'exec:%s\\n' "$*" >> "$log_path"
-  if [ ${JSON.stringify(execDelaySeconds)} != "0.000" ]; then
-    /bin/sleep ${JSON.stringify(execDelaySeconds)}
-  fi
-  printf '{"type":"thread.started","thread_id":"thread-openai-headless"}\\n'
-  printf '{"type":"turn.started"}\\n'
-  printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\\n'
-  printf '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\\n'
-  exit 0
-fi
-printf 'interactive:%s\\n' "$*" >> "$log_path"
-exit 0
+    `#!${process.execPath}
+import { appendFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+
+const args = process.argv.slice(2)
+const logPath = ${JSON.stringify(logPath)}
+const execDelayMs = ${JSON.stringify(options.execDelayMs ?? 0)}
+
+function stripRootFlags(input) {
+  const args = [...input]
+  while (args.length > 0) {
+    const flag = args[0]
+    if (flag === '--enable' || flag === '--disable' || flag === '--model' || flag === '-m' || flag === '-c') {
+      args.splice(0, 2)
+      continue
+    }
+    break
+  }
+  return args
+}
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n')
+}
+
+function emitTurn() {
+  const turnId = 'turn-openai-headless'
+  const item = { id: 'item_0', type: 'agentMessage', text: 'ok' }
+  write({ jsonrpc: '2.0', method: 'turn/started', params: { turn: { id: turnId } } })
+  write({ jsonrpc: '2.0', method: 'item/completed', params: { turnId, item } })
+  write({
+    jsonrpc: '2.0',
+    method: 'thread/tokenUsage/updated',
+    params: { tokenUsage: { input_tokens: 1, output_tokens: 1 } },
+  })
+  write({
+    jsonrpc: '2.0',
+    method: 'turn/completed',
+    params: { turn: { id: turnId, status: 'completed', items: [item] } },
+  })
+}
+
+if (args[0] === '--version') {
+  console.log('codex 99.0.0')
+  process.exit(0)
+}
+
+const commandArgs = stripRootFlags(args)
+const cmd = commandArgs[0] ?? ''
+
+if (cmd === 'app-server' && commandArgs[1] === '--help') {
+  console.log('codex app-server help')
+  process.exit(0)
+}
+
+if (cmd === 'app-server') {
+  appendFileSync(logPath, 'app-server:' + commandArgs.join(' ') + '\\n')
+  const rl = createInterface({ input: process.stdin })
+  rl.on('line', (line) => {
+    const message = JSON.parse(line)
+    if (!('id' in message)) return
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} })
+      return
+    }
+    if (message.method === 'thread/start') {
+      write({ jsonrpc: '2.0', id: message.id, result: { thread: { id: 'thread-openai-headless' } } })
+      return
+    }
+    if (message.method === 'thread/resume') {
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { thread: { id: message.params?.threadId ?? 'thread-openai-headless' } },
+      })
+      return
+    }
+    if (message.method === 'turn/start') {
+      write({ jsonrpc: '2.0', id: message.id, result: { turn: { id: 'turn-openai-headless' } } })
+      setTimeout(emitTurn, execDelayMs)
+      return
+    }
+  })
+  rl.on('close', () => process.exit(0))
+  setTimeout(() => {}, 60_000)
+} else {
+  appendFileSync(logPath, 'interactive:' + args.join(' ') + '\\n')
+}
 `,
     'utf-8'
   )
@@ -516,12 +573,12 @@ describe('D. DM fallback', () => {
       } catch {
         execLog = ''
       }
-      if (execLog.includes('exec:')) {
+      if (execLog.includes('app-server:')) {
         break
       }
       await Bun.sleep(100)
     }
-    expect(execLog).toContain('exec:')
+    expect(execLog).toContain('app-server:')
   })
 
   it('waits for a headless DM response timeout when wait is explicitly requested', async () => {
@@ -581,11 +638,12 @@ describe('E. Regression', () => {
     const hrcEvents = getRunHrcEvents(data.runId)
     const hrcKinds = hrcEvents.map((event) => event.eventKind)
     expect(messageEnd).toBeDefined()
-    expect(messageEnd?.eventJson).toEqual({
+    expect(messageEnd?.eventJson).toMatchObject({
       type: 'message_end',
+      messageId: 'item_0',
       message: {
         role: 'assistant',
-        content: [{ type: 'text', text: 'ok' }],
+        content: 'ok',
       },
     })
     expect(hrcKinds).toContain('turn.user_prompt')
@@ -594,7 +652,7 @@ describe('E. Regression', () => {
     expect(hrcEvents.find((event) => event.eventKind === 'turn.completed')?.payload).toMatchObject({
       success: true,
       transport: 'headless',
-      source: 'codex_jsonl',
+      source: 'codex_app_server',
       finalOutput: 'ok',
     })
   })

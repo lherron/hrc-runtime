@@ -324,10 +324,15 @@ function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
 
   const command = (input ?? {}) as Record<string, unknown>
   const launchMode = command['launchMode']
-  if (launchMode !== undefined && launchMode !== 'shell' && launchMode !== 'exec') {
+  if (
+    launchMode !== undefined &&
+    launchMode !== 'shell' &&
+    launchMode !== 'exec' &&
+    launchMode !== 'app-server'
+  ) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      'spec.command.launchMode must be "shell" or "exec"',
+      'spec.command.launchMode must be "shell", "exec", or "app-server"',
       { field: 'spec.command.launchMode' }
     )
   }
@@ -353,11 +358,11 @@ function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
     return entry
   })
 
-  const effectiveLaunchMode = (launchMode ?? 'exec') as 'shell' | 'exec'
-  if (effectiveLaunchMode === 'exec' && (!argv || argv.length === 0)) {
+  const effectiveLaunchMode = (launchMode ?? 'exec') as 'shell' | 'exec' | 'app-server'
+  if (effectiveLaunchMode !== 'shell' && (!argv || argv.length === 0)) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
-      'spec.command.argv is required when launchMode is "exec"',
+      `spec.command.argv is required when launchMode is "${effectiveLaunchMode}"`,
       { field: 'spec.command.argv' }
     )
   }
