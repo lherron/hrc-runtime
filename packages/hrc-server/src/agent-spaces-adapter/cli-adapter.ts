@@ -167,7 +167,7 @@ function resolveCliFrontend(intent: HrcRuntimeIntent): CliFrontend {
 // Internal: build HRC correlation env vars from placement
 // ---------------------------------------------------------------------------
 
-function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string, string> {
+export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string, string> {
   const env: Record<string, string> = {}
   const correlation = intent.placement?.correlation
   const taskContext = intent.taskContext

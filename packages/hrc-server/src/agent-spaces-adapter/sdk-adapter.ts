@@ -21,8 +21,9 @@ import {
   resolveHarnessFrontendForProvider,
   resolveHarnessProvider,
 } from 'spaces-config'
+import { detectAgentLocalComponents, prepareAgentToolRuntime } from 'spaces-execution'
 
-import { UnsupportedHarnessError } from './cli-adapter.js'
+import { UnsupportedHarnessError, buildHrcCorrelationEnv, mergeEnv } from './cli-adapter.js'
 
 export type SdkTurnRunner = (
   request: RunTurnNonInteractiveRequest
@@ -216,6 +217,25 @@ function inferHarnessSessionJson(
   }
 }
 
+async function buildSdkRequestEnv(intent: HrcRuntimeIntent): Promise<Record<string, string>> {
+  let env = buildHrcCorrelationEnv(intent)
+  const components = await detectAgentLocalComponents(intent.placement.agentRoot)
+
+  if (components?.hasTools) {
+    const toolRuntime = await prepareAgentToolRuntime(
+      {
+        agentRoot: intent.placement.agentRoot,
+        projectRoot: intent.placement.projectRoot,
+        components,
+      },
+      env
+    )
+    env = { ...env, ...toolRuntime.env }
+  }
+
+  return mergeEnv(env, intent.launch)
+}
+
 async function defaultRunner(
   request: RunTurnNonInteractiveRequest,
   intent: HrcRuntimeIntent
@@ -298,6 +318,7 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
 
   const onHrcEvent = options.onHrcEvent ?? (() => {})
   const onBuffer = options.onBuffer ?? (() => {})
+  const env = await buildSdkRequestEnv(options.intent)
 
   const runnerPromise = runner({
     aspHome: getAspHome(), // required by type but ignored when placement is set
@@ -306,6 +327,7 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
     placement: options.intent.placement,
     frontend,
     model: options.intent.harness.model,
+    env,
     prompt: options.prompt,
     ...(options.intent.attachments !== undefined
       ? { attachments: options.intent.attachments }
