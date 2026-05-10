@@ -9,7 +9,7 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "bash -lc 'for pkg in \"acp-admin-store\" \"acp-cli\" \"acp-conversation\" \"acp-core\" \"acp-e2e\" \"acp-interface-store\" \"acp-jobs-store\" \"acp-server\" \"acp-state-store\" \"agent-scope\" \"agent-spaces\" \"cli-kit\" \"@lherron/agent-spaces\" \"spaces-config\" \"coordination-substrate\" \"spaces-execution\" \"gateway-discord\" \"spaces-harness-claude\" \"spaces-harness-codex\" \"spaces-harness-pi-sdk\" \"spaces-harness-pi\" \"hrc-cli\" \"hrc-core\" \"hrc-events\" \"hrc-sdk\" \"hrc-server\" \"hrc-store-sqlite\" \"hrcchat-cli\" \"spaces-runtime\" \"wrkq-lib\" \"spaces-integration-tests\"; do bun run --filter \"$pkg\" test || exit $?; done'",
+    "test": "bash -lc 'bun test tests/conformance/acp-workflow && for pkg in \"acp-admin-store\" \"acp-cli\" \"acp-conversation\" \"acp-core\" \"acp-e2e\" \"acp-interface-store\" \"acp-jobs-store\" \"acp-server\" \"acp-state-store\" \"agent-scope\" \"agent-spaces\" \"cli-kit\" \"@lherron/agent-spaces\" \"spaces-config\" \"coordination-substrate\" \"spaces-execution\" \"gateway-discord\" \"spaces-harness-claude\" \"spaces-harness-codex\" \"spaces-harness-pi-sdk\" \"spaces-harness-pi\" \"hrc-cli\" \"hrc-core\" \"hrc-events\" \"hrc-sdk\" \"hrc-server\" \"hrc-store-sqlite\" \"hrcchat-cli\" \"spaces-runtime\" \"wrkq-lib\" \"spaces-integration-tests\"; do bun run --filter \"$pkg\" test || exit $?; done'",
     "test:fast": "bun scripts/test-fast.ts",
     "test:integration": "bun test integration-tests/tests",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
