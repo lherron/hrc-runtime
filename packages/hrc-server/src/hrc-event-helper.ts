@@ -387,6 +387,7 @@ export function deriveSemanticTurnEventFromLaunchEvent(
           ? { finalOutput: payload['finalOutput'] }
           : {}),
         ...(isRecord(payload['message']) ? { message: payload['message'] } : {}),
+        ...(isRecord(payload['outcome']) ? { outcome: payload['outcome'] } : {}),
       },
     }
   }

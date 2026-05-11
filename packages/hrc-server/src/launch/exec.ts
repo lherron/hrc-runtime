@@ -366,7 +366,13 @@ async function postHeadlessCodexTurnCompleted(
               content: [{ type: 'text', text: input.finalOutput }],
             },
           }
-        : {}),
+        : {
+            outcome: {
+              state: 'degraded',
+              reason: 'no_assistant_content',
+              source: input.source,
+            },
+          }),
     },
     artifact.spoolDir,
     artifact.launchId

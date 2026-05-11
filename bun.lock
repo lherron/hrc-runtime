@@ -54,6 +54,7 @@
         "acp-ops-projection": "*",
         "acp-server": "*",
         "agent-action-render": "*",
+        "agent-scope": "*",
         "chalk": "^5.6.2",
         "cli-kit": "*",
         "commander": "^14.0.0",
@@ -116,6 +117,7 @@
       "name": "acp-interface-store",
       "version": "0.1.0",
       "dependencies": {
+        "agent-scope": "*",
         "better-sqlite3": "^11.10.0",
       },
       "devDependencies": {
@@ -377,6 +379,7 @@
         "acp-core": "*",
         "acp-ops-projection": "*",
         "agent-action-render": "*",
+        "agent-scope": "*",
         "discord.js": "^14.16.0",
         "spaces-runtime": "*",
       },
