@@ -56,6 +56,7 @@
         "cli-kit": "*",
         "commander": "^14.0.0",
         "gateway-discord": "*",
+        "spaces-config": "*",
         "wrkq-lib": "*",
       },
       "devDependencies": {
