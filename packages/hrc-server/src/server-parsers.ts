@@ -969,6 +969,14 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const runtimeIntent = input['runtimeIntent']
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
+  const waitForCompletion = input['waitForCompletion']
+  if (waitForCompletion !== undefined && typeof waitForCompletion !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'waitForCompletion must be a boolean',
+      { field: 'waitForCompletion' }
+    )
+  }
   const allowStaleGeneration = input['allowStaleGeneration']
   if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
     throw new HrcBadRequestError(
@@ -986,6 +994,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
       ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
       : {}),
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
+    ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
   }
 }

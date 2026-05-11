@@ -106,6 +106,16 @@ describe('server-parsers runtime intent harness resolution', () => {
     }
   })
 
+  it('parseDispatchTurnRequest preserves waitForCompletion for detached dispatch', () => {
+    const parsed = parseDispatchTurnRequest({
+      hostSessionId: 'hsid-test',
+      prompt: 'ship it',
+      waitForCompletion: false,
+    })
+
+    expect(parsed.waitForCompletion).toBe(false)
+  })
+
   it('rejects omitted harness when placement.agentRoot cannot resolve a profile', () => {
     expect(() =>
       parseEnsureRuntimeRequest({

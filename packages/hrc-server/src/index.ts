@@ -1783,6 +1783,7 @@ class HrcServerInstance implements HrcServer {
 
     return await this.dispatchTurnForSession(session, intent, body.prompt, {
       runId,
+      waitForCompletion: body.waitForCompletion,
     })
   }
 

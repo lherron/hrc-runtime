@@ -125,6 +125,7 @@ export type DispatchTurnRequest = {
   attachments?: AttachmentRef[] | undefined
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
+  waitForCompletion?: boolean | undefined
   /**
    * Opt out of the server's stale-generation auto-rotation policy.
    * See {@link EnsureRuntimeRequest.allowStaleGeneration}.
