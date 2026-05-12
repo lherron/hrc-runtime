@@ -28,13 +28,20 @@ function todosPreview(input: Record<string, unknown>): string | undefined {
   return `${todos.length} todo${todos.length === 1 ? '' : 's'}`
 }
 
-export function unwrapShell(cmd: string): string | undefined {
+function shellWrapperCommand(cmd: string): string | undefined {
   const match = cmd.match(/^\s*(?:\/bin\/)?(?:zsh|bash|sh)\s+-l?c\s+/)
   if (!match) return undefined
 
-  const rest = cmd.slice(match[0].length)
+  const rest = cmd.slice(match[0].length).trim()
+  return rest.length > 0 ? rest : undefined
+}
+
+export function unwrapShell(cmd: string): string | undefined {
+  const rest = shellWrapperCommand(cmd)
+  if (rest === undefined) return undefined
+
   const first = rest[0]
-  if (first !== "'" && first !== '"') return undefined
+  if (first !== "'" && first !== '"') return rest
 
   const lastQuoteIndex = rest.lastIndexOf(first)
   if (lastQuoteIndex <= 0) return undefined
@@ -49,7 +56,7 @@ export function unwrapShell(cmd: string): string | undefined {
 }
 
 export function looksLikeShell(cmd: string): boolean {
-  if (unwrapShell(cmd) !== undefined) return true
+  if (shellWrapperCommand(cmd) !== undefined) return true
   return /(?<!\\)(?:[|&;<>`~*]|\$\()/.test(cmd)
 }
 

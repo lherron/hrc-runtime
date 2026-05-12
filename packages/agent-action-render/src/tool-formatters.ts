@@ -64,8 +64,8 @@ export function formatToolLine(
   const presenter = resolveToolPresenter(toolName, input ?? {})
   const displayName = getToolDisplayName(presenter, toolName, input ?? {})
   const emoji = failed ? '❌' : presenter.emoji
-  const prefix = `${emoji} ${displayName}: "`
-  const suffix = '"'
+  const prefix = `${emoji} ${displayName}: `
+  const suffix = ''
   const previewBudget = Math.min(MAX_PREVIEW_CHARS, MAX_LINE_CHARS - prefix.length - suffix.length)
 
   const preview = truncateText(extractToolPreview(toolName, input, summary), previewBudget)
