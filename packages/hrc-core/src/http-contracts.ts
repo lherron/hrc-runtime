@@ -143,8 +143,14 @@ export type DispatchTurnResponse = {
   supportsInFlightInput: boolean
 }
 
+export type ActiveRunContributionCapabilityReason =
+  | 'feature_disabled'
+  | 'transport_unsupported'
+  | 'inflight_unsupported'
+
 export type ActiveRunContributionCapability = {
   supported: boolean
+  reason?: ActiveRunContributionCapabilityReason | undefined
   deliverySemantics?:
     | 'same_turn_append'
     | 'interrupting_steer'
@@ -186,7 +192,7 @@ export type HrcActiveRunContributionRequest = {
 }
 
 export type HrcActiveRunContributionResponse = {
-  status: 'accepted' | 'duplicate' | 'rejected' | 'pending'
+  status: 'accepted' | 'duplicate' | 'rejected' | 'pending' | 'queue_recommended'
   inputApplicationId: string
   hostSessionId?: string | undefined
   generation?: number | undefined
