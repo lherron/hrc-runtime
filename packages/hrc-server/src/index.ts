@@ -378,6 +378,8 @@ const NDJSON_HEADERS = {
   'content-type': 'application/x-ndjson; charset=utf-8',
 }
 
+export const HRC_EVENTS_KEEPALIVE_MS = 5_000
+
 export type HrcServerOptions = {
   runtimeRoot: string
   stateRoot: string
@@ -610,11 +612,12 @@ class HrcServerInstance implements HrcServer {
   ) {
     this.server = Bun.serve({
       unix: options.socketPath,
-      fetch: (request, server) => {
+      idleTimeout: 255,
+      fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => {
         server.timeout(request, 0)
         return this.handleRequest(request)
       },
-    })
+    } as unknown as Parameters<typeof Bun.serve>[0])
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
@@ -1705,7 +1708,7 @@ class HrcServerInstance implements HrcServer {
           } catch {
             // Stream closed
           }
-        }, 10_000)
+        }, HRC_EVENTS_KEEPALIVE_MS)
 
         request.signal.addEventListener('abort', close, { once: true })
       },

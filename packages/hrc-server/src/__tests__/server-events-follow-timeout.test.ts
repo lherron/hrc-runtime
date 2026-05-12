@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { createHrcServer } from '../index'
+import * as hrcServer from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -34,7 +34,7 @@ describe('event follow server configuration', () => {
       } as ReturnType<typeof Bun.serve>
     }) as typeof Bun.serve
 
-    server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    server = await hrcServer.createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
 
     expect(capturedOptions).toBeDefined()
     const timeoutCalls: Array<{ request: Request; seconds: number }> = []
@@ -51,5 +51,28 @@ describe('event follow server configuration', () => {
     )
 
     expect(timeoutCalls).toEqual([{ request, seconds: 0 }])
+  })
+
+  it('sets the Bun global idle timeout cap to 255 seconds', async () => {
+    let capturedOptions: Parameters<typeof Bun.serve>[0] | undefined
+
+    Bun.serve = ((options: Parameters<typeof Bun.serve>[0]) => {
+      capturedOptions = options
+      return {
+        stop() {},
+      } as ReturnType<typeof Bun.serve>
+    }) as typeof Bun.serve
+
+    server = await hrcServer.createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+
+    expect(capturedOptions).toBeDefined()
+    expect((capturedOptions as { idleTimeout?: number } | undefined)?.idleTimeout).toBe(255)
+  })
+
+  it('keeps follow-mode event stream heartbeats inside the Bun idle timeout window', () => {
+    expect((hrcServer as { HRC_EVENTS_KEEPALIVE_MS?: number }).HRC_EVENTS_KEEPALIVE_MS).toBeNumber()
+    expect(
+      (hrcServer as { HRC_EVENTS_KEEPALIVE_MS?: number }).HRC_EVENTS_KEEPALIVE_MS
+    ).toBeLessThanOrEqual(5000)
   })
 })
