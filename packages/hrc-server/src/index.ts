@@ -2615,16 +2615,18 @@ class HrcServerInstance implements HrcServer {
         } satisfies HrcActiveRunContributionResponse)
       }
     } else {
+      const contributionsEnabledEnv = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] === '1'
       response = {
-        status: 'rejected',
+        status: 'queue_recommended',
         inputApplicationId: body.inputApplicationId,
         hostSessionId: runtime.hostSessionId,
         generation: runtime.generation,
         runtimeId: runtime.runtimeId,
         runId: runtime.activeRunId,
-        capability: { supported: false },
-        errorCode: 'active_run_contribution_disabled',
-        errorMessage: 'active-run contribution is disabled until provider capability is proven',
+        capability: {
+          supported: false,
+          reason: !contributionsEnabledEnv ? 'feature_disabled' : 'inflight_unsupported',
+        },
       }
     }
 

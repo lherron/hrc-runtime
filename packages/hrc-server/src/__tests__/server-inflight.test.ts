@@ -462,7 +462,9 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
     )
   })
 
-  it('keeps provider delivery disabled even when an active run matches', async () => {
+  it('recommends queue fallback when the contribution feature gate is disabled', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '0'
     fixture.seedSession('hsid-active-disabled', 'active-contrib-disabled')
     fixture.seedTmuxRuntime(
       'hsid-active-disabled',
@@ -474,31 +476,83 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
       }
     )
 
-    const res = await fixture.postJson('/v1/active-run-contributions', {
-      selector: {
-        sessionRef: {
-          scopeRef: 'agent:active-contrib-disabled',
-          laneRef: 'default',
+    try {
+      const res = await fixture.postJson('/v1/active-run-contributions', {
+        selector: {
+          sessionRef: {
+            scopeRef: 'agent:active-contrib-disabled',
+            laneRef: 'default',
+          },
         },
-      },
-      expectedRunId: 'hrc-active-disabled',
-      inputAttemptId: 'ia_disabled',
-      inputApplicationId: 'iap_disabled',
-      prompt: 'would contribute if enabled',
-    })
-
-    expect(res.status).toBe(200)
-    const payload = (await res.json()) as any
-    expect(payload).toEqual(
-      expect.objectContaining({
-        status: 'rejected',
+        expectedRunId: 'hrc-active-disabled',
+        inputAttemptId: 'ia_disabled',
         inputApplicationId: 'iap_disabled',
-        runtimeId: 'rt-active-disabled',
-        runId: 'hrc-active-disabled',
-        errorCode: 'active_run_contribution_disabled',
-        capability: { supported: false },
+        prompt: 'would contribute if enabled',
       })
+
+      expect(res.status).toBe(200)
+      const payload = (await res.json()) as any
+      expect(payload).toEqual(
+        expect.objectContaining({
+          status: 'queue_recommended',
+          inputApplicationId: 'iap_disabled',
+          runtimeId: 'rt-active-disabled',
+          runId: 'hrc-active-disabled',
+          capability: { supported: false, reason: 'feature_disabled' },
+        })
+      )
+      expect(payload.errorCode).toBeUndefined()
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
+  })
+
+  it('recommends queue fallback when a non-SDK active runtime lacks in-flight input', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
+    fixture.seedSession('hsid-active-tmux-unsupported', 'active-contrib-tmux-unsupported')
+    fixture.seedTmuxRuntime(
+      'hsid-active-tmux-unsupported',
+      'active-contrib-tmux-unsupported',
+      'rt-active-tmux-unsupported',
+      {
+        status: 'busy',
+        activeRunId: 'hrc-active-tmux-unsupported',
+      }
     )
+
+    try {
+      const res = await fixture.postJson('/v1/active-run-contributions', {
+        selector: { runtimeId: 'rt-active-tmux-unsupported' },
+        expectedRunId: 'hrc-active-tmux-unsupported',
+        inputAttemptId: 'ia_tmux_unsupported',
+        inputApplicationId: 'iap_tmux_unsupported',
+        prompt: 'queue me because this transport cannot accept in-flight input',
+      })
+
+      expect(res.status).toBe(200)
+      const payload = (await res.json()) as any
+      expect(payload).toEqual(
+        expect.objectContaining({
+          status: 'queue_recommended',
+          inputApplicationId: 'iap_tmux_unsupported',
+          runtimeId: 'rt-active-tmux-unsupported',
+          runId: 'hrc-active-tmux-unsupported',
+          capability: { supported: false, reason: 'inflight_unsupported' },
+        })
+      )
+      expect(payload.errorCode).toBeUndefined()
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
   })
 
   it('marks the ledger ambiguous when enabled provider delivery throws after pending insert', async () => {
@@ -585,7 +639,49 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
     }
   })
 
-  it('keeps contribution capability gated by sdk transport metadata, not provider name', async () => {
+  it('recommends queue fallback when SDK in-flight support is disabled by env', async () => {
+    const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
+    process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '0'
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-active-sdk-env-disabled',
+      scopeRef: 'agent:active-contrib-sdk-env-disabled',
+      runtimeId: 'rt-active-sdk-env-disabled',
+      runId: 'hrc-active-sdk-env-disabled',
+      supportsInflightInput: true,
+      provider: 'anthropic',
+    })
+
+    try {
+      const res = await fixture.postJson('/v1/active-run-contributions', {
+        selector: { runtimeId: 'rt-active-sdk-env-disabled' },
+        expectedRunId: 'hrc-active-sdk-env-disabled',
+        inputAttemptId: 'ia_sdk_env_disabled',
+        inputApplicationId: 'iap_sdk_env_disabled',
+        prompt: 'env disabled should supersede SDK transport support',
+      })
+
+      expect(res.status).toBe(200)
+      const payload = (await res.json()) as any
+      expect(payload).toEqual(
+        expect.objectContaining({
+          status: 'queue_recommended',
+          inputApplicationId: 'iap_sdk_env_disabled',
+          runtimeId: 'rt-active-sdk-env-disabled',
+          runId: 'hrc-active-sdk-env-disabled',
+          capability: { supported: false, reason: 'feature_disabled' },
+        })
+      )
+      expect(payload.errorCode).toBeUndefined()
+    } finally {
+      if (previousGate === undefined) {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined
+      } else {
+        process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = previousGate
+      }
+    }
+  })
+
+  it('recommends queue fallback when SDK runtime metadata lacks in-flight support', async () => {
     const previousGate = process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED']
     process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = '1'
     seedSdkActiveRuntime({
@@ -610,14 +706,14 @@ describe('POST /v1/active-run-contributions — disabled rich contribution contr
       const payload = (await res.json()) as any
       expect(payload).toEqual(
         expect.objectContaining({
-          status: 'rejected',
+          status: 'queue_recommended',
           inputApplicationId: 'iap_capability',
           runtimeId: 'rt-active-capability',
           runId: 'hrc-active-capability',
-          errorCode: 'active_run_contribution_disabled',
-          capability: { supported: false },
+          capability: { supported: false, reason: 'inflight_unsupported' },
         })
       )
+      expect(payload.errorCode).toBeUndefined()
     } finally {
       if (previousGate === undefined) {
         process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] = undefined

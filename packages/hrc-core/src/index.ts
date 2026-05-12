@@ -119,6 +119,7 @@ export type {
   ClearContextResponse,
   CloseBridgeRequest,
   ActiveRunContributionCapability,
+  ActiveRunContributionCapabilityReason,
   DeliverBridgeRequest,
   DeliverBridgeResponse,
   DispatchTurnRequest,
