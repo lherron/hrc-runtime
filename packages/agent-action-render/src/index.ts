@@ -19,3 +19,12 @@ export {
   formatToolLine,
   getToolEmoji,
 } from './tool-formatters.js'
+export type { ToolPresenter } from './tool-presenters.js'
+export {
+  DEFAULT_PRESENTER,
+  PRESENTERS,
+  getToolDisplayName,
+  looksLikeShell,
+  resolveToolPresenter,
+  unwrapShell,
+} from './tool-presenters.js'
