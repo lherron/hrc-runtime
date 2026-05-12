@@ -349,6 +349,8 @@ async function postHeadlessCodexTurnCompleted(
     source: 'codex_jsonl' | 'codex_app_server' | 'launch_exit_synthesized'
   }
 ): Promise<void> {
+  const hasAssistantContent = input.finalOutput !== undefined && input.finalOutput.trim().length > 0
+
   await callbackOrSpool(
     artifact.callbackSocketPath,
     `/v1/internal/launches/${artifact.launchId}/event`,
@@ -358,7 +360,7 @@ async function postHeadlessCodexTurnCompleted(
       transport: 'headless',
       source: input.source,
       ...(input.usage !== undefined ? { usage: input.usage } : {}),
-      ...(input.finalOutput !== undefined
+      ...(hasAssistantContent
         ? {
             finalOutput: input.finalOutput,
             message: {
