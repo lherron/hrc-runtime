@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { resolveScopeInput } from 'agent-scope'
 import { CliUsageError, parseDuration } from 'cli-kit'
-import type { HrcLifecycleEvent } from 'hrc-core'
+import type { HrcLifecycleEvent, HrcMessageRecord, SemanticTurnHandoffResponse } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
@@ -15,6 +15,9 @@ import {
   writeRenderFrameAsNdjson,
 } from '../render-frame.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
+import { createStackedSummarizer } from '../stacked-summary.js'
+import { FlushReason, Phase, Result } from '../stacked-types.js'
 
 export type TurnOptions = {
   new?: boolean | undefined
@@ -22,6 +25,8 @@ export type TurnOptions = {
   pretty?: boolean | undefined
   stallAfter?: string | undefined
   file?: string | undefined
+  stacked?: string | undefined
+  replyTo?: string | undefined
 }
 
 /**
@@ -91,6 +96,18 @@ export async function cmdTurn(
   }
 
   const stallAfterMs = parseDuration(opts.stallAfter ?? '5m')
+  const stackedWindowMs = opts.stacked !== undefined ? parseDuration(opts.stacked) : undefined
+  if (stackedWindowMs !== undefined && stackedWindowMs <= 0) {
+    throw new CliUsageError(`invalid duration: ${opts.stacked} (must be > 0)`)
+  }
+  if (stackedWindowMs !== undefined) {
+    if (opts.pretty) {
+      throw new CliUsageError('--stacked cannot be combined with --pretty')
+    }
+    if (opts.format === 'tree' || opts.format === 'compact') {
+      throw new CliUsageError('--stacked cannot be combined with --format tree or compact')
+    }
+  }
 
   // ── Resolve scope ──
   const resolved = resolveScopeInput(targetInput, 'main')
@@ -127,16 +144,20 @@ export async function cmdTurn(
     body,
     runtimeIntent,
     createIfMissing: true,
+    replyToMessageId: opts.replyTo,
   })
 
   // ── Resolve sink format ──
   // --pretty forces terminal/tree format regardless of TTY detection, so
   // headless invocations can render the same human-facing output.
   const effectiveFormat: RenderFrameFormatInput | undefined = opts.pretty ? 'tree' : opts.format
-  const sinkFormat = resolveRenderFrameSinkFormat({
-    format: effectiveFormat,
-    isTTY: process.stdout.isTTY === true,
-  })
+  const sinkFormat =
+    stackedWindowMs === undefined
+      ? resolveRenderFrameSinkFormat({
+          format: effectiveFormat,
+          isTTY: process.stdout.isTTY === true,
+        })
+      : 'ndjson'
 
   // Quiet the projection's per-event logger unless the operator explicitly
   // asked for it. The frame stream IS the user-facing output here; info logs
@@ -149,6 +170,7 @@ export async function cmdTurn(
   const abortController = new AbortController()
   let turnCompleted = false
   let lastPhase: RenderFrame['phase'] | undefined
+  let stackedAggregator: StackedAggregator | undefined
 
   // SIGINT handler
   const sigintHandler = () => {
@@ -158,15 +180,18 @@ export async function cmdTurn(
 
   // Stall timer
   let stallFired = false
-  const stallTimer = setTimeout(() => {
-    stallFired = true
-    abortController.abort()
-  }, stallAfterMs)
+  const stallTimer =
+    stackedWindowMs === undefined
+      ? setTimeout(() => {
+          stallFired = true
+          abortController.abort()
+        }, stallAfterMs)
+      : undefined
 
   // For --pretty in headless mode we still want in-place redraw rather than
   // stamped scrollback. opts.pretty implies inPlace=true; otherwise honor TTY.
   const terminalRenderer =
-    sinkFormat === 'terminal'
+    stackedWindowMs === undefined && sinkFormat === 'terminal'
       ? createTerminalFrameRenderer({
           scopeHandle: targetInput,
           titleFallback: body,
@@ -174,19 +199,37 @@ export async function cmdTurn(
         })
       : undefined
 
-  const manager = new SessionEventsManager(
-    'hrcchat-turn',
-    (_sessionRef, _projectId, _runId, frame) => {
-      lastPhase = frame.phase
-      if (terminalRenderer) {
-        terminalRenderer.write(frame)
-      } else {
-        writeRenderFrameAsNdjson(frame)
-      }
-    }
-  )
+  const manager =
+    stackedWindowMs === undefined
+      ? new SessionEventsManager('hrcchat-turn', (_sessionRef, _projectId, _runId, frame) => {
+          lastPhase = frame.phase
+          if (terminalRenderer) {
+            terminalRenderer.write(frame)
+          } else {
+            writeRenderFrameAsNdjson(frame)
+          }
+        })
+      : undefined
 
-  manager.subscribe(handoff.sessionRef, resolved.parsed.projectId ?? '')
+  manager?.subscribe(handoff.sessionRef, resolved.parsed.projectId ?? '')
+
+  if (stackedWindowMs !== undefined) {
+    stackedAggregator = createStackedAggregator({
+      windowMs: stackedWindowMs,
+      stallAfterMs,
+      targetScope: targetInput,
+      handoff,
+      summarizer: createStackedSummarizer(),
+      writeLine(line) {
+        process.stdout.write(`${JSON.stringify(line)}\n`)
+      },
+      onStall() {
+        stallFired = true
+        abortController.abort()
+      },
+    })
+    stackedAggregator.start()
+  }
 
   try {
     for await (const event of client.watch({
@@ -198,9 +241,18 @@ export async function cmdTurn(
       follow: true,
       signal: abortController.signal,
     })) {
-      const envelope = adaptHrcLifecycleEvent(event)
-      if (envelope) {
-        manager.receive(envelope)
+      const stackedEvent =
+        stackedAggregator && isTurnEnd(event)
+          ? await enrichFinalEvent(client, handoff, event)
+          : event
+      if (stackedAggregator) {
+        lastPhase = deriveStackedPhase(stackedEvent, lastPhase)
+        await stackedAggregator.receive(stackedEvent)
+      } else {
+        const envelope = adaptHrcLifecycleEvent(event)
+        if (envelope) {
+          manager?.receive(envelope)
+        }
       }
 
       // Check for terminal events
@@ -212,6 +264,13 @@ export async function cmdTurn(
 
       // Runtime died before turn completed
       if (isRuntimeDead(event)) {
+        await stackedAggregator?.finish({
+          phase: Phase.Error,
+          flush: FlushReason.Error,
+          exitCode: TURN_EXIT_RUNTIME_DEAD,
+          result: Result.RuntimeDead,
+          error: { message: 'runtime exited before turn completed' },
+        })
         throw new TurnExitError(TURN_EXIT_RUNTIME_DEAD, 'runtime exited before turn completed')
       }
     }
@@ -233,12 +292,20 @@ export async function cmdTurn(
       throw err
     }
   } finally {
-    clearTimeout(stallTimer)
+    if (stallTimer !== undefined) {
+      clearTimeout(stallTimer)
+    }
     process.removeListener('SIGINT', sigintHandler)
   }
 
   // ── Determine exit code from final state ──
   if (lastPhase === 'permission') {
+    await stackedAggregator?.finish({
+      phase: Phase.Permission,
+      flush: FlushReason.Permission,
+      exitCode: TURN_EXIT_PERMISSION_BLOCKED,
+      result: Result.PermissionBlocked,
+    })
     throw new TurnExitError(
       TURN_EXIT_PERMISSION_BLOCKED,
       'turn blocked on permission request (no interactive approval in MVP)'
@@ -246,7 +313,23 @@ export async function cmdTurn(
   }
 
   if (lastPhase === 'error') {
+    await stackedAggregator?.finish({
+      phase: Phase.Error,
+      flush: FlushReason.Error,
+      exitCode: TURN_EXIT_RUNTIME_DEAD,
+      result: Result.TurnError,
+      error: { message: 'turn ended with error' },
+    })
     throw new TurnExitError(TURN_EXIT_RUNTIME_DEAD, 'turn ended with error')
+  }
+
+  if (stackedAggregator && turnCompleted) {
+    await stackedAggregator.finish({
+      phase: Phase.Final,
+      flush: FlushReason.Final,
+      exitCode: 0,
+      result: Result.Success,
+    })
   }
 
   // exit 0 — success (implicit return)
@@ -262,4 +345,79 @@ function isRuntimeDead(event: HrcLifecycleEvent): boolean {
     event.eventKind === 'runtime_crashed' ||
     event.eventKind === 'runtime_killed'
   )
+}
+
+function deriveStackedPhase(
+  event: HrcLifecycleEvent,
+  prior: RenderFrame['phase'] | undefined
+): RenderFrame['phase'] | undefined {
+  if (event.eventKind === 'permission_request') {
+    return 'permission'
+  }
+  if (event.eventKind === 'turn.completed') {
+    return 'final'
+  }
+  if (event.eventKind === 'run_failed' || event.eventKind === 'turn.error') {
+    return 'error'
+  }
+  if (event.eventKind === 'run_queued') {
+    return prior ?? 'queued'
+  }
+  return prior === 'permission' || prior === 'error' ? prior : 'progress'
+}
+
+async function enrichFinalEvent(
+  client: HrcClient,
+  handoff: SemanticTurnHandoffResponse,
+  event: HrcLifecycleEvent
+): Promise<HrcLifecycleEvent> {
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const payloadBody = typeof payload['body'] === 'string' ? payload['body'] : undefined
+  const payloadReplyId =
+    typeof payload['replyMessageId'] === 'string' ? payload['replyMessageId'] : undefined
+  if (payloadBody !== undefined && payloadReplyId !== undefined) {
+    return event
+  }
+
+  const reply = await findDurableReply(client, handoff.messageId)
+  if (reply === undefined) {
+    return event
+  }
+
+  return {
+    ...event,
+    payload: {
+      ...payload,
+      body: payloadBody ?? reply.body,
+      replyMessageId: payloadReplyId ?? reply.messageId,
+    },
+  }
+}
+
+async function findDurableReply(
+  client: HrcClient,
+  requestMessageId: string
+): Promise<HrcMessageRecord | undefined> {
+  const maybeClient = client as HrcClient & {
+    listMessages?: HrcClient['listMessages'] | undefined
+  }
+  if (typeof maybeClient.listMessages !== 'function') {
+    return undefined
+  }
+
+  try {
+    const result = await maybeClient.listMessages({
+      thread: { rootMessageId: requestMessageId },
+      phases: ['response'],
+      limit: 1,
+      order: 'desc',
+    })
+    return result.messages[0]
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
