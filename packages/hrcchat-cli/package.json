@@ -14,10 +14,12 @@
     "test": "bun test"
   },
   "dependencies": {
+    "agent-action-render": "*",
     "agent-scope": "*",
     "cli-kit": "*",
     "commander": "^14.0.0",
     "hrc-core": "*",
+    "hrc-frame-render": "*",
     "hrc-sdk": "*",
     "spaces-config": "*"
   },
