@@ -432,3 +432,262 @@ describe('hrcchat turn — handoff uses correct parameters', () => {
     expect(capturedWatchOptions!.follow).toBe(true)
   })
 })
+
+function parseStackedLines(stdout: string): Array<Record<string, unknown>> {
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((line) => line['type'] === 'turn_stacked')
+}
+
+describe('hrcchat turn — --stacked monitor stream', () => {
+  it('--stacked 1s emits turn_stacked ndjson with version and monotonic stackSeq', async () => {
+    const client = createTurnClient({
+      handoff: makeHandoff({
+        messageId: 'msg-request-1',
+        sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
+        scopeRef: 'agent:larry:project:agent-spaces:task:T-01449',
+      }),
+      events: [
+        makeLifecycleEvent({
+          eventKind: 'turn.tool_call',
+          hrcSeq: 11,
+          streamSeq: 11,
+          payload: { toolName: 'Read', input: { file_path: 'README.md' } },
+        }),
+        makeLifecycleEvent({
+          eventKind: 'turn.completed',
+          hrcSeq: 12,
+          streamSeq: 12,
+          payload: { body: 'done', replyMessageId: 'msg-reply-1' },
+        }),
+      ],
+    })
+
+    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+      'larry@agent-spaces:T-01449',
+      'work on the task',
+    ])
+
+    expect(result.exitCode).toBe(0)
+    const lines = parseStackedLines(result.stdout)
+    expect(lines.length).toBeGreaterThanOrEqual(1)
+    expect(lines.every((line) => line['type'] === 'turn_stacked')).toBe(true)
+    expect(lines.every((line) => line['version'] === 1)).toBe(true)
+    expect(lines.map((line) => line['stackSeq'])).toEqual(
+      Array.from({ length: lines.length }, (_, index) => index + 1)
+    )
+  })
+
+  it('rejects --stacked with tree, compact, or --pretty formats', async () => {
+    for (const opts of [
+      { stacked: '1s', format: 'tree' },
+      { stacked: '1s', format: 'compact' },
+      { stacked: '1s', pretty: true },
+    ]) {
+      const result = await runTurnCommand(createTurnClient({}), opts as TurnOptions, [
+        'larry@agent-spaces:T-01449',
+        'hello',
+      ])
+
+      expect(result.exitCode).toBe(2)
+      expect(result.stderr).toContain('--stacked')
+    }
+  })
+
+  it('accepts --stacked with ndjson and json formats', async () => {
+    for (const format of ['ndjson', 'json']) {
+      const result = await runTurnCommand(
+        createTurnClient({
+          events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
+        }),
+        { stacked: '1s', format } as TurnOptions,
+        ['larry@agent-spaces:T-01449', 'hello']
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).not.toContain('CliUsageError')
+    }
+  })
+
+  it('propagates parseDuration errors for zero or invalid stacked durations', async () => {
+    for (const stacked of ['0', 'not-a-duration']) {
+      const result = await runTurnCommand(createTurnClient({}), { stacked } as TurnOptions, [
+        'larry@agent-spaces:T-01449',
+        'hello',
+      ])
+
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr.toLowerCase()).toContain('duration')
+    }
+  })
+
+  it('--reply-to is plumbed to semanticTurnHandoff without changing watch selectors', async () => {
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    let capturedWatchOptions: WatchOptions | undefined
+    const handoff = makeHandoff({
+      messageId: 'msg-request-2',
+      runId: 'run-from-handoff',
+      generation: 7,
+      fromSeq: 101,
+      scopeRef: 'agent:larry:project:agent-spaces:task:T-01449',
+      laneRef: 'main',
+    })
+    const client = {
+      ...createTurnClient({ handoff, handoffCalls }),
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        capturedWatchOptions = options
+        yield makeLifecycleEvent({
+          eventKind: 'turn.completed',
+          hrcSeq: 102,
+          payload: { body: 'done', replyMessageId: 'msg-reply-2' },
+        })
+      },
+    } as HrcClient
+
+    const result = await runTurnCommand(
+      client,
+      { stacked: '1s', replyTo: 'msg-prior-reply' } as TurnOptions,
+      ['larry@agent-spaces:T-01449', 'follow up']
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(handoffCalls).toHaveLength(1)
+    expect(handoffCalls[0]).toMatchObject({ replyToMessageId: 'msg-prior-reply' })
+    expect(capturedWatchOptions).toMatchObject({
+      scopeRef: handoff.scopeRef,
+      laneRef: handoff.laneRef,
+      runId: handoff.runId,
+      generation: handoff.generation,
+      fromSeq: handoff.fromSeq,
+    })
+    const finalLine = parseStackedLines(result.stdout).at(-1)
+    expect(finalLine).toMatchObject({
+      messageId: 'msg-request-2',
+      replyMessageId: 'msg-reply-2',
+      runId: 'run-from-handoff',
+    })
+  })
+
+  it('puts truncated finalBody on the final line', async () => {
+    const longBody = `${'final answer '.repeat(2_000)}tail`
+    const client = createTurnClient({
+      handoff: makeHandoff({ messageId: 'msg-request-3' }),
+      events: [
+        makeLifecycleEvent({
+          eventKind: 'turn.completed',
+          hrcSeq: 20,
+          payload: { body: longBody, replyMessageId: 'msg-reply-3' },
+        }),
+      ],
+    })
+
+    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+      'larry@agent-spaces:T-01449',
+      'finish',
+    ])
+
+    const finalLine = parseStackedLines(result.stdout).at(-1)
+    expect(finalLine).toMatchObject({ phase: 'final', replyMessageId: 'msg-reply-3' })
+    expect(finalLine?.['finalBody']).toContain('...[truncated]')
+    expect(String(finalLine?.['finalBody']).length).toBeLessThan(longBody.length)
+  })
+
+  it('includes request messageId on every line and replyMessageId only on the final line', async () => {
+    const client = createTurnClient({
+      handoff: makeHandoff({ messageId: 'msg-request-4' }),
+      events: [
+        makeLifecycleEvent({
+          eventKind: 'turn.tool_call',
+          hrcSeq: 21,
+          payload: { toolName: 'Read' },
+        }),
+        makeLifecycleEvent({
+          eventKind: 'turn.completed',
+          hrcSeq: 22,
+          payload: { body: 'done', replyMessageId: 'msg-reply-4' },
+        }),
+      ],
+    })
+
+    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+      'larry@agent-spaces:T-01449',
+      'finish',
+    ])
+
+    const lines = parseStackedLines(result.stdout)
+    expect(lines.length).toBeGreaterThanOrEqual(1)
+    expect(lines.every((line) => line['messageId'] === 'msg-request-4')).toBe(true)
+    for (const line of lines) {
+      if (line['phase'] === 'final') {
+        expect(line['replyMessageId']).toBe('msg-reply-4')
+      } else {
+        expect(line).not.toHaveProperty('replyMessageId')
+      }
+    }
+  })
+
+  it('extracts taskId from scoped targets and leaves it undefined when absent', async () => {
+    const scoped = await runTurnCommand(
+      createTurnClient({
+        handoff: makeHandoff({
+          sessionRef: 'agent:larry:project:agent-spaces:task:T-01449/lane:main',
+          scopeRef: 'agent:larry:project:agent-spaces:task:T-01449',
+        }),
+        events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
+      }),
+      { stacked: '1s' } as TurnOptions,
+      ['larry@agent-spaces:T-01449', 'finish']
+    )
+    const unscoped = await runTurnCommand(
+      createTurnClient({
+        handoff: makeHandoff({
+          sessionRef: 'agent:larry:project:agent-spaces/lane:main',
+          scopeRef: 'agent:larry:project:agent-spaces',
+        }),
+        events: [makeLifecycleEvent({ eventKind: 'turn.completed', payload: { body: 'done' } })],
+      }),
+      { stacked: '1s' } as TurnOptions,
+      ['larry@agent-spaces', 'finish']
+    )
+
+    expect(parseStackedLines(scoped.stdout).at(-1)).toMatchObject({ taskId: 'T-01449' })
+    expect(parseStackedLines(unscoped.stdout).at(-1)).not.toHaveProperty('taskId')
+  })
+
+  it('emits terminal stacked flush before TurnExitError paths are reported', async () => {
+    const client = createTurnClient({
+      events: [
+        makeLifecycleEvent({
+          eventKind: 'permission_request',
+          hrcSeq: 30,
+          payload: {
+            requestId: 'perm-1',
+            toolUseId: 'tool-1',
+            toolName: 'Bash',
+            toolInput: { command: 'rm -rf /tmp/example' },
+          },
+        }),
+        makeLifecycleEvent({ eventKind: 'turn_end', hrcSeq: 31 }),
+      ],
+    })
+
+    const result = await runTurnCommand(client, { stacked: '1s' } as TurnOptions, [
+      'larry@agent-spaces:T-01449',
+      'needs approval',
+    ])
+
+    expect(result.exitCode).toBe(5)
+    const lines = parseStackedLines(result.stdout)
+    expect(lines.at(-1)).toMatchObject({
+      phase: 'permission',
+      flush: 'permission',
+      result: 'permission_blocked',
+      exitCode: 5,
+    })
+    expect(result.stdout.indexOf('"turn_stacked"')).toBeGreaterThanOrEqual(0)
+    expect(result.stderr).toContain('permission')
+  })
+})

@@ -195,6 +195,8 @@ program
   .option('--format <format>', 'output format: tree, compact, ndjson, json')
   .option('--pretty', 'force the human-facing terminal render even on non-TTY')
   .option('--stall-after <duration>', 'abort if idle for this long', '5m')
+  .option('--stacked <duration>', 'emit bounded turn_stacked ndjson progress windows')
+  .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--file <path>', 'read prompt from file')
   .action(async (target, prompt, opts) => {
     const client = createClient()
