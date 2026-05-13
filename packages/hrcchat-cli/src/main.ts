@@ -15,6 +15,7 @@ import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
 import { cmdShow } from './commands/show.js'
 import { cmdSummon } from './commands/summon.js'
+import { TurnExitError, cmdTurn } from './commands/turn.js'
 import { cmdWho } from './commands/who.js'
 
 // -- .env.local loading -------------------------------------------------------
@@ -183,6 +184,22 @@ program
     await cmdPeek(client, { ...opts, json: globalOpts().json }, [target])
   })
 
+// -- turn ---------------------------------------------------------------------
+
+program
+  .command('turn')
+  .description('dispatch a semantic turn and stream the response')
+  .argument('<target>', 'target handle or scopeRef')
+  .argument('[prompt]', 'prompt text (use - for stdin)')
+  .option('--new', 'clear context before dispatching (clean slate)')
+  .option('--format <format>', 'output format: tree, compact, ndjson, json')
+  .option('--stall-after <duration>', 'abort if idle for this long', '5m')
+  .option('--file <path>', 'read prompt from file')
+  .action(async (target, prompt, opts) => {
+    const client = createClient()
+    await cmdTurn(client, { ...opts }, [target, ...(prompt !== undefined ? [prompt] : [])])
+  })
+
 // -- doctor -------------------------------------------------------------------
 
 program
@@ -201,6 +218,14 @@ if (import.meta.main) {
     await program.parseAsync(process.argv)
   } catch (err) {
     const json = globalOpts().json ?? false
+
+    // Turn command intentional exit codes (1, 3, 4, 5, 130)
+    if (err instanceof TurnExitError) {
+      if (!json) {
+        process.stderr.write(`hrcchat: ${err.message}\n`)
+      }
+      process.exit(err.exitCode)
+    }
 
     // Commander usage errors (unknown option, missing arg) → exit 2
     if (err instanceof CommanderError) {

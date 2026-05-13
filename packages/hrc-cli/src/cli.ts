@@ -1739,6 +1739,9 @@ async function cmdRuntimeEnsure(args: string[]): Promise<void> {
 }
 
 async function cmdTurnSend(args: string[]): Promise<void> {
+  process.stderr.write(
+    'hrc: warning: "hrc turn send" is deprecated. Use "hrcchat turn <target> <prompt>" instead.\n'
+  )
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
   const prompt = parseFlag(args, '--prompt')
   const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
@@ -2802,11 +2805,11 @@ Exit codes:
 
   // -- turn group (commander, Phase 6 T2) -------------------------------------
 
-  const turn = program.command('turn').description('dispatch turns to a session')
+  const turn = program.command('turn').description('dispatch turns to a session (deprecated)')
 
   turn
     .command('send')
-    .description('send a turn')
+    .description('send a turn (deprecated — use "hrcchat turn" instead)')
     .argument('<hostSessionId>', 'host session ID')
     .option('--prompt <prompt>', 'prompt text')
     .option('--provider <provider>', 'provider (anthropic|openai)')

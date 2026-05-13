@@ -978,6 +978,16 @@ describe('turn send / session clear-context', () => {
     return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
 
+  it('turn send emits deprecation warning to stderr', async () => {
+    // Provide a hostSessionId so Commander passes arg validation, but omit --prompt
+    // so cmdTurnSend exits with a usage error. The deprecation warning still appears
+    // because it's emitted at the start of cmdTurnSend before prompt validation.
+    const result = await runCli(['turn', 'send', 'hsid-fake-for-deprecation'], cliEnv())
+    expect(result.stderr).toContain('deprecated')
+    expect(result.stderr).toContain('hrcchat turn')
+    expect(result.exitCode).toBe(2) // --prompt is required → usage error
+  })
+
   it('turn send exits 2 when hostSessionId is missing', async () => {
     const result = await runCli(['turn', 'send'], cliEnv())
     expect(result.exitCode).toBe(2)
