@@ -569,6 +569,7 @@
       "dependencies": {
         "agent-action-render": "*",
         "agent-scope": "*",
+        "chalk": "^5.3.0",
         "cli-kit": "*",
         "commander": "^14.0.0",
         "hrc-core": "*",

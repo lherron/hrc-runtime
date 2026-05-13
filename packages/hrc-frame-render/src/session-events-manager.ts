@@ -628,6 +628,18 @@ function processEvent(
   return newState
 }
 
+function titleFor(phase: RenderFrame['phase'], inputContent: string): string {
+  const emoji =
+    phase === 'permission' ? '🔐' : phase === 'final' ? '✅' : phase === 'error' ? '❌' : '⚙️'
+  const trimmed = inputContent.trim()
+  if (trimmed.length === 0) {
+    return emoji
+  }
+  const oneLine = trimmed.replace(/\s+/g, ' ')
+  const truncated = oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine
+  return `${emoji} ${truncated}`
+}
+
 function formatToolSummary(_toolName: string, toolInput: Record<string, unknown>): string {
   const truncate = (value: string, max: number) =>
     value.length > max ? `${value.slice(0, max)}...` : value
@@ -655,8 +667,6 @@ export function runStateToFrame(run: RunState): RenderFrame {
             : 'error'
 
   const timelineBlocks: Array<{ seq: number; block: RenderFrame['blocks'][number] }> = []
-  const truncate = (value: string, max: number) =>
-    value.length > max ? `${value.slice(0, max)}...` : value
   const allMediaRefs: Array<{
     url: string
     mimeType?: string | undefined
@@ -754,7 +764,7 @@ export function runStateToFrame(run: RunState): RenderFrame {
     runId: run.runId,
     projectId: run.projectId,
     phase,
-    title: `${phase === 'permission' ? '🔐' : phase === 'final' ? '✅' : phase === 'error' ? '❌' : '⚙️'} ${truncate(run.inputContent, 100)}`,
+    title: titleFor(phase, run.inputContent),
     blocks: blocks.length > 0 ? blocks : [{ t: 'markdown', md: '...' }],
     ...(actions ? { actions } : {}),
     statusLine: run.status,

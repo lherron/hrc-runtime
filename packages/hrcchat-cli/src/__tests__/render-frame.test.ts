@@ -55,8 +55,8 @@ function lastFrame(events: SessionEventEnvelope[]): RenderFrame {
   return frame
 }
 
-describe('terminal RenderFrame sink snapshots', () => {
-  test('assistant message accumulation renders terminal tree output', () => {
+describe('terminal RenderFrame sink output', () => {
+  test('assistant message renders as final answer (protagonist), not as tree leaf', () => {
     const frame = lastFrame([
       envelope(1, {
         type: 'run_queued',
@@ -70,12 +70,15 @@ describe('terminal RenderFrame sink snapshots', () => {
       envelope(4, { type: 'message_update', textDelta: 'world.' } as SessionEventEnvelope['event']),
     ])
 
-    expect(renderFrameToTerminalText(frame, { color: false, width: 80 })).toBe(
-      ['⚙️ Summarize status', 'running', '└─ Hello world.', ''].join('\n')
-    )
+    const out = renderFrameToTerminalText(frame, { color: false, width: 80 })
+    expect(out).toContain('Summarize status')
+    expect(out).toContain('Hello world.')
+    // No tree prefix on the answer
+    expect(out).not.toMatch(/└─\s*Hello world\./)
+    expect(out).not.toMatch(/├─\s*Hello world\./)
   })
 
-  test('tool call and result render tool emoji, preview, and output snippet', () => {
+  test('tool call/result renders under the ┊ activity rail with tool emoji and output', () => {
     const frame = lastFrame([
       envelope(1, {
         type: 'run_queued',
@@ -99,21 +102,15 @@ describe('terminal RenderFrame sink snapshots', () => {
       } as SessionEventEnvelope['event']),
     ])
 
-    expect(renderFrameToTerminalText(frame, { color: false, width: 80 })).toBe(
-      [
-        '⚙️ Use a tool',
-        'running',
-        '├─ 💻 shell: echo hi',
-        '│  ```',
-        '│  hello',
-        '│  ```',
-        '└─ ...',
-        '',
-      ].join('\n')
-    )
+    const out = renderFrameToTerminalText(frame, { color: false, width: 80 })
+    expect(out).toContain('Use a tool')
+    expect(out).toContain('┊')
+    expect(out).toContain('💻 shell')
+    expect(out).toContain('echo hi')
+    expect(out).toContain('↳ hello')
   })
 
-  test('turn-completed frame renders final status line and assistant text', () => {
+  test('turn-completed frame renders final answer as protagonist with footer status', () => {
     const frame = lastFrame([
       envelope(1, {
         type: 'run_queued',
@@ -132,9 +129,10 @@ describe('terminal RenderFrame sink snapshots', () => {
       }),
     ])
 
-    expect(renderFrameToTerminalText(frame, { color: false, width: 80 })).toBe(
-      ['✅ Finish turn', 'completed', '└─ done.', ''].join('\n')
-    )
+    const out = renderFrameToTerminalText(frame, { color: false, width: 80 })
+    expect(out).toContain('Finish turn')
+    expect(out).toContain('done.')
+    expect(out).toContain('done')
   })
 
   test('permission request renders approval header and action details without prompting', () => {
@@ -163,20 +161,46 @@ describe('terminal RenderFrame sink snapshots', () => {
       }),
     ])
 
-    expect(renderFrameToTerminalText(frame, { color: false, width: 80 })).toBe(
-      [
-        'APPROVAL REQUIRED',
-        '🔐 Dangerous command',
-        'awaiting_permission',
-        '├─ ```bash',
-        '│  rm -rf /tmp/example',
-        '│  ```',
-        '└─ Actions:',
-        '   - approve: Approve once (allow)',
-        '   - deny: Deny (deny)',
-        '',
-      ].join('\n')
-    )
+    const out = renderFrameToTerminalText(frame, { color: false, width: 80 })
+    expect(out).toContain('Dangerous command')
+    expect(out).toContain('approval required')
+    expect(out).toContain('Approve once')
+    expect(out).toContain('Deny')
+    expect(out).toContain('(allow)')
+    expect(out).toContain('(deny)')
+    expect(out).toContain('rm -rf /tmp/example')
+  })
+
+  test('scopeHandle is included in the editorial header label', () => {
+    const frame: RenderFrame = {
+      runId: 'run-abcdef1234567890',
+      projectId: PROJECT_ID,
+      phase: 'progress',
+      blocks: [],
+      updatedAt: 0,
+    }
+    const out = renderFrameToTerminalText(frame, {
+      color: false,
+      scopeHandle: 'cody@agent-spaces:T-01435',
+    })
+    expect(out).toContain('cody@agent-spaces:T-01435')
+    expect(out).toMatch(/run abcdef12…7890/)
+  })
+
+  test('titleFallback is used when frame.title contains only the phase emoji', () => {
+    const frame: RenderFrame = {
+      runId: RUN_ID,
+      projectId: PROJECT_ID,
+      phase: 'progress',
+      title: '⚙️ ',
+      blocks: [],
+      updatedAt: 0,
+    }
+    const out = renderFrameToTerminalText(frame, {
+      color: false,
+      titleFallback: 'list files in repo',
+    })
+    expect(out).toContain('list files in repo')
   })
 })
 

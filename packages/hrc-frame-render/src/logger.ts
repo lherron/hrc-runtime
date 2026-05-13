@@ -7,8 +7,23 @@ type LogPayload = {
   err?: Record<string, unknown> | undefined
 }
 
+const LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+}
+
+function thresholdFromEnv(): number {
+  const raw = process.env['LOG_LEVEL']?.toLowerCase()
+  if (raw && raw in LEVEL_PRIORITY) {
+    return LEVEL_PRIORITY[raw as LogLevel]
+  }
+  return LEVEL_PRIORITY.info
+}
+
 function write(level: LogLevel, entry: Record<string, unknown>): void {
-  if (level === 'debug' && process.env['LOG_LEVEL'] !== 'debug') {
+  if (LEVEL_PRIORITY[level] < thresholdFromEnv()) {
     return
   }
 

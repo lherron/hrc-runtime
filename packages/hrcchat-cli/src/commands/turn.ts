@@ -10,15 +10,16 @@ import type { HrcClient } from 'hrc-sdk'
 import { resolveCallerAddress, resolveTargetToSessionRef } from '../normalize.js'
 import {
   type RenderFrameFormatInput,
+  createTerminalFrameRenderer,
   resolveRenderFrameSinkFormat,
   writeRenderFrameAsNdjson,
-  writeRenderFrameToTerminal,
 } from '../render-frame.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 
 export type TurnOptions = {
   new?: boolean | undefined
   format?: RenderFrameFormatInput | undefined
+  pretty?: boolean | undefined
   stallAfter?: string | undefined
   file?: string | undefined
 }
@@ -129,10 +130,20 @@ export async function cmdTurn(
   })
 
   // ── Resolve sink format ──
+  // --pretty forces terminal/tree format regardless of TTY detection, so
+  // headless invocations can render the same human-facing output.
+  const effectiveFormat: RenderFrameFormatInput | undefined = opts.pretty ? 'tree' : opts.format
   const sinkFormat = resolveRenderFrameSinkFormat({
-    format: opts.format,
+    format: effectiveFormat,
     isTTY: process.stdout.isTTY === true,
   })
+
+  // Quiet the projection's per-event logger unless the operator explicitly
+  // asked for it. The frame stream IS the user-facing output here; info logs
+  // interleaved with frames make the CLI unreadable.
+  if (process.env['LOG_LEVEL'] === undefined) {
+    process.env['LOG_LEVEL'] = 'warn'
+  }
 
   // ── Watch loop: stream events, adapt → frame → render ──
   const abortController = new AbortController()
@@ -152,12 +163,23 @@ export async function cmdTurn(
     abortController.abort()
   }, stallAfterMs)
 
+  // For --pretty in headless mode we still want in-place redraw rather than
+  // stamped scrollback. opts.pretty implies inPlace=true; otherwise honor TTY.
+  const terminalRenderer =
+    sinkFormat === 'terminal'
+      ? createTerminalFrameRenderer({
+          scopeHandle: targetInput,
+          titleFallback: body,
+          ...(opts.pretty ? { inPlace: true, color: true } : {}),
+        })
+      : undefined
+
   const manager = new SessionEventsManager(
     'hrcchat-turn',
     (_sessionRef, _projectId, _runId, frame) => {
       lastPhase = frame.phase
-      if (sinkFormat === 'terminal') {
-        writeRenderFrameToTerminal(frame)
+      if (terminalRenderer) {
+        terminalRenderer.write(frame)
       } else {
         writeRenderFrameAsNdjson(frame)
       }

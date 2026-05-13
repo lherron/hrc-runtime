@@ -193,6 +193,7 @@ program
   .argument('[prompt]', 'prompt text (use - for stdin)')
   .option('--new', 'clear context before dispatching (clean slate)')
   .option('--format <format>', 'output format: tree, compact, ndjson, json')
+  .option('--pretty', 'force the human-facing terminal render even on non-TTY')
   .option('--stall-after <duration>', 'abort if idle for this long', '5m')
   .option('--file <path>', 'read prompt from file')
   .action(async (target, prompt, opts) => {
