@@ -859,6 +859,51 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
     expect(capturedBody).toBeDefined()
     expect(capturedBody.prompt).toBe('Continue with analysis')
   })
+
+  it('semanticTurnHandoff posts to the handoff endpoint and returns watch filters', async () => {
+    let capturedBody: any
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname === '/v1/messages/turn-handoff') {
+          capturedBody = await req.json()
+          return Response.json({
+            messageId: 'msg-1',
+            sessionRef: 'agent:cody:project:agent-spaces/lane:main',
+            scopeRef: 'agent:cody:project:agent-spaces',
+            laneRef: 'default',
+            hostSessionId: 'hsid-1',
+            runtimeId: 'rt-1',
+            runId: 'run-1',
+            generation: 1,
+            fromSeq: 42,
+          })
+        }
+        return new Response('Not found', { status: 404 })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const response = await client.semanticTurnHandoff({
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:cody:project:agent-spaces/lane:main' },
+      body: 'handoff body',
+    })
+
+    expect(capturedBody.body).toBe('handoff body')
+    expect(response).toEqual({
+      messageId: 'msg-1',
+      sessionRef: 'agent:cody:project:agent-spaces/lane:main',
+      scopeRef: 'agent:cody:project:agent-spaces',
+      laneRef: 'default',
+      hostSessionId: 'hsid-1',
+      runtimeId: 'rt-1',
+      runId: 'run-1',
+      generation: 1,
+      fromSeq: 42,
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

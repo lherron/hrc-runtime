@@ -88,6 +88,7 @@ import type {
   RestartStyle,
   RuntimeActionResponse,
   SemanticDmResponse,
+  SemanticTurnHandoffResponse,
   SendAppHarnessInFlightInputResponse,
   SendLiteralInputResponse,
   StartRuntimeResponse,
@@ -494,6 +495,13 @@ function resolveStaleGenerationThresholdSec(options: HrcServerOptions): number {
 }
 
 type MessageSubscriber = (record: HrcMessageRecord) => void
+type TurnResponseFinalizer = {
+  requestMessageId: string
+  from: HrcMessageAddress
+  to: HrcMessageAddress
+  mode: 'headless' | 'nonInteractive'
+  sessionRef: string
+}
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
 function exactRouteKey(method: string, pathname: string): string {
@@ -509,6 +517,7 @@ class HrcServerInstance implements HrcServer {
   public readonly otelEndpoint: string | undefined
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  private readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -562,6 +571,8 @@ class HrcServerInstance implements HrcServer {
       this.handleGetTarget(url),
     [exactRouteKey('POST', '/v1/messages/query')]: (request) => this.handleQueryMessages(request),
     [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
+    [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
+      this.handleSemanticTurnHandoff(request),
     [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => this.handleEnsureTarget(request),
     [exactRouteKey('POST', '/v1/messages')]: (request) => this.handleCreateMessage(request),
     [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>
@@ -668,6 +679,7 @@ class HrcServerInstance implements HrcServer {
     }
     this.followSubscribers.clear()
     this.messageSubscribers.clear()
+    this.turnResponseFinalizers.clear()
     this.db.close()
     let cleanupError: unknown
 
@@ -1821,7 +1833,9 @@ class HrcServerInstance implements HrcServer {
         !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
         liveTmuxRuntime.activeRunId === undefined
       if (!tmuxAvailableAndIdle) {
-        return await this.handleSdkDispatchTurn(session, intent, prompt, runId)
+        return await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
+          waitForCompletion: options.waitForCompletion,
+        })
       }
       // Fall through to tmux/headless path with the idle runtime
     }
@@ -5424,6 +5438,153 @@ class HrcServerInstance implements HrcServer {
     } satisfies ListMessagesResponse)
   }
 
+  private async handleSemanticTurnHandoff(request: Request): Promise<Response> {
+    const body = parseSemanticDmRequest(await parseJsonBody(request))
+    if (body.to.kind !== 'session') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'semantic turn handoff requires a session target',
+        { field: 'to' }
+      )
+    }
+
+    const parent =
+      body.replyToMessageId !== undefined
+        ? this.db.messages.getById(body.replyToMessageId)
+        : undefined
+
+    if (body.replyToMessageId !== undefined && !parent) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `unknown replyToMessageId "${body.replyToMessageId}"`,
+        {
+          field: 'replyToMessageId',
+          replyToMessageId: body.replyToMessageId,
+        }
+      )
+    }
+
+    const respondTo = body.respondTo ?? body.from
+    const record = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'dm',
+      phase: 'request',
+      from: body.from,
+      to: body.to,
+      body: body.body,
+      ...(body.replyToMessageId !== undefined ? { replyToMessageId: body.replyToMessageId } : {}),
+      ...(parent ? { rootMessageId: parent.rootMessageId } : {}),
+      execution: {
+        state: 'not_applicable',
+        ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
+      },
+    })
+
+    let session = findTargetSession(this.db, body.to.sessionRef)
+    if (!session && body.createIfMissing !== false && body.runtimeIntent) {
+      session = this.ensureTargetSession(
+        body.to.sessionRef,
+        body.runtimeIntent,
+        body.parsedScopeJson
+      )
+    }
+
+    if (!session) {
+      this.db.messages.updateExecution(record.messageId, {
+        state: 'failed',
+        errorCode: HrcErrorCode.UNKNOWN_SESSION,
+        errorMessage: `unknown session "${body.to.sessionRef}"`,
+      })
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_SESSION,
+        `unknown session "${body.to.sessionRef}"`,
+        { sessionRef: body.to.sessionRef }
+      )
+    }
+
+    const rotationResult = await this.maybeAutoRotateStaleSession(session, {
+      allowStaleGeneration: body.allowStaleGeneration,
+      trigger: 'semantic-turn-handoff',
+    })
+    session = rotationResult.session
+
+    const sessionRef = `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`
+    this.db.messages.updateExecution(record.messageId, {
+      sessionRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+    })
+
+    const intent = body.runtimeIntent ?? session.lastAppliedIntentJson
+    const runId = `run-${randomUUID()}`
+    const fromSeq = this.db.hrcEvents.maxHrcSeq() + 1
+
+    try {
+      const normalizedIntent = normalizeDispatchIntent(intent, session, runId)
+      const payload = formatDmPayload(
+        body.from,
+        body.to,
+        body.body,
+        record.messageSeq,
+        record.messageId
+      )
+
+      this.turnResponseFinalizers.set(runId, {
+        requestMessageId: record.messageId,
+        from: body.to,
+        to: respondTo,
+        mode: shouldUseSdkTransport(normalizedIntent) ? 'nonInteractive' : 'headless',
+        sessionRef,
+      })
+
+      const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
+        runId,
+        waitForCompletion: false,
+      })
+      const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+      const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
+      const mode = transport === 'sdk' ? 'nonInteractive' : 'headless'
+
+      const updatedFinalizer = this.turnResponseFinalizers.get(runId)
+      if (updatedFinalizer) {
+        this.turnResponseFinalizers.set(runId, { ...updatedFinalizer, mode })
+      }
+
+      this.db.messages.updateExecution(record.messageId, {
+        state: turnBody.status === 'completed' ? 'completed' : 'started',
+        mode,
+        sessionRef,
+        hostSessionId: turnBody.hostSessionId,
+        generation: turnBody.generation,
+        runtimeId: turnBody.runtimeId,
+        runId: turnBody.runId,
+        transport,
+      })
+
+      return json({
+        messageId: record.messageId,
+        sessionRef,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        hostSessionId: turnBody.hostSessionId,
+        runtimeId: turnBody.runtimeId,
+        runId: turnBody.runId,
+        generation: turnBody.generation,
+        fromSeq,
+      } satisfies SemanticTurnHandoffResponse)
+    } catch (err) {
+      this.turnResponseFinalizers.delete(runId)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      const errorCode = err instanceof HrcDomainError ? err.code : HrcErrorCode.RUNTIME_UNAVAILABLE
+      this.db.messages.updateExecution(record.messageId, {
+        state: 'failed',
+        errorCode,
+        errorMessage,
+      })
+      throw err
+    }
+  }
+
   private async handleSemanticDm(request: Request): Promise<Response> {
     const body = parseSemanticDmRequest(await parseJsonBody(request))
     const parent =
@@ -5812,6 +5973,9 @@ class HrcServerInstance implements HrcServer {
     for (const subscriber of this.followSubscribers) {
       subscriber(event)
     }
+    if ('hrcSeq' in event && event.eventKind === 'turn.completed' && event.runId) {
+      this.finalizeSemanticTurnResponse(event)
+    }
   }
 
   private notifyMessageSubscribers(record: HrcMessageRecord): void {
@@ -5826,6 +5990,80 @@ class HrcServerInstance implements HrcServer {
     const record = this.db.messages.insert(input)
     this.notifyMessageSubscribers(record)
     return record
+  }
+
+  private finalizeSemanticTurnResponse(event: HrcLifecycleEvent): void {
+    const runId = event.runId
+    if (!runId) return
+
+    const finalizer = this.turnResponseFinalizers.get(runId)
+    if (!finalizer) return
+    this.turnResponseFinalizers.delete(runId)
+
+    const request = this.db.messages.getById(finalizer.requestMessageId)
+    if (!request) return
+
+    const run = this.db.runs.getByRunId(runId)
+    const runtimeId = event.runtimeId ?? run?.runtimeId
+    const hostSessionId = event.hostSessionId
+    const generation = event.generation
+    const transport = event.transport ?? run?.transport
+    const failed = Boolean(event.errorCode) || run?.status === 'failed'
+    const bufferedOutput = this.db.runtimeBuffers
+      .listByRunId(runId)
+      .map((chunk) => chunk.text)
+      .join('')
+    const semanticOutput =
+      bufferedOutput.length > 0
+        ? ''
+        : this.db.hrcEvents
+            .listByRun(runId, { eventKind: 'turn.message' })
+            .map((messageEvent) => extractTextFromTurnMessagePayload(messageEvent.payload))
+            .join('')
+    const body =
+      bufferedOutput.length > 0
+        ? bufferedOutput
+        : semanticOutput.length > 0
+          ? semanticOutput
+          : (run?.errorMessage ?? '')
+
+    const response = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'dm',
+      phase: 'response',
+      from: finalizer.from,
+      to: finalizer.to,
+      body,
+      replyToMessageId: request.messageId,
+      rootMessageId: request.rootMessageId,
+      execution: {
+        state: failed ? 'failed' : 'completed',
+        mode: finalizer.mode,
+        sessionRef: finalizer.sessionRef,
+        hostSessionId,
+        generation,
+        ...(runtimeId ? { runtimeId } : {}),
+        runId,
+        ...(transport === 'sdk' || transport === 'tmux' || transport === 'headless'
+          ? { transport }
+          : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        ...(run?.errorMessage ? { errorMessage: run.errorMessage } : {}),
+      },
+    })
+
+    this.db.messages.updateExecution(request.messageId, {
+      state: failed ? 'failed' : 'completed',
+      ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+      ...(run?.errorMessage ? { errorMessage: run.errorMessage } : {}),
+    })
+
+    writeServerLog('INFO', 'semantic_turn_handoff.response_finalized', {
+      requestMessageId: request.messageId,
+      responseMessageId: response.messageId,
+      runId,
+      state: failed ? 'failed' : 'completed',
+    })
   }
 
   private listSessionsByScope(scopeRef: string, laneRef?: string): HrcSessionRecord[] {
@@ -5982,7 +6220,10 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
-    runId: string
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    } = {}
   ): Promise<Response> {
     const existingProvider =
       findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
@@ -6089,123 +6330,212 @@ class HrcServerInstance implements HrcServer {
     })
     this.notifyEvent(startedEvent)
 
-    let chunkSeq = 1
-    const result = await runSdkTurn({
-      intent,
-      hostSessionId: session.hostSessionId,
-      runId,
-      runtimeId: runtime.runtimeId,
-      prompt,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      existingProvider,
-      continuation: session.continuation,
-      onHrcEvent: (event) => {
-        const appended = this.db.events.append(event)
-        this.notifyEvent(appended)
-        const semanticEvent = deriveSemanticTurnEventFromSdkEvent(event.eventKind, event.eventJson)
-        if (semanticEvent) {
-          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
-            ts: event.ts,
-            hostSessionId: event.hostSessionId,
-            scopeRef: event.scopeRef,
-            laneRef: event.laneRef,
-            generation: event.generation,
-            runId: event.runId,
-            runtimeId: event.runtimeId,
-            transport: 'sdk',
-            payload: semanticEvent.payload,
-          })
-          this.notifyEvent(appendedSemanticEvent)
-        }
-        this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
-      },
-      onBuffer: (text) => {
-        this.db.runtimeBuffers.append({
-          runtimeId: runtime.runtimeId,
-          runId,
-          chunkSeq,
-          text,
-          createdAt: timestamp(),
-        })
-        chunkSeq += 1
-      },
-    })
-
-    const completedAt = timestamp()
-    this.db.runs.markCompleted(run.runId, {
-      status: result.result.success ? 'completed' : 'failed',
-      completedAt,
-      updatedAt: completedAt,
-      ...(!result.result.success
-        ? {
-            errorCode:
-              result.result.error?.code === 'provider_mismatch'
-                ? HrcErrorCode.PROVIDER_MISMATCH
-                : HrcErrorCode.RUNTIME_UNAVAILABLE,
-            errorMessage: result.result.error?.message ?? 'sdk turn failed',
+    const execute = async (): Promise<Response> => {
+      let chunkSeq = 1
+      const result = await runSdkTurn({
+        intent,
+        hostSessionId: session.hostSessionId,
+        runId,
+        runtimeId: runtime.runtimeId,
+        prompt,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        existingProvider,
+        continuation: session.continuation,
+        onHrcEvent: (event) => {
+          const appended = this.db.events.append(event)
+          this.notifyEvent(appended)
+          const semanticEvent = deriveSemanticTurnEventFromSdkEvent(
+            event.eventKind,
+            event.eventJson
+          )
+          if (semanticEvent) {
+            const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
+              ts: event.ts,
+              hostSessionId: event.hostSessionId,
+              scopeRef: event.scopeRef,
+              laneRef: event.laneRef,
+              generation: event.generation,
+              runId: event.runId,
+              runtimeId: event.runtimeId,
+              transport: 'sdk',
+              payload: semanticEvent.payload,
+            })
+            this.notifyEvent(appendedSemanticEvent)
           }
-        : {}),
-    })
+          this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+        },
+        onBuffer: (text) => {
+          this.db.runtimeBuffers.append({
+            runtimeId: runtime.runtimeId,
+            runId,
+            chunkSeq,
+            text,
+            createdAt: timestamp(),
+          })
+          chunkSeq += 1
+        },
+      })
 
-    this.db.runtimes.update(runtime.runtimeId, {
-      status: 'ready',
-      lastActivityAt: completedAt,
-      updatedAt: completedAt,
-      harnessSessionJson: result.harnessSessionJson,
-      continuation: result.continuation,
-    })
-    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+      const completedAt = timestamp()
+      this.db.runs.markCompleted(run.runId, {
+        status: result.result.success ? 'completed' : 'failed',
+        completedAt,
+        updatedAt: completedAt,
+        ...(!result.result.success
+          ? {
+              errorCode:
+                result.result.error?.code === 'provider_mismatch'
+                  ? HrcErrorCode.PROVIDER_MISMATCH
+                  : HrcErrorCode.RUNTIME_UNAVAILABLE,
+              errorMessage: result.result.error?.message ?? 'sdk turn failed',
+            }
+          : {}),
+      })
 
-    if (result.continuation) {
-      this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
-    }
+      this.db.runtimes.update(runtime.runtimeId, {
+        status: 'ready',
+        lastActivityAt: completedAt,
+        updatedAt: completedAt,
+        harnessSessionJson: result.harnessSessionJson,
+        continuation: result.continuation,
+      })
+      this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
 
-    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
-      ts: completedAt,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runId,
-      runtimeId: runtime.runtimeId,
-      transport: 'sdk',
-      errorCode: result.result.success
-        ? undefined
-        : result.result.error?.code === 'provider_mismatch'
-          ? HrcErrorCode.PROVIDER_MISMATCH
-          : HrcErrorCode.RUNTIME_UNAVAILABLE,
-      payload: {
-        success: result.result.success,
-      },
-    })
-    this.notifyEvent(completedEvent)
-
-    if (!result.result.success) {
-      if (result.result.error?.code === 'provider_mismatch') {
-        throw new HrcUnprocessableEntityError(
-          HrcErrorCode.PROVIDER_MISMATCH,
-          result.result.error.message,
-          result.result.error.details ?? {}
-        )
+      if (result.continuation) {
+        this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
       }
 
-      throw new HrcRuntimeUnavailableError(result.result.error?.message ?? 'sdk turn failed', {
-        runtimeId: runtime.runtimeId,
+      const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
+        ts: completedAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
         runId,
+        runtimeId: runtime.runtimeId,
+        transport: 'sdk',
+        errorCode: result.result.success
+          ? undefined
+          : result.result.error?.code === 'provider_mismatch'
+            ? HrcErrorCode.PROVIDER_MISMATCH
+            : HrcErrorCode.RUNTIME_UNAVAILABLE,
+        payload: {
+          success: result.result.success,
+        },
+      })
+      this.notifyEvent(completedEvent)
+
+      if (!result.result.success) {
+        if (result.result.error?.code === 'provider_mismatch') {
+          throw new HrcUnprocessableEntityError(
+            HrcErrorCode.PROVIDER_MISMATCH,
+            result.result.error.message,
+            result.result.error.details ?? {}
+          )
+        }
+
+        throw new HrcRuntimeUnavailableError(result.result.error?.message ?? 'sdk turn failed', {
+          runtimeId: runtime.runtimeId,
+          runId,
+        })
+      }
+
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'sdk',
+        status: 'completed',
+        supportsInFlightInput: runtime.supportsInflightInput,
+      } satisfies DispatchTurnResponse)
+    }
+
+    if (options.waitForCompletion === false) {
+      void execute().catch((err: unknown) => {
+        try {
+          this.recordDetachedSemanticTurnFailure(session, runtime.runtimeId, runId, 'sdk', err)
+        } catch (failureErr) {
+          writeServerLog('WARN', 'sdk.detached_turn_failure_record_failed', {
+            hostSessionId: session.hostSessionId,
+            runtimeId: runtime.runtimeId,
+            runId,
+            error: failureErr instanceof Error ? failureErr.message : String(failureErr),
+          })
+        }
+      })
+
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'sdk',
+        status: 'started',
+        supportsInFlightInput: runtime.supportsInflightInput,
+      } satisfies DispatchTurnResponse)
+    }
+
+    return await execute()
+  }
+
+  private recordDetachedSemanticTurnFailure(
+    session: HrcSessionRecord,
+    runtimeId: string,
+    runId: string,
+    transport: 'sdk' | 'headless',
+    err: unknown
+  ): void {
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    writeServerLog('WARN', `${transport}.detached_turn_failed`, {
+      hostSessionId: session.hostSessionId,
+      runtimeId,
+      runId,
+      error: errorMessage,
+    })
+
+    const run = this.db.runs.getByRunId(runId)
+    if (!run || !isRunActive(run)) {
+      return
+    }
+
+    const now = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      errorMessage,
+    })
+
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (runtime?.activeRunId === runId) {
+      this.db.runtimes.updateRunId(runtimeId, undefined, now)
+      this.db.runtimes.update(runtimeId, {
+        status: 'ready',
+        updatedAt: now,
+        lastActivityAt: now,
       })
     }
 
-    return json({
-      runId,
+    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
+      ts: now,
       hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
       generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'sdk',
-      status: 'completed',
-      supportsInFlightInput: runtime.supportsInflightInput,
-    } satisfies DispatchTurnResponse)
+      runId,
+      runtimeId,
+      transport,
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+      payload: {
+        success: false,
+        transport,
+      },
+    })
+    this.notifyEvent(completedEvent)
   }
 
   // -- hrcchat: target ensure (summon) ------------------------------------------
@@ -8071,6 +8401,29 @@ function formatDmPayload(
     '__HRC_REPLY__',
   ].join('\n')
   return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}\n\n${replyHint}`
+}
+
+function extractTextFromTurnMessagePayload(payload: unknown): string {
+  if (!isRecord(payload)) return ''
+  const message = payload['message']
+  if (!isRecord(message)) return ''
+
+  const content = message['content']
+  if (typeof content === 'string') {
+    return content
+  }
+
+  if (!Array.isArray(content)) {
+    return ''
+  }
+
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part
+      if (isRecord(part) && typeof part['text'] === 'string') return part['text']
+      return ''
+    })
+    .join('')
 }
 
 function normalizeTargetLane(laneRef: string | undefined): string | undefined {

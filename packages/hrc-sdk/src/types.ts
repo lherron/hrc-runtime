@@ -143,6 +143,8 @@ export type {
   WaitMessageResponse,
   SemanticDmRequest,
   SemanticDmResponse,
+  SemanticTurnHandoffRequest,
+  SemanticTurnHandoffResponse,
   HrcTargetView,
   HrcMessageRecord,
   HrcMessageFilter,

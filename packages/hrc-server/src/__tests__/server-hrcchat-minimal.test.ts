@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { HrcTargetView, ListMessagesResponse, SemanticDmResponse } from 'hrc-core'
+import type {
+  HrcTargetView,
+  ListMessagesResponse,
+  SemanticDmResponse,
+  SemanticTurnHandoffResponse,
+} from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
@@ -359,6 +364,168 @@ if (cmd === 'app-server') {
     }
 
     expect(execLog).toContain('app-server:')
+  })
+
+  it('semantic turn handoff creates request immediately, returns replay filters, and finalizes response', async () => {
+    const fakeCodex = await installFakeCodex('fake-codex-turn-handoff')
+    const sessionRef = 'agent:handoff:project:agent-spaces/lane:main'
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'handoff to detached turn',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+        launch: {
+          pathPrepend: [fakeCodex.binDir],
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    expect(handoff.messageId).toStartWith('msg-')
+    expect(handoff.sessionRef).toBe(sessionRef)
+    expect(handoff.scopeRef).toBe('agent:handoff:project:agent-spaces')
+    expect(handoff.laneRef).toBe('main')
+    expect(handoff.hostSessionId).toBeString()
+    expect(handoff.runtimeId).toBeString()
+    expect(handoff.runId).toBeString()
+    expect(handoff.generation).toBe(1)
+    expect(handoff.fromSeq).toBeGreaterThan(0)
+
+    const requestListRes = await fixture.postJson('/v1/messages/query', {
+      thread: { rootMessageId: handoff.messageId },
+      phases: ['request'],
+    })
+    expect(requestListRes.status).toBe(200)
+    const requestList = (await requestListRes.json()) as ListMessagesResponse
+    expect(requestList.messages).toHaveLength(1)
+    expect(requestList.messages[0]?.messageId).toBe(handoff.messageId)
+    expect(requestList.messages[0]?.execution.runId).toBe(handoff.runId)
+
+    const acceptedRes = await fixture.fetchSocket(
+      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.accepted`
+    )
+    expect(acceptedRes.status).toBe(200)
+    const acceptedText = await acceptedRes.text()
+    const accepted = acceptedText
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    expect(accepted).toHaveLength(1)
+    expect(handoff.fromSeq).toBeLessThanOrEqual(accepted[0].hrcSeq)
+
+    let responseList: ListMessagesResponse = { messages: [] }
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const responseListRes = await fixture.postJson('/v1/messages/query', {
+        thread: { rootMessageId: handoff.messageId },
+        phases: ['response'],
+      })
+      expect(responseListRes.status).toBe(200)
+      responseList = (await responseListRes.json()) as ListMessagesResponse
+      if (responseList.messages.length > 0) {
+        break
+      }
+      await Bun.sleep(100)
+    }
+
+    expect(responseList.messages).toHaveLength(1)
+    expect(responseList.messages[0]?.replyToMessageId).toBe(handoff.messageId)
+    expect(responseList.messages[0]?.body).toBe('ok')
+    expect(responseList.messages[0]?.execution.runId).toBe(handoff.runId)
+    expect(responseList.messages[0]?.execution.state).toBe('completed')
+  })
+
+  it('semantic turn handoff dispatches instead of literal-delivering when a live tmux runtime exists', async () => {
+    const tmux = new TmuxManager(fixture.tmuxSocketPath)
+    await tmux.initialize()
+    const fakeCodex = await installFakeCodex('fake-codex-turn-handoff-live-tmux')
+
+    const scopeRef = 'agent:handoff-live-tmux:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    const runtimeId = `rt-handoff-live-tmux-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        tmuxJson: pane,
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'must not be sent literally',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'agent-default' },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+        launch: {
+          pathPrepend: [fakeCodex.binDir],
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    expect(handoff.runId).toBeString()
+    expect(handoff.runtimeId).not.toBe(runtimeId)
+
+    await Bun.sleep(300)
+    const captured = await tmux.capture(pane.paneId)
+    expect(captured).not.toContain('must not be sent literally')
+
+    const eventsRes = await fixture.fetchSocket(
+      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.accepted`
+    )
+    expect(eventsRes.status).toBe(200)
+    expect((await eventsRes.text()).trim()).toContain('"turn.accepted"')
   })
 
   it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {

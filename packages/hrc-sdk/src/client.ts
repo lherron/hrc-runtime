@@ -57,6 +57,8 @@ import type {
   RuntimeListFilter,
   SemanticDmRequest,
   SemanticDmResponse,
+  SemanticTurnHandoffRequest,
+  SemanticTurnHandoffResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
@@ -418,6 +420,12 @@ export class HrcClient {
 
   async semanticDm(request: SemanticDmRequest): Promise<SemanticDmResponse> {
     return this.postJson<SemanticDmResponse>('/v1/messages/dm', request)
+  }
+
+  async semanticTurnHandoff(
+    request: SemanticTurnHandoffRequest
+  ): Promise<SemanticTurnHandoffResponse> {
+    return this.postJson<SemanticTurnHandoffResponse>('/v1/messages/turn-handoff', request)
   }
 
   async *watchMessages(options?: WatchMessagesOptions): AsyncIterable<HrcMessageRecord> {

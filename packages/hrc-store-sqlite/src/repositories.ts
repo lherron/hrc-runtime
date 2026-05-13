@@ -2278,6 +2278,13 @@ export class HrcLifecycleEventRepository {
     return this.runQuery({ ...filters, scopeRef }, 'hrc_seq')
   }
 
+  maxHrcSeq(): number {
+    const row = this.db
+      .query<{ max_seq: number | null }, []>('SELECT MAX(hrc_seq) AS max_seq FROM hrc_events')
+      .get()
+    return row?.max_seq ?? 0
+  }
+
   private runQuery(
     filters: HrcLifecycleQueryFilters,
     orderColumn: 'hrc_seq' | 'stream_seq'

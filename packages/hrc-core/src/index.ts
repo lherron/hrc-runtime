@@ -209,6 +209,8 @@ export type {
   WaitMessageResponse,
   SemanticDmRequest,
   SemanticDmResponse,
+  SemanticTurnHandoffRequest,
+  SemanticTurnHandoffResponse,
 } from './hrcchat-contracts.js'
 
 export { createMonitorConditionEngine } from './monitor/condition-engine.js'

@@ -249,3 +249,18 @@ export type SemanticDmResponse = {
   reply?: HrcMessageRecord | undefined
   waited?: WaitMessageResponse | undefined
 }
+
+// POST /v1/messages/turn-handoff (durable request + detached semantic turn)
+export type SemanticTurnHandoffRequest = Omit<SemanticDmRequest, 'wait'>
+
+export type SemanticTurnHandoffResponse = {
+  messageId: string
+  sessionRef: string
+  scopeRef: string
+  laneRef: string
+  hostSessionId: string
+  runtimeId: string
+  runId: string
+  generation: number
+  fromSeq: number
+}
