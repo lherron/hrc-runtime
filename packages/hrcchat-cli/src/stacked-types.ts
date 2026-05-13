@@ -69,13 +69,14 @@ export type TurnStackedEvent = {
   events: number
   summary: string
   taskId?: string | undefined
+  /** Present iff events > 0; omitted for queued/heartbeat lines. */
   hrcSeqRange?: StackedSeqRange | undefined
   permission?: StackedPermission | undefined
   error?: StackedError | undefined
   replyMessageId?: string | undefined
   finalBody?: string | undefined
   exitCode?: number | undefined
-  result?: string | undefined
+  result?: Result | undefined
 }
 
 export type SummarizerInput = {

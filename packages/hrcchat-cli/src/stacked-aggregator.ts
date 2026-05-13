@@ -16,7 +16,7 @@ type TimerHandle = unknown
 type FlushExtras = {
   permission?: StackedPermission | undefined
   exitCode?: number | undefined
-  result?: string | undefined
+  result?: Result | undefined
   finalBody?: string | undefined
   replyMessageId?: string | undefined
   error?: StackedError | undefined
@@ -48,7 +48,7 @@ export type StackedAggregatorOptions = {
 
 export type FinishInput = {
   exitCode: number
-  result: Result | `${Result}` | string
+  result: Result
   finalBody?: string | undefined
   replyMessageId?: string | undefined
   phase?: Phase | `${Phase}` | undefined
@@ -356,7 +356,7 @@ export class StackedAggregator {
     summary: string
     permission?: StackedPermission | undefined
     exitCode?: number | undefined
-    result?: string | undefined
+    result?: Result | undefined
     finalBody?: string | undefined
     replyMessageId?: string | undefined
     error?: StackedError | undefined
