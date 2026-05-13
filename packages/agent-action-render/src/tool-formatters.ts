@@ -1,36 +1,30 @@
 import { MAX_LINE_CHARS, MAX_PREVIEW_CHARS, truncateText } from './budgets.js'
+import { PRESENTERS, getToolDisplayName, resolveToolPresenter } from './tool-presenters.js'
 
-export const TOOL_EMOJI: Record<string, string> = {
-  Bash: '💻',
-  exec_command: '💻',
-  Read: '📖',
-  Write: '✍️',
-  Edit: '🔧',
-  apply_patch: '🔧',
-  Grep: '🔎',
-  Glob: '📁',
-  Task: '🤖',
-  WebFetch: '📄',
-  WebSearch: '🔍',
-  TodoWrite: '📋',
-  NotebookEdit: '📓',
-}
+/**
+ * @deprecated Use the ToolPresenter registry instead.
+ */
+export const TOOL_EMOJI: Record<string, string> = Object.fromEntries(
+  PRESENTERS.flatMap((presenter) =>
+    typeof presenter.match === 'string' ? [[presenter.match, presenter.emoji]] : []
+  )
+)
 
 export const DEFAULT_TOOL_EMOJI = '⚙️'
 
-export const PRIMARY_ARG_KEY: Record<string, string> = {
-  Bash: 'command',
-  exec_command: 'cmd',
-  Read: 'file_path',
-  Write: 'file_path',
-  Edit: 'file_path',
-  apply_patch: 'patch',
-  Grep: 'pattern',
-  Glob: 'pattern',
-  Task: 'description',
-  WebFetch: 'url',
-  WebSearch: 'query',
-  NotebookEdit: 'notebook_path',
+/**
+ * @deprecated Use the ToolPresenter registry instead.
+ */
+export const PRIMARY_ARG_KEY: Record<string, string> = Object.fromEntries(
+  PRESENTERS.flatMap((presenter) =>
+    typeof presenter.match === 'string' && presenter.primaryArgKey !== undefined
+      ? [[presenter.match, presenter.primaryArgKey]]
+      : []
+  )
+)
+
+function summaryPreview(summary: string): string {
+  return summary.replace(/^`|`$/g, '')
 }
 
 export function extractToolPreview(
@@ -39,23 +33,13 @@ export function extractToolPreview(
   summary: string
 ): string {
   if (!input) {
-    return summary.replace(/^`|`$/g, '')
+    return summaryPreview(summary)
   }
 
-  if (toolName === 'TodoWrite') {
-    const todos = input['todos']
-    if (Array.isArray(todos)) {
-      return `${todos.length} todo${todos.length === 1 ? '' : 's'}`
-    }
-    return summary.replace(/^`|`$/g, '')
-  }
-
-  const argKey = PRIMARY_ARG_KEY[toolName]
-  if (argKey) {
-    const value = input[argKey]
-    if (typeof value === 'string' && value.length > 0) {
-      return value
-    }
+  const presenter = resolveToolPresenter(toolName, input)
+  const preview = presenter.preview?.(input)
+  if (preview !== undefined) {
+    return preview
   }
 
   for (const value of Object.values(input)) {
@@ -64,7 +48,7 @@ export function extractToolPreview(
     }
   }
 
-  return summary.replace(/^`|`$/g, '')
+  return summaryPreview(summary)
 }
 
 export function getToolEmoji(toolName: string): string {
@@ -77,9 +61,11 @@ export function formatToolLine(
   summary: string,
   failed: boolean
 ): string {
-  const emoji = failed ? '❌' : getToolEmoji(toolName)
-  const prefix = `${emoji} ${toolName}: "`
-  const suffix = '"'
+  const presenter = resolveToolPresenter(toolName, input ?? {})
+  const displayName = getToolDisplayName(presenter, toolName, input ?? {})
+  const emoji = failed ? '❌' : presenter.emoji
+  const prefix = `${emoji} ${displayName}: `
+  const suffix = ''
   const previewBudget = Math.min(MAX_PREVIEW_CHARS, MAX_LINE_CHARS - prefix.length - suffix.length)
 
   const preview = truncateText(extractToolPreview(toolName, input, summary), previewBudget)

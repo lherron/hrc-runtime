@@ -17,14 +17,82 @@ describe('agent action render helpers', () => {
       'ls -la'
     )
     expect(formatToolLine('Read', { file_path: '/src/index.ts' }, '', false)).toBe(
-      '📖 Read: "/src/index.ts"'
+      '📖 Read: /src/index.ts'
     )
     expect(formatToolLine('Read', { file_path: '/src/index.ts' }, '', true)).toBe(
-      '❌ Read: "/src/index.ts"'
+      '❌ Read: /src/index.ts'
     )
     expect(
       formatToolLine('Bash', { command: 'x'.repeat(200) }, '', false).length
     ).toBeLessThanOrEqual(80)
+  })
+
+  test('renders Bash clean commands with a shell display label', () => {
+    expect(formatToolLine('Bash', { command: 'ls -la' }, '', false)).toBe('💻 shell: ls -la')
+  })
+
+  test('unwraps zsh shell wrappers for command_execution display', () => {
+    expect(
+      formatToolLine('command_execution', { command: "/bin/zsh -lc 'ls -la'" }, '', false)
+    ).toBe('💻 shell: ls -la')
+  })
+
+  test('unwraps unquoted shell wrapper commands for command_execution display', () => {
+    expect(formatToolLine('command_execution', { command: '/bin/zsh -lc pwd' }, '', false)).toBe(
+      '💻 shell: pwd'
+    )
+  })
+
+  test('unwraps double-quoted bash wrappers for command_execution display', () => {
+    expect(formatToolLine('command_execution', { command: 'bash -c "cd x && y"' }, '', false)).toBe(
+      '💻 shell: cd x && y'
+    )
+  })
+
+  test('unwraps single-quoted sh wrappers for command_execution display', () => {
+    expect(formatToolLine('command_execution', { command: "sh -c 'echo hi'" }, '', false)).toBe(
+      '💻 shell: echo hi'
+    )
+  })
+
+  test('renders command_execution with shell metacharacters as shell display', () => {
+    expect(formatToolLine('command_execution', { command: 'ls | grep foo' }, '', false)).toBe(
+      '💻 shell: ls | grep foo'
+    )
+  })
+
+  test('keeps command_execution direct binaries under the wire label', () => {
+    expect(formatToolLine('command_execution', { command: 'cat package.json' }, '', false)).toBe(
+      '⚙️ command_execution: cat package.json'
+    )
+  })
+
+  test('falls back gracefully for malformed shell wrappers', () => {
+    const command = "/bin/zsh -lc 'echo \\'hi\\''"
+    const line = formatToolLine('command_execution', { command }, '', false)
+    expect(line).toContain(command)
+  })
+
+  test('unwraps exec_command cmd shell wrappers for display', () => {
+    expect(formatToolLine('exec_command', { cmd: "/bin/bash -lc 'pwd'" }, '', false)).toBe(
+      '💻 shell: pwd'
+    )
+  })
+
+  test('unwraps unquoted exec_command cmd shell wrappers for display', () => {
+    expect(formatToolLine('exec_command', { cmd: '/bin/bash -lc pwd' }, '', false)).toBe(
+      '💻 shell: pwd'
+    )
+  })
+
+  test('renders failed Bash as a failed shell display line', () => {
+    expect(formatToolLine('Bash', { command: 'false' }, '', true)).toBe('❌ shell: false')
+  })
+
+  test('keeps Read tool formatting unchanged', () => {
+    expect(formatToolLine('Read', { file_path: '/src/index.ts' }, '', false)).toBe(
+      '📖 Read: /src/index.ts'
+    )
   })
 
   test('formats notice lines', () => {
