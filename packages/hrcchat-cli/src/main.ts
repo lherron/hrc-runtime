@@ -99,7 +99,7 @@ program
 
 program
   .command('summon')
-  .description('materialize a target without starting a live runtime')
+  .description('materialize/pre-warm a target; turn auto-summons when needed')
   .argument('<target>', 'target handle')
   .action(async (target) => {
     const client = createClient()
@@ -108,9 +108,9 @@ program
 
 // -- dm -----------------------------------------------------------------------
 
-program
+const dmCmd = program
   .command('dm')
-  .description('send a semantic directed request')
+  .description('send a durable DM/status note; for tracked work use turn --stacked')
   .argument('<target>', 'target handle, "human", or "system"')
   .argument('[message]', 'message body (use - for stdin)')
   .option('--respond-to <kind>', 'human|agent|system')
@@ -126,11 +126,18 @@ program
     ])
   })
 
+dmCmd.addHelpText(
+  'before',
+  'Send a durable DM/status note. It is not the tracked-work path; use hrcchat turn --stacked for work dispatch.\n'
+)
+
 // -- send ---------------------------------------------------------------------
 
-program
+const sendCmd = program
   .command('send')
-  .description('deliver literal input to a live runtime')
+  .description(
+    'inject literal input into a live tmux runtime; bypasses semantic dispatch; not for tracked work'
+  )
   .argument('<target>', 'target handle')
   .argument('[message]', 'text to send (use - for stdin)')
   .option('--enter', 'send enter key after text (default)')
@@ -143,6 +150,11 @@ program
       ...(message !== undefined ? [message] : []),
     ])
   })
+
+sendCmd.addHelpText(
+  'before',
+  'Inject literal text into a live tmux runtime (raw keystrokes; bypasses semantic dispatch). NOT a turn \u2014 use hrcchat turn for work.\n'
+)
 
 // -- show ---------------------------------------------------------------------
 
@@ -176,7 +188,7 @@ program
 
 program
   .command('peek')
-  .description('capture live output from a bound runtime')
+  .description('tail live tmux pane of a bound runtime')
   .argument('<target>', 'target handle')
   .option('--lines <n>', 'number of lines to capture', '80')
   .action(async (target, opts) => {
@@ -186,22 +198,30 @@ program
 
 // -- turn ---------------------------------------------------------------------
 
-program
+const turnCmd = program
   .command('turn')
-  .description('dispatch a semantic turn and stream the response')
+  .description('dispatch tracked work to an agent and stream progress')
   .argument('<target>', 'target handle or scopeRef')
   .argument('[prompt]', 'prompt text (use - for stdin)')
   .option('--new', 'clear context before dispatching (clean slate)')
   .option('--format <format>', 'output format: tree, compact, ndjson, json')
   .option('--pretty', 'force the human-facing terminal render even on non-TTY')
   .option('--stall-after <duration>', 'abort if idle for this long', '5m')
-  .option('--stacked <duration>', 'emit bounded turn_stacked ndjson progress windows')
+  .option(
+    '--stacked <duration>',
+    'emit bounded turn_stacked ndjson progress (interval lines plus phase/stall/final/error/permission force-flushes; implies ndjson)'
+  )
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--file <path>', 'read prompt from file')
   .action(async (target, prompt, opts) => {
     const client = createClient()
     await cmdTurn(client, { ...opts }, [target, ...(prompt !== undefined ? [prompt] : [])])
   })
+
+turnCmd.addHelpText(
+  'before',
+  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use --stacked\n<duration>; the stream is one turn_stacked ndjson line per interval plus force-flush lines on\nphase/stall/final/error/permission. Mutex against --format tree|compact and --pretty.\n'
+)
 
 // -- doctor -------------------------------------------------------------------
 
@@ -213,6 +233,31 @@ program
     const client = createClient()
     await cmdDoctor(client, { json: globalOpts().json }, target ? [target] : [])
   })
+
+// -- Grouped help index -------------------------------------------------------
+
+program.addHelpText(
+  'after',
+  `
+WORK
+  turn        dispatch tracked work to an agent and stream progress
+
+MESSAGES
+  dm          send a durable DM/status note; for tracked work use turn --stacked
+  show        show one message by seq or message ID
+  messages    query durable directed message history
+
+LIVE
+  send        inject literal input into a live tmux runtime; bypasses semantic dispatch; not for tracked work
+  summon      materialize/pre-warm a target; turn auto-summons when needed
+  peek        tail live tmux pane of a bound runtime
+
+UTILITY
+  who         list visible targets
+  doctor      run connectivity and target health checks
+  info        show CLI/runtime info
+`
+)
 
 // -- Run (guarded — only when executed directly, not when imported) -----------
 
