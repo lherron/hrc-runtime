@@ -381,6 +381,7 @@
         "agent-action-render": "*",
         "agent-scope": "*",
         "discord.js": "^14.16.0",
+        "hrc-frame-render": "*",
         "spaces-runtime": "*",
       },
       "devDependencies": {
@@ -502,6 +503,19 @@
       "devDependencies": {
         "@types/bun": "latest",
         "@types/diff": "^7.0.2",
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/hrc-frame-render": {
+      "name": "hrc-frame-render",
+      "version": "0.1.0",
+      "dependencies": {
+        "acp-ops-projection": "*",
+        "agent-scope": "*",
+        "spaces-runtime": "*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
         "typescript": "^5.8.3",
       },
     },
@@ -1383,6 +1397,8 @@
 
     "hrc-events": ["hrc-events@workspace:packages/hrc-events"],
 
+    "hrc-frame-render": ["hrc-frame-render@workspace:packages/hrc-frame-render"],
+
     "hrc-sdk": ["hrc-sdk@workspace:packages/hrc-sdk"],
 
     "hrc-server": ["hrc-server@workspace:packages/hrc-server"],
@@ -1865,6 +1881,8 @@
 
     "hrc-events/@types/bun": ["@types/bun@1.3.13", "", { "dependencies": { "bun-types": "1.3.13" } }, "sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw=="],
 
+    "hrc-frame-render/@types/bun": ["@types/bun@1.3.13", "", { "dependencies": { "bun-types": "1.3.13" } }, "sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw=="],
+
     "hrc-sdk/@types/bun": ["@types/bun@1.3.13", "", { "dependencies": { "bun-types": "1.3.13" } }, "sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw=="],
 
     "hrc-server/@types/bun": ["@types/bun@1.3.13", "", { "dependencies": { "bun-types": "1.3.13" } }, "sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw=="],
@@ -1990,6 +2008,8 @@
     "hrc-core/@types/bun/bun-types": ["bun-types@1.3.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
 
     "hrc-events/@types/bun/bun-types": ["bun-types@1.3.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
+
+    "hrc-frame-render/@types/bun/bun-types": ["bun-types@1.3.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
 
     "hrc-sdk/@types/bun/bun-types": ["bun-types@1.3.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
 
