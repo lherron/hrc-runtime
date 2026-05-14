@@ -516,6 +516,84 @@ describe('hrc-launch exec crash paths', () => {
     expect(completed?.body).not.toHaveProperty('finalOutput')
   })
 
+  it('surfaces codex app-server driver errors in synthesized outcome details', async () => {
+    const launchId = 'launch-headless-app-server-driver-error'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const appServerScript = [
+      "const readline = require('node:readline')",
+      'const rl = readline.createInterface({ input: process.stdin })',
+      'function send(value) { process.stdout.write(JSON.stringify(value) + "\\n") }',
+      "rl.on('line', (line) => {",
+      '  const msg = JSON.parse(line)',
+      "  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })",
+      "  if (msg.method === 'thread/start') {",
+      "    send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'driver exploded before turn' } })",
+      '    setTimeout(() => process.exit(0), 10)',
+      '  }',
+      '})',
+    ].join('\n')
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        frontend: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [process.execPath, '-e', appServerScript],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+        launchMode: 'app-server',
+        codexAppServer: {
+          prompt: 'driver should fail',
+          approvalPolicy: 'never',
+        },
+      } as HrcLaunchArtifact),
+      4_000
+    )
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('driver exploded before turn')
+    const completed = received.find(
+      (entry) => (entry.body as { type?: string }).type === 'turn.completed'
+    )
+    expect(completed?.body).toMatchObject({
+      type: 'turn.completed',
+      success: false,
+      source: 'codex_app_server',
+      outcome: {
+        state: 'degraded',
+        reason: 'no_assistant_content',
+        source: 'codex_app_server',
+        details: {
+          errorMessage: expect.stringContaining('driver exploded before turn'),
+        },
+      },
+    })
+  })
+
   it('declines codex app-server approval requests defensively', async () => {
     const launchId = 'launch-headless-app-server-approval'
     const socketPath = join(tmpDir, 'callbacks.sock')
