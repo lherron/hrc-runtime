@@ -347,9 +347,43 @@ async function postHeadlessCodexTurnCompleted(
     usage?: unknown
     finalOutput?: string | undefined
     source: 'codex_jsonl' | 'codex_app_server' | 'launch_exit_synthesized'
+    signal?: string | undefined
+    exitCode?: number | undefined
   }
 ): Promise<void> {
   const hasAssistantContent = input.finalOutput !== undefined && input.finalOutput.trim().length > 0
+
+  function buildDegradedOutcome(): Record<string, unknown> {
+    if (input.signal !== undefined) {
+      return {
+        outcome: {
+          state: 'degraded',
+          reason: 'launch_signalled',
+          source: input.source,
+          signal: input.signal,
+        },
+      }
+    }
+
+    if (input.exitCode !== undefined && input.exitCode !== 0) {
+      return {
+        outcome: {
+          state: 'degraded',
+          reason: 'launch_failed',
+          source: input.source,
+          exitCode: input.exitCode,
+        },
+      }
+    }
+
+    return {
+      outcome: {
+        state: 'degraded',
+        reason: 'no_assistant_content',
+        source: input.source,
+      },
+    }
+  }
 
   await callbackOrSpool(
     artifact.callbackSocketPath,
@@ -368,13 +402,7 @@ async function postHeadlessCodexTurnCompleted(
               content: [{ type: 'text', text: input.finalOutput }],
             },
           }
-        : {
-            outcome: {
-              state: 'degraded',
-              reason: 'no_assistant_content',
-              source: input.source,
-            },
-          }),
+        : buildDegradedOutcome()),
     },
     artifact.spoolDir,
     artifact.launchId
@@ -664,6 +692,8 @@ async function main(): Promise<void> {
       success: exit.exitCode === 0,
       finalOutput: codexOutputState.finalOutput,
       source: 'launch_exit_synthesized',
+      ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+      ...(exit.exitCode !== 0 && exit.signal === undefined ? { exitCode: exit.exitCode } : {}),
     })
   }
 
