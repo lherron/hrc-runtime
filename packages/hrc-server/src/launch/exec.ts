@@ -215,6 +215,7 @@ function isHeadlessCodexLaunch(artifact: {
 type HeadlessCodexOutputState = {
   turnCompleted: boolean
   finalOutput?: string | undefined
+  driverFailed?: boolean | undefined
 }
 
 function isHeadlessCodexAppServerLaunch(
@@ -349,6 +350,7 @@ async function postHeadlessCodexTurnCompleted(
     source: 'codex_jsonl' | 'codex_app_server' | 'launch_exit_synthesized'
     signal?: string | undefined
     exitCode?: number | undefined
+    errorMessage?: string | undefined
   }
 ): Promise<void> {
   const hasAssistantContent = input.finalOutput !== undefined && input.finalOutput.trim().length > 0
@@ -381,6 +383,9 @@ async function postHeadlessCodexTurnCompleted(
         state: 'degraded',
         reason: 'no_assistant_content',
         source: input.source,
+        ...(input.errorMessage !== undefined
+          ? { details: { errorMessage: input.errorMessage } }
+          : {}),
       },
     }
   }
@@ -474,8 +479,14 @@ async function driveHeadlessCodexAppServer(
       ...(result.finalOutput !== undefined ? { finalOutput: result.finalOutput } : {}),
     }
   } catch (error) {
-    process.stderr.write(`hrc-launch exec: codex app-server driver failed: ${formatError(error)}\n`)
-    return { turnCompleted: false }
+    const errorMessage = formatError(error)
+    process.stderr.write(`hrc-launch exec: codex app-server driver failed: ${errorMessage}\n`)
+    await postHeadlessCodexTurnCompleted(artifact, {
+      success: false,
+      source: 'codex_app_server',
+      errorMessage,
+    })
+    return { turnCompleted: true, driverFailed: true }
   }
 }
 
@@ -687,20 +698,22 @@ async function main(): Promise<void> {
 
   const [codexOutputState] = await Promise.all([childStdout, childStderr])
 
+  const exitCode = codexOutputState.driverFailed ? 1 : exit.exitCode
+
   if (isHeadlessCodexLaunch(artifact) && !codexOutputState.turnCompleted) {
     await postHeadlessCodexTurnCompleted(artifact, {
-      success: exit.exitCode === 0,
+      success: exitCode === 0,
       finalOutput: codexOutputState.finalOutput,
       source: 'launch_exit_synthesized',
       ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
-      ...(exit.exitCode !== 0 && exit.signal === undefined ? { exitCode: exit.exitCode } : {}),
+      ...(exitCode !== 0 && exit.signal === undefined ? { exitCode } : {}),
     })
   }
 
   const exitPayload = {
     launchId,
     hostSessionId,
-    exitCode: exit.exitCode,
+    exitCode,
     ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
   }
   try {
@@ -727,7 +740,7 @@ async function main(): Promise<void> {
     })
   }
 
-  process.exit(exit.exitCode)
+  process.exit(exitCode)
 }
 
 main().catch((err: unknown) => {
