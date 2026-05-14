@@ -659,6 +659,116 @@ describe('hrc-launch exec crash paths', () => {
     })
   })
 
+  it('marks synthesized headless codex completion as signalled when the child exits by signal', async () => {
+    const launchId = 'launch-headless-synthesized-turn-signalled'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [process.execPath, '-e', "process.kill(process.pid, 'SIGTERM')"],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(1)
+    const synthesizedEvents = received.filter(
+      (entry) => entry.url === `/v1/internal/launches/${launchId}/event`
+    )
+    expect(synthesizedEvents[synthesizedEvents.length - 1]?.body).toMatchObject({
+      type: 'turn.completed',
+      success: false,
+      transport: 'headless',
+      source: 'launch_exit_synthesized',
+      outcome: {
+        state: 'degraded',
+        reason: 'launch_signalled',
+        source: 'launch_exit_synthesized',
+        signal: 'SIGTERM',
+      },
+    })
+  })
+
+  it('marks synthesized headless codex completion as failed when the child exits non-zero', async () => {
+    const launchId = 'launch-headless-synthesized-turn-failed'
+    const socketPath = join(tmpDir, 'callbacks.sock')
+    const received: Array<{ url: string; body: unknown }> = []
+
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk.toString()
+      })
+      req.on('end', () => {
+        received.push({
+          url: req.url ?? '',
+          body: raw.length > 0 ? JSON.parse(raw) : {},
+        })
+        res.statusCode = 204
+        res.end()
+      })
+    })
+    await listenOnSocket(server, socketPath)
+
+    const result = await runExec(
+      makeArtifact({
+        launchId,
+        harness: 'codex-cli',
+        provider: 'openai',
+        callbackSocketPath: socketPath,
+        argv: [process.execPath, '-e', 'process.exit(42)'],
+        env: {
+          HOME: tmpDir,
+          HRC_LAUNCH_ID: launchId,
+        },
+        interactionMode: 'headless',
+        ioMode: 'pipes',
+      } as HrcLaunchArtifact)
+    )
+
+    expect(result.exitCode).toBe(42)
+    const synthesizedEvents = received.filter(
+      (entry) => entry.url === `/v1/internal/launches/${launchId}/event`
+    )
+    expect(synthesizedEvents[synthesizedEvents.length - 1]?.body).toMatchObject({
+      type: 'turn.completed',
+      success: false,
+      transport: 'headless',
+      source: 'launch_exit_synthesized',
+      outcome: {
+        state: 'degraded',
+        reason: 'launch_failed',
+        source: 'launch_exit_synthesized',
+        exitCode: 42,
+      },
+    })
+  })
+
   it('prints CODEX_HOME in the summary for codex launches', async () => {
     const codexHome = join(tmpDir, 'codex-home')
     const result = await runExec(
