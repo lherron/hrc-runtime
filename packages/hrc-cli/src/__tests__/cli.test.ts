@@ -306,65 +306,111 @@ async function installFakeCodex(
   const scriptPath = join(binDir, 'codex')
   await writeFile(
     scriptPath,
-    `#!/bin/sh
-set -eu
-cmd="\${1:-}"
-log_path=${JSON.stringify(logPath)}
-resume_path=${JSON.stringify(resumePath)}
-if [ "$cmd" = "--version" ]; then
-  printf 'codex-cli 0.124.0\\n'
-  exit 0
-fi
-if [ "$cmd" = "app-server" ] && [ "\${2:-}" = "--help" ]; then
-  printf 'Usage: codex app-server\\n'
-  exit 0
-fi
-while [ "$cmd" = "--enable" ] || [ "$cmd" = "--disable" ]; do
-  shift
-  shift
-  cmd="\${1:-}"
-done
-if [ "$cmd" = "app-server" ]; then
-  printf 'app-server\\n' >> "$log_path"
-  while IFS= read -r line; do
-    case "$line" in
-      *'"method":"initialize"'*|*'"method": "initialize"'*)
-        printf '{"jsonrpc":"2.0","id":1,"result":{}}\\n'
-        ;;
-      *'"method":"thread/start"'*|*'"method": "thread/start"'*)
-        printf '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"${behavior.execThreadId ?? 'thread-123'}"}}}\\n'
-        ;;
-      *'"method":"turn/start"'*|*'"method": "turn/start"'*)
-        printf '{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"turn-123"}}}\\n'
-        printf '{"jsonrpc":"2.0","method":"item/completed","params":{"turnId":"turn-123","item":{"type":"agentMessage","id":"msg-123","text":"ok"}}}\\n'
-        printf '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"${behavior.execThreadId ?? 'thread-123'}","turnId":"turn-123","tokenUsage":{"total":{"inputTokens":1,"outputTokens":1}}}}\\n'
-        printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"${behavior.execThreadId ?? 'thread-123'}","turn":{"id":"turn-123","status":"completed","items":[]}}}\\n'
-        exit 0
-        ;;
-    esac
-  done
-  exit 0
-fi
-if [ "$cmd" = "exec" ]; then
-  printf 'exec\\n' >> "$log_path"
-  /bin/sleep ${((behavior.execDelayMs ?? 0) / 1000).toFixed(3)}
-  printf '{"type":"thread.started","thread_id":"${behavior.execThreadId ?? 'thread-123'}"}\\n'
-  exit 0
-fi
-if [ "$cmd" = "resume" ]; then
-  shift
-  while [ "\${1:-}" = "--enable" ] || [ "\${1:-}" = "--disable" ]; do
-    shift
-    shift
-  done
-  printf 'resume:%s\\n' "\${1:-}" >> "$resume_path"
-  /bin/sleep ${((behavior.resumeDelayMs ?? 0) / 1000).toFixed(3)}
-  exit 0
-fi
-printf 'interactive:%s\\n' "$*" >> "$log_path"
-printf '%s\\n' ${JSON.stringify(behavior.interactiveBanner ?? 'INTERACTIVE_HARNESS_STARTED')}
-/bin/sleep ${((behavior.interactiveDelayMs ?? 1_500) / 1000).toFixed(3)}
-exit 0
+    `#!${process.execPath}
+import { appendFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+
+const args = process.argv.slice(2)
+const logPath = ${JSON.stringify(logPath)}
+const resumePath = ${JSON.stringify(resumePath)}
+const execDelayMs = ${JSON.stringify(behavior.execDelayMs ?? 0)}
+const execThreadId = ${JSON.stringify(behavior.execThreadId ?? 'thread-123')}
+const interactiveBanner = ${JSON.stringify(behavior.interactiveBanner ?? 'INTERACTIVE_HARNESS_STARTED')}
+const interactiveDelayMs = ${JSON.stringify(behavior.interactiveDelayMs ?? 1_500)}
+const resumeDelayMs = ${JSON.stringify(behavior.resumeDelayMs ?? 0)}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function stripRootFlags(input) {
+  const args = [...input]
+  while (args.length > 0) {
+    const flag = args[0]
+    if (flag === '--enable' || flag === '--disable' || flag === '--model' || flag === '-m' || flag === '-c') {
+      args.splice(0, 2)
+      continue
+    }
+    break
+  }
+  return args
+}
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n')
+}
+
+function emitTurn() {
+  const turnId = 'turn-123'
+  const item = { id: 'msg-123', type: 'agentMessage', text: 'ok' }
+  write({ jsonrpc: '2.0', method: 'turn/started', params: { turn: { id: turnId } } })
+  write({ jsonrpc: '2.0', method: 'item/completed', params: { turnId, item } })
+  write({
+    jsonrpc: '2.0',
+    method: 'thread/tokenUsage/updated',
+    params: { threadId: execThreadId, turnId, tokenUsage: { total: { inputTokens: 1, outputTokens: 1 } } },
+  })
+  write({
+    jsonrpc: '2.0',
+    method: 'turn/completed',
+    params: { threadId: execThreadId, turn: { id: turnId, status: 'completed', items: [item] } },
+  })
+}
+
+if (args[0] === '--version') {
+  console.log('codex-cli 0.124.0')
+  process.exit(0)
+}
+
+const commandArgs = stripRootFlags(args)
+const cmd = commandArgs[0] ?? ''
+
+if (cmd === 'app-server' && commandArgs[1] === '--help') {
+  console.log('Usage: codex app-server')
+  process.exit(0)
+}
+
+if (cmd === 'app-server') {
+  appendFileSync(logPath, 'app-server:' + commandArgs.join(' ') + '\\n')
+  const rl = createInterface({ input: process.stdin })
+  rl.on('line', (line) => {
+    const message = JSON.parse(line)
+    if (!('id' in message)) return
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} })
+      return
+    }
+    if (message.method === 'thread/start') {
+      write({ jsonrpc: '2.0', id: message.id, result: { thread: { id: execThreadId } } })
+      return
+    }
+    if (message.method === 'thread/resume') {
+      const threadId = message.params?.threadId ?? execThreadId
+      appendFileSync(resumePath, 'resume:' + threadId + '\\n')
+      write({ jsonrpc: '2.0', id: message.id, result: { thread: { id: threadId } } })
+      return
+    }
+    if (message.method === 'turn/start') {
+      write({ jsonrpc: '2.0', id: message.id, result: { turn: { id: 'turn-123' } } })
+      setTimeout(emitTurn, execDelayMs)
+      return
+    }
+  })
+  rl.on('close', () => process.exit(0))
+  setTimeout(() => {}, 60_000)
+} else if (cmd === 'exec') {
+  appendFileSync(logPath, 'exec\\n')
+  await sleep(execDelayMs)
+  write({ type: 'thread.started', thread_id: execThreadId })
+} else if (cmd === 'resume') {
+  const resumeArgs = stripRootFlags(commandArgs.slice(1))
+  appendFileSync(resumePath, 'resume:' + (resumeArgs[0] ?? '') + '\\n')
+  await sleep(resumeDelayMs)
+} else {
+  appendFileSync(logPath, 'interactive:' + args.join(' ') + '\\n')
+  console.log(interactiveBanner)
+  await sleep(interactiveDelayMs)
+}
 `,
     'utf-8'
   )

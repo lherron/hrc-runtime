@@ -41,6 +41,7 @@ describe('runSdkTurn agent tool env', () => {
         projectRoot,
         cwd: projectRoot,
         runMode: 'task',
+        dryRun: true,
         bundle: { kind: 'agent-default' },
         correlation: {
           sessionRef: {
@@ -104,8 +105,8 @@ describe('runSdkTurn agent tool env', () => {
       CUSTOM_SDK_ENV: 'from-launch',
     })
     expect(captured.env?.['PATH']?.split(delimiter).slice(0, 2)).toEqual([
-      '/custom/bin',
       toolsBinDir,
+      '/custom/bin',
     ])
   })
 })

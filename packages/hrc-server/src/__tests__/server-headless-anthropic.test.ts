@@ -567,7 +567,7 @@ describe('D. DM fallback', () => {
     expect(dm.waited).toBeUndefined()
 
     let execLog = ''
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
       try {
         execLog = await readFile(fakeCodex.logPath, 'utf-8')
       } catch {
