@@ -20,6 +20,12 @@ packages/hrc-cli/projects/
 packages/hrc-server/projects/
 packages/acp-server/state/
 
+# gbrain PGLite scratch written by agent-brain tests when run without
+# BRAIN_REPO/GBRAIN_HOME overrides (deriveGbrainHome falls back to
+# <agentRoot>/var/state/gbrain)
+packages/*/var/
+packages/*/src/__fixtures__/**/var/
+
 # IDE / editor
 .vscode/
 .idea/
