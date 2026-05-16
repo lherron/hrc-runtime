@@ -23,6 +23,7 @@ export type BrainEnricherResult = {
   reason:
     | 'enabled'
     | 'disabled'
+    | 'injection-disabled'
     | 'resolution-error'
     | 'query-timeout'
     | 'empty-prompt'

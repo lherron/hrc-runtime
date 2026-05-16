@@ -29,6 +29,7 @@ export interface BrainEnricherResult {
   reason:
     | 'enabled'
     | 'disabled'
+    | 'injection-disabled'
     | 'resolution-error'
     | 'query-timeout'
     | 'empty-prompt'
@@ -99,6 +100,9 @@ export async function enrichTurnPromptForBrain(
     }
     if (resolution.kind !== 'enabled') {
       return passThrough(input.prompt, 'resolution-error')
+    }
+    if (resolution.injection === false) {
+      return passThrough(input.prompt, 'injection-disabled')
     }
 
     const queryKey = `${resolution.GBRAIN_HOME}\0${resolution.BRAIN_REPO}\0${input.prompt}`
