@@ -286,7 +286,10 @@ function formatBrainPrompt(
 ): string {
   const rules = options.rules ?? []
   const context = options.context ?? []
-  const rulesText = rules.join('\n')
+  const rulesBlock =
+    rules.length === 0
+      ? '<brain_rules>\n</brain_rules>'
+      : `<brain_rules>\n${rules.join('\n')}\n</brain_rules>`
   const contextText = context
     .map(
       (source) =>
@@ -296,9 +299,7 @@ function formatBrainPrompt(
 
   return `${rawPrompt}
 
-<brain_rules>
-${rulesText}
-</brain_rules>
+${rulesBlock}
 <brain_context source="gbrain" mode="query" results="${context.length}" elapsed_ms="${
     options.elapsedMs ?? 12
   }">
@@ -544,7 +545,7 @@ describe('dispatchTurnForSession brain enricher seam', () => {
   })
 
   it('keeps ACP admission free of brain-enricher imports', async () => {
-    const acpServerRoot = join(process.cwd(), 'packages', 'acp-server', 'src')
+    const acpServerRoot = join(import.meta.dir, '..', '..', '..', 'acp-server', 'src')
     const proc = Bun.spawn(
       ['rg', 'enrichTurnPromptForBrain|brain-enricher|gbrain', acpServerRoot],
       {

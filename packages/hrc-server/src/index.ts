@@ -115,6 +115,7 @@ import {
   getSdkInflightCapability,
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
+import { enrichTurnPromptForBrain } from './brain-enricher.js'
 import {
   appendHrcEvent,
   createUserPromptPayload,
@@ -1813,11 +1814,22 @@ class HrcServerInstance implements HrcServer {
     } = {}
   ): Promise<Response> {
     const runId = options.runId ?? `run-${randomUUID()}`
+    const originalPromptLength = prompt.length
+    const enriched = await enrichTurnPromptForBrain({ session, intent, prompt, runId })
+    const dispatchPrompt = enriched.prompt
+    writeServerLog('INFO', `brain.enricher.${enriched.reason}`, {
+      hostSessionId: session.hostSessionId,
+      runId,
+      applied: enriched.applied,
+      sourceCount: enriched.sources?.length ?? 0,
+      promptLengthDelta: dispatchPrompt.length - originalPromptLength,
+    })
+
     const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
     const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
 
     if (shouldUseHeadlessTransport(intent)) {
-      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
+      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
         waitForCompletion: options.waitForCompletion,
       })
     }
@@ -1833,7 +1845,7 @@ class HrcServerInstance implements HrcServer {
         !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
         liveTmuxRuntime.activeRunId === undefined
       if (!tmuxAvailableAndIdle) {
-        return await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
+        return await this.handleSdkDispatchTurn(session, intent, dispatchPrompt, runId, {
           waitForCompletion: options.waitForCompletion,
         })
       }
@@ -1970,7 +1982,7 @@ class HrcServerInstance implements HrcServer {
       launchId,
       transport: 'tmux',
       payload: {
-        promptLength: prompt.length,
+        promptLength: dispatchPrompt.length,
       },
     })
     this.notifyEvent(acceptedEvent)
@@ -1985,7 +1997,7 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       launchId,
       transport: 'tmux',
-      payload: createUserPromptPayload(prompt),
+      payload: createUserPromptPayload(dispatchPrompt),
     })
     this.notifyEvent(userPromptEvent)
 
