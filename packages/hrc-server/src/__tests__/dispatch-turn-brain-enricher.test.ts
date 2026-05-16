@@ -350,7 +350,7 @@ describe('dispatchTurnForSession brain enricher seam', () => {
     expect(content).toBe(rawPrompt)
   })
 
-  it('fails open when the gbrain query hits the 300ms timeout', async () => {
+  it('fails open when the gbrain query hits the timeout', async () => {
     const rawPrompt = 'Continue after a slow brain lookup.'
 
     const { content } = await dispatchSdkWithMockedResult(rawPrompt, {

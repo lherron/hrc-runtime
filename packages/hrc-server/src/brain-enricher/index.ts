@@ -67,7 +67,7 @@ type ParsedBrainRule = BrainRule & {
   status?: string | undefined
 }
 
-const GBRAIN_TIMEOUT_MS = 300
+const GBRAIN_TIMEOUT_MS = 2500
 const QUERY_LIMIT = 5
 const QUERY_MAX_TOKENS = 800
 
@@ -234,6 +234,14 @@ async function defaultGbrainRunner(
 }
 
 function parseContextSources(stdout: string): BrainContextSource[] {
+  const fromJson = parseContextSourcesFromJson(stdout)
+  if (fromJson.length > 0) {
+    return fromJson
+  }
+  return parseContextSourcesFromText(stdout)
+}
+
+function parseContextSourcesFromJson(stdout: string): BrainContextSource[] {
   const values = normalizeJsonRows(parseJsonOutput(stdout))
   return values
     .map((value): ParsedContextSource | undefined => {
@@ -258,6 +266,40 @@ function parseContextSources(stdout: string): BrainContextSource[] {
       }
     })
     .filter((value): value is ParsedContextSource => value !== undefined)
+}
+
+function parseContextSourcesFromText(stdout: string): BrainContextSource[] {
+  const trimmed = stdout.trim()
+  if (trimmed.length === 0 || trimmed === 'No results.' || trimmed === 'No pages found.') {
+    return []
+  }
+  const headerRe = /^\[([\d.]+)\]\s+(\S+)\s+--\s+#\s*(.*)$/
+  const results: ParsedContextSource[] = []
+  let current: ParsedContextSource | null = null
+  let snippet: string[] = []
+  for (const rawLine of trimmed.split('\n')) {
+    const line = rawLine.replace(/\s*\(stale\)\s*$/, '')
+    const match = line.match(headerRe)
+    if (match && match[1] !== undefined && match[2] !== undefined) {
+      if (current) {
+        current.text = snippet.join(' ').trim().slice(0, 200)
+        results.push(current)
+      }
+      current = {
+        slug: match[2],
+        score: Number.parseFloat(match[1]),
+        text: '',
+      }
+      snippet = []
+    } else if (current && line.trim().length > 0) {
+      snippet.push(line.trim())
+    }
+  }
+  if (current) {
+    current.text = snippet.join(' ').trim().slice(0, 200)
+    results.push(current)
+  }
+  return results
 }
 
 function parseRules(stdout: string): BrainRule[] {
