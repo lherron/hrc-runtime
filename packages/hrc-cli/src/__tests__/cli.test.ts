@@ -886,17 +886,17 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     const status = await waitForServerStatus((value) => value.running === true, env)
     expect(status.running).toBe(true)
 
-    const hostSessionId = await resolveHostSessionId(testProjectScope('codex-launch-logging'))
+    const scope = testProjectScope('codex-launch-logging')
+    const hostSessionId = await resolveHostSessionId(scope)
     const ensureResult = await runCli(
       ['runtime', 'ensure', hostSessionId, '--provider', 'openai'],
       env
     )
     expect(ensureResult.exitCode).toBe(0)
 
-    const sendResult = await runCli(
-      ['turn', 'send', hostSessionId, '--prompt', 'log codex launch', '--provider', 'openai'],
-      env
-    )
+    // `hrc turn` now re-execs `hrcchat turn`; provider comes from the target
+    // intent set up by `runtime ensure --provider openai` above.
+    const sendResult = await runCli(['turn', scope, 'log codex launch'], env)
     expect(sendResult.exitCode).toBe(0)
 
     const log = await waitForServerLog()
