@@ -8,8 +8,8 @@
  * Pass conditions for Curly (T-00957):
  *   1. `hrc` with no args prints help text to stderr and exits 1
  *   2. `hrc unknowncmd` prints error to stderr and exits 2
- *   3. `hrc turn send` and `hrc session clear-context` validate args and dispatch
- *      through hrc-sdk
+ *   3. `hrc session clear-context` validates args and dispatches through
+ *      hrc-sdk; `hrc turn` is a passthrough alias for `hrcchat turn`
  *      to stderr and exit 2
  *   4. `hrc server` starts the daemon (tested via createHrcServer delegation)
  *   5. `hrc session resolve --scope <scopeRef>` outputs JSON to stdout
@@ -85,6 +85,10 @@ function shouldUseSubprocess(args: string[]): boolean {
       return !(args.includes('--no-attach') || args.includes('--dry-run'))
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
+    case 'turn':
+      // turn re-execs `hrcchat turn` with inherited stdio; must run as
+      // subprocess so the grandchild's output flows through pipes to the test
+      return true
     default:
       return false
   }
@@ -678,20 +682,14 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stdout).toMatch(/Usage:/)
   })
 
-  // -- turn group --
-  it('hrc turn --help exits 0 with Usage and lists subcommands', async () => {
+  // -- turn (alias for `hrcchat turn`) --
+  it('hrc turn --help forwards to hrcchat turn and exits 0', async () => {
     const result = await runCli(['turn', '--help'])
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
-    expect(output).toContain('send')
-  })
-
-  it('hrc turn send --help exits 0 with Usage', async () => {
-    const result = await runCli(['turn', 'send', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toMatch(/Usage:/)
-    expect(result.stdout).toContain('--prompt')
+    // hrcchat turn-specific flag — proves we re-execed, not echoed our own help
+    expect(output).toContain('--stacked')
   })
 
   // -- inflight group --
@@ -1012,9 +1010,9 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
 })
 
 // ===========================================================================
-// 3. turn send / session clear-context
+// 3. session clear-context
 // ===========================================================================
-describe('turn send / session clear-context', () => {
+describe('session clear-context', () => {
   beforeEach(async () => {
     server = await createHrcServer(serverOpts())
   })
@@ -1023,39 +1021,6 @@ describe('turn send / session clear-context', () => {
     const result = await runCli(['session', 'resolve', '--scope', scope], cliEnv())
     return JSON.parse(result.stdout.trim()).hostSessionId as string
   }
-
-  it('turn send emits deprecation warning to stderr', async () => {
-    // Provide a hostSessionId so Commander passes arg validation, but omit --prompt
-    // so cmdTurnSend exits with a usage error. The deprecation warning still appears
-    // because it's emitted at the start of cmdTurnSend before prompt validation.
-    const result = await runCli(['turn', 'send', 'hsid-fake-for-deprecation'], cliEnv())
-    expect(result.stderr).toContain('deprecated')
-    expect(result.stderr).toContain('hrcchat turn')
-    expect(result.exitCode).toBe(2) // --prompt is required → usage error
-  })
-
-  it('turn send exits 2 when hostSessionId is missing', async () => {
-    const result = await runCli(['turn', 'send'], cliEnv())
-    expect(result.exitCode).toBe(2)
-    expect(result.stderr.toLowerCase()).toContain('missing required argument')
-  })
-
-  it('turn send outputs run JSON for a known hostSessionId', async () => {
-    const hostSessionId = await resolveHostSessionId(testProjectScope('turncli'))
-    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
-    expect(ensureResult.exitCode).toBe(0)
-
-    const result = await runCli(
-      ['turn', 'send', hostSessionId, '--prompt', 'hello from cli'],
-      cliEnv()
-    )
-
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.runId).toBeString()
-    expect(body.hostSessionId).toBe(hostSessionId)
-    expect(body.status).toBe('started')
-  })
 
   it('session clear-context exits 2 when hostSessionId is missing', async () => {
     const result = await runCli(['session', 'clear-context'], cliEnv())
