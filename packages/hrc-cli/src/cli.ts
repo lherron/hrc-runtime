@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join, resolve as resolvePath } from 'node:path'
@@ -1738,49 +1739,20 @@ async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   printJson(result)
 }
 
-async function cmdTurnSend(args: string[]): Promise<void> {
-  process.stderr.write(
-    'hrc: warning: "hrc turn send" is deprecated. Use "hrcchat turn <target> <prompt>" instead.\n'
-  )
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
-  const prompt = parseFlag(args, '--prompt')
-  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
-  const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
-  const followLatest = hasFlag(args, '--follow-latest')
-
-  if (!prompt) {
-    fatal('--prompt is required for turn send')
-  }
-
-  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
-    fatal('--provider must be one of: anthropic, openai')
-  }
-
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
-
-  const client = createClient()
-  const result = await client.dispatchTurn({
-    hostSessionId,
-    prompt,
-    runtimeIntent: createDefaultRuntimeIntent(providerRaw),
-    fences:
-      expectedHostSessionId !== undefined || expectedGeneration !== undefined || followLatest
-        ? {
-            ...(expectedHostSessionId ? { expectedHostSessionId } : {}),
-            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
-            ...(followLatest ? { followLatest: true } : {}),
-          }
-        : undefined,
+async function execHrcchatTurn(forwarded: string[]): Promise<never> {
+  const child = spawn('hrcchat', ['turn', ...forwarded], { stdio: 'inherit' })
+  return await new Promise<never>((_resolve, reject) => {
+    child.on('error', (err) => {
+      reject(err)
+    })
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal as NodeJS.Signals)
+        return
+      }
+      process.exit(code ?? 0)
+    })
   })
-  printJson(result)
 }
 
 async function cmdInflightSend(args: string[]): Promise<void> {
@@ -2234,8 +2206,8 @@ COMMON CONTROL FLOWS
   Attach to an already-running target:
     hrc attach cody@agent-spaces
 
-  Send a turn to an existing session:
-    hrc turn send <hostSessionId> --prompt "Continue."
+  Send a turn to an agent (alias for hrcchat turn):
+    hrc turn <target> "Continue."
 
   Inspect live output:
     hrc capture <runtimeId>
@@ -2330,7 +2302,7 @@ Commands:
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
-  turn send <hostSessionId> --prompt <text> [--provider <provider>]
+  turn <target> [prompt]              Alias for hrcchat turn; all flags forwarded verbatim
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
   attach <scope> [--dry-run]          Attach to the latest active tmux runtime for a scope
@@ -2803,25 +2775,24 @@ Exit codes:
       await cmdRun(args)
     })
 
-  // -- turn group (commander, Phase 6 T2) -------------------------------------
+  // -- turn (alias for `hrcchat turn`) -----------------------------------------
+  // All arguments are forwarded verbatim to `hrcchat turn`. This keeps `hrc turn`
+  // in lockstep with `hrcchat turn` without duplicating its flag surface.
 
-  const turn = program.command('turn').description('dispatch turns to a session (deprecated)')
-
-  turn
-    .command('send')
-    .description('send a turn (deprecated — use "hrcchat turn" instead)')
-    .argument('<hostSessionId>', 'host session ID')
-    .option('--prompt <prompt>', 'prompt text')
-    .option('--provider <provider>', 'provider (anthropic|openai)')
-    .option('--expected-host-session-id <id>', 'expected host session ID')
-    .option('--expected-generation <n>', 'expected generation')
-    .option('--follow-latest', 'follow latest session')
-    .action(async (hostSessionId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
-        strings: ['prompt', 'provider', 'expected-host-session-id', 'expected-generation'],
-        booleans: ['follow-latest'],
-      })
-      await cmdTurnSend(args)
+  program
+    .command('turn')
+    .description('alias for `hrcchat turn` — dispatch tracked work to an agent and stream progress')
+    .helpOption(false)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .argument('[args...]', 'forwarded verbatim to `hrcchat turn`')
+    .action(async (_args, _opts, cmd: Command) => {
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const turnIdx = fullRaw.indexOf('turn')
+      const forwarded = turnIdx >= 0 ? fullRaw.slice(turnIdx + 1) : []
+      await execHrcchatTurn(forwarded)
     })
 
   // -- inflight group (commander, Phase 6 T2) ---------------------------------
