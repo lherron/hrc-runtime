@@ -79,6 +79,18 @@ Operational notes from dashboard work:
 - Dev demo data should only appear when the dashboard snapshot request fails in development, not before a successful real snapshot replaces it.
 - For package-scoped validation after ops dashboard changes, prefer `bun run --filter acp-ops-web typecheck` and `bun run --filter acp-ops-web test`.
 
+## ACP Viewer
+
+When changing pages or UI under `packages/acp-viewer`, open the affected route in the Codex in-app browser and display it for review.
+
+Run it from `packages/acp-viewer`:
+
+```bash
+bun run dev -- --host 127.0.0.1
+```
+
+Then open the relevant `http://127.0.0.1:5174/...` route in the in-app browser. If port `5174` is already serving the viewer, reuse it instead of starting another server.
+
 ## Project Structure
 
 ```

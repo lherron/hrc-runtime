@@ -64,7 +64,7 @@ export type HrcMessageExecutionState =
 
 export type HrcMessageExecution = {
   state: HrcMessageExecutionState
-  mode?: 'headless' | 'nonInteractive' | 'literal' | undefined
+  mode?: 'headless' | 'interactive' | 'nonInteractive' | 'literal' | undefined
   sessionRef?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
@@ -148,7 +148,7 @@ export type DispatchTurnBySelectorResponse = {
   generation: number
   runtimeId: string
   transport: 'sdk' | 'tmux' | 'headless'
-  mode: 'headless' | 'nonInteractive'
+  mode: 'headless' | 'interactive' | 'nonInteractive'
   status: 'completed' | 'started'
   finalOutput?: string | undefined
   continuationUpdated: boolean

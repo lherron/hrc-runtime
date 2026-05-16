@@ -506,7 +506,7 @@ type TurnResponseFinalizer = {
   requestMessageId: string
   from: HrcMessageAddress
   to: HrcMessageAddress
-  mode: 'headless' | 'nonInteractive'
+  mode: 'headless' | 'interactive' | 'nonInteractive'
   sessionRef: string
 }
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
@@ -5551,6 +5551,22 @@ class HrcServerInstance implements HrcServer {
         record.messageId
       )
 
+      const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+        const delivered = await this.tryDeliverSemanticTurnToInteractiveRuntime({
+          session,
+          runtime: liveTmuxRuntime,
+          request: record,
+          payload,
+          runId,
+          sessionRef,
+          fromSeq,
+        })
+        if (delivered) {
+          return json(delivered satisfies SemanticTurnHandoffResponse)
+        }
+      }
+
       this.turnResponseFinalizers.set(runId, {
         requestMessageId: record.messageId,
         from: body.to,
@@ -5604,6 +5620,126 @@ class HrcServerInstance implements HrcServer {
         errorMessage,
       })
       throw err
+    }
+  }
+
+  private async tryDeliverSemanticTurnToInteractiveRuntime(input: {
+    session: HrcSessionRecord
+    runtime: HrcRuntimeSnapshot
+    request: HrcMessageRecord
+    payload: string
+    runId: string
+    sessionRef: string
+    fromSeq: number
+  }): Promise<SemanticTurnHandoffResponse | undefined> {
+    const { session, runtime, request, payload, runId, sessionRef, fromSeq } = input
+
+    try {
+      const pane = requireTmuxPane(runtime)
+      await this.tmux.sendLiteral(pane.paneId, payload)
+      // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
+      await Bun.sleep(200)
+      await this.tmux.sendEnter(pane.paneId)
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      writeServerLog('WARN', 'semantic_turn.interactive_delivery_failed', {
+        messageId: request.messageId,
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        runId,
+        error: errorMessage,
+      })
+      return undefined
+    }
+
+    const now = timestamp()
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'started',
+      acceptedAt: now,
+      startedAt: now,
+      updatedAt: now,
+    })
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+
+    this.db.messages.updateExecution(request.messageId, {
+      state: 'started',
+      mode: 'interactive',
+      sessionRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      runId,
+      transport: 'tmux',
+    })
+
+    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        promptLength: payload.length,
+        delivery: 'interactive-literal',
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: createUserPromptPayload(payload),
+    })
+    this.notifyEvent(userPromptEvent)
+
+    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        delivery: 'interactive-literal',
+      },
+    })
+    this.notifyEvent(startedEvent)
+
+    writeServerLog('INFO', 'semantic_turn.interactive_selected', {
+      messageId: request.messageId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      runId,
+    })
+
+    return {
+      messageId: request.messageId,
+      sessionRef,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      runId,
+      generation: session.generation,
+      fromSeq,
     }
   }
 
@@ -6055,7 +6191,79 @@ class HrcServerInstance implements HrcServer {
   ): HrcMessageRecord {
     const record = this.db.messages.insert(input)
     this.notifyMessageSubscribers(record)
+    this.maybeCompleteInteractiveSemanticTurn(record)
     return record
+  }
+
+  private maybeCompleteInteractiveSemanticTurn(response: HrcMessageRecord): void {
+    if (response.phase !== 'response' || response.replyToMessageId === undefined) {
+      return
+    }
+
+    const request = this.db.messages.getById(response.replyToMessageId)
+    if (
+      !request ||
+      request.execution.mode !== 'interactive' ||
+      request.execution.transport !== 'tmux' ||
+      request.execution.runId === undefined ||
+      request.execution.hostSessionId === undefined ||
+      request.execution.generation === undefined
+    ) {
+      return
+    }
+
+    const runId = request.execution.runId
+    const run = this.db.runs.getByRunId(runId)
+    if (!run || run.completedAt !== undefined || run.status === 'completed') {
+      return
+    }
+
+    const now = timestamp()
+    this.db.runs.markCompleted(runId, {
+      status: 'completed',
+      completedAt: now,
+      updatedAt: now,
+    })
+
+    this.db.messages.updateExecution(response.messageId, {
+      state: 'completed',
+      mode: 'interactive',
+      sessionRef: request.execution.sessionRef,
+      hostSessionId: request.execution.hostSessionId,
+      generation: request.execution.generation,
+      runtimeId: request.execution.runtimeId,
+      runId,
+      transport: 'tmux',
+    })
+    this.db.messages.updateExecution(request.messageId, {
+      state: 'completed',
+    })
+
+    const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
+      ts: now,
+      hostSessionId: request.execution.hostSessionId,
+      scopeRef: run.scopeRef,
+      laneRef: run.laneRef,
+      generation: request.execution.generation,
+      runId,
+      runtimeId: request.execution.runtimeId,
+      transport: 'tmux',
+      payload: {
+        success: true,
+        transport: 'tmux',
+        delivery: 'interactive-literal',
+        body: response.body,
+        replyMessageId: response.messageId,
+      },
+    })
+    this.notifyEvent(completedEvent)
+
+    writeServerLog('INFO', 'semantic_turn.interactive_response_finalized', {
+      requestMessageId: request.messageId,
+      responseMessageId: response.messageId,
+      runId,
+      state: 'completed',
+    })
   }
 
   private finalizeSemanticTurnResponse(event: HrcLifecycleEvent): void {

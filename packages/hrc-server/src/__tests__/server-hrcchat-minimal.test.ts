@@ -452,7 +452,7 @@ if (cmd === 'app-server') {
     expect(responseList.messages[0]?.execution.state).toBe('completed')
   })
 
-  it('semantic turn handoff dispatches instead of literal-delivering when a live tmux runtime exists', async () => {
+  it('semantic turn handoff prefers live tmux over headless dispatch', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
     const fakeCodex = await installFakeCodex('fake-codex-turn-handoff-live-tmux')
@@ -483,6 +483,22 @@ if (cmd === 'app-server') {
         createdAt: timestamp,
         updatedAt: timestamp,
       })
+      db.runtimes.insert({
+        runtimeId: `rt-handoff-newer-headless-${Date.now()}`,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: fixture.now(),
+        createdAt: fixture.now(),
+        updatedAt: fixture.now(),
+      })
     } finally {
       db.close()
     }
@@ -490,7 +506,7 @@ if (cmd === 'app-server') {
     const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
       from: { kind: 'entity', entity: 'human' },
       to: { kind: 'session', sessionRef },
-      body: 'must not be sent literally',
+      body: 'must be sent literally',
       runtimeIntent: {
         placement: {
           agentRoot: '/tmp/agent',
@@ -515,17 +531,57 @@ if (cmd === 'app-server') {
     expect(handoffRes.status).toBe(200)
     const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
     expect(handoff.runId).toBeString()
-    expect(handoff.runtimeId).not.toBe(runtimeId)
+    expect(handoff.runtimeId).toBe(runtimeId)
 
-    await Bun.sleep(300)
-    const captured = await tmux.capture(pane.paneId)
-    expect(captured).not.toContain('must not be sent literally')
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(100)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('must be sent literally')) {
+        break
+      }
+    }
+    expect(captured).toContain('must be sent literally')
+    expect(captured).toContain('reply_cmd if reply requested:')
+
+    const requestListRes = await fixture.postJson('/v1/messages/query', {
+      thread: { rootMessageId: handoff.messageId },
+      phases: ['request'],
+    })
+    expect(requestListRes.status).toBe(200)
+    const requestList = (await requestListRes.json()) as ListMessagesResponse
+    expect(requestList.messages[0]?.execution).toMatchObject({
+      state: 'started',
+      mode: 'interactive',
+      runtimeId,
+      runId: handoff.runId,
+      transport: 'tmux',
+    })
 
     const eventsRes = await fixture.fetchSocket(
       `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.accepted`
     )
     expect(eventsRes.status).toBe(200)
     expect((await eventsRes.text()).trim()).toContain('"turn.accepted"')
+
+    const codexLog = await readFile(fakeCodex.logPath, 'utf8').catch(() => '')
+    expect(codexLog).not.toContain('app-server:')
+
+    const replyRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'session', sessionRef },
+      to: { kind: 'entity', entity: 'human' },
+      body: 'interactive reply',
+      replyToMessageId: handoff.messageId,
+    })
+    expect(replyRes.status).toBe(200)
+
+    const completedRes = await fixture.fetchSocket(
+      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.completed`
+    )
+    expect(completedRes.status).toBe(200)
+    const completed = (await completedRes.text()).trim()
+    expect(completed).toContain('"turn.completed"')
+    expect(completed).toContain('interactive reply')
   })
 
   it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {
