@@ -2327,12 +2327,19 @@ class HrcServerInstance implements HrcServer {
       lastActivityAt: completedAt,
       updatedAt: completedAt,
       harnessSessionJson: result.harnessSessionJson,
-      continuation: result.continuation,
+      // Only propagate continuation on success — a failed session's sdkSessionId
+      // points to a non-existent conversation file. Passing undefined here is
+      // intentional: it skips the DB update (handled below for failure case).
+      continuation: result.result.success ? result.continuation : undefined,
     })
     this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
 
-    if (result.continuation) {
+    if (result.result.success && result.continuation) {
       this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
+    } else if (!result.result.success) {
+      // Explicitly clear stale runtime continuation so subsequent turns don't
+      // try to --resume from a dead session (ENOENT cascade).
+      this.db.runtimes.clearContinuation(runtime.runtimeId, completedAt)
     }
 
     const completedEvent = appendHrcEvent(this.db, 'turn.completed', {

@@ -1567,6 +1567,20 @@ export class RuntimeRepository {
     return this.update(runtimeId, { status, updatedAt })
   }
 
+  clearContinuation(runtimeId: string, updatedAt: string): HrcRuntimeSnapshot | null {
+    execute(
+      this.db,
+      `
+        UPDATE runtimes
+        SET continuation_json = NULL, updated_at = ?
+        WHERE runtime_id = ?
+      `,
+      updatedAt,
+      runtimeId
+    )
+    return this.getByRuntimeId(runtimeId)
+  }
+
   updatePids(
     runtimeId: string,
     updates: {
