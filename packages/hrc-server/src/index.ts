@@ -2337,9 +2337,13 @@ class HrcServerInstance implements HrcServer {
     if (result.result.success && result.continuation) {
       this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
     } else if (!result.result.success) {
-      // Explicitly clear stale runtime continuation so subsequent turns don't
-      // try to --resume from a dead session (ENOENT cascade).
+      // Clear stale continuation on BOTH runtime and session — the next-turn
+      // resolution at index.ts ~2063/3362/3762 reads
+      // `runtime.continuation ?? session.continuation`, so clearing only the
+      // runtime side leaves session.continuation_json as a fallback that
+      // re-poisons subsequent turns with the dead sdkSessionId.
       this.db.runtimes.clearContinuation(runtime.runtimeId, completedAt)
+      this.db.sessions.updateContinuation(session.hostSessionId, undefined, completedAt)
     }
 
     const completedEvent = appendHrcEvent(this.db, 'turn.completed', {
