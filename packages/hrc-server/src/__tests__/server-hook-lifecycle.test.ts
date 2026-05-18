@@ -423,6 +423,119 @@ describe('manual turn lifecycle', () => {
       },
     })
   })
+
+  // T-01519: claude-code Stop hooks must stamp runId from the runtime's
+  // active run onto the derived semantic events. Without this, the meta-
+  // message body built by `finalizeSemanticTurnResponse` is empty because
+  // `hrcEvents.listByRun(runId, eventKind: 'turn.message')` returns nothing.
+  it('stamps runId from runtime.activeRunId onto Claude Stop turn.message events', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const runId = `run-${randomUUID()}`
+    const scope = `test-stop-runid-${randomUUID()}`
+    const transcriptDir = await mkdtemp(join(tmpdir(), 'hrc-hook-stop-runid-'))
+    const transcriptPath = join(transcriptDir, 'transcript.jsonl')
+
+    await writeFile(
+      transcriptPath,
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'mirrored reply' }] },
+      }),
+      'utf-8'
+    )
+
+    try {
+      fixture.seedSession(hsid, scope)
+      fixture.seedTmuxRuntime(hsid, scope, rtId, {
+        status: 'busy',
+        launchId,
+        activeRunId: runId,
+      })
+      seedLaunch(hsid, rtId, launchId, 'child_started')
+
+      // Seed the run record so listByRun has something to find. Mirrors the
+      // record `handleHeadlessDispatchTurn` writes before spawning the child.
+      const db = openHrcDatabase(fixture.dbPath)
+      try {
+        db.runs.insert({
+          runId,
+          hostSessionId: hsid,
+          runtimeId: rtId,
+          scopeRef: scope.startsWith('agent:') ? scope : `agent:${scope}`,
+          laneRef: 'default',
+          generation: 1,
+          transport: 'headless',
+          status: 'started',
+          acceptedAt: fixture.now(),
+          startedAt: fixture.now(),
+          updatedAt: fixture.now(),
+        })
+      } finally {
+        db.close()
+      }
+
+      const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+        launchId,
+        hostSessionId: hsid,
+        generation: 1,
+        runtimeId: rtId,
+        hookData: {
+          hook_event_name: 'Stop',
+          transcript_path: transcriptPath,
+        },
+      })
+      expect(res.status).toBe(200)
+
+      // The derived turn.message event must carry the runtime's active runId
+      // so finalizeSemanticTurnResponse can resolve it back into the meta-msg.
+      const db2 = openHrcDatabase(fixture.dbPath)
+      try {
+        const turnMessages = db2.hrcEvents.listByRun(runId, { eventKind: 'turn.message' })
+        expect(turnMessages.length).toBe(1)
+        expect(turnMessages[0]?.payload).toEqual({
+          type: 'message_end',
+          message: { role: 'assistant', content: 'mirrored reply' },
+        })
+      } finally {
+        db2.close()
+      }
+    } finally {
+      await rm(transcriptDir, { recursive: true, force: true })
+    }
+  })
+
+  // T-01519 negative case: when no run is active yet (e.g. hook fires before
+  // dispatch persists activeRunId), the event still appends — it just has no
+  // runId attached. This keeps the existing pre-dispatch hook flow working.
+  it('omits runId when runtime has no active run and no prior run history', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const scope = `test-stop-no-runid-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, { status: 'busy', launchId })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        hook_event_name: 'Stop',
+        last_assistant_message: 'no-run reply',
+      },
+    })
+    expect(res.status).toBe(200)
+
+    const hrcEvents = await getAllHrcEvents()
+    const turnMessages = hrcEvents.filter((e) => e.eventKind === 'turn.message')
+    expect(turnMessages.length).toBe(1)
+    expect(turnMessages[0].runId).toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------------------

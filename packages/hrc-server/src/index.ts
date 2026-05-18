@@ -10543,6 +10543,28 @@ function buildStaleLaunchCallbackRejection(
   }
 }
 
+/**
+ * Resolve the runId that the hook envelope belongs to.
+ *
+ * Hook callbacks (Claude Code Stop hooks etc.) reach `/v1/internal/hooks/ingest`
+ * carrying only `runtimeId` — never the per-turn `runId`. Without correlation,
+ * the resulting semantic `turn.message` events are runId-less, so
+ * `finalizeSemanticTurnResponse`'s `hrcEvents.listByRun(runId, …)` query
+ * returns nothing and the meta-message body ends up empty (T-01519).
+ *
+ * Use `runtime.activeRunId` first (set in `handleHeadlessDispatchTurn` and
+ * cleared on `launch.exited`, so it's the in-flight run while the hook fires).
+ * Fall back to the most recent run for the runtime to cover the brief window
+ * between the child exiting and the next call to `finalizeSemanticTurnResponse`.
+ */
+function resolveHookRunId(db: HrcDatabase, runtimeId: string | undefined): string | undefined {
+  if (!runtimeId) return undefined
+  const runtime = db.runtimes.getByRuntimeId(runtimeId)
+  if (!runtime) return undefined
+  if (runtime.activeRunId) return runtime.activeRunId
+  return findLatestRunForRuntime(db, runtimeId)?.runId
+}
+
 function applyHookLifecycleEnvelope(
   db: HrcDatabase,
   envelope: HookEnvelope,
@@ -10551,6 +10573,7 @@ function applyHookLifecycleEnvelope(
   const events: Array<HrcEventEnvelope | HrcLifecycleEvent> = []
   const session = requireSession(db, envelope.hostSessionId)
   const now = timestamp()
+  const hookRunId = resolveHookRunId(db, envelope.runtimeId)
 
   events.push(
     db.events.append({
@@ -10593,6 +10616,7 @@ function applyHookLifecycleEnvelope(
           laneRef: session.laneRef,
           generation: envelope.generation,
           runtimeId: envelope.runtimeId,
+          ...(hookRunId ? { runId: hookRunId } : {}),
           launchId: envelope.launchId,
           replayed: options.replayed,
           payload: userPromptEvent.payload,
@@ -10637,6 +10661,7 @@ function applyHookLifecycleEnvelope(
             laneRef: session.laneRef,
             generation: envelope.generation,
             runtimeId: envelope.runtimeId,
+            ...(hookRunId ? { runId: hookRunId } : {}),
             launchId: envelope.launchId,
             replayed: options.replayed,
             payload: semanticEvent.payload,
@@ -10667,6 +10692,7 @@ function applyHookLifecycleEnvelope(
             laneRef: session.laneRef,
             generation: envelope.generation,
             runtimeId: envelope.runtimeId,
+            ...(hookRunId ? { runId: hookRunId } : {}),
             launchId: envelope.launchId,
             replayed: options.replayed,
             payload: {
@@ -10704,6 +10730,7 @@ function applyHookLifecycleEnvelope(
               laneRef: session.laneRef,
               generation: envelope.generation,
               runtimeId: envelope.runtimeId,
+              ...(hookRunId ? { runId: hookRunId } : {}),
               launchId: envelope.launchId,
               replayed: options.replayed,
               payload: semanticEvent.payload,
@@ -10723,6 +10750,7 @@ function applyHookLifecycleEnvelope(
           laneRef: session.laneRef,
           generation: envelope.generation,
           runtimeId: envelope.runtimeId,
+          ...(hookRunId ? { runId: hookRunId } : {}),
           launchId: envelope.launchId,
           replayed: options.replayed,
           payload: completionMessage.payload,
@@ -10739,6 +10767,7 @@ function applyHookLifecycleEnvelope(
           laneRef: session.laneRef,
           generation: envelope.generation,
           runtimeId: envelope.runtimeId,
+          ...(hookRunId ? { runId: hookRunId } : {}),
           launchId: envelope.launchId,
           replayed: options.replayed,
           payload: segment.payload,
