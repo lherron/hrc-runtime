@@ -68,6 +68,24 @@ export type WatchOptions = {
   signal?: AbortSignal | undefined
 }
 
+/**
+ * Filter options for `HrcClient.listLatestEventBySession()`.
+ *
+ * Mirrors the indexed query in hrc-store-sqlite. `fromSeq` / `follow` are
+ * intentionally absent: this endpoint returns a single row per
+ * (hostSessionId, generation) and is not a stream.
+ */
+export type LatestEventBySessionFilter = {
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  category?: HrcEventCategory | undefined
+  eventKind?: string | undefined
+}
+
 export type SendInFlightInputRequest = {
   runtimeId: string
   runId: string

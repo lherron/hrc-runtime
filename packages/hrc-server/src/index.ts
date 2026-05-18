@@ -622,6 +622,8 @@ class HrcServerInstance implements HrcServer {
       this.handleApplyAppSessions(request),
     [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) => this.handleListAppSessions(url),
     [exactRouteKey('GET', '/v1/events')]: (request, url) => this.handleEvents(url, request),
+    [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
+      this.handleEventsLatestBySession(url),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/attach')]: (request) => this.handleAttachRuntime(request),
@@ -1850,6 +1852,24 @@ class HrcServerInstance implements HrcServer {
       status: 200,
       headers: NDJSON_HEADERS,
     })
+  }
+
+  /**
+   * GET /v1/events/latest-by-session
+   *
+   * Returns the latest HRC lifecycle event per `(host_session_id, generation)`
+   * using an indexed SQL grouping. Backs ACP `listMobileSessions` freshness so
+   * `lastHrcSeq` and `lastActivityAt` remain reliable on large stores without
+   * scanning a bounded recent window.
+   *
+   * Accepts the same filter query params as `/v1/events` (hostSessionId,
+   * generation, scopeRef, laneRef, runtimeId, runId, category, eventKind);
+   * `fromSeq` / `follow` are not supported.
+   */
+  private handleEventsLatestBySession(url: URL): Response {
+    const filters = this.parseEventsRouteFilters(url.searchParams)
+    const events = this.db.hrcEvents.listLatestPerSession(filters)
+    return json(events)
   }
 
   private async handleEnsureRuntime(request: Request): Promise<Response> {

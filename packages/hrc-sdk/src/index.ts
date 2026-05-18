@@ -18,6 +18,7 @@ export type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  LatestEventBySessionFilter,
   LaunchListFilter,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
