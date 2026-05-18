@@ -43,6 +43,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.started': 'turn',
   'turn.completed': 'turn',
   'turn.zombied': 'turn',
+  'turn.reaped': 'turn',
   'turn.user_prompt': 'turn',
   'turn.tool_call': 'turn',
   'turn.tool_result': 'turn',

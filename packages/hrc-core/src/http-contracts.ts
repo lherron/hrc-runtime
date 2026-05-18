@@ -370,6 +370,55 @@ export type SweepZombieRunsResponse = {
   summary: SweepZombieRunsSummary
 }
 
+export type ReconcileActiveRunsRequest = {
+  olderThan?: string | undefined
+  dryRun?: boolean | undefined
+  yes?: boolean | undefined
+}
+
+export type ReconcileActiveRunReason =
+  | 'runtime_terminated_with_active_run'
+  | 'runtime_dead_with_active_run'
+  | 'runtime_ready_with_active_run'
+  | 'runtime_process_exited_with_active_run'
+  | 'runtime_unavailable_with_active_run'
+  | 'runtime_busy_timeout_with_active_run'
+  | 'runtime_may_still_be_live'
+
+export type ReconcileActiveRunResult = {
+  type: 'run'
+  runId: string
+  hostSessionId: string
+  runtimeId: string
+  transport: 'sdk' | 'tmux'
+  status: 'reaped' | 'matched' | 'suspect' | 'skipped' | 'error'
+  reason: ReconcileActiveRunReason
+  observedAt: string
+  observedSource: 'event' | 'started_at' | 'accepted_at' | 'updated_at'
+  runtimeStatus: string
+  nextRuntimeStatus?: string | undefined
+  runtimeOwnershipCleared: boolean
+  launchId?: string | undefined
+  launchStatus?: string | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type ReconcileActiveRunsSummary = {
+  type: 'summary'
+  matched: number
+  reaped: number
+  suspect: number
+  skipped: number
+  errors: number
+}
+
+export type ReconcileActiveRunsResponse = {
+  ok: true
+  results: ReconcileActiveRunResult[]
+  summary: ReconcileActiveRunsSummary
+}
+
 export type SendWindowLiteralInputRequest = {
   runtimeId: string
   text: string

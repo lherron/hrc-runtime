@@ -270,6 +270,11 @@ afterEach(async () => {
 async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   await mkdir(join(agentsRoot, agentId), { recursive: true })
   await mkdir(join(projectsRoot, projectId), { recursive: true })
+  await writeFile(
+    join(agentsRoot, agentId, 'agent-profile.toml'),
+    'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+    'utf8'
+  )
   // Write a marker so the project dir is recognized by the walk-up resolver.
   await writeFile(join(projectsRoot, projectId, 'asp-targets.toml'), 'schema = 1\n', 'utf8')
 }
@@ -452,7 +457,7 @@ exit 0
 async function writeCodexAgentProfile(agentId: string): Promise<void> {
   await writeFile(
     join(agentsRoot, agentId, 'agent-profile.toml'),
-    'schemaVersion = 2\n\n[identity]\ndisplay = "Codex Agent"\nrole = "worker"\nharness = "codex"\n',
+    'schemaVersion = 2\n\n[identity]\ndisplay = "Codex Agent"\nrole = "worker"\nharness = "codex"\n\n[brain]\nenabled = false\n',
     'utf8'
   )
 }
@@ -669,6 +674,14 @@ describe('nested group commander help (Phase 6 T2)', () => {
 
   it('hrc run sweep-zombies --help exits 0 with Usage and flags', async () => {
     const result = await runCli(['run', 'sweep-zombies', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--older-than')
+    expect(result.stdout).toContain('--dry-run')
+  })
+
+  it('hrc run reconcile-active --help exits 0 with Usage and flags', async () => {
+    const result = await runCli(['run', 'reconcile-active', '--help'])
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--older-than')

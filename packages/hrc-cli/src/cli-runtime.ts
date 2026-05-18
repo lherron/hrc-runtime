@@ -463,6 +463,16 @@ function selfRunId(): string | undefined {
 }
 
 /**
+ * Optional filter for the in-flight list. `excludeTransports` drops rows whose
+ * `runs.transport` matches any listed value. Used by `hrc server restart` to
+ * skip tmux runs, which keep running independently of the daemon and are not
+ * killed by a restart.
+ */
+export type InFlightFilter = {
+  excludeTransports?: readonly string[] | undefined
+}
+
+/**
  * Read in-flight runs directly from hrc state.sqlite. We hit the file rather
  * than the daemon because callers want this data right before stopping the
  * daemon — querying the daemon mid-shutdown is racy and pointless.
@@ -475,7 +485,7 @@ function selfRunId(): string | undefined {
  * alone because abandoned `runs.status='started'` rows accumulate when
  * launches die hard.
  */
-export function listInFlightWork(dbPath?: string): InFlightWork[] {
+export function listInFlightWork(dbPath?: string, filter?: InFlightFilter): InFlightWork[] {
   const path = dbPath ?? resolveDatabasePath()
   if (!existsSync(path)) return []
   const db = new Database(path, { readonly: true })
@@ -509,8 +519,12 @@ export function listInFlightWork(dbPath?: string): InFlightWork[] {
       )
       .all(cutoff)
     const self = selfRunId()
+    const excluded = filter?.excludeTransports?.length
+      ? new Set(filter.excludeTransports)
+      : undefined
     return rows
       .filter((row) => row.run_id !== self)
+      .filter((row) => (excluded ? !excluded.has(row.transport ?? '') : true))
       .map((row) => ({
         runId: row.run_id,
         scopeRef: row.scope_ref,
@@ -545,15 +559,16 @@ export async function waitForInFlightDrain(options: {
   timeoutMs: number
   pollIntervalMs?: number | undefined
   dbPath?: string | undefined
+  filter?: InFlightFilter | undefined
   onTick?: ((items: InFlightWork[]) => void) | undefined
 }): Promise<InFlightWork[]> {
   const interval = options.pollIntervalMs ?? 500
   const deadline = Date.now() + options.timeoutMs
-  let items = listInFlightWork(options.dbPath)
+  let items = listInFlightWork(options.dbPath, options.filter)
   options.onTick?.(items)
   while (items.length > 0 && Date.now() < deadline) {
     await delay(interval)
-    items = listInFlightWork(options.dbPath)
+    items = listInFlightWork(options.dbPath, options.filter)
     options.onTick?.(items)
   }
   return items

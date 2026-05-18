@@ -14,6 +14,8 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   InspectRuntimeResponse,
+  ReconcileActiveRunsRequest,
+  ReconcileActiveRunsResponse,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
   SweepZombieRunsRequest,
@@ -909,6 +911,11 @@ async function cmdServerStart(args: string[], defaultMode: 'foreground' | 'daemo
  * up to `--wait-timeout-ms` for runs to drain on their own; if the timeout
  * fires with work still in flight, we error out (no force fallback — the
  * operator has to opt in to that explicitly).
+ *
+ * For `restart`, tmux runs are excluded from the gate: tmux sessions are owned
+ * by the tmux server, not by hrc, and they keep running across a daemon
+ * restart. Only headless/sdk runs (which the daemon supervises directly) are
+ * actually at risk.
  */
 async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): Promise<void> {
   if (hasFlag(args, '--force')) return
@@ -918,25 +925,29 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
     min: 1,
   })
 
-  let inFlight = listInFlightWork()
+  const filter = action === 'restart' ? { excludeTransports: ['tmux'] as const } : undefined
+  const noun = action === 'restart' ? 'headless run' : 'run'
+
+  let inFlight = listInFlightWork(undefined, filter)
   if (inFlight.length === 0) return
 
   if (!wait) {
     process.stderr.write(
-      `hrc: refusing to ${action}: ${inFlight.length} run(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+      `hrc: refusing to ${action}: ${inFlight.length} ${noun}(s) in flight. Use --wait to drain or --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
     )
     throw new CliStatusExit(2)
   }
 
   process.stderr.write(
-    `hrc: waiting up to ${waitTimeoutMs}ms for ${inFlight.length} in-flight run(s) to drain...\n`
+    `hrc: waiting up to ${waitTimeoutMs}ms for ${inFlight.length} in-flight ${noun}(s) to drain...\n`
   )
   let lastReportedCount = inFlight.length
   inFlight = await waitForInFlightDrain({
     timeoutMs: waitTimeoutMs,
+    filter,
     onTick: (items) => {
       if (items.length !== lastReportedCount) {
-        process.stderr.write(`hrc: ${items.length} run(s) still in flight\n`)
+        process.stderr.write(`hrc: ${items.length} ${noun}(s) still in flight\n`)
         lastReportedCount = items.length
       }
     },
@@ -944,7 +955,7 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
 
   if (inFlight.length > 0) {
     process.stderr.write(
-      `hrc: drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} run(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
+      `hrc: drain timed out after ${waitTimeoutMs}ms with ${inFlight.length} ${noun}(s) still in flight. Re-run with --force to ${action} anyway.\n${formatInFlightWork(inFlight)}`
     )
     throw new CliStatusExit(2)
   }
@@ -1334,6 +1345,52 @@ function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean)
   }
   process.stdout.write(
     `summary matched=${result.summary.matched} zombied=${result.summary.zombied} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+  )
+}
+
+async function cmdRunReconcileActive(args: string[]): Promise<void> {
+  const dryRunFlag = hasFlag(args, '--dry-run')
+  const yes = hasFlag(args, '--yes')
+  const jsonOutput = hasFlag(args, '--json')
+  if (!dryRunFlag && !yes && !process.stdout.isTTY) {
+    fatal('run reconcile-active requires --yes to mutate when stdout is not a TTY')
+  }
+
+  const request: ReconcileActiveRunsRequest = {
+    olderThan: parseFlag(args, '--older-than') ?? '30m',
+    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    ...(yes ? { yes } : {}),
+  }
+
+  const client = createClient()
+  const result = await client.reconcileActiveRuns(request)
+  if (jsonOutput) {
+    printReconcileActiveNdjson(result)
+    return
+  }
+
+  printReconcileActiveHuman(result, request.dryRun === true)
+}
+
+function printReconcileActiveNdjson(result: ReconcileActiveRunsResponse): void {
+  for (const row of result.results) {
+    process.stdout.write(`${JSON.stringify(row)}\n`)
+  }
+  process.stdout.write(`${JSON.stringify(result.summary)}\n`)
+}
+
+function printReconcileActiveHuman(result: ReconcileActiveRunsResponse, dryRun: boolean): void {
+  process.stdout.write(`run active reconcile${dryRun ? ' (dry-run)' : ''}\n`)
+  for (const row of result.results) {
+    const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
+    process.stdout.write(
+      `  ${row.status.padEnd(8)} ${row.runId} ${row.transport} runtime=${
+        row.runtimeStatus
+      } reason=${row.reason} ownershipCleared=${row.runtimeOwnershipCleared}${suffix}\n`
+    )
+  }
+  process.stdout.write(
+    `summary matched=${result.summary.matched} reaped=${result.summary.reaped} suspect=${result.summary.suspect} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
   )
 }
 
@@ -2351,6 +2408,7 @@ Commands:
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
   run sweep-zombies [--older-than <duration>] [--dry-run|--yes] [--json]
+  run reconcile-active [--older-than <duration>] [--dry-run|--yes] [--json]
   turn <target> [prompt]              Alias for hrcchat turn; all flags forwarded verbatim
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -2820,6 +2878,16 @@ Exit codes:
         await cmdRunSweepZombies(rawArgv)
         return
       }
+      if (positionals[0] === 'reconcile-active') {
+        let root: Command = cmd
+        while (root.parent) root = root.parent
+        const fullRaw: string[] =
+          (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+        const verbIdx = fullRaw.indexOf('run')
+        const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 2) : fullRaw.slice(2)
+        await cmdRunReconcileActive(rawArgv)
+        return
+      }
       const opts = cmd.opts()
       let root: Command = cmd
       while (root.parent) root = root.parent
@@ -2849,6 +2917,23 @@ Exit codes:
       const verbIdx = fullRaw.indexOf('sweep-zombies')
       const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : []
       await cmdRunSweepZombies(rawArgv)
+    })
+
+  run
+    .command('reconcile-active')
+    .description('reconcile active runs whose runtime lifecycle is already terminal or idle')
+    .option('--older-than <duration>', 'run inactivity threshold')
+    .option('--dry-run', 'preview without mutating')
+    .option('--yes', 'confirm mutation')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const verbIdx = fullRaw.indexOf('reconcile-active')
+      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : []
+      await cmdRunReconcileActive(rawArgv)
     })
 
   // -- turn (alias for `hrcchat turn`) -----------------------------------------

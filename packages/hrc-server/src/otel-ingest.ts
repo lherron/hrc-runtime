@@ -413,6 +413,16 @@ export function extractEventKind(record: NormalizedOtelLogRecord): string {
   return 'otel.log'
 }
 
+export function isOtelTransportDeltaRecord(record: NormalizedOtelLogRecord): boolean {
+  const eventKind = extractEventKind(record)
+  if (eventKind !== 'codex.websocket_event' && eventKind !== 'codex.sse_event') {
+    return false
+  }
+
+  const streamKind = record.logRecord.attributes?.['event.kind']
+  return typeof streamKind === 'string' && streamKind.endsWith('.delta')
+}
+
 function nanoStringToIso(raw: string | undefined): string | null {
   if (!raw) return null
   let bi: bigint

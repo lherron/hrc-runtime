@@ -29,6 +29,8 @@ export type {
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  ReconcileActiveRunsRequest,
+  ReconcileActiveRunsResponse,
   RestartStyle,
   StartRuntimeRequest,
   StartRuntimeResponse,

@@ -49,6 +49,8 @@ import type {
   InspectRuntimeResponse,
   LaunchListFilter,
   ListMessagesResponse,
+  ReconcileActiveRunsRequest,
+  ReconcileActiveRunsResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
@@ -275,6 +277,12 @@ export class HrcClient {
 
   async sweepZombieRuns(request: SweepZombieRunsRequest = {}): Promise<SweepZombieRunsResponse> {
     return this.postJson<SweepZombieRunsResponse>('/v1/runs/sweep-zombies', request)
+  }
+
+  async reconcileActiveRuns(
+    request: ReconcileActiveRunsRequest = {}
+  ): Promise<ReconcileActiveRunsResponse> {
+    return this.postJson<ReconcileActiveRunsResponse>('/v1/runs/reconcile-active', request)
   }
 
   async dropContinuation(request: DropContinuationRequest): Promise<DropContinuationResponse> {

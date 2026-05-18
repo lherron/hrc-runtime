@@ -368,6 +368,39 @@ describe('OTLP/HTTP JSON ingest', () => {
     expect(e.eventJson?.hrc?.launchId).toBe(seed.launchId)
   })
 
+  it('does not append raw OTEL websocket/sse delta rows', async () => {
+    const started = await startServer()
+    server = started.server
+    const seed = await seedCodexLaunch()
+
+    const res = await postOtlp(
+      started.endpoint,
+      makeOtlpLogsBody([
+        {
+          eventName: 'codex.websocket_event',
+          attributes: { 'event.kind': 'response.output_text.delta' },
+        },
+        {
+          eventName: 'codex.sse_event',
+          attributes: { 'event.kind': 'response.function_call_arguments.delta' },
+        },
+        {
+          eventName: 'codex.websocket_event',
+          attributes: { 'event.kind': 'response.completed' },
+        },
+      ]),
+      { 'x-hrc-launch-auth': seed.authHeader }
+    )
+    expect(res.status).toBe(200)
+
+    const events = (await getAllEvents()).filter((e: any) => e.source === 'otel')
+    expect(events).toHaveLength(1)
+    expect((events[0] as any).eventKind).toBe('codex.websocket_event')
+    expect((events[0] as any).eventJson?.otel?.logRecord?.attributes?.['event.kind']).toBe(
+      'response.completed'
+    )
+  })
+
   it('preserves order across a multi-record batch with monotonic seq', async () => {
     const started = await startServer()
     server = started.server

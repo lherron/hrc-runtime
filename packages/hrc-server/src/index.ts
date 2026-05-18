@@ -81,6 +81,10 @@ import type {
   HrcTargetView,
   InspectRuntimeResponse,
   ListMessagesResponse,
+  ReconcileActiveRunReason,
+  ReconcileActiveRunResult,
+  ReconcileActiveRunsResponse,
+  ReconcileActiveRunsSummary,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   RemoveAppSessionResponse,
@@ -139,6 +143,7 @@ import {
   type OtlpLaunchContext,
   type OtlpListenerControl,
   buildHrcEventFromOtelRecord,
+  isOtelTransportDeltaRecord,
   normalizeOtlpJsonRequest,
   startOtlpListener,
   validateOtelLaunchAuth,
@@ -173,6 +178,7 @@ import {
   parseInterruptAppSessionRequest,
   parseJsonBody,
   parseListRuntimesFilter,
+  parseReconcileActiveRunsRequest,
   parseRemoveAppSessionRequest,
   parseResolveSessionRequest,
   parseRuntimeActionBody,
@@ -520,6 +526,8 @@ const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
 const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
 const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
 const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
+const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
+const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -556,11 +564,27 @@ type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Resp
 
 type ZombieObservedSource = SweepZombieRunResult['observedSource']
 
-type ZombieRunCandidate = {
-  run: HrcRunRecord
+type ObservedRunActivity = {
   observedAt: string
   observedSource: ZombieObservedSource
   latestEventAt?: string | undefined
+}
+
+type ZombieRunCandidate = {
+  run: HrcRunRecord
+} & ObservedRunActivity
+
+type ActiveRunReconcileCandidate = {
+  run: HrcRunRecord
+  runtime: HrcRuntimeSnapshot
+  launch?: HrcLaunchRecord | undefined
+} & ObservedRunActivity
+
+type ActiveRunReconcilePlan = {
+  reason: ReconcileActiveRunReason
+  action: 'reap' | 'suspect'
+  errorCode?: HrcErrorCode | undefined
+  nextRuntimeStatus?: string | undefined
 }
 
 type LatestRunEventRow = {
@@ -583,6 +607,8 @@ class HrcServerInstance implements HrcServer {
   private readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   private zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   private zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
+  private activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
+  private activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -604,6 +630,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/runs/sweep-zombies')]: (request) =>
       this.handleSweepZombieRuns(request),
+    [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
+      this.handleReconcileActiveRuns(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
@@ -700,6 +728,7 @@ class HrcServerInstance implements HrcServer {
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.startZombieRunSweeper()
+    this.startActiveRunReconciler()
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
       // Test-only override: caller supplies a fixed endpoint, no listener started.
@@ -754,6 +783,17 @@ class HrcServerInstance implements HrcServer {
         await this.zombieSweepInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.zombie_sweep_wait_failed', { error })
+      }
+    }
+    if (this.activeRunReconcileTimer) {
+      clearInterval(this.activeRunReconcileTimer)
+      this.activeRunReconcileTimer = undefined
+    }
+    if (this.activeRunReconcileInFlight) {
+      try {
+        await this.activeRunReconcileInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
       }
     }
     this.followSubscribers.clear()
@@ -3731,7 +3771,7 @@ class HrcServerInstance implements HrcServer {
     return candidates
   }
 
-  private latestObservedRunActivity(run: HrcRunRecord): Omit<ZombieRunCandidate, 'run'> {
+  private latestObservedRunActivity(run: HrcRunRecord): ObservedRunActivity {
     const latestEvent = this.db.sqlite
       .query<LatestRunEventRow, [string]>(
         `
@@ -3867,6 +3907,369 @@ class HrcServerInstance implements HrcServer {
       runtimeOwnershipCleared,
       ...(runtimeStatus ? { runtimeStatus } : {}),
     }
+  }
+
+  private async handleReconcileActiveRuns(request: Request): Promise<Response> {
+    const body = parseReconcileActiveRunsRequest(await parseJsonBody(request))
+    const olderThanMs = parseSweepDurationMs(body.olderThan ?? '30m')
+    const result = await this.reconcileActiveRunsOnce({
+      olderThanMs,
+      dryRun: body.dryRun === true,
+      thresholdSeconds: Math.floor(olderThanMs / 1000),
+    })
+    return json(result)
+  }
+
+  private startActiveRunReconciler(): void {
+    if (!HRC_ACTIVE_RUN_RECONCILE_ENABLED) return
+
+    void this.runRecurringActiveRunReconcile()
+    this.activeRunReconcileTimer = setInterval(() => {
+      void this.runRecurringActiveRunReconcile()
+    }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
+  }
+
+  private async runRecurringActiveRunReconcile(): Promise<void> {
+    if (this.activeRunReconcileInFlight) {
+      return
+    }
+
+    const reconcile = this.reconcileActiveRunsOnce({
+      olderThanMs: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS * 1000,
+      dryRun: false,
+      thresholdSeconds: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
+    })
+    this.activeRunReconcileInFlight = reconcile
+    try {
+      await reconcile
+    } catch (error) {
+      writeServerLog('WARN', 'run.active_reconcile_failed', { error })
+    } finally {
+      if (this.activeRunReconcileInFlight === reconcile) {
+        this.activeRunReconcileInFlight = undefined
+      }
+    }
+  }
+
+  private async reconcileActiveRunsOnce(input: {
+    olderThanMs: number
+    dryRun: boolean
+    thresholdSeconds: number
+  }): Promise<ReconcileActiveRunsResponse> {
+    const nowMs = Date.now()
+    const cutoffMs = nowMs - input.olderThanMs
+    const candidates = this.listActiveRunReconcileCandidates(cutoffMs)
+    const results: ReconcileActiveRunResult[] = []
+
+    for (const candidate of candidates) {
+      try {
+        const plan = await this.planActiveRunReconcile(candidate)
+        if (plan.action === 'suspect') {
+          results.push(this.activeRunReconcileResult(candidate, plan, 'suspect', false))
+          continue
+        }
+        if (input.dryRun) {
+          results.push(this.activeRunReconcileResult(candidate, plan, 'matched', false))
+          continue
+        }
+
+        results.push(this.reapActiveRun(candidate, plan, input.thresholdSeconds))
+      } catch (error) {
+        results.push({
+          type: 'run',
+          runId: candidate.run.runId,
+          hostSessionId: candidate.run.hostSessionId,
+          runtimeId: candidate.runtime.runtimeId,
+          transport: candidate.run.transport === 'sdk' ? 'sdk' : 'tmux',
+          status: 'error',
+          reason: 'runtime_unavailable_with_active_run',
+          observedAt: candidate.observedAt,
+          observedSource: candidate.observedSource,
+          runtimeStatus: candidate.runtime.status,
+          runtimeOwnershipCleared: false,
+          errorCode: error instanceof HrcDomainError ? error.code : HrcErrorCode.INTERNAL_ERROR,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    const summary: ReconcileActiveRunsSummary = {
+      type: 'summary',
+      matched: results.filter((result) => result.status === 'matched').length,
+      reaped: results.filter((result) => result.status === 'reaped').length,
+      suspect: results.filter((result) => result.status === 'suspect').length,
+      skipped: results.filter((result) => result.status === 'skipped').length,
+      errors: results.filter((result) => result.status === 'error').length,
+    }
+
+    return {
+      ok: true,
+      results,
+      summary,
+    } satisfies ReconcileActiveRunsResponse
+  }
+
+  private listActiveRunReconcileCandidates(cutoffMs: number): ActiveRunReconcileCandidate[] {
+    const rows = this.db.sqlite
+      .query<HrcServerRunRow, []>(
+        `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
+          WHERE status IN ('accepted', 'started', 'running')
+            AND transport IN ('sdk', 'tmux')
+            AND runtime_id IS NOT NULL
+            AND completed_at IS NULL
+          ORDER BY updated_at ASC, run_id ASC`
+      )
+      .all()
+
+    const candidates: ActiveRunReconcileCandidate[] = []
+    for (const row of rows) {
+      const run = mapServerRunRow(row)
+      if (!run.runtimeId) continue
+
+      const runtime = this.db.runtimes.getByRuntimeId(run.runtimeId)
+      if (!runtime || runtime.activeRunId !== run.runId) continue
+
+      const observed = this.latestObservedRunActivity(run)
+      const observedMs = Date.parse(observed.observedAt)
+      if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
+        continue
+      }
+
+      const launch = runtime.launchId ? this.db.launches.getByLaunchId(runtime.launchId) : null
+      candidates.push({
+        run,
+        runtime,
+        ...(launch ? { launch } : {}),
+        ...observed,
+      })
+    }
+    return candidates
+  }
+
+  private async planActiveRunReconcile(
+    candidate: ActiveRunReconcileCandidate
+  ): Promise<ActiveRunReconcilePlan> {
+    const { runtime, launch } = candidate
+
+    if (runtime.status === 'terminated') {
+      return {
+        action: 'reap',
+        reason: 'runtime_terminated_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_TERMINATED_WITH_ACTIVE_RUN,
+      }
+    }
+
+    if (runtime.status === 'dead') {
+      return {
+        action: 'reap',
+        reason: 'runtime_dead_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_DEAD_WITH_ACTIVE_RUN,
+      }
+    }
+
+    if (runtime.status === 'stale') {
+      return {
+        action: 'reap',
+        reason: 'runtime_unavailable_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+      }
+    }
+
+    if (runtime.status === 'ready') {
+      return {
+        action: 'reap',
+        reason: 'runtime_ready_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_READY_WITH_ACTIVE_RUN,
+      }
+    }
+
+    if (launch && (launch.status === 'exited' || launch.status === 'failed')) {
+      return {
+        action: 'reap',
+        reason: 'runtime_process_exited_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_PROCESS_EXITED_WITH_ACTIVE_RUN,
+      }
+    }
+
+    if (launch?.status === 'orphaned') {
+      return {
+        action: 'reap',
+        reason: 'runtime_unavailable_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+        nextRuntimeStatus: 'stale',
+      }
+    }
+
+    if (runtime.transport === 'tmux') {
+      const tmuxSessionName = getObservedTmuxSessionName(runtime)
+      if (!tmuxSessionName) {
+        return {
+          action: 'reap',
+          reason: 'runtime_unavailable_with_active_run',
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+          nextRuntimeStatus: 'dead',
+        }
+      }
+
+      const inspected = await this.tmux.inspectSession(tmuxSessionName)
+      if (!inspected) {
+        return {
+          action: 'reap',
+          reason: 'runtime_unavailable_with_active_run',
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+          nextRuntimeStatus: 'dead',
+        }
+      }
+    }
+
+    if (runtime.status === 'busy') {
+      return {
+        action: 'reap',
+        reason: 'runtime_busy_timeout_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_BUSY_TIMEOUT_WITH_ACTIVE_RUN,
+      }
+    }
+
+    return {
+      action: 'suspect',
+      reason: 'runtime_may_still_be_live',
+    }
+  }
+
+  private activeRunReconcileResult(
+    candidate: ActiveRunReconcileCandidate,
+    plan: ActiveRunReconcilePlan,
+    status: ReconcileActiveRunResult['status'],
+    runtimeOwnershipCleared: boolean
+  ): ReconcileActiveRunResult {
+    return {
+      type: 'run',
+      runId: candidate.run.runId,
+      hostSessionId: candidate.run.hostSessionId,
+      runtimeId: candidate.runtime.runtimeId,
+      transport: candidate.run.transport === 'sdk' ? 'sdk' : 'tmux',
+      status,
+      reason: plan.reason,
+      observedAt: candidate.observedAt,
+      observedSource: candidate.observedSource,
+      runtimeStatus: candidate.runtime.status,
+      ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
+      runtimeOwnershipCleared,
+      ...(candidate.launch ? { launchId: candidate.launch.launchId } : {}),
+      ...(candidate.launch ? { launchStatus: candidate.launch.status } : {}),
+      ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
+    }
+  }
+
+  private reapActiveRun(
+    candidate: ActiveRunReconcileCandidate,
+    plan: ActiveRunReconcilePlan,
+    thresholdSeconds: number
+  ): ReconcileActiveRunResult {
+    const now = timestamp()
+    const errorCode = plan.errorCode ?? HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN
+    const errorMessage = `${HRC_REAPED_RUN_ERROR_MESSAGE}: ${plan.reason}`
+    const claim = this.db.sqlite
+      .query(
+        `
+          UPDATE runs
+          SET
+            status = ?,
+            completed_at = ?,
+            updated_at = ?,
+            error_code = ?,
+            error_message = ?
+          WHERE run_id = ?
+            AND runtime_id = ?
+            AND status IN ('accepted', 'started', 'running')
+            AND transport IN ('sdk', 'tmux')
+            AND completed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM runtimes
+              WHERE runtime_id = ?
+                AND active_run_id = ?
+            )
+        `
+      )
+      .run(
+        'failed',
+        now,
+        now,
+        errorCode,
+        errorMessage,
+        candidate.run.runId,
+        candidate.runtime.runtimeId,
+        candidate.runtime.runtimeId,
+        candidate.run.runId
+      ) as { changes?: number }
+
+    if ((claim.changes ?? 0) === 0) {
+      return this.activeRunReconcileResult(candidate, plan, 'skipped', false)
+    }
+
+    let runtimeOwnershipCleared = false
+    const runtimeUpdate = this.db.sqlite
+      .query(
+        `
+          UPDATE runtimes
+          SET active_run_id = NULL,
+              status = ?,
+              updated_at = ?,
+              last_activity_at = ?
+          WHERE runtime_id = ?
+            AND active_run_id = ?
+        `
+      )
+      .run(
+        plan.nextRuntimeStatus ?? candidate.runtime.status,
+        now,
+        now,
+        candidate.runtime.runtimeId,
+        candidate.run.runId
+      ) as { changes?: number }
+    runtimeOwnershipCleared = (runtimeUpdate.changes ?? 0) > 0
+
+    const event = appendHrcEvent(this.db, 'turn.reaped', {
+      ts: now,
+      hostSessionId: candidate.run.hostSessionId,
+      scopeRef: candidate.run.scopeRef,
+      laneRef: candidate.run.laneRef,
+      generation: candidate.run.generation,
+      runId: candidate.run.runId,
+      runtimeId: candidate.runtime.runtimeId,
+      ...(candidate.run.transport === 'sdk' || candidate.run.transport === 'tmux'
+        ? { transport: candidate.run.transport }
+        : {}),
+      errorCode,
+      payload: {
+        runId: candidate.run.runId,
+        runtimeId: candidate.runtime.runtimeId,
+        reason: plan.reason,
+        thresholdSeconds,
+        lastObservedAt: candidate.observedAt,
+        observedSource: candidate.observedSource,
+        ...(candidate.latestEventAt ? { latestEventAt: candidate.latestEventAt } : {}),
+        fallbackTimestampSource:
+          candidate.observedSource === 'event' ? undefined : candidate.observedSource,
+        priorRunStatus: candidate.run.status,
+        priorRuntimeStatus: candidate.runtime.status,
+        ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
+        ...(candidate.launch
+          ? {
+              launchId: candidate.launch.launchId,
+              launchStatus: candidate.launch.status,
+              wrapperPid: candidate.launch.wrapperPid,
+              childPid: candidate.launch.childPid,
+              exitCode: candidate.launch.exitCode,
+              signal: candidate.launch.signal,
+            }
+          : {}),
+        runtimeOwnershipCleared,
+      },
+    })
+    this.notifyEvent(event)
+
+    return this.activeRunReconcileResult(candidate, plan, 'reaped', runtimeOwnershipCleared)
   }
 
   private claimRuntimeForSweep(runtimeId: string, statuses: string[], now: string): boolean {
@@ -5621,6 +6024,10 @@ class HrcServerInstance implements HrcServer {
 
     const fallbackTs = timestamp()
     for (const record of records) {
+      if (isOtelTransportDeltaRecord(record)) {
+        continue
+      }
+
       const eventInput = buildHrcEventFromOtelRecord({
         record,
         launchCtx: ctx,
@@ -6532,7 +6939,9 @@ class HrcServerInstance implements HrcServer {
     }
     if (
       'hrcSeq' in event &&
-      (event.eventKind === 'turn.completed' || event.eventKind === 'turn.zombied') &&
+      (event.eventKind === 'turn.completed' ||
+        event.eventKind === 'turn.zombied' ||
+        event.eventKind === 'turn.reaped') &&
       event.runId
     ) {
       this.finalizeSemanticTurnResponse(event)

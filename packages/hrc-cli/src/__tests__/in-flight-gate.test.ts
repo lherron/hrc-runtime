@@ -225,6 +225,49 @@ describe('listInFlightWork', () => {
       await cleanup()
     }
   })
+
+  it('drops rows whose transport is in excludeTransports', async () => {
+    const { path, cleanup } = await makeDb()
+    try {
+      insertActiveRun(path, { run_id: 'run-tmux', scope_ref: 'agent:cody', transport: 'tmux' })
+      insertActiveRun(path, {
+        run_id: 'run-headless',
+        scope_ref: 'agent:clod',
+        transport: 'headless',
+      })
+      insertActiveRun(path, { run_id: 'run-sdk', scope_ref: 'agent:rex', transport: 'sdk' })
+
+      const all = listInFlightWork(path)
+      expect(all.map((i) => i.runId).sort()).toEqual(['run-headless', 'run-sdk', 'run-tmux'])
+
+      const headlessOnly = listInFlightWork(path, { excludeTransports: ['tmux'] })
+      expect(headlessOnly.map((i) => i.runId).sort()).toEqual(['run-headless', 'run-sdk'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('returns empty when every in-flight run is excluded by transport', async () => {
+    const { path, cleanup } = await makeDb()
+    try {
+      insertActiveRun(path, { run_id: 'run-tmux-a', scope_ref: 'agent:cody', transport: 'tmux' })
+      insertActiveRun(path, { run_id: 'run-tmux-b', scope_ref: 'agent:clod', transport: 'tmux' })
+      expect(listInFlightWork(path, { excludeTransports: ['tmux'] })).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('treats null transport as not-excluded (legacy rows are still reported)', async () => {
+    const { path, cleanup } = await makeDb()
+    try {
+      insertActiveRun(path, { run_id: 'run-legacy', scope_ref: 'agent:cody', transport: null })
+      const filtered = listInFlightWork(path, { excludeTransports: ['tmux'] })
+      expect(filtered.map((i) => i.runId)).toEqual(['run-legacy'])
+    } finally {
+      await cleanup()
+    }
+  })
 })
 
 describe('formatInFlightWork', () => {
@@ -289,6 +332,22 @@ describe('waitForInFlightDrain', () => {
         dbPath: path,
       })
       expect(result.map((i) => i.runId)).toEqual(['run-stuck'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('returns immediately when only excluded transports are in flight', async () => {
+    const { path, cleanup } = await makeDb()
+    try {
+      insertActiveRun(path, { run_id: 'run-tmux', scope_ref: 'agent:cody', transport: 'tmux' })
+      const result = await waitForInFlightDrain({
+        timeoutMs: 200,
+        pollIntervalMs: 50,
+        dbPath: path,
+        filter: { excludeTransports: ['tmux'] },
+      })
+      expect(result).toEqual([])
     } finally {
       await cleanup()
     }

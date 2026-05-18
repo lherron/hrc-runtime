@@ -97,6 +97,7 @@ export const MonitorEventName = [
   'turn.started',
   'turn.finished',
   'turn.zombied',
+  'turn.reaped',
   'runtime.idle',
   'runtime.busy',
   'runtime.crashed',
