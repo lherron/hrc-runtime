@@ -133,6 +133,13 @@ export type RuntimeListFilter = {
   json?: boolean | undefined
 }
 
+export type RunListFilter = {
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  limit?: number | undefined
+}
+
 export type LaunchListFilter = {
   hostSessionId?: string | undefined
   runtimeId?: string | undefined

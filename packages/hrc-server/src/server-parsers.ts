@@ -100,6 +100,13 @@ export type ListRuntimesFilter = {
   json?: boolean | undefined
 }
 
+export type ListRunsFilter = {
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  limit?: number | undefined
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -223,6 +230,46 @@ export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
     ...(olderThan !== undefined ? { olderThan, olderThanMs: parseDurationMs(olderThan) } : {}),
     ...(json !== undefined ? { json } : {}),
   }
+}
+
+export function parseListRunsFilter(url: URL): ListRunsFilter {
+  const generation = parseOptionalNonNegativeIntegerQuery(
+    url.searchParams.get('generation'),
+    'generation'
+  )
+  const limit = parseOptionalNonNegativeIntegerQuery(url.searchParams.get('limit'), 'limit')
+
+  return {
+    ...(normalizeOptionalQuery(url.searchParams.get('hostSessionId'))
+      ? { hostSessionId: normalizeOptionalQuery(url.searchParams.get('hostSessionId')) }
+      : {}),
+    ...(generation !== undefined ? { generation } : {}),
+    ...(normalizeOptionalQuery(url.searchParams.get('runtimeId'))
+      ? { runtimeId: normalizeOptionalQuery(url.searchParams.get('runtimeId')) }
+      : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  }
+}
+
+function parseOptionalNonNegativeIntegerQuery(
+  raw: string | null,
+  field: string
+): number | undefined {
+  const normalized = normalizeOptionalQuery(raw)
+  if (normalized === undefined) {
+    return undefined
+  }
+
+  const parsed = Number(normalized)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `${field} must be a non-negative integer`,
+      { field, value: normalized }
+    )
+  }
+
+  return parsed
 }
 
 function parseOptionalBooleanQuery(raw: string | null, field: string): boolean | undefined {

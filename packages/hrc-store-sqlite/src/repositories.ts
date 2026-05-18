@@ -60,6 +60,13 @@ export type EventQueryFilters = {
   limit?: number | undefined
 }
 
+export type RunListFilters = {
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  limit?: number | undefined
+}
+
 export type SurfaceBindingBindInput = Omit<
   HrcSurfaceBindingRecord,
   'boundAt' | 'reason' | 'unboundAt'
@@ -1698,6 +1705,52 @@ export class RunRepository {
       .all(runtimeId)
 
     return rows.map(mapRunRow)
+  }
+
+  listRuns(filters: RunListFilters = {}): HrcRunRecord[] {
+    const predicates: string[] = []
+    const values: SQLQueryBindings[] = []
+
+    if (filters.hostSessionId !== undefined) {
+      predicates.push('host_session_id = ?')
+      values.push(filters.hostSessionId)
+    }
+    if (filters.generation !== undefined) {
+      predicates.push('generation = ?')
+      values.push(filters.generation)
+    }
+    if (filters.runtimeId !== undefined) {
+      predicates.push('runtime_id = ?')
+      values.push(filters.runtimeId)
+    }
+
+    const limit = filters.limit ?? 100
+    const where = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''
+    const rows = this.db
+      .query<RunRow, SQLQueryBindings[]>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          ${where}
+          ORDER BY updated_at DESC,
+            COALESCE(completed_at, started_at, accepted_at, updated_at) DESC,
+            run_id DESC
+          LIMIT ?`
+      )
+      .all(...values, Math.max(0, Math.floor(limit)))
+
+    return rows.map(mapRunRow)
+  }
+
+  getLatestForSession(input: {
+    hostSessionId: string
+    generation?: number | undefined
+  }): HrcRunRecord | null {
+    return (
+      this.listRuns({
+        hostSessionId: input.hostSessionId,
+        ...(input.generation !== undefined ? { generation: input.generation } : {}),
+        limit: 1,
+      })[0] ?? null
+    )
   }
 
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {

@@ -223,6 +223,51 @@ describe('runtime lifecycle client methods', () => {
     expect(result.bindingFence.runtimeId).toBe('rt-attach-1')
     expect(result.argv).toEqual(['tmux', 'attach', '-t', 'hrc-demo'])
   })
+
+  it('listRuns sends filters to /v1/runs and returns run lifecycle rows', async () => {
+    let capturedPath = ''
+    let capturedQuery = ''
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedPath = url.pathname
+        capturedQuery = url.searchParams.toString()
+        return Response.json([
+          {
+            runId: 'run-list-1',
+            hostSessionId: 'hsid-list-1',
+            runtimeId: 'rt-list-1',
+            scopeRef: 'agent:test:project:hrc-sdk',
+            laneRef: 'default',
+            generation: 3,
+            transport: 'tmux',
+            status: 'running',
+            acceptedAt: '2026-05-18T12:00:00.000Z',
+            startedAt: '2026-05-18T12:00:01.000Z',
+            updatedAt: '2026-05-18T12:00:02.000Z',
+          },
+        ])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const result = await client.listRuns({
+      hostSessionId: 'hsid-list-1',
+      generation: 3,
+      runtimeId: 'rt-list-1',
+      limit: 1,
+    })
+
+    expect(capturedPath).toBe('/v1/runs')
+    expect(capturedQuery).toBe('hostSessionId=hsid-list-1&generation=3&runtimeId=rt-list-1&limit=1')
+    expect(result[0].runId).toBe('run-list-1')
+    expect(result[0].status).toBe('running')
+    expect(result[0].acceptedAt).toBe('2026-05-18T12:00:00.000Z')
+    expect(result[0].startedAt).toBe('2026-05-18T12:00:01.000Z')
+    expect(result[0].updatedAt).toBe('2026-05-18T12:00:02.000Z')
+  })
 })
 
 // Error parsing tests use a minimal HTTP server that returns known error shapes
@@ -640,6 +685,13 @@ describe('Phase 6 diagnostics round-trip', () => {
     const client = new HrcClient(socketPath)
     // RED: listLaunches does not exist on HrcClient
     const result = await (client as any).listLaunches()
+    expect(Array.isArray(result)).toBe(true)
+  })
+
+  it('listRuns returns an array', async () => {
+    if (!server) return
+    const client = new HrcClient(socketPath)
+    const result = await client.listRuns({ limit: 1 })
     expect(Array.isArray(result)).toBe(true)
   })
 

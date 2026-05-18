@@ -177,6 +177,7 @@ import {
   parseInspectRuntimeRequest,
   parseInterruptAppSessionRequest,
   parseJsonBody,
+  parseListRunsFilter,
   parseListRuntimesFilter,
   parseReconcileActiveRunsRequest,
   parseRemoveAppSessionRequest,
@@ -634,6 +635,7 @@ class HrcServerInstance implements HrcServer {
       this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
       this.handleReconcileActiveRuns(request),
+    [exactRouteKey('GET', '/v1/runs')]: (_request, url) => this.handleListRuns(url),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
@@ -6836,6 +6838,11 @@ class HrcServerInstance implements HrcServer {
       runtimes.map((runtime) => this.reconcileTmuxRuntimeLiveness(runtime))
     )
     return json(filterRuntimes(reconciled, filter))
+  }
+
+  private handleListRuns(url: URL): Response {
+    const filter = parseListRunsFilter(url)
+    return json(this.db.runs.listRuns(filter))
   }
 
   private handleListLaunches(url: URL): Response {

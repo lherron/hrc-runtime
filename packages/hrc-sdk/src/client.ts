@@ -6,6 +6,7 @@ import type {
   HrcTargetView,
   HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
+  HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
@@ -56,6 +57,7 @@ import type {
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  RunListFilter,
   RuntimeActionResponse,
   RuntimeListFilter,
   SemanticDmRequest,
@@ -364,6 +366,29 @@ export class HrcClient {
     const qs = params.toString()
     const path = qs ? `/v1/runtimes?${qs}` : '/v1/runtimes'
     return this.getJson<RuntimeRecord[]>(path)
+  }
+
+  async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {
+    const params = new URLSearchParams()
+    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
+    if (filter?.generation !== undefined) params.set('generation', String(filter.generation))
+    if (filter?.runtimeId) params.set('runtimeId', filter.runtimeId)
+    if (filter?.limit !== undefined) params.set('limit', String(filter.limit))
+    const qs = params.toString()
+    const path = qs ? `/v1/runs?${qs}` : '/v1/runs'
+    return this.getJson<RunRecord[]>(path)
+  }
+
+  async getLatestRunForSession(input: {
+    hostSessionId: string
+    generation?: number | undefined
+  }): Promise<RunRecord | null> {
+    const runs = await this.listRuns({
+      hostSessionId: input.hostSessionId,
+      ...(input.generation !== undefined ? { generation: input.generation } : {}),
+      limit: 1,
+    })
+    return runs[0] ?? null
   }
 
   async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {

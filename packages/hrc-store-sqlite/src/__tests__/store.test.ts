@@ -30,6 +30,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
+import { HrcErrorCode } from 'hrc-core'
 // This import is the RED gate — it will fail until Larry implements the module
 import { openHrcDatabase } from '../index'
 
@@ -509,6 +510,92 @@ describe('RuntimeRepository', () => {
 // 5. RunRepository
 // ---------------------------------------------------------------------------
 describe('RunRepository', () => {
+  function insertRunSession(
+    db: ReturnType<typeof openHrcDatabase>,
+    input: {
+      hostSessionId: string
+      scopeKey: string
+      generation?: number | undefined
+      priorHostSessionId?: string | undefined
+      updatedAt?: string | undefined
+    }
+  ): HrcSessionRecord {
+    const updatedAt = input.updatedAt ?? ts()
+    return db.sessions.insert({
+      hostSessionId: input.hostSessionId,
+      scopeRef: testScopeRef(input.scopeKey),
+      laneRef: 'default',
+      generation: input.generation ?? 1,
+      status: 'active',
+      ...(input.priorHostSessionId ? { priorHostSessionId: input.priorHostSessionId } : {}),
+      createdAt: updatedAt,
+      updatedAt,
+      ancestorScopeRefs: [],
+    })
+  }
+
+  function insertRunRuntime(
+    db: ReturnType<typeof openHrcDatabase>,
+    session: HrcSessionRecord,
+    input: {
+      runtimeId: string
+      status: string
+      activeRunId?: string | undefined
+      updatedAt?: string | undefined
+    }
+  ): HrcRuntimeSnapshot {
+    const updatedAt = input.updatedAt ?? ts()
+    return db.runtimes.insert({
+      runtimeId: input.runtimeId,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: input.status,
+      supportsInflightInput: false,
+      adopted: false,
+      ...(input.activeRunId ? { activeRunId: input.activeRunId } : {}),
+      createdAt: updatedAt,
+      updatedAt,
+    })
+  }
+
+  function insertRun(
+    db: ReturnType<typeof openHrcDatabase>,
+    session: HrcSessionRecord,
+    input: {
+      runId: string
+      runtimeId?: string | undefined
+      status: HrcRunRecord['status']
+      acceptedAt?: string | undefined
+      startedAt?: string | undefined
+      completedAt?: string | undefined
+      updatedAt: string
+      errorCode?: HrcRunRecord['errorCode'] | undefined
+      errorMessage?: string | undefined
+    }
+  ): HrcRunRecord {
+    return db.runs.insert({
+      runId: input.runId,
+      hostSessionId: session.hostSessionId,
+      ...(input.runtimeId ? { runtimeId: input.runtimeId } : {}),
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: input.status,
+      ...(input.acceptedAt ? { acceptedAt: input.acceptedAt } : {}),
+      ...(input.startedAt ? { startedAt: input.startedAt } : {}),
+      ...(input.completedAt ? { completedAt: input.completedAt } : {}),
+      updatedAt: input.updatedAt,
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+    })
+  }
+
   it('creates and retrieves a run', () => {
     const db = openHrcDatabase(dbPath)
     try {
@@ -582,6 +669,179 @@ describe('RunRepository', () => {
       expect(completed!.status).toBe('failed')
       expect(completed!.errorCode).toBe('RUNTIME_UNAVAILABLE')
       expect(completed!.errorMessage).toBe('tmux pane died')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('lists latest runs for a host session with generation and limit filters', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const session = insertRunSession(db, {
+        hostSessionId: 'hsid-run-list',
+        scopeKey: 'scope-run-list',
+        generation: 2,
+      })
+      insertRunRuntime(db, session, { runtimeId: 'rt-run-list', status: 'busy' })
+      insertRun(db, session, {
+        runId: 'run-list-old',
+        runtimeId: 'rt-run-list',
+        status: 'completed',
+        acceptedAt: '2026-05-18T10:00:00.000Z',
+        completedAt: '2026-05-18T10:01:00.000Z',
+        updatedAt: '2026-05-18T10:01:00.000Z',
+      })
+      insertRun(db, session, {
+        runId: 'run-list-new',
+        runtimeId: 'rt-run-list',
+        status: 'running',
+        acceptedAt: '2026-05-18T10:02:00.000Z',
+        startedAt: '2026-05-18T10:02:01.000Z',
+        updatedAt: '2026-05-18T10:03:00.000Z',
+      })
+      const otherSession = insertRunSession(db, {
+        hostSessionId: 'hsid-run-list-other',
+        scopeKey: 'scope-run-list-other',
+      })
+      insertRun(db, otherSession, {
+        runId: 'run-list-other',
+        status: 'running',
+        updatedAt: '2026-05-18T10:04:00.000Z',
+      })
+
+      const runs = db.runs.listRuns({
+        hostSessionId: 'hsid-run-list',
+        generation: 2,
+        limit: 1,
+      })
+
+      expect(runs.map((run) => run.runId)).toEqual(['run-list-new'])
+      expect(runs[0].status).toBe('running')
+      expect(runs[0].runtimeId).toBe('rt-run-list')
+      expect(runs[0].acceptedAt).toBe('2026-05-18T10:02:00.000Z')
+      expect(runs[0].startedAt).toBe('2026-05-18T10:02:01.000Z')
+      expect(runs[0].updatedAt).toBe('2026-05-18T10:03:00.000Z')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('returns the latest run for the C-02541 session/runtime/run lifecycle matrix', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const ready = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-ready',
+        scopeKey: 'scope-matrix-ready',
+      })
+      insertRunRuntime(db, ready, { runtimeId: 'rt-matrix-ready', status: 'ready' })
+      expect(db.runs.getLatestForSession({ hostSessionId: ready.hostSessionId })).toBeNull()
+
+      const busy = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-busy',
+        scopeKey: 'scope-matrix-busy',
+      })
+      insertRunRuntime(db, busy, {
+        runtimeId: 'rt-matrix-busy',
+        status: 'busy',
+        activeRunId: 'run-matrix-running',
+      })
+      insertRun(db, busy, {
+        runId: 'run-matrix-running',
+        runtimeId: 'rt-matrix-busy',
+        status: 'running',
+        acceptedAt: '2026-05-18T11:00:00.000Z',
+        startedAt: '2026-05-18T11:00:01.000Z',
+        updatedAt: '2026-05-18T11:00:02.000Z',
+      })
+      expect(db.runs.getLatestForSession({ hostSessionId: busy.hostSessionId })?.status).toBe(
+        'running'
+      )
+
+      const stale = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-stale',
+        scopeKey: 'scope-matrix-stale',
+      })
+      insertRunRuntime(db, stale, {
+        runtimeId: 'rt-matrix-stale',
+        status: 'stale',
+        activeRunId: 'run-matrix-started',
+      })
+      insertRun(db, stale, {
+        runId: 'run-matrix-started',
+        runtimeId: 'rt-matrix-stale',
+        status: 'started',
+        acceptedAt: '2026-05-18T11:10:00.000Z',
+        startedAt: '2026-05-18T11:10:01.000Z',
+        updatedAt: '2026-05-18T11:10:02.000Z',
+      })
+      expect(db.runs.getLatestForSession({ hostSessionId: stale.hostSessionId })?.status).toBe(
+        'started'
+      )
+
+      const dead = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-dead',
+        scopeKey: 'scope-matrix-dead',
+      })
+      insertRunRuntime(db, dead, {
+        runtimeId: 'rt-matrix-dead',
+        status: 'dead',
+        activeRunId: 'run-matrix-zombie',
+      })
+      insertRun(db, dead, {
+        runId: 'run-matrix-zombie',
+        runtimeId: 'rt-matrix-dead',
+        status: 'zombie',
+        acceptedAt: '2026-05-18T11:20:00.000Z',
+        startedAt: '2026-05-18T11:20:01.000Z',
+        completedAt: '2026-05-18T11:50:00.000Z',
+        updatedAt: '2026-05-18T11:50:00.000Z',
+        errorCode: HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
+        errorMessage: 'run timed out',
+      })
+      const zombie = db.runs.getLatestForSession({ hostSessionId: dead.hostSessionId })
+      expect(zombie?.status).toBe('zombie')
+      expect(zombie?.errorCode).toBe(HrcErrorCode.RUN_ZOMBIE_TIMEOUT)
+      expect(zombie?.errorMessage).toBe('run timed out')
+
+      const prior = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-prior',
+        scopeKey: 'scope-matrix-rotation',
+        generation: 1,
+      })
+      const current = insertRunSession(db, {
+        hostSessionId: 'hsid-matrix-current',
+        scopeKey: 'scope-matrix-rotation',
+        generation: 2,
+        priorHostSessionId: prior.hostSessionId,
+      })
+      insertRunRuntime(db, current, { runtimeId: 'rt-matrix-current', status: 'ready' })
+      insertRun(db, prior, {
+        runId: 'run-matrix-prior',
+        status: 'completed',
+        completedAt: '2026-05-18T12:00:00.000Z',
+        updatedAt: '2026-05-18T12:00:00.000Z',
+      })
+      insertRun(db, current, {
+        runId: 'run-matrix-current',
+        runtimeId: 'rt-matrix-current',
+        status: 'accepted',
+        acceptedAt: '2026-05-18T12:10:00.000Z',
+        updatedAt: '2026-05-18T12:10:00.000Z',
+      })
+
+      expect(current.priorHostSessionId).toBe(prior.hostSessionId)
+      expect(
+        db.runs.getLatestForSession({
+          hostSessionId: current.hostSessionId,
+          generation: current.generation,
+        })?.runId
+      ).toBe('run-matrix-current')
+      expect(
+        db.runs.getLatestForSession({
+          hostSessionId: prior.hostSessionId,
+          generation: prior.generation,
+        })?.runId
+      ).toBe('run-matrix-prior')
     } finally {
       db.close()
     }
