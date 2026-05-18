@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
 
-import { resolveScopeInput } from 'agent-scope'
+import { resolveQualifiedScopeInput } from 'agent-scope'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import type { HrcLifecycleEvent, HrcMessageRecord, SemanticTurnHandoffResponse } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
+import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { resolveCallerAddress, resolveTargetToSessionRef } from '../normalize.js'
 import {
@@ -110,7 +111,11 @@ export async function cmdTurn(
   }
 
   // ── Resolve scope ──
-  const resolved = resolveScopeInput(targetInput, 'main')
+  const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+  const resolved = resolveQualifiedScopeInput(targetInput, {
+    defaultLaneId: 'main',
+    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+  })
   const sessionRef = resolveTargetToSessionRef(targetInput)
 
   // ── --new: clearContext if host exists ──

@@ -1,32 +1,49 @@
 /**
  * Address normalization and resolution for hrcchat CLI.
  */
-import { formatSessionHandle, resolveScopeInput } from 'agent-scope'
+import { formatSessionHandle, resolveQualifiedScopeInput } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'spaces-config'
+
+/**
+ * Extract a taskId from HRC_SESSION_REF, when the caller is already running
+ * inside a task-scoped session. Returns undefined when the env var is unset
+ * or does not carry a `task:<id>` segment.
+ */
+function inferTaskIdFromCallerSession(): string | undefined {
+  const raw = process.env['HRC_SESSION_REF']
+  if (!raw) return undefined
+  // Strip lane suffix and scan for `:task:<id>`.
+  const scopePart = raw.split('/')[0] ?? raw
+  const parts = scopePart.split(':')
+  const taskIdx = parts.indexOf('task')
+  if (taskIdx >= 0 && parts[taskIdx + 1]) {
+    return parts[taskIdx + 1]
+  }
+  return undefined
+}
 
 /**
  * Resolve a CLI target string to a canonical sessionRef.
  * Accepts: SessionHandle (e.g. cody@demo~lane), ScopeHandle, or raw scopeRef.
  *
  * When the input omits a project qualifier (e.g. bare "clod"), the project is
- * inferred from ASP_PROJECT env or cwd so that the sessionRef matches the
- * control-plane's project-qualified sessions.
+ * inferred from ASP_PROJECT env or cwd. When the input omits a task qualifier
+ * the canonical default `primary` is applied so the sessionRef is always
+ * agent+project+task qualified.
  */
 export function resolveTargetToSessionRef(input: string): string {
-  const resolved = resolveScopeInput(input, 'main')
-  let scopeRef = resolved.scopeRef
+  const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+  const fallbackTaskId = inferTaskIdFromCallerSession()
 
-  // Qualify with project when not already present
-  if (resolved.parsed.kind === 'agent') {
-    const projectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
-    if (projectId) {
-      scopeRef = `${scopeRef}:project:${projectId}`
-    }
-  }
+  const resolved = resolveQualifiedScopeInput(input, {
+    defaultLaneId: 'main',
+    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+    ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
+  })
 
-  return `${scopeRef}/lane:${resolved.laneId}`
+  return `${resolved.scopeRef}/lane:${resolved.laneId}`
 }
 
 /**

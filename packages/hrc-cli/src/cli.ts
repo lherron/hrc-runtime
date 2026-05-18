@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join, resolve as resolvePath } from 'node:path'
 
-import { resolveScopeInput } from 'agent-scope'
+import { resolveQualifiedScopeInput } from 'agent-scope'
 import { CliUsageError, exitWithError, parseIntegerValue } from 'cli-kit'
 import { Command, CommanderError } from 'commander'
 
@@ -409,27 +409,26 @@ function resolveManagedScopeContext(
   scopeInput: string,
   options: ResolveManagedScopeOptions = {}
 ): ManagedScopeContext {
-  let { parsed, scopeRef, laneRef } = resolveScopeInput(scopeInput)
+  // Compose projectId fallback in caller-spec order:
+  //   explicit --project-id → ASP_PROJECT (caller env) → cwd inference → register prompt
+  // The shared agent-scope resolver fills the task default ("primary") once a
+  // projectId is known.
+  let projectIdHint: string | undefined =
+    options.projectIdOverride ?? process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
 
-  if (!parsed.projectId && options.projectIdOverride) {
-    ;({ parsed, scopeRef, laneRef } = resolveScopeInput(
-      `${scopeInput}@${options.projectIdOverride}`
-    ))
-  }
+  let resolved = resolveQualifiedScopeInput(scopeInput, {
+    ...(projectIdHint !== undefined ? { projectId: projectIdHint } : {}),
+  })
 
-  if (!parsed.projectId) {
-    const inferredProject = inferProjectIdFromCwd()
-    if (inferredProject) {
-      ;({ parsed, scopeRef, laneRef } = resolveScopeInput(`${scopeInput}@${inferredProject}`))
-    }
-  }
-
-  if (!parsed.projectId && (options.registerPolicy ?? 'never') === 'prompt') {
+  if (!resolved.parsed.projectId && (options.registerPolicy ?? 'never') === 'prompt') {
     const registered = maybePromptToRegisterProject()
     if (registered) {
-      ;({ parsed, scopeRef, laneRef } = resolveScopeInput(`${scopeInput}@${registered}`))
+      projectIdHint = registered
+      resolved = resolveQualifiedScopeInput(scopeInput, { projectId: projectIdHint })
     }
   }
+
+  const { parsed, scopeRef, laneRef } = resolved
 
   // If user explicitly overrode projectId (via --project-id) without also
   // giving --project-root, treat cwd as the project root. This matches the

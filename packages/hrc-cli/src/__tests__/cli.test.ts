@@ -1211,12 +1211,14 @@ describe('hrc start', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('local plan preview')
     expect(result.stdout).toContain('hrc start rex@agent-spaces --dry-run')
-    expect(result.stdout).toContain('sessionRef:   agent:rex:project:agent-spaces/lane:main')
+    expect(result.stdout).toContain(
+      'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
+    )
     expect(result.stdout).toContain('restartStyle: reuse_pty')
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces:task:primary')
       expect(sessions.length).toBe(0)
     } finally {
       db.close()
@@ -1380,7 +1382,7 @@ describe('hrc attach <scope>', () => {
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces:task:primary')
       expect(sessions.length).toBe(0)
     } finally {
       db.close()
@@ -1815,7 +1817,9 @@ describe('hrc run --dry-run', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('local plan preview')
-    expect(result.stdout).toContain('sessionRef:   agent:rex:project:agent-spaces/lane:main')
+    expect(result.stdout).toContain(
+      'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
+    )
     expect(result.stdout).toContain('restartStyle: reuse_pty')
     expect(result.stdout).toContain('provider:     anthropic')
   })
@@ -1847,7 +1851,7 @@ describe('hrc run --dry-run', () => {
     // Confirm no session was persisted — dry-run is client-side only.
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces')
+      const sessions = db.sessions.listByScopeRef('agent:rex:project:agent-spaces:task:primary')
       expect(sessions.length).toBe(0)
     } finally {
       db.close()
@@ -1953,6 +1957,22 @@ describe('hrc run --dry-run', () => {
 
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('provider:     openai')
+  })
+
+  it('canonicalizes bare agent input to task:primary using ASP_PROJECT', async () => {
+    const result = await runCli(
+      ['run', 'rex', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
+        ASP_PROJECT: 'agent-spaces',
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(
+      'sessionRef:   agent:rex:project:agent-spaces:task:primary/lane:main'
+    )
   })
 })
 

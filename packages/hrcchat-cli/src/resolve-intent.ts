@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { resolveScopeInput } from 'agent-scope'
+import { resolveQualifiedScopeInput } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
 import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
@@ -94,13 +94,14 @@ function resolveAgentHarness(
 }
 
 export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIntent {
-  const resolved = resolveScopeInput(targetInput, 'main')
+  const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+  const resolved = resolveQualifiedScopeInput(targetInput, {
+    defaultLaneId: 'main',
+    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+  })
   const scope = resolved.parsed
 
-  let projectId = scope.projectId
-  if (!projectId) {
-    projectId = inferProjectIdFromCwd()
-  }
+  const projectId = scope.projectId
 
   const agentsRoot = getAgentsRoot()
   if (!agentsRoot) {
