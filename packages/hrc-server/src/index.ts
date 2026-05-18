@@ -2056,7 +2056,8 @@ class HrcServerInstance implements HrcServer {
       getReusableHeadlessRuntimeForSession(
         this.db,
         session.hostSessionId,
-        intent.harness.provider
+        intent.harness.provider,
+        intent.harness.id
       ) ?? this.createHeadlessRuntimeForSession(session, intent)
     assertRuntimeNotBusy(this.db, runtime)
 
@@ -2135,7 +2136,7 @@ class HrcServerInstance implements HrcServer {
     this.notifyEvent(startedEvent)
 
     const execute = async (): Promise<Response> => {
-      if (intent.harness.provider === 'anthropic') {
+      if (shouldUseHeadlessSdkExecutor(intent.harness)) {
         return await this.executeHeadlessSdkTurn(
           session,
           runtime,
@@ -3658,7 +3659,8 @@ class HrcServerInstance implements HrcServer {
         const reusableRuntime = getReusableHeadlessRuntimeForSession(
           this.db,
           session.hostSessionId,
-          intent.harness.provider
+          intent.harness.provider,
+          intent.harness.id
         )
         if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
           return reusableRuntime
@@ -3926,7 +3928,7 @@ class HrcServerInstance implements HrcServer {
     runtime: HrcRuntimeSnapshot,
     intent: HrcRuntimeIntent
   ): Promise<HrcRuntimeSnapshot> {
-    if (intent.harness.provider === 'anthropic') {
+    if (shouldUseHeadlessSdkExecutor(intent.harness)) {
       return await this.runHeadlessSdkStartLaunch(session, runtime, intent)
     }
 
@@ -4158,6 +4160,9 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
+    const harness = shouldUseHeadlessSdkExecutor(intent.harness)
+      ? deriveSdkHarness(intent.harness)
+      : deriveInteractiveHarness(intent.harness)
     const runtime = this.db.runtimes.insert({
       runtimeId: `rt-${randomUUID()}`,
       runtimeKind: 'harness',
@@ -4166,7 +4171,7 @@ class HrcServerInstance implements HrcServer {
       laneRef: session.laneRef,
       generation: session.generation,
       transport: 'headless',
-      harness: deriveInteractiveHarness(intent.harness),
+      harness,
       provider: intent.harness.provider,
       status: 'ready',
       continuation: session.continuation,
@@ -8374,6 +8379,26 @@ function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnaps
   return resolveHarnessFrontendForProvider(harness.provider, 'sdk') ?? 'agent-sdk'
 }
 
+/**
+ * Decide whether a headless dispatch (or start) should run through the SDK
+ * executor (executeHeadlessSdkTurn / runHeadlessSdkStartLaunch) rather than
+ * the CLI executor. Explicit SDK harness ids always win. Id-less anthropic
+ * intents keep the legacy SDK fallback. Everything else is CLI.
+ *
+ * Exported for unit testing — single-source predicate for dispatch routing,
+ * start routing, runtime harness label (`deriveSdkHarness` vs
+ * `deriveInteractiveHarness`), and reuse filtering.
+ */
+export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness']): boolean {
+  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+    return true
+  }
+  if (harness.id !== undefined) {
+    return false
+  }
+  return harness.provider === 'anthropic'
+}
+
 function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
   const preferredMode = intent.execution?.preferredMode
   return preferredMode === 'headless' || preferredMode === 'nonInteractive'
@@ -8548,11 +8573,23 @@ function findLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSn
 function getReusableHeadlessRuntimeForSession(
   db: HrcDatabase,
   hostSessionId: string,
-  provider: HrcProvider
+  provider: HrcProvider,
+  harnessId?: HrcHarness | undefined
 ): HrcRuntimeSnapshot | null {
   const runtime = db.runtimes
     .listByHostSessionId(hostSessionId)
-    .filter((candidate) => candidate.transport === 'headless' && candidate.provider === provider)
+    .filter((candidate) => {
+      if (candidate.transport !== 'headless' || candidate.provider !== provider) {
+        return false
+      }
+      // When the intent specifies a harness id, only reuse runtimes labeled
+      // with the same id — provider-only reuse is unsafe across SDK/CLI lines
+      // (e.g. a Codex CLI runtime cannot serve a pi-sdk turn).
+      if (harnessId !== undefined && candidate.harness !== harnessId) {
+        return false
+      }
+      return true
+    })
     .at(-1)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     return null
