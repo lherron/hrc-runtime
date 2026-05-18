@@ -36,6 +36,8 @@ export type {
   InspectRuntimeResponse,
   RuntimeActionResponse,
   StatusResponse,
+  SweepZombieRunsRequest,
+  SweepZombieRunsResponse,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
   TerminateRuntimeRequest,

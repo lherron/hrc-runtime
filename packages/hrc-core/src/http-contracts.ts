@@ -336,6 +336,40 @@ export type SweepRuntimesResponse = {
   summary: SweepRuntimesSummary
 }
 
+export type SweepZombieRunsRequest = {
+  olderThan?: string | undefined
+  dryRun?: boolean | undefined
+  yes?: boolean | undefined
+}
+
+export type SweepZombieRunResult = {
+  type: 'run'
+  runId: string
+  hostSessionId: string
+  runtimeId?: string | undefined
+  status: 'zombied' | 'matched' | 'skipped' | 'error'
+  observedAt: string
+  observedSource: 'event' | 'started_at' | 'accepted_at' | 'updated_at'
+  runtimeOwnershipCleared: boolean
+  runtimeStatus?: string | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type SweepZombieRunsSummary = {
+  type: 'summary'
+  matched: number
+  zombied: number
+  skipped: number
+  errors: number
+}
+
+export type SweepZombieRunsResponse = {
+  ok: true
+  results: SweepZombieRunResult[]
+  summary: SweepZombieRunsSummary
+}
+
 export type SendWindowLiteralInputRequest = {
   runtimeId: string
   text: string

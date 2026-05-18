@@ -16,6 +16,8 @@ import type {
   InspectRuntimeResponse,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
+  SweepZombieRunsRequest,
+  SweepZombieRunsResponse,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
@@ -1289,6 +1291,52 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
   )
 }
 
+async function cmdRunSweepZombies(args: string[]): Promise<void> {
+  const dryRunFlag = hasFlag(args, '--dry-run')
+  const yes = hasFlag(args, '--yes')
+  const jsonOutput = hasFlag(args, '--json')
+  if (!dryRunFlag && !yes && !process.stdout.isTTY) {
+    fatal('run sweep-zombies requires --yes to mutate when stdout is not a TTY')
+  }
+
+  const request: SweepZombieRunsRequest = {
+    olderThan: parseFlag(args, '--older-than') ?? '30m',
+    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    ...(yes ? { yes } : {}),
+  }
+
+  const client = createClient()
+  const result = await client.sweepZombieRuns(request)
+  if (jsonOutput) {
+    printZombieSweepNdjson(result)
+    return
+  }
+
+  printZombieSweepHuman(result, request.dryRun === true)
+}
+
+function printZombieSweepNdjson(result: SweepZombieRunsResponse): void {
+  for (const row of result.results) {
+    process.stdout.write(`${JSON.stringify(row)}\n`)
+  }
+  process.stdout.write(`${JSON.stringify(result.summary)}\n`)
+}
+
+function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean): void {
+  process.stdout.write(`run zombie sweep${dryRun ? ' (dry-run)' : ''}\n`)
+  for (const row of result.results) {
+    const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
+    process.stdout.write(
+      `  ${row.status.padEnd(8)} ${row.runId} observed=${row.observedAt} source=${
+        row.observedSource
+      } ownershipCleared=${row.runtimeOwnershipCleared}${suffix}\n`
+    )
+  }
+  process.stdout.write(
+    `summary matched=${result.summary.matched} zombied=${result.summary.zombied} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+  )
+}
+
 async function cmdLaunchList(args: string[]): Promise<void> {
   const hostSessionId = parseFlag(args, '--host-session-id')
   const runtimeId = parseFlag(args, '--runtime-id')
@@ -2302,6 +2350,7 @@ Commands:
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
+  run sweep-zombies [--older-than <duration>] [--dry-run|--yes] [--json]
   turn <target> [prompt]              Alias for hrcchat turn; all flags forwarded verbatim
   inflight send <runtimeId> --run-id <runId> --input <text> [--input-type <type>]
   capture <runtimeId>                 Capture tmux pane text
@@ -2744,7 +2793,7 @@ Exit codes:
       await cmdStart(args)
     })
 
-  program
+  const run = program
     .command('run')
     .description('launch or reattach and attach')
     .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
@@ -2761,6 +2810,16 @@ Exit codes:
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .action(async (_scope, _opts, cmd: Command) => {
       const positionals: string[] = cmd.args
+      if (positionals[0] === 'sweep-zombies') {
+        let root: Command = cmd
+        while (root.parent) root = root.parent
+        const fullRaw: string[] =
+          (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+        const verbIdx = fullRaw.indexOf('run')
+        const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 2) : fullRaw.slice(2)
+        await cmdRunSweepZombies(rawArgv)
+        return
+      }
       const opts = cmd.opts()
       let root: Command = cmd
       while (root.parent) root = root.parent
@@ -2773,6 +2832,23 @@ Exit codes:
         negatedBooleans: ['attach', 'register'],
       })
       await cmdRun(args)
+    })
+
+  run
+    .command('sweep-zombies')
+    .description('sweep stale active runs into zombie terminal state')
+    .option('--older-than <duration>', 'run inactivity threshold')
+    .option('--dry-run', 'preview without mutating')
+    .option('--yes', 'confirm mutation')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      let root: Command = cmd
+      while (root.parent) root = root.parent
+      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+      const verbIdx = fullRaw.indexOf('sweep-zombies')
+      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : []
+      await cmdRunSweepZombies(rawArgv)
     })
 
   // -- turn (alias for `hrcchat turn`) -----------------------------------------

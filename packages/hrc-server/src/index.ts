@@ -96,6 +96,9 @@ import type {
   SweepRuntimeTransport,
   SweepRuntimesResponse,
   SweepRuntimesSummary,
+  SweepZombieRunResult,
+  SweepZombieRunsResponse,
+  SweepZombieRunsSummary,
   TargetCapabilityView,
   TerminateRuntimeResponse,
   WaitMessageResponse,
@@ -177,6 +180,7 @@ import {
   parseSessionRef,
   parseStartRuntimeRequest,
   parseSweepRuntimesRequest,
+  parseSweepZombieRunsRequest,
   parseTerminateAppSessionRequest,
   parseTerminateRuntimeRequest,
   parseUnbindSurfaceRequest,
@@ -382,6 +386,40 @@ type SessionRow = {
   continuation_json: string | null
 }
 
+type HrcServerRunRow = {
+  run_id: string
+  host_session_id: string
+  runtime_id: string | null
+  scope_ref: string
+  lane_ref: string
+  generation: number
+  transport: string
+  status: string
+  accepted_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  updated_at: string
+  error_code: HrcErrorCode | null
+  error_message: string | null
+}
+
+const HRC_SERVER_RUN_COLUMNS = `
+  run_id,
+  host_session_id,
+  runtime_id,
+  scope_ref,
+  lane_ref,
+  generation,
+  transport,
+  status,
+  accepted_at,
+  started_at,
+  completed_at,
+  updated_at,
+  error_code,
+  error_message
+`
+
 const NDJSON_HEADERS = {
   'content-type': 'application/x-ndjson; charset=utf-8',
 }
@@ -477,6 +515,11 @@ const OTLP_CONTENT_TYPE_JSON = 'application/json'
 // Default stale-generation threshold: sessions older than 24 hours are
 // auto-rotated to a fresh generation unless the caller opts out.
 const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
+const HRC_ZOMBIE_SWEEP_ENABLED = true
+const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
+const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
+const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
+const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -511,6 +554,19 @@ type TurnResponseFinalizer = {
 }
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
+type ZombieObservedSource = SweepZombieRunResult['observedSource']
+
+type ZombieRunCandidate = {
+  run: HrcRunRecord
+  observedAt: string
+  observedSource: ZombieObservedSource
+  latestEventAt?: string | undefined
+}
+
+type LatestRunEventRow = {
+  ts: string
+}
+
 function exactRouteKey(method: string, pathname: string): string {
   return `${method} ${pathname}`
 }
@@ -525,6 +581,8 @@ class HrcServerInstance implements HrcServer {
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   private readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
+  private zombieSweepTimer: ReturnType<typeof setInterval> | undefined
+  private zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -544,6 +602,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/runtimes/inspect')]: (request) =>
       this.handleInspectRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
+    [exactRouteKey('POST', '/v1/runs/sweep-zombies')]: (request) =>
+      this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
@@ -639,6 +699,7 @@ class HrcServerInstance implements HrcServer {
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
+    this.startZombieRunSweeper()
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
       // Test-only override: caller supplies a fixed endpoint, no listener started.
@@ -682,6 +743,17 @@ class HrcServerInstance implements HrcServer {
         this.otelListener.stop()
       } catch (error) {
         writeServerLog('WARN', 'server.stop.otel_listener_stop_failed', { error })
+      }
+    }
+    if (this.zombieSweepTimer) {
+      clearInterval(this.zombieSweepTimer)
+      this.zombieSweepTimer = undefined
+    }
+    if (this.zombieSweepInFlight) {
+      try {
+        await this.zombieSweepInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.zombie_sweep_wait_failed', { error })
       }
     }
     this.followSubscribers.clear()
@@ -3530,6 +3602,273 @@ class HrcServerInstance implements HrcServer {
     } satisfies SweepRuntimesResponse)
   }
 
+  private async handleSweepZombieRuns(request: Request): Promise<Response> {
+    const body = parseSweepZombieRunsRequest(await parseJsonBody(request))
+    const olderThanMs = parseSweepDurationMs(body.olderThan ?? '30m')
+    const result = await this.sweepZombieRunsOnce({
+      olderThanMs,
+      dryRun: body.dryRun === true,
+      thresholdSeconds: Math.floor(olderThanMs / 1000),
+    })
+    return json(result)
+  }
+
+  private startZombieRunSweeper(): void {
+    if (!HRC_ZOMBIE_SWEEP_ENABLED) return
+
+    void this.runRecurringZombieSweep()
+    this.zombieSweepTimer = setInterval(() => {
+      void this.runRecurringZombieSweep()
+    }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
+  }
+
+  private async runRecurringZombieSweep(): Promise<void> {
+    if (this.zombieSweepInFlight) {
+      return
+    }
+
+    const sweep = this.sweepZombieRunsOnce({
+      olderThanMs: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS * 1000,
+      dryRun: false,
+      thresholdSeconds: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
+    })
+    this.zombieSweepInFlight = sweep
+    try {
+      await sweep
+    } catch (error) {
+      writeServerLog('WARN', 'run.zombie_sweep_failed', { error })
+    } finally {
+      if (this.zombieSweepInFlight === sweep) {
+        this.zombieSweepInFlight = undefined
+      }
+    }
+  }
+
+  private async sweepZombieRunsOnce(input: {
+    olderThanMs: number
+    dryRun: boolean
+    thresholdSeconds: number
+  }): Promise<SweepZombieRunsResponse> {
+    const nowMs = Date.now()
+    const cutoffMs = nowMs - input.olderThanMs
+    const candidates = this.listZombieRunCandidates(cutoffMs)
+    const results: SweepZombieRunResult[] = []
+
+    for (const candidate of candidates) {
+      if (input.dryRun) {
+        results.push({
+          type: 'run',
+          runId: candidate.run.runId,
+          hostSessionId: candidate.run.hostSessionId,
+          ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+          status: 'matched',
+          observedAt: candidate.observedAt,
+          observedSource: candidate.observedSource,
+          runtimeOwnershipCleared: false,
+        })
+        continue
+      }
+
+      try {
+        const result = await this.zombieRun(candidate, input.thresholdSeconds)
+        results.push(result)
+      } catch (error) {
+        results.push({
+          type: 'run',
+          runId: candidate.run.runId,
+          hostSessionId: candidate.run.hostSessionId,
+          ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+          status: 'error',
+          observedAt: candidate.observedAt,
+          observedSource: candidate.observedSource,
+          runtimeOwnershipCleared: false,
+          errorCode: error instanceof HrcDomainError ? error.code : HrcErrorCode.INTERNAL_ERROR,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    const summary: SweepZombieRunsSummary = {
+      type: 'summary',
+      matched: candidates.length,
+      zombied: results.filter((result) => result.status === 'zombied').length,
+      skipped: results.filter((result) => result.status === 'skipped').length,
+      errors: results.filter((result) => result.status === 'error').length,
+    }
+
+    return {
+      ok: true,
+      results,
+      summary,
+    } satisfies SweepZombieRunsResponse
+  }
+
+  private listZombieRunCandidates(cutoffMs: number): ZombieRunCandidate[] {
+    const placeholders = HRC_ZOMBIE_ACTIVE_RUN_STATUSES.map(() => '?').join(', ')
+    const rows = this.db.sqlite
+      .query<HrcServerRunRow, string[]>(
+        `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
+          WHERE status IN (${placeholders})
+            AND transport = 'headless'
+            AND completed_at IS NULL
+          ORDER BY updated_at ASC, run_id ASC`
+      )
+      .all(...HRC_ZOMBIE_ACTIVE_RUN_STATUSES)
+
+    const candidates: ZombieRunCandidate[] = []
+    for (const row of rows) {
+      const run = mapServerRunRow(row)
+      const observed = this.latestObservedRunActivity(run)
+      const observedMs = Date.parse(observed.observedAt)
+      if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
+        continue
+      }
+      candidates.push({
+        run,
+        ...observed,
+      })
+    }
+    return candidates
+  }
+
+  private latestObservedRunActivity(run: HrcRunRecord): Omit<ZombieRunCandidate, 'run'> {
+    const latestEvent = this.db.sqlite
+      .query<LatestRunEventRow, [string]>(
+        `
+          SELECT ts FROM hrc_events
+          WHERE run_id = ?
+          ORDER BY ts DESC, hrc_seq DESC
+          LIMIT 1
+        `
+      )
+      .get(run.runId)
+    if (latestEvent) {
+      return {
+        observedAt: latestEvent.ts,
+        observedSource: 'event',
+        latestEventAt: latestEvent.ts,
+      }
+    }
+
+    if (run.startedAt) {
+      return { observedAt: run.startedAt, observedSource: 'started_at' }
+    }
+    if (run.acceptedAt) {
+      return { observedAt: run.acceptedAt, observedSource: 'accepted_at' }
+    }
+    return { observedAt: run.updatedAt, observedSource: 'updated_at' }
+  }
+
+  private async zombieRun(
+    candidate: ZombieRunCandidate,
+    thresholdSeconds: number
+  ): Promise<SweepZombieRunResult> {
+    const now = timestamp()
+    const claim = this.db.sqlite
+      .query(
+        `
+          UPDATE runs
+          SET
+            status = ?,
+            completed_at = ?,
+            updated_at = ?,
+            error_code = ?,
+            error_message = ?
+          WHERE run_id = ?
+            AND status IN ('accepted', 'started', 'running')
+            AND transport = 'headless'
+            AND completed_at IS NULL
+        `
+      )
+      .run(
+        'zombie',
+        now,
+        now,
+        HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
+        HRC_ZOMBIE_ERROR_MESSAGE,
+        candidate.run.runId
+      ) as { changes?: number }
+
+    if ((claim.changes ?? 0) === 0) {
+      return {
+        type: 'run',
+        runId: candidate.run.runId,
+        hostSessionId: candidate.run.hostSessionId,
+        ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+        status: 'skipped',
+        observedAt: candidate.observedAt,
+        observedSource: candidate.observedSource,
+        runtimeOwnershipCleared: false,
+      }
+    }
+
+    const runtime = candidate.run.runtimeId
+      ? this.db.runtimes.getByRuntimeId(candidate.run.runtimeId)
+      : null
+    let runtimeOwnershipCleared = false
+    let runtimeStatus: string | undefined
+    if (runtime?.activeRunId === candidate.run.runId) {
+      runtimeStatus = 'stale'
+      const runtimeUpdate = this.db.sqlite
+        .query(
+          `
+            UPDATE runtimes
+            SET active_run_id = NULL,
+                status = ?,
+                updated_at = ?,
+                last_activity_at = ?
+            WHERE runtime_id = ?
+              AND active_run_id = ?
+          `
+        )
+        .run(runtimeStatus, now, now, runtime.runtimeId, candidate.run.runId) as {
+        changes?: number
+      }
+      runtimeOwnershipCleared = (runtimeUpdate.changes ?? 0) > 0
+    }
+
+    const event = appendHrcEvent(this.db, 'turn.zombied', {
+      ts: now,
+      hostSessionId: candidate.run.hostSessionId,
+      scopeRef: candidate.run.scopeRef,
+      laneRef: candidate.run.laneRef,
+      generation: candidate.run.generation,
+      runId: candidate.run.runId,
+      ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+      ...(candidate.run.transport === 'sdk' ||
+      candidate.run.transport === 'tmux' ||
+      candidate.run.transport === 'headless'
+        ? { transport: candidate.run.transport }
+        : {}),
+      errorCode: HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
+      payload: {
+        runId: candidate.run.runId,
+        ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+        thresholdSeconds,
+        lastObservedAt: candidate.observedAt,
+        observedSource: candidate.observedSource,
+        ...(candidate.latestEventAt ? { latestEventAt: candidate.latestEventAt } : {}),
+        fallbackTimestampSource:
+          candidate.observedSource === 'event' ? undefined : candidate.observedSource,
+        runtimeOwnershipCleared,
+        ...(runtimeStatus ? { runtimeStatus } : {}),
+      },
+    })
+    this.notifyEvent(event)
+
+    return {
+      type: 'run',
+      runId: candidate.run.runId,
+      hostSessionId: candidate.run.hostSessionId,
+      ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
+      status: 'zombied',
+      observedAt: candidate.observedAt,
+      observedSource: candidate.observedSource,
+      runtimeOwnershipCleared,
+      ...(runtimeStatus ? { runtimeStatus } : {}),
+    }
+  }
+
   private claimRuntimeForSweep(runtimeId: string, statuses: string[], now: string): boolean {
     const placeholders = statuses.map(() => '?').join(', ')
     const statement = this.db.sqlite.query(
@@ -6191,7 +6530,11 @@ class HrcServerInstance implements HrcServer {
     for (const subscriber of this.followSubscribers) {
       subscriber(event)
     }
-    if ('hrcSeq' in event && event.eventKind === 'turn.completed' && event.runId) {
+    if (
+      'hrcSeq' in event &&
+      (event.eventKind === 'turn.completed' || event.eventKind === 'turn.zombied') &&
+      event.runId
+    ) {
       this.finalizeSemanticTurnResponse(event)
     }
   }
@@ -9097,6 +9440,25 @@ function parseSweepDurationMs(raw: string): number {
             ? 60 * 60 * 1000
             : 24 * 60 * 60 * 1000
   return Math.max(0, Math.floor(value * multiplier))
+}
+
+function mapServerRunRow(row: HrcServerRunRow): HrcRunRecord {
+  return {
+    runId: row.run_id,
+    hostSessionId: row.host_session_id,
+    ...(row.runtime_id ? { runtimeId: row.runtime_id } : {}),
+    scopeRef: row.scope_ref,
+    laneRef: row.lane_ref,
+    generation: row.generation,
+    transport: row.transport,
+    status: row.status,
+    ...(row.accepted_at ? { acceptedAt: row.accepted_at } : {}),
+    ...(row.started_at ? { startedAt: row.started_at } : {}),
+    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+    updatedAt: row.updated_at,
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    ...(row.error_message ? { errorMessage: row.error_message } : {}),
+  }
 }
 
 function runtimeMatchesSweepRequest(

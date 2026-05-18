@@ -750,6 +750,25 @@ const activeInputDeliveriesMigration: HrcMigration = {
   },
 }
 
+const zombieRunSweepIndexesMigration: HrcMigration = {
+  id: '0012_zombie_run_sweep_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_status_completed_at
+        ON runs(status, completed_at);
+
+      CREATE INDEX IF NOT EXISTS idx_events_run_ts
+        ON events(run_id, ts);
+
+      CREATE INDEX IF NOT EXISTS idx_hrc_events_run_ts
+        ON hrc_events(run_id, ts);
+
+      CREATE INDEX IF NOT EXISTS idx_runtimes_active_run_id
+        ON runtimes(active_run_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -762,6 +781,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   legacyHrcEventsBackfillMigration,
   runtimeBuffersScopedByRunMigration,
   activeInputDeliveriesMigration,
+  zombieRunSweepIndexesMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

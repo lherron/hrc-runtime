@@ -32,6 +32,7 @@ import type {
   StartRuntimeRequest,
   SweepRuntimeTransport,
   SweepRuntimesRequest,
+  SweepZombieRunsRequest,
   TerminateAppSessionRequest,
   TerminateRuntimeRequest,
   UnbindSurfaceRequest,
@@ -1213,6 +1214,41 @@ export function parseSweepRuntimesRequest(input: unknown): SweepRuntimesRequest 
     ...(parsedStatus ? { status: parsedStatus } : {}),
     ...(scope ? { scope: scope.trim() } : {}),
     ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
+    ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
+    ...(typeof yes === 'boolean' ? { yes } : {}),
+  }
+}
+
+export function parseSweepZombieRunsRequest(input: unknown): SweepZombieRunsRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const olderThan = input['olderThan']
+  if (olderThan !== undefined && (typeof olderThan !== 'string' || olderThan.trim().length === 0)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'olderThan must be a non-empty string',
+      { field: 'olderThan' }
+    )
+  }
+
+  const dryRun = input['dryRun']
+  if (dryRun !== undefined && typeof dryRun !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'dryRun must be a boolean', {
+      field: 'dryRun',
+    })
+  }
+
+  const yes = input['yes']
+  if (yes !== undefined && typeof yes !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'yes must be a boolean', {
+      field: 'yes',
+    })
+  }
+
+  return {
+    ...(olderThan ? { olderThan: olderThan.trim() } : {}),
     ...(typeof dryRun === 'boolean' ? { dryRun } : {}),
     ...(typeof yes === 'boolean' ? { yes } : {}),
   }

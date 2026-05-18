@@ -293,7 +293,15 @@ export type HrcRunRecord = {
   laneRef: string
   generation: number
   transport: string
-  status: string
+  status:
+    | 'accepted'
+    | 'started'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'zombie'
+    | string
   acceptedAt?: string | undefined
   startedAt?: string | undefined
   completedAt?: string | undefined

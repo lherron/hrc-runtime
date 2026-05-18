@@ -68,6 +68,8 @@ import type {
   SurfaceListFilter,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
+  SweepZombieRunsRequest,
+  SweepZombieRunsResponse,
   TargetListFilter,
   TerminateRuntimeRequest,
   TerminateRuntimeResponse,
@@ -269,6 +271,10 @@ export class HrcClient {
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {
     return this.postJson<SweepRuntimesResponse>('/v1/runtimes/sweep', request)
+  }
+
+  async sweepZombieRuns(request: SweepZombieRunsRequest = {}): Promise<SweepZombieRunsResponse> {
+    return this.postJson<SweepZombieRunsResponse>('/v1/runs/sweep-zombies', request)
   }
 
   async dropContinuation(request: DropContinuationRequest): Promise<DropContinuationResponse> {

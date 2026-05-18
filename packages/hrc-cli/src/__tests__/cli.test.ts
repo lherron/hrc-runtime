@@ -667,6 +667,14 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stdout).toContain('--transport')
   })
 
+  it('hrc run sweep-zombies --help exits 0 with Usage and flags', async () => {
+    const result = await runCli(['run', 'sweep-zombies', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--older-than')
+    expect(result.stdout).toContain('--dry-run')
+  })
+
   // -- launch group --
   it('hrc launch --help exits 0 with Usage and lists subcommands', async () => {
     const result = await runCli(['launch', '--help'])
