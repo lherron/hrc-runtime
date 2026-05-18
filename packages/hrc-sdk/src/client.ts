@@ -6,6 +6,7 @@ import type {
   HrcTargetView,
   HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
+  HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
@@ -47,6 +48,7 @@ import type {
   HrcBridgeTargetResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  LatestEventBySessionFilter,
   LaunchListFilter,
   ListMessagesResponse,
   ReconcileActiveRunsRequest,
@@ -55,6 +57,7 @@ import type {
   RegisterBridgeTargetResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
+  RunListFilter,
   RuntimeActionResponse,
   RuntimeListFilter,
   SemanticDmRequest,
@@ -365,6 +368,29 @@ export class HrcClient {
     return this.getJson<RuntimeRecord[]>(path)
   }
 
+  async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {
+    const params = new URLSearchParams()
+    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
+    if (filter?.generation !== undefined) params.set('generation', String(filter.generation))
+    if (filter?.runtimeId) params.set('runtimeId', filter.runtimeId)
+    if (filter?.limit !== undefined) params.set('limit', String(filter.limit))
+    const qs = params.toString()
+    const path = qs ? `/v1/runs?${qs}` : '/v1/runs'
+    return this.getJson<RunRecord[]>(path)
+  }
+
+  async getLatestRunForSession(input: {
+    hostSessionId: string
+    generation?: number | undefined
+  }): Promise<RunRecord | null> {
+    const runs = await this.listRuns({
+      hostSessionId: input.hostSessionId,
+      ...(input.generation !== undefined ? { generation: input.generation } : {}),
+      limit: 1,
+    })
+    return runs[0] ?? null
+  }
+
   async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {
     const params = new URLSearchParams()
     if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
@@ -495,6 +521,31 @@ export class HrcClient {
   }
 
   // -- Event stream -----------------------------------------------------------
+
+  /**
+   * Return the latest HRC lifecycle event per `(hostSessionId, generation)`.
+   *
+   * Backs ACP listMobileSessions freshness. Uses the indexed
+   * `idx_hrc_events_host_session_generation_seq` query and does not depend on
+   * a bounded recent window, so callers can compute `lastHrcSeq` /
+   * `lastActivityAt` reliably regardless of total event count.
+   */
+  async listLatestEventBySession(
+    filter?: LatestEventBySessionFilter
+  ): Promise<HrcLifecycleEvent[]> {
+    const params = new URLSearchParams()
+    appendOptionalEventQueryParam(params, 'hostSessionId', filter?.hostSessionId)
+    appendOptionalEventQueryParam(params, 'generation', filter?.generation)
+    appendOptionalEventQueryParam(params, 'scopeRef', filter?.scopeRef)
+    appendOptionalEventQueryParam(params, 'laneRef', filter?.laneRef)
+    appendOptionalEventQueryParam(params, 'runtimeId', filter?.runtimeId)
+    appendOptionalEventQueryParam(params, 'runId', filter?.runId)
+    appendOptionalEventQueryParam(params, 'category', filter?.category)
+    appendOptionalEventQueryParam(params, 'eventKind', filter?.eventKind)
+    const qs = params.toString()
+    const path = qs ? `/v1/events/latest-by-session?${qs}` : '/v1/events/latest-by-session'
+    return this.getJson<HrcLifecycleEvent[]>(path)
+  }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
     const params = new URLSearchParams()

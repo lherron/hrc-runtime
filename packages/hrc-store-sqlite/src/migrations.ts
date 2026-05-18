@@ -785,6 +785,19 @@ const hrcEventsCanonicalReaderIndexesMigration: HrcMigration = {
   },
 }
 
+const runSessionLookupIndexesMigration: HrcMigration = {
+  id: '0014_run_session_lookup_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_session_generation_updated
+        ON runs(host_session_id, generation, updated_at, run_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runs_runtime_updated
+        ON runs(runtime_id, updated_at, run_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -799,6 +812,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   activeInputDeliveriesMigration,
   zombieRunSweepIndexesMigration,
   hrcEventsCanonicalReaderIndexesMigration,
+  runSessionLookupIndexesMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

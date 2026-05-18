@@ -7,6 +7,7 @@ export type {
   HrcActiveInputDeliveryRecord,
   HrcLifecycleEventInput,
   HrcLifecycleQueryFilters,
+  RunListFilters,
 } from './repositories.js'
 export { MessageRepository } from './message-repository.js'
 export type { MessageInsertInput } from './message-repository.js'

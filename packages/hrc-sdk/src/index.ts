@@ -18,6 +18,7 @@ export type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  LatestEventBySessionFilter,
   LaunchListFilter,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
@@ -28,6 +29,7 @@ export type {
   StartRuntimeResponse,
   RuntimeActionResponse,
   RuntimeListFilter,
+  RunListFilter,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
@@ -58,6 +60,7 @@ export type {
 export type {
   HrcLaunchRecord as LaunchRecord,
   HrcLocalBridgeRecord as LocalBridgeRecord,
+  HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'

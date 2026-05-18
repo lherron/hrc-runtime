@@ -60,6 +60,13 @@ export type EventQueryFilters = {
   limit?: number | undefined
 }
 
+export type RunListFilters = {
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  limit?: number | undefined
+}
+
 export type SurfaceBindingBindInput = Omit<
   HrcSurfaceBindingRecord,
   'boundAt' | 'reason' | 'unboundAt'
@@ -1700,6 +1707,52 @@ export class RunRepository {
     return rows.map(mapRunRow)
   }
 
+  listRuns(filters: RunListFilters = {}): HrcRunRecord[] {
+    const predicates: string[] = []
+    const values: SQLQueryBindings[] = []
+
+    if (filters.hostSessionId !== undefined) {
+      predicates.push('host_session_id = ?')
+      values.push(filters.hostSessionId)
+    }
+    if (filters.generation !== undefined) {
+      predicates.push('generation = ?')
+      values.push(filters.generation)
+    }
+    if (filters.runtimeId !== undefined) {
+      predicates.push('runtime_id = ?')
+      values.push(filters.runtimeId)
+    }
+
+    const limit = filters.limit ?? 100
+    const where = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''
+    const rows = this.db
+      .query<RunRow, SQLQueryBindings[]>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          ${where}
+          ORDER BY updated_at DESC,
+            COALESCE(completed_at, started_at, accepted_at, updated_at) DESC,
+            run_id DESC
+          LIMIT ?`
+      )
+      .all(...values, Math.max(0, Math.floor(limit)))
+
+    return rows.map(mapRunRow)
+  }
+
+  getLatestForSession(input: {
+    hostSessionId: string
+    generation?: number | undefined
+  }): HrcRunRecord | null {
+    return (
+      this.listRuns({
+        hostSessionId: input.hostSessionId,
+        ...(input.generation !== undefined ? { generation: input.generation } : {}),
+        limit: 1,
+      })[0] ?? null
+    )
+  }
+
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {
     const entries: Array<[column: string, value: string | number | null]> = []
 
@@ -2297,6 +2350,93 @@ export class HrcLifecycleEventRepository {
       .query<{ max_seq: number | null }, []>('SELECT MAX(hrc_seq) AS max_seq FROM hrc_events')
       .get()
     return row?.max_seq ?? 0
+  }
+
+  /**
+   * Return the latest HRC lifecycle event per `(host_session_id, generation)` group.
+   *
+   * Uses the `idx_hrc_events_host_session_generation_seq` covering index, so this is
+   * O(unique sessions × generations) regardless of total event count; it does not
+   * scan or buffer a bounded recent window. Callers should not paginate this query —
+   * use it for freshness projection (latest seq/ts per session) only.
+   *
+   * Optional filters (`hostSessionId`, `generation`, `scopeRef`, `laneRef`,
+   * `runtimeId`, `runId`, `launchId`, `eventKind`, `category`) narrow the search
+   * window before grouping; `fromHrcSeq`/`fromStreamSeq`/`limit` are ignored.
+   *
+   * Tie-break / stable ordering on `hrc_seq` is enforced by the inner MAX(hrc_seq)
+   * selection. The outer ORDER BY hrc_seq DESC returns the freshest groups first.
+   */
+  listLatestPerSession(
+    filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> = {}
+  ): HrcLifecycleEvent[] {
+    const where: string[] = []
+    const values: Array<string | number> = []
+
+    if (filters.hostSessionId !== undefined) {
+      where.push('host_session_id = ?')
+      values.push(filters.hostSessionId)
+    }
+    if (filters.generation !== undefined) {
+      where.push('generation = ?')
+      values.push(filters.generation)
+    }
+    if (filters.scopeRef !== undefined) {
+      where.push('scope_ref = ?')
+      values.push(filters.scopeRef)
+    }
+    if (filters.laneRef !== undefined) {
+      where.push('lane_ref = ?')
+      values.push(filters.laneRef)
+    }
+    if (filters.runtimeId !== undefined) {
+      where.push('runtime_id = ?')
+      values.push(filters.runtimeId)
+    }
+    if (filters.runId !== undefined) {
+      where.push('run_id = ?')
+      values.push(filters.runId)
+    }
+    if (filters.launchId !== undefined) {
+      where.push('launch_id = ?')
+      values.push(filters.launchId)
+    }
+    if (filters.eventKind !== undefined) {
+      where.push('event_kind = ?')
+      values.push(filters.eventKind)
+    }
+    if (filters.category !== undefined) {
+      where.push('category = ?')
+      values.push(filters.category)
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+
+    // Inner subquery finds (host_session_id, generation, MAX(hrc_seq)) using the
+    // (host_session_id, generation, hrc_seq) index. Outer join re-reads the row.
+    // hrc_seq is the AUTOINCREMENT primary key, so a single max value selects a
+    // unique row — no further tie-break is necessary.
+    const qualifiedColumns = HRC_EVENT_COLUMNS.split(',')
+      .map((column) => `e.${column.trim()}`)
+      .join(', ')
+    const rows = this.db
+      .query<HrcEventRow, Array<string | number>>(
+        `SELECT ${qualifiedColumns}
+           FROM hrc_events e
+           INNER JOIN (
+             SELECT host_session_id, generation, MAX(hrc_seq) AS max_hrc_seq
+               FROM hrc_events
+               ${whereClause}
+              GROUP BY host_session_id, generation
+           ) latest
+             ON latest.host_session_id = e.host_session_id
+            AND latest.generation = e.generation
+            AND latest.max_hrc_seq = e.hrc_seq
+          ORDER BY e.hrc_seq DESC`
+      )
+      .all(...values)
+
+    return rows.map(mapHrcEventRow)
   }
 
   private runQuery(
