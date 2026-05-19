@@ -1,4 +1,4 @@
-import type { AttachmentRef } from 'acp-core'
+import type { AttachmentRef } from 'spaces-runtime'
 
 /**
  * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.

@@ -20,9 +20,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "acp-core": "*",
     "agent-scope": "*",
-    "spaces-config": "*"
+    "spaces-config": "*",
+    "spaces-runtime": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",
