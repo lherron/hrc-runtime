@@ -1,174 +1,136 @@
+## hrc-runtime
+
+This is the HRC (Harness Runtime Controller) layer of the three-repo split
+(ASP / HRC / ACP). It owns the harness runtime lifecycle, event normalization,
+session/run state, and the operator/chat CLIs (`hrc`, `hrcchat`).
+
+ASP packages (agent-scope, cli-kit, spaces-config, spaces-runtime,
+spaces-execution, spaces-harness-*, agent-spaces) are external dependencies
+sourced from the local Verdaccio registry at `http://127.0.0.1:4873/`.
+
 ## Build & Run
 
-This is a Bun monorepo with packages in `packages/*`.
-
 ```bash
-bun install       # Install dependencies
-bun run build     # Build all packages
+bun install       # Install dependencies (resolves ASP deps from Verdaccio)
+bun run build     # Build all HRC packages in order
 ```
 
 ## Validation
 
-Run these after implementing to get immediate feedback:
-
-- Only run tests (`bun run test`) **after modifying files under `packages/*` AND after manually testing if possible**.
 - Tests: `bun run test`
-- Typecheck: `bun run typecheck` (run `bun run build` first if workspace typings are missing)
+- Typecheck: `bun run typecheck`
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
-
-## Discord Gateway Validation
-
-When changing Discord gateway behavior, smoke test with real Discord. Fake Discord clients, mocked channel objects, and in-process Discord substitutes are acceptable for automated tests, but they do not count as manual smoke validation.
-
-For gateway changes, verify the behavior in an actual Discord channel/thread using the installed gateway, real bot credentials, and ACP/HRC services. Report the real Discord smoke result when handing work back. If real Discord validation is blocked, say exactly what blocked it and do not present fake-client output as a successful smoke test.
-
-## ACP Discord Bindings
-
-Bindings map a Discord conversation to an ACP session scope. Manage them under `acp admin interface binding` (note: under `admin interface`, not bare `interface`).
-
-```bash
-acp admin interface binding list --json
-acp admin interface binding set --gateway <id> --conversation-ref channel:<discord-channel-id> \
-  --project <projectId> --scope-ref <scopeRef> --lane-ref main --json
-acp admin interface binding disable --binding <id>
-```
-
-Notes:
-
-- `binding set` upserts on `(gatewayId, conversationRef [, threadRef])`. Re-running `set` with the same channel keeps the same `bindingId` and just updates the scope/lane — that's the supported way to repoint a channel without churning binding IDs.
-- `conversationRef` for a channel is `channel:<id>`; for a thread, add `--thread-ref thread:<id>`. Use the numeric Discord ID, not the `#name`.
-- Discord channel ID lookup: `discord-chat channels list | jq -r '.data[] | select(.name=="<name>") | .id'`.
-- Standard dev gateway is `acp-discord-smoke`; bind `agent:<agent>:project:<project>:task:<task>` for task-scoped routing.
-
-Verifying a binding:
-
-```bash
-# 1. Send via the virtu bot (acts as a real user, not the gateway bot itself)
-CP_CHANNEL_ID=<channel-id> ./scripts/virtu-send.sh "ping"
-
-# 2. Confirm a run was created on the target scope
-acp session resolve --scope-ref <scopeRef> --lane-ref main --json     # -> sessionId
-acp session runs --session <sessionId> --json                         # check metadata.meta.interfaceSource.bindingId
-
-# 3. Read the reply from Discord (acp tail may return [] for headless runs)
-TOKEN=$(consul kv get cfg/dev/_global/discord/master_token)
-curl -sS -H "Authorization: Bot $TOKEN" \
-  "https://discord.com/api/v10/channels/<channel-id>/messages?limit=5" \
-  | jq -r '.[] | {author: .author.username, ts: .timestamp, content}'
-```
-
-The run's `metadata.meta.interfaceSource.bindingId` is the authoritative proof that a specific binding routed the inbound — match it against the binding you just created.
-
-## Ops Dashboard
-
-When the user refers to the "ops dashboard", they mean the ACP ops web dashboard in `packages/acp-ops-web`.
-Always open the ops dashboard in the Codex in-app browser when asked to start, inspect, or verify it.
-
-Run it from `packages/acp-ops-web`:
-
-```bash
-bun run dev -- --host 127.0.0.1
-```
-
-Then open `http://127.0.0.1:5173/` in the in-app browser. If port `5173` is already serving the dashboard, reuse it instead of starting another server.
-
-Operational notes from dashboard work:
-
-- The real snapshot endpoint is `/v1/ops/session-dashboard/snapshot`.
-- A successful real snapshot can contain sessions with `events: 0`; an empty event stream/timeline is not automatically a rendering bug.
-- Dev demo data should only appear when the dashboard snapshot request fails in development, not before a successful real snapshot replaces it.
-- For package-scoped validation after ops dashboard changes, prefer `bun run --filter acp-ops-web typecheck` and `bun run --filter acp-ops-web test`.
-
-## ACP Viewer
-
-When changing pages or UI under `packages/acp-viewer`, open the affected route in the Codex in-app browser and display it for review.
-
-Run it from `packages/acp-viewer`:
-
-```bash
-bun run dev -- --host 127.0.0.1
-```
-
-Then open the relevant `http://127.0.0.1:5174/...` route in the in-app browser. If port `5174` is already serving the viewer, reuse it instead of starting another server.
+- Boundary checks: `bun run check:boundaries`, `bun run check:manifests`
 
 ## Project Structure
 
 ```
 packages/
-├── agent-scope/      # ScopeRef/ScopeHandle/SessionRef/SessionHandle utilities
-├── config/           # spaces-config: config-time determinism, resolution, locks, materialization
-├── runtime/          # spaces-runtime: harness-agnostic runtime/session contracts
-├── execution/        # spaces-execution: run-time orchestration and harness dispatch
-├── harness-claude/   # Claude CLI + Agent SDK adapters
-├── harness-codex/    # Codex adapter
-├── harness-pi/       # Pi CLI adapter
-├── harness-pi-sdk/   # Pi SDK adapter
-├── agent-spaces/     # Public host-facing client surface
-└── cli/              # CLI entry point
+├── agent-action-render/   # Shared rendering helpers for agent tool/action lines
+├── hrc-core/              # Runtime/session/run DTOs, HTTP contracts, errors
+├── hrc-events/            # Hook/OTEL/SSE event normalization + schemas
+├── hrc-store-sqlite/      # SQLite migrations + repositories for HRC state
+├── hrc-sdk/               # Typed client for the HRC daemon
+├── hrc-frame-render/      # Lifecycle/message events → frame/timeline projection
+├── hrc-server/            # Unix-socket HTTP API, launch/control, tmux/headless orchestration
+├── hrc-cli/               # `hrc` operator CLI
+└── hrcchat-cli/           # `hrcchat` directed-messaging CLI
 ```
 
-## Smoke Testing the CLI
+## Repo Boundaries
 
-**Always test `asp run` changes with `--dry-run`** to verify the generated Claude command without actually launching Claude.
-**If you update something available via CLI, run the CLI to validate it.**
+Enforced by `bun run check:boundaries`:
 
-Run CLI commands with `--dry-run` to verify behavior without launching Claude:
+- HRC source **must not** import `acp-*`, `gateway-discord`, `gateway-ios`,
+  `coordination-substrate`, `wrkq-lib`, or `wlearn`.
+- HRC may import ASP packages by name (`agent-scope`, `spaces-runtime`, etc.) —
+  these resolve via Verdaccio at install time. Pin to exact versions in
+  `package.json` (currently `0.1.0`).
+
+If you find HRC source reaching into an ACP-owned package or asserting an
+invariant about ACP source from inside HRC tests, that's a split violation —
+either the assertion belongs in the ACP repo, or the shared semantic belongs
+in `agent-action-render` / `hrc-frame-render` so both sides can test against it.
+
+## HRC Server Lifecycle
+
+The `hrc` daemon is managed via launchd:
+
+- Plist: `launchd/com.praesidium.hrc-server.plist` (canonical source); installed
+  to `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`.
+- Socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
+- State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
+- Logs: `/Users/lherron/praesidium/var/logs/hrc-server.{log,err.log}`
+
+The binary at `/Users/lherron/.bun/bin/hrc` is `bun link`ed from this repo's
+`packages/hrc-cli`. After local changes:
 
 ```bash
-# Run CLI directly with bun (no build step needed)
-bun packages/cli/bin/asp.js <command>
-
-# Set ASP_HOME to a writable path (avoids EPERM creating temp dirs)
-ASP_HOME=/tmp/asp-test
-
-# Test with a local space (dev mode)
-ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
-  integration-tests/fixtures/sample-registry/spaces/base --dry-run
-
-# For codex harness dry-runs without a local Codex install
-PATH=integration-tests/fixtures/codex-shim:$PATH \
-  ASP_HOME=/tmp/asp-test bun packages/cli/bin/asp.js run \
-  integration-tests/fixtures/sample-registry/spaces/base --dry-run --harness codex
-
-# Test inherit flags
-bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-all
-bun packages/cli/bin/asp.js run <space-path> --dry-run --inherit-project --inherit-user
-
-# Test settings composition (add [settings] to a space.toml first)
-bun packages/cli/bin/asp.js run <space-path> --dry-run  # should show --settings flag
+bun run build
+launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
+hrc server status
 ```
 
-Note: `asp run` does not accept a `--prompt` flag.
+## Headless vs Tmux Runtimes
 
-Test fixtures are in `integration-tests/fixtures/`:
-- `sample-registry/spaces/` - Various test spaces (base, frontend, backend, etc.)
-- `sample-project/` - Project with asp-targets.toml
-- `claude-shim/` - Mock claude binary for tests
+- **Headless runtimes** run agents under a wrapper process; events flow via
+  hooks and OTEL.
+- **Tmux runtimes** drive a tmux pane and survive `hrc server restart`.
 
-## Codebase Patterns
+When running long tool calls (multi-minute `bun install`, `git filter-repo`,
+full test suites), be aware of the zombie sweeper threshold
+(`HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800`). After 30 minutes of `hrc_events`
+silence the sweeper marks the run zombie regardless of process liveness; see
+the wrkq defect `hrc-server-zombie-sweeper-no-pid-liveness` for the proposed
+PID-liveness fix.
 
-- TypeScript with strict mode and `exactOptionalPropertyTypes`
-- Optional properties use `prop?: T | undefined` pattern
-- Biome for linting/formatting
-- JSON schemas in `packages/config/src/core/schemas/`
-- Error classes in `packages/config/src/core/errors.ts`
+## hrcchat Validation
 
-## Error Handling
+`hrcchat` is the directed-messaging CLI for HRC sessions:
 
-`asp run` should **never** silently capture errors. It should always exit immediately when an error occurs.
+```bash
+hrcchat dm <agent>@<project>:T-XXXXX - <<'EOF'
+message
+EOF
 
-- Do not use try/catch blocks that swallow errors
-- Let filesystem errors propagate naturally
-- Throw explicit errors for invalid states (e.g., missing bundle)
-- Errors should be visible to the user, not hidden
+hrcchat turn --stacked 1m <agent>@<project>:T-XXXXX - <<'EOF'
+turn body
+EOF
+```
 
-## Pi Harness
+After changing `hrcchat-cli` rendering, install the binary and run a real
+round-trip through a live `hrc-server`. Unit tests don't catch terminal
+rendering regressions.
 
-When running with `--harness pi`:
+## Frame Rendering
 
-- Always set `PI_CODING_AGENT_DIR=<asp_modules target pi dir>` as an environment variable
-- This env var must appear in `--print-command` output for copy-paste compatibility
-- This env var must be set when spawning the Pi process directly
-- Add `--no-extensions` when there are no extensions to load (prevents Pi from loading defaults)
-- Always add `--no-skills` to disable default skill loading from `.claude`, `.codex`, `~/.pi/agent/skills/`
-- Materialize hooks to `hooks-scripts/` (Pi has an incompatible `hooks/` directory format)
+`hrc-frame-render` projects HRC lifecycle/message events into RenderFrames.
+Both `hrcchat-cli` (terminal output) and ACP's `gateway-discord` (Discord
+output) consume the same RenderFrame contract. Shared semantic invariants —
+tool emoji, action lines, admission labels — live in `agent-action-render`.
+
+Do NOT add tests in this repo that assert behavior about gateway-discord or
+acp-server source. Those are ACP-owned. If you need to ensure cross-renderer
+parity, write the assertion against `agent-action-render` so both renderers
+can be tested against the shared contract independently in their own repos.
+
+## Cross-Repo Publishing
+
+HRC publishes these packages to the local Verdaccio for ACP consumption:
+
+- Production-imported: `agent-action-render`, `hrc-core`, `hrc-sdk`, `hrc-frame-render`
+- Dev/E2E: `hrc-events`, `hrc-store-sqlite`, `hrc-server` (only if ACP E2E uses them)
+
+To re-publish after changes (each package has its own `prepack` that strips
+`exports.*.bun` for safe Bun-consumer resolution):
+
+```bash
+for p in agent-action-render hrc-core hrc-sdk hrc-frame-render hrc-events hrc-store-sqlite hrc-server; do
+  pushd packages/$p
+  jq 'del(.private)' package.json > /tmp/pkg.tmp && mv /tmp/pkg.tmp package.json
+  bun ../../scripts/strip-bun-exports.ts
+  npm publish --ignore-scripts --registry http://127.0.0.1:4873/
+  git checkout HEAD -- package.json
+  popd
+done
+```
