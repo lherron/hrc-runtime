@@ -8,6 +8,7 @@
     "build:parallel": "bun run --filter '*' build",
     "check:boundaries": "bun scripts/check-boundaries.ts",
     "check:manifests": "bun scripts/check-manifest-edges.ts",
+    "check:packs": "bun scripts/smoke-pack-cross-repo.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
