@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.praesidium.hrc-server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/lherron/.bun/bin/hrc</string>
+    <string>server</string>
+    <string>serve</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/lherron/.local/bin:/Users/lherron/.bun/bin:/Users/lherron/.tooling/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/lherron</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>ASP_HOME</key>
+    <string>/Users/lherron/praesidium/var/spaces-repo</string>
+    <key>PI_PATH</key>
+    <string>/Users/lherron/.nvm/versions/node/v22.20.0/bin/pi</string>
+    <key>HRC_RUNTIME_DIR</key>
+    <string>/Users/lherron/praesidium/var/run/hrc</string>
+    <key>HRC_STATE_DIR</key>
+    <string>/Users/lherron/praesidium/var/state/hrc</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/lherron/praesidium</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/lherron/praesidium/var/logs/hrc-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/lherron/praesidium/var/logs/hrc-server.err.log</string>
+</dict>
+</plist>
