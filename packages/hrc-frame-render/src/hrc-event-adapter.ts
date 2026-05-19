@@ -1,4 +1,4 @@
-import { admissionLabel } from 'acp-ops-projection'
+import { admissionLabel } from 'agent-action-render'
 import { parseScopeRef, validateScopeRef } from 'agent-scope'
 import type { ContentBlock, Message, ToolResult } from 'spaces-runtime'
 import { createLogger } from './logger.js'

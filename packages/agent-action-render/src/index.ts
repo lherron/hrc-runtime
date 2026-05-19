@@ -1,3 +1,8 @@
+export {
+  admissionLabel,
+  admissionLabelFromResponse,
+  type AdmissionLabelInput,
+} from './admission-labels.js'
 export { MAX_LINE_CHARS, MAX_PREVIEW_CHARS, truncateText } from './budgets.js'
 export {
   PRIMARY_FIELD_BY_KIND,

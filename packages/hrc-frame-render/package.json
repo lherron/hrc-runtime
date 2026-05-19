@@ -20,7 +20,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "acp-ops-projection": "*",
+    "agent-action-render": "*",
     "agent-scope": "*",
     "spaces-runtime": "*"
   },

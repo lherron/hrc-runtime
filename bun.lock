@@ -142,6 +142,9 @@
     "packages/acp-ops-projection": {
       "name": "acp-ops-projection",
       "version": "0.1.0",
+      "dependencies": {
+        "agent-action-render": "*",
+      },
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.8.3",
@@ -511,7 +514,7 @@
       "name": "hrc-frame-render",
       "version": "0.1.0",
       "dependencies": {
-        "acp-ops-projection": "*",
+        "agent-action-render": "*",
         "agent-scope": "*",
         "spaces-runtime": "*",
       },
