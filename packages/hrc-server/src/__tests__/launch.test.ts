@@ -176,6 +176,29 @@ describe('Launch artifact IO', () => {
     await Bun.write(badPath, '{ not valid json }}}')
     await expect(readLaunchArtifact(badPath)).rejects.toThrow()
   })
+
+  it('artifact env carries identity vars matching top-level fields', async () => {
+    const artifact = makeArtifact({
+      launchId: 'launch-id-test',
+      runtimeId: 'rt-id-test',
+      generation: 7,
+      env: {
+        HOME: '/Users/test',
+        HRC_LAUNCH_ID: 'launch-id-test',
+        HRC_RUNTIME_ID: 'rt-id-test',
+        HRC_GENERATION: '7',
+      },
+    })
+
+    const path = await writeLaunchArtifact(artifact, tmpDir)
+    const read = await readLaunchArtifact(path)
+
+    // The three identity vars must be present in env and consistent with
+    // top-level artifact fields — this is the contract T-01538 establishes.
+    expect(read.env['HRC_LAUNCH_ID']).toBe(read.launchId)
+    expect(read.env['HRC_RUNTIME_ID']).toBe(read.runtimeId)
+    expect(read.env['HRC_GENERATION']).toBe(String(read.generation))
+  })
 })
 
 // ---------------------------------------------------------------------------

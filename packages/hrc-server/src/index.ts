@@ -2031,6 +2031,11 @@ class HrcServerInstance implements HrcServer {
       this.otelEndpoint,
       cliInvocation.interactionMode
     )
+    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+    })
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -2041,11 +2046,11 @@ class HrcServerInstance implements HrcServer {
       frontend: cliInvocation.frontend,
       provider: runtime.provider,
       argv: cliInvocation.argv,
-      env: launchEnv,
+      env: artifactEnv,
       cwd: cliInvocation.cwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(launchEnv),
+      correlationEnv: extractCorrelationEnv(artifactEnv),
       ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
       ...(cliInvocation.codexAppServer ? { codexAppServer: cliInvocation.codexAppServer } : {}),
@@ -2540,6 +2545,11 @@ class HrcServerInstance implements HrcServer {
       this.otelEndpoint,
       cliInvocation.interactionMode
     )
+    const artifactEnv = injectArtifactIdentityEnv(cliInvocation.env, {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+    })
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -2550,11 +2560,11 @@ class HrcServerInstance implements HrcServer {
       frontend: cliInvocation.frontend,
       provider: runtime.provider,
       argv: cliInvocation.argv,
-      env: cliInvocation.env,
+      env: artifactEnv,
       cwd: launchCwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(cliInvocation.env),
+      correlationEnv: extractCorrelationEnv(artifactEnv),
       ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: cliInvocation.interactionMode,
       ioMode: cliInvocation.ioMode,
@@ -4620,6 +4630,11 @@ class HrcServerInstance implements HrcServer {
       this.otelEndpoint,
       invocation.interactionMode
     )
+    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+    })
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -4629,11 +4644,11 @@ class HrcServerInstance implements HrcServer {
       frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
-      env: launchEnv,
+      env: artifactEnv,
       cwd: invocation.cwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(launchEnv),
+      correlationEnv: extractCorrelationEnv(artifactEnv),
       ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
@@ -4826,6 +4841,11 @@ class HrcServerInstance implements HrcServer {
       this.otelEndpoint,
       invocation.interactionMode
     )
+    const artifactEnv = injectArtifactIdentityEnv(invocation.env, {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+    })
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -4835,11 +4855,11 @@ class HrcServerInstance implements HrcServer {
       frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
-      env: invocation.env,
+      env: artifactEnv,
       cwd: invocation.cwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(invocation.env),
+      correlationEnv: extractCorrelationEnv(artifactEnv),
       ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
@@ -5018,6 +5038,11 @@ class HrcServerInstance implements HrcServer {
       this.otelEndpoint,
       invocation.interactionMode
     )
+    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
+      launchId,
+      runtimeId: runtime.runtimeId,
+      generation: session.generation,
+    })
     const launchArtifact = {
       launchId,
       hostSessionId: session.hostSessionId,
@@ -5027,11 +5052,11 @@ class HrcServerInstance implements HrcServer {
       frontend: invocation.frontend,
       provider: runtime.provider,
       argv: invocation.argv,
-      env: launchEnv,
+      env: artifactEnv,
       cwd: launchCwd,
       callbackSocketPath: this.options.socketPath,
       spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(launchEnv),
+      correlationEnv: extractCorrelationEnv(artifactEnv),
       ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
       interactionMode: invocation.interactionMode,
       ioMode: invocation.ioMode,
@@ -11228,6 +11253,23 @@ function extractCorrelationEnv(env: Record<string, string>): Record<string, stri
   return Object.fromEntries(
     Object.entries(env).filter(([key]) => key.startsWith('HRC_') || key.startsWith('AGENT_'))
   )
+}
+
+/**
+ * Inject identity vars that are otherwise only set in the exec wrapper's
+ * process env into the artifact's env map so consumers can read them from
+ * the artifact without reaching into process.env.
+ */
+function injectArtifactIdentityEnv(
+  env: Record<string, string>,
+  ids: { launchId: string; runtimeId: string; generation: number }
+): Record<string, string> {
+  return {
+    ...env,
+    HRC_LAUNCH_ID: ids.launchId,
+    HRC_RUNTIME_ID: ids.runtimeId,
+    HRC_GENERATION: String(ids.generation),
+  }
 }
 
 async function isLaunchCommandAvailable(command: string | undefined): Promise<boolean> {
