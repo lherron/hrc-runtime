@@ -1,7 +1,6 @@
 {
   "name": "hrc-events",
   "version": "0.1.0",
-  "private": true,
   "description": "Hook-derived event types, Zod schemas, and Claude hook normalizer",
   "type": "module",
   "main": "./dist/index.js",

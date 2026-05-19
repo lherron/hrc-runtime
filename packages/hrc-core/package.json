@@ -1,7 +1,6 @@
 {
   "name": "hrc-core",
   "version": "0.1.0",
-  "private": true,
   "description": "HRC domain types, selectors, fences, errors, path resolution, and event envelope models",
   "type": "module",
   "main": "./dist/index.js",

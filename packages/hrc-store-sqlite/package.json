@@ -1,7 +1,6 @@
 {
   "name": "hrc-store-sqlite",
   "version": "0.1.0",
-  "private": true,
   "description": "SQLite schema, migrations, and repositories for HRC state",
   "type": "module",
   "main": "./dist/index.js",

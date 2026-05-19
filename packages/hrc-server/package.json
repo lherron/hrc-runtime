@@ -1,7 +1,6 @@
 {
   "name": "hrc-server",
   "version": "0.1.0",
-  "private": true,
   "description": "HRC daemon: Unix socket HTTP API, tmux management, runtime orchestration",
   "type": "module",
   "main": "./dist/index.js",

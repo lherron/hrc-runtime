@@ -1,7 +1,6 @@
 {
   "name": "hrc-sdk",
   "version": "0.1.0",
-  "private": true,
   "description": "Typed client for the HRC daemon over Unix socket",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,7 +1,6 @@
 {
   "name": "hrc-frame-render",
   "version": "0.1.0",
-  "private": true,
   "description": "Shared HRC events-to-frame projection pipeline (adapter, projection, types)",
   "type": "module",
   "main": "./dist/index.js",
