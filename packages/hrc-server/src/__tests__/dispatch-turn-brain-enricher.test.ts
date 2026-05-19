@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
