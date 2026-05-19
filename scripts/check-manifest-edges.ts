@@ -79,9 +79,11 @@ async function workspacePackages(): Promise<PackageInfo[]> {
     }
   }
 
-  const integrationInfo = await readPackageInfo('integration-tests')
-  if (integrationInfo) {
-    packages.push(integrationInfo)
+  if (await pathExists('integration-tests')) {
+    const integrationInfo = await readPackageInfo('integration-tests')
+    if (integrationInfo) {
+      packages.push(integrationInfo)
+    }
   }
 
   return packages.sort((left, right) => left.dir.localeCompare(right.dir))

@@ -545,40 +545,6 @@ describe('dispatchTurnForSession brain enricher seam', () => {
     expect(new Set(reasons)).toEqual(new Set(['disabled', 'resolution-error', 'query-timeout']))
   })
 
-  it('keeps ACP admission free of brain-enricher imports', async () => {
-    const acpServerRoot = join(import.meta.dir, '..', '..', '..', 'acp-server', 'src')
-    const proc = Bun.spawn(
-      ['rg', 'enrichTurnPromptForBrain|brain-enricher|gbrain', acpServerRoot],
-      {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      }
-    )
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-
-    expect({ exitCode, stdout, stderr }).toEqual({ exitCode: 1, stdout: '', stderr: '' })
-
-    brainEnricherMock.use(async (input) => ({
-      prompt: formatBrainPrompt(input.prompt, {
-        context: [
-          { slug: 'concepts/acp-forwarded', mode: 'query', score: 0.79, text: 'ACP forwarded' },
-        ],
-      }),
-      applied: true,
-      reason: 'enabled',
-      sources: [{ slug: 'concepts/acp-forwarded', score: 0.79 }],
-    }))
-    const hostSessionId = await resolveSession('brain-acp-forwarded')
-    const { response } = await dispatchTurn(hostSessionId, 'Forwarded through ACP.', sdkIntent())
-
-    expect(response.status).toBe(200)
-    expect(brainEnricherMock.calls).toHaveLength(1)
-  })
-
   it('enriches before headless transport dispatch handles the prompt', async () => {
     const rawPrompt = 'Headless should receive enriched prompt.'
     const enrichedPrompt = formatBrainPrompt(rawPrompt, {

@@ -1,20 +1,18 @@
 {
-  "name": "agent-spaces-v2",
+  "name": "hrc-runtime",
   "private": true,
-  "workspaces": ["packages/*", "integration-tests"],
+  "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run build:ordered",
-    "build:ordered": "bun run --filter 'agent-scope' build && bun run --filter 'acp-core' build && bun run --filter 'wrkq-lib' build && bun run --filter 'coordination-substrate' build && bun run --filter 'spaces-config' build && bun run --filter 'spaces-runtime' build && bun run --filter 'spaces-harness-claude' build && bun run --filter 'spaces-harness-pi' build && bun run --filter 'spaces-harness-pi-sdk' build && bun run --filter 'spaces-harness-codex' build && bun run --filter 'spaces-execution' build && bun run --filter 'agent-spaces' build && bun run --filter 'cli-kit' build && bun run --filter 'agent-action-render' build && bun run --filter '@lherron/agent-spaces' build && bun run --filter 'hrc-core' build && bun run --filter 'hrc-sdk' build && bun run --filter 'gateway-ios' build && bun run --filter 'acp-interface-store' build && bun run --filter 'acp-state-store' build && bun run --filter 'acp-admin-store' build && bun run --filter 'acp-jobs-store' build && bun run --filter 'acp-conversation' build && bun run --filter 'acp-ops-projection' build && bun run --filter 'acp-ops-reducer' build && bun run --filter 'acp-ops-web' build && bun run --filter 'acp-viewer' build && bun run --filter 'hrc-frame-render' build && bun run --filter 'acp-server' build && bun run --filter 'gateway-discord' build && bun run --filter 'acp-cli' build && bun run --filter 'wlearn' build && bun run --filter 'hrc-events' build && bun run --filter 'hrc-store-sqlite' build && bun run --filter 'hrc-server' build && bun run --filter 'acp-e2e' build && bun run --filter 'hrc-cli' build && bun run --filter 'hrcchat-cli' build",
+    "build:ordered": "bun run --filter 'agent-action-render' build && bun run --filter 'hrc-core' build && bun run --filter 'hrc-events' build && bun run --filter 'hrc-store-sqlite' build && bun run --filter 'hrc-sdk' build && bun run --filter 'hrc-frame-render' build && bun run --filter 'hrc-server' build && bun run --filter 'hrc-cli' build && bun run --filter 'hrcchat-cli' build",
     "build:parallel": "bun run --filter '*' build",
     "check:boundaries": "bun scripts/check-boundaries.ts",
     "check:manifests": "bun scripts/check-manifest-edges.ts",
-    "check:packs": "bun scripts/smoke-pack-cross-repo.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "bash -lc 'bun test tests/conformance/acp-workflow && for pkg in \"acp-admin-store\" \"acp-cli\" \"acp-conversation\" \"acp-core\" \"acp-e2e\" \"acp-interface-store\" \"acp-jobs-store\" \"acp-server\" \"acp-state-store\" \"agent-action-render\" \"agent-scope\" \"agent-spaces\" \"cli-kit\" \"@lherron/agent-spaces\" \"spaces-config\" \"coordination-substrate\" \"spaces-execution\" \"gateway-discord\" \"hrc-frame-render\" \"spaces-harness-claude\" \"spaces-harness-codex\" \"spaces-harness-pi-sdk\" \"spaces-harness-pi\" \"wlearn\" \"hrc-cli\" \"hrc-core\" \"hrc-events\" \"hrc-sdk\" \"hrc-server\" \"hrc-store-sqlite\" \"hrcchat-cli\" \"spaces-runtime\" \"wrkq-lib\" \"spaces-integration-tests\"; do bun run --filter \"$pkg\" test || exit $?; done'",
-    "test:fast": "bun scripts/test-fast.ts",
-    "test:integration": "bun test integration-tests/tests",
+    "test": "bash -lc 'for pkg in \"agent-action-render\" \"hrc-core\" \"hrc-events\" \"hrc-store-sqlite\" \"hrc-sdk\" \"hrc-frame-render\" \"hrc-server\" \"hrc-cli\" \"hrcchat-cli\"; do bun run --filter \"$pkg\" test || exit $?; done'",
+    "test:fast": "bun run test",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
     "rebuild": "bun run clean && bun run build",
     "prepare": "lefthook install"
@@ -23,8 +21,6 @@
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "^1.1.14",
     "lefthook": "^1.11.5",
-    "marked": "^17.0.1",
-    "marked-terminal": "^7.3.0",
     "typescript": "^5.7.2"
   }
 }

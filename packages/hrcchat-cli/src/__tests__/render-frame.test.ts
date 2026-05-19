@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { type RenderFrame, type SessionEventEnvelope, SessionEventsManager } from 'hrc-frame-render'
 
-import { renderFrameToDiscordContent } from '../../../gateway-discord/src/render.js'
 import {
   renderFrameToNdjsonLine,
   renderFrameToTerminalText,
@@ -247,7 +246,7 @@ test('ndjson sink emits one machine-readable event line per frame', () => {
   })
 })
 
-test('terminal tool emoji and preview content match gateway-discord for the same RenderFrame', () => {
+test('terminal tool emoji and preview content render as expected', () => {
   const frame: RenderFrame = {
     runId: RUN_ID,
     projectId: PROJECT_ID,
@@ -264,8 +263,5 @@ test('terminal tool emoji and preview content match gateway-discord for the same
   }
 
   const terminal = renderFrameToTerminalText(frame, { color: false, width: 100 })
-  const discord = renderFrameToDiscordContent(frame, 2000)
-
   expect(terminal).toContain('📖 Read: packages/hrcchat-cli/src/render-frame.ts')
-  expect(discord).toContain('📖 Read: packages/hrcchat-cli/src/render-frame.ts')
 })

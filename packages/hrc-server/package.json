@@ -13,7 +13,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -23,15 +25,15 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "agent-scope": "*",
-    "agent-spaces": "*",
+    "agent-scope": "0.1.0",
+    "agent-spaces": "0.1.0",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
-    "spaces-config": "*",
-    "spaces-execution": "*",
-    "spaces-harness-codex": "*",
-    "spaces-runtime": "*"
+    "spaces-config": "0.1.0",
+    "spaces-execution": "0.1.0",
+    "spaces-harness-codex": "0.1.0",
+    "spaces-runtime": "0.1.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
