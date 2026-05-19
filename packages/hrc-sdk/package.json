@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "hrc-server": "*",
     "typescript": "^5.8.3"
   }
 }
