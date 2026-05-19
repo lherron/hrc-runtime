@@ -10,6 +10,10 @@ pre-commit:
     lint:
       run: bun run lint
       stage_fixed: true
+    boundaries:
+      run: bun scripts/check-boundaries.ts
+    manifests:
+      run: bun scripts/check-manifest-edges.ts
     typecheck:
       run: bun run build && bun run typecheck
 

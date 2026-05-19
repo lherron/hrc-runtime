@@ -41,8 +41,13 @@ lint-fix:
 typecheck:
     bun run typecheck
 
-# Run all verification (lint + typecheck + test)
-verify: lint typecheck test
+# Run repo-split boundary + manifest edge checks
+check:
+    bun scripts/check-boundaries.ts
+    bun scripts/check-manifest-edges.ts
+
+# Run all verification (check + lint + typecheck + test)
+verify: check lint typecheck test
 
 # Clean build artifacts
 clean:
