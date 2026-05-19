@@ -50,3 +50,6 @@ coverage/
 
 # Stray ~ expansion mishaps (e.g. copy to literal "~")
 /~/
+
+# Coordinator long-running spec backups (kept locally by skill convention)
+*_BACKUP.md
