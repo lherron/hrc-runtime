@@ -621,6 +621,7 @@ async function main(): Promise<void> {
       ...scrubInheritedEnv(process.env),
       ...env,
       HRC_LAUNCH_FILE: launchFile,
+      AGENT_LAUNCH_FILE: launchFile,
       HRC_CALLBACK_SOCKET: callbackSocketPath,
       HRC_CALLBACK_SOCK: callbackSocketPath,
       HRC_SPOOL_DIR: spoolDir,
