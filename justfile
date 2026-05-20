@@ -61,7 +61,7 @@ rebuild:
 # Install dependencies
 install:
     bun run clean
-    bun install
+    rm -rf node_modules packages/*/node_modules
     bun run sync:asp
     bun run build
     just publish-dev
