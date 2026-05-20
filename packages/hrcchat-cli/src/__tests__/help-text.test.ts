@@ -35,10 +35,11 @@ describe('hrcchat help text intent boundary', () => {
     expect(out).toContain('force-flush lines on')
   })
 
-  it('dm --help contains tracked-work redirect', async () => {
+  it('dm --help advertises --follow as the tracked-progress path', async () => {
     const out = await helpOutput(['dm'])
-    expect(out).toContain('not the tracked-work path')
-    expect(out).toContain('hrcchat turn --stacked')
+    expect(out).toContain('--follow <duration>')
+    expect(out).toContain('tracked turn')
+    expect(out).toContain('turn_stacked')
   })
 
   it('send --help contains NOT a turn warning', async () => {

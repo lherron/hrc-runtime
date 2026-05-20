@@ -110,16 +110,28 @@ program
 
 const dmCmd = program
   .command('dm')
-  .description('send a durable DM/status note; for tracked work use turn --stacked')
+  .description('send a durable DM/status note; pass --follow <duration> to stream tracked progress')
   .argument('<target>', 'target handle, "human", or "system"')
   .argument('[message]', 'message body (use - for stdin)')
   .option('--respond-to <kind>', 'human|agent|system')
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--mode <mode>', 'auto|headless|nonInteractive')
   .option('--file <path>', 'read body from file')
+  .option(
+    '--follow <duration>',
+    'dispatch as a tracked turn and stream turn_stacked ndjson progress at this interval'
+  )
   .action(async (target, message, opts) => {
     const client = createClient()
     const g = globalOpts()
+    if (opts.follow !== undefined) {
+      await cmdTurn(
+        client,
+        { follow: opts.follow, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}) },
+        [target, ...(message !== undefined ? [message] : [])]
+      )
+      return
+    }
     await cmdDm(client, { ...opts, json: g.json, project: g.project }, [
       target,
       ...(message !== undefined ? [message] : []),
@@ -128,7 +140,7 @@ const dmCmd = program
 
 dmCmd.addHelpText(
   'before',
-  'Send a durable DM/status note. It is not the tracked-work path; use hrcchat turn --stacked for work dispatch.\n'
+  "Send a durable DM/status note. Add --follow <duration> to dispatch as a tracked turn and stream\nturn_stacked ndjson progress on that interval (suitable for Claude Code's Monitor tool).\n"
 )
 
 // -- send ---------------------------------------------------------------------
@@ -206,11 +218,12 @@ const turnCmd = program
   .option('--new', 'clear context before dispatching (clean slate)')
   .option('--format <format>', 'output format: tree, compact, ndjson, json')
   .option('--pretty', 'force the human-facing terminal render even on non-TTY')
-  .option('--stall-after <duration>', 'abort if idle for this long', '5m')
+  .option('--stall-after <duration>', 'abort if idle for this long', '1h')
   .option(
     '--stacked <duration>',
     'emit bounded turn_stacked ndjson progress (interval lines plus phase/stall/final/error/permission force-flushes; implies ndjson)'
   )
+  .option('--follow <duration>', 'alias for --stacked')
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option('--file <path>', 'read prompt from file')
   .action(async (target, prompt, opts) => {
@@ -220,7 +233,7 @@ const turnCmd = program
 
 turnCmd.addHelpText(
   'before',
-  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use --stacked\n<duration>; the stream is one turn_stacked ndjson line per interval plus force-flush lines on\nphase/stall/final/error/permission. Mutex against --format tree|compact and --pretty.\n'
+  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use\n--follow <duration> (alias --stacked); the stream is one turn_stacked ndjson line per interval\nplus force-flush lines on phase/stall/final/error/permission. Mutex against --format tree|compact\nand --pretty.\n'
 )
 
 // -- doctor -------------------------------------------------------------------
@@ -243,7 +256,7 @@ WORK
   turn        dispatch tracked work to an agent and stream progress
 
 MESSAGES
-  dm          send a durable DM/status note; for tracked work use turn --stacked
+  dm          send a durable DM/status note; pass --follow <duration> for tracked progress
   show        show one message by seq or message ID
   messages    query durable directed message history
 

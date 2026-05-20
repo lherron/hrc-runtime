@@ -101,7 +101,12 @@ describe('runSdkTurn agent tool env', () => {
       ASP_PROJECT_ROOT: projectRoot,
       ASP_PROJECT_ID: projectId,
       ASP_PROJECT_STATE_DIR: join(agentRoot, 'var', 'state', 'projects', projectId),
-      HRC_SESSION_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test/main',
+      ASP_SCOPE_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test',
+      ASP_AGENT_ID: 'sparky',
+      ASP_PROJECT: 'agent-spaces',
+      ASP_TASK_ID: 'tool-env-test',
+      ASP_HANDLE: 'sparky@agent-spaces:tool-env-test',
+      HRC_SESSION_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test/lane:main',
       CUSTOM_SDK_ENV: 'from-launch',
     })
     expect(captured.env?.['PATH']?.split(delimiter).slice(0, 2)).toEqual([

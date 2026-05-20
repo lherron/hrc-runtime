@@ -752,3 +752,127 @@ describe('idempotent runtime start', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Claude Stop hook finalizes the active run
+// ---------------------------------------------------------------------------
+describe('claude Stop hook finalizes active run', () => {
+  it('marks run completed, clears activeRunId, returns runtime to ready, and emits turn.completed', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const runId = `run-${randomUUID()}`
+    const scope = `test-stop-finalize-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, {
+      status: 'busy',
+      launchId,
+      activeRunId: runId,
+    })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runs.insert({
+        runId,
+        hostSessionId: hsid,
+        runtimeId: rtId,
+        scopeRef: scope.startsWith('agent:') ? scope : `agent:${scope}`,
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        status: 'started',
+        acceptedAt: fixture.now(),
+        startedAt: fixture.now(),
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const res = await fixture.postJson('/v1/internal/hooks/ingest', {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: {
+        hook_event_name: 'Stop',
+        last_assistant_message: 'done',
+      },
+    })
+    expect(res.status).toBe(200)
+
+    const db2 = openHrcDatabase(fixture.dbPath)
+    try {
+      const completed = db2.hrcEvents.listByRun(runId, { eventKind: 'turn.completed' })
+      expect(completed.length).toBe(1)
+      expect(completed[0]?.runtimeId).toBe(rtId)
+      expect((completed[0]?.payload as any)?.source).toBe('hook_stop')
+
+      const finalRun = db2.runs.getByRunId(runId)
+      expect(finalRun?.status).toBe('completed')
+      expect(finalRun?.completedAt).toBeDefined()
+
+      const finalRuntime = db2.runtimes.getByRuntimeId(rtId)
+      expect(finalRuntime?.status).toBe('ready')
+      expect(finalRuntime?.activeRunId).toBeUndefined()
+    } finally {
+      db2.close()
+    }
+  })
+
+  it('is idempotent — a second Stop hook does not double-emit turn.completed', async () => {
+    const hsid = `hsid-${randomUUID()}`
+    const rtId = `rt-${randomUUID()}`
+    const launchId = `launch-${randomUUID()}`
+    const runId = `run-${randomUUID()}`
+    const scope = `test-stop-idempotent-${randomUUID()}`
+
+    fixture.seedSession(hsid, scope)
+    fixture.seedTmuxRuntime(hsid, scope, rtId, {
+      status: 'busy',
+      launchId,
+      activeRunId: runId,
+    })
+    seedLaunch(hsid, rtId, launchId, 'child_started')
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runs.insert({
+        runId,
+        hostSessionId: hsid,
+        runtimeId: rtId,
+        scopeRef: scope.startsWith('agent:') ? scope : `agent:${scope}`,
+        laneRef: 'default',
+        generation: 1,
+        transport: 'tmux',
+        status: 'started',
+        acceptedAt: fixture.now(),
+        startedAt: fixture.now(),
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const payload = {
+      launchId,
+      hostSessionId: hsid,
+      generation: 1,
+      runtimeId: rtId,
+      hookData: { hook_event_name: 'Stop', last_assistant_message: 'done' },
+    }
+
+    expect((await fixture.postJson('/v1/internal/hooks/ingest', payload)).status).toBe(200)
+    expect((await fixture.postJson('/v1/internal/hooks/ingest', payload)).status).toBe(200)
+
+    const db2 = openHrcDatabase(fixture.dbPath)
+    try {
+      const completed = db2.hrcEvents.listByRun(runId, { eventKind: 'turn.completed' })
+      expect(completed.length).toBe(1)
+    } finally {
+      db2.close()
+    }
+  })
+})

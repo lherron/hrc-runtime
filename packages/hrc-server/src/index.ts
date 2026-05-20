@@ -3617,17 +3617,25 @@ class HrcServerInstance implements HrcServer {
         }
 
         try {
-          const response = await this.terminateRuntime(runtime, {
-            dropContinuation: droppedContinuation,
+          const session = requireSession(this.db, runtime.hostSessionId)
+          if (droppedContinuation) {
+            this.db.sessions.updateContinuation(session.hostSessionId, undefined, timestamp())
+          }
+          const event = markRuntimeStale(this.db, session, runtime, {
+            runtimeId: runtime.runtimeId,
+            reason: 'runtime_sweep',
+            priorStatus: runtime.status,
+            transport: runtime.transport,
+            droppedContinuation,
           })
-          const terminated = (await response.json()) as TerminateRuntimeResponse
+          this.notifyEvent(event)
           results.push({
             type: 'runtime',
             runtimeId: runtime.runtimeId,
             hostSessionId: runtime.hostSessionId,
             transport: runtime.transport as SweepRuntimeTransport,
-            status: 'terminated',
-            droppedContinuation: terminated.droppedContinuation,
+            status: 'stale',
+            droppedContinuation,
           })
         } catch (err) {
           results.push({
@@ -3658,7 +3666,8 @@ class HrcServerInstance implements HrcServer {
     const summary: SweepRuntimesSummary = {
       type: 'summary',
       matched: matched.length,
-      terminated: results.filter((result) => result.status === 'terminated').length,
+      stale: results.filter((result) => result.status === 'stale').length,
+      terminated: 0,
       skipped: results.filter((result) => result.status === 'skipped').length,
       errors: results.filter((result) => result.status === 'error').length,
     }
@@ -4159,6 +4168,7 @@ class HrcServerInstance implements HrcServer {
         action: 'reap',
         reason: 'runtime_busy_timeout_with_active_run',
         errorCode: HrcErrorCode.RUNTIME_BUSY_TIMEOUT_WITH_ACTIVE_RUN,
+        nextRuntimeStatus: 'stale',
       }
     }
 
@@ -9096,7 +9106,7 @@ function markRuntimeStale(
   session: HrcSessionRecord,
   runtime: HrcRuntimeSnapshot,
   eventJson: Record<string, unknown>
-): void {
+): HrcLifecycleEvent {
   const now = timestamp()
   if (runtime.activeRunId !== undefined) {
     db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
@@ -9114,7 +9124,7 @@ function markRuntimeStale(
     updatedAt: now,
     lastActivityAt: now,
   })
-  appendHrcEvent(db, 'runtime.stale', {
+  return appendHrcEvent(db, 'runtime.stale', {
     ts: now,
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
@@ -9194,7 +9204,7 @@ function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnaps
  * `deriveInteractiveHarness`), and reuse filtering.
  */
 export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness']): boolean {
-  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
+  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk' || harness.id === 'claude-code') {
     return true
   }
   if (harness.id !== undefined) {
@@ -10590,6 +10600,59 @@ function resolveHookRunId(db: HrcDatabase, runtimeId: string | undefined): strin
   return findLatestRunForRuntime(db, runtimeId)?.runId
 }
 
+// Claude `Stop`/`SessionEnd`/`SubagentStop` hooks fire when the agent finishes
+// a turn. Finalize the active run, return the runtime to ready, and emit
+// turn.completed. Idempotent via the run's completedAt/status guard — a second
+// Stop on the same run is a no-op.
+function finalizeRunOnStopHook(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  envelope: HookEnvelope,
+  now: string
+): HrcLifecycleEvent | undefined {
+  if (!envelope.runtimeId || !isRecord(envelope.hookData)) return undefined
+  const hookEventName = (envelope.hookData as Record<string, unknown>)['hook_event_name']
+  if (
+    hookEventName !== 'Stop' &&
+    hookEventName !== 'SessionEnd' &&
+    hookEventName !== 'SubagentStop'
+  ) {
+    return undefined
+  }
+  const runtime = db.runtimes.getByRuntimeId(envelope.runtimeId)
+  const activeRunId = runtime?.activeRunId
+  if (!runtime || !activeRunId) return undefined
+  const run = db.runs.getByRunId(activeRunId)
+  if (!run || run.completedAt !== undefined || run.status === 'completed') return undefined
+
+  db.runs.markCompleted(activeRunId, {
+    status: 'completed',
+    completedAt: now,
+    updatedAt: now,
+  })
+  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'ready',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+  return appendHrcEvent(db, 'turn.completed', {
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: run.scopeRef,
+    laneRef: run.laneRef,
+    generation: envelope.generation,
+    runId: activeRunId,
+    runtimeId: runtime.runtimeId,
+    ...(run.transport === 'sdk' || run.transport === 'tmux' ? { transport: run.transport } : {}),
+    payload: {
+      success: true,
+      source: 'hook_stop',
+      hookName: hookEventName,
+    },
+  })
+}
+
 function applyHookLifecycleEnvelope(
   db: HrcDatabase,
   envelope: HookEnvelope,
@@ -10800,6 +10863,9 @@ function applyHookLifecycleEnvelope(
       )
     }
   }
+
+  const stopCompletion = finalizeRunOnStopHook(db, session, envelope, now)
+  if (stopCompletion) events.push(stopCompletion)
 
   if (!envelope.runtimeId) return events
 

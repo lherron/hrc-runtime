@@ -7,6 +7,7 @@
  * References: T-00960, T-00946
  */
 
+import { type LaneRef, formatSessionHandle, normalizeLaneRef, parseScopeRef } from 'agent-scope'
 import {
   type BuildProcessInvocationSpecRequest,
   type BuildProcessInvocationSpecResponse,
@@ -175,7 +176,22 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
   const taskContext = intent.taskContext
 
   if (correlation?.sessionRef) {
-    env['HRC_SESSION_REF'] = `${correlation.sessionRef.scopeRef}/${correlation.sessionRef.laneRef}`
+    const { scopeRef, laneRef } = correlation.sessionRef
+    const normalizedLaneRef = normalizeCorrelationLaneRef(laneRef)
+    const laneId = normalizedLaneRef === 'main' ? 'main' : normalizedLaneRef.slice('lane:'.length)
+    env['HRC_SESSION_REF'] = `${scopeRef}/lane:${laneId}`
+    env['ASP_SCOPE_REF'] = scopeRef
+    const parsed = parseScopeRef(scopeRef)
+    if (parsed.agentId) {
+      env['ASP_AGENT_ID'] = parsed.agentId
+    }
+    if (parsed.projectId) {
+      env['ASP_PROJECT'] = parsed.projectId
+    }
+    if (parsed.taskId) {
+      env['ASP_TASK_ID'] = parsed.taskId
+    }
+    env['ASP_HANDLE'] = formatSessionHandle({ scopeRef, laneRef: normalizedLaneRef })
   }
 
   if (correlation?.hostSessionId) {
@@ -188,6 +204,7 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
 
   if (taskContext?.taskId) {
     env['HRC_TASK_ID'] = taskContext.taskId
+    env['ASP_TASK_ID'] ??= taskContext.taskId
   }
 
   if (taskContext?.phase) {
@@ -209,6 +226,12 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
   return env
 }
 
+function normalizeCorrelationLaneRef(laneRef: string): LaneRef {
+  if (laneRef === 'main' || laneRef === 'lane:main') {
+    return 'main'
+  }
+  return normalizeLaneRef(laneRef.startsWith('lane:') ? laneRef : `lane:${laneRef}`)
+}
 // ---------------------------------------------------------------------------
 // Default spec builder using real agent-spaces client
 // ---------------------------------------------------------------------------

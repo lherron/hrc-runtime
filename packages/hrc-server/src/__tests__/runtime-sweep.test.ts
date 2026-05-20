@@ -169,6 +169,7 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(body.summary).toEqual({
       type: 'summary',
       matched: 0,
+      stale: 0,
       terminated: 0,
       skipped: 0,
       errors: 0,
@@ -178,13 +179,14 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(sweepEvents).toHaveLength(1)
     expect(sweepEvents[0]?.payload).toMatchObject({
       matched: 0,
+      stale: 0,
       terminated: 0,
       skipped: 0,
       errors: 0,
     })
   })
 
-  it('terminates three stale headless runtimes and emits per-runtime plus summary events', async () => {
+  it('marks three stale headless runtimes stale and emits per-runtime plus summary events', async () => {
     for (const suffix of ['one', 'two', 'three']) {
       seedRuntime({
         runtimeId: `rt-stale-${suffix}`,
@@ -199,7 +201,8 @@ describe('POST /v1/runtimes/sweep', () => {
 
     expect(body.summary).toMatchObject({
       matched: 3,
-      terminated: 3,
+      stale: 3,
+      terminated: 0,
       skipped: 0,
       errors: 0,
     })
@@ -208,12 +211,12 @@ describe('POST /v1/runtimes/sweep', () => {
       'rt-stale-three',
       'rt-stale-two',
     ])
-    expect(body.results.every((result) => result.status === 'terminated')).toBe(true)
-    expect(getRuntime('rt-stale-one')?.status).toBe('terminated')
-    expect(getRuntime('rt-stale-two')?.status).toBe('terminated')
-    expect(getRuntime('rt-stale-three')?.status).toBe('terminated')
+    expect(body.results.every((result) => result.status === 'stale')).toBe(true)
+    expect(getRuntime('rt-stale-one')?.status).toBe('stale')
+    expect(getRuntime('rt-stale-two')?.status).toBe('stale')
+    expect(getRuntime('rt-stale-three')?.status).toBe('stale')
 
-    expect(eventRuntimeIds(listRuntimeEvents('runtime.terminated')).sort()).toEqual([
+    expect(eventRuntimeIds(listRuntimeEvents('runtime.stale')).sort()).toEqual([
       'rt-stale-one',
       'rt-stale-three',
       'rt-stale-two',
@@ -246,11 +249,75 @@ describe('POST /v1/runtimes/sweep', () => {
 
     const body = await sweep({ transport: 'headless', olderThan: '1h' })
 
-    expect(body.summary).toMatchObject({ matched: 1, terminated: 1, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 1,
+      stale: 1,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results.map((result) => result.runtimeId)).toEqual(['rt-filter-headless'])
-    expect(getRuntime('rt-filter-headless')?.status).toBe('terminated')
+    expect(getRuntime('rt-filter-headless')?.status).toBe('stale')
     expect(getRuntime('rt-filter-sdk')?.status).toBe('ready')
     expect(getRuntime('rt-filter-tmux')?.status).toBe('ready')
+  })
+
+  it('marks tmux runtimes stale without terminating their tmux session', async () => {
+    seedRuntime({
+      runtimeId: 'rt-tmux-live',
+      hostSessionId: 'hsid-tmux-live',
+      scopeRef: 'sweep-tmux-live',
+      transport: 'tmux',
+      createdAt: isoMinutesAgo(180),
+    })
+
+    const tmux = (
+      server as unknown as {
+        tmux: {
+          inspectSession(sessionName: string): Promise<unknown>
+          terminate(sessionName: string): Promise<void>
+        }
+      }
+    ).tmux
+    const originalInspectSession = tmux.inspectSession.bind(tmux)
+    const originalTerminate = tmux.terminate.bind(tmux)
+    const terminatedSessions: string[] = []
+    tmux.inspectSession = async (sessionName: string) => ({
+      socketPath: fixture.tmuxSocketPath,
+      sessionName,
+      windowName: 'main',
+      sessionId: '$1',
+      windowId: '@1',
+      paneId: '%1',
+    })
+    tmux.terminate = async (sessionName: string) => {
+      terminatedSessions.push(sessionName)
+      throw new Error(`unexpected tmux terminate for ${sessionName}`)
+    }
+
+    try {
+      const body = await sweep({ transport: 'tmux', olderThan: '1h' })
+
+      expect(body.summary).toMatchObject({
+        matched: 1,
+        stale: 1,
+        terminated: 0,
+        skipped: 0,
+        errors: 0,
+      })
+      expect(body.results[0]).toMatchObject({
+        runtimeId: 'rt-tmux-live',
+        transport: 'tmux',
+        status: 'stale',
+        droppedContinuation: false,
+      })
+      expect(getRuntime('rt-tmux-live')?.status).toBe('stale')
+      expect(terminatedSessions).toEqual([])
+      expect(listRuntimeEvents('runtime.terminated')).toHaveLength(0)
+    } finally {
+      tmux.inspectSession = originalInspectSession
+      tmux.terminate = originalTerminate
+    }
   })
 
   it('honors scope prefix filtering', async () => {
@@ -279,7 +346,13 @@ describe('POST /v1/runtimes/sweep', () => {
       scope: 'agent:sweep-scope/team-a',
     })
 
-    expect(body.summary).toMatchObject({ matched: 2, terminated: 2, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 2,
+      stale: 2,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results.map((result) => result.runtimeId).sort()).toEqual([
       'rt-scope-match-a',
       'rt-scope-match-b',
@@ -303,9 +376,15 @@ describe('POST /v1/runtimes/sweep', () => {
 
     const body = await sweep({ transport: 'headless', olderThan: '1h' })
 
-    expect(body.summary).toMatchObject({ matched: 1, terminated: 1, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 1,
+      stale: 1,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results.map((result) => result.runtimeId)).toEqual(['rt-old-enough'])
-    expect(getRuntime('rt-old-enough')?.status).toBe('terminated')
+    expect(getRuntime('rt-old-enough')?.status).toBe('stale')
     expect(getRuntime('rt-too-new')?.status).toBe('ready')
   })
 
@@ -327,14 +406,20 @@ describe('POST /v1/runtimes/sweep', () => {
 
     const body = await sweep({ transport: 'headless', olderThan: '1h', status: ['starting'] })
 
-    expect(body.summary).toMatchObject({ matched: 1, terminated: 1, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 1,
+      stale: 1,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results.map((result) => result.runtimeId)).toEqual(['rt-status-starting'])
-    expect(getRuntime('rt-status-starting')?.status).toBe('terminated')
+    expect(getRuntime('rt-status-starting')?.status).toBe('stale')
     expect(getRuntime('rt-status-ready')?.status).toBe('ready')
   })
 
   it('second concurrent sweep sees no matches once the first sweep has bumped lastActivityAt', async () => {
-    // Under lastActivityAt-based staleness, once the first sweep terminates a row
+    // Under lastActivityAt-based staleness, once the first sweep marks a row stale
     // its activity timestamp is refreshed to "now", so a subsequent sweep's match
     // phase naturally excludes it. The within-iteration atomic claim guard (see
     // claimRuntimeForSweep) remains in place for the narrower race where both
@@ -354,11 +439,23 @@ describe('POST /v1/runtimes/sweep', () => {
     ])
 
     const summaries = [first.summary, second.summary].sort(
-      (left, right) => right.terminated - left.terminated
+      (left, right) => right.stale - left.stale
     )
-    expect(summaries[0]).toMatchObject({ matched: 2, terminated: 2, skipped: 0, errors: 0 })
-    expect(summaries[1]).toMatchObject({ matched: 0, terminated: 0, skipped: 0, errors: 0 })
-    expect(listRuntimeEvents('runtime.terminated')).toHaveLength(2)
+    expect(summaries[0]).toMatchObject({
+      matched: 2,
+      stale: 2,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
+    expect(summaries[1]).toMatchObject({
+      matched: 0,
+      stale: 0,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
+    expect(listRuntimeEvents('runtime.stale')).toHaveLength(2)
     expect(listRuntimeEvents('runtime.sweep_completed')).toHaveLength(2)
   })
 
@@ -373,7 +470,13 @@ describe('POST /v1/runtimes/sweep', () => {
 
     const body = await sweep({ transport: 'headless', olderThan: '1h', dropContinuation: true })
 
-    expect(body.summary).toMatchObject({ matched: 1, terminated: 1, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 1,
+      stale: 1,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results[0]).toMatchObject({
       runtimeId: 'rt-drop-explicit',
       droppedContinuation: true,
@@ -400,7 +503,13 @@ describe('POST /v1/runtimes/sweep', () => {
 
     const body = await sweep({ transport: 'headless', olderThan: '1h' })
 
-    expect(body.summary).toMatchObject({ matched: 2, terminated: 2, skipped: 0, errors: 0 })
+    expect(body.summary).toMatchObject({
+      matched: 2,
+      stale: 2,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
     expect(body.results.find((result) => result.runtimeId === 'rt-default-busy')).toMatchObject({
       droppedContinuation: true,
     })
@@ -425,7 +534,8 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(sweepEvents).toHaveLength(1)
     expect(sweepEvents[0]?.payload).toMatchObject({
       matched: 1,
-      terminated: 1,
+      stale: 1,
+      terminated: 0,
       skipped: 0,
       errors: 0,
     })

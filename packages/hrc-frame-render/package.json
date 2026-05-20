@@ -16,16 +16,16 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "bun ../../scripts/sync-asp-from-verdaccio.ts && tsc",
+    "typecheck": "bun ../../scripts/sync-asp-from-verdaccio.ts && tsc --noEmit",
     "test": "bun test",
     "prepack": "bun ../../scripts/strip-bun-exports.ts",
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
     "agent-action-render": "*",
-    "agent-scope": "0.1.0",
-    "spaces-runtime": "0.1.0"
+    "agent-scope": "0.1.0-dev.20260519231838",
+    "spaces-runtime": "0.1.0-dev.20260519231838"
   },
   "devDependencies": {
     "@types/bun": "latest",

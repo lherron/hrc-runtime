@@ -316,7 +316,7 @@ export type SweepRuntimeResult = {
   runtimeId: string
   hostSessionId: string
   transport: SweepRuntimeTransport
-  status: 'terminated' | 'skipped' | 'error'
+  status: 'stale' | 'skipped' | 'error'
   droppedContinuation: boolean
   errorCode?: string | undefined
   errorMessage?: string | undefined
@@ -325,6 +325,7 @@ export type SweepRuntimeResult = {
 export type SweepRuntimesSummary = {
   type: 'summary'
   matched: number
+  stale: number
   terminated: number
   skipped: number
   errors: number

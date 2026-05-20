@@ -377,6 +377,7 @@ type ManagedScopeContext = {
   agentId: string
   projectId?: string | undefined
   scopeRef: string
+  laneRef: string
   sessionRef: string
   /** Explicit projectRoot override (from --project-root or inferred from --project-id + cwd). */
   projectRootOverride?: string | undefined
@@ -442,6 +443,7 @@ function resolveManagedScopeContext(
     agentId: parsed.agentId,
     projectId: parsed.projectId,
     scopeRef,
+    laneRef: laneId === 'main' ? 'main' : `lane:${laneId}`,
     sessionRef: `${scopeRef}/lane:${laneId}`,
     ...(projectRootOverride ? { projectRootOverride } : {}),
   }
@@ -577,6 +579,12 @@ function buildManagedRuntimeIntent(
       cwd,
       runMode: 'task' as const,
       bundle,
+      correlation: {
+        sessionRef: {
+          scopeRef: scope.scopeRef,
+          laneRef: scope.laneRef,
+        },
+      },
     },
     harness: {
       provider,
@@ -1297,7 +1305,7 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
     )
   }
   process.stdout.write(
-    `summary matched=${result.summary.matched} terminated=${result.summary.terminated} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+    `summary matched=${result.summary.matched} stale=${result.summary.stale} terminated=${result.summary.terminated} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
   )
 }
 
@@ -2722,7 +2730,7 @@ Exit codes:
     .option('--scope <scope>', 'filter by scope')
     .option('--older-than <duration>', 'filter by age')
     .option('--dry-run', 'preview without mutating')
-    .option('--yes', 'confirm destructive operation')
+    .option('--yes', 'confirm mutation')
     .option('--json', 'output as JSON')
     .option('--drop-continuation', 'drop continuation on sweep')
     .action(async (_opts, cmd: Command) => {

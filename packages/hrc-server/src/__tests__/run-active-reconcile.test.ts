@@ -277,9 +277,11 @@ describe('POST /v1/runs/reconcile-active', () => {
     expect(getRun('run-live-tmux')?.errorCode).toBe('runtime_busy_timeout_with_active_run')
     expect(getRun('run-busy-sdk')?.status).toBe('failed')
     expect(getRun('run-busy-sdk')?.errorCode).toBe('runtime_busy_timeout_with_active_run')
-    expect(getRuntime('rt-live-tmux')?.status).toBe('busy')
+    // Reap must transition the runtime out of 'busy' — otherwise the runtime
+    // wedges with status=busy + activeRunId=NULL, a self-contradiction.
+    expect(getRuntime('rt-live-tmux')?.status).toBe('stale')
     expect(getRuntime('rt-live-tmux')?.activeRunId).toBeUndefined()
-    expect(getRuntime('rt-busy-sdk')?.status).toBe('busy')
+    expect(getRuntime('rt-busy-sdk')?.status).toBe('stale')
     expect(getRuntime('rt-busy-sdk')?.activeRunId).toBeUndefined()
     expect(listEvents('turn.reaped')).toHaveLength(2)
   })

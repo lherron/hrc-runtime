@@ -38,9 +38,9 @@ const cases: Case[] = [
     expected: false,
   },
   {
-    name: 'explicit claude-code id → CLI executor',
+    name: 'explicit claude-code id → SDK executor for headless continuation',
     harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
-    expected: false,
+    expected: true,
   },
   {
     name: 'explicit pi-cli id → CLI executor',

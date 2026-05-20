@@ -27,6 +27,7 @@ export type TurnOptions = {
   stallAfter?: string | undefined
   file?: string | undefined
   stacked?: string | undefined
+  follow?: string | undefined
   replyTo?: string | undefined
 }
 
@@ -96,17 +97,21 @@ export async function cmdTurn(
     throw new CliUsageError('turn requires a prompt (positional, -, or --file)')
   }
 
-  const stallAfterMs = parseDuration(opts.stallAfter ?? '5m')
-  const stackedWindowMs = opts.stacked !== undefined ? parseDuration(opts.stacked) : undefined
+  const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
+  if (opts.stacked !== undefined && opts.follow !== undefined) {
+    throw new CliUsageError('--follow is an alias for --stacked; pass one, not both')
+  }
+  const stackedRaw = opts.stacked ?? opts.follow
+  const stackedWindowMs = stackedRaw !== undefined ? parseDuration(stackedRaw) : undefined
   if (stackedWindowMs !== undefined && stackedWindowMs <= 0) {
-    throw new CliUsageError(`invalid duration: ${opts.stacked} (must be > 0)`)
+    throw new CliUsageError(`invalid duration: ${stackedRaw} (must be > 0)`)
   }
   if (stackedWindowMs !== undefined) {
     if (opts.pretty) {
-      throw new CliUsageError('--stacked cannot be combined with --pretty')
+      throw new CliUsageError('--follow/--stacked cannot be combined with --pretty')
     }
     if (opts.format === 'tree' || opts.format === 'compact') {
-      throw new CliUsageError('--stacked cannot be combined with --format tree or compact')
+      throw new CliUsageError('--follow/--stacked cannot be combined with --format tree or compact')
     }
   }
 
