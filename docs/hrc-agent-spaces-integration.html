@@ -1,0 +1,2103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hrc-runtime / agent-spaces Integration Map</title>
+    <style>
+      :root {
+        --paper: #f6f4ed;
+        --paper-2: #ebe9df;
+        --ink: #161616;
+        --muted: #626058;
+        --line: #24231f;
+        --line-soft: rgba(36, 35, 31, 0.16);
+        --critical: #de3d36;
+        --core: #007f94;
+        --runtime: #16805f;
+        --utility: #6b6f79;
+        --risk: #b76700;
+        --owner-hrc-bg: #f3ece4;
+        --owner-asp-bg: #eaf0ea;
+        --owner-hrc-ink: #6f5040;
+        --owner-asp-ink: #3f6655;
+        --priority-shadow: rgba(36, 35, 31, 0.34);
+        --shadow: 0 18px 50px rgba(22, 22, 22, 0.12);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(90deg, rgba(22, 22, 22, 0.05) 1px, transparent 1px) 0 0 / 48px 48px,
+          linear-gradient(rgba(22, 22, 22, 0.05) 1px, transparent 1px) 0 0 / 48px 48px,
+          var(--paper);
+        font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+        line-height: 1.48;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      code,
+      pre,
+      .mono {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+      }
+
+      code {
+        overflow-wrap: anywhere;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 268px minmax(0, 1fr);
+        min-height: 100vh;
+        min-width: 0;
+      }
+
+      .rail {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        min-width: 0;
+        padding: 28px 22px;
+        border-right: 2px solid var(--line);
+        background: #191917;
+        color: #f7f3e6;
+      }
+
+      .rail-title {
+        margin: 0 0 28px;
+        font-family: "Avenir Next Condensed", "Impact", sans-serif;
+        font-size: 29px;
+        line-height: 0.95;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .rail-title span {
+        display: block;
+        color: #ffce55;
+      }
+
+      .rail-meta {
+        margin: 0 0 28px;
+        color: rgba(247, 243, 230, 0.72);
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      .nav {
+        display: grid;
+        gap: 7px;
+      }
+
+      .nav a {
+        display: block;
+        padding: 9px 10px;
+        border: 1px solid rgba(247, 243, 230, 0.2);
+        border-radius: 6px;
+        color: #f7f3e6;
+        text-decoration: none;
+        font-size: 13px;
+      }
+
+      .nav a:hover {
+        background: rgba(255, 206, 85, 0.14);
+        border-color: rgba(255, 206, 85, 0.65);
+      }
+
+      main {
+        min-width: 0;
+      }
+
+      section {
+        padding: 58px min(6vw, 84px);
+        border-bottom: 2px solid var(--line);
+      }
+
+      .hero {
+        min-height: 88vh;
+        display: grid;
+        align-content: center;
+        gap: 24px;
+        background:
+          radial-gradient(circle at 85% 14%, rgba(0, 127, 148, 0.18), transparent 26%),
+          linear-gradient(135deg, transparent 0 70%, rgba(222, 61, 54, 0.13) 70% 100%);
+      }
+
+      .kicker {
+        width: fit-content;
+        max-width: 100%;
+        padding: 7px 11px;
+        border: 2px solid var(--line);
+        border-radius: 6px;
+        background: #ffce55;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        overflow-wrap: anywhere;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 980px;
+        font-family: "Avenir Next Condensed", "Impact", sans-serif;
+        font-size: clamp(52px, 8.1vw, 104px);
+        line-height: 0.9;
+        text-transform: uppercase;
+      }
+
+      h2 {
+        font-family: "Avenir Next Condensed", "Impact", sans-serif;
+        font-size: clamp(36px, 5vw, 64px);
+        line-height: 0.95;
+        text-transform: uppercase;
+      }
+
+      h3 {
+        font-size: 20px;
+      }
+
+      .hero-copy {
+        max-width: 850px;
+        font-size: 20px;
+        color: #33322d;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .metric {
+        min-height: 98px;
+        padding: 14px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(246, 244, 237, 0.9);
+        box-shadow: 6px 6px 0 #191917;
+      }
+
+      .metric strong {
+        display: block;
+        font-family: "Avenir Next Condensed", "Impact", sans-serif;
+        font-size: 38px;
+        line-height: 1;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        width: max-content;
+        max-width: 100%;
+        padding: 5px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fffdf6;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .badge::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .critical {
+        color: var(--critical);
+      }
+
+      .core {
+        color: var(--core);
+      }
+
+      .runtime {
+        color: var(--runtime);
+      }
+
+      .utility {
+        color: var(--utility);
+      }
+
+      .risk {
+        color: var(--risk);
+      }
+
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 28px;
+      }
+
+      .section-head p {
+        max-width: 760px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+      }
+
+      .repo-map {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 130px minmax(0, 1fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .repo {
+        position: relative;
+        padding: 24px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #fffdf6;
+        box-shadow: var(--shadow);
+      }
+
+      .repo::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 10px;
+        background: var(--core);
+      }
+
+      .repo.hrc::before {
+        background: var(--critical);
+      }
+
+      .repo h3 {
+        margin-bottom: 12px;
+        font-family: "Avenir Next Condensed", "Impact", sans-serif;
+        font-size: 32px;
+        text-transform: uppercase;
+      }
+
+      .repo ul {
+        margin: 14px 0 0;
+        padding-left: 19px;
+      }
+
+      .bridge {
+        display: grid;
+        place-items: center;
+        min-height: 230px;
+        border: 2px dashed var(--line);
+        border-radius: var(--radius);
+        background: #ffce55;
+        text-align: center;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .bridge span {
+        display: block;
+        font-size: 13px;
+        color: #5b4800;
+      }
+
+      .callout {
+        margin-top: 18px;
+        padding: 18px;
+        border: 2px solid var(--line);
+        border-left-width: 10px;
+        border-radius: var(--radius);
+        background: #fffdf6;
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .appendix-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+      }
+
+      .card {
+        position: relative;
+        padding: 18px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #fffdf6;
+        min-width: 0;
+      }
+
+      .card.hrc-owned {
+        background: linear-gradient(180deg, var(--owner-hrc-bg) 0 86px, #fffdf6 86px);
+      }
+
+      .card.asp-owned {
+        background: linear-gradient(180deg, var(--owner-asp-bg) 0 86px, #fffdf6 86px);
+      }
+
+      .card.important {
+        box-shadow: 7px 7px 0 var(--priority-shadow);
+      }
+
+      .card.core-line {
+        box-shadow: 7px 7px 0 rgba(36, 35, 31, 0.2);
+      }
+
+      .card.runtime-line {
+        box-shadow: 7px 7px 0 rgba(36, 35, 31, 0.2);
+      }
+
+      .card h3 {
+        margin: 8px 0 10px;
+      }
+
+      .card p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .interface-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .owner-chip {
+        display: inline-flex;
+        width: max-content;
+        max-width: 100%;
+        padding: 5px 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .owner-hrc {
+        background: rgba(111, 80, 64, 0.12);
+        color: var(--owner-hrc-ink);
+      }
+
+      .owner-asp {
+        background: rgba(63, 102, 85, 0.12);
+        color: var(--owner-asp-ink);
+      }
+
+      .owner-path {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .owner-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: -12px 0 18px;
+      }
+
+      #interfaces .badge.critical {
+        color: #8a4d43;
+      }
+
+      #interfaces .badge.core {
+        color: #496b66;
+      }
+
+      #interfaces .badge.runtime {
+        color: #4d705c;
+      }
+
+      .source-list {
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .source-list li {
+        overflow-wrap: anywhere;
+      }
+
+      .codebox {
+        margin: 16px 0 0;
+        padding: 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        background: #171714;
+        color: #f6f4ed;
+        overflow-x: auto;
+        font-size: 12px;
+      }
+
+      .sample-card .codebox {
+        max-height: 440px;
+      }
+
+      .sample-card h3 {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 20px 0 12px;
+      }
+
+      .sample-note {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .flow {
+        display: grid;
+        gap: 12px;
+      }
+
+      .flow-row {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+
+      .flow-label {
+        display: grid;
+        place-items: center;
+        padding: 14px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #191917;
+        color: #f7f3e6;
+        font-weight: 900;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      .flow-steps {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .step {
+        position: relative;
+        min-height: 150px;
+        padding: 14px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #fffdf6;
+      }
+
+      .step:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -17px;
+        width: 22px;
+        height: 2px;
+        background: var(--line);
+      }
+
+      .step small {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .step strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fffdf6;
+        border: 2px solid var(--line);
+      }
+
+      th,
+      td {
+        padding: 13px;
+        border: 1px solid var(--line-soft);
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        background: #191917;
+        color: #f7f3e6;
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      td {
+        font-size: 14px;
+      }
+
+      td code {
+        overflow-wrap: anywhere;
+      }
+
+      .inventory td:first-child {
+        width: 190px;
+        font-weight: 900;
+      }
+
+      .inventory td:nth-child(2) {
+        width: 34%;
+      }
+
+      details {
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #fffdf6;
+      }
+
+      details + details {
+        margin-top: 10px;
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 14px 16px;
+        font-weight: 900;
+      }
+
+      details[open] summary {
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .detail-body {
+        padding: 16px;
+      }
+
+      .concerns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .concern {
+        padding: 18px;
+        border: 2px solid var(--line);
+        border-radius: var(--radius);
+        background: #fffdf6;
+      }
+
+      .concern[data-level="critical"] {
+        box-shadow: 8px 8px 0 rgba(222, 61, 54, 0.9);
+      }
+
+      .concern[data-level="high"] {
+        box-shadow: 8px 8px 0 rgba(183, 103, 0, 0.85);
+      }
+
+      .concern[data-level="medium"] {
+        box-shadow: 8px 8px 0 rgba(0, 127, 148, 0.55);
+      }
+
+      .concern h3 {
+        margin-top: 8px;
+      }
+
+      .concern p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .checklist {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      .checklist li {
+        margin: 8px 0;
+      }
+
+      .footer {
+        background: #191917;
+        color: #f7f3e6;
+      }
+
+      .footer p {
+        max-width: 900px;
+        margin: 12px 0 0;
+        color: rgba(247, 243, 230, 0.78);
+      }
+
+      @media (max-width: 1180px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .rail {
+          position: static;
+          height: auto;
+          border-right: 0;
+          border-bottom: 2px solid var(--line);
+        }
+
+        .nav {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .repo-map,
+        .two-col,
+        .concerns {
+          grid-template-columns: 1fr;
+        }
+
+        .bridge {
+          min-height: 84px;
+        }
+
+        .metrics,
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .flow-row {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-steps {
+          grid-template-columns: 1fr;
+        }
+
+        .step:not(:last-child)::after {
+          display: none;
+        }
+      }
+
+      @media (max-width: 720px) {
+        section {
+          padding: 38px 18px;
+        }
+
+        .metrics,
+        .grid,
+        .appendix-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .rail {
+          padding: 18px;
+        }
+
+        .rail-title {
+          margin-bottom: 14px;
+          font-size: 25px;
+        }
+
+        .rail-meta {
+          display: none;
+        }
+
+        .nav {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .nav a {
+          padding: 8px;
+          font-size: 12px;
+        }
+
+        .hero {
+          min-height: auto;
+          align-content: start;
+        }
+
+        h1 {
+          font-size: 48px;
+        }
+
+        .hero-copy {
+          font-size: 17px;
+        }
+
+        .section-head {
+          display: grid;
+          align-items: start;
+          gap: 12px;
+        }
+
+        .section-head p {
+          font-size: 15px;
+        }
+
+        table,
+        thead,
+        tbody,
+        th,
+        td,
+        tr {
+          display: block;
+        }
+
+        th {
+          display: none;
+        }
+
+        td {
+          display: block;
+          border-top: 0;
+        }
+
+        .inventory td:first-child,
+        .inventory td:nth-child(2) {
+          width: auto;
+        }
+
+        td::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 7px;
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        tr + tr {
+          border-top: 2px solid var(--line);
+        }
+      }
+
+      @media print {
+        .layout {
+          display: block;
+        }
+
+        .rail {
+          display: none;
+        }
+
+        section {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="rail">
+        <h2 class="rail-title">HRC <span>ASP map</span></h2>
+        <p class="rail-meta">
+          Source snapshot: May 20, 2026. Scope: production TypeScript imports in
+          <code>/Users/lherron/praesidium/hrc-runtime</code> and public contracts in
+          <code>../agent-spaces</code>.
+        </p>
+        <nav class="nav" aria-label="Document sections">
+          <a href="#map">Boundary Map</a>
+          <a href="#interfaces">Important Interfaces</a>
+          <a href="#flows">Data Flows</a>
+          <a href="#inventory">Import Inventory</a>
+          <a href="#concerns">Concerns</a>
+          <a href="#refactor">Refactor Targets</a>
+          <a href="#appendix">Appendix</a>
+        </nav>
+      </aside>
+
+      <main>
+        <section class="hero" id="top">
+          <div class="kicker">Integration dossier for protocol simplification</div>
+          <h1>hrc-runtime / agent-spaces integration map</h1>
+          <p class="hero-copy">
+            HRC owns host session state, runtime lifecycle, launch artifacts, callbacks, and
+            normalized event streams. Agent Spaces owns placement resolution, bundle
+            materialization, harness adapters, SDK session execution, and the public host-facing
+            client used by HRC.
+          </p>
+          <div class="metrics" aria-label="Integration summary">
+            <div class="metric">
+              <strong>7</strong>
+              <span>ASP packages imported by production HRC source</span>
+            </div>
+            <div class="metric">
+              <strong>2</strong>
+              <span>critical bridge adapters in <code>hrc-server</code></span>
+            </div>
+            <div class="metric">
+              <strong>0</strong>
+              <span>production <code>hrc-*</code> imports found in <code>../agent-spaces</code></span>
+            </div>
+            <div class="metric">
+              <strong>3</strong>
+              <span>runtime execution lanes: tmux, headless CLI, SDK</span>
+            </div>
+          </div>
+          <div class="legend" aria-label="Visual indicator legend">
+            <span class="badge critical">Critical host protocol</span>
+            <span class="badge core">Core placement/config</span>
+            <span class="badge runtime">Runtime execution</span>
+            <span class="badge utility">CLI utility</span>
+            <span class="badge risk">Concern or leakage</span>
+          </div>
+        </section>
+
+        <section id="map">
+          <div class="section-head">
+            <h2>Boundary Map</h2>
+            <p>
+              The dependency direction is intentionally one-way. HRC consumes packages published
+              from <code>../agent-spaces</code>; ASP does not import HRC packages.
+            </p>
+          </div>
+
+          <div class="repo-map">
+            <article class="repo hrc">
+              <h3>hrc-runtime</h3>
+              <p>
+                Host/controller layer. Owns daemon HTTP contracts, sessions, runs, launch artifacts,
+                tmux/headless orchestration, callbacks, SQLite state, and user-facing CLIs.
+              </p>
+              <ul>
+                <li><code>hrc-core</code>: HRC DTOs and persistent state shapes.</li>
+                <li><code>hrc-server</code>: adapter bridge and lifecycle executor.</li>
+                <li><code>hrc-cli</code>, <code>hrcchat-cli</code>: target resolution and operator UX.</li>
+                <li><code>hrc-frame-render</code>: lifecycle events to render frames.</li>
+              </ul>
+            </article>
+
+            <div class="bridge">
+              HRC imports ASP
+              <span>published packages via Verdaccio</span>
+            </div>
+
+            <article class="repo">
+              <h3>agent-spaces</h3>
+              <p>
+                ASP layer. Owns scope syntax, config-time placement, materialization, harness
+                registries, SDK session execution, and the public host-facing
+                <code>AgentSpacesClient</code>.
+              </p>
+              <ul>
+                <li><code>agent-scope</code>: canonical agent/project/task/lane identifiers.</li>
+                <li><code>spaces-config</code>: placement and bundle resolution.</li>
+                <li><code>spaces-execution</code>: runtime planning, brain/tools env prep.</li>
+                <li><code>agent-spaces</code>: public bridge client used by HRC.</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout">
+            <strong>Boundary invariant</strong>
+            HRC source may depend on ASP packages by package name. ASP source must not import
+            <code>hrc-*</code>, <code>acp-*</code>, <code>gateway-*</code>, or other downstream repos.
+            A source scan found no <code>hrc-*</code> imports in <code>../agent-spaces/packages</code>.
+          </div>
+        </section>
+
+        <section id="interfaces">
+          <div class="section-head">
+            <h2>Important Interfaces</h2>
+            <p>
+              These are the interfaces integrators should treat as the current protocol surface.
+              Each card uses a muted background tint to mark the repository that defines the
+              interface; heavier shadows still mark the highest leverage simplification targets.
+            </p>
+          </div>
+
+          <div class="owner-legend" aria-label="Interface ownership legend">
+            <span class="owner-chip owner-hrc">Defined in hrc-runtime</span>
+            <span class="owner-chip owner-asp">Defined in agent-spaces</span>
+          </div>
+
+          <div class="grid">
+            <article class="card important hrc-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-hrc">hrc-runtime</span>
+                <span class="badge critical">Critical</span>
+              </div>
+              <div class="owner-path">Defined in <code>packages/hrc-core/src/contracts.ts</code></div>
+              <h3><code>HrcRuntimeIntent</code></h3>
+              <p>
+                HRC's host intent wrapper around ASP <code>RuntimePlacement</code>. Persisted as
+                <code>lastAppliedIntentJson</code> and sent through start, attach, dispatch, and
+                app-session flows.
+              </p>
+              <pre class="codebox">type HrcRuntimeIntent = {
+  placement: RuntimePlacement
+  harness: HrcHarnessIntent
+  execution?: HrcExecutionIntent
+  launch?: HrcLaunchEnvConfig
+  initialPrompt?: string
+  attachments?: AttachmentRef[]
+  taskContext?: HrcTaskContext
+}</pre>
+            </article>
+
+            <article class="card important asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge critical">Critical</span>
+              </div>
+              <div class="owner-path">Defined in <code>packages/agent-spaces/src/types.ts</code></div>
+              <h3><code>AgentSpacesClient</code></h3>
+              <p>
+                The main public client HRC calls. Used only in
+                <code>hrc-server/src/agent-spaces-adapter</code> production code.
+              </p>
+              <pre class="codebox">interface AgentSpacesClient {
+  runTurnNonInteractive(req): Promise&lt;RunTurnNonInteractiveResponse&gt;
+  runTurnInFlight(req): Promise&lt;RunTurnNonInteractiveResponse&gt;
+  queueInFlightInput(req): Promise&lt;QueueInFlightInputResponse&gt;
+  interruptInFlightTurn(req): Promise&lt;void&gt;
+  buildProcessInvocationSpec(req): Promise&lt;BuildProcessInvocationSpecResponse&gt;
+  resolve(req): Promise&lt;ResolveResponse&gt;
+  describe(req): Promise&lt;DescribeResponse&gt;
+  getHarnessCapabilities(): Promise&lt;HarnessCapabilities&gt;
+}</pre>
+            </article>
+
+            <article class="card important asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge critical">Critical</span>
+              </div>
+              <div class="owner-path">
+                Defined in <code>packages/config/src/core/types/placement.ts</code>
+              </div>
+              <h3><code>RuntimePlacement</code></h3>
+              <p>
+                ASP-owned placement input embedded directly in HRC requests and state. It selects
+                the agent root, project root, run mode, composed bundle, scaffold packets, and host
+                correlation.
+              </p>
+              <pre class="codebox">interface RuntimePlacement {
+  agentRoot: string
+  projectRoot?: string
+  cwd?: string
+  runMode: 'query' | 'heartbeat' | 'task' | 'maintenance'
+  bundle: RuntimeBundleRef
+  scaffoldPackets?: RunScaffoldPacket[]
+  correlation?: HostCorrelation
+  dryRun?: boolean
+}</pre>
+            </article>
+
+            <article class="card core-line asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">Core</span>
+              </div>
+              <div class="owner-path">Defined in <code>packages/agent-spaces/src/types.ts</code></div>
+              <h3><code>ProcessInvocationSpec</code></h3>
+              <p>
+                ASP's CLI launch result. HRC uses it to write
+                <code>HrcLaunchArtifact</code>, enqueue a tmux command, or drive a headless Codex
+                app-server launch.
+              </p>
+              <pre class="codebox">type ProcessInvocationSpec = {
+  provider: 'anthropic' | 'openai'
+  frontend: 'agent-sdk' | 'pi-sdk' | 'claude-code' | 'codex-cli' | 'pi-cli'
+  argv: string[]
+  cwd: string
+  env: Record&lt;string, string&gt;
+  interactionMode: 'interactive' | 'headless' | 'nonInteractive'
+  ioMode: 'pty' | 'pipes' | 'inherit'
+  continuation?: HarnessContinuationRef
+  systemPromptFile?: string
+  codexAppServer?: CodexAppServerDescriptor
+}</pre>
+            </article>
+
+            <article class="card runtime-line asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge runtime">Runtime</span>
+              </div>
+              <div class="owner-path">Defined in <code>packages/agent-spaces/src/types.ts</code></div>
+              <h3><code>AgentEvent</code></h3>
+              <p>
+                ASP's coarser SDK event stream. HRC converts it to
+                <code>HrcEventEnvelope</code>, derives semantic turn events, appends buffers, and
+                persists continuation state.
+              </p>
+              <pre class="codebox">type AgentEvent =
+  | { type: 'state'; state: SessionState }
+  | { type: 'message'; role: 'user' | 'assistant'; content: string }
+  | { type: 'message_delta'; role: 'assistant'; delta: string }
+  | { type: 'tool_call'; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_result'; toolUseId: string; toolName: string; output: unknown; isError: boolean }
+  | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string }
+  | { type: 'complete'; result: RunResult }</pre>
+            </article>
+
+            <article class="card core-line asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">Core</span>
+              </div>
+              <div class="owner-path">Defined in <code>packages/agent-scope/src/types.ts</code></div>
+              <h3><code>ScopeRef</code> / <code>SessionRef</code></h3>
+              <p>
+                Shared identity syntax from <code>agent-scope</code>. HRC stores
+                <code>scopeRef</code>, <code>laneRef</code>, and <code>scopeRef/lane:&lt;id&gt;</code>
+                session refs across sessions, events, monitor filters, and hrcchat addresses.
+              </p>
+              <pre class="codebox">type ParsedScopeRef = {
+  kind: ScopeKind
+  agentId: string
+  projectId?: string
+  taskId?: string
+  roleName?: string
+  scopeRef: string
+}
+type LaneRef = 'main' | `lane:${string}`
+type SessionRef = { scopeRef: string; laneRef: LaneRef }</pre>
+            </article>
+          </div>
+        </section>
+
+        <section id="flows">
+          <div class="section-head">
+            <h2>Data Flows</h2>
+            <p>
+              The same <code>HrcRuntimeIntent</code> moves through several execution lanes. The
+              important distinction is whether Agent Spaces returns a process to launch or runs an
+              SDK turn in-process and emits <code>AgentEvent</code> callbacks.
+            </p>
+          </div>
+
+          <div class="flow">
+            <div class="flow-row">
+              <div class="flow-label">Target resolution</div>
+              <div class="flow-steps">
+                <div class="step">
+                  <small>1</small>
+                  <strong>Operator target</strong>
+                  <p><code>hrc</code> and <code>hrcchat</code> accept handles like an agent, project, task, or lane.</p>
+                </div>
+                <div class="step">
+                  <small>2</small>
+                  <strong><code>agent-scope</code></strong>
+                  <p><code>resolveQualifiedScopeInput</code> canonicalizes to scope and lane refs.</p>
+                </div>
+                <div class="step">
+                  <small>3</small>
+                  <strong><code>spaces-config</code></strong>
+                  <p>Finds agents root, project root, target config, profile, harness, and bundle ref.</p>
+                </div>
+                <div class="step">
+                  <small>4</small>
+                  <strong><code>HrcRuntimeIntent</code></strong>
+                  <p>HRC embeds <code>RuntimePlacement</code>, harness intent, execution mode, prompt, and env policy.</p>
+                </div>
+                <div class="step">
+                  <small>5</small>
+                  <strong>Server request</strong>
+                  <p>Intent reaches <code>ensureRuntime</code>, <code>dispatchTurn</code>, or semantic handoff.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-label">Interactive / tmux</div>
+              <div class="flow-steps">
+                <div class="step">
+                  <small>1</small>
+                  <strong>HRC runtime row</strong>
+                  <p>Server creates or reuses a tmux runtime and normalizes placement correlation.</p>
+                </div>
+                <div class="step">
+                  <small>2</small>
+                  <strong><code>buildCliInvocation</code></strong>
+                  <p>HRC calls <code>AgentSpacesClient.buildProcessInvocationSpec</code>.</p>
+                </div>
+                <div class="step">
+                  <small>3</small>
+                  <strong>ASP materialization</strong>
+                  <p>Agent Spaces resolves placement, plans harness runtime, materializes spaces, prepares brain/tools env.</p>
+                </div>
+                <div class="step">
+                  <small>4</small>
+                  <strong>Launch artifact</strong>
+                  <p>HRC writes argv, env, cwd, callback socket, spool dir, correlation env, and optional Codex descriptor.</p>
+                </div>
+                <div class="step">
+                  <small>5</small>
+                  <strong>Hooks / callbacks</strong>
+                  <p>Wrapper posts launch events, continuations, hook-derived events, and completion back to HRC.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-label">SDK turn</div>
+              <div class="flow-steps">
+                <div class="step">
+                  <small>1</small>
+                  <strong>SDK runtime</strong>
+                  <p>HRC creates a transient <code>transport: 'sdk'</code> runtime and run row.</p>
+                </div>
+                <div class="step">
+                  <small>2</small>
+                  <strong><code>runSdkTurn</code></strong>
+                  <p>HRC chooses <code>agent-sdk</code> or <code>pi-sdk</code> from the provider.</p>
+                </div>
+                <div class="step">
+                  <small>3</small>
+                  <strong><code>runTurnNonInteractive</code></strong>
+                  <p>Agent Spaces creates the SDK session, runs the prompt, and maps unified session events.</p>
+                </div>
+                <div class="step">
+                  <small>4</small>
+                  <strong><code>AgentEvent</code></strong>
+                  <p>Callbacks become <code>sdk.*</code> HRC events and message buffers.</p>
+                </div>
+                <div class="step">
+                  <small>5</small>
+                  <strong>Continuation</strong>
+                  <p>HRC persists provider continuation and harness session JSON on success.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-label">In-flight input</div>
+              <div class="flow-steps">
+                <div class="step">
+                  <small>1</small>
+                  <strong>Active run contribution</strong>
+                  <p>HRC validates runtime, run id, fences, and contribution capability.</p>
+                </div>
+                <div class="step">
+                  <small>2</small>
+                  <strong><code>deliverSdkInflightInput</code></strong>
+                  <p>HRC calls <code>queueInFlightInput</code> on the shared Agent Spaces client.</p>
+                </div>
+                <div class="step">
+                  <small>3</small>
+                  <strong>ASP in-flight map</strong>
+                  <p>Agent Spaces finds the active SDK session by <code>hostSessionId</code> and <code>runId</code>.</p>
+                </div>
+                <div class="step">
+                  <small>4</small>
+                  <strong>Prompt / interrupt</strong>
+                  <p>Input is enqueued; <code>interrupt_and_continue</code> invokes session interrupt when available.</p>
+                </div>
+                <div class="step">
+                  <small>5</small>
+                  <strong>Ack event</strong>
+                  <p>HRC appends <code>sdk.inflight_delivered</code> with accepted status and pending count.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-label">Headless Codex</div>
+              <div class="flow-steps">
+                <div class="step">
+                  <small>1</small>
+                  <strong>Codex CLI spec</strong>
+                  <p>Agent Spaces may include <code>codexAppServer</code> in <code>ProcessInvocationSpec</code>.</p>
+                </div>
+                <div class="step">
+                  <small>2</small>
+                  <strong>Launch artifact</strong>
+                  <p>HRC stores the descriptor and OTEL auth metadata.</p>
+                </div>
+                <div class="step">
+                  <small>3</small>
+                  <strong>Direct harness import</strong>
+                  <p><code>launch/exec.ts</code> calls <code>runCodexAppServerOneShot</code> from <code>spaces-harness-codex</code>.</p>
+                </div>
+                <div class="step">
+                  <small>4</small>
+                  <strong>Callbacks</strong>
+                  <p>Thread ids become OpenAI continuations; app-server events are posted to HRC callbacks.</p>
+                </div>
+                <div class="step">
+                  <small>5</small>
+                  <strong>Normalized lifecycle</strong>
+                  <p>HRC records headless turn completion, buffers, and lifecycle events.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="inventory">
+          <div class="section-head">
+            <h2>Import Inventory</h2>
+            <p>
+              Production source import scan excluding <code>dist</code>, <code>__tests__</code>,
+              and <code>*.test.ts</code>. These are the package interfaces HRC currently imports
+              from the Agent Spaces repository.
+            </p>
+          </div>
+
+          <table class="inventory">
+            <thead>
+              <tr>
+                <th>ASP package</th>
+                <th>Imported symbols</th>
+                <th>HRC consumers</th>
+                <th>Protocol role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-label="ASP package"><code>agent-spaces</code></td>
+                <td data-label="Imported symbols">
+                  <code>AgentEvent</code>, <code>AgentSpacesClient</code>,
+                  <code>RunTurnNonInteractiveRequest</code>,
+                  <code>RunTurnNonInteractiveResponse</code>,
+                  <code>BuildProcessInvocationSpecRequest</code>,
+                  <code>BuildProcessInvocationSpecResponse</code>,
+                  <code>ProcessInvocationSpec</code>, <code>createAgentSpacesClient</code>
+                </td>
+                <td data-label="HRC consumers">
+                  <code>packages/hrc-server/src/agent-spaces-adapter/sdk-adapter.ts</code><br />
+                  <code>packages/hrc-server/src/agent-spaces-adapter/cli-adapter.ts</code>
+                </td>
+                <td data-label="Protocol role">
+                  Public bridge for SDK turn execution, in-flight input, and CLI invocation
+                  construction.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>spaces-config</code></td>
+                <td data-label="Imported symbols">
+                  <code>RuntimePlacement</code>, <code>ResolvedRuntimeBundle</code>,
+                  <code>TargetDefinition</code>, <code>PROJECT_MARKER_FILENAME</code>,
+                  <code>buildRuntimeBundleRef</code>, <code>findProjectMarker</code>,
+                  <code>getAgentsRoot</code>, <code>getAspHome</code>,
+                  <code>inferProjectIdFromCwd</code>, <code>mergeAgentWithProjectTarget</code>,
+                  <code>normalizeHarnessFrontend</code>, <code>parseAgentProfile</code>,
+                  <code>parseTargetsToml</code>, <code>resolveAgentPlacementPaths</code>,
+                  <code>resolveAgentPrimingPrompt</code>, <code>resolveHarnessProvider</code>,
+                  <code>resolveHarnessFrontendForProvider</code>
+                </td>
+                <td data-label="HRC consumers">
+                  <code>hrc-core</code>, <code>hrc-server</code>, <code>hrc-cli</code>,
+                  <code>hrcchat-cli</code>
+                </td>
+                <td data-label="Protocol role">
+                  Placement, harness/provider resolution, project inference, agent profile parsing,
+                  and persistent runtime intent shape.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>spaces-runtime</code></td>
+                <td data-label="Imported symbols">
+                  <code>AttachmentRef</code>, <code>ContentBlock</code>, <code>Message</code>,
+                  <code>ToolResult</code>, <code>UnifiedSessionEvent</code> via dynamic type import
+                </td>
+                <td data-label="HRC consumers">
+                  <code>hrc-core/src/contracts.ts</code>,
+                  <code>hrc-core/src/http-contracts.ts</code>,
+                  <code>hrc-frame-render/src/hrc-event-adapter.ts</code>,
+                  <code>hrc-frame-render/src/types.ts</code>
+                </td>
+                <td data-label="Protocol role">
+                  Attachment DTOs and harness-agnostic message/tool payload shapes used by frame
+                  projection.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>spaces-execution</code></td>
+                <td data-label="Imported symbols">
+                  <code>detectAgentLocalComponents</code>,
+                  <code>prepareAgentBrainRuntime</code>, <code>prepareAgentToolRuntime</code>,
+                  <code>resolveAgentBrainRuntime</code>, <code>AgentBrainRuntimeContext</code>,
+                  <code>BrainRuntimeResolution</code>, <code>displayPrompts</code>,
+                  <code>formatDisplayCommand</code>, <code>renderKeyValueSection</code>
+                </td>
+                <td data-label="HRC consumers">
+                  <code>hrc-server/src/agent-spaces-adapter/sdk-adapter.ts</code>,
+                  <code>hrc-server/src/brain-enricher/index.ts</code>,
+                  <code>hrc-server/src/launch/exec.ts</code>, <code>hrc-cli/src/cli.ts</code>
+                </td>
+                <td data-label="Protocol role">
+                  Runtime env preparation for agent-local brain/tools plus shared prompt and command
+                  display formatting.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>agent-scope</code></td>
+                <td data-label="Imported symbols">
+                  <code>LaneRef</code>, <code>formatScopeHandle</code>,
+                  <code>formatSessionHandle</code>, <code>normalizeLaneRef</code>,
+                  <code>parseScopeRef</code>, <code>parseSessionHandle</code>,
+                  <code>resolveQualifiedScopeInput</code>, <code>validateLaneRef</code>,
+                  <code>validateScopeRef</code>
+                </td>
+                <td data-label="HRC consumers">
+                  <code>hrc-core/src/selectors.ts</code>, <code>hrc-server</code>,
+                  <code>hrc-cli</code>, <code>hrcchat-cli</code>, <code>hrc-frame-render</code>
+                </td>
+                <td data-label="Protocol role">
+                  Canonical identity parsing and formatting for session refs, monitor selectors, and
+                  operator-visible handles.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>spaces-harness-codex/codex-session</code></td>
+                <td data-label="Imported symbols"><code>runCodexAppServerOneShot</code></td>
+                <td data-label="HRC consumers"><code>packages/hrc-server/src/launch/exec.ts</code></td>
+                <td data-label="Protocol role">
+                  Direct Codex app-server driver used for headless Codex launches. This is an
+                  important boundary exception.
+                </td>
+              </tr>
+              <tr>
+                <td data-label="ASP package"><code>cli-kit</code></td>
+                <td data-label="Imported symbols">
+                  <code>CliUsageError</code>, <code>attachJsonOption</code>,
+                  <code>consumeBody</code>, <code>exitWithError</code>,
+                  <code>parseDuration</code>, <code>parseIntegerValue</code>
+                </td>
+                <td data-label="HRC consumers"><code>hrc-cli</code>, <code>hrcchat-cli</code></td>
+                <td data-label="Protocol role">Shared CLI validation and process-exit ergonomics.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="callout">
+            <strong>Package-level dependency fan-out</strong>
+            <code>hrc-server</code> is the integration hotspot. <code>hrc-core</code> imports ASP
+            types for DTOs, <code>hrc-frame-render</code> imports runtime message primitives, and
+            the CLIs import target resolution utilities. <code>hrc-sdk</code>,
+            <code>hrc-events</code>, <code>hrc-store-sqlite</code>, and
+            <code>agent-action-render</code> do not import ASP packages in production source.
+          </div>
+        </section>
+
+        <section id="contracts">
+          <div class="section-head">
+            <h2>Contract Details</h2>
+            <p>
+              Expand each contract for the system-level meaning and source of truth. These are the
+              places where protocol consolidation should start.
+            </p>
+          </div>
+
+          <details open>
+            <summary><span class="badge critical">Critical</span> Placement and runtime intent</summary>
+            <div class="detail-body">
+              <div class="two-col">
+                <div>
+                  <h3>HRC responsibility</h3>
+                  <ul class="checklist">
+                    <li>Accept HTTP and CLI input, then build or parse <code>HrcRuntimeIntent</code>.</li>
+                    <li>Normalize correlation with <code>hostSessionId</code>, <code>runId</code>, <code>scopeRef</code>, and <code>laneRef</code>.</li>
+                    <li>Persist the intent on the HRC session as <code>lastAppliedIntentJson</code>.</li>
+                    <li>Choose execution lane: tmux, headless, or SDK.</li>
+                  </ul>
+                </div>
+                <div>
+                  <h3>ASP responsibility</h3>
+                  <ul class="checklist">
+                    <li>Resolve <code>RuntimePlacement</code> to <code>ResolvedRuntimeBundle</code>.</li>
+                    <li>Materialize spaces, prompts, hooks, MCP config, and harness-specific files.</li>
+                    <li>Plan effective cwd, model, yolo flag, and provider-specific run options.</li>
+                    <li>Return either a process invocation spec or SDK events.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <details>
+            <summary><span class="badge critical">Critical</span> Invocation spec and launch artifact</summary>
+            <div class="detail-body">
+              <p>
+                <code>BuildProcessInvocationSpecRequest</code> carries placement, provider,
+                frontend, model, interaction mode, I/O mode, continuation, prompt, attachments, and
+                env deltas. Agent Spaces returns <code>ProcessInvocationSpec</code> with argv, cwd,
+                env, display command, resolved bundle, warnings, optional system prompt file, and
+                optional Codex app-server descriptor.
+              </p>
+              <p>
+                HRC then writes <code>HrcLaunchArtifact</code> with HRC-only metadata:
+                <code>launchId</code>, <code>runtimeId</code>, <code>generation</code>,
+                callback socket, spool dir, OTEL configuration, and extracted correlation env.
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary><span class="badge runtime">Runtime</span> Event conversion and projection</summary>
+            <div class="detail-body">
+              <p>
+                SDK execution uses Agent Spaces <code>AgentEvent</code> callbacks. HRC maps event
+                types to <code>sdk.state</code>, <code>sdk.message</code>,
+                <code>sdk.message_delta</code>, <code>sdk.tool_call</code>,
+                <code>sdk.tool_result</code>, and <code>sdk.complete</code> HRC events. HRC strips
+                fields already represented by the event envelope while preserving continuation when
+                present.
+              </p>
+              <p>
+                CLI execution uses hook callbacks, launch callbacks, and Codex OTEL/app-server
+                events. <code>hrc-frame-render</code> then adapts HRC lifecycle events to render
+                frames, while relying on <code>spaces-runtime</code> message/tool result primitive
+                shapes.
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary><span class="badge core">Core</span> Correlation env</summary>
+            <div class="detail-body">
+              <p>
+                There are two related correlation env builders. Agent Spaces exports
+                <code>buildCorrelationEnvVars</code>, producing <code>AGENT_SCOPE_REF</code>,
+                <code>AGENT_LANE_REF</code>, <code>HRC_SESSION_REF</code>, and
+                <code>AGENT_HOST_SESSION_ID</code>. HRC's adapter additionally produces
+                <code>ASP_SCOPE_REF</code>, <code>ASP_AGENT_ID</code>, <code>ASP_PROJECT</code>,
+                <code>ASP_TASK_ID</code>, <code>ASP_HANDLE</code>,
+                <code>HRC_HOST_SESSION_ID</code>, <code>HRC_RUN_ID</code>, and task context vars.
+              </p>
+              <p>
+                This should become a single versioned contract. Today, callers can observe different
+                names depending on which path built the env.
+              </p>
+            </div>
+          </details>
+        </section>
+
+        <section id="concerns">
+          <div class="section-head">
+            <h2>Concerns</h2>
+            <p>
+              Areas where protocols, ownership, or implementation details leak across the HRC / ASP
+              boundary. Severity is based on refactor risk and likelihood of drift.
+            </p>
+          </div>
+
+          <div class="concerns">
+            <article class="concern" data-level="critical">
+              <span class="badge critical">Critical</span>
+              <h3>Mixed legacy and placement request shapes</h3>
+              <p>
+                <code>RunTurnNonInteractiveRequest</code> and
+                <code>BuildProcessInvocationSpecRequest</code> still require legacy
+                <code>aspHome</code>, <code>spec</code>, and <code>cwd</code> fields even when
+                <code>placement</code> is set and those fields are ignored. HRC passes placeholder
+                values such as <code>spec: { spaces: [] }</code> and <code>cwd: '/'</code>.
+              </p>
+            </article>
+
+            <article class="concern" data-level="critical">
+              <span class="badge critical">Critical</span>
+              <h3>RuntimePlacement is cast, persisted, and not fully validated by HRC</h3>
+              <p>
+                <code>server-parsers.ts</code> casts request JSON to
+                <code>import('spaces-config').RuntimePlacement</code>. HRC later persists the
+                intent and routes execution from it. Invalid placement can escape early validation
+                until the ASP resolver or launch path rejects it.
+              </p>
+            </article>
+
+            <article class="concern" data-level="high">
+              <span class="badge risk">High</span>
+              <h3>Correlation env has two overlapping dialects</h3>
+              <p>
+                Agent Spaces and HRC each build correlation env vars. The overlap is useful, but
+                the naming differs: <code>AGENT_SCOPE_REF</code> vs <code>ASP_SCOPE_REF</code>,
+                <code>AGENT_HOST_SESSION_ID</code> vs <code>HRC_HOST_SESSION_ID</code>, plus
+                HRC-only task vars. Tool authors may depend on path-specific names.
+              </p>
+            </article>
+
+            <article class="concern" data-level="high">
+              <span class="badge risk">High</span>
+              <h3>SDK paths prepare brain/tools env twice</h3>
+              <p>
+                HRC's <code>buildSdkRequestEnv</code> calls
+                <code>detectAgentLocalComponents</code>, <code>prepareAgentBrainRuntime</code>, and
+                <code>prepareAgentToolRuntime</code>, then Agent Spaces placement SDK execution
+                prepares brain/tools again. Some operations are idempotent, but the split makes env
+                ownership unclear.
+              </p>
+            </article>
+
+            <article class="concern" data-level="high">
+              <span class="badge risk">High</span>
+              <h3>HRC imports a harness-specific Codex subpath</h3>
+              <p>
+                <code>launch/exec.ts</code> imports
+                <code>spaces-harness-codex/codex-session</code> directly to run
+                <code>runCodexAppServerOneShot</code>. That bypasses the otherwise public
+                <code>agent-spaces</code> client boundary and couples HRC to a harness package.
+              </p>
+            </article>
+
+            <article class="concern" data-level="medium">
+              <span class="badge risk">Medium</span>
+              <h3>Target resolution is duplicated in HRC CLIs</h3>
+              <p>
+                <code>hrcchat-cli/src/resolve-intent.ts</code> explicitly mirrors
+                <code>hrc-cli</code> resolution to avoid an <code>hrcchat -> hrc-cli</code>
+                dependency. Both read profiles, merge project targets, infer provider, and build
+                placement.
+              </p>
+            </article>
+
+            <article class="concern" data-level="medium">
+              <span class="badge risk">Medium</span>
+              <h3>Deprecated <code>cpSessionId</code> remains in public ASP contracts</h3>
+              <p>
+                Agent Spaces request and event types still carry
+                <code>cpSessionId</code> alongside <code>hostSessionId</code>. HRC strips or
+                conditionally preserves it in event JSON. This is old control-plane vocabulary
+                leaking through a modern host/session contract.
+              </p>
+            </article>
+
+            <article class="concern" data-level="medium">
+              <span class="badge risk">Medium</span>
+              <h3>Untyped prompt extension on invocation result</h3>
+              <p>
+                HRC casts <code>ProcessInvocationSpec</code> to read optional
+                <code>prompts</code>, <code>systemPromptFile</code>, and
+                <code>codexAppServer</code>. <code>systemPromptFile</code> and
+                <code>codexAppServer</code> are typed in the ASP spec; <code>prompts</code> is an
+                HRC-side extension and should be formalized or removed.
+              </p>
+            </article>
+
+            <article class="concern" data-level="medium">
+              <span class="badge risk">Medium</span>
+              <h3><code>dryRun</code> defaults hide invalid placement during dispatch</h3>
+              <p>
+                HRC normalizes dispatch placement with <code>dryRun: true</code> when unset, and
+                headless SDK start paths also default dry run. That supports tests and early startup
+                flows, but it can delay real validation and create different behavior across
+                interactive, headless, and SDK lanes.
+              </p>
+            </article>
+
+            <article class="concern" data-level="medium">
+              <span class="badge risk">Medium</span>
+              <h3>Event primitive ownership is split</h3>
+              <p>
+                <code>spaces-runtime</code> defines unified session message/tool primitives, while
+                <code>hrc-events</code> also defines hook-derived primitives. The shapes are close,
+                but not a single contract. Renderers consume the common subset through
+                <code>hrc-frame-render</code>.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="refactor">
+          <div class="section-head">
+            <h2>Refactor Targets</h2>
+            <p>
+              Practical simplifications that reduce protocol surface area without changing the
+              three-repo ownership model.
+            </p>
+          </div>
+
+          <div class="two-col">
+            <article class="card important">
+              <span class="badge critical">First</span>
+              <h3>Split placement-only request types</h3>
+              <p>
+                Add placement-only <code>AgentSpacesClient</code> methods or overloads that do not
+                require legacy <code>aspHome/spec/cwd</code> placeholders. Keep legacy
+                <code>SpaceSpec</code> methods as explicit compatibility APIs until removed.
+              </p>
+            </article>
+
+            <article class="card important">
+              <span class="badge critical">First</span>
+              <h3>Publish one correlation env contract</h3>
+              <p>
+                Define a single source of truth, probably in <code>agent-scope</code> or
+                <code>spaces-config</code>, for session/ref/task env names. HRC can append
+                HRC-only launch identity vars after the shared block.
+              </p>
+            </article>
+
+            <article class="card core-line">
+              <span class="badge core">Next</span>
+              <h3>Move target-to-intent resolution into ASP</h3>
+              <p>
+                Extract the duplicated <code>hrc-cli</code> and <code>hrcchat-cli</code> resolution
+                logic into a shared ASP helper that returns <code>RuntimePlacement</code>, provider,
+                frontend, and warnings. HRC CLIs should own UX, not profile merging.
+              </p>
+            </article>
+
+            <article class="card core-line">
+              <span class="badge core">Next</span>
+              <h3>Validate placement at the HTTP edge</h3>
+              <p>
+                Export a runtime validator or JSON schema for <code>RuntimePlacement</code> from
+                <code>spaces-config</code>. HRC should reject malformed placement before persisting
+                it as <code>lastAppliedIntentJson</code>.
+              </p>
+            </article>
+
+            <article class="card runtime-line">
+              <span class="badge runtime">Runtime</span>
+              <h3>De-duplicate brain/tools preparation</h3>
+              <p>
+                Pick one owner. Prefer Agent Spaces to prepare ASP runtime env for both CLI and SDK
+                placement execution, while HRC supplies only HRC launch/task env and operator
+                overrides.
+              </p>
+            </article>
+
+            <article class="card runtime-line">
+              <span class="badge runtime">Runtime</span>
+              <h3>Hide Codex app-server behind the bridge</h3>
+              <p>
+                Move <code>runCodexAppServerOneShot</code> behind <code>agent-spaces</code> or
+                <code>spaces-execution</code> so HRC consumes a harness-neutral headless execution
+                contract instead of importing a harness package subpath.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="appendix">
+          <div class="section-head">
+            <h2>Appendix</h2>
+            <p>
+              Representative contract samples for integration planning. These examples are
+              intentionally concrete so refactors can compare old and new protocol shapes.
+            </p>
+          </div>
+
+          <div class="appendix-grid">
+            <article class="card sample-card hrc-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-hrc">hrc-runtime</span>
+                <span class="badge critical">Host request</span>
+              </div>
+              <div class="owner-path">
+                Based on <code>EnsureRuntimeRequest</code> and <code>HrcRuntimeIntent</code>
+              </div>
+              <h3>Start or Ensure Runtime</h3>
+              <pre class="codebox">{
+  "hostSessionId": "hs-9f2b",
+  "restartStyle": "reuse_pty",
+  "intent": {
+    "placement": {
+      "agentRoot": "/Users/lherron/agents/cody",
+      "projectRoot": "/Users/lherron/praesidium/hrc-runtime",
+      "cwd": "/Users/lherron/praesidium/hrc-runtime",
+      "runMode": "task",
+      "bundle": {
+        "kind": "agent-project",
+        "agentName": "cody",
+        "projectRoot": "/Users/lherron/praesidium/hrc-runtime"
+      },
+      "correlation": {
+        "sessionRef": {
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-00990",
+          "laneRef": "main"
+        }
+      }
+    },
+    "harness": {
+      "provider": "openai",
+      "interactive": true,
+      "id": "codex-cli",
+      "model": "gpt-5.2"
+    },
+    "execution": {
+      "preferredMode": "interactive"
+    },
+    "initialPrompt": "Start the task and report the plan."
+  }
+}</pre>
+              <p class="sample-note">
+                HRC persists the intent on the session and later normalizes placement correlation
+                with <code>hostSessionId</code> and <code>runId</code>.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">Placement</span>
+              </div>
+              <div class="owner-path">Defined in <code>spaces-config</code></div>
+              <h3>RuntimePlacement</h3>
+              <pre class="codebox">{
+  "agentRoot": "/Users/lherron/agents/cody",
+  "projectRoot": "/Users/lherron/praesidium/hrc-runtime",
+  "cwd": "/Users/lherron/praesidium/hrc-runtime",
+  "runMode": "task",
+  "bundle": {
+    "kind": "agent-project",
+    "agentName": "cody",
+    "projectRoot": "/Users/lherron/praesidium/hrc-runtime"
+  },
+  "scaffoldPackets": [
+    {
+      "slot": "task",
+      "contentType": "markdown",
+      "content": "Implement T-00990 with tests."
+    }
+  ],
+  "correlation": {
+    "hostSessionId": "hs-9f2b",
+    "runId": "run-f1b8",
+    "sessionRef": {
+      "scopeRef": "agent:cody:project:hrc-runtime:task:T-00990",
+      "laneRef": "main"
+    }
+  },
+  "dryRun": false
+}</pre>
+              <p class="sample-note">
+                This is the ASP-owned placement input embedded inside HRC runtime intents.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">CLI request</span>
+              </div>
+              <div class="owner-path">
+                Sent by <code>buildCliInvocation()</code> to
+                <code>AgentSpacesClient.buildProcessInvocationSpec()</code>
+              </div>
+              <h3>BuildProcessInvocationSpecRequest</h3>
+              <pre class="codebox">{
+  "placement": { "...": "RuntimePlacement" },
+  "provider": "openai",
+  "frontend": "codex-cli",
+  "model": "gpt-5.2",
+  "interactionMode": "headless",
+  "ioMode": "pipes",
+  "prompt": "Continue from the latest context.",
+  "attachments": [
+    {
+      "kind": "file",
+      "path": "/tmp/screenshot.png",
+      "contentType": "image/png"
+    }
+  ],
+  "continuation": {
+    "provider": "openai",
+    "key": "thread_abc123"
+  },
+  "yolo": true,
+
+  "aspHome": "/Users/lherron/.asp",
+  "spec": { "spaces": [] },
+  "cwd": "/"
+}</pre>
+              <p class="sample-note">
+                The final three fields are current legacy placeholders when
+                <code>placement</code> is present.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">CLI response</span>
+              </div>
+              <div class="owner-path">Returned as <code>BuildProcessInvocationSpecResponse</code></div>
+              <h3>ProcessInvocationSpec</h3>
+              <pre class="codebox">{
+  "spec": {
+    "provider": "openai",
+    "frontend": "codex-cli",
+    "argv": [
+      "/Users/lherron/.bun/bin/codex",
+      "app-server",
+      "--json"
+    ],
+    "cwd": "/Users/lherron/praesidium/hrc-runtime",
+    "env": {
+      "ASP_HOME": "/Users/lherron/.asp",
+      "CODEX_HOME": "/Users/lherron/.asp/codex-homes/hrc-runtime_cody",
+      "AGENTCHAT_ID": "cody",
+      "HRC_SESSION_REF": "agent:cody:project:hrc-runtime:task:T-00990/lane:main"
+    },
+    "interactionMode": "headless",
+    "ioMode": "pipes",
+    "displayCommand": "codex app-server --json",
+    "systemPromptFile": "/Users/lherron/.asp/projects/hrc-runtime/cody/AGENTS.md",
+    "codexAppServer": {
+      "prompt": "Continue from the latest context.",
+      "resumeThreadId": "thread_abc123",
+      "model": "gpt-5.2",
+      "approvalPolicy": "never",
+      "sandboxMode": "danger-full-access"
+    }
+  },
+  "resolvedBundle": {
+    "bundleIdentity": "agent-project:cody@hrc-runtime",
+    "runMode": "task",
+    "cwd": "/Users/lherron/praesidium/hrc-runtime",
+    "instructions": [],
+    "spaces": []
+  },
+  "warnings": []
+}</pre>
+              <p class="sample-note">
+                HRC turns this into a launch artifact, adding runtime ids, callback socket, spool
+                path, and OTEL metadata.
+              </p>
+            </article>
+
+            <article class="card sample-card hrc-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-hrc">hrc-runtime</span>
+                <span class="badge runtime">Launch</span>
+              </div>
+              <div class="owner-path">Persisted as <code>HrcLaunchArtifact</code></div>
+              <h3>Launch Artifact</h3>
+              <pre class="codebox">{
+  "launchId": "launch-a6d4",
+  "hostSessionId": "hs-9f2b",
+  "generation": 3,
+  "runtimeId": "rt-4401",
+  "runId": "run-f1b8",
+  "harness": "codex-cli",
+  "frontend": "codex-cli",
+  "provider": "openai",
+  "argv": ["/Users/lherron/.bun/bin/codex", "app-server", "--json"],
+  "env": {
+    "HRC_LAUNCH_ID": "launch-a6d4",
+    "HRC_RUNTIME_ID": "rt-4401",
+    "HRC_RUN_ID": "run-f1b8",
+    "AGENTCHAT_TRANSPORT": "tmux"
+  },
+  "cwd": "/Users/lherron/praesidium/hrc-runtime",
+  "callbackSocketPath": "/Users/lherron/praesidium/var/run/hrc/hrc.sock",
+  "spoolDir": "/Users/lherron/praesidium/var/run/hrc/spool",
+  "correlationEnv": {
+    "HRC_SESSION_REF": "agent:cody:project:hrc-runtime:task:T-00990/lane:main"
+  },
+  "launchMode": "app-server",
+  "interactionMode": "headless",
+  "ioMode": "pipes"
+}</pre>
+              <p class="sample-note">
+                This is HRC-only operational state. It should not be required by ASP consumers.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge runtime">SDK request</span>
+              </div>
+              <div class="owner-path">
+                Sent by <code>runSdkTurn()</code> to
+                <code>AgentSpacesClient.runTurnNonInteractive()</code>
+              </div>
+              <h3>RunTurnNonInteractiveRequest</h3>
+              <pre class="codebox">{
+  "placement": { "...": "RuntimePlacement" },
+  "frontend": "agent-sdk",
+  "model": "claude-sonnet-4-5-20250929",
+  "prompt": "Summarize current runtime state.",
+  "attachments": [],
+  "runId": "run-f1b8",
+  "hostSessionId": "hs-9f2b",
+  "continuation": {
+    "provider": "anthropic",
+    "key": "sdk-session-7132"
+  },
+  "env": {
+    "HRC_RUN_ID": "run-f1b8",
+    "ASP_AGENT_ID": "cody",
+    "GBRAIN_HOME": "/Users/lherron/agents/cody/var/brain"
+  },
+
+  "aspHome": "/Users/lherron/.asp",
+  "spec": { "spaces": [] },
+  "cwd": "/"
+}</pre>
+              <p class="sample-note">
+                The real request also carries <code>callbacks.onEvent</code>; HRC maps those
+                callbacks into stored lifecycle events and runtime buffers.
+              </p>
+            </article>
+
+            <article class="card sample-card hrc-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-hrc">hrc-runtime</span>
+                <span class="badge runtime">Events</span>
+              </div>
+              <div class="owner-path">
+                Agent Spaces <code>AgentEvent</code> normalized to HRC event envelope
+              </div>
+              <h3>SDK Event Mapping</h3>
+              <pre class="codebox">{
+  "agentEvent": {
+    "ts": "2026-05-20T13:00:00.000Z",
+    "seq": 7,
+    "hostSessionId": "hs-9f2b",
+    "runId": "run-f1b8",
+    "type": "tool_call",
+    "toolUseId": "toolu_01",
+    "toolName": "Read",
+    "input": { "file_path": "packages/hrc-core/src/contracts.ts" }
+  },
+  "hrcEvent": {
+    "ts": "2026-05-20T13:00:00.000Z",
+    "hostSessionId": "hs-9f2b",
+    "scopeRef": "agent:cody:project:hrc-runtime:task:T-00990",
+    "laneRef": "main",
+    "generation": 3,
+    "runId": "run-f1b8",
+    "runtimeId": "rt-4401",
+    "source": "agent-spaces",
+    "eventKind": "sdk.tool_call",
+    "eventJson": {
+      "type": "tool_call",
+      "toolUseId": "toolu_01",
+      "toolName": "Read",
+      "input": { "file_path": "packages/hrc-core/src/contracts.ts" }
+    }
+  }
+}</pre>
+              <p class="sample-note">
+                Envelope fields are HRC-owned. SDK payload semantics remain ASP-owned.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge runtime">In-flight</span>
+              </div>
+              <div class="owner-path">Delivered through <code>queueInFlightInput()</code></div>
+              <h3>In-flight Input</h3>
+              <pre class="codebox">{
+  "hostSessionId": "hs-9f2b",
+  "runId": "run-f1b8",
+  "inputApplicationId": "hrcchat",
+  "idempotencyKey": "dm-20260520-001",
+  "semantics": "interrupt_and_continue",
+  "prompt": "Correction: use the placement-only API shape."
+}</pre>
+              <p class="sample-note">
+                HRC validates active runtime/run fences first, then Agent Spaces queues the input
+                against the active SDK session.
+              </p>
+            </article>
+
+            <article class="card sample-card asp-owned">
+              <div class="interface-meta">
+                <span class="owner-chip owner-asp">agent-spaces</span>
+                <span class="badge core">Identity</span>
+              </div>
+              <div class="owner-path">Defined by <code>agent-scope</code></div>
+              <h3>Scope and Session Refs</h3>
+              <pre class="codebox">{
+  "scopeHandle": "cody@hrc-runtime:T-00990",
+  "scopeRef": "agent:cody:project:hrc-runtime:task:T-00990",
+  "laneRef": "main",
+  "sessionRef": "agent:cody:project:hrc-runtime:task:T-00990/lane:main",
+  "displayHandle": "cody@hrc-runtime:T-00990"
+}</pre>
+              <p class="sample-note">
+                HRC persists canonical refs. CLIs may accept handles, but shared parsing belongs to
+                <code>agent-scope</code>.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="sources" class="footer">
+          <h2>Source Basis</h2>
+          <p>
+            Primary HRC integration files:
+            <code>packages/hrc-server/src/agent-spaces-adapter/sdk-adapter.ts</code>,
+            <code>packages/hrc-server/src/agent-spaces-adapter/cli-adapter.ts</code>,
+            <code>packages/hrc-server/src/index.ts</code>,
+            <code>packages/hrc-server/src/server-parsers.ts</code>,
+            <code>packages/hrc-server/src/launch/exec.ts</code>,
+            <code>packages/hrc-core/src/contracts.ts</code>,
+            <code>packages/hrc-core/src/http-contracts.ts</code>,
+            <code>packages/hrc-core/src/selectors.ts</code>,
+            <code>packages/hrc-cli/src/cli.ts</code>,
+            <code>packages/hrcchat-cli/src/resolve-intent.ts</code>, and
+            <code>packages/hrc-frame-render/src/hrc-event-adapter.ts</code>.
+          </p>
+          <p>
+            Primary ASP contract files:
+            <code>../agent-spaces/packages/agent-spaces/src/types.ts</code>,
+            <code>../agent-spaces/packages/agent-spaces/src/client.ts</code>,
+            <code>../agent-spaces/packages/agent-spaces/src/placement-api.ts</code>,
+            <code>../agent-spaces/packages/config/src/core/types/placement.ts</code>,
+            <code>../agent-spaces/packages/config/src/core/types/harness.ts</code>,
+            <code>../agent-spaces/packages/config/src/core/types/agent-profile.ts</code>,
+            <code>../agent-spaces/packages/execution/src/run/placement-plan.ts</code>,
+            <code>../agent-spaces/packages/execution/src/run/agent-profile.ts</code>,
+            <code>../agent-spaces/packages/execution/src/run/agent-brain.ts</code>,
+            <code>../agent-spaces/packages/execution/src/run/agent-tools.ts</code>, and
+            <code>../agent-spaces/packages/runtime/src/session/types.ts</code>.
+          </p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
