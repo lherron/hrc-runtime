@@ -34,11 +34,13 @@ type SeedRunOptions = {
   hostSessionId: string
   scopeRef: string
   runtimeId: string
-  transport?: 'sdk' | 'tmux' | undefined
+  transport?: 'sdk' | 'tmux' | 'headless' | undefined
   runtimeStatus?: string | undefined
   updatedAt?: string | undefined
   activeRunOwner?: boolean | undefined
   tmuxSessionName?: string | undefined
+  launchId?: string | undefined
+  launchStatus?: string | undefined
 }
 
 function isoMinutesAgo(minutes: number): string {
@@ -68,6 +70,7 @@ function seedRun(options: SeedRunOptions): void {
       harness: transport === 'tmux' ? 'claude-code' : 'agent-sdk',
       provider: 'anthropic',
       status: options.runtimeStatus ?? 'busy',
+      ...(options.launchId ? { launchId: options.launchId } : {}),
       ...(transport === 'tmux'
         ? {
             tmuxJson: {
@@ -84,6 +87,21 @@ function seedRun(options: SeedRunOptions): void {
       createdAt: timestamp,
       updatedAt: timestamp,
     })
+
+    if (options.launchId && options.launchStatus) {
+      db.launches.insert({
+        launchId: options.launchId,
+        hostSessionId: options.hostSessionId,
+        generation: 1,
+        runtimeId: options.runtimeId,
+        harness: transport === 'tmux' ? 'claude-code' : 'codex-cli',
+        provider: transport === 'tmux' ? 'anthropic' : 'openai',
+        launchArtifactPath: `/tmp/${options.launchId}.json`,
+        status: options.launchStatus,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
 
     db.runs.insert({
       runId: options.runId,
@@ -243,6 +261,40 @@ describe('POST /v1/runs/reconcile-active', () => {
     expect(getRun('run-missing-tmux')?.errorCode).toBe('runtime_unavailable_with_active_run')
     expect(getRuntime('rt-missing-tmux')?.status).toBe('dead')
     expect(getRuntime('rt-missing-tmux')?.activeRunId).toBeUndefined()
+  })
+
+  it('reaps headless active runs whose launch is orphaned', async () => {
+    seedRun({
+      runId: 'run-headless-orphan',
+      hostSessionId: 'hsid-headless-orphan',
+      scopeRef: 'reconcile-active-headless-orphan',
+      runtimeId: 'rt-headless-orphan',
+      transport: 'headless',
+      runtimeStatus: 'busy',
+      launchId: 'launch-headless-orphan',
+      launchStatus: 'orphaned',
+    })
+
+    const body = await reconcile({ olderThan: '30m', yes: true })
+
+    expect(body.results[0]).toMatchObject({
+      runId: 'run-headless-orphan',
+      transport: 'headless',
+      status: 'reaped',
+      reason: 'orphaned-headless',
+      nextRuntimeStatus: 'stale',
+      launchId: 'launch-headless-orphan',
+      launchStatus: 'orphaned',
+    })
+    expect(getRun('run-headless-orphan')?.status).toBe('failed')
+    expect(getRun('run-headless-orphan')?.errorCode).toBe(
+      'runtime_unavailable_with_active_run'
+    )
+    expect(getRuntime('rt-headless-orphan')?.status).toBe('stale')
+    expect(getRuntime('rt-headless-orphan')?.activeRunId).toBeUndefined()
+    const reaped = listEvents('turn.reaped')
+    expect(reaped).toHaveLength(1)
+    expect(reaped[0]?.payload).toMatchObject({ reason: 'orphaned-headless' })
   })
 
   it('reaps stale busy tmux and sdk active runs after the activity threshold', async () => {

@@ -4021,7 +4021,7 @@ class HrcServerInstance implements HrcServer {
           runId: candidate.run.runId,
           hostSessionId: candidate.run.hostSessionId,
           runtimeId: candidate.runtime.runtimeId,
-          transport: candidate.run.transport === 'sdk' ? 'sdk' : 'tmux',
+          transport: reconcileResultTransport(candidate.run),
           status: 'error',
           reason: 'runtime_unavailable_with_active_run',
           observedAt: candidate.observedAt,
@@ -4055,7 +4055,7 @@ class HrcServerInstance implements HrcServer {
       .query<HrcServerRunRow, []>(
         `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
           WHERE status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux')
+            AND transport IN ('sdk', 'tmux', 'headless')
             AND runtime_id IS NOT NULL
             AND completed_at IS NULL
           ORDER BY updated_at ASC, run_id ASC`
@@ -4070,13 +4070,15 @@ class HrcServerInstance implements HrcServer {
       const runtime = this.db.runtimes.getByRuntimeId(run.runtimeId)
       if (!runtime || runtime.activeRunId !== run.runId) continue
 
+      const launch = runtime.launchId ? this.db.launches.getByLaunchId(runtime.launchId) : null
+      if (run.transport === 'headless' && launch?.status !== 'orphaned') continue
+
       const observed = this.latestObservedRunActivity(run)
       const observedMs = Date.parse(observed.observedAt)
       if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
         continue
       }
 
-      const launch = runtime.launchId ? this.db.launches.getByLaunchId(runtime.launchId) : null
       candidates.push({
         run,
         runtime,
@@ -4091,6 +4093,15 @@ class HrcServerInstance implements HrcServer {
     candidate: ActiveRunReconcileCandidate
   ): Promise<ActiveRunReconcilePlan> {
     const { runtime, launch } = candidate
+
+    if (runtime.transport === 'headless' && launch?.status === 'orphaned') {
+      return {
+        action: 'reap',
+        reason: 'orphaned-headless',
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+        nextRuntimeStatus: 'stale',
+      }
+    }
 
     if (runtime.status === 'terminated') {
       return {
@@ -4189,7 +4200,7 @@ class HrcServerInstance implements HrcServer {
       runId: candidate.run.runId,
       hostSessionId: candidate.run.hostSessionId,
       runtimeId: candidate.runtime.runtimeId,
-      transport: candidate.run.transport === 'sdk' ? 'sdk' : 'tmux',
+      transport: reconcileResultTransport(candidate.run),
       status,
       reason: plan.reason,
       observedAt: candidate.observedAt,
@@ -4224,7 +4235,7 @@ class HrcServerInstance implements HrcServer {
           WHERE run_id = ?
             AND runtime_id = ?
             AND status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux')
+            AND transport IN ('sdk', 'tmux', 'headless')
             AND completed_at IS NULL
             AND EXISTS (
               SELECT 1 FROM runtimes
@@ -4279,7 +4290,9 @@ class HrcServerInstance implements HrcServer {
       generation: candidate.run.generation,
       runId: candidate.run.runId,
       runtimeId: candidate.runtime.runtimeId,
-      ...(candidate.run.transport === 'sdk' || candidate.run.transport === 'tmux'
+      ...(candidate.run.transport === 'sdk' ||
+      candidate.run.transport === 'tmux' ||
+      candidate.run.transport === 'headless'
         ? { transport: candidate.run.transport }
         : {}),
       errorCode,
@@ -8944,6 +8957,8 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
 
       const session = requireSession(db, launch.hostSessionId)
       const now = timestamp()
+      const runtime = launch.runtimeId ? db.runtimes.getByRuntimeId(launch.runtimeId) : null
+      const activeRunId = runtime?.activeRunId
       db.launches.update(launch.launchId, {
         status: 'orphaned',
         updatedAt: now,
@@ -8955,12 +8970,16 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
         laneRef: session.laneRef,
         generation: session.generation,
         runtimeId: launch.runtimeId,
+        runId: activeRunId,
         launchId: launch.launchId,
         payload: {
           pid: trackedPid,
           priorStatus: launch.status,
         },
       })
+      if (runtime?.transport === 'headless' && activeRunId) {
+        reapStartupHeadlessOrphan(db, session, runtime, launch, activeRunId, now)
+      }
     } catch (error) {
       logStartupIssue('launch reconciliation failed', { launchId: launch.launchId }, error)
     }
@@ -9132,6 +9151,61 @@ function markRuntimeStale(
     generation: session.generation,
     runtimeId: runtime.runtimeId,
     payload: eventJson,
+  })
+}
+
+function reapStartupHeadlessOrphan(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  launch: HrcLaunchRecord,
+  runId: string,
+  now: string
+): HrcLifecycleEvent | null {
+  const run = db.runs.getByRunId(runId)
+  if (!run || !isRunActive(run) || run.transport !== 'headless') {
+    return null
+  }
+
+  db.runs.markCompleted(runId, {
+    status: 'failed',
+    completedAt: now,
+    updatedAt: now,
+    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+    errorMessage: `${HRC_REAPED_RUN_ERROR_MESSAGE}: orphaned-headless`,
+  })
+  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+  db.runtimes.update(runtime.runtimeId, {
+    status: 'stale',
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+
+  return appendHrcEvent(db, 'turn.reaped', {
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    runId,
+    transport: 'headless',
+    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+    payload: {
+      runId,
+      runtimeId: runtime.runtimeId,
+      reason: 'orphaned-headless',
+      lastObservedAt: now,
+      observedSource: 'updated_at',
+      priorRunStatus: run.status,
+      priorRuntimeStatus: runtime.status,
+      nextRuntimeStatus: 'stale',
+      launchId: launch.launchId,
+      launchStatus: 'orphaned',
+      wrapperPid: launch.wrapperPid,
+      childPid: launch.childPid,
+      runtimeOwnershipCleared: true,
+    },
   })
 }
 
@@ -9930,6 +10004,10 @@ function mapServerRunRow(row: HrcServerRunRow): HrcRunRecord {
     ...(row.error_code ? { errorCode: row.error_code } : {}),
     ...(row.error_message ? { errorMessage: row.error_message } : {}),
   }
+}
+
+function reconcileResultTransport(run: HrcRunRecord): ReconcileActiveRunResult['transport'] {
+  return run.transport === 'sdk' || run.transport === 'headless' ? run.transport : 'tmux'
 }
 
 function runtimeMatchesSweepRequest(

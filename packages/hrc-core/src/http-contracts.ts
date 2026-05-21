@@ -378,6 +378,7 @@ export type ReconcileActiveRunsRequest = {
 }
 
 export type ReconcileActiveRunReason =
+  | 'orphaned-headless'
   | 'runtime_terminated_with_active_run'
   | 'runtime_dead_with_active_run'
   | 'runtime_ready_with_active_run'
@@ -391,7 +392,7 @@ export type ReconcileActiveRunResult = {
   runId: string
   hostSessionId: string
   runtimeId: string
-  transport: 'sdk' | 'tmux'
+  transport: 'sdk' | 'tmux' | 'headless'
   status: 'reaped' | 'matched' | 'suspect' | 'skipped' | 'error'
   reason: ReconcileActiveRunReason
   observedAt: string
