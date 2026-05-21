@@ -363,12 +363,25 @@ export class StackedAggregator {
   }): TurnStackedEvent {
     const at = new Date(input.atMs).toISOString()
     const hrcSeqRange = seqRange(input.events)
+    // Key order is load-bearing: downstream consumers see this JSON line via
+    // hosts that truncate around 500 chars. High-signal fields come first so the
+    // actionable bits survive truncation; stable identifiers come last.
     return {
       type: 'turn_stacked',
       version: 1,
       stackSeq: ++this.stackSeq,
       phase: input.phase,
       flush: input.flush as FlushReason,
+      events: input.events.length,
+      summary: input.summary,
+      ...(hrcSeqRange !== undefined ? { hrcSeqRange } : {}),
+      ...(input.permission !== undefined ? { permission: input.permission } : {}),
+      ...(input.error !== undefined ? { error: input.error } : {}),
+      ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
+      ...(input.result !== undefined ? { result: input.result } : {}),
+      ...(input.phase === Phase.Final && input.replyMessageId !== undefined
+        ? { replyMessageId: input.replyMessageId }
+        : {}),
       at,
       window: {
         startedAt: new Date(input.windowStartedMs).toISOString(),
@@ -385,19 +398,9 @@ export class StackedAggregator {
       laneRef: this.options.handoff.laneRef,
       runId: this.options.handoff.runId,
       generation: this.options.handoff.generation,
-      ...(hrcSeqRange !== undefined ? { hrcSeqRange } : {}),
-      events: input.events.length,
-      summary: input.summary,
-      ...(input.permission !== undefined ? { permission: input.permission } : {}),
-      ...(input.error !== undefined ? { error: input.error } : {}),
-      ...(input.phase === Phase.Final && input.replyMessageId !== undefined
-        ? { replyMessageId: input.replyMessageId }
-        : {}),
       ...(input.phase === Phase.Final && input.finalBody !== undefined
         ? { finalBody: input.finalBody }
         : {}),
-      ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
-      ...(input.result !== undefined ? { result: input.result } : {}),
     }
   }
 

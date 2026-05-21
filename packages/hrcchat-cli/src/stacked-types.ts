@@ -51,14 +51,30 @@ export type StackedError = {
   code?: string | undefined
 }
 
+/**
+ * Field order is load-bearing for the JSON emitter in `stacked-aggregator.ts`:
+ * high-signal fields (phase/flush/events/summary, terminal results, permission/error)
+ * appear before stable identifiers so they survive truncation in downstream UIs
+ * that cap line length around 500 chars. See `buildLine` for the canonical order.
+ */
 export type TurnStackedEvent = {
   type: 'turn_stacked'
   version: 1
   stackSeq: number
   phase: Phase
   flush: FlushReason
+  events: number
+  summary: string
+  /** Present iff events > 0; omitted for queued/heartbeat lines. */
+  hrcSeqRange?: StackedSeqRange | undefined
+  permission?: StackedPermission | undefined
+  error?: StackedError | undefined
+  exitCode?: number | undefined
+  result?: Result | undefined
+  replyMessageId?: string | undefined
   at: string
   window: StackedWindow
+  taskId?: string | undefined
   scope: string
   messageId: string
   sessionRef: string
@@ -66,17 +82,7 @@ export type TurnStackedEvent = {
   laneRef: string
   runId: string
   generation: number
-  events: number
-  summary: string
-  taskId?: string | undefined
-  /** Present iff events > 0; omitted for queued/heartbeat lines. */
-  hrcSeqRange?: StackedSeqRange | undefined
-  permission?: StackedPermission | undefined
-  error?: StackedError | undefined
-  replyMessageId?: string | undefined
   finalBody?: string | undefined
-  exitCode?: number | undefined
-  result?: Result | undefined
 }
 
 export type SummarizerInput = {
