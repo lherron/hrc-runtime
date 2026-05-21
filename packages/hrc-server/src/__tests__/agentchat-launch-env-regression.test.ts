@@ -108,7 +108,7 @@ describe('agentchat launch env regression', () => {
           projectRoot: '/tmp/agent-spaces',
           cwd: '/tmp/agent-spaces',
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {

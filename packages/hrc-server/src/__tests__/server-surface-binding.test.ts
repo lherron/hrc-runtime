@@ -146,7 +146,7 @@ async function ensureInteractiveRuntime(scopeRef: string): Promise<{
         projectRoot: '/tmp/project',
         cwd: '/tmp/project',
         runMode: 'task',
-        bundle: { kind: 'agent-default' },
+        bundle: { kind: 'compose', compose: [] },
         dryRun: true,
       },
       harness: {

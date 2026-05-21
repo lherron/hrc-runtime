@@ -113,7 +113,7 @@ function sdkIntent(): object {
       projectRoot: '/tmp/project',
       cwd: '/tmp/project',
       runMode: 'task',
-      bundle: { kind: 'agent-default' },
+      bundle: { kind: 'compose', compose: [] },
       dryRun: true,
     },
     harness: {
@@ -130,7 +130,7 @@ function headlessIntent(): object {
       projectRoot: '/tmp/project',
       cwd: '/tmp/project',
       runMode: 'task',
-      bundle: { kind: 'agent-default' },
+      bundle: { kind: 'compose', compose: [] },
       dryRun: true,
     },
     harness: {
@@ -150,7 +150,7 @@ function tmuxIntent(): object {
       projectRoot: '/tmp/project',
       cwd: '/tmp/project',
       runMode: 'task',
-      bundle: { kind: 'agent-default' },
+      bundle: { kind: 'compose', compose: [] },
       dryRun: true,
     },
     harness: {

@@ -4578,7 +4578,7 @@ class HrcServerInstance implements HrcServer {
             projectRoot: process.cwd(),
             cwd: process.cwd(),
             runMode: 'task',
-            bundle: { kind: 'agent-default' },
+            bundle: { kind: 'compose', compose: [] },
             dryRun: true,
           },
           harness: {
@@ -5006,7 +5006,7 @@ class HrcServerInstance implements HrcServer {
           projectRoot: process.cwd(),
           cwd: process.cwd(),
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {
@@ -11162,7 +11162,8 @@ function normalizeDispatchIntent(
       projectRoot,
       cwd,
       runMode: intent.placement?.runMode ?? 'task',
-      bundle: intent.placement?.bundle ?? { kind: 'agent-default' },
+      // Callers may legitimately omit a bundle; do not claim an agent identity here.
+      bundle: intent.placement?.bundle ?? { kind: 'compose', compose: [] },
       dryRun: intent.placement?.dryRun ?? true,
       correlation: {
         sessionRef: {

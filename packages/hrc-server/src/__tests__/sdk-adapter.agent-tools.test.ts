@@ -42,7 +42,7 @@ describe('runSdkTurn agent tool env', () => {
         cwd: projectRoot,
         runMode: 'task',
         dryRun: true,
-        bundle: { kind: 'agent-default' },
+        bundle: { kind: 'compose', compose: [] },
         correlation: {
           sessionRef: {
             scopeRef: 'agent:sparky:project:agent-spaces:task:tool-env-test',

@@ -315,7 +315,7 @@ if (cmd === 'app-server') {
           projectRoot: '/tmp/project',
           cwd: '/tmp/project',
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {
@@ -380,7 +380,7 @@ if (cmd === 'app-server') {
           projectRoot: '/tmp/project',
           cwd: '/tmp/project',
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {
@@ -513,7 +513,7 @@ if (cmd === 'app-server') {
           projectRoot: '/tmp/project',
           cwd: '/tmp/project',
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {

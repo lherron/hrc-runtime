@@ -59,7 +59,7 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
       projectRoot: '/tmp/project',
       cwd: '/tmp/project',
       runMode: 'task',
-      bundle: { kind: 'agent-default' },
+      bundle: { kind: 'compose', compose: [] },
       dryRun: true,
     },
     harness: {
@@ -258,7 +258,7 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
           projectRoot: '/tmp/project',
           cwd: '/tmp/project',
           runMode: 'task',
-          bundle: { kind: 'agent-default' },
+          bundle: { kind: 'compose', compose: [] },
           dryRun: true,
         },
         harness: {

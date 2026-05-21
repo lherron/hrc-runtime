@@ -296,7 +296,7 @@ function createDefaultRuntimeIntent(
       projectRoot: cwd,
       cwd,
       runMode: 'task',
-      bundle: { kind: 'agent-default' },
+      bundle: { kind: 'compose', compose: [] },
       dryRun: true,
     },
     harness: {
