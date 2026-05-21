@@ -331,10 +331,10 @@ describe('hrc monitor show acceptance (T-01289)', () => {
       },
     })
 
-    expect(body.scope.scopeRef).toBe('agent:clod:project:agent-spaces')
-    expect(body.scope.scopeHandle).toBe('clod@agent-spaces')
-    expect(body.session.sessionRef).toBe('agent:clod:project:agent-spaces/lane:main')
-    expect(body.session.sessionHandle).toBe('clod@agent-spaces')
+    expect(body.scope.scopeRef).toBe('agent:clod:project:agent-spaces:task:primary')
+    expect(body.scope.scopeHandle).toBe('clod@agent-spaces:primary')
+    expect(body.session.sessionRef).toBe('agent:clod:project:agent-spaces:task:primary/lane:main')
+    expect(body.session.sessionHandle).toBe('clod@agent-spaces:primary')
   })
 
   it('exits 2 for an invalid selector', async () => {

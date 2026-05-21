@@ -187,13 +187,13 @@ const monitorSelectorCases = [
   {
     raw: 'cody@agent-spaces',
     kind: 'target',
-    canonicalSelector: 'session:agent:cody:project:agent-spaces/lane:main',
+    canonicalSelector: 'session:agent:cody:project:agent-spaces:task:primary/lane:main',
     expected: {
       raw: 'cody@agent-spaces',
-      scopeRef: 'agent:cody:project:agent-spaces',
-      sessionRef: 'agent:cody:project:agent-spaces/lane:main',
-      scopeHandle: 'cody@agent-spaces',
-      sessionHandle: 'cody@agent-spaces',
+      scopeRef: 'agent:cody:project:agent-spaces:task:primary',
+      sessionRef: 'agent:cody:project:agent-spaces:task:primary/lane:main',
+      scopeHandle: 'cody@agent-spaces:primary',
+      sessionHandle: 'cody@agent-spaces:primary',
     },
   },
   {

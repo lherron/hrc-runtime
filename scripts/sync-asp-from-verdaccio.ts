@@ -187,7 +187,10 @@ async function syncAsp(): Promise<void> {
     try {
       const bunfig = join(tmp, 'bunfig.toml')
       await writeFile(bunfig, '[install]\nminimumReleaseAge = 0\n')
-      const install = run('bun', ['install', `--config=${bunfig}`])
+      // --no-cache bypasses bun's manifest cache so we always see Verdaccio's
+      // current dist-tags. Without it, a freshly-published dev version can
+      // "fail to resolve" until the cache TTL expires.
+      const install = run('bun', ['install', '--no-cache', `--config=${bunfig}`])
       if (install.status !== 0) {
         throw new Error(`bun install failed while syncing ASP packages:\n${install.out}`)
       }

@@ -3,6 +3,7 @@ import {
   formatSessionHandle,
   parseScopeRef,
   parseSessionHandle,
+  resolveQualifiedScopeInput,
   validateLaneRef,
   validateScopeRef,
 } from 'agent-scope'
@@ -292,6 +293,11 @@ function parseSessionMonitorSelector(
 }
 
 function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
+  // Validate the input shape first via parseSessionHandle so we surface a
+  // clear "invalid selector" error. Then re-resolve through the qualifying
+  // resolver so the scope honors the always-qualified invariant (project
+  // present ⇒ task:primary filled when absent), matching the scopeRefs that
+  // hrc-cli / hrcchat / asp produce when seeding sessions and runtimes.
   let parsed: ReturnType<typeof parseSessionHandle>
   try {
     parsed = parseSessionHandle(raw)
@@ -302,8 +308,9 @@ function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
 
   let sessionRef: HrcSessionRef
   try {
+    const qualified = resolveQualifiedScopeInput(raw)
     sessionRef = formatCanonicalSessionRef({
-      scopeRef: parsed.scopeRef,
+      scopeRef: qualified.scopeRef,
       laneRef: parsed.laneRef,
     })
   } catch (error) {
