@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -153,7 +153,9 @@ async function seedBusyRuntime(): Promise<void> {
     db.close()
   }
 
-  await mkdir(join(fixture.tmpDir, 'agents', 'cody'), { recursive: true })
+  const agentRoot = join(fixture.tmpDir, 'agents', 'cody')
+  await mkdir(agentRoot, { recursive: true })
+  await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
 }
 
 async function runDmJson(
