@@ -24,15 +24,15 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "agent-scope": "0.1.0-dev.20260521110641",
-    "agent-spaces": "0.1.0-dev.20260521110641",
+    "agent-scope": "0.1.0-dev.20260521120825",
+    "agent-spaces": "0.1.0-dev.20260521120825",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
-    "spaces-config": "0.1.0-dev.20260521110641",
-    "spaces-execution": "0.1.0-dev.20260521110641",
-    "spaces-harness-codex": "0.1.0-dev.20260521110641",
-    "spaces-runtime": "0.1.0-dev.20260521110641"
+    "spaces-config": "0.1.0-dev.20260521120825",
+    "spaces-execution": "0.1.0-dev.20260521120825",
+    "spaces-harness-codex": "0.1.0-dev.20260521120825",
+    "spaces-runtime": "0.1.0-dev.20260521120825"
   },
   "devDependencies": {
     "@types/bun": "latest",

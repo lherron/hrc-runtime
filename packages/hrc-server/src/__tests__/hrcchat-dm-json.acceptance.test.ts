@@ -195,9 +195,7 @@ function listHrcEvents(eventKind: string): Array<{
 }> {
   const db = openHrcDatabase(fixture.dbPath)
   try {
-    return db.hrcEvents
-      .listFromHrcSeq(1)
-      .filter((event) => event.eventKind === eventKind)
+    return db.hrcEvents.listFromHrcSeq(1).filter((event) => event.eventKind === eventKind)
   } finally {
     db.close()
   }

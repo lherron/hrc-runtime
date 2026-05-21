@@ -287,9 +287,7 @@ describe('POST /v1/runs/reconcile-active', () => {
       launchStatus: 'orphaned',
     })
     expect(getRun('run-headless-orphan')?.status).toBe('failed')
-    expect(getRun('run-headless-orphan')?.errorCode).toBe(
-      'runtime_unavailable_with_active_run'
-    )
+    expect(getRun('run-headless-orphan')?.errorCode).toBe('runtime_unavailable_with_active_run')
     expect(getRuntime('rt-headless-orphan')?.status).toBe('stale')
     expect(getRuntime('rt-headless-orphan')?.activeRunId).toBeUndefined()
     const reaped = listEvents('turn.reaped')

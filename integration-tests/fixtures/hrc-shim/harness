@@ -1,0 +1,70 @@
+#!/bin/bash
+# HRC harness shim for Slice 1B integration/acceptance testing.
+#
+# Simulates a claude-code or codex-cli harness process launched by hrc-launch exec.
+# Reads the launch artifact, POSTs wrapper-started / child-started / exited
+# callbacks to the HRC server, then exits 0.
+#
+# ENVIRONMENT (set by hrc-launch exec via the launch artifact):
+#   HRC_LAUNCH_FILE       - Path to the launch artifact JSON
+#   HRC_CALLBACK_SOCKET   - Unix socket path for the HRC server
+#   HRC_SPOOL_DIR         - Spool directory for offline callbacks
+#
+# This shim does NOT use hrc-launch exec - it IS the child process that
+# hrc-launch exec would spawn. The launch artifact is passed via env or
+# the first positional argument.
+#
+# Reference: T-00964, T-00963
+
+set -euo pipefail
+
+LAUNCH_FILE="${HRC_LAUNCH_FILE:-$1}"
+if [ -z "$LAUNCH_FILE" ] || [ ! -f "$LAUNCH_FILE" ]; then
+  echo "hrc-shim: launch file not found: ${LAUNCH_FILE:-<not set>}" >&2
+  exit 1
+fi
+
+# Extract fields from launch artifact
+CALLBACK_SOCKET=$(jq -r '.callbackSocketPath' "$LAUNCH_FILE")
+LAUNCH_ID=$(jq -r '.launchId' "$LAUNCH_FILE")
+HOST_SESSION_ID=$(jq -r '.hostSessionId' "$LAUNCH_FILE")
+
+# Record that we were invoked (for test assertions)
+SHIM_OUTPUT="${HRC_SHIM_OUTPUT:-/tmp/hrc-shim-output.json}"
+jq -n \
+  --arg launchId "$LAUNCH_ID" \
+  --arg hostSessionId "$HOST_SESSION_ID" \
+  --arg launchFile "$LAUNCH_FILE" \
+  --argjson pid "$$" \
+  --argjson argv "$(jq '.argv' "$LAUNCH_FILE")" \
+  '{timestamp: now | todate, launchId: $launchId, hostSessionId: $hostSessionId, launchFile: $launchFile, pid: $pid, argv: $argv}' \
+  > "$SHIM_OUTPUT"
+
+# POST wrapper-started callback
+curl -sf --unix-socket "$CALLBACK_SOCKET" \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d "{\"hostSessionId\":\"$HOST_SESSION_ID\",\"wrapperPid\":$$,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  "http://hrc/v1/internal/launches/$LAUNCH_ID/wrapper-started" \
+  > /dev/null 2>&1 || true
+
+# POST child-started callback (we are the child in shim mode)
+curl -sf --unix-socket "$CALLBACK_SOCKET" \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d "{\"hostSessionId\":\"$HOST_SESSION_ID\",\"childPid\":$$,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  "http://hrc/v1/internal/launches/$LAUNCH_ID/child-started" \
+  > /dev/null 2>&1 || true
+
+# Brief sleep to simulate work
+sleep "${HRC_SHIM_SLEEP:-0.2}"
+
+# POST exited callback
+curl -sf --unix-socket "$CALLBACK_SOCKET" \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d "{\"hostSessionId\":\"$HOST_SESSION_ID\",\"exitCode\":0,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  "http://hrc/v1/internal/launches/$LAUNCH_ID/exited" \
+  > /dev/null 2>&1 || true
+
+exit 0

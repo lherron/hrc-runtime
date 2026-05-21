@@ -1578,20 +1578,36 @@ async function cmdRun(args: string[]): Promise<void> {
     const client = createClient()
 
     const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
-    const runtime = await client.ensureRuntime({
-      hostSessionId: resolved.hostSessionId,
-      intent,
-      restartStyle,
-    })
+    const hasPrompt = prompt !== undefined && prompt.length > 0
 
-    try {
-      await client.dispatchTurn({
-        hostSessionId: resolved.hostSessionId,
-        prompt: prompt && prompt.length > 0 ? prompt : scopeInput,
-      })
-    } catch (err) {
-      if (!isHrcDomainErrorLike(err) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
-        throw err
+    // No prompt → use startRuntime so the server can ensure the pane and, if
+    // no interactive harness is running, boot one via enqueueInteractiveStartLaunch.
+    // For an already-live runtime the server returns it unchanged and nothing is
+    // injected into the pane. A prompt routes through ensureRuntime + dispatchTurn,
+    // where the server picks literal send-keys for live harnesses and the
+    // launch-artifact path for fresh panes.
+    const runtime = hasPrompt
+      ? await client.ensureRuntime({
+          hostSessionId: resolved.hostSessionId,
+          intent,
+          restartStyle,
+        })
+      : await client.startRuntime({
+          hostSessionId: resolved.hostSessionId,
+          intent,
+          restartStyle,
+        })
+
+    if (hasPrompt) {
+      try {
+        await client.dispatchTurn({
+          hostSessionId: resolved.hostSessionId,
+          prompt,
+        })
+      } catch (err) {
+        if (!isHrcDomainErrorLike(err) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
+          throw err
+        }
       }
     }
 

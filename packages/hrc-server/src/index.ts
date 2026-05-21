@@ -2013,6 +2013,14 @@ class HrcServerInstance implements HrcServer {
       : requireLatestRuntime(this.db, session.hostSessionId)
     assertRuntimeNotBusy(this.db, runtime)
 
+    // If an interactive harness is already running in the pane, deliver the
+    // prompt as literal user input instead of injecting `bun run exec.ts`
+    // (which the running harness would otherwise eat as keystrokes). Mirrors
+    // the hrcchat dm path that uses sendLiteral against live tmux runtimes.
+    if (hasLiveInteractiveLaunch(this.db, runtime)) {
+      return await this.dispatchTurnViaLiteral(session, runtime, dispatchPrompt, runId)
+    }
+
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
@@ -2171,6 +2179,122 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       launchId,
       transport: 'tmux',
+    })
+    this.notifyEvent(startedEvent)
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: false,
+    } satisfies DispatchTurnResponse)
+  }
+
+  /**
+   * Deliver a dispatch turn as literal user input to a tmux pane that already
+   * has an interactive harness running. Avoids the `bun run exec.ts` launch
+   * path, which would be parsed as keystrokes by the live harness CLI.
+   */
+  private async dispatchTurnViaLiteral(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    prompt: string,
+    runId: string
+  ): Promise<Response> {
+    const tmuxPane = requireTmuxPane(runtime)
+    const acceptedAt = timestamp()
+
+    const run = this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'accepted',
+      acceptedAt,
+      updatedAt: acceptedAt,
+    })
+
+    try {
+      this.db.runtimes.update(runtime.runtimeId, {
+        activeRunId: run.runId,
+        status: 'busy',
+        lastActivityAt: acceptedAt,
+        updatedAt: acceptedAt,
+      })
+      await this.tmux.sendLiteral(tmuxPane.paneId, prompt)
+      // Pause before Enter to avoid paste-burst classification in TUIs.
+      await Bun.sleep(200)
+      await this.tmux.sendEnter(tmuxPane.paneId)
+      writeServerLog('INFO', 'launch.dispatch.literal_enqueued', {
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        runId: run.runId,
+        paneId: tmuxPane.paneId,
+      })
+    } catch (error) {
+      rollbackFailedTmuxDispatch(this.db, runtime, run.runId)
+      throw new HrcInternalError('tmux literal dispatch failed', {
+        runtimeId: runtime.runtimeId,
+        runId: run.runId,
+        cause: error instanceof Error ? error.message : String(error),
+      })
+    }
+
+    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
+      ts: acceptedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        promptLength: prompt.length,
+        delivery: 'interactive-literal',
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+      ts: acceptedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: createUserPromptPayload(prompt),
+    })
+    this.notifyEvent(userPromptEvent)
+
+    const startedAt = timestamp()
+    this.db.runs.update(runId, {
+      status: 'started',
+      startedAt,
+      updatedAt: startedAt,
+    })
+    this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
+
+    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
+      ts: startedAt,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        delivery: 'interactive-literal',
+      },
     })
     this.notifyEvent(startedEvent)
 
@@ -4479,6 +4603,7 @@ class HrcServerInstance implements HrcServer {
         existingRuntime &&
         !isRuntimeUnavailableStatus(existingRuntime.status) &&
         !requiresHeadlessStart(intent) &&
+        restartStyle === 'reuse_pty' &&
         (existingRuntime.status === 'busy' ||
           existingRuntime.status === 'starting' ||
           hasLiveInteractiveLaunch(this.db, existingRuntime))
