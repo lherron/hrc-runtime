@@ -36,6 +36,7 @@ export type HrcEventCategory =
   | 'runtime'
   | 'launch'
   | 'turn'
+  | 'input'
   | 'inflight'
   | 'surface'
   | 'bridge'

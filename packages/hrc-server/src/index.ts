@@ -529,6 +529,9 @@ const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as con
 const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
 const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
 const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
+const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
+const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
+  'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -6654,6 +6657,7 @@ class HrcServerInstance implements HrcServer {
     // If target is a session, attempt semantic turn execution
     let execution: DispatchTurnBySelectorResponse | undefined
     let reply: HrcMessageRecord | undefined
+    let rejected = false
 
     if (body.to.kind === 'session') {
       // Auto-summon if needed
@@ -6686,60 +6690,69 @@ class HrcServerInstance implements HrcServer {
           generation: session.generation,
         })
 
-        // Prepare the DM payload once before transport selection so brain
-        // enrichment fires uniformly across tmux-literal and SDK/headless
-        // fallback paths. Without this, the tmux-literal branch bypasses
-        // dispatchTurnForSession (and its enricher), leaving live-pane DMs
-        // unenriched while only fallback DMs got brain context.
-        const prepared = await this.prepareSemanticDmPayload(session, body, record)
+        const busyHeadlessRuntime = findBusyHeadlessRuntimeForSession(
+          this.db,
+          session.hostSessionId
+        )
+        if (busyHeadlessRuntime) {
+          this.rejectBusyHeadlessSemanticDm(session, record, busyHeadlessRuntime)
+          rejected = true
+        } else {
+          // Prepare the DM payload once before transport selection so brain
+          // enrichment fires uniformly across tmux-literal and SDK/headless
+          // fallback paths. Without this, the tmux-literal branch bypasses
+          // dispatchTurnForSession (and its enricher), leaving live-pane DMs
+          // unenriched while only fallback DMs got brain context.
+          const prepared = await this.prepareSemanticDmPayload(session, body, record)
 
-        // If the target has a live interactive tmux runtime, deliver via
-        // literal send-keys instead of dispatching a new turn. This lets dm
-        // reach agents whether they are mid-turn or idle in an interactive session.
-        // Falls back to SDK dispatch if tmux delivery fails (e.g. pane gone).
-        let tmuxDelivered = false
-        const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
-        if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
-          try {
-            const paneId = requireTmuxPane(liveTmuxRuntime).paneId
-            const payload = prepared.payload
-            await this.tmux.sendLiteral(paneId, payload)
-            // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
-            await Bun.sleep(200)
-            await this.tmux.sendEnter(paneId)
-            this.db.messages.updateExecution(record.messageId, {
-              state: 'completed',
-              mode: 'headless',
-              sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
-              hostSessionId: session.hostSessionId,
-              generation: session.generation,
-              runtimeId: liveTmuxRuntime.runtimeId,
-              transport: 'tmux',
-            })
-            tmuxDelivered = true
-          } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err)
-            writeServerLog('WARN', 'semantic_dm.literal_delivery_failed', {
-              messageId: record.messageId,
-              error: errorMessage,
-            })
+          // If the target has a live interactive tmux runtime, deliver via
+          // literal send-keys instead of dispatching a new turn. This lets dm
+          // reach agents whether they are mid-turn or idle in an interactive session.
+          // Falls back to SDK dispatch if tmux delivery fails (e.g. pane gone).
+          let tmuxDelivered = false
+          const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+          if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+            try {
+              const paneId = requireTmuxPane(liveTmuxRuntime).paneId
+              const payload = prepared.payload
+              await this.tmux.sendLiteral(paneId, payload)
+              // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
+              await Bun.sleep(200)
+              await this.tmux.sendEnter(paneId)
+              this.db.messages.updateExecution(record.messageId, {
+                state: 'completed',
+                mode: 'headless',
+                sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+                hostSessionId: session.hostSessionId,
+                generation: session.generation,
+                runtimeId: liveTmuxRuntime.runtimeId,
+                transport: 'tmux',
+              })
+              tmuxDelivered = true
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err)
+              writeServerLog('WARN', 'semantic_dm.literal_delivery_failed', {
+                messageId: record.messageId,
+                error: errorMessage,
+              })
+            }
           }
-        }
 
-        if (!tmuxDelivered) {
-          const result = await this.executeSemanticTurn(session, body, record, respondTo, {
-            waitForCompletion: body.wait?.enabled === true,
-            prepared,
-          })
-          execution = result.execution
-          reply = result.reply
+          if (!tmuxDelivered) {
+            const result = await this.executeSemanticTurn(session, body, record, respondTo, {
+              waitForCompletion: body.wait?.enabled === true,
+              prepared,
+            })
+            execution = result.execution
+            reply = result.reply
+          }
         }
       }
     }
 
     // Handle --wait
     let waited: WaitMessageResponse | undefined
-    if (body.wait?.enabled && record.phase === 'request') {
+    if (body.wait?.enabled && record.phase === 'request' && !rejected) {
       const timeoutMs = body.wait.timeoutMs ?? 30_000
       waited = await this.waitForMessage(
         {
@@ -6763,6 +6776,59 @@ class HrcServerInstance implements HrcServer {
       ...(reply ? { reply } : {}),
       ...(waited ? { waited } : {}),
     } satisfies SemanticDmResponse)
+  }
+
+  private rejectBusyHeadlessSemanticDm(
+    session: HrcSessionRecord,
+    record: HrcMessageRecord,
+    runtime: HrcRuntimeSnapshot
+  ): void {
+    const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+    const sessionRef = `${session.scopeRef}/lane:${laneRef}`
+    const activeRunId = runtime.activeRunId
+
+    this.db.messages.updateExecution(record.messageId, {
+      state: 'failed',
+      mode: 'headless',
+      sessionRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      ...(activeRunId ? { runId: activeRunId } : {}),
+      transport: 'headless',
+      errorCode: HRC_BUSY_HEADLESS_DM_REJECTION_CODE,
+      errorMessage: HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE,
+    })
+
+    const event = appendHrcEvent(this.db, 'input.rejected', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      ...(activeRunId ? { runId: activeRunId } : {}),
+      transport: 'headless',
+      errorCode: HRC_BUSY_HEADLESS_DM_REJECTION_CODE,
+      payload: {
+        reason: 'busy-headless-runtime',
+        delivery: 'semantic-dm',
+        messageId: record.messageId,
+        sessionRef,
+        runtimeId: runtime.runtimeId,
+        ...(activeRunId ? { activeRunId } : {}),
+        bodyLength: record.body.length,
+        recommendation: 'retry after current turn completes or use hrcchat turn',
+      },
+    })
+    this.notifyEvent(event)
+
+    writeServerLog('INFO', 'semantic_dm.busy_headless_rejected', {
+      messageId: record.messageId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      activeRunId,
+    })
   }
 
   private async executeSemanticTurn(
@@ -9483,6 +9549,29 @@ function getReusableHeadlessRuntimeForSession(
     return null
   }
   return runtime
+}
+
+function findBusyHeadlessRuntimeForSession(
+  db: HrcDatabase,
+  hostSessionId: string
+): HrcRuntimeSnapshot | null {
+  return (
+    db.runtimes
+      .listByHostSessionId(hostSessionId)
+      .filter((runtime) => {
+        if (
+          runtime.transport !== 'headless' ||
+          runtime.activeRunId === undefined ||
+          isRuntimeUnavailableStatus(runtime.status)
+        ) {
+          return false
+        }
+
+        const activeRun = db.runs.getByRunId(runtime.activeRunId)
+        return !activeRun || isRunActive(activeRun)
+      })
+      .at(-1) ?? null
+  )
 }
 
 function findLatestSessionRuntime(

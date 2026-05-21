@@ -79,16 +79,17 @@ done
     const envelope = JSON.parse(serialized) as Record<string, unknown>
     const request = envelope['request'] as Record<string, unknown>
     const execution = request['execution'] as Record<string, unknown>
-    expect(execution['errorMessage']).toBe('runtime already has an active run')
+    expect(execution['errorCode']).toBe('runtime_busy_dm_rejected')
     expect(request['body']).toBe('line 1\nline 2\nline 3\n')
   })
 
-  it('preserves the failed dm --json envelope shape when the target runtime is busy', async () => {
-    await seedBusyRuntime()
+  it('rejects dm --json to a busy headless session without spawning a parallel runtime', async () => {
+    await seedBusyRuntime({ agentHarness: 'codex' })
 
     const result = await runDmJson('cody@agent-spaces:T-01303', 'line 1\nline 2\nline 3\n')
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
+    expect(countRuntimesForScope('agent:cody:project:agent-spaces:task:T-01303')).toBe(1)
 
     const envelope = JSON.parse(result.stdout) as Record<string, unknown>
     expect(Object.hasOwn(envelope, 'messageId')).toBe(true)
@@ -100,8 +101,22 @@ done
     const request = envelope['request'] as Record<string, unknown>
     const execution = request['execution'] as Record<string, unknown>
     expect(execution['state']).toBe('failed')
-    expect(execution['errorMessage']).toBeString()
-    expect((execution['errorMessage'] as string).length).toBeGreaterThan(0)
+    expect(execution['errorCode']).toBe('runtime_busy_dm_rejected')
+    expect(execution['runtimeId']).toBe('rt-busy-dm-json')
+    expect(execution['runId']).toBe('run-busy-dm-json')
+
+    const rejected = listHrcEvents('input.rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]).toMatchObject({
+      runtimeId: 'rt-busy-dm-json',
+      runId: 'run-busy-dm-json',
+      errorCode: 'runtime_busy_dm_rejected',
+    })
+    expect(rejected[0]?.payload).toMatchObject({
+      reason: 'busy-headless-runtime',
+      delivery: 'semantic-dm',
+      activeRunId: 'run-busy-dm-json',
+    })
   })
 })
 
@@ -109,7 +124,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
-async function seedBusyRuntime(): Promise<void> {
+async function seedBusyRuntime(options: { agentHarness?: string | undefined } = {}): Promise<void> {
   const scopeRef = 'agent:cody:project:agent-spaces:task:T-01303'
   const hostSessionId = 'hsid-busy-dm-json'
   const runtimeId = 'rt-busy-dm-json'
@@ -155,7 +170,37 @@ async function seedBusyRuntime(): Promise<void> {
 
   const agentRoot = join(fixture.tmpDir, 'agents', 'cody')
   await mkdir(agentRoot, { recursive: true })
-  await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+  await writeFile(
+    join(agentRoot, 'agent-profile.toml'),
+    options.agentHarness
+      ? `schemaVersion = 2\n\n[identity]\nharness = "${options.agentHarness}"\n`
+      : 'schemaVersion = 2\n'
+  )
+}
+
+function countRuntimesForScope(scopeRef: string): number {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.runtimes.listAll().filter((runtime) => runtime.scopeRef === scopeRef).length
+  } finally {
+    db.close()
+  }
+}
+
+function listHrcEvents(eventKind: string): Array<{
+  runtimeId?: string | undefined
+  runId?: string | undefined
+  errorCode?: string | undefined
+  payload: unknown
+}> {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents
+      .listFromHrcSeq(1)
+      .filter((event) => event.eventKind === eventKind)
+  } finally {
+    db.close()
+  }
 }
 
 async function runDmJson(

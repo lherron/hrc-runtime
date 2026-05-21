@@ -249,6 +249,33 @@ describe('hrcchat CLI smoke fixture', () => {
     }
   })
 
+  it('hrcchat dm --json surfaces structured rejection codes at top level', async () => {
+    const sessionRef = 'agent:cody:project:agent-spaces:task:T-01573/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'failed',
+        sessionRef,
+        runtimeId: 'rt-busy-headless',
+        runId: 'run-busy-headless',
+        transport: 'headless',
+        errorCode: 'runtime_busy_dm_rejected',
+        errorMessage: 'target session has a busy headless runtime',
+      },
+    })
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01573', 'hello'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.json).toMatchObject({
+      errorCode: 'runtime_busy_dm_rejected',
+      errorMessage: 'target session has a busy headless runtime',
+      runtimeId: 'rt-busy-headless',
+      turnId: 'run-busy-headless',
+    })
+  })
+
   it('hrcchat dm with no args exits 2 (usage error) and reports usage context', async () => {
     const client = createDmClient()
     const opts: DmOptions = {}

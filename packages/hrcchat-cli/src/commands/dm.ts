@@ -85,6 +85,8 @@ export type DmHandoffEnvelope = {
   sessionRef: string
   runtimeId: string | null
   turnId: string | null
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
   /** Full response preserved for backward compatibility and debugging. */
   request: SemanticDmResponse['request']
   execution?: SemanticDmResponse['execution']
@@ -116,6 +118,8 @@ function buildHandoffEnvelope(
     sessionRef,
     runtimeId,
     turnId,
+    ...(request.execution.errorCode ? { errorCode: request.execution.errorCode } : {}),
+    ...(request.execution.errorMessage ? { errorMessage: request.execution.errorMessage } : {}),
     request: result.request,
     ...(result.execution ? { execution: result.execution } : {}),
     ...(result.reply ? { reply: result.reply } : {}),

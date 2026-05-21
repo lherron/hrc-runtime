@@ -49,6 +49,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.tool_result': 'turn',
   'turn.message': 'turn',
   'turn.message_segment': 'turn',
+  'input.rejected': 'input',
   'inflight.accepted': 'inflight',
   'inflight.rejected': 'inflight',
   'surface.bound': 'surface',
