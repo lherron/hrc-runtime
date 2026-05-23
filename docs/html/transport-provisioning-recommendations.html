@@ -1,0 +1,1284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HRC Runtime Control and Provisioning Recommendations</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f7f5ef;
+        --ink: #171915;
+        --muted: #63685f;
+        --line: #d9d2c1;
+        --panel: #fffdf7;
+        --panel-2: #efebe0;
+        --provision: #8a3d1d;
+        --control: #0c5e68;
+        --route: #474b5d;
+        --risk: #b12d3a;
+        --ok: #327a46;
+        --shadow: 0 18px 55px rgba(40, 32, 18, 0.11);
+        --mono:
+          ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", serif;
+        --sans: Avenir Next, "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      * {
+        min-width: 0;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(90deg, rgba(23, 25, 21, 0.035) 1px, transparent 1px) 0 0 / 48px 48px,
+          linear-gradient(rgba(23, 25, 21, 0.03) 1px, transparent 1px) 0 0 / 48px 48px,
+          radial-gradient(circle at 24% 8%, rgba(138, 61, 29, 0.14), transparent 29rem),
+          radial-gradient(circle at 88% 18%, rgba(12, 94, 104, 0.13), transparent 24rem),
+          var(--paper);
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.5;
+      }
+
+      .page {
+        width: min(1180px, calc(100vw - 40px));
+        margin: 0 auto;
+      }
+
+      header {
+        min-height: 58vh;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+        gap: 48px;
+        align-items: center;
+        padding: 44px 0 34px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 920px;
+        font-family: var(--serif);
+        font-size: 5.3rem;
+        line-height: 0.94;
+      }
+
+      h1 span {
+        color: var(--provision);
+      }
+
+      .eyebrow,
+      .section-kicker,
+      .divider-label {
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin: 24px 0 0;
+        color: #3f443d;
+        font-size: 1.18rem;
+      }
+
+      .boundary-map {
+        padding: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 253, 247, 0.76);
+        box-shadow: var(--shadow);
+      }
+
+      .layer {
+        min-height: 112px;
+        padding: 18px 18px 18px 20px;
+        border-left: 7px solid var(--route);
+        background: var(--panel);
+      }
+
+      .layer + .layer {
+        margin-top: 12px;
+      }
+
+      .layer.provision {
+        border-color: var(--provision);
+      }
+
+      .layer.control {
+        border-color: var(--control);
+      }
+
+      .layer h2 {
+        font-size: 0.88rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .layer p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .token-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      code,
+      .token {
+        font-family: var(--mono);
+        font-size: 0.84em;
+        overflow-wrap: anywhere;
+      }
+
+      .token {
+        display: inline-flex;
+        min-height: 28px;
+        max-width: 100%;
+        align-items: center;
+        padding: 5px 8px;
+        border: 1px solid rgba(23, 25, 21, 0.14);
+        background: var(--panel-2);
+        white-space: normal;
+      }
+
+      main {
+        padding-bottom: 80px;
+      }
+
+      section {
+        padding: 58px 0;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(190px, 0.34fr) minmax(0, 1fr);
+        gap: 34px;
+        align-items: start;
+        margin-bottom: 26px;
+      }
+
+      .section-head h2 {
+        font-family: var(--serif);
+        font-size: 3.2rem;
+        line-height: 1;
+      }
+
+      .section-head p {
+        max-width: 820px;
+        margin: 14px 0 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        padding: 20px;
+        border: 1px solid var(--line);
+        background: rgba(255, 253, 247, 0.9);
+      }
+
+      .card.provision {
+        border-top: 7px solid var(--provision);
+      }
+
+      .card.route {
+        border-top: 7px solid var(--route);
+        box-shadow: var(--shadow);
+      }
+
+      .card.control {
+        border-top: 7px solid var(--control);
+      }
+
+      .card h3 {
+        font-size: 0.9rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .card p,
+      .card li {
+        color: var(--muted);
+      }
+
+      .type-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .type-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 164px minmax(0, 1fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .type-box {
+        padding: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 253, 247, 0.92);
+      }
+
+      .type-box.as-is {
+        border-left: 6px solid var(--provision);
+      }
+
+      .type-box.to-be {
+        border-left: 6px solid var(--control);
+      }
+
+      .type-box.missing {
+        color: var(--muted);
+        border-left-style: dashed;
+      }
+
+      .type-name {
+        display: inline-flex;
+        padding: 5px 8px;
+        background: var(--ink);
+        color: var(--paper);
+        font-family: var(--mono);
+        font-size: 0.72rem;
+      }
+
+      .scope-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .scope-chip {
+        display: inline-flex;
+        min-height: 24px;
+        max-width: 100%;
+        align-items: center;
+        padding: 4px 7px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        font-weight: 780;
+        overflow-wrap: anywhere;
+        text-transform: uppercase;
+        white-space: normal;
+      }
+
+      .scope-chip.input {
+        border-color: rgba(138, 61, 29, 0.38);
+        color: var(--provision);
+      }
+
+      .scope-chip.output {
+        border-color: rgba(12, 94, 104, 0.38);
+        color: var(--control);
+      }
+
+      .scope-chip.both {
+        border-color: rgba(71, 75, 93, 0.38);
+        color: var(--route);
+      }
+
+      .type-box h3 {
+        margin-top: 12px;
+        font-size: 1rem;
+      }
+
+      .type-box p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .values {
+        margin-top: 14px;
+        color: #34372f;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        line-height: 1.6;
+      }
+
+      .type-action {
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(23, 25, 21, 0.16);
+        background: var(--panel-2);
+        color: var(--route);
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .divider-label {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 16px;
+        align-items: center;
+        margin: 28px 0 18px;
+      }
+
+      .divider-label::before,
+      .divider-label::after {
+        content: "";
+        height: 1px;
+        background: var(--line);
+      }
+
+      pre {
+        max-width: 100%;
+        margin: 0;
+        padding: 18px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: var(--ink);
+        color: #f8f1df;
+        font-family: var(--mono);
+        font-size: 0.79rem;
+        line-height: 1.55;
+      }
+
+      pre code {
+        display: block;
+        min-width: max-content;
+      }
+
+      .code-compare {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .caption {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .route-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: rgba(255, 253, 247, 0.92);
+      }
+
+      .route-table {
+        width: 100%;
+        min-width: 1040px;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+
+      .route-table th,
+      .route-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(23, 25, 21, 0.1);
+        border-right: 1px solid rgba(23, 25, 21, 0.08);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .route-table th {
+        background: var(--ink);
+        color: var(--paper);
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .route-table .yes {
+        color: var(--ok);
+        font-weight: 800;
+      }
+
+      .route-table .no {
+        color: var(--muted);
+        font-weight: 760;
+      }
+
+      .callout {
+        margin-top: 24px;
+        padding: 20px 22px;
+        border-left: 8px solid var(--route);
+        background: rgba(255, 253, 247, 0.92);
+      }
+
+      .callout h3 {
+        font-size: 1.1rem;
+      }
+
+      .callout p,
+      .callout li {
+        color: var(--muted);
+      }
+
+      .source-list {
+        columns: 2;
+        column-gap: 30px;
+        padding-left: 18px;
+      }
+
+      .source-list li {
+        break-inside: avoid;
+        margin-bottom: 10px;
+        color: var(--muted);
+      }
+
+      footer {
+        padding: 34px 0 70px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+
+      @media (max-width: 920px) {
+        header,
+        .section-head,
+        .grid,
+        .code-compare,
+        .type-row {
+          grid-template-columns: 1fr;
+        }
+
+        header {
+          min-height: auto;
+        }
+
+        h1 {
+          font-size: 3.5rem;
+        }
+
+        .section-head h2 {
+          font-size: 2.6rem;
+        }
+
+        .type-action {
+          min-height: 44px;
+        }
+
+        .source-list {
+          columns: 1;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .page {
+          width: min(100vw - 24px, 1180px);
+        }
+
+        h1 {
+          font-size: 2.18rem;
+          overflow-wrap: anywhere;
+        }
+
+        section {
+          padding: 44px 0;
+        }
+
+        pre {
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+
+        pre code {
+          min-width: 0;
+          white-space: inherit;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div>
+          <div class="eyebrow">HRC runtime architecture</div>
+          <h1>Separate <span>runtime intent</span> from runtime control.</h1>
+          <p class="lead">
+            HRC already treats provisioning and runtime control as different decisions. The refactor
+            should make that separation executable through route decisions, a valid-combination catalog,
+            and controller-specific runtime state.
+          </p>
+        </div>
+
+        <aside class="boundary-map" aria-label="Runtime boundary model">
+          <div class="layer provision">
+            <h2>Provisioning Contract</h2>
+            <p>What harness family should exist, where it should run, and which model provider it uses.</p>
+            <div class="token-row">
+              <span class="token">modelProvider</span>
+              <span class="token">harnessFamily</span>
+              <span class="token">harnessRuntime</span>
+              <span class="token">RuntimePlacement</span>
+            </div>
+          </div>
+          <div class="layer">
+            <h2>Daemon Routing Policy</h2>
+            <p>How HRC chooses the legal route from intent, feature flags, and current runtime state.</p>
+            <div class="token-row">
+              <span class="token">RuntimeRouteDecision</span>
+              <span class="token">interactionMode</span>
+              <span class="token">startupMethod</span>
+              <span class="token">turnDelivery</span>
+            </div>
+          </div>
+          <div class="layer control">
+            <h2>Runtime Control</h2>
+            <p>How HRC owns lifecycle, input, observation, reuse, and teardown after route selection.</p>
+            <div class="token-row">
+              <span class="token">runtimeController</span>
+              <span class="token">tmux</span>
+              <span class="token">ghostty</span>
+              <span class="token">embedded-sdk</span>
+              <span class="token">managed-child-process</span>
+            </div>
+          </div>
+        </aside>
+      </header>
+
+      <main>
+        <section id="context">
+          <div class="section-head">
+            <div class="section-kicker">Context</div>
+            <div>
+              <h2>The boundary is real, but implicit.</h2>
+              <p>
+                Requests describe placement, provider, and desired harness family. Runtime records, run records,
+                lifecycle events, and responses report HRC's selected runtime controller. Today those
+                decisions are scattered through predicates, transport strings, and optional JSON fields.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid">
+            <article class="card provision">
+              <h3>Provisioning</h3>
+              <p>
+                Agent Spaces resolves bundle, cwd, prompt, env, model, and harness runtime details.
+                Intent should not carry an HRC runtime-controller field.
+              </p>
+            </article>
+            <article class="card route">
+              <h3>Routing</h3>
+              <p>
+                HRC interprets the intent, decides reuse/create/adopt policy, and selects the controller,
+                startup method, interaction mode, and turn delivery.
+              </p>
+            </article>
+            <article class="card control">
+              <h3>Runtime Control</h3>
+              <p>
+                Tmux, Ghostty, embedded SDK, and managed child-process controllers own different
+                lifecycle, input, capture, and state semantics.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="types">
+          <div class="section-head">
+            <div class="section-kicker">Type Evolution</div>
+            <div>
+              <h2>Define every route dimension.</h2>
+              <p>
+                The target model uses separate names for provider, requested harness family, materialized
+                runtime, HRC controller, interaction contract, runtime acquisition, turn delivery, and
+                controller-specific state.
+              </p>
+            </div>
+          </div>
+
+          <div class="type-grid">
+            <article class="type-row">
+              <div class="type-box as-is">
+                <span class="type-name">provider</span>
+                <div class="scope-row">
+                  <span class="scope-chip both">legacy shared</span>
+                </div>
+                <h3>Generic model family</h3>
+                <p>
+                  Provider names the model family and continuation owner. The name is too generic once
+                  harnesses, model APIs, and continuation providers appear in the same contract.
+                </p>
+                <div class="values">'anthropic'<br />'openai'</div>
+              </div>
+              <div class="type-action">rename</div>
+              <div class="type-box to-be">
+                <span class="type-name">modelProvider</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">request</span>
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Model and continuation owner</h3>
+                <p>
+                  Rename the cross-repo field to <code>modelProvider</code>. It owns credentials, model
+                  options, and continuation compatibility; HRC should mirror the term at its boundary.
+                </p>
+                <div class="values">anthropic<br />openai<br />future providers</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is">
+                <span class="type-name">harness</span>
+                <div class="scope-row">
+                  <span class="scope-chip both">legacy mixed</span>
+                </div>
+                <h3>Mixed request and runtime label</h3>
+                <p>
+                  <code>HrcHarness</code> carries requested harness behavior, CLI frontend names, SDK
+                  frontend names, and runtime labels in one union.
+                </p>
+                <div class="values">'claude-code'<br />'codex-cli'<br />'agent-sdk'<br />'pi-sdk'</div>
+              </div>
+              <div class="type-action">split</div>
+              <div class="type-box to-be">
+                <span class="type-name">harnessFamily</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">request optional</span>
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Requested harness family</h3>
+                <p>
+                  Replace overloaded harness intent with <code>harnessFamily</code>: the family the
+                  caller wants before CLI, SDK, app-server, or HRC runtime controller is selected.
+                  Prefer this over <code>harnessProvider</code>; provider is reserved for
+                  <code>modelProvider</code>. Do not use <code>surface</code>; that word belongs to
+                  terminal/visual control.
+                </p>
+                <div class="values">claude-code<br />codex<br />pi<br />future harnesses</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is">
+                <span class="type-name">frontend</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">current ASP</span>
+                </div>
+                <h3>Runtime selector with UI-flavored name</h3>
+                <p>
+                  Agent Spaces already exposes <code>HarnessFrontend</code> for CLI and SDK choices.
+                  The name sounds UI-oriented even though the value selects a runtime implementation.
+                </p>
+                <div class="values">cli-adapter<br />sdk-adapter<br />ProcessInvocationSpec</div>
+              </div>
+              <div class="type-action">clarify</div>
+              <div class="type-box to-be">
+                <span class="type-name">harnessRuntime</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">request preference</span>
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Materialized harness implementation</h3>
+                <p>
+                  Recommended replacement for <code>frontend</code>. It covers CLI executables, SDK
+                  runners, and app-server-backed harnesses. Use <code>claude-code-cli</code> for the CLI
+                  runtime and <code>claude-agent-sdk</code> for the Anthropic SDK runtime, so the names do
+                  not collide with model or generic SDK vocabulary.
+                </p>
+                <div class="values">claude-code-cli<br />codex-cli<br />pi-cli<br />claude-agent-sdk<br />pi-sdk</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is">
+                <span class="type-name">transport</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">current HRC</span>
+                </div>
+                <h3>Loose HRC lane</h3>
+                <p>
+                  Transport is stored on runtimes, runs, and events, but some core records still expose
+                  it as <code>string</code>. The values mix control carriers with execution and
+                  interaction concepts.
+                </p>
+                <div class="values">'tmux'<br />'ghostty'<br />'sdk'<br />'headless'</div>
+              </div>
+              <div class="type-action">tighten</div>
+              <div class="type-box to-be">
+                <span class="type-name">runtimeController</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Strict runtime controller</h3>
+                <p>
+                  Rename the HRC-owned field and restrict it to the controller that owns lifecycle,
+                  input, observation, reuse, and teardown for a runtime. <code>headless</code> becomes an
+                  interaction mode; <code>sdk</code> becomes a harness runtime, startup method, or turn
+                  delivery path.
+                </p>
+                <div class="values">tmux<br />ghostty<br />embedded-sdk<br />managed-child-process</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is missing">
+                <span class="type-name">model</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">current request</span>
+                </div>
+                <h3>Raw model string on requests</h3>
+                <p>
+                  Current request surfaces carry a provider-native model string and, for Codex, optional
+                  reasoning effort. That input does not by itself say which exact model eventually ran.
+                </p>
+                <div class="values">model?<br />modelReasoningEffort?<br />provider-specific options</div>
+              </div>
+              <div class="type-action">resolve</div>
+              <div class="type-box to-be">
+                <span class="type-name">modelSelection</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">request</span>
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Requested and resolved model metadata</h3>
+                <p>
+                  Keep caller input separate from resolved execution metadata. <code>modelId</code> is
+                  authoritative; <code>modelVersion</code> is optional display/parsed metadata, not a
+                  primary selector.
+                </p>
+                <div class="values">requestedModel?<br />modelId<br />modelAlias?<br />modelVersion?<br />reasoningEffort?</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is missing">
+                <span class="type-name">interactionMode</span>
+                <div class="scope-row">
+                  <span class="scope-chip both">current implicit</span>
+                </div>
+                <h3>Present, not cleanly separated</h3>
+                <p>
+                  Current execution-mode fields distinguish interactive, headless, and non-interactive
+                  paths, but the meaning is entangled with transport values such as <code>sdk</code> and
+                  <code>headless</code>.
+                </p>
+                <div class="values">HrcExecutionMode<br />preferredMode<br />harness.interactive</div>
+              </div>
+              <div class="type-action">define</div>
+              <div class="type-box to-be">
+                <span class="type-name">interactionMode</span>
+                <div class="scope-row">
+                  <span class="scope-chip input">request preference</span>
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>Runtime interaction contract</h3>
+                <p>
+                  Describes whether the selected runtime exposes a human-operable surface, an external
+                  headless process, or request-scoped SDK execution. It does not choose the controller or
+                  delivery path.
+                </p>
+                <div class="values">interactive<br />headless<br />nonInteractive</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is missing">
+                <span class="type-name">startupMethod</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">missing</span>
+                </div>
+                <h3>Hidden runtime acquisition path</h3>
+                <p>
+                  Runtime acquisition is currently inferred from call path: reuse an existing runtime,
+                  launch a wrapper artifact, create an SDK session, call the broker, or adopt an
+                  externally-created runtime.
+                </p>
+                <div class="values">ensure branches<br />dispatch branches<br />broker path<br />adoption path</div>
+              </div>
+              <div class="type-action">add</div>
+              <div class="type-box to-be">
+                <span class="type-name">startupMethod</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>How HRC obtains the runtime</h3>
+                <p>
+                  Names how HRC obtains the target runtime before input is delivered. A resolved route
+                  carries one startup method and one turn delivery.
+                </p>
+                <div class="values">reuse-existing<br />launch-artifact<br />sdk-session<br />broker-invocation<br />adopt-existing</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is missing">
+                <span class="type-name">turnDelivery</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">missing</span>
+                </div>
+                <h3>Hidden turn ingress path</h3>
+                <p>
+                  The distinction is implicit in call paths. The old <code>executionBackend</code>
+                  proposal duplicated <code>harnessRuntime</code>; the missing HRC concept is how a turn
+                  is delivered to that runtime.
+                </p>
+                <div class="values">hidden in routing branches</div>
+              </div>
+              <div class="type-action">add</div>
+              <div class="type-box to-be">
+                <span class="type-name">turnDelivery</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">resolved</span>
+                </div>
+                <h3>How HRC delivers input</h3>
+                <p>
+                  Names how HRC delivers a prompt or follow-up after HRC has selected the harness
+                  runtime. This is routing state, not another runtime identity.
+                </p>
+                <div class="values">launch-input<br />literal-input<br />sdk-turn<br />inflight-queue<br />broker-input</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is missing">
+                <span class="type-name">runtimeState</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">missing</span>
+                </div>
+                <h3>Does not exist as a discriminant</h3>
+                <p>
+                  Runtime metadata is a set of optional opaque JSON fields: <code>tmuxJson</code>,
+                  <code>surfaceJson</code>, and <code>harnessSessionJson</code>. This permits impossible
+                  states such as tmux runtimes without pane metadata.
+                </p>
+                <div class="values">tmuxJson<br />surfaceJson<br />harnessSessionJson</div>
+              </div>
+              <div class="type-action">add</div>
+              <div class="type-box to-be">
+                <span class="type-name">runtimeState</span>
+                <div class="scope-row">
+                  <span class="scope-chip output">snapshot</span>
+                </div>
+                <h3>Controller-specific state</h3>
+                <p>
+                  A typed state payload tied to <code>runtimeController</code>. A tmux runtime has pane
+                  state; a Ghostty runtime has surface state; embedded SDK and managed child-process
+                  runtimes get their own state shapes.
+                </p>
+                <div class="values">tmux pane state<br />ghostty surface state<br />embedded SDK session state<br />managed child-process state</div>
+              </div>
+            </article>
+
+            <article class="type-row">
+              <div class="type-box as-is">
+                <span class="type-name">subtractions</span>
+                <div class="scope-row">
+                  <span class="scope-chip both">legacy cleanup</span>
+                </div>
+                <h3>Accidental responsibilities</h3>
+                <p>
+                  Some names carry too much: <code>HrcHarness</code> doubles as runtime vocabulary,
+                  <code>frontend</code> sounds like UI, transport accepts arbitrary strings, and runtime
+                  records allow metadata that does not match the selected runtime controller.
+                </p>
+                <div class="values">mixed harness union<br />frontend naming<br />transport: string<br />optional state mismatch</div>
+              </div>
+              <div class="type-action">remove</div>
+              <div class="type-box to-be">
+                <span class="type-name">subtractions</span>
+                <div class="scope-row">
+                  <span class="scope-chip both">model cleanup</span>
+                </div>
+                <h3>Removed from the model</h3>
+                <p>The cleanest new type is sometimes the absence of an old responsibility.</p>
+                <div class="values">no agentSurface term<br />no frontend field name<br />no sdk/headless controller<br />no duplicate executionBackend<br />no mismatched runtimeState</div>
+              </div>
+            </article>
+          </div>
+
+          <div class="callout">
+            <h3>Decision: <code>sdk</code> and <code>headless</code> are not controllers.</h3>
+            <p>
+              SDK is expressed through <code>harnessRuntime</code>, <code>startupMethod</code>, or
+              <code>turnDelivery</code>. Headless is expressed through <code>interactionMode</code>.
+            </p>
+          </div>
+        </section>
+
+        <section id="recommendations">
+          <div class="section-head">
+            <div class="section-kicker">Recommendations</div>
+            <div>
+              <h2>Make the existing boundary executable.</h2>
+              <p>
+                The goal is not a large rewrite. The path is to name the hidden decision points, type
+                the impossible states out of existence, and let server modules reflect the architecture
+                already present in the contracts.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid">
+            <article class="card route">
+              <h3>1. Extract <code>RuntimeRouteDecision</code></h3>
+              <p>
+                Centralize the current predicates into a pure routing function that returns model
+                provider, harness family, harness runtime, runtime controller, interaction mode, startup
+                method, turn delivery, and whether provisioning must normalize the harness to
+                interactive.
+              </p>
+            </article>
+            <article class="card control">
+              <h3>2. Rename <code>transport</code></h3>
+              <p>
+                Use <code>runtimeController</code> for runtime lifecycle/control semantics. Remove
+                <code>sdk</code> and <code>headless</code> from controller values; model them as
+                <code>harnessRuntime</code>, <code>interactionMode</code>, <code>startupMethod</code>,
+                and <code>turnDelivery</code>.
+              </p>
+            </article>
+            <article class="card control">
+              <h3>3. Discriminate runtime state</h3>
+              <p>
+                Replace opaque optional <code>tmuxJson</code> and <code>surfaceJson</code> checks with
+                runtime-controller-specific variants. Make it impossible to represent
+                <code>runtimeController: 'tmux'</code> without tmux pane metadata.
+              </p>
+            </article>
+            <article class="card provision">
+              <h3>4. Rename Agent Spaces nouns</h3>
+              <p>
+                Move <code>provider</code> toward <code>modelProvider</code>,
+                <code>harness</code> toward <code>harnessFamily</code>, and <code>frontend</code>
+                toward <code>harnessRuntime</code> in Agent Spaces first, then mirror aliases in HRC.
+              </p>
+            </article>
+            <article class="card route">
+              <h3>5. Split server responsibilities</h3>
+              <p>
+                Extract small modules for routing, interactive runtime provisioning, SDK dispatch,
+                managed child-process execution, launch artifact building, startup, turn delivery, and
+                controller operations.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="routing">
+          <div class="section-head">
+            <div class="section-kicker">Routing Catalog</div>
+            <div>
+              <h2>Valid combinations are a table, not a cross product.</h2>
+              <p>
+                Use the catalog for partial input validation, candidate search during route resolution,
+                and exact validation of the resolved <code>RuntimeRouteDecision</code>. External callers
+                provide intent; HRC chooses one legal route.
+              </p>
+            </div>
+          </div>
+
+          <div class="route-table-wrap" role="region" aria-label="Valid runtime route catalog" tabindex="0">
+            <table class="route-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Family</th>
+                  <th>Runtime</th>
+                  <th>Controller</th>
+                  <th>Mode</th>
+                  <th>Startup</th>
+                  <th>Turn delivery</th>
+                  <th>Attach</th>
+                  <th>Capture</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>anthropic</code></td>
+                  <td><code>claude-code</code></td>
+                  <td><code>claude-code-cli</code></td>
+                  <td><code>tmux</code></td>
+                  <td><code>interactive</code></td>
+                  <td><code>launch-artifact</code>, <code>reuse-existing</code>, <code>adopt-existing</code></td>
+                  <td><code>launch-input</code>, <code>literal-input</code></td>
+                  <td class="yes">yes</td>
+                  <td class="yes">yes</td>
+                </tr>
+                <tr>
+                  <td><code>anthropic</code></td>
+                  <td><code>claude-code</code></td>
+                  <td><code>claude-code-cli</code></td>
+                  <td><code>ghostty</code></td>
+                  <td><code>interactive</code></td>
+                  <td><code>launch-artifact</code>, <code>reuse-existing</code>, <code>adopt-existing</code></td>
+                  <td><code>launch-input</code>, <code>literal-input</code></td>
+                  <td class="yes">yes</td>
+                  <td class="yes">yes</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>codex</code></td>
+                  <td><code>codex-cli</code></td>
+                  <td><code>tmux</code></td>
+                  <td><code>interactive</code></td>
+                  <td><code>launch-artifact</code>, <code>reuse-existing</code>, <code>adopt-existing</code></td>
+                  <td><code>launch-input</code>, <code>literal-input</code></td>
+                  <td class="yes">yes</td>
+                  <td class="yes">yes</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>pi</code></td>
+                  <td><code>pi-cli</code></td>
+                  <td><code>tmux</code></td>
+                  <td><code>interactive</code></td>
+                  <td><code>launch-artifact</code>, <code>reuse-existing</code>, <code>adopt-existing</code></td>
+                  <td><code>launch-input</code>, <code>literal-input</code></td>
+                  <td class="yes">yes</td>
+                  <td class="yes">yes</td>
+                </tr>
+                <tr>
+                  <td><code>anthropic</code></td>
+                  <td><code>claude-code</code></td>
+                  <td><code>claude-agent-sdk</code></td>
+                  <td><code>embedded-sdk</code></td>
+                  <td><code>nonInteractive</code></td>
+                  <td><code>sdk-session</code></td>
+                  <td><code>sdk-turn</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+                <tr>
+                  <td><code>anthropic</code></td>
+                  <td><code>claude-code</code></td>
+                  <td><code>claude-agent-sdk</code></td>
+                  <td><code>embedded-sdk</code></td>
+                  <td><code>nonInteractive</code></td>
+                  <td><code>reuse-existing</code></td>
+                  <td><code>inflight-queue</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>pi</code></td>
+                  <td><code>pi-sdk</code></td>
+                  <td><code>embedded-sdk</code></td>
+                  <td><code>nonInteractive</code></td>
+                  <td><code>sdk-session</code></td>
+                  <td><code>sdk-turn</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>pi</code></td>
+                  <td><code>pi-sdk</code></td>
+                  <td><code>embedded-sdk</code></td>
+                  <td><code>nonInteractive</code></td>
+                  <td><code>reuse-existing</code></td>
+                  <td><code>inflight-queue</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>codex</code></td>
+                  <td><code>codex-cli</code></td>
+                  <td><code>managed-child-process</code></td>
+                  <td><code>headless</code></td>
+                  <td><code>launch-artifact</code></td>
+                  <td><code>launch-input</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+                <tr>
+                  <td><code>openai</code></td>
+                  <td><code>codex</code></td>
+                  <td><code>codex-cli</code></td>
+                  <td><code>managed-child-process</code></td>
+                  <td><code>headless</code></td>
+                  <td><code>broker-invocation</code></td>
+                  <td><code>broker-input</code></td>
+                  <td class="no">no</td>
+                  <td class="no">no</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout">
+            <h3>Catalog usage</h3>
+            <ul>
+              <li>Input validation is partial: reject impossible intent combinations early.</li>
+              <li>Route resolution searches the catalog for legal candidates, then applies policy.</li>
+              <li>Output validation is exact: every resolved route must match one catalog row and one startup/delivery pair.</li>
+            </ul>
+          </div>
+        </section>
+
+        <section id="contracts">
+          <div class="section-head">
+            <div class="section-kicker">Contract Sketch</div>
+            <div>
+              <h2>Requests are partial; resolved outputs are exact.</h2>
+              <p>
+                Input contracts capture user preference and raw model selection. Output contracts record
+                the exact route, exact model identifier, and controller-specific runtime state HRC chose.
+              </p>
+            </div>
+          </div>
+
+          <div class="code-compare">
+            <div>
+              <pre><code>type ModelSelectionRequest = {
+  model?: string | undefined
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | undefined
+}
+
+type AgentRuntimeIntent = {
+  placement: RuntimePlacement
+  modelProvider: ModelProvider
+  harnessFamily?: HarnessFamily | undefined
+  preferredHarnessRuntime?: HarnessRuntime | undefined
+  interactionMode?: InteractionMode | undefined
+  model?: ModelSelectionRequest | undefined
+}</code></pre>
+              <p class="caption">
+                Request/input: partial preferences. No <code>runtimeController</code>,
+                <code>startupMethod</code>, <code>turnDelivery</code>, or <code>runtimeState</code>.
+              </p>
+            </div>
+            <div>
+              <pre><code>type ResolvedModelSelection = {
+  modelProvider: ModelProvider
+  requestedModel?: string | undefined
+  modelId: string
+  modelAlias?: string | undefined
+  modelVersion?: string | undefined
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | undefined
+}</code></pre>
+              <p class="caption">
+                Resolved output: <code>modelId</code> is authoritative. <code>modelVersion</code> is
+                optional metadata for aliases or parsed provider IDs.
+              </p>
+            </div>
+          </div>
+
+          <div class="divider-label">Resolved route and state</div>
+
+          <div class="code-compare">
+            <div>
+              <pre><code>type RuntimeRouteDecision =
+  | {
+      runtimeController: 'tmux' | 'ghostty'
+      harnessRuntime: 'claude-code-cli' | 'codex-cli' | 'pi-cli'
+      interactionMode: 'interactive'
+      startupMethod: 'reuse-existing' | 'launch-artifact' | 'adopt-existing'
+      turnDelivery: 'launch-input' | 'literal-input'
+      attachable: true
+      capture: true
+    }
+  | {
+      runtimeController: 'embedded-sdk'
+      harnessRuntime: 'claude-agent-sdk' | 'pi-sdk'
+      interactionMode: 'nonInteractive'
+      startupMethod: 'reuse-existing' | 'sdk-session'
+      turnDelivery: 'sdk-turn' | 'inflight-queue'
+      attachable: false
+      capture: false
+    }
+  | {
+      runtimeController: 'managed-child-process'
+      harnessRuntime: 'codex-cli'
+      interactionMode: 'headless'
+      startupMethod: 'launch-artifact' | 'broker-invocation'
+      turnDelivery: 'launch-input' | 'broker-input'
+      attachable: false
+      capture: false
+    }
+
+type ResolvedRuntimeRoute = RuntimeRouteDecision & {
+  model: ResolvedModelSelection
+}</code></pre>
+              <p class="caption">Resolved decisions carry singular startup and delivery values.</p>
+            </div>
+            <div>
+              <pre><code>type RuntimeSnapshot =
+  | {
+      runtimeController: 'tmux'
+      runtimeState: { kind: 'tmux'; pane: TmuxPaneState }
+      capabilities: { attach: true; capture: true; literalInput: true }
+    }
+  | {
+      runtimeController: 'ghostty'
+      runtimeState: { kind: 'ghostty'; surface: GhosttySurfaceState }
+      capabilities: { attach: true; capture: true; literalInput: true }
+    }
+  | {
+      runtimeController: 'embedded-sdk'
+      runtimeState: { kind: 'embedded-sdk'; harnessSession?: HarnessSessionState }
+      capabilities: { attach: false; capture: false; inflightInput: boolean }
+    }
+  | {
+      runtimeController: 'managed-child-process'
+      runtimeState: {
+        kind: 'managed-child-process'
+        continuation?: HrcContinuationRef
+        childPid?: number
+        brokerInvocationId?: string
+      }
+      capabilities: { attach: false; capture: false; inflightInput: false }
+    }</code></pre>
+              <p class="caption">Runtime state is discriminated by controller, not requested harness.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="sources">
+          <div class="section-head">
+            <div class="section-kicker">Code Anchors</div>
+            <div>
+              <h2>Where the pressure points live.</h2>
+              <p>These anchors show the current vocabulary and the migration surface.</p>
+            </div>
+          </div>
+          <div class="callout">
+            <h3>Visual cue discipline</h3>
+            <p>
+              The route layer is the center of the design: it turns request-facing provisioning into
+              HRC-owned runtime control. Rust marks provisioning, teal marks runtime control, and neutral
+              panels carry explanatory context.
+            </p>
+          </div>
+          <ul class="source-list">
+            <li><code>packages/hrc-core/src/contracts.ts</code>: intent, transport, runtime, run, launch types.</li>
+            <li><code>packages/hrc-core/src/http-contracts.ts</code>: request intent versus response runtime view.</li>
+            <li><code>packages/hrc-core/src/hrcchat-contracts.ts</code>: selector dispatch and target runtime views.</li>
+            <li><code>packages/hrc-store-sqlite/src/migrations.ts</code>: runtime/run transport storage.</li>
+            <li><code>packages/hrc-server/src/index.ts</code>: routing, dispatch, start, ensure, headless, SDK, and interactive paths.</li>
+            <li><code>packages/hrc-server/src/tmux.ts</code>: tmux control mechanics.</li>
+            <li><code>packages/hrc-server/src/ghostmux.ts</code>: Ghostty control mechanics.</li>
+            <li><code>../agent-spaces/packages/config/src/core/types/harness.ts</code>: harness catalog.</li>
+            <li><code>../agent-spaces/packages/agent-spaces/src/types.ts</code>: invocation and non-interactive turn contracts.</li>
+            <li><code>../agent-spaces/packages/harness-broker-protocol/src/invocation.ts</code>: broker process transport and interaction vocabulary.</li>
+          </ul>
+        </section>
+      </main>
+
+      <footer>
+        Runtime-control/provisioning refactor reference. Keep this page aligned with
+        <code>REFACTOR_PLAN.md</code>.
+      </footer>
+    </div>
+  </body>
+</html>
