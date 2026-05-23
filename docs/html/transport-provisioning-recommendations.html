@@ -514,7 +514,9 @@
           <p class="lead">
             HRC already treats provisioning and runtime control as different decisions. The refactor
             should make that separation executable through route decisions, a valid-combination catalog,
-            and controller-specific runtime state.
+            and controller-specific runtime state. Harness-broker now sharpens the target boundary:
+            HRC should route and persist the decision, while broker-capable harness execution moves out
+            of <code>exec.ts</code>.
           </p>
         </div>
 
@@ -547,6 +549,7 @@
               <span class="token">tmux</span>
               <span class="token">ghostty</span>
               <span class="token">embedded-sdk</span>
+              <span class="token">harness-broker</span>
               <span class="token">managed-child-process</span>
             </div>
           </div>
@@ -585,10 +588,63 @@
             <article class="card control">
               <h3>Runtime Control</h3>
               <p>
-                Tmux, Ghostty, embedded SDK, and managed child-process controllers own different
-                lifecycle, input, capture, and state semantics.
+                Tmux, Ghostty, embedded SDK, harness-broker, and managed child-process controllers own
+                different lifecycle, input, capture, and state semantics.
               </p>
             </article>
+          </div>
+        </section>
+
+        <section id="broker-direction">
+          <div class="section-head">
+            <div class="section-kicker">Harness Broker Direction</div>
+            <div>
+              <h2>Brokered harnesses get their own controller.</h2>
+              <p>
+                The broker package is no longer just a possible launch helper. It owns invocation
+                identity, process protocol, input policy, stop/dispose, continuation updates, permission
+                negotiation, and normalized events. That makes it an HRC runtime-control boundary.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid">
+            <article class="card route">
+              <h3>Current migration shape</h3>
+              <p>
+                Headless Codex still reaches through <code>hrc-server/src/launch/exec.ts</code>. The
+                wrapper drives app-server one-shot behavior, parses output, posts callbacks, and carries
+                harness-specific execution logic inside HRC.
+              </p>
+            </article>
+            <article class="card control">
+              <h3>Target control boundary</h3>
+              <p>
+                HRC should select <code>runtimeController: 'harness-broker'</code>, ask Agent Spaces for
+                a <code>HarnessInvocationSpec</code>, control the broker through its client protocol,
+                and map broker events back into HRC runtime, run, session, and lifecycle state.
+              </p>
+            </article>
+            <article class="card provision">
+              <h3>Contract effect</h3>
+              <p>
+                <code>broker-invocation</code> and <code>broker-input</code> become operations on the
+                broker controller. <code>managed-child-process</code> remains for command runtimes and
+                temporary direct harness wrappers, not as the long-term bucket for broker-capable
+                harnesses.
+              </p>
+            </article>
+          </div>
+
+          <div class="callout">
+            <h3>Broad-strokes plan update</h3>
+            <p>
+              The markdown plan now adds <code>harness-broker</code> to <code>RuntimeController</code>,
+              gives brokered Codex its own route-catalog row, adds broker invocation state to
+              <code>runtimeState</code>, treats <code>broker-input</code> as turn delivery through
+              <code>invocation.input</code>, and marks direct <code>exec.ts</code> harness launch as
+              migration-only.
+            </p>
           </div>
         </section>
 
@@ -725,7 +781,7 @@
                   interaction mode; <code>sdk</code> becomes a harness runtime, startup method, or turn
                   delivery path.
                 </p>
-                <div class="values">tmux<br />ghostty<br />embedded-sdk<br />managed-child-process</div>
+                <div class="values">tmux<br />ghostty<br />embedded-sdk<br />harness-broker<br />managed-child-process</div>
               </div>
             </article>
 
@@ -799,8 +855,8 @@
                 <h3>Hidden runtime acquisition path</h3>
                 <p>
                   Runtime acquisition is currently inferred from call path: reuse an existing runtime,
-                  launch a wrapper artifact, create an SDK session, call the broker, or adopt an
-                  externally-created runtime.
+                  launch a wrapper artifact, create an SDK session, start a broker invocation, or adopt
+                  an externally-created runtime.
                 </p>
                 <div class="values">ensure branches<br />dispatch branches<br />broker path<br />adoption path</div>
               </div>
@@ -871,10 +927,11 @@
                 <h3>Controller-specific state</h3>
                 <p>
                   A typed state payload tied to <code>runtimeController</code>. A tmux runtime has pane
-                  state; a Ghostty runtime has surface state; embedded SDK and managed child-process
-                  runtimes get their own state shapes.
+                  state; a Ghostty runtime has surface state; a broker runtime has invocation identity
+                  and capabilities; embedded SDK and managed child-process runtimes get their own state
+                  shapes.
                 </p>
-                <div class="values">tmux pane state<br />ghostty surface state<br />embedded SDK session state<br />managed child-process state</div>
+                <div class="values">tmux pane state<br />ghostty surface state<br />broker invocation state<br />embedded SDK session state<br />managed child-process state</div>
               </div>
             </article>
 
@@ -900,7 +957,7 @@
                 </div>
                 <h3>Removed from the model</h3>
                 <p>The cleanest new type is sometimes the absence of an old responsibility.</p>
-                <div class="values">no agentSurface term<br />no frontend field name<br />no sdk/headless controller<br />no duplicate executionBackend<br />no mismatched runtimeState</div>
+                <div class="values">no agentSurface term<br />no frontend field name<br />no sdk/headless controller<br />no duplicate executionBackend<br />no exec.ts harness contract<br />no mismatched runtimeState</div>
               </div>
             </article>
           </div>
@@ -910,6 +967,14 @@
             <p>
               SDK is expressed through <code>harnessRuntime</code>, <code>startupMethod</code>, or
               <code>turnDelivery</code>. Headless is expressed through <code>interactionMode</code>.
+            </p>
+          </div>
+          <div class="callout">
+            <h3>Decision: <code>harness-broker</code> is a controller.</h3>
+            <p>
+              The broker protocol has invocation identity, status, input, stop/dispose, continuation,
+              permissions, capabilities, and normalized events. Those are runtime-control semantics, not
+              just a child-process startup method.
             </p>
           </div>
         </section>
@@ -928,8 +993,16 @@
           </div>
 
           <div class="grid">
+            <article class="card control">
+              <h3>1. Promote <code>harness-broker</code></h3>
+              <p>
+                Treat brokered harness execution as <code>runtimeController: 'harness-broker'</code>,
+                not as a hidden branch of managed child-process execution. HRC owns the broker client
+                and persistence mapping; the broker owns harness process/protocol details.
+              </p>
+            </article>
             <article class="card route">
-              <h3>1. Extract <code>RuntimeRouteDecision</code></h3>
+              <h3>2. Extract <code>RuntimeRouteDecision</code></h3>
               <p>
                 Centralize the current predicates into a pure routing function that returns model
                 provider, harness family, harness runtime, runtime controller, interaction mode, startup
@@ -938,7 +1011,7 @@
               </p>
             </article>
             <article class="card control">
-              <h3>2. Rename <code>transport</code></h3>
+              <h3>3. Rename <code>transport</code></h3>
               <p>
                 Use <code>runtimeController</code> for runtime lifecycle/control semantics. Remove
                 <code>sdk</code> and <code>headless</code> from controller values; model them as
@@ -947,15 +1020,16 @@
               </p>
             </article>
             <article class="card control">
-              <h3>3. Discriminate runtime state</h3>
+              <h3>4. Discriminate runtime state</h3>
               <p>
                 Replace opaque optional <code>tmuxJson</code> and <code>surfaceJson</code> checks with
                 runtime-controller-specific variants. Make it impossible to represent
-                <code>runtimeController: 'tmux'</code> without tmux pane metadata.
+                <code>runtimeController: 'tmux'</code> without tmux pane metadata or
+                <code>runtimeController: 'harness-broker'</code> without broker invocation identity.
               </p>
             </article>
             <article class="card provision">
-              <h3>4. Rename Agent Spaces nouns</h3>
+              <h3>5. Rename Agent Spaces nouns</h3>
               <p>
                 Move <code>provider</code> toward <code>modelProvider</code>,
                 <code>harness</code> toward <code>harnessFamily</code>, and <code>frontend</code>
@@ -963,11 +1037,11 @@
               </p>
             </article>
             <article class="card route">
-              <h3>5. Split server responsibilities</h3>
+              <h3>6. Split server responsibilities</h3>
               <p>
                 Extract small modules for routing, interactive runtime provisioning, SDK dispatch,
-                managed child-process execution, launch artifact building, startup, turn delivery, and
-                controller operations.
+                broker control, managed child-process execution, launch artifact building, startup,
+                turn delivery, and controller operations.
               </p>
             </article>
           </div>
@@ -1105,9 +1179,9 @@
                   <td><code>openai</code></td>
                   <td><code>codex</code></td>
                   <td><code>codex-cli</code></td>
-                  <td><code>managed-child-process</code></td>
+                  <td><code>harness-broker</code></td>
                   <td><code>headless</code></td>
-                  <td><code>broker-invocation</code></td>
+                  <td><code>broker-invocation</code>, <code>reuse-existing</code></td>
                   <td><code>broker-input</code></td>
                   <td class="no">no</td>
                   <td class="no">no</td>
@@ -1122,6 +1196,7 @@
               <li>Input validation is partial: reject impossible intent combinations early.</li>
               <li>Route resolution searches the catalog for legal candidates, then applies policy.</li>
               <li>Output validation is exact: every resolved route must match one catalog row and one startup/delivery pair.</li>
+              <li><code>managed-child-process</code> headless Codex is migration-only once HRC consumes harness-broker directly.</li>
             </ul>
           </div>
         </section>
@@ -1198,16 +1273,27 @@ type AgentRuntimeIntent = {
       capture: false
     }
   | {
+      runtimeController: 'harness-broker'
+      harnessRuntime: 'codex-cli'
+      interactionMode: 'headless'
+      startupMethod: 'broker-invocation' | 'reuse-existing'
+      turnDelivery: 'broker-input'
+      brokerDriver: 'codex-app-server'
+      brokerProtocol: 'harness-broker/0.1'
+      attachable: false
+      capture: false
+    }
+  | {
       runtimeController: 'managed-child-process'
       harnessRuntime: 'codex-cli'
       interactionMode: 'headless'
-      startupMethod: 'launch-artifact' | 'broker-invocation'
-      turnDelivery: 'launch-input' | 'broker-input'
+      startupMethod: 'launch-artifact'
+      turnDelivery: 'launch-input'
       attachable: false
       capture: false
     }
 
-type ResolvedRuntimeRoute = RuntimeRouteDecision & {
+type ResolvedRuntimeRoute = RuntimeRouteDecision &amp; {
   model: ResolvedModelSelection
 }</code></pre>
               <p class="caption">Resolved decisions carry singular startup and delivery values.</p>
@@ -1230,12 +1316,33 @@ type ResolvedRuntimeRoute = RuntimeRouteDecision & {
       capabilities: { attach: false; capture: false; inflightInput: boolean }
     }
   | {
+      runtimeController: 'harness-broker'
+      runtimeState: {
+        kind: 'harness-broker'
+        brokerInvocationId: string
+        brokerProtocol: 'harness-broker/0.1'
+        brokerDriver: string
+        brokerPid?: number
+        childPid?: number
+        continuation?: HrcContinuationRef
+        invocationState?: InvocationState
+        invocationCapabilities?: InvocationCapabilities
+      }
+      capabilities: {
+        attach: false
+        capture: false
+        brokerInput: true
+        stop: true
+        dispose: true
+        inputQueue: boolean
+      }
+    }
+  | {
       runtimeController: 'managed-child-process'
       runtimeState: {
         kind: 'managed-child-process'
         continuation?: HrcContinuationRef
         childPid?: number
-        brokerInvocationId?: string
       }
       capabilities: { attach: false; capture: false; inflightInput: false }
     }</code></pre>
@@ -1270,7 +1377,12 @@ type ResolvedRuntimeRoute = RuntimeRouteDecision & {
             <li><code>packages/hrc-server/src/ghostmux.ts</code>: Ghostty control mechanics.</li>
             <li><code>../agent-spaces/packages/config/src/core/types/harness.ts</code>: harness catalog.</li>
             <li><code>../agent-spaces/packages/agent-spaces/src/types.ts</code>: invocation and non-interactive turn contracts.</li>
+            <li><code>../agent-spaces/packages/agent-spaces/src/broker-invocation.ts</code>: broker start request construction.</li>
             <li><code>../agent-spaces/packages/harness-broker-protocol/src/invocation.ts</code>: broker process transport and interaction vocabulary.</li>
+            <li><code>../agent-spaces/packages/harness-broker-protocol/src/commands.ts</code>: broker start/input/status/stop/dispose contracts.</li>
+            <li><code>../agent-spaces/packages/harness-broker-protocol/src/events.ts</code>: normalized invocation and turn event vocabulary.</li>
+            <li><code>../agent-spaces/packages/harness-broker/src/broker.ts</code>: broker lifecycle API over drivers.</li>
+            <li><code>../agent-spaces/packages/harness-broker-client/src/client.ts</code>: stdio client HRC can consume.</li>
           </ul>
         </section>
       </main>
