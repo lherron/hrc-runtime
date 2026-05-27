@@ -4,6 +4,7 @@ import { connect } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { createAgentSpacesClient } from 'agent-spaces'
 /** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
@@ -115,6 +116,8 @@ import type {
   HrcLifecycleQueryFilters,
 } from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
+import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
+import { type CompileFn, compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
   type SdkInflightInputClient,
   buildCliInvocation,
@@ -123,6 +126,8 @@ import {
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
 import { enrichTurnPromptForBrain } from './brain-enricher.js'
+import { HarnessBrokerController } from './broker/controller.js'
+import { BrokerEventMapper } from './broker/event-mapper.js'
 import {
   appendHrcEvent,
   createUserPromptPayload,
@@ -193,6 +198,8 @@ import {
   parseUnbindSurfaceRequest,
 } from './server-parsers.js'
 
+import type { InvocationInput } from 'spaces-harness-broker-protocol'
+import type { RuntimeContinuationRef } from 'spaces-runtime-contracts'
 import {
   type GhostmuxManagerOptions,
   type GhostmuxSurfaceState,
@@ -481,6 +488,12 @@ export type HrcServerOptions = {
    * Env override: `HRC_STALE_GENERATION_ENABLED` (`0`/`false` disables).
    */
   staleGenerationEnabled?: boolean | undefined
+  /**
+   * Cut headless OpenAI Codex dispatch over to the Harness Broker. Default off.
+   *
+   * Env override: `HRC_HEADLESS_CODEX_BROKER_ENABLED` (`1`/`true` enables).
+   */
+  headlessCodexBrokerEnabled?: boolean | undefined
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
@@ -546,6 +559,7 @@ const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an 
 const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
 const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
   'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'
+const HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV = 'HRC_HEADLESS_CODEX_BROKER_ENABLED'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -568,6 +582,13 @@ function resolveStaleGenerationThresholdSec(options: HrcServerOptions): number {
     return DEFAULT_STALE_GENERATION_THRESHOLD_SEC
   }
   return Math.floor(hours * 60 * 60)
+}
+
+function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): boolean {
+  if (typeof options.headlessCodexBrokerEnabled === 'boolean') {
+    return options.headlessCodexBrokerEnabled
+  }
+  return isTruthyFeatureFlag(process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV])
 }
 
 function resolveClaudeGhosttyIdleCleanupMinutes(): number {
@@ -644,6 +665,8 @@ class HrcServerInstance implements HrcServer {
   // `allowStaleGeneration: true`.
   private readonly staleGenerationEnabled: boolean
   private readonly staleGenerationThresholdSec: number
+  private readonly headlessCodexBrokerEnabled: boolean
+  private harnessBrokerController: HarnessBrokerController | undefined
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
@@ -761,6 +784,7 @@ class HrcServerInstance implements HrcServer {
 
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
+    this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
@@ -2015,6 +2039,26 @@ class HrcServerInstance implements HrcServer {
     const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
 
     if (shouldUseHeadlessTransport(intent)) {
+      if (this.headlessCodexBrokerEnabled) {
+        const route = decideHeadlessExecutionRoute(intent, { brokerFlagEnabled: true })
+        if (route === 'broker') {
+          return await runHeadlessRoute(route, {
+            sdk: async () =>
+              this.handleHeadlessDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
+                waitForCompletion: options.waitForCompletion,
+              }),
+            broker: async () =>
+              this.handleHeadlessBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
+                waitForCompletion: options.waitForCompletion,
+              }),
+            legacyExec: async () =>
+              this.handleHeadlessDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
+                waitForCompletion: options.waitForCompletion,
+              }),
+          })
+        }
+      }
+
       return await this.handleHeadlessDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
         waitForCompletion: options.waitForCompletion,
       })
@@ -2550,6 +2594,314 @@ class HrcServerInstance implements HrcServer {
     }
 
     return await execute()
+  }
+
+  private async handleHeadlessBrokerDispatchTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    } = {}
+  ): Promise<Response> {
+    const reusableRuntime = getReusableHeadlessRuntimeForSession(
+      this.db,
+      session.hostSessionId,
+      intent.harness.provider,
+      intent.harness.id
+    )
+    if (reusableRuntime) {
+      assertRuntimeNotBusy(this.db, reusableRuntime)
+      if (
+        reusableRuntime.controllerKind === 'harness-broker' &&
+        reusableRuntime.activeInvocationId !== undefined
+      ) {
+        return await this.executeHeadlessBrokerInputTurn(
+          session,
+          reusableRuntime,
+          prompt,
+          runId,
+          options
+        )
+      }
+    }
+
+    return await this.executeHeadlessBrokerStartTurn(session, intent, prompt, runId, options)
+  }
+
+  private getHarnessBrokerController(): HarnessBrokerController {
+    if (this.harnessBrokerController) {
+      return this.harnessBrokerController
+    }
+
+    const mapper = new BrokerEventMapper({ db: this.db })
+    this.harnessBrokerController = new HarnessBrokerController({
+      db: this.db,
+      mapper: {
+        apply: (envelope) => {
+          const result = mapper.apply(envelope)
+          for (const event of result.events) {
+            this.notifyEvent(event)
+          }
+          return result
+        },
+      },
+      env: process.env,
+      serverInstanceId: `hrc-server:${process.pid}`,
+      logger: {
+        info: (message, fields) => writeServerLog('INFO', message, fields),
+        warn: (message, fields) => writeServerLog('WARN', message, fields),
+        error: (message, fields) => writeServerLog('ERROR', message, fields),
+      },
+    })
+    return this.harnessBrokerController
+  }
+
+  private async executeHeadlessBrokerStartTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    }
+  ): Promise<Response> {
+    const turnIntent: HrcRuntimeIntent =
+      prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+    const now = timestamp()
+    this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
+
+    const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
+    if (typeof client.compileRuntimePlan !== 'function') {
+      throw new HrcRuntimeUnavailableError(
+        'agent-spaces client cannot compile broker runtime plans',
+        {
+          hostSessionId: session.hostSessionId,
+          runId,
+          route: 'broker',
+        }
+      )
+    }
+    const compile = client.compileRuntimePlan
+    const compiled = await compileBrokerRuntimePlan(
+      {
+        intent: turnIntent,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        dispatchEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+        continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+      },
+      {
+        compile,
+        ids: {
+          requestId: () => `req-${randomUUID()}`,
+          operationId: () => `op-${randomUUID()}`,
+          runtimeId: () => `rt-${randomUUID()}`,
+          invocationId: () => `inv-${randomUUID()}`,
+          initialInputId: () => `input-${randomUUID()}`,
+          runId: () => runId,
+          traceId: () => `trace-${randomUUID()}`,
+        },
+      }
+    )
+
+    if (!compiled.admitted) {
+      throw new HrcRuntimeUnavailableError('headless broker compile/admission rejected', {
+        hostSessionId: session.hostSessionId,
+        runId,
+        code: compiled.code,
+        route: 'broker',
+      })
+    }
+
+    const controller = this.getHarnessBrokerController()
+    const result = await controller.start({
+      plan: compiled.plan,
+      profile: compiled.profile,
+      startRequest: compiled.startRequest,
+      specHash: compiled.specHash,
+      startRequestHash: compiled.startRequestHash,
+      identity: compiled.identity,
+      dispatchEnv: compiled.dispatchEnv,
+      routeDecision: {
+        route: 'broker',
+        flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+        selectedBy: 'decideHeadlessExecutionRoute',
+      },
+    })
+
+    if (!result.ok) {
+      throw new HrcRuntimeUnavailableError('headless broker start failed', {
+        hostSessionId: session.hostSessionId,
+        runId,
+        code: result.error.code,
+        message: result.error.message,
+        route: 'broker',
+      })
+    }
+
+    if (options.waitForCompletion === false) {
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: result.runtime.runtimeId,
+        transport: 'headless',
+        status: 'started',
+        supportsInFlightInput: true,
+      } satisfies DispatchTurnResponse)
+    }
+
+    await this.waitForHeadlessBrokerRunCompletion(runId, result.runtime.runtimeId)
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: result.runtime.runtimeId,
+      transport: 'headless',
+      status: 'completed',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
+  }
+
+  private async executeHeadlessBrokerInputTurn(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    prompt: string,
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    }
+  ): Promise<Response> {
+    const invocationId = runtime.activeInvocationId
+    if (invocationId === undefined) {
+      throw new HrcRuntimeUnavailableError('headless broker runtime has no active invocation', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        route: 'broker',
+      })
+    }
+
+    const now = timestamp()
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+      invocationId,
+      operationId: runtime.activeOperationId,
+    })
+    this.db.runtimes.update(runtime.runtimeId, {
+      activeRunId: runId,
+      status: 'busy',
+      lastActivityAt: now,
+      updatedAt: now,
+    })
+    this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+
+    const input: InvocationInput = {
+      inputId: `input-${randomUUID()}` as InvocationInput['inputId'],
+      kind: 'user',
+      content: [{ type: 'text', text: prompt }],
+      metadata: { runId },
+    }
+
+    const result = await this.getHarnessBrokerController().dispatchInput({
+      runtimeId: runtime.runtimeId,
+      input,
+    })
+    if (!result.ok || !result.response.accepted) {
+      const completedAt = timestamp()
+      const errorMessage = result.ok
+        ? (result.response.reason ?? 'broker rejected invocation input')
+        : result.error.message
+      this.db.runs.markCompleted(runId, {
+        status: 'failed',
+        completedAt,
+        updatedAt: completedAt,
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage,
+      })
+      this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+      this.db.runtimes.update(runtime.runtimeId, {
+        status: 'ready',
+        lastActivityAt: completedAt,
+        updatedAt: completedAt,
+      })
+      throw new HrcRuntimeUnavailableError('headless broker input failed', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        invocationId,
+        route: 'broker',
+        error: errorMessage,
+      })
+    }
+
+    if (options.waitForCompletion === false) {
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'headless',
+        status: 'started',
+        supportsInFlightInput: true,
+      } satisfies DispatchTurnResponse)
+    }
+
+    await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      status: 'completed',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
+  }
+
+  private async waitForHeadlessBrokerRunCompletion(
+    runId: string,
+    runtimeId: string
+  ): Promise<HrcRunRecord> {
+    const deadline = Date.now() + 10 * 60 * 1000
+    while (Date.now() < deadline) {
+      const run = this.db.runs.getByRunId(runId)
+      if (run && !isRunActive(run)) {
+        const now = timestamp()
+        this.db.runtimes.updateRunId(runtimeId, undefined, now)
+        this.db.runtimes.update(runtimeId, {
+          status: 'ready',
+          lastActivityAt: now,
+          updatedAt: now,
+        })
+        if (run.status !== 'completed') {
+          throw new HrcRuntimeUnavailableError('headless broker turn failed', {
+            runtimeId,
+            runId,
+            status: run.status,
+            errorCode: run.errorCode,
+            errorMessage: run.errorMessage,
+          })
+        }
+        return run
+      }
+      await delay(100)
+    }
+
+    throw new HrcRuntimeUnavailableError('headless broker turn timed out', {
+      runtimeId,
+      runId,
+      route: 'broker',
+    })
   }
 
   private recordDetachedHeadlessTurnFailure(
@@ -10050,6 +10402,24 @@ function deriveInteractiveHarness(
   return harness.provider === 'openai' ? 'codex-cli' : 'claude-code'
 }
 
+function toRuntimeContinuationRef(
+  continuation: HrcContinuationRef | undefined
+): RuntimeContinuationRef | undefined {
+  if (continuation?.key === undefined) {
+    return undefined
+  }
+  return {
+    schemaVersion: 'runtime-continuation/v1',
+    hrc: {
+      provider: continuation.provider,
+      continuationId: continuation.key,
+      key: continuation.key,
+    },
+    source: 'harness-broker',
+    observedAt: timestamp(),
+  }
+}
+
 function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnapshot['harness'] {
   if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
@@ -10077,6 +10447,44 @@ export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness'
     return false
   }
   return harness.provider === 'anthropic'
+}
+
+export type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
+
+export function decideHeadlessExecutionRoute(
+  intent: HrcRuntimeIntent,
+  options: { brokerFlagEnabled: boolean }
+): HeadlessExecutionRoute {
+  if (shouldUseHeadlessSdkExecutor(intent.harness)) {
+    return 'sdk'
+  }
+
+  const isHeadlessCodexCandidate =
+    options.brokerFlagEnabled &&
+    shouldUseHeadlessTransport(intent) &&
+    intent.harness.interactive !== true &&
+    intent.harness.provider === 'openai' &&
+    (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
+
+  return isHeadlessCodexCandidate ? 'broker' : 'legacy-exec'
+}
+
+export async function runHeadlessRoute<T>(
+  route: HeadlessExecutionRoute,
+  executors: {
+    sdk: () => Promise<T>
+    broker: () => Promise<T>
+    legacyExec: () => Promise<T>
+  }
+): Promise<T> {
+  switch (route) {
+    case 'sdk':
+      return await executors.sdk()
+    case 'broker':
+      return await executors.broker()
+    case 'legacy-exec':
+      return await executors.legacyExec()
+  }
 }
 
 function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
