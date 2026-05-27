@@ -70,7 +70,9 @@ export function makeBrokerProfile(
   identity: RuntimeIdentityAllocation,
   opts: FixtureOpts = {}
 ): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
-  const invocationId = opts.invocationId ?? identity.invocationId
+  const invocationId = (opts.invocationId ?? identity.invocationId) as
+    | RuntimeIdentityAllocation['invocationId']
+    | undefined
   const withInitialInput = opts.withInitialInput ?? identity.initialInputId !== undefined
 
   const spec: HarnessInvocationSpec = {
@@ -107,8 +109,9 @@ export function makeBrokerProfile(
       : {}),
   } as InvocationStartRequest
 
-  const specHash = project(spec, 'spec').specHash
-  const startRequestHash = project(startRequest, 'start-request').startRequestHash
+  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
+  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
+    .startRequestHash
 
   const profile = {
     schemaVersion: 'agent-runtime-profile/v1',
