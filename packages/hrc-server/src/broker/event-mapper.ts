@@ -191,7 +191,10 @@ export class BrokerEventMapper {
         if (runId !== undefined) {
           db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
         }
-        db.brokerInvocations.update(invocationId, { invocationState: 'turn_active', updatedAt: now })
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'turn_active',
+          updatedAt: now,
+        })
         break
       }
       case 'turn.completed': {
@@ -290,6 +293,9 @@ export class BrokerEventMapper {
       }
       case 'permission.resolved': {
         const payload = envelope.payload as PermissionResolvedPayload
+        if (db.permissionDecisions.getByPermissionRequestId(payload.permissionRequestId)) {
+          break
+        }
         const requested = this.findRequestedPayload(invocationId, payload.permissionRequestId)
         db.permissionDecisions.insert({
           permissionRequestId: payload.permissionRequestId,
