@@ -28,6 +28,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.ensured': 'runtime',
   'runtime.interrupted': 'runtime',
   'runtime.terminated': 'runtime',
+  'runtime.idle_cleanup_started': 'runtime',
   'runtime.sweep_completed': 'runtime',
   'runtime.restarted': 'runtime',
   'runtime.dead': 'runtime',

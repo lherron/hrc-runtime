@@ -504,6 +504,51 @@ describe('RuntimeRepository', () => {
       db.close()
     }
   })
+
+  it('round-trips surfaceJson through create', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const now = ts()
+      db.sessions.insert({
+        hostSessionId: 'hsid-rt-surface',
+        scopeRef: testScopeRef('scope-rt-surface'),
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      const surfaceJson = {
+        kind: 'ghostty',
+        surfaceId: 'surface-1',
+        title: 'claude-code: cody@hrc-runtime:T-01588',
+        createdBy: 'ghostmux',
+      }
+      const created = db.runtimes.insert({
+        runtimeId: 'rt-surface-1',
+        hostSessionId: 'hsid-rt-surface',
+        scopeRef: testScopeRef('scope-rt-surface'),
+        laneRef: 'default',
+        generation: 1,
+        transport: 'ghostty',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        surfaceJson,
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+      expect(created.surfaceJson).toEqual(surfaceJson)
+
+      const found = db.runtimes.getByRuntimeId('rt-surface-1')
+      expect(found!.surfaceJson).toEqual(surfaceJson)
+    } finally {
+      db.close()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -884,6 +929,47 @@ describe('LaunchRepository', () => {
       const found = db.launches.getByLaunchId('launch-001')
       expect(found).not.toBeNull()
       expect(found!.status).toBe('pending')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('round-trips surfaceJson through create', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const now = ts()
+      db.sessions.insert({
+        hostSessionId: 'hsid-launch-surface',
+        scopeRef: testScopeRef('scope-launch-surface'),
+        laneRef: 'default',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+
+      const surfaceJson = {
+        kind: 'ghostty',
+        surfaceId: 'surface-launch-1',
+        createdBy: 'ghostmux',
+      }
+      const created = db.launches.insert({
+        launchId: 'launch-surface-001',
+        hostSessionId: 'hsid-launch-surface',
+        generation: 1,
+        harness: 'claude-code',
+        provider: 'anthropic',
+        launchArtifactPath: '/tmp/launches/launch-surface-001.json',
+        surfaceJson,
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now,
+      })
+      expect(created.surfaceJson).toEqual(surfaceJson)
+
+      const found = db.launches.getByLaunchId('launch-surface-001')
+      expect(found!.surfaceJson).toEqual(surfaceJson)
     } finally {
       db.close()
     }

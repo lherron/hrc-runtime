@@ -16,6 +16,7 @@ info:
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
     @echo "  just verify    - Run lint + typecheck + test"
+    @echo "  just serve-docs - Serve docs/html on 0.0.0.0:18481"
 
 # Build all packages
 build:
@@ -87,6 +88,10 @@ publish-semver-dry-run version tag="latest":
 # Serve the ACP Session Dashboard (acp-ops-web) against the local dev stack
 serve-dashboard:
     cd packages/acp-ops-web && bun run dev
+
+# Serve standalone HTML docs/specs locally and over tailnet
+serve-docs port="18481" bind="0.0.0.0":
+    python3 -m http.server {{port}} --bind {{bind}} -d docs/html
 
 # Run control-plane interface test with rex-home target
 cp-test prompt="List skills available. Use only what is in your context, no tools.":

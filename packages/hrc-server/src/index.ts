@@ -194,6 +194,12 @@ import {
 } from './server-parsers.js'
 
 import {
+  type GhostmuxManagerOptions,
+  type GhostmuxSurfaceState,
+  type GhostmuxManager as ServerGhostmuxManager,
+  createGhostmuxManager,
+} from './ghostmux.js'
+import {
   type TmuxManager as ServerTmuxManager,
   type TmuxManagerOptions,
   type TmuxPaneState,
@@ -208,7 +214,7 @@ type InFlightInputResponse = {
 }
 
 type AttachDescriptorResponse = {
-  transport: 'tmux'
+  transport: 'tmux' | 'ghostty'
   argv: string[]
   bindingFence: {
     hostSessionId: string
@@ -217,6 +223,7 @@ type AttachDescriptorResponse = {
     windowId?: string | undefined
     tabId?: string | undefined
     paneId?: string | undefined
+    surfaceId?: string | undefined
   }
 }
 
@@ -477,6 +484,7 @@ export type HrcServerOptions = {
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
+  ghostmuxOptions?: GhostmuxManagerOptions | undefined
 }
 
 export type HrcServer = {
@@ -502,6 +510,9 @@ type ServerLockState = {
 export type TmuxManager = ServerTmuxManager
 export { createTmuxManager }
 export type { RestartStyle, TmuxManagerOptions }
+export type GhostmuxManager = ServerGhostmuxManager
+export { createGhostmuxManager }
+export type { GhostmuxManagerOptions }
 
 // Re-export CLI invocation builder so hrc-cli can produce dry-run previews
 // without duplicating the intent → argv/env translation.
@@ -528,6 +539,9 @@ const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
 const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
 const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
 const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
+const HRC_CLAUDE_GHOSTTY_ENV = 'HRC_CLAUDE_GHOSTTY'
+const HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS = 30_000
+const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15
 const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
 const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
 const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
@@ -554,6 +568,16 @@ function resolveStaleGenerationThresholdSec(options: HrcServerOptions): number {
     return DEFAULT_STALE_GENERATION_THRESHOLD_SEC
   }
   return Math.floor(hours * 60 * 60)
+}
+
+function resolveClaudeGhosttyIdleCleanupMinutes(): number {
+  const raw = process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES']
+  if (raw === undefined) return DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES
+  const minutes = Number.parseFloat(raw)
+  if (!Number.isFinite(minutes) || minutes < 0) {
+    return DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES
+  }
+  return minutes
 }
 
 type MessageSubscriber = (record: HrcMessageRecord) => void
@@ -613,6 +637,8 @@ class HrcServerInstance implements HrcServer {
   private zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   private activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   private activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
+  private idleCleanupTimer: ReturnType<typeof setInterval> | undefined
+  private idleCleanupInFlight: Promise<void> | undefined
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -721,6 +747,7 @@ class HrcServerInstance implements HrcServer {
     private readonly options: HrcServerOptions,
     private readonly db: HrcDatabase,
     private readonly tmux: ServerTmuxManager,
+    private readonly ghostmux: ServerGhostmuxManager,
     private readonly lockHandle: ServerLockHandle
   ) {
     this.server = Bun.serve({
@@ -736,6 +763,7 @@ class HrcServerInstance implements HrcServer {
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
+    this.startClaudeGhosttyIdleCleanup()
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
       // Test-only override: caller supplies a fixed endpoint, no listener started.
@@ -801,6 +829,17 @@ class HrcServerInstance implements HrcServer {
         await this.activeRunReconcileInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
+      }
+    }
+    if (this.idleCleanupTimer) {
+      clearInterval(this.idleCleanupTimer)
+      this.idleCleanupTimer = undefined
+    }
+    if (this.idleCleanupInFlight) {
+      try {
+        await this.idleCleanupInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.idle_cleanup_wait_failed', { error })
       }
     }
     this.followSubscribers.clear()
@@ -1982,16 +2021,18 @@ class HrcServerInstance implements HrcServer {
     }
 
     if (shouldUseSdkTransport(intent)) {
-      // Prefer live idle tmux runtime over SDK when one is available (spec §11.3.3:
+      // Prefer a live idle interactive runtime over SDK when one is available (spec §11.3.3:
       // headless for CLI/headless-capable targets, SDK only as fallback)
-      const liveTmuxRuntime = latestRuntime
-      const tmuxAvailableAndIdle =
-        liveTmuxRuntime &&
-        liveTmuxRuntime.transport === 'tmux' &&
-        liveTmuxRuntime.tmuxJson !== undefined &&
-        !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
-        liveTmuxRuntime.activeRunId === undefined
-      if (!tmuxAvailableAndIdle) {
+      const liveInteractiveRuntime = latestRuntime
+      const interactiveAvailableAndIdle =
+        liveInteractiveRuntime &&
+        (liveInteractiveRuntime.transport === 'tmux' ||
+          liveInteractiveRuntime.transport === 'ghostty') &&
+        (liveInteractiveRuntime.tmuxJson !== undefined ||
+          liveInteractiveRuntime.surfaceJson !== undefined) &&
+        !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
+        liveInteractiveRuntime.activeRunId === undefined
+      if (!interactiveAvailableAndIdle) {
         return await this.handleSdkDispatchTurn(session, intent, dispatchPrompt, runId, {
           waitForCompletion: options.waitForCompletion,
         })
@@ -2025,15 +2066,32 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const continuationForDispatch = runtime.continuation
+    const dispatchLaunchIntent =
+      dispatchPrompt.length > 0
+        ? { ...dispatchIntent, initialPrompt: dispatchPrompt }
+        : dispatchIntent
     const cliInvocation = await buildDispatchInvocation(
-      dispatchIntent,
+      dispatchLaunchIntent,
       continuationForDispatch ? { continuation: continuationForDispatch } : undefined
     )
-    const tmuxPane = requireTmuxPane(runtime)
+    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
+    let tmuxPane: TmuxPaneState | undefined
+    let ghosttySurface: GhostmuxSurfaceState | undefined
+    let agentchatTarget: string
+    let ghosttyEnv: Record<string, string> = {}
+    if (interactiveTransport === 'ghostty') {
+      ghosttySurface = requireGhosttySurface(runtime)
+      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
+      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
+    } else {
+      tmuxPane = requireTmuxPane(runtime)
+      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
+    }
     const launchEnv = {
       ...cliInvocation.env,
-      AGENTCHAT_TRANSPORT: 'tmux',
-      AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
+      AGENTCHAT_TRANSPORT: interactiveTransport,
+      AGENTCHAT_TARGET: agentchatTarget,
+      ...ghosttyEnv,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchOtel = buildLaunchOtelConfig(
@@ -2082,7 +2140,7 @@ class HrcServerInstance implements HrcServer {
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      transport: 'tmux',
+      transport: interactiveTransport,
       status: 'accepted',
       acceptedAt: now,
       updatedAt: now,
@@ -2106,24 +2164,39 @@ class HrcServerInstance implements HrcServer {
         provider: runtime.provider,
         launchArtifactPath,
         tmuxJson: runtime.tmuxJson,
+        surfaceJson: runtime.surfaceJson,
         status: 'accepted',
         createdAt: now,
         updatedAt: now,
       })
       launchCreated = true
 
-      await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+      if (interactiveTransport === 'ghostty') {
+        if (!ghosttySurface) {
+          throw new Error('missing Ghostty surface for Ghostty dispatch')
+        }
+        await this.ghostmux.sendKeys(
+          ghosttySurface.surfaceId,
+          buildLaunchCommand(launchArtifactPath)
+        )
+      } else {
+        if (!tmuxPane) {
+          throw new Error('missing tmux pane for tmux dispatch')
+        }
+        await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+      }
       writeServerLog('INFO', 'launch.dispatch.enqueued', {
         launchId,
         hostSessionId: session.hostSessionId,
         runtimeId: runtime.runtimeId,
         runId: run.runId,
-        paneId: tmuxPane.paneId,
+        ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
+        ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
         launchArtifactPath,
       })
     } catch (error) {
       rollbackFailedTmuxDispatch(this.db, runtime, run.runId, launchCreated ? launchId : undefined)
-      throw new HrcInternalError('tmux dispatch failed before launch start', {
+      throw new HrcInternalError(`${interactiveTransport} dispatch failed before launch start`, {
         runtimeId: runtime.runtimeId,
         runId: run.runId,
         launchId,
@@ -2140,7 +2213,7 @@ class HrcServerInstance implements HrcServer {
       runId,
       runtimeId: runtime.runtimeId,
       launchId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       payload: {
         promptLength: dispatchPrompt.length,
       },
@@ -2156,7 +2229,7 @@ class HrcServerInstance implements HrcServer {
       runId,
       runtimeId: runtime.runtimeId,
       launchId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       payload: createUserPromptPayload(dispatchPrompt),
     })
     this.notifyEvent(userPromptEvent)
@@ -2178,7 +2251,7 @@ class HrcServerInstance implements HrcServer {
       runId,
       runtimeId: runtime.runtimeId,
       launchId,
-      transport: 'tmux',
+      transport: interactiveTransport,
     })
     this.notifyEvent(startedEvent)
 
@@ -2187,14 +2260,14 @@ class HrcServerInstance implements HrcServer {
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       status: 'started',
       supportsInFlightInput: false,
     } satisfies DispatchTurnResponse)
   }
 
   /**
-   * Deliver a dispatch turn as literal user input to a tmux pane that already
+   * Deliver a dispatch turn as literal user input to an interactive surface that already
    * has an interactive harness running. Avoids the `bun run exec.ts` launch
    * path, which would be parsed as keystrokes by the live harness CLI.
    */
@@ -2204,7 +2277,14 @@ class HrcServerInstance implements HrcServer {
     prompt: string,
     runId: string
   ): Promise<Response> {
-    const tmuxPane = requireTmuxPane(runtime)
+    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
+    let tmuxPane: TmuxPaneState | undefined
+    let ghosttySurface: GhostmuxSurfaceState | undefined
+    if (interactiveTransport === 'ghostty') {
+      ghosttySurface = requireGhosttySurface(runtime)
+    } else {
+      tmuxPane = requireTmuxPane(runtime)
+    }
     const acceptedAt = timestamp()
 
     const run = this.db.runs.insert({
@@ -2214,7 +2294,7 @@ class HrcServerInstance implements HrcServer {
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      transport: 'tmux',
+      transport: interactiveTransport,
       status: 'accepted',
       acceptedAt,
       updatedAt: acceptedAt,
@@ -2227,19 +2307,40 @@ class HrcServerInstance implements HrcServer {
         lastActivityAt: acceptedAt,
         updatedAt: acceptedAt,
       })
-      await this.tmux.sendLiteral(tmuxPane.paneId, prompt)
+      if (interactiveTransport === 'ghostty') {
+        if (!ghosttySurface) {
+          throw new Error('missing Ghostty surface for Ghostty literal dispatch')
+        }
+        await this.ghostmux.sendLiteral(ghosttySurface.surfaceId, prompt)
+      } else {
+        if (!tmuxPane) {
+          throw new Error('missing tmux pane for tmux literal dispatch')
+        }
+        await this.tmux.sendLiteral(tmuxPane.paneId, prompt)
+      }
       // Pause before Enter to avoid paste-burst classification in TUIs.
       await Bun.sleep(200)
-      await this.tmux.sendEnter(tmuxPane.paneId)
+      if (interactiveTransport === 'ghostty') {
+        if (!ghosttySurface) {
+          throw new Error('missing Ghostty surface for Ghostty literal dispatch')
+        }
+        await this.ghostmux.sendEnter(ghosttySurface.surfaceId)
+      } else {
+        if (!tmuxPane) {
+          throw new Error('missing tmux pane for tmux literal dispatch')
+        }
+        await this.tmux.sendEnter(tmuxPane.paneId)
+      }
       writeServerLog('INFO', 'launch.dispatch.literal_enqueued', {
         hostSessionId: session.hostSessionId,
         runtimeId: runtime.runtimeId,
         runId: run.runId,
-        paneId: tmuxPane.paneId,
+        ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
+        ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
       })
     } catch (error) {
       rollbackFailedTmuxDispatch(this.db, runtime, run.runId)
-      throw new HrcInternalError('tmux literal dispatch failed', {
+      throw new HrcInternalError(`${interactiveTransport} literal dispatch failed`, {
         runtimeId: runtime.runtimeId,
         runId: run.runId,
         cause: error instanceof Error ? error.message : String(error),
@@ -2254,7 +2355,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       payload: {
         promptLength: prompt.length,
         delivery: 'interactive-literal',
@@ -2270,7 +2371,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       payload: createUserPromptPayload(prompt),
     })
     this.notifyEvent(userPromptEvent)
@@ -2291,7 +2392,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       payload: {
         delivery: 'interactive-literal',
       },
@@ -2303,7 +2404,7 @@ class HrcServerInstance implements HrcServer {
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport: interactiveTransport,
       status: 'started',
       supportsInFlightInput: false,
     } satisfies DispatchTurnResponse)
@@ -4045,7 +4146,8 @@ class HrcServerInstance implements HrcServer {
       ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
       ...(candidate.run.transport === 'sdk' ||
       candidate.run.transport === 'tmux' ||
-      candidate.run.transport === 'headless'
+      candidate.run.transport === 'headless' ||
+      candidate.run.transport === 'ghostty'
         ? { transport: candidate.run.transport }
         : {}),
       errorCode: HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
@@ -4119,6 +4221,113 @@ class HrcServerInstance implements HrcServer {
     }
   }
 
+  private startClaudeGhosttyIdleCleanup(): void {
+    if (!isClaudeGhosttyEnabled()) return
+    if (resolveClaudeGhosttyIdleCleanupMinutes() === 0) return
+
+    void this.runClaudeGhosttyIdleCleanup()
+    this.idleCleanupTimer = setInterval(() => {
+      void this.runClaudeGhosttyIdleCleanup()
+    }, HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS)
+  }
+
+  private async runClaudeGhosttyIdleCleanup(): Promise<void> {
+    if (this.idleCleanupInFlight) return
+    const cleanup = this.cleanupIdleClaudeGhosttyRuntimes()
+    this.idleCleanupInFlight = cleanup
+    try {
+      await cleanup
+    } catch (error) {
+      writeServerLog('WARN', 'runtime.idle_cleanup_failed', { error })
+    } finally {
+      if (this.idleCleanupInFlight === cleanup) {
+        this.idleCleanupInFlight = undefined
+      }
+    }
+  }
+
+  private async cleanupIdleClaudeGhosttyRuntimes(): Promise<void> {
+    const cleanupMinutes = resolveClaudeGhosttyIdleCleanupMinutes()
+    if (cleanupMinutes === 0) return
+
+    const nowMs = Date.now()
+    const cutoffMs = nowMs - cleanupMinutes * 60_000
+    for (const runtime of this.db.runtimes.listAll()) {
+      if (
+        runtime.transport !== 'ghostty' ||
+        runtime.harness !== 'claude-code' ||
+        runtime.activeRunId !== undefined ||
+        runtime.status === 'busy' ||
+        runtime.status === 'starting' ||
+        isRuntimeUnavailableStatus(runtime.status)
+      ) {
+        continue
+      }
+
+      const activityMs = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+      if (!Number.isFinite(activityMs) || activityMs > cutoffMs) continue
+
+      const latest = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+      if (
+        !latest ||
+        latest.activeRunId !== undefined ||
+        latest.status === 'busy' ||
+        latest.status === 'starting' ||
+        latest.generation !== runtime.generation
+      ) {
+        continue
+      }
+
+      const surface = requireGhosttySurface(latest)
+      const session = requireSession(this.db, latest.hostSessionId)
+      const startedAt = timestamp()
+      const startedEvent = appendHrcEvent(this.db, 'runtime.idle_cleanup_started', {
+        ts: startedAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: latest.runtimeId,
+        transport: 'ghostty',
+        payload: {
+          transport: 'ghostty',
+          surfaceId: surface.surfaceId,
+          reason: 'claude-ghostty-idle',
+          idleMinutes: cleanupMinutes,
+        },
+      })
+      this.notifyEvent(startedEvent)
+
+      try {
+        await this.ghostmux.sendKeys(surface.surfaceId, '/quit')
+        await delay(1_000)
+        await this.ghostmux.terminate(surface.surfaceId)
+      } catch (error) {
+        const inspected = await this.ghostmux.inspectSurface(surface.surfaceId).catch(() => null)
+        if (inspected) throw error
+      }
+
+      const completedAt = timestamp()
+      finalizeRuntimeTermination(this.db, latest, completedAt)
+      const terminatedEvent = appendHrcEvent(this.db, 'runtime.terminated', {
+        ts: completedAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: latest.runtimeId,
+        transport: 'ghostty',
+        payload: {
+          transport: 'ghostty',
+          surfaceId: surface.surfaceId,
+          reason: 'claude-ghostty-idle',
+          droppedContinuation: false,
+        },
+      })
+      this.notifyEvent(terminatedEvent)
+    }
+  }
+
   private async reconcileActiveRunsOnce(input: {
     olderThanMs: number
     dryRun: boolean
@@ -4182,7 +4391,7 @@ class HrcServerInstance implements HrcServer {
       .query<HrcServerRunRow, []>(
         `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
           WHERE status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless')
+            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
             AND runtime_id IS NOT NULL
             AND completed_at IS NULL
           ORDER BY updated_at ASC, run_id ASC`
@@ -4362,7 +4571,7 @@ class HrcServerInstance implements HrcServer {
           WHERE run_id = ?
             AND runtime_id = ?
             AND status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless')
+            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
             AND completed_at IS NULL
             AND EXISTS (
               SELECT 1 FROM runtimes
@@ -4419,7 +4628,8 @@ class HrcServerInstance implements HrcServer {
       runtimeId: candidate.runtime.runtimeId,
       ...(candidate.run.transport === 'sdk' ||
       candidate.run.transport === 'tmux' ||
-      candidate.run.transport === 'headless'
+      candidate.run.transport === 'headless' ||
+      candidate.run.transport === 'ghostty'
         ? { transport: candidate.run.transport }
         : {}),
       errorCode,
@@ -4507,10 +4717,10 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async captureRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
-    if (runtime.transport !== 'tmux') {
+    if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
       throw new HrcBadRequestError(
         HrcErrorCode.MALFORMED_REQUEST,
-        'cannot capture a non-tmux runtime; use the runtime event stream instead',
+        'cannot capture a non-interactive runtime; use the runtime event stream instead',
         {
           runtimeId: runtime.runtimeId,
           transport: runtime.transport,
@@ -4518,7 +4728,10 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
-    const text = await this.tmux.capture(requireTmuxPane(runtime).paneId)
+    const text =
+      runtime.transport === 'ghostty'
+        ? await this.ghostmux.capture(requireGhosttySurface(runtime).surfaceId)
+        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
@@ -4532,7 +4745,25 @@ class HrcServerInstance implements HrcServer {
     runtime: HrcRuntimeSnapshot
   ): Promise<HrcRuntimeSnapshot> {
     if (runtime.transport !== 'tmux' || isRuntimeUnavailableStatus(runtime.status)) {
-      return runtime
+      if (runtime.transport !== 'ghostty' || isRuntimeUnavailableStatus(runtime.status)) {
+        return runtime
+      }
+      const surfaceId = runtime.surfaceJson?.['surfaceId']
+      if (typeof surfaceId !== 'string') {
+        return runtime
+      }
+      const inspected = await this.ghostmux.inspectSurface(surfaceId)
+      if (inspected) {
+        return runtime
+      }
+
+      markRuntimeDead(this.db, requireSession(this.db, runtime.hostSessionId), runtime, 'ghostty', {
+        runtimeId: runtime.runtimeId,
+        surfaceId,
+        reason: 'ghostty_surface_missing',
+      })
+
+      return requireRuntime(this.db, runtime.runtimeId)
     }
 
     const tmuxSessionTarget = getObservedTmuxSessionName(runtime)
@@ -4555,8 +4786,11 @@ class HrcServerInstance implements HrcServer {
   }
 
   private assertTmuxRuntimeStillLive(runtime: HrcRuntimeSnapshot): void {
-    if (runtime.transport === 'tmux' && isRuntimeUnavailableStatus(runtime.status)) {
-      throw new HrcRuntimeUnavailableError('tmux runtime is no longer live', {
+    if (
+      (runtime.transport === 'tmux' || runtime.transport === 'ghostty') &&
+      isRuntimeUnavailableStatus(runtime.status)
+    ) {
+      throw new HrcRuntimeUnavailableError(`${runtime.transport} runtime is no longer live`, {
         runtimeId: runtime.runtimeId,
         status: runtime.status,
         hostSessionId: runtime.hostSessionId,
@@ -4577,6 +4811,9 @@ class HrcServerInstance implements HrcServer {
     const operation = (async () => {
       const existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
       const normalizedIntent = normalizeRuntimeProvisionIntent(intent)
+      const expectedInteractiveTransport = shouldUseGhosttyTransport(normalizedIntent)
+        ? 'ghostty'
+        : 'tmux'
       if (shouldUseHeadlessTransport(intent)) {
         const now = timestamp()
         this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
@@ -4604,6 +4841,7 @@ class HrcServerInstance implements HrcServer {
         !isRuntimeUnavailableStatus(existingRuntime.status) &&
         !requiresHeadlessStart(intent) &&
         restartStyle === 'reuse_pty' &&
+        existingRuntime.transport === expectedInteractiveTransport &&
         (existingRuntime.status === 'busy' ||
           existingRuntime.status === 'starting' ||
           hasLiveInteractiveLaunch(this.db, existingRuntime))
@@ -4640,8 +4878,22 @@ class HrcServerInstance implements HrcServer {
   }
 
   private attachRuntime(runtime: HrcRuntimeSnapshot): Response {
+    if (runtime.transport === 'ghostty') {
+      const surface = requireGhosttySurface(runtime)
+      return json({
+        transport: 'ghostty',
+        argv: this.ghostmux.getAttachDescriptor(surface.surfaceId).argv,
+        bindingFence: {
+          hostSessionId: runtime.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          generation: runtime.generation,
+          surfaceId: surface.surfaceId,
+        },
+      } satisfies AttachDescriptorResponse)
+    }
+
     if (runtime.transport !== 'tmux') {
-      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
+      throw new HrcRuntimeUnavailableError('attach is only available for interactive runtimes', {
         runtimeId: runtime.runtimeId,
         transport: runtime.transport,
       })
@@ -4663,7 +4915,7 @@ class HrcServerInstance implements HrcServer {
 
   private async attachRuntimeEffectfully(runtime: HrcRuntimeSnapshot): Promise<Response> {
     if (runtime.transport === 'sdk') {
-      throw new HrcRuntimeUnavailableError('attach is only available for tmux runtimes', {
+      throw new HrcRuntimeUnavailableError('attach is only available for interactive runtimes', {
         runtimeId: runtime.runtimeId,
         transport: runtime.transport,
       })
@@ -4683,10 +4935,16 @@ class HrcServerInstance implements HrcServer {
 
     const operation = (async () => {
       const latestRuntime = requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
-      if (latestRuntime.transport === 'tmux' && !isRuntimeUnavailableStatus(latestRuntime.status)) {
+      if (
+        (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
+        !isRuntimeUnavailableStatus(latestRuntime.status)
+      ) {
         return this.attachRuntime(latestRuntime)
       }
-      if (latestRuntime.transport === 'tmux' && latestRuntime.provider !== 'openai') {
+      if (
+        (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
+        latestRuntime.provider !== 'openai'
+      ) {
         this.assertTmuxRuntimeStillLive(latestRuntime)
       }
 
@@ -4703,6 +4961,7 @@ class HrcServerInstance implements HrcServer {
         latestTmuxRuntime &&
         !isRuntimeUnavailableStatus(latestTmuxRuntime.status) &&
         latestTmuxRuntime.provider === latestRuntime.provider &&
+        (latestTmuxRuntime.transport === 'tmux' || latestTmuxRuntime.transport === 'ghostty') &&
         (latestTmuxRuntime.harnessSessionJson?.['attachPrepared'] === true ||
           latestTmuxRuntime.status === 'busy' ||
           latestTmuxRuntime.status === 'starting' ||
@@ -4765,14 +5024,27 @@ class HrcServerInstance implements HrcServer {
     intent: HrcRuntimeIntent
   ): Promise<HrcRuntimeSnapshot> {
     const invocation = await buildDispatchInvocation(intent)
-    const tmuxPane = requireTmuxPane(runtime)
+    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
+    let tmuxPane: TmuxPaneState | undefined
+    let ghosttySurface: GhostmuxSurfaceState | undefined
+    let agentchatTarget: string
+    let ghosttyEnv: Record<string, string> = {}
+    if (interactiveTransport === 'ghostty') {
+      ghosttySurface = requireGhosttySurface(runtime)
+      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
+      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
+    } else {
+      tmuxPane = requireTmuxPane(runtime)
+      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
+    }
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const launchEnv = {
       ...invocation.env,
-      AGENTCHAT_TRANSPORT: 'tmux',
-      AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
+      AGENTCHAT_TRANSPORT: interactiveTransport,
+      AGENTCHAT_TARGET: agentchatTarget,
+      ...ghosttyEnv,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchOtel = buildLaunchOtelConfig(
@@ -4819,6 +5091,8 @@ class HrcServerInstance implements HrcServer {
       provider: runtime.provider,
       launchArtifactPath,
       continuation: runtime.continuation,
+      tmuxJson: runtime.tmuxJson,
+      surfaceJson: runtime.surfaceJson,
       status: 'accepted',
       createdAt: now,
       updatedAt: now,
@@ -4832,7 +5106,20 @@ class HrcServerInstance implements HrcServer {
     })
 
     try {
-      await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+      if (interactiveTransport === 'ghostty') {
+        if (!ghosttySurface) {
+          throw new Error('missing Ghostty surface for Ghostty interactive start')
+        }
+        await this.ghostmux.sendKeys(
+          ghosttySurface.surfaceId,
+          buildLaunchCommand(launchArtifactPath)
+        )
+      } else {
+        if (!tmuxPane) {
+          throw new Error('missing tmux pane for tmux interactive start')
+        }
+        await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+      }
     } catch (error) {
       rollbackFailedInteractiveStartLaunch(this.db, runtime, launchId)
       throw new HrcInternalError('interactive start failed before launch start', {
@@ -4846,7 +5133,8 @@ class HrcServerInstance implements HrcServer {
       launchId,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
-      paneId: tmuxPane.paneId,
+      ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
+      ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
       launchArtifactPath,
     })
 
@@ -5173,14 +5461,27 @@ class HrcServerInstance implements HrcServer {
     })
     const launchCwd = await resolveDispatchCwd(invocation.cwd, attachIntent)
 
-    const tmuxPane = requireTmuxPane(runtime)
+    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
+    let tmuxPane: TmuxPaneState | undefined
+    let ghosttySurface: GhostmuxSurfaceState | undefined
+    let agentchatTarget: string
+    let ghosttyEnv: Record<string, string> = {}
+    if (interactiveTransport === 'ghostty') {
+      ghosttySurface = requireGhosttySurface(runtime)
+      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
+      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
+    } else {
+      tmuxPane = requireTmuxPane(runtime)
+      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
+    }
     const launchId = `launch-${randomUUID()}`
     const now = timestamp()
     const launchesDir = join(this.options.runtimeRoot, 'launches')
     const launchEnv = {
       ...invocation.env,
-      AGENTCHAT_TRANSPORT: 'tmux',
-      AGENTCHAT_TARGET: `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`,
+      AGENTCHAT_TRANSPORT: interactiveTransport,
+      AGENTCHAT_TARGET: agentchatTarget,
+      ...ghosttyEnv,
     }
     const launchArtifactPath = join(launchesDir, `${launchId}.json`)
     const launchOtel = buildLaunchOtelConfig(
@@ -5227,6 +5528,7 @@ class HrcServerInstance implements HrcServer {
       provider: runtime.provider,
       launchArtifactPath,
       tmuxJson: runtime.tmuxJson,
+      surfaceJson: runtime.surfaceJson,
       continuation,
       status: 'accepted',
       createdAt: now,
@@ -5245,12 +5547,23 @@ class HrcServerInstance implements HrcServer {
       lastActivityAt: now,
     })
 
-    await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+    if (interactiveTransport === 'ghostty') {
+      if (!ghosttySurface) {
+        throw new Error('missing Ghostty surface for Ghostty attach')
+      }
+      await this.ghostmux.sendKeys(ghosttySurface.surfaceId, buildLaunchCommand(launchArtifactPath))
+    } else {
+      if (!tmuxPane) {
+        throw new Error('missing tmux pane for tmux attach')
+      }
+      await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
+    }
     writeServerLog('INFO', 'launch.attach.enqueued', {
       launchId,
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
-      paneId: tmuxPane.paneId,
+      ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
+      ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
       launchArtifactPath,
     })
   }
@@ -5260,11 +5573,43 @@ class HrcServerInstance implements HrcServer {
       return await this.terminateRuntime(runtime)
     }
 
-    if (runtime.transport !== 'tmux') {
+    if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
       return this.interruptHeadlessRuntime(runtime)
     }
 
-    return await this.interruptTmuxRuntime(runtime)
+    return runtime.transport === 'ghostty'
+      ? await this.interruptGhosttyRuntime(runtime)
+      : await this.interruptTmuxRuntime(runtime)
+  }
+
+  private async interruptGhosttyRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const surface = requireGhosttySurface(runtime)
+
+    await this.ghostmux.interrupt(surface.surfaceId)
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    const event = appendHrcEvent(this.db, 'runtime.interrupted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'ghostty',
+      payload: {
+        transport: 'ghostty',
+        surfaceId: surface.surfaceId,
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+    } satisfies RuntimeActionResponse)
   }
 
   private async interruptTmuxRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
@@ -5352,6 +5697,9 @@ class HrcServerInstance implements HrcServer {
     if (runtime.transport === 'tmux') {
       return await this.terminateTmuxRuntime(runtime)
     }
+    if (runtime.transport === 'ghostty') {
+      return await this.terminateGhosttyRuntime(runtime)
+    }
 
     const dropContinuation = opts.dropContinuation ?? runtime.activeRunId != null
     return await this.terminateHeadlessRuntime(runtime, { dropContinuation })
@@ -5379,6 +5727,38 @@ class HrcServerInstance implements HrcServer {
       payload: {
         transport: 'tmux',
         sessionName: tmux.sessionName,
+        droppedContinuation: false,
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      droppedContinuation: false,
+    } satisfies TerminateRuntimeResponse)
+  }
+
+  private async terminateGhosttyRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
+    const session = requireSession(this.db, runtime.hostSessionId)
+    const surface = requireGhosttySurface(runtime)
+
+    const now = timestamp()
+    await this.ghostmux.terminate(surface.surfaceId)
+
+    finalizeRuntimeTermination(this.db, runtime, now)
+    const event = appendHrcEvent(this.db, 'runtime.terminated', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'ghostty',
+      payload: {
+        transport: 'ghostty',
+        surfaceId: surface.surfaceId,
         droppedContinuation: false,
       },
     })
@@ -6593,13 +6973,25 @@ class HrcServerInstance implements HrcServer {
     fromSeq: number
   }): Promise<SemanticTurnHandoffResponse | undefined> {
     const { session, runtime, request, payload, runId, sessionRef, fromSeq } = input
+    const transport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
 
     try {
-      const pane = requireTmuxPane(runtime)
-      await this.tmux.sendLiteral(pane.paneId, payload)
+      if (transport === 'ghostty') {
+        const surface = requireGhosttySurface(runtime)
+        await this.ghostmux.sendLiteral(surface.surfaceId, payload)
+      } else {
+        const pane = requireTmuxPane(runtime)
+        await this.tmux.sendLiteral(pane.paneId, payload)
+      }
       // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
       await Bun.sleep(200)
-      await this.tmux.sendEnter(pane.paneId)
+      if (transport === 'ghostty') {
+        const surface = requireGhosttySurface(runtime)
+        await this.ghostmux.sendEnter(surface.surfaceId)
+      } else {
+        const pane = requireTmuxPane(runtime)
+        await this.tmux.sendEnter(pane.paneId)
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       writeServerLog('WARN', 'semantic_turn.interactive_delivery_failed', {
@@ -6620,7 +7012,7 @@ class HrcServerInstance implements HrcServer {
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: session.generation,
-      transport: 'tmux',
+      transport,
       status: 'started',
       acceptedAt: now,
       startedAt: now,
@@ -6636,7 +7028,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       runId,
-      transport: 'tmux',
+      transport,
     })
 
     const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
@@ -6647,7 +7039,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport,
       payload: {
         promptLength: payload.length,
         delivery: 'interactive-literal',
@@ -6663,7 +7055,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport,
       payload: createUserPromptPayload(payload),
     })
     this.notifyEvent(userPromptEvent)
@@ -6676,7 +7068,7 @@ class HrcServerInstance implements HrcServer {
       generation: session.generation,
       runId,
       runtimeId: runtime.runtimeId,
-      transport: 'tmux',
+      transport,
       payload: {
         delivery: 'interactive-literal',
       },
@@ -6830,30 +7222,47 @@ class HrcServerInstance implements HrcServer {
           // unenriched while only fallback DMs got brain context.
           const prepared = await this.prepareSemanticDmPayload(session, body, record)
 
-          // If the target has a live interactive tmux runtime, deliver via
+          // If the target has a live interactive runtime, deliver via
           // literal send-keys instead of dispatching a new turn. This lets dm
           // reach agents whether they are mid-turn or idle in an interactive session.
-          // Falls back to SDK dispatch if tmux delivery fails (e.g. pane gone).
-          let tmuxDelivered = false
-          const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
-          if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+          // Falls back to turn dispatch if literal delivery fails (e.g. pane gone).
+          let interactiveDelivered = false
+          const liveInteractiveRuntime = findLatestRuntime(this.db, session.hostSessionId)
+          if (
+            liveInteractiveRuntime &&
+            (liveInteractiveRuntime.transport === 'tmux' ||
+              liveInteractiveRuntime.transport === 'ghostty') &&
+            !isRuntimeUnavailableStatus(liveInteractiveRuntime.status)
+          ) {
             try {
-              const paneId = requireTmuxPane(liveTmuxRuntime).paneId
+              const transport = liveInteractiveRuntime.transport === 'ghostty' ? 'ghostty' : 'tmux'
               const payload = prepared.payload
-              await this.tmux.sendLiteral(paneId, payload)
+              if (transport === 'ghostty') {
+                const surface = requireGhosttySurface(liveInteractiveRuntime)
+                await this.ghostmux.sendLiteral(surface.surfaceId, payload)
+              } else {
+                const paneId = requireTmuxPane(liveInteractiveRuntime).paneId
+                await this.tmux.sendLiteral(paneId, payload)
+              }
               // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
               await Bun.sleep(200)
-              await this.tmux.sendEnter(paneId)
+              if (transport === 'ghostty') {
+                const surface = requireGhosttySurface(liveInteractiveRuntime)
+                await this.ghostmux.sendEnter(surface.surfaceId)
+              } else {
+                const paneId = requireTmuxPane(liveInteractiveRuntime).paneId
+                await this.tmux.sendEnter(paneId)
+              }
               this.db.messages.updateExecution(record.messageId, {
                 state: 'completed',
                 mode: 'headless',
                 sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
                 hostSessionId: session.hostSessionId,
                 generation: session.generation,
-                runtimeId: liveTmuxRuntime.runtimeId,
-                transport: 'tmux',
+                runtimeId: liveInteractiveRuntime.runtimeId,
+                transport,
               })
-              tmuxDelivered = true
+              interactiveDelivered = true
             } catch (err) {
               const errorMessage = err instanceof Error ? err.message : String(err)
               writeServerLog('WARN', 'semantic_dm.literal_delivery_failed', {
@@ -6863,7 +7272,7 @@ class HrcServerInstance implements HrcServer {
             }
           }
 
-          if (!tmuxDelivered) {
+          if (!interactiveDelivered) {
             const result = await this.executeSemanticTurn(session, body, record, respondTo, {
               waitForCompletion: body.wait?.enabled === true,
               prepared,
@@ -7238,13 +7647,14 @@ class HrcServerInstance implements HrcServer {
     if (
       !request ||
       request.execution.mode !== 'interactive' ||
-      request.execution.transport !== 'tmux' ||
+      (request.execution.transport !== 'tmux' && request.execution.transport !== 'ghostty') ||
       request.execution.runId === undefined ||
       request.execution.hostSessionId === undefined ||
       request.execution.generation === undefined
     ) {
       return
     }
+    const transport = request.execution.transport
 
     const runId = request.execution.runId
     const run = this.db.runs.getByRunId(runId)
@@ -7267,7 +7677,7 @@ class HrcServerInstance implements HrcServer {
       generation: request.execution.generation,
       runtimeId: request.execution.runtimeId,
       runId,
-      transport: 'tmux',
+      transport,
     })
     this.db.messages.updateExecution(request.messageId, {
       state: 'completed',
@@ -7281,10 +7691,10 @@ class HrcServerInstance implements HrcServer {
       generation: request.execution.generation,
       runId,
       runtimeId: request.execution.runtimeId,
-      transport: 'tmux',
+      transport,
       payload: {
         success: true,
-        transport: 'tmux',
+        transport,
         delivery: 'interactive-literal',
         body: response.body,
         replyMessageId: response.messageId,
@@ -7352,7 +7762,10 @@ class HrcServerInstance implements HrcServer {
         generation,
         ...(runtimeId ? { runtimeId } : {}),
         runId,
-        ...(transport === 'sdk' || transport === 'tmux' || transport === 'headless'
+        ...(transport === 'sdk' ||
+        transport === 'tmux' ||
+        transport === 'headless' ||
+        transport === 'ghostty'
           ? { transport }
           : {}),
         ...(event.errorCode ? { errorCode: event.errorCode } : {}),
@@ -7432,6 +7845,11 @@ class HrcServerInstance implements HrcServer {
     intent: HrcRuntimeIntent,
     restartStyle: RestartStyle
   ): Promise<HrcRuntimeSnapshot> {
+    if (shouldUseGhosttyTransport(intent)) {
+      validateEnsureRuntimeIntent(intent, { allowNonInteractive: true })
+      return await this.ensureGhosttyRuntimeForSession(session, intent, restartStyle)
+    }
+
     validateEnsureRuntimeIntent(intent)
 
     const existingRuntime = findLatestRuntime(this.db, session.hostSessionId)
@@ -7517,6 +7935,141 @@ class HrcServerInstance implements HrcServer {
       payload: {
         restartStyle,
         tmux: simplifyTmuxJson(runtime.tmuxJson),
+      },
+    })
+    this.notifyEvent(event)
+
+    return runtime
+  }
+
+  private async ensureGhosttyRuntimeForSession(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    restartStyle: RestartStyle
+  ): Promise<HrcRuntimeSnapshot> {
+    const existingRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    let eventKind = 'runtime.created'
+
+    if (restartStyle === 'reuse_pty' && existingRuntime?.surfaceJson) {
+      const surfaceId = existingRuntime.surfaceJson['surfaceId']
+      const inspected =
+        typeof surfaceId === 'string' ? await this.ghostmux.inspectSurface(surfaceId) : null
+      if (inspected && !isRuntimeUnavailableStatus(existingRuntime.status)) {
+        const now = timestamp()
+        const runtime =
+          this.db.runtimes.update(existingRuntime.runtimeId, {
+            runtimeKind: 'harness',
+            status: 'ready',
+            surfaceJson: toSurfaceJson({
+              ...inspected,
+              title:
+                typeof existingRuntime.surfaceJson['title'] === 'string'
+                  ? existingRuntime.surfaceJson['title']
+                  : inspected.title,
+              anchorSurfaceId:
+                typeof existingRuntime.surfaceJson['anchorSurfaceId'] === 'string'
+                  ? existingRuntime.surfaceJson['anchorSurfaceId']
+                  : inspected.anchorSurfaceId,
+            }),
+            updatedAt: now,
+            lastActivityAt: now,
+          }) ?? existingRuntime
+        eventKind = 'runtime.ensured'
+        this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+        const event = appendHrcEvent(this.db, eventKind, {
+          ts: now,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runtimeId: runtime.runtimeId,
+          transport: 'ghostty',
+          payload: {
+            restartStyle,
+            surface: simplifySurfaceJson(runtime.surfaceJson),
+          },
+        })
+        this.notifyEvent(event)
+        return runtime
+      }
+    }
+
+    const now = timestamp()
+    const harness = deriveInteractiveHarness(intent.harness)
+    const runtimeId = `rt-${randomUUID()}`
+    const title = `${harness}: ${session.scopeRef}/${session.laneRef}`
+    const surface = await this.ghostmux
+      .ensureSurface(session.hostSessionId, restartStyle, {
+        cwd: intent.placement.cwd ?? intent.placement.projectRoot ?? process.cwd(),
+        title,
+        runtimeId,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        generation: session.generation,
+        projectId:
+          typeof intent.placement.correlation?.sessionRef?.scopeRef === 'string'
+            ? intent.placement.correlation.sessionRef.scopeRef.split('@')[1]?.split(':')[0]
+            : undefined,
+      })
+      .catch((error) => {
+        if (isGhostmuxUnavailableError(error)) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new HrcRuntimeUnavailableError(`Ghostty/ghostmux unavailable: ${message}`, {
+            transport: 'ghostty',
+            runtimeId,
+            hostSessionId: session.hostSessionId,
+          })
+        }
+        throw error
+      })
+    const surfaceJson = toSurfaceJson(surface)
+
+    this.db.sessions.updateIntent(session.hostSessionId, intent, now)
+
+    if (existingRuntime) {
+      this.db.runtimes.updateStatus(existingRuntime.runtimeId, 'terminated', now)
+    }
+
+    const runtime = this.db.runtimes.insert({
+      runtimeId,
+      runtimeKind: 'harness',
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'ghostty',
+      harness,
+      provider: intent.harness.provider,
+      status: 'ready',
+      surfaceJson,
+      supportsInflightInput: false,
+      adopted: false,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    this.db.surfaceBindings.bind({
+      surfaceKind: 'ghostty',
+      surfaceId: surface.surfaceId,
+      hostSessionId: session.hostSessionId,
+      runtimeId,
+      generation: session.generation,
+      paneId: surface.surfaceId,
+      boundAt: now,
+    })
+
+    const event = appendHrcEvent(this.db, eventKind, {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'ghostty',
+      payload: {
+        restartStyle,
+        surface: simplifySurfaceJson(runtime.surfaceJson),
       },
     })
     this.notifyEvent(event)
@@ -8118,18 +8671,28 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    if (runtime.transport !== 'tmux') {
-      throw new HrcRuntimeUnavailableError('runtime does not support literal input (not tmux)', {
+    if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
+      throw new HrcRuntimeUnavailableError('runtime does not support literal input', {
         sessionRef,
         runtimeId: runtime.runtimeId,
         transport: runtime.transport,
       })
     }
 
-    const paneId = requireTmuxPane(runtime).paneId
-    await this.tmux.sendLiteral(paneId, body['text'])
+    const paneId = runtime.transport === 'tmux' ? requireTmuxPane(runtime).paneId : undefined
+    const surfaceId =
+      runtime.transport === 'ghostty' ? requireGhosttySurface(runtime).surfaceId : undefined
+    if (runtime.transport === 'ghostty') {
+      await this.ghostmux.sendLiteral(surfaceId as string, body['text'])
+    } else {
+      await this.tmux.sendLiteral(paneId as string, body['text'])
+    }
     if (body['enter'] !== false) {
-      await this.tmux.sendEnter(paneId)
+      if (runtime.transport === 'ghostty') {
+        await this.ghostmux.sendEnter(surfaceId as string)
+      } else {
+        await this.tmux.sendEnter(paneId as string)
+      }
     }
 
     const now = timestamp()
@@ -8163,7 +8726,7 @@ class HrcServerInstance implements HrcServer {
         generation: session.generation,
         runtimeId: runtime.runtimeId,
         ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
-        transport: 'tmux',
+        transport: runtime.transport,
         payload: createUserPromptPayload(body['text'] as string),
       })
       this.notifyEvent(promptEvent)
@@ -8253,10 +8816,10 @@ class HrcServerInstance implements HrcServer {
       { runId }
     )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-    const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
+    const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless' | 'ghostty'
 
     let finalOutput: string | undefined
-    if (transport !== 'tmux') {
+    if (transport !== 'tmux' && transport !== 'ghostty') {
       const bufferedOutput = this.db.runtimeBuffers
         .listByRunId(turnBody.runId)
         .map((chunk) => chunk.text)
@@ -8454,9 +9017,16 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       socketPath: getTmuxSocketPath(options),
     })
     await tmux.initialize()
+    const ghostmux = createGhostmuxManager(options.ghostmuxOptions)
+    const claudeGhosttyEnabled = isClaudeGhosttyEnabled()
+    if (claudeGhosttyEnabled) {
+      await ghostmux.initialize().catch((error) => {
+        writeServerLog('WARN', 'server.start.ghostmux_unavailable', { error })
+      })
+    }
     const db = openHrcDatabase(options.dbPath)
     await replaySpool(options, db)
-    await reconcileStartupState(db, tmux)
+    await reconcileStartupState(db, tmux, ghostmux, { reconcileGhostty: claudeGhosttyEnabled })
     writeServerLog('INFO', 'server.start.ready', {
       runtimeRoot: options.runtimeRoot,
       stateRoot: options.stateRoot,
@@ -8464,7 +9034,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       dbPath: options.dbPath,
       tmuxSocketPath: getTmuxSocketPath(options),
     })
-    return new HrcServerInstance(options, db, tmux, lockHandle)
+    return new HrcServerInstance(options, db, tmux, ghostmux, lockHandle)
   } catch (error) {
     writeServerLog('ERROR', 'server.start.failed', {
       runtimeRoot: options.runtimeRoot,
@@ -9134,7 +9704,12 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
   )
 }
 
-async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): Promise<void> {
+async function reconcileStartupState(
+  db: HrcDatabase,
+  tmux: ServerTmuxManager,
+  ghostmux: ServerGhostmuxManager,
+  options: { reconcileGhostty: boolean }
+): Promise<void> {
   for (const launch of db.launches.listAll()) {
     if (!isOrphanableLaunchStatus(launch.status)) {
       continue
@@ -9178,7 +9753,7 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
 
   for (const runtime of db.runtimes.listAll()) {
     if (
-      runtime.transport !== 'tmux' ||
+      (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') ||
       runtime.status === 'terminated' ||
       runtime.status === 'dead'
     ) {
@@ -9206,21 +9781,42 @@ async function reconcileStartupState(db: HrcDatabase, tmux: ServerTmuxManager): 
         continue
       }
 
-      const tmuxSessionName = getObservedTmuxSessionName(runtime)
-      if (!tmuxSessionName) {
-        continue
-      }
+      if (runtime.transport === 'ghostty') {
+        if (!options.reconcileGhostty) {
+          continue
+        }
+        const surfaceId = runtime.surfaceJson?.['surfaceId']
+        if (typeof surfaceId !== 'string') {
+          continue
+        }
 
-      const inspected = await tmux.inspectSession(tmuxSessionName)
-      if (inspected) {
-        continue
-      }
+        const inspected = await ghostmux.inspectSurface(surfaceId)
+        if (inspected) {
+          continue
+        }
 
-      markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'tmux', {
-        runtimeId: runtime.runtimeId,
-        sessionName: tmuxSessionName,
-        reason: 'tmux_session_missing',
-      })
+        markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'ghostty', {
+          runtimeId: runtime.runtimeId,
+          surfaceId,
+          reason: 'ghostty_surface_missing',
+        })
+      } else {
+        const tmuxSessionName = getObservedTmuxSessionName(runtime)
+        if (!tmuxSessionName) {
+          continue
+        }
+
+        const inspected = await tmux.inspectSession(tmuxSessionName)
+        if (inspected) {
+          continue
+        }
+
+        markRuntimeDead(db, requireSession(db, runtime.hostSessionId), runtime, 'tmux', {
+          runtimeId: runtime.runtimeId,
+          sessionName: tmuxSessionName,
+          reason: 'tmux_session_missing',
+        })
+      }
     } catch (error) {
       logStartupIssue('runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
     }
@@ -9232,7 +9828,7 @@ function isOrphanableLaunchStatus(status: string): boolean {
 }
 
 function hasLiveInteractiveLaunch(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
-  if (runtime.transport !== 'tmux') return false
+  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') return false
   if (!runtime.launchId) return false
 
   const launch = db.launches.getByLaunchId(runtime.launchId)
@@ -9424,7 +10020,10 @@ function toManagedSessionRecord(record: AppManagedSessionRecord): HrcManagedSess
   }
 }
 
-function validateEnsureRuntimeIntent(intent: HrcRuntimeIntent): void {
+function validateEnsureRuntimeIntent(
+  intent: HrcRuntimeIntent,
+  options: { allowNonInteractive?: boolean } = {}
+): void {
   if (!isRecord(intent.harness)) {
     throw new HrcUnprocessableEntityError(
       HrcErrorCode.MISSING_RUNTIME_INTENT,
@@ -9432,7 +10031,7 @@ function validateEnsureRuntimeIntent(intent: HrcRuntimeIntent): void {
     )
   }
 
-  if (intent.harness.interactive !== true) {
+  if (intent.harness.interactive !== true && options.allowNonInteractive !== true) {
     throw new HrcRuntimeUnavailableError(
       'ensureRuntime supports only interactive runtimes in phase 1'
     )
@@ -9461,15 +10060,17 @@ function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnaps
 /**
  * Decide whether a headless dispatch (or start) should run through the SDK
  * executor (executeHeadlessSdkTurn / runHeadlessSdkStartLaunch) rather than
- * the CLI executor. Explicit SDK harness ids always win. Id-less anthropic
- * intents keep the legacy SDK fallback. Everything else is CLI.
+ * the CLI executor. Explicit SDK harness ids always win. Id-less Anthropic
+ * intents keep the legacy SDK fallback only after the caller has already
+ * selected the headless path. Normal Claude dispatch routes through Ghostty
+ * only when HRC_CLAUDE_GHOSTTY=1 is set.
  *
  * Exported for unit testing — single-source predicate for dispatch routing,
  * start routing, runtime harness label (`deriveSdkHarness` vs
  * `deriveInteractiveHarness`), and reuse filtering.
  */
 export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness']): boolean {
-  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk' || harness.id === 'claude-code') {
+  if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return true
   }
   if (harness.id !== undefined) {
@@ -9480,17 +10081,60 @@ export function shouldUseHeadlessSdkExecutor(harness: HrcRuntimeIntent['harness'
 
 function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
   const preferredMode = intent.execution?.preferredMode
-  return preferredMode === 'headless' || preferredMode === 'nonInteractive'
+  if (preferredMode === 'headless') return true
+  if (preferredMode === 'nonInteractive') {
+    return !(isClaudeGhosttyEnabled() && isGhosttyClaudeIntent(intent))
+  }
+  return false
 }
 
 function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
   if (shouldUseHeadlessTransport(intent)) {
     return false
   }
+  if (shouldUseGhosttyTransport(intent)) {
+    return false
+  }
 
   return (
     intent.harness.interactive === false || intent.execution?.preferredMode === 'nonInteractive'
   )
+}
+
+function shouldUseGhosttyTransport(intent: HrcRuntimeIntent): boolean {
+  if (!isClaudeGhosttyEnabled()) {
+    return false
+  }
+  if (intent.execution?.preferredMode === 'headless') {
+    return false
+  }
+  if (!isGhosttyClaudeIntent(intent)) {
+    return false
+  }
+  return true
+}
+
+function isGhosttyClaudeIntent(intent: HrcRuntimeIntent): boolean {
+  if (intent.harness.provider !== 'anthropic') {
+    return false
+  }
+  return intent.harness.id !== 'agent-sdk' && intent.harness.id !== 'pi-sdk'
+}
+
+function isClaudeGhosttyEnabled(): boolean {
+  return isTruthyFeatureFlag(process.env[HRC_CLAUDE_GHOSTTY_ENV])
+}
+
+function isTruthyFeatureFlag(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false
+  }
+  return ['1', 'true', 'yes', 'on', 'enabled'].includes(value.trim().toLowerCase())
+}
+
+function isGhostmuxUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /cannot connect to Ghostty UDS|Ghostty API|api\.sock|ghostmux/i.test(message)
 }
 
 function normalizeRuntimeProvisionIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {
@@ -9512,7 +10156,11 @@ function shouldEnsureTmuxRuntimeForDispatch(
   intent: HrcRuntimeIntent,
   ensureInteractiveRuntime: boolean
 ): boolean {
-  if (!ensureInteractiveRuntime && !shouldUseHeadlessTransport(intent)) {
+  if (
+    !ensureInteractiveRuntime &&
+    !shouldUseHeadlessTransport(intent) &&
+    !shouldUseGhosttyTransport(intent)
+  ) {
     return false
   }
 
@@ -9520,7 +10168,8 @@ function shouldEnsureTmuxRuntimeForDispatch(
     return true
   }
 
-  return runtime.transport !== 'tmux' || runtime.provider !== intent.harness.provider
+  const expectedTransport = shouldUseGhosttyTransport(intent) ? 'ghostty' : 'tmux'
+  return runtime.transport !== expectedTransport || runtime.provider !== intent.harness.provider
 }
 
 function selectEnsureRuntimeRestartStyle(
@@ -9531,7 +10180,8 @@ function selectEnsureRuntimeRestartStyle(
     return 'reuse_pty'
   }
 
-  return runtime.transport === 'tmux' && runtime.provider === intent.harness.provider
+  const expectedTransport = shouldUseGhosttyTransport(intent) ? 'ghostty' : 'tmux'
+  return runtime.transport === expectedTransport && runtime.provider === intent.harness.provider
     ? 'reuse_pty'
     : 'fresh_pty'
 }
@@ -9548,6 +10198,31 @@ function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
     sessionId: tmuxPane.sessionId,
     windowId: tmuxPane.windowId,
     paneId: tmuxPane.paneId,
+  }
+}
+
+function toSurfaceJson(surface: GhostmuxSurfaceState): Record<string, unknown> {
+  return {
+    kind: 'ghostty',
+    surfaceId: surface.surfaceId,
+    title: surface.title,
+    createdBy: surface.createdBy,
+    ...(surface.anchorSurfaceId ? { anchorSurfaceId: surface.anchorSurfaceId } : {}),
+  }
+}
+
+function simplifySurfaceJson(
+  surfaceJson: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!surfaceJson) {
+    return {}
+  }
+
+  return {
+    kind: surfaceJson['kind'],
+    surfaceId: surfaceJson['surfaceId'],
+    title: surfaceJson['title'],
+    anchorSurfaceId: surfaceJson['anchorSurfaceId'],
   }
 }
 
@@ -9613,6 +10288,21 @@ function toStatusSessionView(db: HrcDatabase, session: HrcSessionRecord): HrcSta
 }
 
 function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResponse {
+  if (runtime.transport === 'ghostty') {
+    const surface = requireGhosttySurface(runtime)
+    return {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      transport: 'ghostty',
+      status: runtime.status,
+      supportsInFlightInput: runtime.supportsInflightInput,
+      surface: {
+        surfaceId: surface.surfaceId,
+        ...(surface.title ? { title: surface.title } : {}),
+      },
+    }
+  }
+
   const tmux = requireTmuxPane(runtime)
   return {
     runtimeId: runtime.runtimeId,
@@ -9645,7 +10335,7 @@ function toStartRuntimeResponse(runtime: HrcRuntimeSnapshot): StartRuntimeRespon
 function findLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot | null {
   const runtimes = db.runtimes
     .listByHostSessionId(hostSessionId)
-    .filter((runtime) => runtime.transport === 'tmux')
+    .filter((runtime) => runtime.transport === 'tmux' || runtime.transport === 'ghostty')
   return runtimes.at(-1) ?? null
 }
 
@@ -10221,7 +10911,9 @@ function mapServerRunRow(row: HrcServerRunRow): HrcRunRecord {
 }
 
 function reconcileResultTransport(run: HrcRunRecord): ReconcileActiveRunResult['transport'] {
-  return run.transport === 'sdk' || run.transport === 'headless' ? run.transport : 'tmux'
+  return run.transport === 'sdk' || run.transport === 'headless' || run.transport === 'ghostty'
+    ? run.transport
+    : 'tmux'
 }
 
 function runtimeMatchesSweepRequest(
@@ -10260,7 +10952,12 @@ function runtimeMatchesSweepRequest(
 }
 
 function isSweepRuntimeTransport(transport: string): transport is SweepRuntimeTransport {
-  return transport === 'tmux' || transport === 'headless' || transport === 'sdk'
+  return (
+    transport === 'tmux' ||
+    transport === 'headless' ||
+    transport === 'sdk' ||
+    transport === 'ghostty'
+  )
 }
 
 function filterRuntimes(
@@ -10477,6 +11174,7 @@ function toTargetCapabilities(
   }
   if (
     runtime?.transport === 'tmux' ||
+    runtime?.transport === 'ghostty' ||
     runtime?.transport === 'headless' ||
     session.lastAppliedIntentJson?.harness.interactive === true
   ) {
@@ -10489,7 +11187,7 @@ function toTargetCapabilities(
     modesSupported: supported,
     defaultMode: supported[0] ?? 'none',
     dmReady: supported.length > 0 || session.lastAppliedIntentJson !== undefined,
-    sendReady: runtime?.transport === 'tmux',
+    sendReady: runtime?.transport === 'tmux' || runtime?.transport === 'ghostty',
     peekReady: runtime !== undefined && runtime.transport !== 'headless',
   }
 }
@@ -10501,7 +11199,8 @@ function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRunti
   if (
     runtime.transport !== 'sdk' &&
     runtime.transport !== 'tmux' &&
-    runtime.transport !== 'headless'
+    runtime.transport !== 'headless' &&
+    runtime.transport !== 'ghostty'
   ) {
     return undefined
   }
@@ -10510,7 +11209,7 @@ function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRunti
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
     status: runtime.status,
-    supportsLiteralSend: runtime.transport === 'tmux',
+    supportsLiteralSend: runtime.transport === 'tmux' || runtime.transport === 'ghostty',
     supportsCapture: runtime.transport !== 'headless',
     activeRunId: runtime.activeRunId,
     lastActivityAt: runtime.lastActivityAt,
@@ -10936,7 +11635,9 @@ function finalizeRunOnStopHook(
     generation: envelope.generation,
     runId: activeRunId,
     runtimeId: runtime.runtimeId,
-    ...(run.transport === 'sdk' || run.transport === 'tmux' ? { transport: run.transport } : {}),
+    ...(run.transport === 'sdk' || run.transport === 'tmux' || run.transport === 'ghostty'
+      ? { transport: run.transport }
+      : {}),
     payload: {
       success: true,
       source: 'hook_stop',
@@ -11163,7 +11864,7 @@ function applyHookLifecycleEnvelope(
 
   const runtime = db.runtimes.getByRuntimeId(envelope.runtimeId)
   if (!runtime) return events
-  if (runtime.transport !== 'tmux') return events
+  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') return events
   if (isRuntimeUnavailableStatus(runtime.status)) return events
   if (runtime.activeRunId !== undefined) return events
 
@@ -11392,6 +12093,29 @@ function requireTmuxPane(runtime: HrcRuntimeSnapshot): TmuxPaneState {
   }
 }
 
+function requireGhosttySurface(runtime: HrcRuntimeSnapshot): GhostmuxSurfaceState {
+  const surfaceId = runtime.surfaceJson?.['surfaceId']
+  const title = runtime.surfaceJson?.['title']
+  const anchorSurfaceId = runtime.surfaceJson?.['anchorSurfaceId']
+
+  if (typeof surfaceId !== 'string' || surfaceId.length === 0) {
+    throw new HrcRuntimeUnavailableError(
+      `runtime "${runtime.runtimeId}" is missing ghostty state`,
+      {
+        runtimeId: runtime.runtimeId,
+      }
+    )
+  }
+
+  return {
+    kind: 'ghostty',
+    surfaceId,
+    title: typeof title === 'string' ? title : undefined,
+    anchorSurfaceId: typeof anchorSurfaceId === 'string' ? anchorSurfaceId : undefined,
+    createdBy: 'ghostmux',
+  }
+}
+
 function upsertLaunch(
   db: HrcDatabase,
   launchId: string,
@@ -11492,13 +12216,22 @@ async function buildDispatchInvocation(
 
   let buildError: unknown
   let unavailableCommand: string | undefined
+  const invocationIntent = shouldUseGhosttyTransport(intent)
+    ? {
+        ...intent,
+        harness: {
+          ...intent.harness,
+          interactive: true as const,
+        },
+      }
+    : intent
 
   try {
-    const invocation = await buildCliInvocation(intent, {
+    const invocation = await buildCliInvocation(invocationIntent, {
       ...(options.continuation ? { continuation: options.continuation } : {}),
     })
     env = invocation.env
-    cwd = await resolveDispatchCwd(invocation.cwd, intent)
+    cwd = await resolveDispatchCwd(invocation.cwd, invocationIntent)
     interactionMode = invocation.interactionMode
     ioMode = invocation.ioMode
     prompts = invocation.prompts

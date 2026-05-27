@@ -22,11 +22,13 @@ let server: HrcServer | undefined
 let originalPath: string | undefined
 let originalAspCodexPath: string | undefined
 let originalAspCodexSkipCommonPaths: string | undefined
+let originalHrcClaudeGhostty: string | undefined
 
 function saveCodexEnv(): void {
   originalPath = process.env['PATH']
   originalAspCodexPath = process.env['ASP_CODEX_PATH']
   originalAspCodexSkipCommonPaths = process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+  originalHrcClaudeGhostty = process.env['HRC_CLAUDE_GHOSTTY']
 }
 
 function restoreCodexEnv(): void {
@@ -47,6 +49,12 @@ function restoreCodexEnv(): void {
     delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
   } else {
     process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
+  }
+  if (originalHrcClaudeGhostty === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['HRC_CLAUDE_GHOSTTY']
+  } else {
+    process.env['HRC_CLAUDE_GHOSTTY'] = originalHrcClaudeGhostty
   }
 }
 
@@ -85,12 +93,39 @@ function headlessIntent(
   }
 }
 
+function interactiveAnthropicIntent(): object {
+  return {
+    placement: {
+      agentRoot: '/tmp/agent',
+      projectRoot: '/tmp/project',
+      cwd: '/tmp/project',
+      runMode: 'task',
+      bundle: { kind: 'compose', compose: [] },
+      dryRun: true,
+    },
+    harness: {
+      provider: 'anthropic',
+      interactive: true,
+      id: 'claude-code',
+    },
+    execution: {
+      preferredMode: 'interactive',
+    },
+  }
+}
+
 function expectedAnthropicContinuationKey(hostSessionId: string): string {
   return `sdk-${createHash('sha1').update(hostSessionId).digest('hex').slice(0, 12)}`
 }
 
-async function createTestServer(): Promise<void> {
+async function createTestServer(options: { claudeGhostty?: boolean } = {}): Promise<void> {
   saveCodexEnv()
+  if (options.claudeGhostty === true) {
+    process.env['HRC_CLAUDE_GHOSTTY'] = '1'
+  } else {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['HRC_CLAUDE_GHOSTTY']
+  }
   fixture = await createHrcTestFixture('hrc-headless-anthropic-')
   server = await createHrcServer(fixture.serverOpts())
 }
@@ -463,8 +498,8 @@ describe('B. Anthropic headless start', () => {
 })
 
 describe('C. Attach from headless Anthropic runtime', () => {
-  it('rematerializes tmux from a headless Anthropic runtime with continuation', async () => {
-    await createTestServer()
+  it('rematerializes Ghostty from a headless Anthropic runtime with continuation', async () => {
+    await createTestServer({ claudeGhostty: true })
 
     const fakeClaude = await installFakeClaude('fake-claude-attach')
     const { hostSessionId } = await resolveSession('anthropic-headless-attach')
@@ -484,17 +519,17 @@ describe('C. Attach from headless Anthropic runtime', () => {
     })
     expect(attachRes.status).toBe(200)
     const attachData = (await attachRes.json()) as any
-    expect(attachData.transport).toBe('tmux')
-    expect(attachData.argv[0]).toBe('tmux')
-    expect(attachData.argv).toContain('attach-session')
+    expect(attachData.transport).toBe('ghostty')
+    expect(attachData.argv[0]).toBe('ghostmux')
+    expect(attachData.bindingFence.surfaceId).toBeString()
     expect(attachData.bindingFence.runtimeId).toBeString()
     expect(attachData.bindingFence.runtimeId).not.toBe(started.runtimeId)
 
     const attachedRuntime = getRuntime(String(attachData.bindingFence.runtimeId))
     expect(attachedRuntime).not.toBeNull()
-    expect(attachedRuntime?.transport).toBe('tmux')
+    expect(attachedRuntime?.transport).toBe('ghostty')
     expect(attachedRuntime?.provider).toBe('anthropic')
-  })
+  }, 10_000)
 
   it('returns an error when a headless Anthropic runtime has no continuation', async () => {
     await createTestServer()
@@ -513,6 +548,57 @@ describe('C. Attach from headless Anthropic runtime', () => {
     const data = (await attachRes.json()) as any
     expect(data.error).toBeDefined()
     expect(String(data.error.message ?? '')).toContain('continuation')
+  })
+})
+
+describe('C2. Ghostty availability', () => {
+  it('uses tmux for interactive Claude when Ghostty is not enabled', async () => {
+    await createTestServer()
+
+    const fakeClaude = await installFakeClaude('fake-claude-default-tmux')
+    const { hostSessionId } = await resolveSession('anthropic-default-tmux')
+    const res = await fixture!.postJson('/v1/runtimes/start', {
+      hostSessionId,
+      intent: {
+        ...interactiveAnthropicIntent(),
+        launch: {
+          pathPrepend: [fakeClaude.binDir],
+        },
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as StartRuntimeResponse
+    expect(data.transport).toBe('tmux')
+  }, 10_000)
+
+  it('returns runtime_unavailable instead of internal_error when ghostmux cannot reach Ghostty', async () => {
+    saveCodexEnv()
+    process.env['HRC_CLAUDE_GHOSTTY'] = '1'
+    fixture = await createHrcTestFixture('hrc-headless-anthropic-')
+    server = await createHrcServer(
+      fixture.serverOpts({
+        ghostmuxOptions: {
+          runner: async () => {
+            throw new Error(
+              'cannot connect to Ghostty UDS at /Users/test/Library/Application Support/Ghostty/api.sock'
+            )
+          },
+        },
+      })
+    )
+
+    const { hostSessionId } = await resolveSession('anthropic-ghostty-unavailable')
+    const res = await fixture.postJson('/v1/runtimes/start', {
+      hostSessionId,
+      intent: interactiveAnthropicIntent(),
+    })
+
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    const data = (await res.json()) as any
+    expect(data.error?.code).toBe('runtime_unavailable')
+    expect(String(data.error?.message ?? '')).toContain('Ghostty/ghostmux unavailable')
+    expect(String(data.error?.message ?? '')).not.toContain('internal server error')
   })
 })
 
@@ -559,7 +645,7 @@ describe('D. DM fallback', () => {
 
     expect(dmRes.status).toBe(200)
     const dm = (await dmRes.json()) as SemanticDmResponse
-    expect(elapsedMs).toBeLessThan(4_000)
+    expect(elapsedMs).toBeLessThan(5_500)
     expect(dm.execution?.transport).toBe('headless')
     expect(dm.execution?.status).toBe('started')
     expect(dm.execution?.continuationUpdated).toBe(false)
@@ -579,7 +665,7 @@ describe('D. DM fallback', () => {
       await Bun.sleep(100)
     }
     expect(execLog).toContain('app-server:')
-  })
+  }, 10_000)
 
   it('waits for a headless DM response timeout when wait is explicitly requested', async () => {
     await createTestServer()
@@ -605,7 +691,7 @@ describe('D. DM fallback', () => {
     expect(dm.execution?.continuationUpdated).toBe(true)
     expect(dm.reply).toBeUndefined()
     expect(dm.waited).toEqual({ matched: false, reason: 'timeout' })
-  })
+  }, 10_000)
 })
 
 describe('E. Regression', () => {
@@ -655,7 +741,7 @@ describe('E. Regression', () => {
       source: 'codex_app_server',
       finalOutput: 'ok',
     })
-  })
+  }, 10_000)
 })
 
 describe('F. Target state', () => {

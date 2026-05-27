@@ -22,6 +22,18 @@ bun run build     # Build all HRC packages in order
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 - Boundary checks: `bun run check:boundaries`, `bun run check:manifests`
 
+## HTML Specs
+
+Put standalone HTML spec/recommendation pages in `docs/html/`. Preview them
+locally and over tailnet with:
+
+```bash
+just serve-docs
+```
+
+The recipe serves `docs/html/` on `0.0.0.0:18481` by default; override with
+`just serve-docs <port> <bind>` if needed.
+
 ## Project Structure
 
 ```

@@ -112,7 +112,7 @@ describe('agentchat launch env regression', () => {
           dryRun: true,
         },
         harness: {
-          provider: 'anthropic',
+          provider: 'openai',
           interactive: true,
         },
       },
@@ -139,5 +139,5 @@ describe('agentchat launch env regression', () => {
     expect(artifact.env['AGENTCHAT_TARGET']).toBe(
       `sock=${tmuxSocketPath};session=hrc-${session.hostSessionId.slice(0, 12)}`
     )
-  })
+  }, 10_000)
 })

@@ -50,8 +50,8 @@ async function resolveSession(scope: string): Promise<string> {
 }
 
 /** Build a non-interactive (SDK) runtime intent.
- * Uses interactive=false without preferredMode so that
- * shouldUseSdkTransport matches (not shouldUseHeadlessTransport). */
+ * Uses an explicit SDK harness id so Anthropic's default Ghostty routing does
+ * not capture SDK-specific assertions. */
 function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   return {
     placement: {
@@ -65,6 +65,7 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
     harness: {
       provider,
       interactive: false,
+      id: provider === 'anthropic' ? 'agent-sdk' : 'pi-sdk',
     },
   }
 }
@@ -288,9 +289,16 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
 // ---------------------------------------------------------------------------
 describe('POST /v1/in-flight-input — unsupported SDK provider', () => {
   it('returns 422 with code inflight_unsupported for SDK runtime that does not support in-flight', async () => {
-    const hsid = await resolveSession('inflight-unsupported-1')
-    // Dispatch an openai SDK turn — adapter should declare supportsInflightInput=false
-    const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'openai')
+    const runtimeId = 'rt-inflight-unsupported-openai'
+    const runId = 'run-inflight-unsupported-openai'
+    seedSdkActiveRuntime({
+      hostSessionId: 'hsid-inflight-unsupported-openai',
+      scopeRef: 'agent:inflight-unsupported-openai',
+      runtimeId,
+      runId,
+      provider: 'openai',
+      supportsInflightInput: false,
+    })
 
     const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId,

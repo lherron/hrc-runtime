@@ -327,6 +327,34 @@ const phase8CommandRuntimeFieldsMigration: HrcMigration = {
   },
 }
 
+const interactiveSurfaceJsonMigration: HrcMigration = {
+  id: '0015_interactive_surface_json',
+  apply(db) {
+    const runtimeColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(runtimes)')
+      .all()
+      .map((row) => row.name)
+    const launchColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(launches)')
+      .all()
+      .map((row) => row.name)
+
+    if (!runtimeColumns.includes('surface_json')) {
+      db.exec(`
+        ALTER TABLE runtimes
+        ADD COLUMN surface_json TEXT
+      `)
+    }
+
+    if (!launchColumns.includes('surface_json')) {
+      db.exec(`
+        ALTER TABLE launches
+        ADD COLUMN surface_json TEXT
+      `)
+    }
+  },
+}
+
 const hrcEventsMigration: HrcMigration = {
   id: '0008_hrc_events',
   apply(db) {
@@ -413,8 +441,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function readLifecycleTransport(value: unknown): 'sdk' | 'tmux' | undefined {
-  return value === 'sdk' || value === 'tmux' ? value : undefined
+function readLifecycleTransport(value: unknown): 'sdk' | 'tmux' | 'ghostty' | undefined {
+  return value === 'sdk' || value === 'tmux' || value === 'ghostty' ? value : undefined
 }
 
 function categoryForLegacyHrcEventKind(eventKind: string): string {
@@ -452,7 +480,7 @@ function normalizeLegacyHrcPayload(eventJson: unknown): {
   launchId?: string | undefined
   appId?: string | undefined
   appSessionKey?: string | undefined
-  transport?: 'sdk' | 'tmux' | undefined
+  transport?: 'sdk' | 'tmux' | 'ghostty' | undefined
   errorCode?: string | undefined
   replayed?: boolean | undefined
   payload: unknown
@@ -562,7 +590,7 @@ const legacyHrcEventsBackfillMigration: HrcMigration = {
           string | null,
           string,
           string,
-          'sdk' | 'tmux' | null,
+          'sdk' | 'tmux' | 'ghostty' | null,
           string | null,
           number,
           string,
@@ -805,6 +833,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   phase6LocalBridgesRuntimeIdIndexMigration,
   phase7ManagedAppSessionsMigration,
   phase8CommandRuntimeFieldsMigration,
+  interactiveSurfaceJsonMigration,
   hrcchatMessagesMigration,
   hrcEventsMigration,
   legacyHrcEventsBackfillMigration,

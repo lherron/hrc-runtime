@@ -584,6 +584,99 @@ if (cmd === 'app-server') {
     expect(completed).toContain('interactive reply')
   })
 
+  it('semantic turn handoff completes replies from live Ghostty runtimes', async () => {
+    const scopeRef = 'agent:handoff-live-ghostty:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:default`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-handoff-live-ghostty-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'ghostty',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        surfaceJson: {
+          kind: 'ghostty',
+          surfaceId: 'surface-live-ghostty',
+          title: 'claude-code: handoff-live-ghostty',
+          createdBy: 'ghostmux',
+        },
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'must be sent to ghostty literally',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'anthropic',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+    expect(handoff.runtimeId).toBe(runtimeId)
+
+    const requestListRes = await fixture.postJson('/v1/messages/query', {
+      thread: { rootMessageId: handoff.messageId },
+      phases: ['request'],
+    })
+    expect(requestListRes.status).toBe(200)
+    const requestList = (await requestListRes.json()) as ListMessagesResponse
+    expect(requestList.messages[0]?.execution).toMatchObject({
+      state: 'started',
+      mode: 'interactive',
+      runtimeId,
+      runId: handoff.runId,
+      transport: 'ghostty',
+    })
+
+    const replyRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'session', sessionRef },
+      to: { kind: 'entity', entity: 'human' },
+      body: 'ghostty interactive reply',
+      replyToMessageId: handoff.messageId,
+    })
+    expect(replyRes.status).toBe(200)
+
+    const completedRes = await fixture.fetchSocket(
+      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.completed`
+    )
+    expect(completedRes.status).toBe(200)
+    const completed = (await completedRes.text()).trim()
+    expect(completed).toContain('"turn.completed"')
+    expect(completed).toContain('"transport":"ghostty"')
+    expect(completed).toContain('ghostty interactive reply')
+  })
+
   it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()

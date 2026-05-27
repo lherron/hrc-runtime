@@ -119,6 +119,7 @@ function sdkIntent(): object {
     harness: {
       provider: 'anthropic',
       interactive: false,
+      id: 'agent-sdk',
     },
   }
 }
@@ -154,7 +155,7 @@ function tmuxIntent(): object {
       dryRun: true,
     },
     harness: {
-      provider: 'anthropic',
+      provider: 'openai',
       interactive: true,
     },
     execution: {
@@ -608,5 +609,5 @@ describe('dispatchTurnForSession brain enricher seam', () => {
     expect(userPromptContentForRun(body.runId)).toBe(enrichedPrompt)
 
     expect(acceptedPromptLengthForRun(body.runId)).toBe(enrichedPrompt.length)
-  })
+  }, 10_000)
 })

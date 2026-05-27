@@ -7,7 +7,7 @@ import type { AttachmentRef } from 'spaces-runtime'
 
 export type HrcProvider = 'anthropic' | 'openai'
 export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
-export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux'
+export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux' | 'ghostty'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 
@@ -43,7 +43,7 @@ export type HrcEventCategory =
   | 'context'
   | 'app_session'
 
-export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless'
+export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless' | 'ghostty'
 
 export type HrcLifecycleEvent = {
   hrcSeq: number
@@ -271,6 +271,8 @@ export type HrcRuntimeSnapshot = {
   status: string
   /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
+  /** Opaque interactive surface metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
+  surfaceJson?: Record<string, unknown> | undefined
   wrapperPid?: number | undefined
   childPid?: number | undefined
   /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */
@@ -321,6 +323,8 @@ export type HrcLaunchRecord = {
   launchArtifactPath: string
   /** Opaque tmux session metadata. Validated by hrc-server at launch creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
+  /** Opaque interactive surface metadata. Validated by hrc-server at launch creation, not by SDK consumers. */
+  surfaceJson?: Record<string, unknown> | undefined
   wrapperPid?: number | undefined
   childPid?: number | undefined
   /** Opaque harness session state. Written by the harness callback, trusted at the hrc-server boundary. */

@@ -38,9 +38,9 @@ const cases: Case[] = [
     expected: false,
   },
   {
-    name: 'explicit claude-code id → SDK executor for headless continuation',
+    name: 'explicit claude-code id → CLI executor for Ghostty runtime',
     harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
-    expected: true,
+    expected: false,
   },
   {
     name: 'explicit pi-cli id → CLI executor',
@@ -48,7 +48,7 @@ const cases: Case[] = [
     expected: false,
   },
   {
-    name: 'id-less anthropic → legacy SDK fallback',
+    name: 'id-less anthropic headless path → legacy SDK fallback',
     harness: { provider: 'anthropic', interactive: false },
     expected: true,
   },

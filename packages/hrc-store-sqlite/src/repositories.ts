@@ -147,6 +147,7 @@ type RuntimeRow = {
   provider: HrcRuntimeSnapshot['provider']
   status: string
   tmux_json: string | null
+  surface_json: string | null
   wrapper_pid: number | null
   child_pid: number | null
   harness_session_json: string | null
@@ -186,6 +187,7 @@ type LaunchRow = {
   provider: HrcLaunchRecord['provider']
   launch_artifact_path: string
   tmux_json: string | null
+  surface_json: string | null
   wrapper_pid: number | null
   child_pid: number | null
   harness_session_json: string | null
@@ -396,6 +398,7 @@ const RUNTIME_COLUMNS = `
   provider,
   status,
   tmux_json,
+  surface_json,
   wrapper_pid,
   child_pid,
   harness_session_json,
@@ -433,6 +436,7 @@ const LAUNCH_COLUMNS = `
   provider,
   launch_artifact_path,
   tmux_json,
+  surface_json,
   wrapper_pid,
   child_pid,
   harness_session_json,
@@ -609,6 +613,7 @@ function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
     provider: row.provider,
     status: row.status,
     tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
+    surfaceJson: parseJson<Record<string, unknown>>(row.surface_json, 'surface_json'),
     wrapperPid: row.wrapper_pid ?? undefined,
     childPid: row.child_pid ?? undefined,
     harnessSessionJson: parseJson<Record<string, unknown>>(
@@ -719,6 +724,7 @@ function mapLaunchRow(row: LaunchRow): HrcLaunchRecord {
     provider: row.provider,
     launchArtifactPath: row.launch_artifact_path,
     tmuxJson: parseJson<Record<string, unknown>>(row.tmux_json, 'tmux_json'),
+    surfaceJson: parseJson<Record<string, unknown>>(row.surface_json, 'surface_json'),
     wrapperPid: row.wrapper_pid ?? undefined,
     childPid: row.child_pid ?? undefined,
     harnessSessionJson: parseJson<Record<string, unknown>>(
@@ -1416,6 +1422,7 @@ export class RuntimeRepository {
           provider,
           status,
           tmux_json,
+          surface_json,
           wrapper_pid,
           child_pid,
           harness_session_json,
@@ -1427,7 +1434,7 @@ export class RuntimeRepository {
           last_activity_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
       record.runtimeKind ?? 'harness',
@@ -1441,6 +1448,7 @@ export class RuntimeRepository {
       record.provider,
       record.status,
       serializeJson(record.tmuxJson),
+      serializeJson(record.surfaceJson),
       record.wrapperPid ?? null,
       record.childPid ?? null,
       serializeJson(record.harnessSessionJson),
@@ -1526,6 +1534,9 @@ export class RuntimeRepository {
     }
     if (patch.tmuxJson !== undefined) {
       entries.push(['tmux_json', serializeJson(patch.tmuxJson)])
+    }
+    if (patch.surfaceJson !== undefined) {
+      entries.push(['surface_json', serializeJson(patch.surfaceJson)])
     }
     if (patch.wrapperPid !== undefined) {
       entries.push(['wrapper_pid', patch.wrapperPid])
@@ -1859,6 +1870,7 @@ export class LaunchRepository {
           provider,
           launch_artifact_path,
           tmux_json,
+          surface_json,
           wrapper_pid,
           child_pid,
           harness_session_json,
@@ -1871,7 +1883,7 @@ export class LaunchRepository {
           status,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.launchId,
       record.hostSessionId,
@@ -1881,6 +1893,7 @@ export class LaunchRepository {
       record.provider,
       record.launchArtifactPath,
       serializeJson(record.tmuxJson),
+      serializeJson(record.surfaceJson),
       record.wrapperPid ?? null,
       record.childPid ?? null,
       serializeJson(record.harnessSessionJson),
@@ -1932,6 +1945,9 @@ export class LaunchRepository {
     }
     if (patch.tmuxJson !== undefined) {
       entries.push(['tmux_json', serializeJson(patch.tmuxJson)])
+    }
+    if (patch.surfaceJson !== undefined) {
+      entries.push(['surface_json', serializeJson(patch.surfaceJson)])
     }
     if (patch.wrapperPid !== undefined) {
       entries.push(['wrapper_pid', patch.wrapperPid])

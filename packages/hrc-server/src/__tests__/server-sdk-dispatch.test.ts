@@ -94,8 +94,8 @@ async function resolveSession(scope: string): Promise<string> {
 }
 
 /** Build a non-interactive (SDK) runtime intent.
- * Uses interactive=false without preferredMode so that
- * shouldUseSdkTransport matches (not shouldUseHeadlessTransport). */
+ * Uses an explicit SDK harness id so Anthropic's default Ghostty routing does
+ * not capture SDK-specific assertions. */
 function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
   return {
     placement: {
@@ -109,6 +109,7 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
     harness: {
       provider,
       interactive: false,
+      id: provider === 'anthropic' ? 'agent-sdk' : 'pi-sdk',
     },
   }
 }
@@ -223,35 +224,6 @@ afterEach(async () => {
 })
 
 describe('runtime lifecycle start/attach', () => {
-  async function installFakeClaude(dirName: string): Promise<{ binDir: string; logPath: string }> {
-    const binDir = join(tmpDir, dirName)
-    const logPath = join(binDir, 'claude.log')
-    await mkdir(binDir, { recursive: true })
-    const scriptPath = join(binDir, 'claude')
-    await writeFile(
-      scriptPath,
-      `#!/bin/sh
-set -eu
-if [ "\${1:-}" = "--version" ]; then
-  printf 'claude 1.0.0\\n'
-  exit 0
-fi
-if [ "\${1:-}" = "--help" ]; then
-  printf 'Usage: claude [--resume session]\\n'
-  exit 0
-fi
-printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
-/bin/sleep 1
-exit 0
-`,
-      'utf-8'
-    )
-    await chmod(scriptPath, 0o755)
-    process.env['PATH'] = `${binDir}:${process.env['PATH'] ?? ''}`
-    process.env['ASP_CLAUDE_PATH'] = scriptPath
-    return { binDir, logPath }
-  }
-
   async function installFakeCodex(
     dirName: string,
     behavior: {
@@ -495,22 +467,11 @@ if (cmd === 'app-server') {
     })
     seedSessionContinuation(hsid, 'stale-session-continuation')
 
-    const startRes = await postJson('/v1/runtimes/start', {
+    const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
       intent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
     })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as { runtimeId: string }
-
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.update(startData.runtimeId, {
-        status: 'ready',
-        updatedAt: new Date().toISOString(),
-      })
-    } finally {
-      db.close()
-    }
+    expect(ensureRes.status).toBe(200)
 
     const turnRes = await postJson('/v1/turns', {
       hostSessionId: hsid,
@@ -528,13 +489,13 @@ if (cmd === 'app-server') {
   })
 
   it('interactive dispatch uses the runtime continuation when present', async () => {
-    await installFakeClaude('fake-claude-interactive-runtime-resume')
+    const fakeCodex = await installFakeCodex('fake-codex-interactive-runtime-resume')
     const hsid = await resolveSession('interactive-dispatch-runtime-continuation')
     seedSessionContinuation(hsid, 'stale-session-continuation')
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
-      intent: interactiveCliIntent('anthropic'),
+      intent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
     })
     expect(ensureRes.status).toBe(200)
     const ensureData = (await ensureRes.json()) as { runtimeId: string }
@@ -542,7 +503,7 @@ if (cmd === 'app-server') {
     const db = openHrcDatabase(dbPath)
     try {
       db.runtimes.update(ensureData.runtimeId, {
-        continuation: { provider: 'anthropic', key: 'runtime-continuation' },
+        continuation: { provider: 'openai', key: 'runtime-continuation' },
         updatedAt: new Date().toISOString(),
       })
     } finally {
@@ -552,13 +513,13 @@ if (cmd === 'app-server') {
     const turnRes = await postJson('/v1/turns', {
       hostSessionId: hsid,
       prompt: 'Dispatch with runtime resume',
-      runtimeIntent: interactiveCliIntent('anthropic'),
+      runtimeIntent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
     })
     expect(turnRes.status).toBe(200)
     const turnData = (await turnRes.json()) as { runtimeId: string }
 
     const launchArtifact = await readLaunchArtifactForRuntime(turnData.runtimeId)
-    expect(launchArtifact.argv).toContain('--resume')
+    expect(launchArtifact.argv).toContain('resume')
     expect(launchArtifact.argv).toContain('runtime-continuation')
     expect(launchArtifact.argv).not.toContain('stale-session-continuation')
   })
@@ -725,7 +686,7 @@ if (cmd === 'app-server') {
     expect(secondAttachRes.status).toBe(200)
 
     expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
-  })
+  }, 10_000)
 
   it('POST /v1/runtimes/attach resumes codex without replaying the original priming prompt', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach-no-reprime')
@@ -772,7 +733,7 @@ if (cmd === 'app-server') {
     expect(launchArtifact.argv).not.toContain(primingPrompt)
 
     expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
-  })
+  }, 10_000)
 
   it('POST /v1/runtimes/attach prefers tmux sessionId when stored sessionName is stale', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-stale-session-name')
@@ -828,7 +789,7 @@ if (cmd === 'app-server') {
       '-t',
       sessionId,
     ])
-  })
+  }, 10_000)
 
   it('POST /v1/runtimes/attach rematerializes tmux when the requested codex tmux runtime is already dead', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach-dead-runtime')

@@ -61,6 +61,90 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   await mkdir(runtimeRoot, { recursive: true })
   await mkdir(stateRoot, { recursive: true })
   await mkdir(spoolDir, { recursive: true })
+  const ghostmuxSurfaces = new Map<string, Record<string, unknown>>()
+  const ghostmuxMetadata = new Map<string, Record<string, unknown>>()
+  const ghostmuxWindowMetadata = new Map<string, Record<string, unknown>>()
+  let ghostmuxSurfaceSeq = 0
+
+  function createGhostmuxSurface(title: string, cwd: string): Record<string, unknown> {
+    ghostmuxSurfaceSeq += 1
+    const id = `surface-test-${ghostmuxSurfaceSeq}`
+    const surface = {
+      id,
+      short_id: id.slice(0, 12),
+      title,
+      name: title,
+      working_directory: cwd,
+      columns: 120,
+      rows: 40,
+      focused: false,
+    }
+    ghostmuxSurfaces.set(id, surface)
+    return surface
+  }
+
+  function ghostmuxArgAfter(args: string[], flag: string): string | undefined {
+    const index = args.indexOf(flag)
+    return index >= 0 ? args[index + 1] : undefined
+  }
+
+  async function runFakeGhostmux(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const command = args[0]
+    if (command === 'status') return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+    if (command === 'list-surfaces') {
+      return {
+        stdout: JSON.stringify({ terminals: Array.from(ghostmuxSurfaces.values()) }),
+        stderr: '',
+      }
+    }
+    if (command === 'new') {
+      const cwd = ghostmuxArgAfter(args, '--cwd') ?? tmpDir
+      const title = ghostmuxArgAfter(args, '--title') ?? 'Ghostty Test'
+      return { stdout: JSON.stringify(createGhostmuxSurface(title, cwd)), stderr: '' }
+    }
+    if (command === 'new-pane') {
+      const cwd = ghostmuxArgAfter(args, '--cwd') ?? tmpDir
+      return { stdout: JSON.stringify(createGhostmuxSurface(cwd, cwd)), stderr: '' }
+    }
+    if (command === 'metadata') {
+      const action = args[1]
+      const target = ghostmuxArgAfter(args, '-t') ?? ''
+      const window = args.includes('--window')
+      const store = window ? ghostmuxWindowMetadata : ghostmuxMetadata
+      if (action === 'get') {
+        return { stdout: JSON.stringify(store.get(target) ?? {}), stderr: '' }
+      }
+      if (action === 'set') {
+        const jsonArg = args.find((arg, index) => index > 1 && arg.startsWith('{')) ?? '{}'
+        store.set(target, JSON.parse(jsonArg) as Record<string, unknown>)
+        return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+      }
+    }
+    if (command === 'set-title') {
+      const target = ghostmuxArgAfter(args, '-t') ?? ''
+      const title = args.at(-1) ?? ''
+      const surface = ghostmuxSurfaces.get(target)
+      if (surface) surface['title'] = title
+      return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+    }
+    if (command === 'kill-surface') {
+      const target = ghostmuxArgAfter(args, '-t') ?? ''
+      ghostmuxSurfaces.delete(target)
+      ghostmuxMetadata.delete(target)
+      ghostmuxWindowMetadata.delete(target)
+      return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+    }
+    if (
+      command === 'equalize-panes' ||
+      command === 'send-keys' ||
+      command === 'send-key' ||
+      command === 'resize-pane'
+    ) {
+      return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+    }
+    if (command === 'capture-pane') return { stdout: 'fake ghostmux capture', stderr: '' }
+    return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+  }
 
   // Opt tests into the integration-test harness shim so buildDispatchInvocation
   // can fall back when the real claude/codex binaries aren't on PATH. Production
@@ -96,6 +180,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       spoolDir,
       dbPath,
       tmuxSocketPath,
+      ghostmuxOptions: { runner: runFakeGhostmux },
       ...overrides,
     }
   }

@@ -77,13 +77,17 @@ export type EnsureRuntimeRequest = {
 export type EnsureRuntimeResponse = {
   runtimeId: string
   hostSessionId: string
-  transport: 'tmux'
+  transport: 'tmux' | 'ghostty'
   status: string
   supportsInFlightInput: boolean
-  tmux: {
+  tmux?: {
     sessionId: string
     windowId: string
     paneId: string
+  }
+  surface?: {
+    surfaceId: string
+    title?: string | undefined
   }
 }
 
@@ -138,7 +142,7 @@ export type DispatchTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless'
+  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
 }
@@ -299,7 +303,7 @@ export type DropContinuationResponse = {
   previousContinuationKey: string | null
 }
 
-export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk'
+export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk' | 'ghostty'
 
 export type SweepRuntimesRequest = {
   transport?: SweepRuntimeTransport | undefined
@@ -392,7 +396,7 @@ export type ReconcileActiveRunResult = {
   runId: string
   hostSessionId: string
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless'
+  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
   status: 'reaped' | 'matched' | 'suspect' | 'skipped' | 'error'
   reason: ReconcileActiveRunReason
   observedAt: string
@@ -640,7 +644,7 @@ export type DispatchAppHarnessTurnResponse = {
   hostSessionId: string
   generation: number
   runtimeId: string
-  transport: 'sdk' | 'tmux' | 'headless'
+  transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
 }
