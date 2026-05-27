@@ -100,7 +100,7 @@
       "dependencies": {
         "@iarna/toml": "^2.2.5",
         "agent-scope": "0.1.1",
-        "agent-spaces": "0.1.1",
+        "agent-spaces": "0.1.2",
         "hrc-core": "*",
         "hrc-events": "*",
         "hrc-store-sqlite": "*",
@@ -363,7 +363,7 @@
 
     "agent-scope": ["agent-scope@0.1.1", "http://127.0.0.1:4873/agent-scope/-/agent-scope-0.1.1.tgz", {}, "sha512-2YFqZo2h9c88QEhQV27XjyDbTtfEivy6/cqgwO6HJzLSKkh06hKnGXZQp7b8bILLHn42ue3jtP31A486+40VHA=="],
 
-    "agent-spaces": ["agent-spaces@0.1.1", "http://127.0.0.1:4873/agent-spaces/-/agent-spaces-0.1.1.tgz", { "dependencies": { "agent-scope": "0.1.1", "spaces-config": "0.1.1", "spaces-execution": "0.1.1", "spaces-harness-broker-protocol": "*", "spaces-harness-codex": "0.1.1", "spaces-harness-pi-sdk": "0.1.1", "spaces-runtime": "0.1.1" } }, "sha512-U3SKyb6+ygT3ndWbMMedQtonaBy2adlPJklITYHmjoef+uBiH4ednV0IUHyJwdwHVavRSYjfME6b60KYNUpLtA=="],
+    "agent-spaces": ["agent-spaces@0.1.2", "http://127.0.0.1:4873/agent-spaces/-/agent-spaces-0.1.2.tgz", { "dependencies": { "agent-scope": "0.1.1", "spaces-config": "0.1.1", "spaces-execution": "0.1.1", "spaces-harness-broker-client": "0.1.1", "spaces-harness-broker-protocol": "0.1.1", "spaces-harness-codex": "0.1.1", "spaces-harness-pi-sdk": "0.1.1", "spaces-runtime": "0.1.1", "spaces-runtime-contracts": "0.1.0" } }, "sha512-mCeP+9V5AC3dTxfBa1NaUT4PKD0PsC7Zq20KzMumHzkv2P9CG/7C/I8MSk14tCNc41Pu1XEzDL/roFa4J92X2w=="],
 
     "ajv": ["ajv@8.20.0", "http://127.0.0.1:4873/ajv/-/ajv-8.20.0.tgz", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 
@@ -702,8 +702,6 @@
     "@mariozechner/pi-ai/@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.90.0", "http://127.0.0.1:4873/@anthropic-ai/sdk/-/sdk-0.90.0.tgz", { "dependencies": { "json-schema-to-ts": "^3.1.1" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-MzZtPabJF1b0FTDl6Z6H5ljphPwACLGP13lu8MTiB8jXaW/YXlpOp+Po2cVou3MPM5+f5toyLnul9whKCy7fBg=="],
 
     "@mariozechner/pi-coding-agent/diff": ["diff@8.0.4", "http://127.0.0.1:4873/diff/-/diff-8.0.4.tgz", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
-
-    "agent-spaces/spaces-harness-broker-protocol": ["spaces-harness-broker-protocol@0.1.0", "http://127.0.0.1:4873/spaces-harness-broker-protocol/-/spaces-harness-broker-protocol-0.1.0.tgz", {}, "sha512-DIYi5jMk3UaPKNRIbATJxIUjoN1LioM+B9MP76gvv85tek7FhbdfkKb+kbXAKGHY6t/TmzAH7w7Eo43w2f5pJA=="],
 
     "cli-highlight/chalk": ["chalk@4.1.2", "http://127.0.0.1:4873/chalk/-/chalk-4.1.2.tgz", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
 
