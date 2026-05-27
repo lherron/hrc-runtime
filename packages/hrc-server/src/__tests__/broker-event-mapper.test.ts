@@ -1,0 +1,421 @@
+/**
+ * RED tests (T-01696 / T-01690 Wave W3A) for the idempotent BROKER EVENT MAPPER.
+ *
+ * These tests are EXPECTED TO FAIL until curly implements
+ *   packages/hrc-server/src/broker/event-mapper.ts
+ * (red signal = module-not-found on the import below).
+ *
+ * The mapper is the SOLE interpreter of broker `InvocationEventEnvelope`
+ * payloads. It resolves projection context from the persisted broker invocation
+ * and, in ONE SQLite transaction:
+ *   1. appends the broker event by (invocationId, seq) via the W1B idempotent
+ *      append repo (`BrokerInvocationEventRepository.appendEvent`);
+ *   2. projects the event into HRC state (runtime / run / buffer / continuation
+ *      / surface / permission audit / diagnostics);
+ *   3. emits HRC events with `source: 'broker'` via `EventRepository.append`;
+ *   4. marks the broker event row projection_status = 'applied'.
+ *
+ * Contract invariants under test:
+ *   - atomic: a projection error rolls the appended broker event row back too;
+ *   - idempotent: same (invocationId, seq) + SAME payload twice => one projection;
+ *   - conflict: same (invocationId, seq) + DIFFERENT payload => throws
+ *     BrokerInvocationEventConflictError, NO projection;
+ *   - source:'broker' on every emitted HRC event;
+ *   - full ordered sequence projects runtime/run/message/tool/continuation;
+ *   - replay of the whole sequence is a no-op.
+ *
+ * Public API under test (documented for curly in the final reply):
+ *   class BrokerEventMapper {
+ *     constructor(deps: { db: HrcDatabase; now?: () => string })
+ *     apply(envelope: InvocationEventEnvelope): {
+ *       idempotent: boolean
+ *       events: HrcEventEnvelope[]   // each has source: 'broker'
+ *     }
+ *   }
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+
+import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
+
+// RED gate: this module does not exist yet (curly creates it under src/broker/).
+import { BrokerEventMapper } from '../broker/event-mapper'
+
+import {
+  ASSISTANT_TEXT,
+  bufferTextForRun,
+  CONTINUATION_KEY,
+  emittedEventsMentioning,
+  envelope,
+  headlessSequence,
+  HOST_SESSION_ID,
+  INVOCATION_ID,
+  makeSeededFixture,
+  permissionRequestId,
+  RUN_ID,
+  RUNTIME_ID,
+  TOOL_CALL_ID,
+  TOOL_NAME,
+  ts,
+  type SeededFixture,
+} from './broker-event-mapper-fixtures'
+
+let fixture: SeededFixture
+
+beforeEach(async () => {
+  fixture = await makeSeededFixture()
+})
+
+afterEach(async () => {
+  await fixture.cleanup()
+})
+
+function makeMapper() {
+  return new BrokerEventMapper({ db: fixture.db, now: () => ts(100) })
+}
+
+// ---------------------------------------------------------------------------
+// 1. source:'broker' on every emitted HRC event
+// ---------------------------------------------------------------------------
+describe('emitted HRC events', () => {
+  it('stamps source:"broker" on every event emitted across the sequence', () => {
+    const mapper = makeMapper()
+    const allEmitted = headlessSequence().flatMap((env) => mapper.apply(env).events)
+
+    expect(allEmitted.length).toBeGreaterThan(0)
+    for (const event of allEmitted) {
+      expect(event.source).toBe('broker')
+    }
+  })
+
+  it('persists emitted events to the events table with source:"broker"', () => {
+    const mapper = makeMapper()
+    mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
+
+    const persisted = fixture.db.events.listFromSeq(1, { runtimeId: RUNTIME_ID })
+    expect(persisted.length).toBeGreaterThan(0)
+    for (const event of persisted) {
+      expect(event.source).toBe('broker')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2. Idempotency — same (invocationId, seq) + SAME payload twice
+// ---------------------------------------------------------------------------
+describe('idempotency', () => {
+  it('applies SAME (invocationId, seq) + SAME payload exactly once', () => {
+    const mapper = makeMapper()
+    const env = envelope('continuation.updated', 8, {
+      provider: 'openai',
+      key: CONTINUATION_KEY,
+    })
+
+    const first = mapper.apply(env)
+    expect(first.idempotent).toBe(false)
+    expect(first.events.length).toBeGreaterThan(0)
+
+    const eventsAfterFirst = fixture.db.events.count({ runtimeId: RUNTIME_ID })
+    const brokerRowsAfterFirst = fixture.db.brokerInvocationEvents.listByInvocationId(
+      INVOCATION_ID
+    ).length
+
+    const second = mapper.apply(env)
+    expect(second.idempotent).toBe(true)
+    expect(second.events.length).toBe(0)
+
+    // No double-apply: no new HRC events, no new broker event rows.
+    expect(fixture.db.events.count({ runtimeId: RUNTIME_ID })).toBe(eventsAfterFirst)
+    expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length).toBe(
+      brokerRowsAfterFirst
+    )
+
+    // The single projection is intact (not applied twice / not reverted).
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+      provider: 'openai',
+      key: CONTINUATION_KEY,
+    })
+  })
+
+  it('does not throw on a duplicate apply', () => {
+    const mapper = makeMapper()
+    const env = envelope('invocation.ready', 2, { state: 'ready' })
+    mapper.apply(env)
+    expect(() => mapper.apply(env)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3. Conflict — same (invocationId, seq) + DIFFERENT payload
+// ---------------------------------------------------------------------------
+describe('conflict (divergent payload, same key)', () => {
+  it('throws BrokerInvocationEventConflictError and projects nothing from the conflicting event', () => {
+    const mapper = makeMapper()
+
+    const original = envelope('continuation.updated', 8, {
+      provider: 'openai',
+      key: 'key_ORIGINAL',
+    })
+    mapper.apply(original)
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+      provider: 'openai',
+      key: 'key_ORIGINAL',
+    })
+
+    const eventsBefore = fixture.db.events.count({ runtimeId: RUNTIME_ID })
+
+    const divergent = envelope('continuation.updated', 8, {
+      provider: 'openai',
+      key: 'key_DIVERGENT',
+    })
+
+    expect(() => mapper.apply(divergent)).toThrow(BrokerInvocationEventConflictError)
+
+    // No projection from the divergent event: continuation unchanged, no new
+    // HRC events, stored broker payload still the original.
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+      provider: 'openai',
+      key: 'key_ORIGINAL',
+    })
+    expect(fixture.db.events.count({ runtimeId: RUNTIME_ID })).toBe(eventsBefore)
+
+    const stored = fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 8)
+    expect(stored).not.toBeNull()
+    expect(JSON.parse(stored!.brokerEventJson)).toEqual({
+      provider: 'openai',
+      key: 'key_ORIGINAL',
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. Transaction atomicity — projection failure rolls back the event row
+// ---------------------------------------------------------------------------
+describe('transaction atomicity', () => {
+  it('rolls back the appended broker event row when projection fails', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    // Fault the HRC-event emission so projection throws mid-transaction.
+    const original = db.events.append.bind(db.events)
+    let armed = true
+    ;(db.events as { append: typeof db.events.append }).append = ((input) => {
+      if (armed) {
+        throw new Error('injected projection failure')
+      }
+      return original(input)
+    }) as typeof db.events.append
+
+    const completed = envelope(
+      'turn.completed',
+      7,
+      { turnId: 'turn_atomic' as never, status: 'completed', producedContent: true },
+      { turnId: 'turn_atomic' as never }
+    )
+
+    try {
+      expect(() => mapper.apply(completed)).toThrow()
+    } finally {
+      armed = false
+      ;(db.events as { append: typeof db.events.append }).append = original
+    }
+
+    // Neither the broker event row nor the run-state projection persisted.
+    expect(db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 7)).toBeNull()
+    const run = db.runs.getByRunId(RUN_ID)!
+    expect(run.status).toBe('accepted')
+    expect(run.completedAt).toBeUndefined()
+  })
+
+  it('marks the broker event row projection_status applied on success', () => {
+    const mapper = makeMapper()
+    mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
+
+    const stored = fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 2)
+    expect(stored).not.toBeNull()
+    expect(stored!.projectionStatus).toBe('applied')
+    expect(typeof stored!.hrcEventSeq).toBe('number')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. Projection mapping — ordered synthetic sequence
+// ---------------------------------------------------------------------------
+describe('projection mapping (ordered sequence)', () => {
+  it('projects runtime / run / message / tool / continuation state', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const seq = headlessSequence()
+    const emittedByType = new Map<string, ReturnType<typeof mapper.apply>>()
+    for (const env of seq) {
+      emittedByType.set(env.type, mapper.apply(env))
+    }
+
+    // invocation.started -> runtime linkage; invocation.ready/exited -> state.
+    const invocation = db.brokerInvocations.getByInvocationId(INVOCATION_ID)!
+    expect(invocation.invocationState).toBe('exited')
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.activeInvocationId).toBe(INVOCATION_ID)
+
+    // turn lifecycle -> run.
+    const run = db.runs.getByRunId(RUN_ID)!
+    expect(run.startedAt).toBeDefined()
+    expect(run.status).toBe('completed')
+    expect(run.completedAt).toBeDefined()
+
+    // assistant.message.* -> runtime buffer / message events.
+    expect(bufferTextForRun(db, RUN_ID)).toContain(ASSISTANT_TEXT)
+
+    // tool.call.* -> tool events (surfaced as broker HRC events).
+    const allEmitted = seq.flatMap((env) => emittedByType.get(env.type)!.events)
+    const toolEvents = emittedEventsMentioning(allEmitted, TOOL_CALL_ID)
+    expect(toolEvents.length).toBeGreaterThan(0)
+    expect(JSON.stringify(toolEvents[0]!.eventJson)).toContain(TOOL_NAME)
+
+    // continuation.updated -> BOTH runtime AND session continuation.
+    const expectedContinuation = { provider: 'openai', key: CONTINUATION_KEY }
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual(expectedContinuation)
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual(
+      expectedContinuation
+    )
+
+    // every broker event row was projected.
+    const rows = db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID)
+    expect(rows.length).toBe(seq.length)
+    for (const row of rows) {
+      expect(row.projectionStatus).toBe('applied')
+    }
+
+    // every emitted event is sourced from the broker.
+    for (const event of allEmitted) {
+      expect(event.source).toBe('broker')
+    }
+  })
+
+  it('reflects invocation lifecycle state transitions in order', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    mapper.apply(envelope('invocation.started', 1, { command: 'codex', args: [], cwd: '/tmp' }))
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.activeInvocationId).toBe(INVOCATION_ID)
+
+    mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe('ready')
+
+    mapper.apply(envelope('invocation.exited', 9, { exitCode: 0, signal: null }))
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe('exited')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Permission audit, surface binding, diagnostics
+// ---------------------------------------------------------------------------
+describe('auxiliary projections', () => {
+  it('audits permission.resolved through permission_decisions', () => {
+    const mapper = makeMapper()
+    const prid = permissionRequestId('perm_w3a_1')
+
+    mapper.apply(
+      envelope('permission.requested', 30, {
+        permissionRequestId: prid,
+        kind: 'command',
+        subjectDisplay: { command: 'rm -rf /tmp/x' },
+        defaultDecision: 'deny',
+      })
+    )
+
+    mapper.apply(
+      envelope('permission.resolved', 31, {
+        permissionRequestId: prid,
+        decision: 'deny',
+        decidedBy: 'policy',
+      })
+    )
+
+    const decision = fixture.db.permissionDecisions.getByPermissionRequestId('perm_w3a_1')
+    expect(decision).not.toBeNull()
+    expect(decision!.decision).toBe('deny')
+    expect(decision!.decidedBy).toBe('policy')
+    expect(decision!.invocationId).toBe(INVOCATION_ID)
+    expect(decision!.runtimeId).toBe(RUNTIME_ID)
+  })
+
+  it('binds a terminal surface on terminal.surface.reported', () => {
+    const mapper = makeMapper()
+    mapper.apply(
+      envelope('terminal.surface.reported', 40, {
+        kind: 'tmux-session',
+        socketPath: '/tmp/hrc-tmux.sock',
+        sessionName: 'broker-w3a',
+        paneId: '%7',
+      })
+    )
+
+    const bindings = fixture.db.surfaceBindings.findByRuntime(RUNTIME_ID)
+    expect(bindings.length).toBeGreaterThan(0)
+  })
+
+  it('surfaces diagnostics as broker HRC events', () => {
+    const mapper = makeMapper()
+    const result = mapper.apply(
+      envelope('diagnostic', 50, {
+        level: 'warn',
+        message: 'broker-diagnostic-marker',
+        source: 'driver',
+      })
+    )
+
+    expect(result.events.length).toBeGreaterThan(0)
+    const hits = emittedEventsMentioning(result.events, 'broker-diagnostic-marker')
+    expect(hits.length).toBeGreaterThan(0)
+    for (const event of result.events) {
+      expect(event.source).toBe('broker')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. Replay — applying the whole sequence again is a no-op
+// ---------------------------------------------------------------------------
+describe('replay (end-to-end idempotency)', () => {
+  it('produces no state change when the full sequence is replayed', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const seq = headlessSequence()
+
+    for (const env of seq) {
+      mapper.apply(env)
+    }
+
+    const snapshot = {
+      hrcEvents: db.events.count({ runtimeId: RUNTIME_ID }),
+      brokerRows: db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length,
+      bufferChunks: db.runtimeBuffers.listByRunId(RUN_ID).length,
+      runStatus: db.runs.getByRunId(RUN_ID)!.status,
+      runtimeContinuation: db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation,
+      sessionContinuation: db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation,
+      invocationState: db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState,
+    }
+
+    // Replay the identical sequence.
+    for (const env of seq) {
+      const replay = mapper.apply(env)
+      expect(replay.idempotent).toBe(true)
+      expect(replay.events.length).toBe(0)
+    }
+
+    expect(db.events.count({ runtimeId: RUNTIME_ID })).toBe(snapshot.hrcEvents)
+    expect(db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length).toBe(
+      snapshot.brokerRows
+    )
+    expect(db.runtimeBuffers.listByRunId(RUN_ID).length).toBe(snapshot.bufferChunks)
+    expect(db.runs.getByRunId(RUN_ID)!.status).toBe(snapshot.runStatus)
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual(
+      snapshot.runtimeContinuation
+    )
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual(
+      snapshot.sessionContinuation
+    )
+    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe(
+      snapshot.invocationState
+    )
+  })
+})
