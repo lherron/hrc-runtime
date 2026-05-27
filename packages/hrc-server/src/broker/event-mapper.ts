@@ -1,0 +1,395 @@
+/**
+ * BrokerEventMapper (T-01690 Wave W3A / T-01696).
+ *
+ * The SOLE interpreter of broker `InvocationEventEnvelope` payloads. Given a
+ * normalized broker event, it resolves projection context from the persisted
+ * broker invocation and, in ONE SQLite transaction:
+ *   1. appends the broker event by `(invocationId, seq)` via the W1B idempotent
+ *      append repo (`BrokerInvocationEventRepository.appendEvent`);
+ *   2. projects the event into HRC state (runtime / run / buffer / continuation
+ *      / surface / permission audit / diagnostics);
+ *   3. emits HRC events with `source: 'broker'` via `EventRepository.append`;
+ *   4. marks the broker event row `projection_status = 'applied'`.
+ *
+ * Contract invariants (pinned by broker-event-mapper.test.ts):
+ *   - atomic: a projection error rolls the appended broker event row back too;
+ *   - idempotent: same (invocationId, seq) + SAME payload twice => one projection;
+ *   - conflict: same (invocationId, seq) + DIFFERENT payload => throws
+ *     `BrokerInvocationEventConflictError`, NO projection;
+ *   - `source:'broker'` on every emitted HRC event.
+ *
+ * W1A broker-path boundary: this module imports ONLY persistence
+ * (`hrc-store-sqlite`), domain contracts (`hrc-core`), and broker protocol TYPES
+ * (`spaces-harness-broker-protocol`). It MUST NOT import launch/exec.ts,
+ * spaces-harness-codex, or spaces-harness-broker internals, and never
+ * launches/execs anything. It is inert unless invoked by the W3B controller,
+ * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
+ */
+import type { HrcContinuationRef, HrcEventEnvelope, HrcProvider } from 'hrc-core'
+import type { HrcDatabase } from 'hrc-store-sqlite'
+import type {
+  AssistantMessageCompletedPayload,
+  AssistantMessageDeltaPayload,
+  ContinuationUpdate,
+  InvocationEventEnvelope,
+  PermissionRequestedPayload,
+  PermissionResolvedPayload,
+  TerminalSurfaceReportedPayload,
+  TurnFailedPayload,
+} from 'spaces-harness-broker-protocol'
+
+export type BrokerEventMapperDeps = {
+  db: HrcDatabase
+  now?: () => string
+}
+
+export type BrokerProjectionResult = {
+  /** True when the (invocationId, seq) was already applied with the same payload. */
+  idempotent: boolean
+  /** HRC events appended this call (each `source:'broker'`); empty on idempotent re-apply. */
+  events: HrcEventEnvelope[]
+}
+
+/** Resolved projection context for a single invocation. */
+type ProjectionContext = {
+  runtimeId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  operationId: string
+  runId: string | undefined
+}
+
+export class BrokerEventMapper {
+  private readonly db: HrcDatabase
+  private readonly now: () => string
+
+  constructor(deps: BrokerEventMapperDeps) {
+    this.db = deps.db
+    this.now = deps.now ?? (() => new Date().toISOString())
+  }
+
+  /**
+   * Append + project a single broker event in one transaction. Synchronous: the
+   * persistence layer is synchronous and the whole operation must commit (event
+   * row + state) or roll back together.
+   */
+  apply(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    const run = this.db.sqlite.transaction(() => this.project(envelope))
+    return run()
+  }
+
+  private project(envelope: InvocationEventEnvelope): BrokerProjectionResult {
+    const db = this.db
+    const now = this.now()
+
+    const invocation = db.brokerInvocations.getByInvocationId(envelope.invocationId)
+    if (!invocation) {
+      throw new Error(`broker invocation not found for event: ${envelope.invocationId}`)
+    }
+    const runtime = db.runtimes.getByRuntimeId(invocation.runtimeId)
+    if (!runtime) {
+      throw new Error(`runtime not found for broker invocation: ${invocation.runtimeId}`)
+    }
+
+    const ctx: ProjectionContext = {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      operationId: invocation.operationId,
+      runId: invocation.runId,
+    }
+
+    // (a) Idempotent append keyed by (invocationId, seq). A duplicate with the
+    // same payload short-circuits with no projection; a divergent payload throws
+    // BrokerInvocationEventConflictError, which propagates and rolls the tx back.
+    const appended = db.brokerInvocationEvents.appendEvent({
+      invocationId: envelope.invocationId,
+      seq: envelope.seq,
+      time: envelope.time,
+      type: envelope.type,
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      payload: envelope.payload,
+    })
+
+    if (appended.idempotent) {
+      return { idempotent: true, events: [] }
+    }
+
+    // (b) Project state into HRC, then emit the broker-sourced HRC event(s).
+    this.projectState(envelope, ctx, now)
+    const emitted = this.emit(envelope, ctx, now)
+
+    // (c) Record projection outcome on the broker event row.
+    db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
+      hrcEventSeq: emitted.seq,
+      projectionStatus: 'applied',
+    })
+
+    return { idempotent: false, events: [emitted] }
+  }
+
+  /** Apply the type-specific state mutation. Emission is handled separately. */
+  private projectState(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    const { runId } = ctx
+
+    switch (envelope.type) {
+      // ── Invocation lifecycle -> runtime linkage + invocation state ──────────
+      case 'invocation.started': {
+        db.runtimes.update(ctx.runtimeId, {
+          activeInvocationId: invocationId,
+          activeOperationId: ctx.operationId,
+          lastActivityAt: now,
+          updatedAt: now,
+        })
+        db.brokerInvocations.update(invocationId, { invocationState: 'starting', updatedAt: now })
+        break
+      }
+      case 'invocation.ready': {
+        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        break
+      }
+      case 'invocation.stopping': {
+        db.brokerInvocations.update(invocationId, { invocationState: 'stopping', updatedAt: now })
+        break
+      }
+      case 'invocation.exited': {
+        db.brokerInvocations.update(invocationId, { invocationState: 'exited', updatedAt: now })
+        break
+      }
+      case 'invocation.failed': {
+        db.brokerInvocations.update(invocationId, { invocationState: 'failed', updatedAt: now })
+        break
+      }
+      case 'invocation.disposed': {
+        db.brokerInvocations.update(invocationId, { invocationState: 'disposed', updatedAt: now })
+        break
+      }
+
+      // ── Input disposition -> run touch ──────────────────────────────────────
+      case 'input.accepted':
+      case 'input.rejected':
+      case 'input.queued': {
+        if (runId !== undefined) {
+          db.runs.update(runId, { updatedAt: now })
+        }
+        break
+      }
+
+      // ── Turn lifecycle -> run state + invocation turn state ─────────────────
+      case 'turn.started': {
+        if (runId !== undefined) {
+          db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
+        }
+        db.brokerInvocations.update(invocationId, { invocationState: 'turn_active', updatedAt: now })
+        break
+      }
+      case 'turn.completed': {
+        if (runId !== undefined) {
+          db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
+        }
+        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        break
+      }
+      case 'turn.failed': {
+        const payload = envelope.payload as TurnFailedPayload
+        if (runId !== undefined) {
+          db.runs.markCompleted(runId, {
+            status: 'failed',
+            completedAt: now,
+            updatedAt: now,
+            errorMessage: payload.message,
+          })
+        }
+        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        break
+      }
+      case 'turn.interrupted': {
+        if (runId !== undefined) {
+          db.runs.markCompleted(runId, { status: 'cancelled', completedAt: now, updatedAt: now })
+        }
+        db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        break
+      }
+
+      // ── Assistant output -> runtime buffer (text projection) ────────────────
+      case 'assistant.message.completed': {
+        const payload = envelope.payload as AssistantMessageCompletedPayload
+        const text = payload.content
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('')
+        this.appendBuffer(ctx, text, now)
+        break
+      }
+      case 'assistant.message.delta': {
+        const payload = envelope.payload as AssistantMessageDeltaPayload
+        this.appendBuffer(ctx, payload.text, now)
+        break
+      }
+      case 'assistant.message.started': {
+        // No text yet; the emitted HRC event records the message start.
+        break
+      }
+
+      // ── Tool activity -> emitted HRC event only (eventJson carries id+name) ──
+      case 'tool.call.started':
+      case 'tool.call.delta':
+      case 'tool.call.completed':
+      case 'tool.call.failed': {
+        break
+      }
+
+      // ── Continuation -> DUAL write: runtime AND session (must-not-miss) ─────
+      case 'continuation.updated': {
+        const payload = envelope.payload as ContinuationUpdate
+        const continuation: HrcContinuationRef = {
+          provider: payload.provider as HrcProvider,
+          key: payload.key,
+        }
+        db.runtimes.update(ctx.runtimeId, {
+          continuation,
+          lastActivityAt: now,
+          updatedAt: now,
+        })
+        db.sessions.updateContinuation(ctx.hostSessionId, continuation, now)
+        break
+      }
+
+      // ── Terminal surface binding ────────────────────────────────────────────
+      case 'terminal.surface.reported': {
+        const payload = envelope.payload as TerminalSurfaceReportedPayload
+        db.surfaceBindings.bind({
+          surfaceKind: payload.kind,
+          surfaceId: `${payload.socketPath}#${payload.sessionName}`,
+          hostSessionId: ctx.hostSessionId,
+          runtimeId: ctx.runtimeId,
+          generation: ctx.generation,
+          ...(payload.paneId !== undefined ? { paneId: payload.paneId } : {}),
+          boundAt: now,
+        })
+        break
+      }
+
+      // ── Permission audit ────────────────────────────────────────────────────
+      case 'permission.requested': {
+        // Audit/projection only: the request is recorded as a broker HRC event.
+        // permission_decisions PK is permission_request_id and has no update API,
+        // so the authoritative row is inserted on resolution below.
+        break
+      }
+      case 'permission.resolved': {
+        const payload = envelope.payload as PermissionResolvedPayload
+        const requested = this.findRequestedPayload(invocationId, payload.permissionRequestId)
+        db.permissionDecisions.insert({
+          permissionRequestId: payload.permissionRequestId,
+          invocationId,
+          runtimeId: ctx.runtimeId,
+          ...(runId !== undefined ? { runId } : {}),
+          kind: requested?.payload.kind ?? 'unknown',
+          subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
+          defaultDecision: requested?.payload.defaultDecision ?? 'deny',
+          decision: payload.decision,
+          decidedBy: payload.decidedBy,
+          policyJson: JSON.stringify(
+            payload.message !== undefined ? { message: payload.message } : {}
+          ),
+          requestedAt: requested?.time ?? now,
+          decidedAt: now,
+        })
+        break
+      }
+
+      // ── Diagnostics / notices / usage -> emitted HRC event only ─────────────
+      case 'diagnostic':
+      case 'driver.notice':
+      case 'usage.updated': {
+        break
+      }
+
+      default: {
+        // Unknown event types still get persisted + emitted; no state mutation.
+        break
+      }
+    }
+  }
+
+  /** Emit a single broker-sourced HRC event mirroring the broker envelope. */
+  private emit(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): HrcEventEnvelope {
+    return this.db.events.append({
+      ts: now,
+      hostSessionId: ctx.hostSessionId,
+      scopeRef: ctx.scopeRef,
+      laneRef: ctx.laneRef,
+      generation: ctx.generation,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      runtimeId: ctx.runtimeId,
+      source: 'broker',
+      eventKind: `broker.${envelope.type}`,
+      eventJson: {
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        type: envelope.type,
+        time: envelope.time,
+        ...(envelope.turnId !== undefined ? { turnId: envelope.turnId } : {}),
+        ...(envelope.inputId !== undefined ? { inputId: envelope.inputId } : {}),
+        ...(envelope.itemId !== undefined ? { itemId: envelope.itemId } : {}),
+        payload: envelope.payload,
+      },
+    })
+  }
+
+  private appendBuffer(ctx: ProjectionContext, text: string, now: string): void {
+    if (ctx.runId === undefined || text.length === 0) {
+      return
+    }
+    const chunkSeq = this.db.runtimeBuffers.listByRunId(ctx.runId).length
+    this.db.runtimeBuffers.append({
+      runtimeId: ctx.runtimeId,
+      runId: ctx.runId,
+      chunkSeq,
+      text,
+      createdAt: now,
+    })
+  }
+
+  /**
+   * Recover the originating `permission.requested` payload (kind / subjectDisplay
+   * / defaultDecision) persisted on a prior event so the authoritative decision
+   * row carries the full request context.
+   */
+  private findRequestedPayload(
+    invocationId: string,
+    permissionRequestId: string
+  ): { payload: PermissionRequestedPayload; time: string } | undefined {
+    const rows = this.db.brokerInvocationEvents.listByInvocationId(invocationId)
+    for (const row of rows) {
+      if (row.type !== 'permission.requested') {
+        continue
+      }
+      try {
+        const payload = JSON.parse(row.brokerEventJson) as PermissionRequestedPayload
+        if (payload.permissionRequestId === permissionRequestId) {
+          return { payload, time: row.time }
+        }
+      } catch {
+        // Ignore unparseable rows; fall through to the default-decision path.
+      }
+    }
+    return undefined
+  }
+}
