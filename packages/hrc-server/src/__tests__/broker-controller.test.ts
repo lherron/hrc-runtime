@@ -17,6 +17,7 @@ import type {
   BrokerHealthResponse,
   BrokerHelloRequest,
   BrokerHelloResponse,
+  InvocationCapabilities,
   InvocationEventEnvelope,
   InvocationInputRequest,
   InvocationInputResponse,
@@ -31,7 +32,11 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile, CompiledRuntimePlan } from 'spaces-runtime-contracts'
+import type {
+  BrokerExecutionProfile,
+  CapabilityRequirements,
+  CompiledRuntimePlan,
+} from 'spaces-runtime-contracts'
 
 import {
   type BrokerClientLike,
@@ -97,6 +102,7 @@ class FakeBrokerClient implements BrokerClientLike {
     dispatchEnv?: Record<string, string> | undefined
   }> = []
   readonly healthCalls: BrokerHealthRequest[] = []
+  emitCloseOnClose = false
   permissionHandler?: (request: PermissionRequestParams) => Promise<PermissionDecision>
   private closeHandler?: (error: Error) => void
 
@@ -204,6 +210,9 @@ class FakeBrokerClient implements BrokerClientLike {
   async close(): Promise<void> {
     this.callOrder.push('close')
     this.events.close()
+    if (this.emitCloseOnClose) {
+      this.emitClose(new Error('Broker process closed with signal SIGTERM'))
+    }
   }
 
   emitClose(error: Error): void {
@@ -377,8 +386,95 @@ describe('HarnessBrokerController', () => {
     expect(brokerClosed).toBeDefined()
   })
 
+  it('admits raw queue-capable codex drivers and validates queue on effective start caps', async () => {
+    const fake = new FakeBrokerClient()
+    const rawCaps = invocationCapabilities()
+    rawCaps.input.queue = true
+    const effectiveCaps = invocationCapabilities()
+    effectiveCaps.input.queue = false
+    fake.helloResponse.drivers = [
+      {
+        kind: 'codex-app-server',
+        version: '0.1.2-test',
+        available: true,
+        capabilities: rawCaps,
+      },
+    ]
+    fake.startResponse = {
+      ...fake.startResponse,
+      capabilities: effectiveCaps,
+    }
+    const input = makeStartInput()
+    input.profile.expectedCapabilities = capabilityRequirements({ queue: 'forbidden' })
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const result = await controller.start(input)
+
+    expect(result.ok).toBe(true)
+    expect(fake.callOrder).toContain('start')
+    expect(fixture.db.runtimeOperations.getByOperationId('runtimeOperation_w2')?.status).toBe(
+      'completed'
+    )
+  })
+
+  it('fails closed after start when effective invocation caps violate the profile', async () => {
+    const fake = new FakeBrokerClient()
+    const rawCaps = invocationCapabilities()
+    rawCaps.input.queue = true
+    const effectiveCaps = invocationCapabilities()
+    effectiveCaps.input.queue = true
+    fake.helloResponse.drivers = [
+      {
+        kind: 'codex-app-server',
+        version: '0.1.2-test',
+        available: true,
+        capabilities: rawCaps,
+      },
+    ]
+    fake.startResponse = {
+      ...fake.startResponse,
+      capabilities: effectiveCaps,
+    }
+    const input = makeStartInput()
+    input.profile.expectedCapabilities = capabilityRequirements({ queue: 'forbidden' })
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const result = await controller.start(input)
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('broker_invocation_admission_rejected')
+      expect(result.error.detail['missing']).toEqual(['input.queue.forbidden'])
+      expect(result.error.detail['effectiveCapabilities']).toEqual(effectiveCaps)
+    }
+    expect(fake.callOrder).toContain('start')
+    expect(fake.callOrder).toContain('dispose')
+    expect(fake.callOrder).toContain('close')
+    expect(fixture.db.compiledRuntimePlans.getByPlanHash('planhash_w2')).not.toBeNull()
+    expect(fixture.db.runtimeOperations.getByOperationId('runtimeOperation_w2')?.status).toBe(
+      'failed'
+    )
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('failed')
+    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('failed')
+    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
+      'failed'
+    )
+  })
+
   it('fails closed when broker hello cannot admit the requested driver', async () => {
     const fake = new FakeBrokerClient()
+    fake.emitCloseOnClose = true
+    const infos: Array<{ message: string; fields?: Record<string, unknown> }> = []
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = []
+    const errors: Array<{ message: string; fields?: Record<string, unknown> }> = []
     fake.helloResponse = {
       ...fake.helloResponse,
       drivers: [{ kind: 'codex-app-server', version: '0.1.1-test', available: false }],
@@ -387,6 +483,17 @@ describe('HarnessBrokerController', () => {
       db: fixture.db,
       brokerClientFactory: async () => fake,
       now: () => NOW,
+      logger: {
+        info(message, fields) {
+          infos.push({ message, fields })
+        },
+        warn(message, fields) {
+          warnings.push({ message, fields })
+        },
+        error(message, fields) {
+          errors.push({ message, fields })
+        },
+      },
     })
 
     const result = await controller.start(makeStartInput())
@@ -395,8 +502,18 @@ describe('HarnessBrokerController', () => {
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(BrokerControllerError)
       expect(result.error.code).toBe('broker_admission_rejected')
+      expect(result.error.detail['missing']).toEqual(['driver.codex-app-server.available'])
+      expect(result.error.detail['protocolVersion']).toBe('harness-broker/0.1')
+      expect(result.error.detail['driver']).toEqual(
+        expect.objectContaining({ kind: 'codex-app-server', available: false })
+      )
     }
     expect(fake.callOrder).toContain('close')
+    expect(warnings.some((entry) => entry.message.includes('pre-start admission rejected'))).toBe(
+      true
+    )
+    expect(infos.some((entry) => entry.message.includes('closed intentionally'))).toBe(true)
+    expect(errors).toEqual([])
     expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')).toBeNull()
   })
 })
@@ -472,6 +589,37 @@ function invocationCapabilities(): InvocationCapabilities {
     },
     control: { stop: true, dispose: true, status: true, attach: false },
     permissions: { brokerToClientRequests: true, eventAudit: true },
+  }
+}
+
+function capabilityRequirements(
+  overrides: Partial<CapabilityRequirements['input']> = {}
+): CapabilityRequirements {
+  return {
+    input: {
+      user: 'required',
+      steer: 'optional',
+      appendContext: 'optional',
+      localImages: 'optional',
+      fileRefs: 'optional',
+      queue: 'optional',
+      ...overrides,
+    },
+    turns: { concurrency: 'single', interrupt: 'optional' },
+    continuation: 'required',
+    permissions: 'client-mediated',
+    events: {
+      assistantDeltas: 'optional',
+      toolCalls: 'optional',
+      usage: 'optional',
+      diagnostics: 'optional',
+    },
+    control: {
+      stop: 'optional',
+      dispose: 'optional',
+      reconcile: 'optional',
+      attachReplay: 'optional',
+    },
   }
 }
 

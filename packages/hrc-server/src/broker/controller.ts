@@ -26,6 +26,7 @@ import type {
   BrokerHelloResponse,
   DriverSummary,
   InputPolicy,
+  InvocationCapabilities,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
   InvocationId,
@@ -188,11 +189,13 @@ type ActiveBrokerRuntime = {
   invocationId: string
   client: BrokerClientLike
   closing: boolean
+  closeReason?: string | undefined
 }
 
 type CapabilityCheck = {
   ok: boolean
   missing: string[]
+  detail: Record<string, unknown>
 }
 
 export class HarnessBrokerController {
@@ -210,6 +213,7 @@ export class HarnessBrokerController {
   private readonly serverInstanceId: string
   private readonly logger: BrokerControllerLogger
   private readonly active = new Map<string, ActiveBrokerRuntime>()
+  private readonly intentionalClosingRuntimeIds = new Map<string, string>()
 
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
@@ -255,15 +259,17 @@ export class HarnessBrokerController {
         capabilities: { permissionRequests: true },
       })
 
-      const admission = this.admitBroker(input.profile, hello)
+      const admission = this.admitBrokerHello(input.profile, hello)
       if (!admission.ok) {
+        this.logger.warn?.('harness broker pre-start admission rejected', admission.detail)
+        this.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected')
         await client.close().catch(() => undefined)
         return {
           ok: false,
           error: new BrokerControllerError(
             'broker_admission_rejected',
             'broker hello/capability admission rejected the runtime',
-            { missing: admission.missing }
+            admission.detail
           ),
         }
       }
@@ -273,6 +279,32 @@ export class HarnessBrokerController {
         input.startRequest,
         input.dispatchEnv
       )
+
+      const invocationAdmission = this.admitStartedInvocation(
+        input.profile,
+        hello,
+        startResult.response.capabilities
+      )
+      if (!invocationAdmission.ok) {
+        this.logger.warn?.(
+          'harness broker post-start invocation admission rejected',
+          invocationAdmission.detail
+        )
+        this.markStartedInvocationFailed(input, startResult.response, invocationAdmission.detail)
+        this.markBrokerClosing(String(identity.runtimeId), 'post-start-admission-rejected')
+        await client
+          .dispose({ invocationId: startResult.invocationId as InvocationId })
+          .catch(() => undefined)
+        await client.close().catch(() => undefined)
+        return {
+          ok: false,
+          error: new BrokerControllerError(
+            'broker_invocation_admission_rejected',
+            'broker effective invocation capabilities rejected the runtime',
+            invocationAdmission.detail
+          ),
+        }
+      }
 
       const now = this.now()
       const invocation = this.db.brokerInvocations.update(startResult.invocationId, {
@@ -325,6 +357,7 @@ export class HarnessBrokerController {
     } catch (error) {
       const controllerError = toControllerError('broker_start_failed', error)
       if (client) {
+        this.markBrokerClosing(String(input.identity.runtimeId), 'broker-start-failed')
         await client.close().catch(() => undefined)
       }
       this.logger.error?.('harness broker start failed', {
@@ -463,7 +496,7 @@ export class HarnessBrokerController {
     if (!active) {
       return { ok: false, error: this.notActive(runtimeId) }
     }
-    active.closing = true
+    this.markBrokerClosing(runtimeId, 'dispose')
     try {
       await active.client.dispose({ invocationId: active.invocationId as InvocationId })
       await active.client.close()
@@ -660,11 +693,12 @@ export class HarnessBrokerController {
     }
   }
 
-  private admitBroker(
+  private admitBrokerHello(
     profile: BrokerExecutionProfile,
     hello: BrokerHelloResponse
   ): CapabilityCheck {
     const missing: string[] = []
+    const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
     if (hello.protocolVersion !== BROKER_PROTOCOL_VERSION) {
       missing.push(`protocolVersion:${BROKER_PROTOCOL_VERSION}`)
     }
@@ -681,19 +715,43 @@ export class HarnessBrokerController {
       missing.push('broker.capabilities.brokerToClientRequests')
     }
 
-    const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
     if (!driver) {
       missing.push(`driver.${profile.brokerDriver}`)
     } else if (!driver.available) {
       missing.push(`driver.${profile.brokerDriver}.available`)
     } else {
-      missing.push(...this.checkInvocationCapabilities(profile.expectedCapabilities, driver))
+      missing.push(...this.checkPreStartDriverCapabilities(profile.expectedCapabilities, driver))
     }
 
-    return { ok: missing.length === 0, missing }
+    return {
+      ok: missing.length === 0,
+      missing,
+      detail: this.buildAdmissionDetail('pre-start-hello', profile, hello, driver, missing),
+    }
   }
 
-  private checkInvocationCapabilities(
+  private admitStartedInvocation(
+    profile: BrokerExecutionProfile,
+    hello: BrokerHelloResponse,
+    capabilities: InvocationCapabilities
+  ): CapabilityCheck {
+    const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
+    const missing = this.checkInvocationCapabilities(profile.expectedCapabilities, capabilities)
+    return {
+      ok: missing.length === 0,
+      missing,
+      detail: this.buildAdmissionDetail(
+        'post-start-invocation',
+        profile,
+        hello,
+        driver,
+        missing,
+        capabilities
+      ),
+    }
+  }
+
+  private checkPreStartDriverCapabilities(
     requirements: CapabilityRequirements,
     driver: DriverSummary
   ): string[] {
@@ -701,6 +759,76 @@ export class HarnessBrokerController {
     if (!caps) {
       return []
     }
+    const missing: string[] = []
+    checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
+    checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
+    checkNeed(
+      missing,
+      'input.appendContext',
+      requirements.input?.appendContext,
+      caps.input.appendContext
+    )
+    checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
+    checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
+    // input.queue is broker-composed from the start request. A raw driver
+    // queue:true can become effective queue:false post-start.
+    checkNeed(missing, 'input.queue', requiredOnly(requirements.input?.queue), caps.input.queue)
+    if (
+      requirements.turns?.concurrency === 'multiple' &&
+      requirements.turns.concurrency !== caps.turns.concurrency
+    ) {
+      missing.push(`turns.concurrency.${requirements.turns.concurrency}`)
+    }
+    checkNeed(
+      missing,
+      'turns.interrupt',
+      requirements.turns?.interrupt,
+      caps.turns.interrupt !== 'unsupported'
+    )
+    checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
+    if (requirements.permissions === 'client-mediated') {
+      checkNeed(
+        missing,
+        'permissions.brokerToClientRequests',
+        'required',
+        caps.permissions?.brokerToClientRequests ?? false
+      )
+    }
+    checkNeed(
+      missing,
+      'events.assistantDeltas',
+      requirements.events?.assistantDeltas,
+      caps.events.assistantDeltas
+    )
+    checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
+    checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
+    checkNeed(
+      missing,
+      'events.diagnostics',
+      requirements.events?.diagnostics,
+      caps.events.diagnostics
+    )
+    checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
+    checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
+    checkNeed(
+      missing,
+      'control.reconcile',
+      requirements.control?.reconcile,
+      caps.control.status ?? false
+    )
+    checkNeed(
+      missing,
+      'control.attachReplay',
+      requirements.control?.attachReplay,
+      caps.control.attach ?? false
+    )
+    return missing
+  }
+
+  private checkInvocationCapabilities(
+    requirements: CapabilityRequirements,
+    caps: InvocationCapabilities
+  ): string[] {
     const missing: string[] = []
     checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
     checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
@@ -764,6 +892,92 @@ export class HarnessBrokerController {
       caps.control.attach ?? false
     )
     return missing
+  }
+
+  private buildAdmissionDetail(
+    phase: 'pre-start-hello' | 'post-start-invocation',
+    profile: BrokerExecutionProfile,
+    hello: BrokerHelloResponse,
+    driver: DriverSummary | undefined,
+    missing: string[],
+    effectiveCapabilities?: InvocationCapabilities | undefined
+  ): Record<string, unknown> {
+    return {
+      phase,
+      missing,
+      protocolVersion: hello.protocolVersion,
+      brokerCapabilities: hello.capabilities,
+      driver: driver
+        ? {
+            kind: driver.kind,
+            available: driver.available,
+            rawCapabilities: driver.capabilities,
+            ...(driver.unavailableReason ? { unavailableReason: driver.unavailableReason } : {}),
+          }
+        : { kind: profile.brokerDriver, available: false, missing: true },
+      expectedCapabilities: profile.expectedCapabilities,
+      ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+    }
+  }
+
+  private markStartedInvocationFailed(
+    input: BrokerControllerStartInput,
+    response: InvocationStartResponse,
+    detail: Record<string, unknown>
+  ): void {
+    const now = this.now()
+    const identity = input.identity
+    const operationId = String(identity.operationId)
+    const runtimeId = String(identity.runtimeId)
+    const runId = identity.runId !== undefined ? String(identity.runId) : undefined
+    const invocationId = response.invocationId
+    const message = 'broker effective invocation capabilities rejected the runtime'
+
+    this.db.brokerInvocations.update(invocationId, {
+      invocationState: 'failed',
+      capabilitiesJson: JSON.stringify(response.capabilities),
+      updatedAt: now,
+    })
+    this.db.runtimeOperations.update(operationId, {
+      status: 'failed',
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      errorCode: 'broker_invocation_admission_rejected',
+      errorMessage: message,
+      capabilityResolutionJson: JSON.stringify({
+        brokerHello: detail['brokerCapabilities'],
+        invocation: response.capabilities,
+        result: { status: 'reject', missing: detail['missing'] },
+      }),
+    })
+    if (runId !== undefined) {
+      this.db.runs.markCompleted(runId, {
+        status: 'failed',
+        completedAt: now,
+        updatedAt: now,
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage: message,
+      })
+    }
+    this.db.runtimes.update(runtimeId, {
+      status: 'failed',
+      activeInvocationId: invocationId,
+      activeOperationId: operationId,
+      activeRunId: runId,
+      lastActivityAt: now,
+      runtimeStateJson: {
+        schemaVersion: 'runtime-state/v1',
+        kind: 'harness-broker',
+        runtimeId,
+        hostSessionId: String(identity.hostSessionId),
+        generation: identity.generation,
+        status: 'failed',
+        admissionFailure: detail,
+        updatedAt: now,
+      },
+      updatedAt: now,
+    })
   }
 
   private async handlePermissionRequest(
@@ -849,14 +1063,34 @@ export class HarnessBrokerController {
 
   private handleBrokerClose(runtimeId: string, error: Error): void {
     const active = this.active.get(runtimeId)
+    const intentionalReason =
+      active?.closing === true
+        ? (active.closeReason ?? this.intentionalClosingRuntimeIds.get(runtimeId))
+        : this.intentionalClosingRuntimeIds.get(runtimeId)
+    if (intentionalReason) {
+      this.logger.info?.('harness broker process closed intentionally', {
+        runtimeId,
+        reason: intentionalReason,
+        error: error.message,
+      })
+      this.active.delete(runtimeId)
+      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      return
+    }
     this.logger.error?.('harness broker process closed', {
       runtimeId,
       error: error.message,
     })
-    if (active?.closing) {
-      return
-    }
     this.markBrokerCrashTerminal(runtimeId, toControllerError('broker_process_closed', error))
+  }
+
+  private markBrokerClosing(runtimeId: string, reason: string): void {
+    this.intentionalClosingRuntimeIds.set(runtimeId, reason)
+    const active = this.active.get(runtimeId)
+    if (active) {
+      active.closing = true
+      active.closeReason = reason
+    }
   }
 
   private markBrokerCrashTerminal(runtimeId: string, error: BrokerControllerError): void {
@@ -946,6 +1180,12 @@ function checkNeed(
   if (need === 'forbidden' && actual) {
     missing.push(`${path}.forbidden`)
   }
+}
+
+function requiredOnly(
+  need: 'required' | 'optional' | 'forbidden' | undefined
+): 'required' | 'optional' | undefined {
+  return need === 'required' ? 'required' : need === 'optional' ? 'optional' : undefined
 }
 
 function runtimeStatusFromInvocationState(state: string): string {
