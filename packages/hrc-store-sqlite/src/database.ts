@@ -8,13 +8,19 @@ import {
   ActiveInputDeliveryRepository,
   AppManagedSessionRepository,
   AppSessionRepository,
+  BrokerInvocationEventRepository,
+  BrokerInvocationRepository,
+  CompiledRuntimePlanRepository,
   ContinuityRepository,
   EventRepository,
   HrcLifecycleEventRepository,
   LaunchRepository,
   LocalBridgeRepository,
+  PermissionDecisionRepository,
   RunRepository,
+  RuntimeArtifactRepository,
   RuntimeBufferRepository,
+  RuntimeOperationRepository,
   RuntimeRepository,
   SessionRepository,
   SurfaceBindingRepository,
@@ -40,6 +46,12 @@ export type HrcDatabase = {
   runtimeBuffers: RuntimeBufferRepository
   activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
+  compiledRuntimePlans: CompiledRuntimePlanRepository
+  runtimeOperations: RuntimeOperationRepository
+  brokerInvocations: BrokerInvocationRepository
+  brokerInvocationEvents: BrokerInvocationEventRepository
+  runtimeArtifacts: RuntimeArtifactRepository
+  permissionDecisions: PermissionDecisionRepository
 }
 
 function isEphemeralPath(path: string): boolean {
@@ -84,5 +96,11 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
     activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
+    compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
+    runtimeOperations: new RuntimeOperationRepository(sqlite),
+    brokerInvocations: new BrokerInvocationRepository(sqlite),
+    brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite),
+    runtimeArtifacts: new RuntimeArtifactRepository(sqlite),
+    permissionDecisions: new PermissionDecisionRepository(sqlite),
   }
 }

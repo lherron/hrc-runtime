@@ -4,7 +4,10 @@ import {
   type HrcActiveRunContributionResponse,
   type HrcAppSessionRecord,
   type HrcAppSessionSpec,
+  type HrcBrokerInvocationEventRecord,
+  type HrcBrokerInvocationRecord,
   type HrcCommandLaunchSpec,
+  type HrcCompiledRuntimePlanRecord,
   type HrcContinuationRef,
   type HrcContinuityRecord,
   type HrcErrorCode,
@@ -13,8 +16,11 @@ import {
   type HrcLifecycleEvent,
   type HrcLocalBridgeRecord,
   type HrcManagedSessionRecord,
+  type HrcPermissionDecisionRecord,
   type HrcRunRecord,
+  type HrcRuntimeArtifactRecord,
   type HrcRuntimeIntent,
+  type HrcRuntimeOperationRecord,
   type HrcRuntimeSnapshot,
   type HrcSessionRecord,
   type HrcSurfaceBindingRecord,
@@ -157,6 +163,13 @@ type RuntimeRow = {
   adopted: number
   active_run_id: string | null
   last_activity_at: string | null
+  controller_kind: string | null
+  active_operation_id: string | null
+  active_invocation_id: string | null
+  compile_id: string | null
+  plan_hash: string | null
+  selected_profile_hash: string | null
+  runtime_state_json: string | null
   created_at: string
   updated_at: string
 }
@@ -176,6 +189,8 @@ type RunRow = {
   updated_at: string
   error_code: HrcErrorCode | null
   error_message: string | null
+  operation_id: string | null
+  invocation_id: string | null
 }
 
 type LaunchRow = {
@@ -408,6 +423,13 @@ const RUNTIME_COLUMNS = `
   adopted,
   active_run_id,
   last_activity_at,
+  controller_kind,
+  active_operation_id,
+  active_invocation_id,
+  compile_id,
+  plan_hash,
+  selected_profile_hash,
+  runtime_state_json,
   created_at,
   updated_at`
 
@@ -425,7 +447,9 @@ const RUN_COLUMNS = `
   completed_at,
   updated_at,
   error_code,
-  error_message`
+  error_message,
+  operation_id,
+  invocation_id`
 
 const LAUNCH_COLUMNS = `
   launch_id,
@@ -626,6 +650,16 @@ function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
     adopted: fromSqliteBoolean(row.adopted),
     activeRunId: row.active_run_id ?? undefined,
     lastActivityAt: row.last_activity_at ?? undefined,
+    controllerKind: row.controller_kind ?? undefined,
+    activeOperationId: row.active_operation_id ?? undefined,
+    activeInvocationId: row.active_invocation_id ?? undefined,
+    compileId: row.compile_id ?? undefined,
+    planHash: row.plan_hash ?? undefined,
+    selectedProfileHash: row.selected_profile_hash ?? undefined,
+    runtimeStateJson: parseJson<Record<string, unknown>>(
+      row.runtime_state_json,
+      'runtime_state_json'
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -647,6 +681,8 @@ function mapRunRow(row: RunRow): HrcRunRecord {
     updatedAt: row.updated_at,
     errorCode: row.error_code ?? undefined,
     errorMessage: row.error_message ?? undefined,
+    operationId: row.operation_id ?? undefined,
+    invocationId: row.invocation_id ?? undefined,
   }
 }
 
@@ -1432,9 +1468,16 @@ export class RuntimeRepository {
           adopted,
           active_run_id,
           last_activity_at,
+          controller_kind,
+          active_operation_id,
+          active_invocation_id,
+          compile_id,
+          plan_hash,
+          selected_profile_hash,
+          runtime_state_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
       record.runtimeKind ?? 'harness',
@@ -1458,6 +1501,13 @@ export class RuntimeRepository {
       toSqliteBoolean(record.adopted),
       record.activeRunId ?? null,
       record.lastActivityAt ?? null,
+      record.controllerKind ?? null,
+      record.activeOperationId ?? null,
+      record.activeInvocationId ?? null,
+      record.compileId ?? null,
+      record.planHash ?? null,
+      record.selectedProfileHash ?? null,
+      serializeJson(record.runtimeStateJson),
       record.createdAt,
       record.updatedAt
     )
@@ -1564,6 +1614,27 @@ export class RuntimeRepository {
     }
     if (patch.lastActivityAt !== undefined) {
       entries.push(['last_activity_at', patch.lastActivityAt])
+    }
+    if (patch.controllerKind !== undefined) {
+      entries.push(['controller_kind', patch.controllerKind])
+    }
+    if (patch.activeOperationId !== undefined) {
+      entries.push(['active_operation_id', patch.activeOperationId])
+    }
+    if (patch.activeInvocationId !== undefined) {
+      entries.push(['active_invocation_id', patch.activeInvocationId])
+    }
+    if (patch.compileId !== undefined) {
+      entries.push(['compile_id', patch.compileId])
+    }
+    if (patch.planHash !== undefined) {
+      entries.push(['plan_hash', patch.planHash])
+    }
+    if (patch.selectedProfileHash !== undefined) {
+      entries.push(['selected_profile_hash', patch.selectedProfileHash])
+    }
+    if (patch.runtimeStateJson !== undefined) {
+      entries.push(['runtime_state_json', serializeJson(patch.runtimeStateJson)])
     }
     if (patch.createdAt !== undefined) {
       entries.push(['created_at', patch.createdAt])
@@ -1676,8 +1747,10 @@ export class RunRepository {
           completed_at,
           updated_at,
           error_code,
-          error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          error_message,
+          operation_id,
+          invocation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -1692,7 +1765,9 @@ export class RunRepository {
       record.completedAt ?? null,
       record.updatedAt,
       record.errorCode ?? null,
-      record.errorMessage ?? null
+      record.errorMessage ?? null,
+      record.operationId ?? null,
+      record.invocationId ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
@@ -1805,6 +1880,12 @@ export class RunRepository {
     }
     if (patch.errorMessage !== undefined) {
       entries.push(['error_message', patch.errorMessage])
+    }
+    if (patch.operationId !== undefined) {
+      entries.push(['operation_id', patch.operationId])
+    }
+    if (patch.invocationId !== undefined) {
+      entries.push(['invocation_id', patch.invocationId])
     }
 
     if (entries.length === 0) {
@@ -2952,6 +3033,961 @@ export class RuntimeBufferRepository {
       .all(runId)
 
     return rows.map(mapRuntimeBufferRow)
+  }
+}
+
+// ── Harness Broker persistence repositories (T-01690 W1B) ──────────────────
+// Repositories for the six broker tables added in migration 0016. They are
+// additive and inert: nothing here is wired into any live dispatch path. The
+// harness-broker controller (W4) and event mapper (W3A) are the only callers,
+// and they are unreachable unless HRC_HEADLESS_CODEX_BROKER_ENABLED is set.
+
+type CompiledRuntimePlanRow = {
+  plan_hash: string
+  compile_id: string
+  schema_version: string
+  compiler_name: string
+  compiler_version: string
+  plan_projection_json: string
+  diagnostics_json: string | null
+  created_at: string
+}
+
+type RuntimeOperationRow = {
+  operation_id: string
+  runtime_id: string
+  run_id: string | null
+  host_session_id: string
+  generation: number
+  operation_kind: string
+  controller: string
+  compile_id: string | null
+  plan_hash: string | null
+  selected_profile_id: string | null
+  selected_profile_hash: string | null
+  startup_method: string
+  turn_delivery: string | null
+  status: string
+  route_decision_json: string
+  capability_resolution_json: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+  updated_at: string
+  error_code: string | null
+  error_message: string | null
+}
+
+type BrokerInvocationRow = {
+  invocation_id: string
+  operation_id: string
+  runtime_id: string
+  run_id: string | null
+  broker_protocol: string
+  broker_driver: string
+  broker_pid: number | null
+  child_pid: number | null
+  invocation_state: string
+  capabilities_json: string
+  continuation_json: string | null
+  broker_continuation_json: string | null
+  spec_hash: string
+  start_request_hash: string
+  selected_profile_hash: string
+  spec_projection_json: string | null
+  start_request_projection_json: string | null
+  last_event_seq: number | null
+  owner_server_instance_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+type BrokerInvocationEventRow = {
+  invocation_id: string
+  seq: number
+  time: string
+  type: string
+  run_id: string | null
+  runtime_id: string
+  broker_event_json: string
+  hrc_event_seq: number | null
+  projection_status: string
+  projection_error: string | null
+  created_at: string
+}
+
+type RuntimeArtifactRow = {
+  artifact_id: string
+  operation_id: string
+  artifact_kind: string
+  media_type: string
+  storage_kind: string
+  content_hash: string
+  artifact_json: string | null
+  artifact_path: string | null
+  created_at: string
+}
+
+type PermissionDecisionRow = {
+  permission_request_id: string
+  invocation_id: string
+  runtime_id: string
+  run_id: string | null
+  kind: string
+  subject_display_json: string
+  default_decision: string
+  decision: string
+  decided_by: string
+  policy_json: string
+  requested_at: string
+  decided_at: string
+}
+
+const COMPILED_RUNTIME_PLAN_COLUMNS = `
+  plan_hash,
+  compile_id,
+  schema_version,
+  compiler_name,
+  compiler_version,
+  plan_projection_json,
+  diagnostics_json,
+  created_at`
+
+const RUNTIME_OPERATION_COLUMNS = `
+  operation_id,
+  runtime_id,
+  run_id,
+  host_session_id,
+  generation,
+  operation_kind,
+  controller,
+  compile_id,
+  plan_hash,
+  selected_profile_id,
+  selected_profile_hash,
+  startup_method,
+  turn_delivery,
+  status,
+  route_decision_json,
+  capability_resolution_json,
+  created_at,
+  started_at,
+  completed_at,
+  updated_at,
+  error_code,
+  error_message`
+
+const BROKER_INVOCATION_COLUMNS = `
+  invocation_id,
+  operation_id,
+  runtime_id,
+  run_id,
+  broker_protocol,
+  broker_driver,
+  broker_pid,
+  child_pid,
+  invocation_state,
+  capabilities_json,
+  continuation_json,
+  broker_continuation_json,
+  spec_hash,
+  start_request_hash,
+  selected_profile_hash,
+  spec_projection_json,
+  start_request_projection_json,
+  last_event_seq,
+  owner_server_instance_id,
+  created_at,
+  updated_at`
+
+const BROKER_INVOCATION_EVENT_COLUMNS = `
+  invocation_id,
+  seq,
+  time,
+  type,
+  run_id,
+  runtime_id,
+  broker_event_json,
+  hrc_event_seq,
+  projection_status,
+  projection_error,
+  created_at`
+
+const RUNTIME_ARTIFACT_COLUMNS = `
+  artifact_id,
+  operation_id,
+  artifact_kind,
+  media_type,
+  storage_kind,
+  content_hash,
+  artifact_json,
+  artifact_path,
+  created_at`
+
+const PERMISSION_DECISION_COLUMNS = `
+  permission_request_id,
+  invocation_id,
+  runtime_id,
+  run_id,
+  kind,
+  subject_display_json,
+  default_decision,
+  decision,
+  decided_by,
+  policy_json,
+  requested_at,
+  decided_at`
+
+function mapCompiledRuntimePlanRow(row: CompiledRuntimePlanRow): HrcCompiledRuntimePlanRecord {
+  return {
+    planHash: row.plan_hash,
+    compileId: row.compile_id,
+    schemaVersion: row.schema_version,
+    compilerName: row.compiler_name,
+    compilerVersion: row.compiler_version,
+    planProjectionJson: row.plan_projection_json,
+    ...(row.diagnostics_json !== null ? { diagnosticsJson: row.diagnostics_json } : {}),
+    createdAt: row.created_at,
+  }
+}
+
+function mapRuntimeOperationRow(row: RuntimeOperationRow): HrcRuntimeOperationRecord {
+  return {
+    operationId: row.operation_id,
+    runtimeId: row.runtime_id,
+    ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    hostSessionId: row.host_session_id,
+    generation: row.generation,
+    operationKind: row.operation_kind,
+    controller: row.controller,
+    ...(row.compile_id !== null ? { compileId: row.compile_id } : {}),
+    ...(row.plan_hash !== null ? { planHash: row.plan_hash } : {}),
+    ...(row.selected_profile_id !== null ? { selectedProfileId: row.selected_profile_id } : {}),
+    ...(row.selected_profile_hash !== null
+      ? { selectedProfileHash: row.selected_profile_hash }
+      : {}),
+    startupMethod: row.startup_method,
+    ...(row.turn_delivery !== null ? { turnDelivery: row.turn_delivery } : {}),
+    status: row.status,
+    routeDecisionJson: row.route_decision_json,
+    ...(row.capability_resolution_json !== null
+      ? { capabilityResolutionJson: row.capability_resolution_json }
+      : {}),
+    createdAt: row.created_at,
+    ...(row.started_at !== null ? { startedAt: row.started_at } : {}),
+    ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
+    updatedAt: row.updated_at,
+    ...(row.error_code !== null ? { errorCode: row.error_code } : {}),
+    ...(row.error_message !== null ? { errorMessage: row.error_message } : {}),
+  }
+}
+
+function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvocationRecord {
+  return {
+    invocationId: row.invocation_id,
+    operationId: row.operation_id,
+    runtimeId: row.runtime_id,
+    ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    brokerProtocol: row.broker_protocol,
+    brokerDriver: row.broker_driver,
+    ...(row.broker_pid !== null ? { brokerPid: row.broker_pid } : {}),
+    ...(row.child_pid !== null ? { childPid: row.child_pid } : {}),
+    invocationState: row.invocation_state,
+    capabilitiesJson: row.capabilities_json,
+    ...(row.continuation_json !== null ? { continuationJson: row.continuation_json } : {}),
+    ...(row.broker_continuation_json !== null
+      ? { brokerContinuationJson: row.broker_continuation_json }
+      : {}),
+    specHash: row.spec_hash,
+    startRequestHash: row.start_request_hash,
+    selectedProfileHash: row.selected_profile_hash,
+    ...(row.spec_projection_json !== null ? { specProjectionJson: row.spec_projection_json } : {}),
+    ...(row.start_request_projection_json !== null
+      ? { startRequestProjectionJson: row.start_request_projection_json }
+      : {}),
+    ...(row.last_event_seq !== null ? { lastEventSeq: row.last_event_seq } : {}),
+    ...(row.owner_server_instance_id !== null
+      ? { ownerServerInstanceId: row.owner_server_instance_id }
+      : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapBrokerInvocationEventRow(
+  row: BrokerInvocationEventRow
+): HrcBrokerInvocationEventRecord {
+  return {
+    invocationId: row.invocation_id,
+    seq: row.seq,
+    time: row.time,
+    type: row.type,
+    ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    runtimeId: row.runtime_id,
+    brokerEventJson: row.broker_event_json,
+    ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
+    projectionStatus: row.projection_status,
+    ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),
+    createdAt: row.created_at,
+  }
+}
+
+function mapRuntimeArtifactRow(row: RuntimeArtifactRow): HrcRuntimeArtifactRecord {
+  return {
+    artifactId: row.artifact_id,
+    operationId: row.operation_id,
+    artifactKind: row.artifact_kind,
+    mediaType: row.media_type,
+    storageKind: row.storage_kind,
+    contentHash: row.content_hash,
+    ...(row.artifact_json !== null ? { artifactJson: row.artifact_json } : {}),
+    ...(row.artifact_path !== null ? { artifactPath: row.artifact_path } : {}),
+    createdAt: row.created_at,
+  }
+}
+
+function mapPermissionDecisionRow(row: PermissionDecisionRow): HrcPermissionDecisionRecord {
+  return {
+    permissionRequestId: row.permission_request_id,
+    invocationId: row.invocation_id,
+    runtimeId: row.runtime_id,
+    ...(row.run_id !== null ? { runId: row.run_id } : {}),
+    kind: row.kind,
+    subjectDisplayJson: row.subject_display_json,
+    defaultDecision: row.default_decision,
+    decision: row.decision,
+    decidedBy: row.decided_by,
+    policyJson: row.policy_json,
+    requestedAt: row.requested_at,
+    decidedAt: row.decided_at,
+  }
+}
+
+export class CompiledRuntimePlanRepository {
+  constructor(private readonly db: Database) {}
+
+  /**
+   * Content-addressed insert. Plans are keyed by `planHash`; re-inserting the
+   * same plan is a no-op (the first stored compile metadata is preserved).
+   */
+  insert(record: HrcCompiledRuntimePlanRecord): HrcCompiledRuntimePlanRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO compiled_runtime_plans (
+          plan_hash,
+          compile_id,
+          schema_version,
+          compiler_name,
+          compiler_version,
+          plan_projection_json,
+          diagnostics_json,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(plan_hash) DO NOTHING
+      `,
+      record.planHash,
+      record.compileId,
+      record.schemaVersion,
+      record.compilerName,
+      record.compilerVersion,
+      record.planProjectionJson,
+      record.diagnosticsJson ?? null,
+      record.createdAt
+    )
+
+    return requireRecord(
+      this.getByPlanHash(record.planHash),
+      `failed to reload compiled runtime plan ${record.planHash}`
+    )
+  }
+
+  getByPlanHash(planHash: string): HrcCompiledRuntimePlanRecord | null {
+    const row = this.db
+      .query<CompiledRuntimePlanRow, [string]>(
+        `SELECT ${COMPILED_RUNTIME_PLAN_COLUMNS} FROM compiled_runtime_plans WHERE plan_hash = ?`
+      )
+      .get(planHash)
+
+    return row ? mapCompiledRuntimePlanRow(row) : null
+  }
+
+  listByCompileId(compileId: string): HrcCompiledRuntimePlanRecord[] {
+    const rows = this.db
+      .query<CompiledRuntimePlanRow, [string]>(
+        `SELECT ${COMPILED_RUNTIME_PLAN_COLUMNS} FROM compiled_runtime_plans
+          WHERE compile_id = ?
+          ORDER BY created_at ASC, plan_hash ASC`
+      )
+      .all(compileId)
+
+    return rows.map(mapCompiledRuntimePlanRow)
+  }
+}
+
+export type RuntimeOperationUpdatePatch = Partial<
+  Omit<HrcRuntimeOperationRecord, 'operationId' | 'createdAt'>
+>
+
+export class RuntimeOperationRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcRuntimeOperationRecord): HrcRuntimeOperationRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO runtime_operations (
+          operation_id,
+          runtime_id,
+          run_id,
+          host_session_id,
+          generation,
+          operation_kind,
+          controller,
+          compile_id,
+          plan_hash,
+          selected_profile_id,
+          selected_profile_hash,
+          startup_method,
+          turn_delivery,
+          status,
+          route_decision_json,
+          capability_resolution_json,
+          created_at,
+          started_at,
+          completed_at,
+          updated_at,
+          error_code,
+          error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.operationId,
+      record.runtimeId,
+      record.runId ?? null,
+      record.hostSessionId,
+      record.generation,
+      record.operationKind,
+      record.controller,
+      record.compileId ?? null,
+      record.planHash ?? null,
+      record.selectedProfileId ?? null,
+      record.selectedProfileHash ?? null,
+      record.startupMethod,
+      record.turnDelivery ?? null,
+      record.status,
+      record.routeDecisionJson,
+      record.capabilityResolutionJson ?? null,
+      record.createdAt,
+      record.startedAt ?? null,
+      record.completedAt ?? null,
+      record.updatedAt,
+      record.errorCode ?? null,
+      record.errorMessage ?? null
+    )
+
+    return requireRecord(
+      this.getByOperationId(record.operationId),
+      `failed to reload runtime operation ${record.operationId}`
+    )
+  }
+
+  getByOperationId(operationId: string): HrcRuntimeOperationRecord | null {
+    const row = this.db
+      .query<RuntimeOperationRow, [string]>(
+        `SELECT ${RUNTIME_OPERATION_COLUMNS} FROM runtime_operations WHERE operation_id = ?`
+      )
+      .get(operationId)
+
+    return row ? mapRuntimeOperationRow(row) : null
+  }
+
+  listByRuntimeId(runtimeId: string): HrcRuntimeOperationRecord[] {
+    const rows = this.db
+      .query<RuntimeOperationRow, [string]>(
+        `SELECT ${RUNTIME_OPERATION_COLUMNS} FROM runtime_operations
+          WHERE runtime_id = ?
+          ORDER BY created_at ASC, operation_id ASC`
+      )
+      .all(runtimeId)
+
+    return rows.map(mapRuntimeOperationRow)
+  }
+
+  update(
+    operationId: string,
+    patch: RuntimeOperationUpdatePatch
+  ): HrcRuntimeOperationRecord | null {
+    const entries: Array<[column: string, value: string | number | null]> = []
+
+    if (patch.runtimeId !== undefined) entries.push(['runtime_id', patch.runtimeId])
+    if (patch.runId !== undefined) entries.push(['run_id', patch.runId ?? null])
+    if (patch.hostSessionId !== undefined) entries.push(['host_session_id', patch.hostSessionId])
+    if (patch.generation !== undefined) entries.push(['generation', patch.generation])
+    if (patch.operationKind !== undefined) entries.push(['operation_kind', patch.operationKind])
+    if (patch.controller !== undefined) entries.push(['controller', patch.controller])
+    if (patch.compileId !== undefined) entries.push(['compile_id', patch.compileId ?? null])
+    if (patch.planHash !== undefined) entries.push(['plan_hash', patch.planHash ?? null])
+    if (patch.selectedProfileId !== undefined)
+      entries.push(['selected_profile_id', patch.selectedProfileId ?? null])
+    if (patch.selectedProfileHash !== undefined)
+      entries.push(['selected_profile_hash', patch.selectedProfileHash ?? null])
+    if (patch.startupMethod !== undefined) entries.push(['startup_method', patch.startupMethod])
+    if (patch.turnDelivery !== undefined)
+      entries.push(['turn_delivery', patch.turnDelivery ?? null])
+    if (patch.status !== undefined) entries.push(['status', patch.status])
+    if (patch.routeDecisionJson !== undefined)
+      entries.push(['route_decision_json', patch.routeDecisionJson])
+    if (patch.capabilityResolutionJson !== undefined)
+      entries.push(['capability_resolution_json', patch.capabilityResolutionJson ?? null])
+    if (patch.startedAt !== undefined) entries.push(['started_at', patch.startedAt ?? null])
+    if (patch.completedAt !== undefined) entries.push(['completed_at', patch.completedAt ?? null])
+    if (patch.updatedAt !== undefined) entries.push(['updated_at', patch.updatedAt])
+    if (patch.errorCode !== undefined) entries.push(['error_code', patch.errorCode ?? null])
+    if (patch.errorMessage !== undefined)
+      entries.push(['error_message', patch.errorMessage ?? null])
+
+    if (entries.length === 0) {
+      return this.getByOperationId(operationId)
+    }
+
+    const { clause, values } = buildSetClause(entries)
+    execute(
+      this.db,
+      `UPDATE runtime_operations SET ${clause} WHERE operation_id = ?`,
+      ...values,
+      operationId
+    )
+    return this.getByOperationId(operationId)
+  }
+}
+
+export type BrokerInvocationUpdatePatch = Partial<
+  Omit<HrcBrokerInvocationRecord, 'invocationId' | 'createdAt'>
+>
+
+export class BrokerInvocationRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcBrokerInvocationRecord): HrcBrokerInvocationRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO broker_invocations (
+          invocation_id,
+          operation_id,
+          runtime_id,
+          run_id,
+          broker_protocol,
+          broker_driver,
+          broker_pid,
+          child_pid,
+          invocation_state,
+          capabilities_json,
+          continuation_json,
+          broker_continuation_json,
+          spec_hash,
+          start_request_hash,
+          selected_profile_hash,
+          spec_projection_json,
+          start_request_projection_json,
+          last_event_seq,
+          owner_server_instance_id,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.invocationId,
+      record.operationId,
+      record.runtimeId,
+      record.runId ?? null,
+      record.brokerProtocol,
+      record.brokerDriver,
+      record.brokerPid ?? null,
+      record.childPid ?? null,
+      record.invocationState,
+      record.capabilitiesJson,
+      record.continuationJson ?? null,
+      record.brokerContinuationJson ?? null,
+      record.specHash,
+      record.startRequestHash,
+      record.selectedProfileHash,
+      record.specProjectionJson ?? null,
+      record.startRequestProjectionJson ?? null,
+      record.lastEventSeq ?? null,
+      record.ownerServerInstanceId ?? null,
+      record.createdAt,
+      record.updatedAt
+    )
+
+    return requireRecord(
+      this.getByInvocationId(record.invocationId),
+      `failed to reload broker invocation ${record.invocationId}`
+    )
+  }
+
+  getByInvocationId(invocationId: string): HrcBrokerInvocationRecord | null {
+    const row = this.db
+      .query<BrokerInvocationRow, [string]>(
+        `SELECT ${BROKER_INVOCATION_COLUMNS} FROM broker_invocations WHERE invocation_id = ?`
+      )
+      .get(invocationId)
+
+    return row ? mapBrokerInvocationRow(row) : null
+  }
+
+  listByRuntimeId(runtimeId: string): HrcBrokerInvocationRecord[] {
+    const rows = this.db
+      .query<BrokerInvocationRow, [string]>(
+        `SELECT ${BROKER_INVOCATION_COLUMNS} FROM broker_invocations
+          WHERE runtime_id = ?
+          ORDER BY created_at ASC, invocation_id ASC`
+      )
+      .all(runtimeId)
+
+    return rows.map(mapBrokerInvocationRow)
+  }
+
+  update(
+    invocationId: string,
+    patch: BrokerInvocationUpdatePatch
+  ): HrcBrokerInvocationRecord | null {
+    const entries: Array<[column: string, value: string | number | null]> = []
+
+    if (patch.operationId !== undefined) entries.push(['operation_id', patch.operationId])
+    if (patch.runtimeId !== undefined) entries.push(['runtime_id', patch.runtimeId])
+    if (patch.runId !== undefined) entries.push(['run_id', patch.runId ?? null])
+    if (patch.brokerProtocol !== undefined) entries.push(['broker_protocol', patch.brokerProtocol])
+    if (patch.brokerDriver !== undefined) entries.push(['broker_driver', patch.brokerDriver])
+    if (patch.brokerPid !== undefined) entries.push(['broker_pid', patch.brokerPid ?? null])
+    if (patch.childPid !== undefined) entries.push(['child_pid', patch.childPid ?? null])
+    if (patch.invocationState !== undefined)
+      entries.push(['invocation_state', patch.invocationState])
+    if (patch.capabilitiesJson !== undefined)
+      entries.push(['capabilities_json', patch.capabilitiesJson])
+    if (patch.continuationJson !== undefined)
+      entries.push(['continuation_json', patch.continuationJson ?? null])
+    if (patch.brokerContinuationJson !== undefined)
+      entries.push(['broker_continuation_json', patch.brokerContinuationJson ?? null])
+    if (patch.specHash !== undefined) entries.push(['spec_hash', patch.specHash])
+    if (patch.startRequestHash !== undefined)
+      entries.push(['start_request_hash', patch.startRequestHash])
+    if (patch.selectedProfileHash !== undefined)
+      entries.push(['selected_profile_hash', patch.selectedProfileHash])
+    if (patch.specProjectionJson !== undefined)
+      entries.push(['spec_projection_json', patch.specProjectionJson ?? null])
+    if (patch.startRequestProjectionJson !== undefined)
+      entries.push(['start_request_projection_json', patch.startRequestProjectionJson ?? null])
+    if (patch.lastEventSeq !== undefined)
+      entries.push(['last_event_seq', patch.lastEventSeq ?? null])
+    if (patch.ownerServerInstanceId !== undefined)
+      entries.push(['owner_server_instance_id', patch.ownerServerInstanceId ?? null])
+    if (patch.updatedAt !== undefined) entries.push(['updated_at', patch.updatedAt])
+
+    if (entries.length === 0) {
+      return this.getByInvocationId(invocationId)
+    }
+
+    const { clause, values } = buildSetClause(entries)
+    execute(
+      this.db,
+      `UPDATE broker_invocations SET ${clause} WHERE invocation_id = ?`,
+      ...values,
+      invocationId
+    )
+    return this.getByInvocationId(invocationId)
+  }
+}
+
+export type BrokerInvocationEventAppendInput = {
+  invocationId: string
+  seq: number
+  time: string
+  type: string
+  runtimeId: string
+  runId?: string | undefined
+  /**
+   * Broker event content to persist. Serialized verbatim and compared on
+   * re-append: the same `(invocationId, seq)` with the same payload is a no-op;
+   * a different payload throws.
+   */
+  payload: unknown
+  hrcEventSeq?: number | undefined
+  projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
+  projectionError?: string | undefined
+  createdAt?: string | undefined
+}
+
+export type BrokerInvocationEventAppendResult = {
+  record: HrcBrokerInvocationEventRecord
+  /** True when an identical event already existed and the append was a no-op. */
+  idempotent: boolean
+}
+
+export class BrokerInvocationEventConflictError extends Error {
+  constructor(
+    readonly invocationId: string,
+    readonly seq: number
+  ) {
+    super(
+      `broker_invocation_events conflict: (invocation_id=${invocationId}, seq=${seq}) already exists with a different payload; refusing to overwrite`
+    )
+    this.name = 'BrokerInvocationEventConflictError'
+  }
+}
+
+export class BrokerInvocationEventRepository {
+  private readonly appendInTransaction: (
+    input: BrokerInvocationEventAppendInput
+  ) => BrokerInvocationEventAppendResult
+
+  constructor(private readonly db: Database) {
+    this.appendInTransaction = db.transaction(
+      (input: BrokerInvocationEventAppendInput): BrokerInvocationEventAppendResult => {
+        const brokerEventJson = JSON.stringify(input.payload ?? null)
+
+        const existing = this.db
+          .query<BrokerInvocationEventRow, [string, number]>(
+            `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+              WHERE invocation_id = ? AND seq = ?`
+          )
+          .get(input.invocationId, input.seq)
+
+        if (existing) {
+          if (existing.broker_event_json !== brokerEventJson) {
+            throw new BrokerInvocationEventConflictError(input.invocationId, input.seq)
+          }
+          return { record: mapBrokerInvocationEventRow(existing), idempotent: true }
+        }
+
+        execute(
+          this.db,
+          `
+            INSERT INTO broker_invocation_events (
+              invocation_id,
+              seq,
+              time,
+              type,
+              run_id,
+              runtime_id,
+              broker_event_json,
+              hrc_event_seq,
+              projection_status,
+              projection_error,
+              created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          input.invocationId,
+          input.seq,
+          input.time,
+          input.type,
+          input.runId ?? null,
+          input.runtimeId,
+          brokerEventJson,
+          input.hrcEventSeq ?? null,
+          input.projectionStatus ?? 'pending',
+          input.projectionError ?? null,
+          input.createdAt ?? input.time
+        )
+
+        const stored = requireRecord(
+          this.getByInvocationAndSeq(input.invocationId, input.seq),
+          `failed to reload broker invocation event ${input.invocationId}/${input.seq}`
+        )
+        return { record: stored, idempotent: false }
+      }
+    )
+  }
+
+  /**
+   * Idempotent append keyed by `(invocationId, seq)`:
+   * - inserts a new row for a new key;
+   * - is a no-op (returns the stored row, `idempotent: true`) when the same key
+   *   is re-appended with the same payload;
+   * - throws `BrokerInvocationEventConflictError` when the same key arrives with
+   *   a different payload — no silent overwrite, no double projection.
+   */
+  appendEvent(input: BrokerInvocationEventAppendInput): BrokerInvocationEventAppendResult {
+    return this.appendInTransaction(input)
+  }
+
+  getByInvocationAndSeq(invocationId: string, seq: number): HrcBrokerInvocationEventRecord | null {
+    const row = this.db
+      .query<BrokerInvocationEventRow, [string, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE invocation_id = ? AND seq = ?`
+      )
+      .get(invocationId, seq)
+
+    return row ? mapBrokerInvocationEventRow(row) : null
+  }
+
+  listByInvocationId(invocationId: string): HrcBrokerInvocationEventRecord[] {
+    const rows = this.db
+      .query<BrokerInvocationEventRow, [string]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE invocation_id = ?
+          ORDER BY seq ASC`
+      )
+      .all(invocationId)
+
+    return rows.map(mapBrokerInvocationEventRow)
+  }
+
+  /** Record projection outcome (hrc event seq + status) after the mapper runs. */
+  updateProjection(
+    invocationId: string,
+    seq: number,
+    update: {
+      hrcEventSeq?: number | undefined
+      projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
+      projectionError?: string | undefined
+    }
+  ): HrcBrokerInvocationEventRecord | null {
+    const entries: Array<[column: string, value: string | number | null]> = []
+    if (update.hrcEventSeq !== undefined)
+      entries.push(['hrc_event_seq', update.hrcEventSeq ?? null])
+    if (update.projectionStatus !== undefined)
+      entries.push(['projection_status', update.projectionStatus])
+    if (update.projectionError !== undefined)
+      entries.push(['projection_error', update.projectionError ?? null])
+
+    if (entries.length === 0) {
+      return this.getByInvocationAndSeq(invocationId, seq)
+    }
+
+    const { clause, values } = buildSetClause(entries)
+    execute(
+      this.db,
+      `UPDATE broker_invocation_events SET ${clause} WHERE invocation_id = ? AND seq = ?`,
+      ...values,
+      invocationId,
+      seq
+    )
+    return this.getByInvocationAndSeq(invocationId, seq)
+  }
+}
+
+export class RuntimeArtifactRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcRuntimeArtifactRecord): HrcRuntimeArtifactRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO runtime_artifacts (
+          artifact_id,
+          operation_id,
+          artifact_kind,
+          media_type,
+          storage_kind,
+          content_hash,
+          artifact_json,
+          artifact_path,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.artifactId,
+      record.operationId,
+      record.artifactKind,
+      record.mediaType,
+      record.storageKind,
+      record.contentHash,
+      record.artifactJson ?? null,
+      record.artifactPath ?? null,
+      record.createdAt
+    )
+
+    return requireRecord(
+      this.getByArtifactId(record.artifactId),
+      `failed to reload runtime artifact ${record.artifactId}`
+    )
+  }
+
+  getByArtifactId(artifactId: string): HrcRuntimeArtifactRecord | null {
+    const row = this.db
+      .query<RuntimeArtifactRow, [string]>(
+        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts WHERE artifact_id = ?`
+      )
+      .get(artifactId)
+
+    return row ? mapRuntimeArtifactRow(row) : null
+  }
+
+  listByOperationId(operationId: string): HrcRuntimeArtifactRecord[] {
+    const rows = this.db
+      .query<RuntimeArtifactRow, [string]>(
+        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
+          WHERE operation_id = ?
+          ORDER BY created_at ASC, artifact_id ASC`
+      )
+      .all(operationId)
+
+    return rows.map(mapRuntimeArtifactRow)
+  }
+}
+
+export class PermissionDecisionRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcPermissionDecisionRecord): HrcPermissionDecisionRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO permission_decisions (
+          permission_request_id,
+          invocation_id,
+          runtime_id,
+          run_id,
+          kind,
+          subject_display_json,
+          default_decision,
+          decision,
+          decided_by,
+          policy_json,
+          requested_at,
+          decided_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      record.permissionRequestId,
+      record.invocationId,
+      record.runtimeId,
+      record.runId ?? null,
+      record.kind,
+      record.subjectDisplayJson,
+      record.defaultDecision,
+      record.decision,
+      record.decidedBy,
+      record.policyJson,
+      record.requestedAt,
+      record.decidedAt
+    )
+
+    return requireRecord(
+      this.getByPermissionRequestId(record.permissionRequestId),
+      `failed to reload permission decision ${record.permissionRequestId}`
+    )
+  }
+
+  getByPermissionRequestId(permissionRequestId: string): HrcPermissionDecisionRecord | null {
+    const row = this.db
+      .query<PermissionDecisionRow, [string]>(
+        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions WHERE permission_request_id = ?`
+      )
+      .get(permissionRequestId)
+
+    return row ? mapPermissionDecisionRow(row) : null
+  }
+
+  listByInvocationId(invocationId: string): HrcPermissionDecisionRecord[] {
+    const rows = this.db
+      .query<PermissionDecisionRow, [string]>(
+        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
+          WHERE invocation_id = ?
+          ORDER BY requested_at ASC, permission_request_id ASC`
+      )
+      .all(invocationId)
+
+    return rows.map(mapPermissionDecisionRow)
   }
 }
 

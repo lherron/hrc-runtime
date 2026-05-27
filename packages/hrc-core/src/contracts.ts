@@ -7,7 +7,14 @@ import type { AttachmentRef } from 'spaces-runtime'
 
 export type HrcProvider = 'anthropic' | 'openai'
 export type HrcHarness = 'agent-sdk' | 'claude-code' | 'codex-cli' | 'pi' | 'pi-cli' | 'pi-sdk'
-export type HrcEventSource = 'agent-spaces' | 'hook' | 'hrc' | 'otel' | 'tmux' | 'ghostty' | 'broker'
+export type HrcEventSource =
+  | 'agent-spaces'
+  | 'hook'
+  | 'hrc'
+  | 'otel'
+  | 'tmux'
+  | 'ghostty'
+  | 'broker'
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 
@@ -284,6 +291,17 @@ export type HrcRuntimeSnapshot = {
   adopted: boolean
   activeRunId?: string | undefined
   lastActivityAt?: string | undefined
+  // ── Harness-broker runtime state (T-01690 W1B). Nullable/additive; set only
+  // by the harness-broker controller/mapper. Legacy runtimes leave these unset.
+  /** Controller kind that owns this runtime (e.g. 'harness-broker'). */
+  controllerKind?: HrcRuntimeControllerKind | undefined
+  activeOperationId?: string | undefined
+  activeInvocationId?: string | undefined
+  compileId?: string | undefined
+  planHash?: string | undefined
+  selectedProfileHash?: string | undefined
+  /** Opaque RuntimeState blob (runtime-state/v1). Validated at the hrc-server boundary. */
+  runtimeStateJson?: Record<string, unknown> | undefined
   createdAt: string
   updatedAt: string
 }
@@ -311,6 +329,10 @@ export type HrcRunRecord = {
   updatedAt: string
   errorCode?: HrcErrorCode | undefined
   errorMessage?: string | undefined
+  // ── Harness-broker run linkage (T-01690 W1B). Nullable/additive; set only by
+  // the harness-broker controller/mapper. Legacy runs leave these unset.
+  operationId?: string | undefined
+  invocationId?: string | undefined
 }
 
 export type HrcLaunchRecord = {
@@ -376,6 +398,159 @@ export type HrcLocalBridgeRecord = {
   createdAt: string
   closedAt?: string | undefined
   status?: string | undefined
+}
+
+// ── Harness Broker persistence records (T-01690 W1B) ───────────────────────
+// Mirror the spaces-runtime-contracts persistence DTOs (refactor FINAL_DATATYPES
+// §17). These records are additive and inert: they are written only by the
+// harness-broker controller/mapper, which is unreachable unless
+// HRC_HEADLESS_CODEX_BROKER_ENABLED is set. Hashes and projections are stored as
+// opaque strings/JSON; HRC trusts the broker/compiler boundary, not hrc-core.
+
+export type HrcRuntimeControllerKind =
+  | 'terminal'
+  | 'embedded-sdk'
+  | 'harness-broker'
+  | 'command-process'
+  | 'legacy-exec'
+  | string
+
+export type HrcRuntimeOperationKind =
+  | 'terminal_launch'
+  | 'broker_invocation'
+  | 'broker_input'
+  | 'sdk_turn'
+  | 'command_process'
+  | 'legacy_exec'
+  | 'interrupt'
+  | 'stop'
+  | 'dispose'
+  | 'reconcile'
+  | string
+
+export type HrcRuntimeOperationStatus =
+  | 'accepted'
+  | 'admitted'
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'rejected'
+  | string
+
+export type HrcBrokerInvocationState =
+  | 'starting'
+  | 'ready'
+  | 'turn_active'
+  | 'stopping'
+  | 'exited'
+  | 'failed'
+  | 'disposed'
+  | string
+
+export type HrcBrokerEventProjectionStatus = 'pending' | 'applied' | 'duplicate' | 'failed' | string
+
+export type HrcCompiledRuntimePlanRecord = {
+  planHash: string
+  compileId: string
+  schemaVersion: string
+  compilerName: string
+  compilerVersion: string
+  planProjectionJson: string
+  diagnosticsJson?: string | undefined
+  createdAt: string
+}
+
+export type HrcRuntimeOperationRecord = {
+  operationId: string
+  runtimeId: string
+  runId?: string | undefined
+  hostSessionId: string
+  generation: number
+  operationKind: HrcRuntimeOperationKind
+  controller: HrcRuntimeControllerKind
+  compileId?: string | undefined
+  planHash?: string | undefined
+  selectedProfileId?: string | undefined
+  selectedProfileHash?: string | undefined
+  startupMethod: string
+  turnDelivery?: string | undefined
+  status: HrcRuntimeOperationStatus
+  routeDecisionJson: string
+  capabilityResolutionJson?: string | undefined
+  createdAt: string
+  startedAt?: string | undefined
+  completedAt?: string | undefined
+  updatedAt: string
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type HrcBrokerInvocationRecord = {
+  invocationId: string
+  operationId: string
+  runtimeId: string
+  runId?: string | undefined
+  brokerProtocol: string
+  brokerDriver: string
+  brokerPid?: number | undefined
+  childPid?: number | undefined
+  invocationState: HrcBrokerInvocationState
+  capabilitiesJson: string
+  continuationJson?: string | undefined
+  brokerContinuationJson?: string | undefined
+  specHash: string
+  startRequestHash: string
+  selectedProfileHash: string
+  specProjectionJson?: string | undefined
+  startRequestProjectionJson?: string | undefined
+  lastEventSeq?: number | undefined
+  ownerServerInstanceId?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
+export type HrcBrokerInvocationEventRecord = {
+  invocationId: string
+  seq: number
+  time: string
+  type: string
+  runId?: string | undefined
+  runtimeId: string
+  /** Canonical serialized broker event used for idempotent re-append comparison. */
+  brokerEventJson: string
+  hrcEventSeq?: number | undefined
+  projectionStatus: HrcBrokerEventProjectionStatus
+  projectionError?: string | undefined
+  createdAt: string
+}
+
+export type HrcRuntimeArtifactRecord = {
+  artifactId: string
+  operationId: string
+  artifactKind: string
+  mediaType: string
+  storageKind: 'inline-json' | 'file-path' | string
+  contentHash: string
+  artifactJson?: string | undefined
+  artifactPath?: string | undefined
+  createdAt: string
+}
+
+export type HrcPermissionDecisionRecord = {
+  permissionRequestId: string
+  invocationId: string
+  runtimeId: string
+  runId?: string | undefined
+  kind: string
+  subjectDisplayJson: string
+  defaultDecision: 'allow' | 'deny' | string
+  decision: 'allow' | 'deny' | string
+  decidedBy: 'policy' | 'user' | 'api' | 'timeout' | string
+  policyJson: string
+  requestedAt: string
+  decidedAt: string
 }
 
 export type HrcCapabilityStatus = {

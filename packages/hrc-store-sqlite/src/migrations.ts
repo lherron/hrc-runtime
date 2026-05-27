@@ -826,6 +826,217 @@ const runSessionLookupIndexesMigration: HrcMigration = {
   },
 }
 
+// ── Harness Broker persistence (T-01690 W1B) ──────────────────────────────
+// Additive-only: six new tables for broker operations/invocations/events/
+// artifacts/permission decisions plus compiled plans. No existing table or
+// query is altered here. The broker_invocation_events table carries the
+// UNIQUE(invocation_id, seq) constraint that backs the mapper's idempotent
+// append invariant. New tables intentionally carry no foreign keys so the
+// event log can be persisted before/atomically with projection and so the
+// broker subsystem stays decoupled from legacy launch tables.
+const brokerPersistenceMigration: HrcMigration = {
+  id: '0016_broker_persistence',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS compiled_runtime_plans (
+        plan_hash TEXT PRIMARY KEY,
+        compile_id TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        compiler_name TEXT NOT NULL,
+        compiler_version TEXT NOT NULL,
+        plan_projection_json TEXT NOT NULL,
+        diagnostics_json TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_compiled_runtime_plans_compile_id
+        ON compiled_runtime_plans(compile_id);
+
+      CREATE TABLE IF NOT EXISTS runtime_operations (
+        operation_id TEXT PRIMARY KEY,
+        runtime_id TEXT NOT NULL,
+        run_id TEXT,
+        host_session_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        operation_kind TEXT NOT NULL,
+        controller TEXT NOT NULL,
+        compile_id TEXT,
+        plan_hash TEXT,
+        selected_profile_id TEXT,
+        selected_profile_hash TEXT,
+        startup_method TEXT NOT NULL,
+        turn_delivery TEXT,
+        status TEXT NOT NULL,
+        route_decision_json TEXT NOT NULL,
+        capability_resolution_json TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_operations_runtime_id
+        ON runtime_operations(runtime_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_operations_run_id
+        ON runtime_operations(run_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_operations_host_session_id
+        ON runtime_operations(host_session_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_operations_status
+        ON runtime_operations(status);
+
+      CREATE TABLE IF NOT EXISTS broker_invocations (
+        invocation_id TEXT PRIMARY KEY,
+        operation_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        run_id TEXT,
+        broker_protocol TEXT NOT NULL,
+        broker_driver TEXT NOT NULL,
+        broker_pid INTEGER,
+        child_pid INTEGER,
+        invocation_state TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL,
+        continuation_json TEXT,
+        broker_continuation_json TEXT,
+        spec_hash TEXT NOT NULL,
+        start_request_hash TEXT NOT NULL,
+        selected_profile_hash TEXT NOT NULL,
+        spec_projection_json TEXT,
+        start_request_projection_json TEXT,
+        last_event_seq INTEGER,
+        owner_server_instance_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_operation_id
+        ON broker_invocations(operation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_runtime_id
+        ON broker_invocations(runtime_id);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_run_id
+        ON broker_invocations(run_id);
+
+      CREATE TABLE IF NOT EXISTS broker_invocation_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invocation_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        time TEXT NOT NULL,
+        type TEXT NOT NULL,
+        run_id TEXT,
+        runtime_id TEXT NOT NULL,
+        broker_event_json TEXT NOT NULL,
+        hrc_event_seq INTEGER,
+        projection_status TEXT NOT NULL DEFAULT 'pending',
+        projection_error TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (invocation_id, seq)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_invocation_seq
+        ON broker_invocation_events(invocation_id, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocation_events_projection_status
+        ON broker_invocation_events(projection_status);
+
+      CREATE TABLE IF NOT EXISTS runtime_artifacts (
+        artifact_id TEXT PRIMARY KEY,
+        operation_id TEXT NOT NULL,
+        artifact_kind TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        storage_kind TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        artifact_json TEXT,
+        artifact_path TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_artifacts_operation_id
+        ON runtime_artifacts(operation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_artifacts_content_hash
+        ON runtime_artifacts(content_hash);
+
+      CREATE TABLE IF NOT EXISTS permission_decisions (
+        permission_request_id TEXT PRIMARY KEY,
+        invocation_id TEXT NOT NULL,
+        runtime_id TEXT NOT NULL,
+        run_id TEXT,
+        kind TEXT NOT NULL,
+        subject_display_json TEXT NOT NULL,
+        default_decision TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        decided_by TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_permission_decisions_invocation_id
+        ON permission_decisions(invocation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_permission_decisions_runtime_id
+        ON permission_decisions(runtime_id);
+    `)
+  },
+}
+
+// Nullable broker runtime/run state. Uses the PRAGMA table_info guard +
+// ALTER TABLE ADD COLUMN pattern (same as 0006/0015) so the migration is safe
+// to re-run and applies cleanly over a populated legacy DB. Every column is
+// nullable with no default, so existing rows survive untouched and legacy code
+// paths that never read these columns are unaffected.
+const runtimeBrokerStateMigration: HrcMigration = {
+  id: '0017_runtime_broker_state',
+  apply(db) {
+    const runtimeColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runtimes)')
+        .all()
+        .map((row) => row.name)
+    )
+    const runtimeAdditions = [
+      'controller_kind',
+      'active_operation_id',
+      'active_invocation_id',
+      'compile_id',
+      'plan_hash',
+      'selected_profile_hash',
+      'runtime_state_json',
+    ]
+    for (const column of runtimeAdditions) {
+      if (!runtimeColumns.has(column)) {
+        db.exec(`ALTER TABLE runtimes ADD COLUMN ${column} TEXT`)
+      }
+    }
+
+    const runColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    for (const column of ['operation_id', 'invocation_id']) {
+      if (!runColumns.has(column)) {
+        db.exec(`ALTER TABLE runs ADD COLUMN ${column} TEXT`)
+      }
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtimes_active_invocation_id
+        ON runtimes(active_invocation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runs_invocation_id
+        ON runs(invocation_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -842,6 +1053,8 @@ export const phase1Migrations: readonly HrcMigration[] = [
   zombieRunSweepIndexesMigration,
   hrcEventsCanonicalReaderIndexesMigration,
   runSessionLookupIndexesMigration,
+  brokerPersistenceMigration,
+  runtimeBrokerStateMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
