@@ -48,6 +48,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
+import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 
 import * as hrc from '../index'
 
@@ -55,7 +56,10 @@ type Harness = HrcRuntimeIntent['harness']
 type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
 
 // Minimal valid intent factory — only the fields the routing decision reads.
-function intent(harness: Harness, preferredMode: 'headless' | 'nonInteractive' = 'headless'): HrcRuntimeIntent {
+function intent(
+  harness: Harness,
+  preferredMode: 'headless' | 'nonInteractive' = 'headless'
+): HrcRuntimeIntent {
   return {
     placement: { kind: 'inline' } as unknown as HrcRuntimeIntent['placement'],
     harness,
@@ -82,6 +86,15 @@ const runHeadlessRoute = (
   }
 ).runHeadlessRoute
 
+const filterBrokerDispatchEnvForLockedEnv = (
+  hrc as unknown as {
+    filterBrokerDispatchEnvForLockedEnv?: (
+      dispatchEnv: Record<string, string> | undefined,
+      startRequest: InvocationStartRequest
+    ) => Record<string, string> | undefined
+  }
+).filterBrokerDispatchEnvForLockedEnv
+
 describe('W4 cutover seam — exports exist', () => {
   it('exports decideHeadlessExecutionRoute', () => {
     expect(typeof decideHeadlessExecutionRoute).toBe('function')
@@ -89,6 +102,10 @@ describe('W4 cutover seam — exports exist', () => {
 
   it('exports runHeadlessRoute', () => {
     expect(typeof runHeadlessRoute).toBe('function')
+  })
+
+  it('exports filterBrokerDispatchEnvForLockedEnv', () => {
+    expect(typeof filterBrokerDispatchEnvForLockedEnv).toBe('function')
   })
 })
 
@@ -195,7 +212,9 @@ describe('runHeadlessRoute — dispatch + cody FAIL-CLOSED', () => {
     legacyExec: () => Promise<string>
     calls: string[]
   }
-  function makeSpies(overrides: Partial<Record<'sdk' | 'broker' | 'legacyExec', () => Promise<string>>> = {}): Spies {
+  function makeSpies(
+    overrides: Partial<Record<'sdk' | 'broker' | 'legacyExec', () => Promise<string>>> = {}
+  ): Spies {
     const calls: string[] = []
     const wrap = (name: string, fn?: () => Promise<string>) => async () => {
       calls.push(name)
@@ -264,5 +283,41 @@ describe('runHeadlessRoute — dispatch + cody FAIL-CLOSED', () => {
     expect(result).toBe('sdk')
     expect(spies.calls).toEqual(['sdk'])
     expect(spies.calls).not.toContain('broker')
+  })
+})
+
+describe('filterBrokerDispatchEnvForLockedEnv — broker dispatch contract', () => {
+  it('removes compiler-locked keys and preserves dispatch-only correlation keys', () => {
+    const startRequest = {
+      spec: {
+        process: {
+          lockedEnv: {
+            ASP_PROJECT: 'hrc-runtime',
+            ASP_HOME: '/Users/lherron/praesidium/var/asp',
+            AGENTCHAT_ID: 'locked-chat',
+          },
+        },
+      },
+    } as InvocationStartRequest
+
+    expect(
+      filterBrokerDispatchEnvForLockedEnv!(
+        {
+          ASP_PROJECT: 'shadow-project',
+          ASP_HOME: 'shadow-home',
+          AGENTCHAT_ID: 'shadow-chat',
+          AGENT_SCOPE_REF: 'agent:larry:project:hrc-runtime:task:T-01698',
+          AGENT_LANE_REF: 'main',
+          AGENT_HOST_SESSION_ID: 'hostSession_w4',
+          HRC_RUN_ID: 'run_w4',
+        },
+        startRequest
+      )
+    ).toEqual({
+      AGENT_SCOPE_REF: 'agent:larry:project:hrc-runtime:task:T-01698',
+      AGENT_LANE_REF: 'main',
+      AGENT_HOST_SESSION_ID: 'hostSession_w4',
+      HRC_RUN_ID: 'run_w4',
+    })
   })
 })

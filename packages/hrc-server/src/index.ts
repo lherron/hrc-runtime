@@ -198,7 +198,7 @@ import {
   parseUnbindSurfaceRequest,
 } from './server-parsers.js'
 
-import type { InvocationInput } from 'spaces-harness-broker-protocol'
+import type { InvocationInput, InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import type { RuntimeContinuationRef } from 'spaces-runtime-contracts'
 import {
   type GhostmuxManagerOptions,
@@ -2684,12 +2684,12 @@ class HrcServerInstance implements HrcServer {
       )
     }
     const compile = client.compileRuntimePlan
+    const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
     const compiled = await compileBrokerRuntimePlan(
       {
         intent: turnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
-        dispatchEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
         continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
       },
       {
@@ -2723,7 +2723,7 @@ class HrcServerInstance implements HrcServer {
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
-      dispatchEnv: compiled.dispatchEnv,
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
       routeDecision: {
         route: 'broker',
         flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
@@ -10485,6 +10485,21 @@ export async function runHeadlessRoute<T>(
     case 'legacy-exec':
       return await executors.legacyExec()
   }
+}
+
+export function filterBrokerDispatchEnvForLockedEnv(
+  dispatchEnv: Record<string, string> | undefined,
+  startRequest: InvocationStartRequest
+): Record<string, string> | undefined {
+  if (dispatchEnv === undefined) {
+    return undefined
+  }
+
+  const lockedEnv = startRequest.spec.process.lockedEnv ?? {}
+  const filtered = Object.fromEntries(
+    Object.entries(dispatchEnv).filter(([key]) => !(key in lockedEnv))
+  )
+  return Object.keys(filtered).length > 0 ? filtered : undefined
 }
 
 function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
