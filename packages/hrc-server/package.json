@@ -31,8 +31,11 @@
     "hrc-store-sqlite": "*",
     "spaces-config": "0.1.1",
     "spaces-execution": "0.1.1",
+    "spaces-harness-broker-client": "0.1.1",
+    "spaces-harness-broker-protocol": "0.1.1",
     "spaces-harness-codex": "0.1.1",
-    "spaces-runtime": "0.1.1"
+    "spaces-runtime": "0.1.1",
+    "spaces-runtime-contracts": "0.1.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

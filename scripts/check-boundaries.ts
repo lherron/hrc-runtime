@@ -1,6 +1,6 @@
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 type Layer = {
   name: string
@@ -11,6 +11,7 @@ type Layer = {
 type Violation = {
   file: string
   specifier: string
+  reason?: string
 }
 
 const aspPackages = [
@@ -68,7 +69,8 @@ const ignoredDirectories = new Set([
   'tmp',
 ])
 
-const importPattern = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+const importPattern =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
 
 async function collectTsFiles(root: string): Promise<string[]> {
   const files: string[] = []
@@ -104,6 +106,30 @@ async function collectTsFiles(root: string): Promise<string[]> {
   return files
 }
 
+async function collectExistingTsFiles(paths: string[]): Promise<string[]> {
+  const files = await Promise.all(
+    paths.map(async (path) => {
+      if (path.includes('*')) {
+        const directory = dirname(path)
+        const basenamePattern = new RegExp(
+          `^${path
+            .slice(directory.length + 1)
+            .replaceAll('.', '\\.')
+            .replaceAll('*', '.*')}$`
+        )
+
+        return (await collectTsFiles(directory)).filter((file) =>
+          basenamePattern.test(file.slice(directory.length + 1))
+        )
+      }
+
+      return collectTsFiles(path)
+    })
+  )
+
+  return files.flat()
+}
+
 function isForbidden(specifier: string, token: string): boolean {
   if (token.endsWith('-')) {
     return specifier.startsWith(token)
@@ -117,6 +143,66 @@ function packageGroup(file: string): string {
     return `packages/${parts[1]}`
   }
   return parts[0] ?? dirname(file)
+}
+
+const brokerScopedPaths = [
+  // Broker-path scoped guard only: future broker subsystem files and compile adapters.
+  // This must not become a global hrc-server import ban because legacy launch/exec.ts
+  // still owns direct spaces-harness-codex integration until the cutover removes it.
+  'packages/hrc-server/src/broker',
+  'packages/hrc-server/src/agent-spaces-adapter/compile-*.ts',
+]
+
+function resolvesToHrcLaunchExec(file: string, specifier: string): boolean {
+  if (!specifier.startsWith('.')) {
+    return false
+  }
+
+  const resolved = resolve(dirname(file), specifier)
+  const launchExec = resolve('packages/hrc-server/src/launch/exec')
+  return (
+    resolved === launchExec ||
+    resolved === `${launchExec}.ts` ||
+    resolved === `${launchExec}.js`
+  )
+}
+
+function findBrokerScopedViolation(file: string, specifier: string): string | undefined {
+  if (resolvesToHrcLaunchExec(file, specifier)) {
+    return 'broker-path files must not import launch/exec.ts'
+  }
+
+  if (specifier === 'spaces-harness-codex' || specifier.startsWith('spaces-harness-codex/')) {
+    return 'broker-path files must not import concrete spaces-harness-codex APIs'
+  }
+
+  if (specifier === 'spaces-harness-broker' || specifier.startsWith('spaces-harness-broker/')) {
+    return 'broker-path files may import broker client/protocol packages, not spaces-harness-broker internals'
+  }
+
+  return undefined
+}
+
+async function findBrokerScopedViolations(): Promise<Violation[]> {
+  const violations: Violation[] = []
+  const files = (await collectExistingTsFiles(brokerScopedPaths)).sort()
+
+  for (const file of files) {
+    const content = await readFile(file, 'utf8')
+    for (const match of content.matchAll(importPattern)) {
+      const specifier = match[1] ?? match[2]
+      if (!specifier) {
+        continue
+      }
+
+      const reason = findBrokerScopedViolation(file, specifier)
+      if (reason) {
+        violations.push({ file: relative(process.cwd(), file), specifier, reason })
+      }
+    }
+  }
+
+  return violations
 }
 
 async function findViolations(layer: Layer): Promise<Violation[]> {
@@ -149,8 +235,14 @@ for (const layer of layers) {
   }
 }
 
+const brokerScopedViolations = await findBrokerScopedViolations()
+if (brokerScopedViolations.length > 0) {
+  violationsByLayer.set('HRC broker-path scoped', brokerScopedViolations)
+}
+
 if (violationsByLayer.size === 0) {
   console.log('Boundary check passed.')
+  console.log(`Broker-path scoped guard passed for: ${brokerScopedPaths.join(', ')}`)
   process.exit(0)
 }
 
@@ -164,7 +256,8 @@ for (const [layerName, violations] of violationsByLayer) {
   for (const [group, groupViolations] of grouped) {
     console.error(`  ${group}`)
     for (const violation of groupViolations) {
-      console.error(`    ${violation.file}: forbidden '${violation.specifier}'`)
+      const reason = violation.reason ? ` (${violation.reason})` : ''
+      console.error(`    ${violation.file}: forbidden '${violation.specifier}'${reason}`)
     }
   }
 }
