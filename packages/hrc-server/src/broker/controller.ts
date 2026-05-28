@@ -792,6 +792,12 @@ export class HarnessBrokerController {
     ) {
       missing.push('broker.capabilities.brokerToClientRequests')
     }
+    if (
+      profile.expectedCapabilities.control?.attachReplay === 'forbidden' &&
+      hello.capabilities.attachReplay === true
+    ) {
+      missing.push('broker.capabilities.attachReplay.forbidden')
+    }
 
     if (!driver) {
       missing.push(`driver.${profile.brokerDriver}`)
@@ -894,12 +900,6 @@ export class HarnessBrokerController {
       requirements.control?.reconcile,
       caps.control.status ?? false
     )
-    checkNeed(
-      missing,
-      'control.attachReplay',
-      requirements.control?.attachReplay,
-      caps.control.attach ?? false
-    )
     return missing
   }
 
@@ -962,12 +962,6 @@ export class HarnessBrokerController {
       'control.reconcile',
       requirements.control?.reconcile,
       caps.control.status ?? false
-    )
-    checkNeed(
-      missing,
-      'control.attachReplay',
-      requirements.control?.attachReplay,
-      caps.control.attach ?? false
     )
     return missing
   }

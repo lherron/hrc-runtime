@@ -16,17 +16,17 @@
     "test": "bun test"
   },
   "dependencies": {
-    "agent-scope": "0.1.1-dev.20260528064656",
+    "agent-scope": "0.1.1-dev.20260528091507",
     "chalk": "^5.6.2",
-    "cli-kit": "0.1.1-dev.20260528064656",
+    "cli-kit": "0.1.1-dev.20260528091507",
     "commander": "^14.0.0",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*",
-    "spaces-config": "0.1.1-dev.20260528064656",
-    "spaces-execution": "0.1.1-dev.20260528064656"
+    "spaces-config": "0.1.1-dev.20260528091507",
+    "spaces-execution": "0.1.1-dev.20260528091507"
   },
   "devDependencies": {
     "@types/bun": "latest",
