@@ -97,6 +97,42 @@ describe('emitted HRC events', () => {
       expect(event.source).toBe('broker')
     }
   })
+
+  // T-01711: clients follow the canonical hrc_events lifecycle stream (/v1/events),
+  // NOT the raw `events` mirror. The mapper must project mapped broker types into
+  // hrc_events under registered turn.* kinds (carrying hrcSeq so follow-subscribers
+  // deliver them + notifyEvent finalizes the turn). The raw mirror stays broker.*.
+  it('projects mapped broker types into the hrc_events lifecycle stream', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    const completed = mapper.apply(
+      envelope(
+        'turn.completed',
+        7,
+        { turnId: 'turn_x' as never, status: 'completed', producedContent: true },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    // Raw mirror keeps the broker. prefix; lifecycle event is canonical.
+    expect(completed.events.map((e) => e.eventKind)).toEqual(['broker.turn.completed'])
+    expect(completed.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.completed'])
+    // Lifecycle event carries hrcSeq + runId so the follow stream/finalize path fires.
+    expect(typeof completed.lifecycleEvents[0]!.hrcSeq).toBe('number')
+    expect(completed.lifecycleEvents[0]!.runId).toBe(RUN_ID)
+
+    // The canonical turn.completed lands in hrc_events for the run (gates read this).
+    const hrcCompleted = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.completed' })
+    expect(hrcCompleted.length).toBe(1)
+  })
+
+  it('treats unmapped broker types as provenance-only (no lifecycle event)', () => {
+    const mapper = makeMapper()
+    const diagnostic = mapper.apply(envelope('diagnostic', 8, { level: 'info', message: 'noise' }))
+    expect(diagnostic.events.map((e) => e.eventKind)).toEqual(['broker.diagnostic'])
+    expect(diagnostic.lifecycleEvents).toEqual([])
+  })
 })
 
 // ---------------------------------------------------------------------------

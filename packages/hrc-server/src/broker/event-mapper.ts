@@ -25,7 +25,12 @@
  * launches/execs anything. It is inert unless invoked by the W3B controller,
  * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
  */
-import type { HrcContinuationRef, HrcEventEnvelope, HrcProvider } from 'hrc-core'
+import type {
+  HrcContinuationRef,
+  HrcEventEnvelope,
+  HrcLifecycleEvent,
+  HrcProvider,
+} from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
   AssistantMessageCompletedPayload,
@@ -38,6 +43,30 @@ import type {
   TurnFailedPayload,
 } from 'spaces-harness-broker-protocol'
 
+import { appendHrcEvent } from '../hrc-event-helper'
+
+/**
+ * Broker event type -> canonical HRC lifecycle `event_kind`. The `events` table
+ * mirror carries every broker event under a `broker.<type>` kind for provenance,
+ * but the lifecycle stream (`hrc_events`, served by `/v1/events`) is what every
+ * client consumes: hrcchat `turn` / `monitor wait` follow it and gate on these
+ * canonical kinds, and `notifyEvent` only finalizes the semantic turn on a
+ * `turn.completed` lifecycle event. A broker event with no mapping here is
+ * provenance-only (no lifecycle row) (T-01711). Mapped kinds MUST exist in
+ * `hrc-event-helper`'s KIND_CATEGORIES or `appendHrcEvent` throws.
+ */
+const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
+  'input.accepted': 'turn.accepted',
+  'turn.started': 'turn.started',
+  'assistant.message.completed': 'turn.message',
+  'turn.completed': 'turn.completed',
+  // Failed/interrupted have no registered lifecycle kind; surface them as a
+  // terminal turn.completed (payload carries success:false) so client waiters
+  // unblock — run state already records failed/cancelled via projectState.
+  'turn.failed': 'turn.completed',
+  'turn.interrupted': 'turn.completed',
+}
+
 export type BrokerEventMapperDeps = {
   db: HrcDatabase
   now?: () => string
@@ -46,8 +75,14 @@ export type BrokerEventMapperDeps = {
 export type BrokerProjectionResult = {
   /** True when the (invocationId, seq) was already applied with the same payload. */
   idempotent: boolean
-  /** HRC events appended this call (each `source:'broker'`); empty on idempotent re-apply. */
+  /** Raw `events`-table mirror appended this call (each `source:'broker'`); empty on idempotent re-apply. */
   events: HrcEventEnvelope[]
+  /**
+   * Canonical `hrc_events` lifecycle events appended this call (the ones the
+   * server `notifyEvent`s to follow-stream subscribers and uses to finalize the
+   * semantic turn). Empty on idempotent re-apply or for provenance-only events.
+   */
+  lifecycleEvents: HrcLifecycleEvent[]
 }
 
 /** Resolved projection context for a single invocation. */
@@ -117,12 +152,14 @@ export class BrokerEventMapper {
     })
 
     if (appended.idempotent) {
-      return { idempotent: true, events: [] }
+      return { idempotent: true, events: [], lifecycleEvents: [] }
     }
 
-    // (b) Project state into HRC, then emit the broker-sourced HRC event(s).
+    // (b) Project state into HRC, then emit the raw provenance mirror plus the
+    // canonical lifecycle event (the latter is what clients/notifyEvent see).
     this.projectState(envelope, ctx, now)
     const emitted = this.emit(envelope, ctx, now)
+    const lifecycleEvent = this.emitLifecycle(envelope, ctx, now)
 
     // (c) Record projection outcome on the broker event row.
     db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
@@ -130,7 +167,11 @@ export class BrokerEventMapper {
       projectionStatus: 'applied',
     })
 
-    return { idempotent: false, events: [emitted] }
+    return {
+      idempotent: false,
+      events: [emitted],
+      lifecycleEvents: lifecycleEvent ? [lifecycleEvent] : [],
+    }
   }
 
   /** Apply the type-specific state mutation. Emission is handled separately. */
@@ -357,6 +398,57 @@ export class BrokerEventMapper {
         payload: envelope.payload,
       },
     })
+  }
+
+  /**
+   * Project a broker event into the canonical `hrc_events` lifecycle stream that
+   * every client follows via `/v1/events`. Returns the appended lifecycle event
+   * (so the server can `notifyEvent` it) or undefined for provenance-only types.
+   */
+  private emitLifecycle(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): HrcLifecycleEvent | undefined {
+    const eventKind = BROKER_TO_HRC_KIND[envelope.type]
+    if (eventKind === undefined) {
+      return undefined
+    }
+    return appendHrcEvent(this.db, eventKind, {
+      ts: now,
+      hostSessionId: ctx.hostSessionId,
+      scopeRef: ctx.scopeRef,
+      laneRef: ctx.laneRef,
+      generation: ctx.generation,
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      transport: 'headless',
+      payload: this.lifecyclePayload(envelope),
+    })
+  }
+
+  /** Build the legacy-shaped lifecycle payload for a mapped broker event. */
+  private lifecyclePayload(envelope: InvocationEventEnvelope): Record<string, unknown> {
+    switch (envelope.type) {
+      case 'assistant.message.completed': {
+        const payload = envelope.payload as AssistantMessageCompletedPayload
+        const content = payload.content
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('')
+        return { type: 'message_end', message: { role: 'assistant', content } }
+      }
+      case 'turn.completed':
+        return { success: true, transport: 'headless', source: 'broker' }
+      case 'turn.failed': {
+        const payload = envelope.payload as TurnFailedPayload
+        return { success: false, transport: 'headless', source: 'broker', message: payload.message }
+      }
+      case 'turn.interrupted':
+        return { success: false, interrupted: true, transport: 'headless', source: 'broker' }
+      default:
+        return { transport: 'headless' }
+    }
   }
 
   private appendBuffer(ctx: ProjectionContext, text: string, now: string): void {

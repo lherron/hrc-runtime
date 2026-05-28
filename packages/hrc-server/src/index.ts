@@ -2641,7 +2641,11 @@ class HrcServerInstance implements HrcServer {
       mapper: {
         apply: (envelope) => {
           const result = mapper.apply(envelope)
-          for (const event of result.events) {
+          // Notify the canonical lifecycle events (hrc_events): these carry hrcSeq
+          // so follow-stream subscribers deliver them and notifyEvent finalizes the
+          // semantic turn on turn.completed. The raw `events` mirror lacks hrcSeq and
+          // is provenance-only, so it is intentionally not notified.
+          for (const event of result.lifecycleEvents) {
             this.notifyEvent(event)
           }
           return result
@@ -10171,6 +10175,45 @@ async function reconcileStartupState(
       }
     } catch (error) {
       logStartupIssue('runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
+    }
+  }
+
+  // Harness-broker runtimes cannot survive a daemon restart: the broker child
+  // process was parented by the prior daemon and is gone, but its invocation may
+  // persist as `ready`. Feeding such an invocation `invocation.input` on the next
+  // turn surfaces as `runtime_unavailable: headless broker input failed`. Mark
+  // these runtimes stale (reaping any active run) and dispose the orphaned
+  // invocation so the next turn starts a FRESH invocation — continuation persists
+  // on the session, so the conversation still resumes. (T-01711)
+  for (const runtime of db.runtimes.listAll()) {
+    if (runtime.controllerKind !== 'harness-broker' || isRuntimeUnavailableStatus(runtime.status)) {
+      continue
+    }
+    try {
+      const session = requireSession(db, runtime.hostSessionId)
+      const now = timestamp()
+      const invocationId = runtime.activeInvocationId
+      if (invocationId !== undefined) {
+        const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+        if (
+          invocation &&
+          invocation.invocationState !== 'disposed' &&
+          invocation.invocationState !== 'exited' &&
+          invocation.invocationState !== 'failed'
+        ) {
+          db.brokerInvocations.update(invocationId, {
+            invocationState: 'disposed',
+            updatedAt: now,
+          })
+        }
+      }
+      markRuntimeStale(db, session, runtime, {
+        runtimeId: runtime.runtimeId,
+        reason: 'broker_orphaned_on_restart',
+        ...(invocationId !== undefined ? { invocationId } : {}),
+      })
+    } catch (error) {
+      logStartupIssue('broker runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
     }
   }
 }
