@@ -452,9 +452,18 @@ export class BrokerEventMapper {
       // ── Terminal surface binding ────────────────────────────────────────────
       case 'terminal.surface.reported': {
         const payload = envelope.payload as TerminalSurfaceReportedPayload
+        // A `tmux-pane` lease is keyed by its pane id — the stable, unique lease
+        // identifier (paneId is non-optional for tmux-pane). The legacy
+        // `tmux-session` surface keeps the socket#session composite key, which a
+        // pane lease must never use (it would emit `#undefined` when sessionName
+        // is absent and would not be the pane id).
+        const surfaceId =
+          payload.kind === 'tmux-pane'
+            ? payload.paneId
+            : `${payload.socketPath}#${payload.sessionName}`
         db.surfaceBindings.bind({
           surfaceKind: payload.kind,
-          surfaceId: `${payload.socketPath}#${payload.sessionName}`,
+          surfaceId,
           hostSessionId: ctx.hostSessionId,
           runtimeId: ctx.runtimeId,
           generation: ctx.generation,

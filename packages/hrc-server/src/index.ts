@@ -2864,7 +2864,39 @@ class HrcServerInstance implements HrcServer {
         await mkdir(dirname(socketPath), { recursive: true })
         const tmux = createTmuxManager({ socketPath })
         await tmux.initialize()
-        return { socketPath, allocatedAt: timestamp() }
+        // Allocate the runtime-owned tmux pane on its dedicated lease socket and
+        // hand the broker a narrow pane lease (it attaches to the pane, never
+        // owns the server). Session name is deterministic from runtimeId so
+        // restart reconcile can re-scan it (C-02889).
+        const sessionName = `hrc-${brokerDriver}-${runtimeId}`
+        const pane = await tmux.createLeaseSession(sessionName)
+        const lease = {
+          kind: 'tmux-pane' as const,
+          ownership: 'hrc' as const,
+          socketPath,
+          sessionId: pane.sessionId,
+          windowId: pane.windowId,
+          paneId: pane.paneId,
+          sessionName: pane.sessionName,
+          windowName: pane.windowName,
+          allowedOps: {
+            inspect: true as const,
+            sendInput: true as const,
+            sendInterrupt: true as const,
+            capture: true,
+            resize: false,
+          },
+        }
+        return {
+          socketPath,
+          allocatedAt: timestamp(),
+          lease,
+          sessionId: pane.sessionId,
+          windowId: pane.windowId,
+          paneId: pane.paneId,
+          sessionName: pane.sessionName,
+          windowName: pane.windowName,
+        }
       },
     }
     this.harnessBrokerController = new HarnessBrokerController({
@@ -6464,9 +6496,24 @@ class HrcServerInstance implements HrcServer {
     const tmux = requireTmuxPane(runtime)
 
     const now = timestamp()
-    const inspected = await this.tmux.inspectSession(tmux.sessionName)
-    if (inspected) {
-      await this.tmux.terminate(tmux.sessionName)
+    // Broker-tmux runtimes own a tmux server on a PER-RUNTIME lease socket
+    // (`tmuxJson.socketPath`), NOT the shared default `this.tmux` server. Tear
+    // the lease down via a TmuxManager bound to the lease socket and kill its
+    // server (removing the socket); never touch the default server.
+    if (runtime.controllerKind === 'harness-broker') {
+      const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime) ?? tmux.socketPath
+      const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+      const leaseTmux = createTmuxManager({ socketPath: leaseSocket })
+      const inspected = await leaseTmux.inspectSession(sessionName)
+      if (inspected) {
+        await leaseTmux.terminate(sessionName)
+      }
+      await leaseTmux.killServer()
+    } else {
+      const inspected = await this.tmux.inspectSession(tmux.sessionName)
+      if (inspected) {
+        await this.tmux.terminate(tmux.sessionName)
+      }
     }
 
     finalizeRuntimeTermination(this.db, runtime, now)
@@ -10514,6 +10561,14 @@ async function reconcileStartupState(
       continue
     }
 
+    // Broker-tmux runtimes own a tmux server on a per-runtime LEASE socket, not
+    // the default `tmux` server this generic block inspects. They are reconciled
+    // by the dedicated broker pass below (lease-socket inspect + id-match
+    // re-associate), so skip them here to avoid a false "session missing" death.
+    if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
+      continue
+    }
+
     try {
       const runtimeLaunches = db.launches.listByRuntimeId(runtime.runtimeId)
       const currentRuntimeLaunches = runtimeLaunches.filter(
@@ -10588,28 +10643,21 @@ async function reconcileStartupState(
       continue
     }
     try {
-      const session = requireSession(db, runtime.hostSessionId)
-      const now = timestamp()
-      const invocationId = runtime.activeInvocationId
-      if (invocationId !== undefined) {
-        const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-        if (
-          invocation &&
-          invocation.invocationState !== 'disposed' &&
-          invocation.invocationState !== 'exited' &&
-          invocation.invocationState !== 'failed'
-        ) {
-          db.brokerInvocations.update(invocationId, {
-            invocationState: 'disposed',
-            updatedAt: now,
-          })
+      // Broker-TMUX runtimes lease a tmux server that outlives the daemon. On
+      // restart re-scan the LEASE socket (NOT `tmux attach-session`): if the
+      // leased pane is alive AND its ids match the persisted lease,
+      // RE-ASSOCIATE (leave the runtime usable + invocation intact); otherwise
+      // GC the runtime and dispose its orphaned invocation. Other broker
+      // runtimes (headless) cannot survive — their child was parented by the
+      // prior daemon — so fall through to the blanket orphan sweep.
+      if (runtime.transport === 'tmux') {
+        if (await reassociateBrokerTmuxLease(runtime)) {
+          continue
         }
+        gcBrokerRuntimeOnRestart(db, runtime, 'broker_tmux_lease_stale_on_restart')
+        continue
       }
-      markRuntimeStale(db, session, runtime, {
-        runtimeId: runtime.runtimeId,
-        reason: 'broker_orphaned_on_restart',
-        ...(invocationId !== undefined ? { invocationId } : {}),
-      })
+      gcBrokerRuntimeOnRestart(db, runtime, 'broker_orphaned_on_restart')
     } catch (error) {
       logStartupIssue(
         'broker runtime reconciliation failed',
@@ -10618,6 +10666,75 @@ async function reconcileStartupState(
       )
     }
   }
+}
+
+/**
+ * Re-associate a broker-tmux runtime whose leased pane is still alive AND whose
+ * live ids match the persisted lease. Returns true when re-associated (the
+ * runtime is left usable); false when the lease is gone or its ids no longer
+ * match (caller GCs it).
+ */
+async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): Promise<boolean> {
+  const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+  if (!socketPath) {
+    return false
+  }
+  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+  const leaseTmux = createTmuxManager({ socketPath })
+  const inspected = await leaseTmux.inspectSession(sessionName)
+  if (!inspected) {
+    return false
+  }
+  return brokerLeaseIdsMatch(runtime, inspected)
+}
+
+/** Compare the persisted lease ids against an observed live pane. */
+function brokerLeaseIdsMatch(runtime: HrcRuntimeSnapshot, observed: TmuxPaneState): boolean {
+  const tmuxJson = runtime.tmuxJson
+  if (!tmuxJson) {
+    return false
+  }
+  for (const [key, value] of [
+    ['sessionId', observed.sessionId],
+    ['windowId', observed.windowId],
+    ['paneId', observed.paneId],
+  ] as const) {
+    const persisted = tmuxJson[key]
+    if (typeof persisted === 'string' && persisted !== value) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Mark a broker runtime unavailable and dispose its orphaned invocation. */
+function gcBrokerRuntimeOnRestart(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  reason: string
+): void {
+  const session = requireSession(db, runtime.hostSessionId)
+  const now = timestamp()
+  const invocationId = runtime.activeInvocationId
+  if (invocationId !== undefined) {
+    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+    if (
+      invocation &&
+      invocation.invocationState !== 'disposed' &&
+      invocation.invocationState !== 'exited' &&
+      invocation.invocationState !== 'failed'
+    ) {
+      db.brokerInvocations.update(invocationId, {
+        invocationState: 'disposed',
+        updatedAt: now,
+      })
+    }
+  }
+  markRuntimeStale(db, session, runtime, {
+    runtimeId: runtime.runtimeId,
+    reason,
+    ...(invocationId !== undefined ? { invocationId } : {}),
+  })
 }
 
 function isOrphanableLaunchStatus(status: string): boolean {

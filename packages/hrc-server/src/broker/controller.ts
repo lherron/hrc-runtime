@@ -105,9 +105,25 @@ export type BrokerAgentchatLifecycle = {
   }) => Promise<void> | void
 }
 
+/** The runtime-owned tmux pane lease handed to the broker at dispatch time. */
+export type BrokerTmuxLease = NonNullable<InvocationRuntimeContext['terminalSurface']>
+
 export type BrokerTmuxAllocation = {
   socketPath: string
   allocatedAt?: string | undefined
+  /**
+   * The full pane lease the allocator carved out. When present it is dispatched
+   * to the broker via `runtime.terminalSurface` (kind `tmux-pane`, hrc-owned)
+   * and its pane ids are persisted to `runtime.tmuxJson` for restart reconcile
+   * and teardown. Absent for legacy socket-only allocations (which fall back to
+   * the `runtime.tmux` shim).
+   */
+  lease?: BrokerTmuxLease | undefined
+  sessionId?: string | undefined
+  windowId?: string | undefined
+  paneId?: string | undefined
+  sessionName?: string | undefined
+  windowName?: string | undefined
 }
 
 export type BrokerTmuxAllocator = {
@@ -768,6 +784,12 @@ export class HarnessBrokerController {
     return {
       socketPath: allocation.socketPath,
       allocatedAt: allocation.allocatedAt ?? this.now(),
+      ...(allocation.lease ? { lease: allocation.lease } : {}),
+      ...(allocation.sessionId !== undefined ? { sessionId: allocation.sessionId } : {}),
+      ...(allocation.windowId !== undefined ? { windowId: allocation.windowId } : {}),
+      ...(allocation.paneId !== undefined ? { paneId: allocation.paneId } : {}),
+      ...(allocation.sessionName !== undefined ? { sessionName: allocation.sessionName } : {}),
+      ...(allocation.windowName !== undefined ? { windowName: allocation.windowName } : {}),
     }
   }
 
@@ -1281,7 +1303,33 @@ function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
 function toDispatchRuntime(
   allocation: BrokerTmuxAllocation | undefined
 ): InvocationRuntimeContext | undefined {
-  return allocation ? { tmux: { socketPath: allocation.socketPath } } : undefined
+  if (!allocation) {
+    return undefined
+  }
+  // Phase C/D flip: dispatch the pane lease via `terminalSurface` (the driver
+  // reads only this). The legacy `runtime.tmux` socket shim is used solely for
+  // legacy socket-only allocations that carry no lease.
+  if (allocation.lease) {
+    return { terminalSurface: allocation.lease }
+  }
+  return { tmux: { socketPath: allocation.socketPath } }
+}
+
+/** Pane ids carried by the lease (or top-level allocation), if present. */
+function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string, string> {
+  const lease = allocation.lease
+  const ids: Record<string, string> = {}
+  const sessionId = lease?.sessionId ?? allocation.sessionId
+  const windowId = lease?.windowId ?? allocation.windowId
+  const paneId = lease?.paneId ?? allocation.paneId
+  const sessionName = lease?.sessionName ?? allocation.sessionName
+  const windowName = lease?.windowName ?? allocation.windowName
+  if (typeof sessionId === 'string') ids['sessionId'] = sessionId
+  if (typeof windowId === 'string') ids['windowId'] = windowId
+  if (typeof paneId === 'string') ids['paneId'] = paneId
+  if (typeof sessionName === 'string') ids['sessionName'] = sessionName
+  if (typeof windowName === 'string') ids['windowName'] = windowName
+  return ids
 }
 
 function toBrokerTmuxJson(
@@ -1293,6 +1341,7 @@ function toBrokerTmuxJson(
     brokerDriver,
     socketPath: allocation.socketPath,
     allocatedAt: allocation.allocatedAt,
+    ...paneIdsFromAllocation(allocation),
   }
 }
 
@@ -1304,6 +1353,7 @@ function toRuntimeStateTmux(
     brokerDriver,
     socketPath: allocation.socketPath,
     allocatedAt: allocation.allocatedAt,
+    ...paneIdsFromAllocation(allocation),
   }
 }
 
@@ -1319,10 +1369,18 @@ function extractRuntimeStateTmux(
   if (typeof brokerDriver !== 'string' || typeof socketPath !== 'string') {
     return undefined
   }
+  const passthrough: Record<string, string> = {}
+  for (const key of ['sessionId', 'windowId', 'paneId', 'sessionName', 'windowName']) {
+    const value = tmuxJson[key]
+    if (typeof value === 'string') {
+      passthrough[key] = value
+    }
+  }
   return {
     brokerDriver,
     socketPath,
     ...(typeof allocatedAt === 'string' ? { allocatedAt } : {}),
+    ...passthrough,
   }
 }
 

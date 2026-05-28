@@ -53,6 +53,15 @@ function isMissingTargetError(stderr: string): boolean {
   )
 }
 
+function isServerGoneError(stderr: string): boolean {
+  const normalized = stderr.toLowerCase()
+  return (
+    normalized.includes('error connecting') ||
+    normalized.includes('no such file or directory') ||
+    normalized.includes('no server running')
+  )
+}
+
 function parseVersion(stdout: string, stderr: string): { major: number; minor: number } {
   const source = `${stdout}\n${stderr}`.trim()
   const match = source.match(/tmux\s+(\d+)\.(\d+)/i)
@@ -164,6 +173,20 @@ export class TmuxManager {
     return this.createNamedSession(sessionNameFor(hostSessionId))
   }
 
+  /**
+   * Create (or re-use) a named lease session on this socket and return its pane.
+   * Used by the broker pane-lease allocator, which owns the session name
+   * (`hrc-<driver>-<runtimeId>`) deterministically from the runtime id.
+   */
+  async createLeaseSession(sessionName: string): Promise<TmuxPaneState> {
+    await this.startServer()
+    const existing = await this.inspectSession(sessionName)
+    if (existing) {
+      return existing
+    }
+    return this.createNamedSession(sessionName)
+  }
+
   async capture(paneId: string): Promise<string> {
     const result = await this.exec(['capture-pane', '-t', paneId, '-p'])
     return result.stdout
@@ -181,6 +204,29 @@ export class TmuxManager {
 
   async terminate(sessionName: string): Promise<void> {
     await this.killSession(sessionName)
+  }
+
+  /**
+   * Kill the entire tmux server bound to this socket (and remove the socket).
+   * Used to tear down a per-runtime lease server so it cannot leak. Tolerates
+   * an already-absent server.
+   */
+  async killServer(): Promise<void> {
+    try {
+      await this.exec(['kill-server'])
+    } catch (error) {
+      // Killing the last session already exits the server and removes the
+      // socket, so kill-server can race to a gone/absent server. Tolerate both
+      // "no server running" and the connect-failure that a removed socket yields.
+      const message = error instanceof Error ? error.message : String(error)
+      if (!isMissingTargetError(message) && !isServerGoneError(message)) {
+        throw error
+      }
+    } finally {
+      // tmux may leave a stale socket file behind after the server exits; remove
+      // it so the lease socket is fully reclaimed.
+      await rm(this.socketPath, { force: true }).catch(() => undefined)
+    }
   }
 
   async sendLiteral(paneId: string, text: string): Promise<void> {
@@ -211,7 +257,10 @@ export class TmuxManager {
       ])
       return parsePaneState(result.stdout, this.socketPath)
     } catch (error) {
-      if (error instanceof Error && isMissingTargetError(error.message)) {
+      // A missing target OR a gone/absent server (removed socket) both mean the
+      // session does not exist — surface that as `null`, not a throw.
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
         return null
       }
       throw error
