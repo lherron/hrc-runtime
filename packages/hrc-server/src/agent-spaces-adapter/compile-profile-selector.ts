@@ -16,6 +16,7 @@
  * HRC_HEADLESS_CODEX_BROKER_ENABLED) invokes it.
  */
 
+import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import { project } from 'spaces-runtime-contracts'
 import type {
   BrokerExecutionProfile,
@@ -23,7 +24,6 @@ import type {
   RuntimeExecutionProfile,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
-import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 
 /** Codes for every REJECT path. We never silently fall back. */
 export type BrokerProfileRejectionCode =
@@ -49,10 +49,21 @@ export type BrokerProfileSelection =
   | { admitted: false; code: BrokerProfileRejectionCode }
 
 /**
- * Static admission predicate for the W2 target: a headless codex-app-server
- * harness-broker profile speaking harness-broker/0.1. Interactive tmux profiles
- * and non-codex drivers are intentionally OUT (sibling task).
+ * Static admission predicate for broker-controller profiles. Headless Codex and
+ * interactive broker-owned tmux drivers share the same HRC controller; the
+ * interactive path is selected by profile driver/terminal metadata, not harness
+ * identity.
  */
+export function isBrokerControllerProfile(
+  profile: RuntimeExecutionProfile
+): profile is BrokerExecutionProfile {
+  return (
+    profile.kind === 'harness-broker' &&
+    profile.brokerProtocol === 'harness-broker/0.1' &&
+    (isHeadlessCodexBrokerProfile(profile) || isInteractiveTmuxBrokerProfile(profile))
+  )
+}
+
 export function isHeadlessCodexBrokerProfile(
   profile: RuntimeExecutionProfile
 ): profile is BrokerExecutionProfile {
@@ -61,6 +72,19 @@ export function isHeadlessCodexBrokerProfile(
     profile.interactionMode === 'headless' &&
     profile.brokerProtocol === 'harness-broker/0.1' &&
     profile.brokerDriver === 'codex-app-server'
+  )
+}
+
+export function isInteractiveTmuxBrokerProfile(
+  profile: RuntimeExecutionProfile
+): profile is BrokerExecutionProfile {
+  return (
+    profile.kind === 'harness-broker' &&
+    profile.interactionMode === 'interactive' &&
+    profile.brokerProtocol === 'harness-broker/0.1' &&
+    typeof profile.brokerDriver === 'string' &&
+    (profile.brokerDriver === 'claude-code-tmux' || profile.brokerDriver === 'codex-cli-tmux') &&
+    profile.brokerTerminal?.host === 'tmux'
   )
 }
 
@@ -100,7 +124,7 @@ export function selectBrokerExecutionProfile(
     return { admitted: false, code: 'compile-not-ok' }
   }
 
-  const candidates = response.plan.executionProfiles.filter(isHeadlessCodexBrokerProfile)
+  const candidates = response.plan.executionProfiles.filter(isBrokerControllerProfile)
   if (candidates.length === 0) {
     return { admitted: false, code: 'no-matching-profile' }
   }

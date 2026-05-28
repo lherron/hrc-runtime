@@ -23,6 +23,7 @@ import type {
   InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
+  InvocationRuntimeContext,
   InvocationStartRequest,
   InvocationStartResponse,
   InvocationStatusRequest,
@@ -44,7 +45,12 @@ import {
   HarnessBrokerController,
 } from '../broker/controller'
 
-import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeBrokerProfile,
+  makeCompileResponse,
+  makeIdentity,
+  makeInteractiveTmuxProfile,
+} from './broker-compile-fixtures'
 import { envelope } from './broker-event-mapper-fixtures'
 
 const NOW = '2026-05-27T12:34:56.000Z'
@@ -100,6 +106,7 @@ class FakeBrokerClient implements BrokerClientLike {
   readonly startCalls: Array<{
     request: InvocationStartRequest
     dispatchEnv?: Record<string, string> | undefined
+    runtime?: InvocationRuntimeContext | undefined
   }> = []
   readonly healthCalls: BrokerHealthRequest[] = []
   emitCloseOnClose = false
@@ -167,14 +174,15 @@ class FakeBrokerClient implements BrokerClientLike {
 
   async startInvocationFromRequest(
     request: InvocationStartRequest,
-    dispatchEnv?: Record<string, string>
+    dispatchEnv?: Record<string, string>,
+    runtime?: InvocationRuntimeContext
   ): Promise<{
     invocationId: string
     response: InvocationStartResponse
     events: AsyncIterable<InvocationEventEnvelope>
   }> {
     this.callOrder.push('start')
-    this.startCalls.push({ request, dispatchEnv })
+    this.startCalls.push({ request, dispatchEnv, runtime })
     return {
       invocationId: this.startResponse.invocationId,
       response: this.startResponse,
@@ -256,6 +264,75 @@ describe('HarnessBrokerController', () => {
       'ready'
     )
     expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
+  })
+
+  it('allocates and persists an HRC-owned tmux socket on interactive broker-tmux dispatch', async () => {
+    const fake = new FakeBrokerClient()
+    const identity = makeIdentity({
+      runtimeId: 'runtime_tmux',
+      invocationId: 'invocation_tmux',
+      runId: 'run_tmux',
+    })
+    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
+    const response = makeCompileResponse(identity, [profile])
+    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+    fake.helloResponse.drivers = [
+      {
+        kind: 'claude-code-tmux',
+        version: '0.1.1-test',
+        available: true,
+        capabilities: invocationCapabilities(),
+      },
+    ]
+    fake.startResponse = {
+      ...fake.startResponse,
+      invocationId: 'invocation_tmux',
+    }
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      tmuxAllocator: {
+        async allocate() {
+          return {
+            socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock',
+            allocatedAt: NOW,
+          }
+        },
+      },
+      now: () => NOW,
+    })
+
+    const result = await controller.start({
+      plan: response.plan,
+      profile,
+      startRequest,
+      specHash: profile.harnessInvocation.specHash,
+      startRequestHash: profile.harnessInvocation.startRequestHash,
+      identity,
+      dispatchEnv: { HRC_DISPATCH: 'yes' },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fake.startCalls[0]?.request).toBe(startRequest)
+    expect(
+      (fake.startCalls[0]?.request as unknown as { runtime?: unknown }).runtime
+    ).toBeUndefined()
+    expect(fake.startCalls[0]?.runtime).toEqual({
+      tmux: { socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock' },
+    })
+    const runtime = fixture.db.runtimes.getByRuntimeId('runtime_tmux')
+    expect(runtime?.transport).toBe('tmux')
+    expect(runtime?.tmuxJson).toEqual({
+      kind: 'broker-tmux-allocation',
+      brokerDriver: 'claude-code-tmux',
+      socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock',
+      allocatedAt: NOW,
+    })
+    expect(runtime?.runtimeStateJson?.['tmux']).toEqual({
+      brokerDriver: 'claude-code-tmux',
+      socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock',
+      allocatedAt: NOW,
+    })
   })
 
   it('delegates ordered broker events to the mapper without interpreting payloads', async () => {

@@ -126,7 +126,7 @@ import {
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
 import { enrichTurnPromptForBrain } from './brain-enricher.js'
-import { HarnessBrokerController } from './broker/controller.js'
+import { type BrokerTmuxAllocator, HarnessBrokerController } from './broker/controller.js'
 import { BrokerEventMapper } from './broker/event-mapper.js'
 import {
   appendHrcEvent,
@@ -2645,6 +2645,15 @@ class HrcServerInstance implements HrcServer {
     }
 
     const mapper = new BrokerEventMapper({ db: this.db })
+    const tmuxAllocator: BrokerTmuxAllocator = {
+      allocate: async ({ runtimeId, brokerDriver }) => {
+        const socketPath = getBrokerTmuxSocketPath(this.options, brokerDriver, runtimeId)
+        await mkdir(dirname(socketPath), { recursive: true })
+        const tmux = createTmuxManager({ socketPath })
+        await tmux.initialize()
+        return { socketPath, allocatedAt: timestamp() }
+      },
+    }
     this.harnessBrokerController = new HarnessBrokerController({
       db: this.db,
       mapper: {
@@ -2660,6 +2669,7 @@ class HrcServerInstance implements HrcServer {
           return result
         },
       },
+      tmuxAllocator,
       env: process.env,
       serverInstanceId: `hrc-server:${process.pid}`,
       logger: {
@@ -10256,7 +10266,11 @@ async function reconcileStartupState(
         ...(invocationId !== undefined ? { invocationId } : {}),
       })
     } catch (error) {
-      logStartupIssue('broker runtime reconciliation failed', { runtimeId: runtime.runtimeId }, error)
+      logStartupIssue(
+        'broker runtime reconciliation failed',
+        { runtimeId: runtime.runtimeId },
+        error
+      )
     }
   }
 }
@@ -10929,6 +10943,20 @@ function resolveActiveRunId(db: HrcDatabase, runtime: HrcRuntimeSnapshot): strin
 
 function getTmuxSocketPath(options: HrcServerOptions): string {
   return options.tmuxSocketPath ?? join(options.runtimeRoot, 'tmux.sock')
+}
+
+function getBrokerTmuxSocketPath(
+  options: HrcServerOptions,
+  brokerDriver: string,
+  runtimeId: string
+): string {
+  const driver = sanitizeBrokerTmuxPathSegment(brokerDriver).slice(0, 12)
+  const runtime = sanitizeBrokerTmuxPathSegment(runtimeId).slice(0, 32)
+  return join(options.runtimeRoot, 'btmux', `${driver}-${runtime}.sock`)
+}
+
+function sanitizeBrokerTmuxPathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_')
 }
 
 async function detectTmuxBackend(): Promise<{ available: boolean; version?: string | undefined }> {

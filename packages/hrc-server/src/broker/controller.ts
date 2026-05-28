@@ -34,6 +34,7 @@ import type {
   InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
+  InvocationRuntimeContext,
   InvocationStartRequest,
   InvocationStartResponse,
   InvocationStatusResponse,
@@ -67,7 +68,8 @@ export type BrokerClientLike = {
   health(req?: Parameters<BrokerClient['health']>[0]): Promise<BrokerHealthResponse>
   startInvocationFromRequest(
     request: InvocationStartRequest,
-    dispatchEnv?: Record<string, string>
+    dispatchEnv?: Record<string, string>,
+    runtime?: InvocationRuntimeContext
   ): Promise<{
     invocationId: string
     response: InvocationStartResponse
@@ -103,12 +105,27 @@ export type BrokerAgentchatLifecycle = {
   }) => Promise<void> | void
 }
 
+export type BrokerTmuxAllocation = {
+  socketPath: string
+  allocatedAt?: string | undefined
+}
+
+export type BrokerTmuxAllocator = {
+  allocate(input: {
+    runtimeId: string
+    hostSessionId: string
+    generation: number
+    brokerDriver: string
+  }): Promise<BrokerTmuxAllocation>
+}
+
 export type HarnessBrokerControllerDeps = {
   db: HrcDatabase
   mapper?: Pick<BrokerEventMapper, 'apply'>
   brokerClientFactory?: BrokerClientFactory
   permissionChannel?: BrokerPermissionChannel | undefined
   agentchat?: BrokerAgentchatLifecycle | undefined
+  tmuxAllocator?: BrokerTmuxAllocator | undefined
   brokerCommand?: string | undefined
   brokerArgs?: string[] | undefined
   env?: Record<string, string | undefined> | undefined
@@ -206,6 +223,7 @@ export class HarnessBrokerController {
   private readonly brokerClientFactory: BrokerClientFactory
   private readonly permissionChannel: BrokerPermissionChannel | undefined
   private readonly agentchat: BrokerAgentchatLifecycle | undefined
+  private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
   private readonly brokerCommand: string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
@@ -227,6 +245,7 @@ export class HarnessBrokerController {
       deps.brokerClientFactory ?? ((options) => BrokerClient.start(options))
     this.permissionChannel = deps.permissionChannel
     this.agentchat = deps.agentchat
+    this.tmuxAllocator = deps.tmuxAllocator
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
     this.brokerArgs = deps.brokerArgs ?? DEFAULT_BROKER_ARGS
@@ -274,10 +293,13 @@ export class HarnessBrokerController {
         }
       }
 
-      const persisted = this.persistStartGraph(input, hello)
+      const tmuxAllocation = await this.allocateTmuxIfRequired(input)
+      const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
+      const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
       const startResult = await client.startInvocationFromRequest(
         input.startRequest,
-        input.dispatchEnv
+        input.dispatchEnv,
+        dispatchRuntime
       )
 
       const invocationAdmission = this.admitStartedInvocation(
@@ -516,7 +538,8 @@ export class HarnessBrokerController {
 
   private persistStartGraph(
     input: BrokerControllerStartInput,
-    hello: BrokerHelloResponse
+    hello: BrokerHelloResponse,
+    tmuxAllocation: BrokerTmuxAllocation | undefined
   ): {
     session: HrcSessionRecord
     runtime: HrcRuntimeSnapshot
@@ -570,6 +593,7 @@ export class HarnessBrokerController {
       updatedAt: now,
     })
 
+    const transport = tmuxAllocation ? 'tmux' : 'headless'
     const runtime = this.db.runtimes.insert({
       runtimeId: String(identity.runtimeId),
       runtimeKind: 'harness',
@@ -577,12 +601,17 @@ export class HarnessBrokerController {
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
       generation: identity.generation,
-      transport: 'headless',
+      transport,
       harness: runtimeHarness(input.plan.harness.runtime),
       provider: input.plan.harness.provider as HrcProvider,
       status: 'starting',
       supportsInflightInput: true,
       adopted: false,
+      ...(tmuxAllocation
+        ? {
+            tmuxJson: toBrokerTmuxJson(input.profile.brokerDriver, tmuxAllocation),
+          }
+        : {}),
       ...(identity.runId !== undefined ? { activeRunId: String(identity.runId) } : {}),
       controllerKind: 'harness-broker',
       activeOperationId: String(identity.operationId),
@@ -597,6 +626,9 @@ export class HarnessBrokerController {
         hostSessionId: String(identity.hostSessionId),
         generation: identity.generation,
         status: 'starting',
+        ...(tmuxAllocation
+          ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
+          : {}),
       },
       createdAt: now,
       updatedAt: now,
@@ -611,7 +643,7 @@ export class HarnessBrokerController {
             scopeRef: session.scopeRef,
             laneRef: session.laneRef,
             generation: identity.generation,
-            transport: 'headless',
+            transport,
             status: 'accepted',
             acceptedAt: now,
             updatedAt: now,
@@ -674,6 +706,13 @@ export class HarnessBrokerController {
         startedAt: now,
         ownerServerInstanceId: this.serverInstanceId,
       },
+      ...(isBrokerTmuxProfile(input.profile)
+        ? {
+            tmux: extractRuntimeStateTmux(
+              this.db.runtimes.getByRuntimeId(String(identity.runtimeId))?.tmuxJson
+            ),
+          }
+        : {}),
       invocation: {
         invocationId: response.invocationId,
         state: response.state,
@@ -690,6 +729,45 @@ export class HarnessBrokerController {
         policy: input.profile.policy.inputPolicy,
         pendingDepth: 0,
       },
+    }
+  }
+
+  private async allocateTmuxIfRequired(
+    input: BrokerControllerStartInput
+  ): Promise<BrokerTmuxAllocation | undefined> {
+    if (!isBrokerTmuxProfile(input.profile)) {
+      return undefined
+    }
+    if (!this.tmuxAllocator) {
+      throw new BrokerControllerError(
+        'broker_tmux_allocator_unavailable',
+        'interactive broker-tmux profile requires an HRC tmux allocator',
+        {
+          runtimeId: String(input.identity.runtimeId),
+          brokerDriver: input.profile.brokerDriver,
+          brokerTerminal: input.profile.brokerTerminal,
+        }
+      )
+    }
+    const allocation = await this.tmuxAllocator.allocate({
+      runtimeId: String(input.identity.runtimeId),
+      hostSessionId: String(input.identity.hostSessionId),
+      generation: input.identity.generation,
+      brokerDriver: input.profile.brokerDriver,
+    })
+    if (allocation.socketPath.length === 0) {
+      throw new BrokerControllerError(
+        'broker_tmux_allocation_invalid',
+        'tmux allocator returned an empty socket path',
+        {
+          runtimeId: String(input.identity.runtimeId),
+          brokerDriver: input.profile.brokerDriver,
+        }
+      )
+    }
+    return {
+      socketPath: allocation.socketPath,
+      allocatedAt: allocation.allocatedAt ?? this.now(),
     }
   }
 
@@ -1196,6 +1274,62 @@ function runtimeStatusFromInvocationState(state: string): string {
   if (state === 'failed') return 'failed'
   if (state === 'disposed') return 'disposed'
   return 'starting'
+}
+
+function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
+  return (
+    profile.interactionMode === 'interactive' &&
+    profile.brokerTerminal?.host === 'tmux' &&
+    typeof profile.brokerDriver === 'string'
+  )
+}
+
+function toDispatchRuntime(
+  allocation: BrokerTmuxAllocation | undefined
+): InvocationRuntimeContext | undefined {
+  return allocation ? { tmux: { socketPath: allocation.socketPath } } : undefined
+}
+
+function toBrokerTmuxJson(
+  brokerDriver: string,
+  allocation: BrokerTmuxAllocation
+): Record<string, unknown> {
+  return {
+    kind: 'broker-tmux-allocation',
+    brokerDriver,
+    socketPath: allocation.socketPath,
+    allocatedAt: allocation.allocatedAt,
+  }
+}
+
+function toRuntimeStateTmux(
+  brokerDriver: string,
+  allocation: BrokerTmuxAllocation
+): Record<string, unknown> {
+  return {
+    brokerDriver,
+    socketPath: allocation.socketPath,
+    allocatedAt: allocation.allocatedAt,
+  }
+}
+
+function extractRuntimeStateTmux(
+  tmuxJson: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!tmuxJson) {
+    return undefined
+  }
+  const brokerDriver = tmuxJson['brokerDriver']
+  const socketPath = tmuxJson['socketPath']
+  const allocatedAt = tmuxJson['allocatedAt']
+  if (typeof brokerDriver !== 'string' || typeof socketPath !== 'string') {
+    return undefined
+  }
+  return {
+    brokerDriver,
+    socketPath,
+    ...(typeof allocatedAt === 'string' ? { allocatedAt } : {}),
+  }
 }
 
 function runtimeHarness(runtime: string): HrcRuntimeSnapshot['harness'] {

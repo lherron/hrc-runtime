@@ -50,7 +50,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
   it('freezes the admitted startRequest so it can never be mutated downstream', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity)
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
 
     expect(selection.admitted).toBe(true)
     if (!selection.admitted) return
@@ -66,19 +69,27 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('compile-not-ok')
   })
 
-  it('REJECTS when no compatible broker profile exists (interactive tmux only)', () => {
+  it('admits an interactive claude-code-tmux broker profile by broker driver and terminal', () => {
     const identity = makeIdentity()
-    const response = makeCompileResponse(identity, [makeInteractiveTmuxProfile()])
+    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
+    const response = makeCompileResponse(identity, [profile])
     const selection = selectBrokerExecutionProfile(response, identity)
-    expect(selection.admitted).toBe(false)
-    if (selection.admitted) return
-    expect(selection.code).toBe('no-matching-profile')
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.profile.brokerDriver).toBe('claude-code-tmux')
+    expect(selection.profile.brokerTerminal).toEqual({ host: 'tmux' })
+    expect(selection.startRequest).toBe(startRequest)
+    expect((selection.startRequest as unknown as { runtime?: unknown }).runtime).toBeUndefined()
   })
 
   it('REJECTS a non-codex broker driver (does not admit other drivers)', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { brokerDriver: 'claude-code-tmux' })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('no-matching-profile')
@@ -87,7 +98,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
   it('REJECTS an interactive codex broker profile (headless-only for W2)', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { interactionMode: 'interactive' })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('no-matching-profile')
@@ -110,7 +124,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
         { level: 'error', code: 'driver-unavailable', message: 'no codex', plane: 'asp-compiler' },
       ],
     })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('profile-diagnostics-error')
@@ -121,7 +138,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     const { profile } = makeBrokerProfile(identity)
     // tamper with the spec without recomputing the hash
     profile.harnessInvocation.startRequest.spec.process.args = ['app-server', '--tampered']
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('spec-hash-mismatch')
@@ -134,7 +154,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     ;(profile.harnessInvocation.startRequest as { runtime?: unknown }).runtime = {
       tmux: { socketPath: '/tmp/injected.sock' },
     }
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('start-request-hash-mismatch')
@@ -144,7 +167,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     const identity = makeIdentity()
     // compiler echoed a DIFFERENT invocationId; hashes are internally valid
     const { profile } = makeBrokerProfile(identity, { invocationId: 'invocation_other' })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('invocation-id-mismatch')
@@ -153,7 +179,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
   it('REJECTS when the initialInput id does not match the allocated initialInputId', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { initialInputId: 'input_other' })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return
     expect(selection.code).toBe('initial-input-id-mismatch')
@@ -164,8 +193,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity)
     const recomputedSpec = project(profile.harnessInvocation.startRequest.spec, 'spec').specHash
-    const recomputedStart = project(profile.harnessInvocation.startRequest, 'start-request')
-      .startRequestHash
+    const recomputedStart = project(
+      profile.harnessInvocation.startRequest,
+      'start-request'
+    ).startRequestHash
     expect(recomputedSpec).toBe(profile.harnessInvocation.specHash)
     expect(recomputedStart).toBe(profile.harnessInvocation.startRequestHash)
   })

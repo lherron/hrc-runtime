@@ -11,6 +11,7 @@
  * outside the W1A broker-path boundary guard.
  */
 
+import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import { project } from 'spaces-runtime-contracts'
 import type {
   BrokerExecutionProfile,
@@ -18,10 +19,6 @@ import type {
   RuntimeCompileResponse,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
-import type {
-  HarnessInvocationSpec,
-  InvocationStartRequest,
-} from 'spaces-harness-broker-protocol'
 
 /**
  * A deterministic identity allocation matching the headless-codex shape: an
@@ -60,6 +57,8 @@ export type FixtureOpts = {
   brokerDriver?: string
   /** Override interactionMode (to test interactive rejection). */
   interactionMode?: 'headless' | 'interactive'
+  /** Override broker terminal metadata. */
+  brokerTerminal?: { host: 'tmux' | string }
 }
 
 /**
@@ -123,6 +122,7 @@ export function makeBrokerProfile(
     brokerProtocol: 'harness-broker/0.1',
     brokerDriver: opts.brokerDriver ?? 'codex-app-server',
     brokerOwnership: 'hrc-owned-process',
+    ...(opts.brokerTerminal ? { brokerTerminal: opts.brokerTerminal } : {}),
     expectedCapabilities: {},
     harnessInvocation: { startRequest, specHash, startRequestHash },
     policy: {
@@ -137,28 +137,72 @@ export function makeBrokerProfile(
   return { profile, startRequest }
 }
 
-/** An interactive claude-code-tmux broker profile — must NOT be admitted. */
-export function makeInteractiveTmuxProfile(): BrokerExecutionProfile {
-  return {
-    schemaVersion: 'agent-runtime-profile/v1',
-    profileId: 'profile_claude_tmux',
-    profileHash: 'profilehash_claude_tmux',
-    compatibilityHash: 'compat_claude_tmux',
-    kind: 'harness-broker',
-    interactionMode: 'interactive',
-    brokerProtocol: 'harness-broker/0.1',
-    brokerDriver: 'claude-code-tmux',
-    brokerOwnership: 'hrc-owned-process',
-    brokerTerminal: { host: 'tmux' },
-    expectedCapabilities: {},
-    harnessInvocation: {
-      startRequest: { spec: {} },
-      specHash: 'x',
-      startRequestHash: 'y',
+/** An interactive claude-code-tmux broker profile. */
+export function makeInteractiveTmuxProfile(
+  identity: RuntimeIdentityAllocation = makeIdentity({
+    runtimeId: 'runtime_tmux' as RuntimeIdentityAllocation['runtimeId'],
+    invocationId: 'invocation_tmux' as RuntimeIdentityAllocation['invocationId'],
+  })
+): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+  const spec: HarnessInvocationSpec = {
+    specVersion: 'harness-broker.invocation/v1',
+    invocationId: identity.invocationId,
+    harness: { frontend: 'claude', provider: 'anthropic', driver: 'claude-code-tmux' },
+    process: {
+      command: 'claude',
+      args: ['--dangerously-skip-permissions'],
+      cwd: '/tmp/work',
+      lockedEnv: { CLAUDE_CONFIG_DIR: '/tmp/work/.claude' },
+      harnessTransport: { kind: 'pty' },
     },
-    policy: {},
-    observability: {},
-  } as unknown as BrokerExecutionProfile
+    interaction: { mode: 'interactive', turnConcurrency: 'single', inputQueue: 'fifo' },
+    driver: { kind: 'claude-code-tmux' },
+    correlation: {
+      requestId: String(identity.requestId),
+      operationId: String(identity.operationId),
+      runtimeId: String(identity.runtimeId),
+      invocationId: String(identity.invocationId),
+    },
+  }
+  const startRequest: InvocationStartRequest = {
+    spec,
+    ...(identity.initialInputId
+      ? {
+          initialInput: {
+            inputId: identity.initialInputId,
+            kind: 'user',
+            content: [{ type: 'text', text: 'hello claude tmux' }],
+          },
+        }
+      : {}),
+  }
+  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
+  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
+    .startRequestHash
+
+  return {
+    profile: {
+      schemaVersion: 'agent-runtime-profile/v1',
+      profileId: 'profile_claude_tmux',
+      profileHash: 'profilehash_claude_tmux',
+      compatibilityHash: 'compat_claude_tmux',
+      kind: 'harness-broker',
+      interactionMode: 'interactive',
+      brokerProtocol: 'harness-broker/0.1',
+      brokerDriver: 'claude-code-tmux',
+      brokerOwnership: 'hrc-owned-process',
+      brokerTerminal: { host: 'tmux' },
+      expectedCapabilities: {},
+      harnessInvocation: { startRequest, specHash, startRequestHash },
+      policy: {
+        permissionPolicy: { mode: 'deny', audit: true },
+        inputPolicy: {},
+        exposurePolicy: {},
+      },
+      observability: {},
+    } as unknown as BrokerExecutionProfile,
+    startRequest,
+  }
 }
 
 /** Wrap one-or-more profiles into a successful compile response. */
@@ -173,7 +217,11 @@ export function makeCompileResponse(
     planHash: 'planhash_w2',
     createdAt: '2026-05-27T00:00:00Z',
     identity,
-    placement: { agentRoot: '/tmp/agent', runMode: 'task', bundle: { kind: 'compose', compose: [] } },
+    placement: {
+      agentRoot: '/tmp/agent',
+      runMode: 'task',
+      bundle: { kind: 'compose', compose: [] },
+    },
     resolvedBundle: { bundleIdentity: 'bundle_w2' },
     harness: { family: 'codex', runtime: 'codex-cli', provider: 'openai' },
     model: { provider: 'openai', modelId: 'gpt-5-codex' },
