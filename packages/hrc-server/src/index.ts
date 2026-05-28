@@ -2612,7 +2612,16 @@ class HrcServerInstance implements HrcServer {
       intent.harness.id
     )
     if (reusableRuntime) {
-      assertRuntimeNotBusy(this.db, reusableRuntime)
+      // Broker FIFO queue support: when the active broker invocation's composed
+      // capabilities.input.queue is true, a busy runtime can accept a second
+      // concurrent turn — the broker queues it (whenBusy:'queue') and drains
+      // FIFO after the active turn completes. Skip assertRuntimeNotBusy in
+      // that case; the queued path inside executeHeadlessBrokerInputTurn keeps
+      // the active run's pointers intact and relies on the event-mapper to
+      // flip invocation.runId on input.accepted for the drained input.
+      if (!isBrokerRuntimeQueueCapable(this.db, reusableRuntime)) {
+        assertRuntimeNotBusy(this.db, reusableRuntime)
+      }
       if (
         reusableRuntime.controllerKind === 'harness-broker' &&
         reusableRuntime.activeInvocationId !== undefined
@@ -2787,6 +2796,18 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
+    // Queued-mode detection: a runtime is "busy" iff it has an active run still
+    // in a non-terminal state. In that case the active run keeps the runtime
+    // and invocation pointers (HRC must NOT clobber them with this new runId);
+    // the broker queues the new input (whenBusy:'queue') and the event-mapper
+    // flips invocation.runId + runtime.activeRunId onto this run on the
+    // drained input.accepted envelope.
+    const activeRun =
+      runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
+    const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
+    const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
+
+    const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
     const now = timestamp()
     this.db.runs.insert({
       runId,
@@ -2801,17 +2822,24 @@ class HrcServerInstance implements HrcServer {
       updatedAt: now,
       invocationId,
       operationId: runtime.activeOperationId,
+      // Persist HRC's inputId on the run row so the broker event-mapper can
+      // correlate a drained input.accepted envelope back to this run and flip
+      // invocation.runId before turn.* events project. Set on every dispatch
+      // (immediate and queued) for uniform reasoning; a no-op flip is harmless.
+      dispatchedInputId: inputId,
     })
-    this.db.runtimes.update(runtime.runtimeId, {
-      activeRunId: runId,
-      status: 'busy',
-      lastActivityAt: now,
-      updatedAt: now,
-    })
-    this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+    if (!queuedMode) {
+      this.db.runtimes.update(runtime.runtimeId, {
+        activeRunId: runId,
+        status: 'busy',
+        lastActivityAt: now,
+        updatedAt: now,
+      })
+      this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+    }
 
     const input: InvocationInput = {
-      inputId: `input-${randomUUID()}` as InvocationInput['inputId'],
+      inputId,
       kind: 'user',
       content: [{ type: 'text', text: prompt }],
       metadata: { runId },
@@ -2820,6 +2848,13 @@ class HrcServerInstance implements HrcServer {
     const result = await this.getHarnessBrokerController().dispatchInput({
       runtimeId: runtime.runtimeId,
       input,
+      // Always send whenBusy:'queue' when the active invocation supports
+      // FIFO queueing: the broker applies it only when its invocation state
+      // is turn_active; if the invocation became 'ready' in between, the
+      // broker applies the input immediately and ignores policy (per
+      // harness-broker invocation-manager). The event-mapper flip on
+      // input.accepted is the unconditional safety net in either case.
+      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
     })
     if (!result.ok || !result.response.accepted) {
       const completedAt = timestamp()
@@ -2880,13 +2915,21 @@ class HrcServerInstance implements HrcServer {
     while (Date.now() < deadline) {
       const run = this.db.runs.getByRunId(runId)
       if (run && !isRunActive(run)) {
-        const now = timestamp()
-        this.db.runtimes.updateRunId(runtimeId, undefined, now)
-        this.db.runtimes.update(runtimeId, {
-          status: 'ready',
-          lastActivityAt: now,
-          updatedAt: now,
-        })
+        // Guarded cleanup: only clear runtime.activeRunId / set status='ready'
+        // when the runtime's active run is STILL this one. With broker FIFO
+        // queueing, the event-mapper may have already flipped activeRunId to
+        // a drained queued run on input.accepted; unconditionally clearing
+        // would clobber that pointer and re-introduce the T-01711 hang class.
+        const currentRuntime = this.db.runtimes.getByRuntimeId(runtimeId)
+        if (currentRuntime?.activeRunId === runId) {
+          const now = timestamp()
+          this.db.runtimes.updateRunId(runtimeId, undefined, now)
+          this.db.runtimes.update(runtimeId, {
+            status: 'ready',
+            lastActivityAt: now,
+            updatedAt: now,
+          })
+        }
         if (run.status !== 'completed') {
           throw new HrcRuntimeUnavailableError('headless broker turn failed', {
             runtimeId,
@@ -12878,6 +12921,25 @@ function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapshot): voi
       runtimeId: runtime.runtimeId,
       activeRunId: runtime.activeRunId,
     })
+  }
+}
+
+// Reads the composed input.queue capability off the runtime's active broker
+// invocation. True iff the broker reported (post-start) that this invocation
+// accepts FIFO queueing — driverCaps.input.queue && driverCaps.input.user &&
+// spec.interaction.inputQueue === 'fifo'. Returns false defensively on any
+// error (missing invocation, malformed capabilities_json) so callers fall
+// back to the existing reject-if-busy behavior.
+function isBrokerRuntimeQueueCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
+  if (runtime.controllerKind !== 'harness-broker') return false
+  if (runtime.activeInvocationId === undefined) return false
+  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  if (!inv?.capabilitiesJson) return false
+  try {
+    const caps = JSON.parse(inv.capabilitiesJson) as { input?: { queue?: boolean } }
+    return caps.input?.queue === true
+  } catch {
+    return false
   }
 }
 

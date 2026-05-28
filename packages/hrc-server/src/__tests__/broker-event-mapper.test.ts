@@ -133,6 +133,126 @@ describe('emitted HRC events', () => {
     expect(diagnostic.events.map((e) => e.eventKind)).toEqual(['broker.diagnostic'])
     expect(diagnostic.lifecycleEvents).toEqual([])
   })
+
+  // hrcchat turn / Discord / monitor follow the canonical hrc_events stream.
+  // Tool calls are the most visible mid-turn signal — if they don't reach the
+  // lifecycle stream, the UX shows a long blank ... between user prompt and
+  // final message. Mapper MUST project tool.call.started/completed/failed under
+  // the registered turn.tool_call / turn.tool_result kinds, with hrc-events'
+  // canonical hook-derived payload shape so existing renderers consume them.
+  it('projects tool.call.started into turn.tool_call with hook-derived payload', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    const result = mapper.apply(
+      envelope(
+        'tool.call.started',
+        10,
+        {
+          toolCallId: TOOL_CALL_ID as never,
+          name: TOOL_NAME,
+          input: { command: '/bin/zsh -lc ls', cwd: '/tmp/project' },
+        },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.tool.call.started'])
+    expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.tool_call'])
+    const lifecycle = result.lifecycleEvents[0]!
+    expect(lifecycle.runId).toBe(RUN_ID)
+    expect(lifecycle.payload).toEqual({
+      type: 'tool_execution_start',
+      toolUseId: TOOL_CALL_ID,
+      toolName: TOOL_NAME,
+      input: { command: '/bin/zsh -lc ls', cwd: '/tmp/project' },
+    })
+
+    const rows = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.tool_call' })
+    expect(rows.length).toBe(1)
+  })
+
+  it('projects tool.call.completed into turn.tool_result, normalizing driver result shape', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    const result = mapper.apply(
+      envelope(
+        'tool.call.completed',
+        11,
+        {
+          toolCallId: TOOL_CALL_ID as never,
+          name: TOOL_NAME,
+          // codex's `command` tool emits {output, exitCode}, not a ToolResult.
+          // Mapper must coerce into hrc-events' {content: ContentBlock[]} shape.
+          result: { output: 'AGENTS.md\nCLAUDE.md\n', exitCode: 0 },
+          isError: false,
+          durationMs: 12,
+        },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.tool_result'])
+    expect(result.lifecycleEvents[0]!.payload).toEqual({
+      type: 'tool_execution_end',
+      toolUseId: TOOL_CALL_ID,
+      toolName: TOOL_NAME,
+      result: {
+        content: [{ type: 'text', text: 'AGENTS.md\nCLAUDE.md\n' }],
+        details: { output: 'AGENTS.md\nCLAUDE.md\n', exitCode: 0 },
+      },
+      isError: false,
+    })
+    expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.tool_result' }).length).toBe(1)
+  })
+
+  it('passes through a result already in ToolResult shape', () => {
+    const mapper = makeMapper()
+    const result = mapper.apply(
+      envelope(
+        'tool.call.completed',
+        12,
+        {
+          toolCallId: TOOL_CALL_ID as never,
+          name: TOOL_NAME,
+          result: { content: [{ type: 'text', text: 'pre-shaped' }] },
+        },
+        { turnId: 'turn_x' as never }
+      )
+    )
+    expect(result.lifecycleEvents[0]!.payload).toEqual({
+      type: 'tool_execution_end',
+      toolUseId: TOOL_CALL_ID,
+      toolName: TOOL_NAME,
+      result: { content: [{ type: 'text', text: 'pre-shaped' }] },
+    })
+  })
+
+  it('projects tool.call.failed into turn.tool_result with isError:true', () => {
+    const mapper = makeMapper()
+    const result = mapper.apply(
+      envelope(
+        'tool.call.failed',
+        13,
+        {
+          toolCallId: TOOL_CALL_ID as never,
+          name: TOOL_NAME,
+          message: 'command timed out',
+        },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.tool_result'])
+    expect(result.lifecycleEvents[0]!.payload).toEqual({
+      type: 'tool_execution_end',
+      toolUseId: TOOL_CALL_ID,
+      toolName: TOOL_NAME,
+      result: { content: [{ type: 'text', text: 'command timed out' }] },
+      isError: true,
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

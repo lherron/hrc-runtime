@@ -31,6 +31,13 @@ import type {
   HrcLifecycleEvent,
   HrcProvider,
 } from 'hrc-core'
+import type {
+  AgentMessageEvent,
+  ContentBlock,
+  ToolExecutionEndEvent,
+  ToolExecutionStartEvent,
+  ToolResult,
+} from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
   AssistantMessageCompletedPayload,
@@ -40,6 +47,9 @@ import type {
   PermissionRequestedPayload,
   PermissionResolvedPayload,
   TerminalSurfaceReportedPayload,
+  ToolCallCompletedPayload,
+  ToolCallFailedPayload,
+  ToolCallStartedPayload,
   TurnFailedPayload,
 } from 'spaces-harness-broker-protocol'
 
@@ -55,10 +65,52 @@ import { appendHrcEvent } from '../hrc-event-helper'
  * provenance-only (no lifecycle row) (T-01711). Mapped kinds MUST exist in
  * `hrc-event-helper`'s KIND_CATEGORIES or `appendHrcEvent` throws.
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Coerce the broker `tool.call.completed.result` field (typed `unknown`) into
+ * the canonical hrc-events `ToolResult` shape. Broker drivers emit
+ * driver-specific result blobs (e.g. codex's `command` tool returns
+ * `{output, exitCode}`); the lifecycle stream uses the hook-derived
+ * `{content: ContentBlock[]}` shape consumers already know how to render.
+ */
+function toolResultFromBrokerResult(result: unknown): ToolResult {
+  if (isRecord(result) && Array.isArray(result['content'])) {
+    const content = result['content']
+    if (content.every((item) => isRecord(item) && typeof item['type'] === 'string')) {
+      return result as unknown as ToolResult
+    }
+  }
+  const text =
+    typeof result === 'string'
+      ? result
+      : isRecord(result) && typeof result['output'] === 'string'
+        ? result['output']
+        : result === undefined || result === null
+          ? ''
+          : safeStringify(result)
+  const block: ContentBlock = { type: 'text', text }
+  const details = isRecord(result) ? result : undefined
+  return details === undefined ? { content: [block] } : { content: [block], details }
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
   'input.accepted': 'turn.accepted',
   'turn.started': 'turn.started',
   'assistant.message.completed': 'turn.message',
+  'tool.call.started': 'turn.tool_call',
+  'tool.call.completed': 'turn.tool_result',
+  'tool.call.failed': 'turn.tool_result',
   'turn.completed': 'turn.completed',
   // Failed/interrupted have no registered lifecycle kind; surface them as a
   // terminal turn.completed (payload carries success:false) so client waiters
@@ -128,6 +180,21 @@ export class BrokerEventMapper {
       throw new Error(`runtime not found for broker invocation: ${invocation.runtimeId}`)
     }
 
+    // ── Broker FIFO queue correlation (order-robust resolution) ─────────────
+    // Resolve runId by finding the most recent input.accepted at seq <=
+    // envelope.seq and looking up the run HRC dispatched with that inputId.
+    // The broker emits a strictly-monotonic seq, so for ANY event, the
+    // "currently-being-applied input" is the highest-seq input.accepted that
+    // precedes (or equals) it. This is robust to out-of-order arrival in
+    // HRC's controller: even if turn.completed (seq N) arrives after a later
+    // input.accepted (seq N+1) for the next queued input, the lookup filter
+    // `seq <= N` still picks the correct prior input.accepted. Falls back to
+    // invocation.runId when there's no preceding input.accepted (rare) or
+    // when the run wasn't dispatched through the broker-input path (e.g. the
+    // initial start-turn input on a fresh invocation, where the start path
+    // pre-sets invocation.runId correctly).
+    const resolvedRunId = this.resolveRunIdForEvent(envelope, invocation.runId)
+
     const ctx: ProjectionContext = {
       runtimeId: runtime.runtimeId,
       hostSessionId: runtime.hostSessionId,
@@ -135,7 +202,7 @@ export class BrokerEventMapper {
       laneRef: runtime.laneRef,
       generation: runtime.generation,
       operationId: invocation.operationId,
-      runId: invocation.runId,
+      runId: resolvedRunId,
     }
 
     // (a) Idempotent append keyed by (invocationId, seq). A duplicate with the
@@ -172,6 +239,78 @@ export class BrokerEventMapper {
       events: [emitted],
       lifecycleEvents: lifecycleEvent ? [lifecycleEvent] : [],
     }
+  }
+
+  /**
+   * Resolve the runId this event belongs to, robust to out-of-order projection.
+   *
+   * Strategy: find the most-recent `input.accepted` at seq <= envelope.seq for
+   * this invocation and resolve the run HRC dispatched with that inputId
+   * (runs.dispatched_input_id). For the input.accepted event itself, the
+   * envelope's own inputId is used (avoids a redundant DB hit AND covers the
+   * case where appendEvent for the current envelope hasn't been written yet).
+   *
+   * Why per-event time-travel beats a stateful runId-flip: the controller's
+   * `for await ... of` does pull envelopes sequentially, but envelopes
+   * delivered by the broker client at the same millisecond can race past it
+   * out of seq order (broker_invocation_events row evidence shows
+   * input.accepted seq 53 projected before its preceding turn.completed seq
+   * 52). A stateful flip would then misroute seq 52 onto run N+1. Time-travel
+   * lookup uses the immutable seq order regardless of arrival order.
+   *
+   * Falls back to fallbackRunId (invocation.runId) when no input.accepted
+   * precedes this event or when the matched input lacks a dispatched run
+   * (e.g. the initial start-turn input on a fresh invocation — that path
+   * pre-sets invocation.runId correctly).
+   */
+  private resolveRunIdForEvent(
+    envelope: InvocationEventEnvelope,
+    fallbackRunId: string | undefined
+  ): string | undefined {
+    // Prefer envelope.inputId when the broker sets it: input.accepted /
+    // input.queued / input.rejected always carry it (contract), and
+    // input.queued specifically refers to the QUEUED input — its seq-based
+    // prior-input.accepted lookup would wrongly resolve to the currently-
+    // running input. For events without envelope.inputId (turn.*, assistant.*,
+    // diagnostics, etc.), find the most-recent input.accepted at seq <=
+    // envelope.seq — that's the input currently being applied by the driver.
+    const envelopeInputId =
+      envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
+    const inputId =
+      envelopeInputId ??
+      this.findPriorInputAcceptedInputId(envelope.invocationId, envelope.seq)
+    if (inputId !== undefined) {
+      const run = this.db.runs.getByDispatchedInputId(inputId)
+      if (run?.runId) return run.runId
+    }
+    return fallbackRunId
+  }
+
+  private extractInputIdFromPayload(payload: unknown): string | undefined {
+    if (payload && typeof payload === 'object' && 'inputId' in payload) {
+      const v = (payload as { inputId?: unknown }).inputId
+      return typeof v === 'string' ? v : undefined
+    }
+    return undefined
+  }
+
+  private findPriorInputAcceptedInputId(
+    invocationId: string,
+    seq: number
+  ): string | undefined {
+    // json_extract on broker_event_json (the payload, which carries inputId
+    // on input.accepted per broker contract). Filtering on type='input.accepted'
+    // before json_extract keeps this O(log n) via the (invocation_id, seq) index.
+    const row = this.db.sqlite
+      .query<{ inputId: string | null }, [string, number]>(
+        `SELECT json_extract(broker_event_json, '$.inputId') AS inputId
+           FROM broker_invocation_events
+          WHERE invocation_id = ? AND type = 'input.accepted' AND seq <= ?
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, seq)
+    return row?.inputId ?? undefined
   }
 
   /** Apply the type-specific state mutation. Emission is handled separately. */
@@ -436,7 +575,43 @@ export class BrokerEventMapper {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('')
-        return { type: 'message_end', message: { role: 'assistant', content } }
+        const event: AgentMessageEvent = {
+          type: 'message_end',
+          message: { role: 'assistant', content },
+        }
+        return event as unknown as Record<string, unknown>
+      }
+      case 'tool.call.started': {
+        const payload = envelope.payload as ToolCallStartedPayload
+        const event: ToolExecutionStartEvent = {
+          type: 'tool_execution_start',
+          toolUseId: payload.toolCallId,
+          toolName: payload.name,
+          input: isRecord(payload.input) ? payload.input : {},
+        }
+        return event as unknown as Record<string, unknown>
+      }
+      case 'tool.call.completed': {
+        const payload = envelope.payload as ToolCallCompletedPayload
+        const event: ToolExecutionEndEvent = {
+          type: 'tool_execution_end',
+          toolUseId: payload.toolCallId,
+          toolName: payload.name,
+          result: toolResultFromBrokerResult(payload.result),
+          ...(payload.isError !== undefined ? { isError: payload.isError } : {}),
+        }
+        return event as unknown as Record<string, unknown>
+      }
+      case 'tool.call.failed': {
+        const payload = envelope.payload as ToolCallFailedPayload
+        const event: ToolExecutionEndEvent = {
+          type: 'tool_execution_end',
+          toolUseId: payload.toolCallId,
+          toolName: payload.name,
+          result: { content: [{ type: 'text', text: payload.message }] },
+          isError: true,
+        }
+        return event as unknown as Record<string, unknown>
       }
       case 'turn.completed':
         return { success: true, transport: 'headless', source: 'broker' }

@@ -1037,6 +1037,29 @@ const runtimeBrokerStateMigration: HrcMigration = {
   },
 }
 
+// Broker FIFO input-queue support: persist HRC's dispatched inputId on each run
+// so the broker event-mapper can correlate a drained (queued) input.accepted
+// envelope back to its run and flip invocation.runId before downstream turn.*
+// events project. Same ALTER TABLE ADD COLUMN pattern as 0017; idempotent.
+const runsDispatchedInputIdMigration: HrcMigration = {
+  id: '0018_runs_dispatched_input_id',
+  apply(db) {
+    const runColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!runColumns.has('dispatched_input_id')) {
+      db.exec('ALTER TABLE runs ADD COLUMN dispatched_input_id TEXT')
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_dispatched_input_id
+        ON runs(dispatched_input_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1055,6 +1078,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   runSessionLookupIndexesMigration,
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
+  runsDispatchedInputIdMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

@@ -191,6 +191,7 @@ type RunRow = {
   error_message: string | null
   operation_id: string | null
   invocation_id: string | null
+  dispatched_input_id: string | null
 }
 
 type LaunchRow = {
@@ -449,7 +450,8 @@ const RUN_COLUMNS = `
   error_code,
   error_message,
   operation_id,
-  invocation_id`
+  invocation_id,
+  dispatched_input_id`
 
 const LAUNCH_COLUMNS = `
   launch_id,
@@ -683,6 +685,7 @@ function mapRunRow(row: RunRow): HrcRunRecord {
     errorMessage: row.error_message ?? undefined,
     operationId: row.operation_id ?? undefined,
     invocationId: row.invocation_id ?? undefined,
+    dispatchedInputId: row.dispatched_input_id ?? undefined,
   }
 }
 
@@ -1749,8 +1752,9 @@ export class RunRepository {
           error_code,
           error_message,
           operation_id,
-          invocation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          invocation_id,
+          dispatched_input_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -1767,7 +1771,8 @@ export class RunRepository {
       record.errorCode ?? null,
       record.errorMessage ?? null,
       record.operationId ?? null,
-      record.invocationId ?? null
+      record.invocationId ?? null,
+      record.dispatchedInputId ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
@@ -1777,6 +1782,20 @@ export class RunRepository {
     const row = this.db
       .query<RunRow, [string]>(`SELECT ${RUN_COLUMNS} FROM runs WHERE run_id = ?`)
       .get(runId)
+
+    return row ? mapRunRow(row) : null
+  }
+
+  // Broker FIFO queue correlation: lookup by HRC-assigned inputId so the broker
+  // event-mapper can flip invocation.runId on input.accepted for a drained turn.
+  // inputId is unique per dispatched input (HRC mints it via randomUUID), so at
+  // most one matching active run exists. The migration's index makes this O(1).
+  getByDispatchedInputId(inputId: string): HrcRunRecord | null {
+    const row = this.db
+      .query<RunRow, [string]>(
+        `SELECT ${RUN_COLUMNS} FROM runs WHERE dispatched_input_id = ? LIMIT 1`
+      )
+      .get(inputId)
 
     return row ? mapRunRow(row) : null
   }
@@ -1886,6 +1905,9 @@ export class RunRepository {
     }
     if (patch.invocationId !== undefined) {
       entries.push(['invocation_id', patch.invocationId])
+    }
+    if (patch.dispatchedInputId !== undefined) {
+      entries.push(['dispatched_input_id', patch.dispatchedInputId])
     }
 
     if (entries.length === 0) {

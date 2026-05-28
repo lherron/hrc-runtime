@@ -333,6 +333,11 @@ export type HrcRunRecord = {
   // the harness-broker controller/mapper. Legacy runs leave these unset.
   operationId?: string | undefined
   invocationId?: string | undefined
+  // ── Broker FIFO input-queue correlation. Set by HRC at dispatch when a turn
+  // is sent with whenBusy:'queue' policy: the broker echoes this inputId on
+  // input.accepted (contract guarantee) and the event-mapper looks the run up
+  // by it to flip invocation.runId before downstream turn.* events project.
+  dispatchedInputId?: string | undefined
 }
 
 export type HrcLaunchRecord = {
