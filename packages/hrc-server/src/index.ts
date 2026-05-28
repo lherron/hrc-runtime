@@ -2733,6 +2733,30 @@ class HrcServerInstance implements HrcServer {
   ): Promise<Response> {
     const turnIntent: HrcRuntimeIntent =
       prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+    const runtime = await this.startInteractiveTmuxBrokerRuntime(
+      session,
+      turnIntent,
+      runId,
+      flagOptions
+    )
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
+  }
+
+  private async startInteractiveTmuxBrokerRuntime(
+    session: HrcSessionRecord,
+    turnIntent: HrcRuntimeIntent,
+    diagnosticRunId: string,
+    flagOptions: { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
+  ): Promise<HrcRuntimeSnapshot> {
     const now = timestamp()
     this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
 
@@ -2742,7 +2766,7 @@ class HrcServerInstance implements HrcServer {
         'agent-spaces client cannot compile interactive broker runtime plans',
         {
           hostSessionId: session.hostSessionId,
-          runId,
+          runId: diagnosticRunId,
           route: 'interactive-broker',
           flag: flagOptions.flagEnvName,
         }
@@ -2765,7 +2789,7 @@ class HrcServerInstance implements HrcServer {
           runtimeId: () => `rt-${randomUUID()}`,
           invocationId: () => `inv-${randomUUID()}`,
           initialInputId: () => `input-${randomUUID()}`,
-          runId: () => runId,
+          runId: () => diagnosticRunId,
           traceId: () => `trace-${randomUUID()}`,
         },
       }
@@ -2774,7 +2798,7 @@ class HrcServerInstance implements HrcServer {
     if (!compiled.admitted) {
       throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
         hostSessionId: session.hostSessionId,
-        runId,
+        runId: diagnosticRunId,
         code: compiled.code,
         route: 'interactive-broker',
         flag: flagOptions.flagEnvName,
@@ -2790,7 +2814,7 @@ class HrcServerInstance implements HrcServer {
         `interactive broker profile did not resolve to ${flagOptions.allowedBrokerDriver}`,
         {
           hostSessionId: session.hostSessionId,
-          runId,
+          runId: diagnosticRunId,
           brokerDriver: compiled.profile.brokerDriver,
           brokerTerminal: compiled.profile.brokerTerminal,
           route: 'interactive-broker',
@@ -2817,7 +2841,7 @@ class HrcServerInstance implements HrcServer {
     if (!result.ok) {
       throw new HrcRuntimeUnavailableError('interactive broker start failed', {
         hostSessionId: session.hostSessionId,
-        runId,
+        runId: diagnosticRunId,
         code: result.error.code,
         message: result.error.message,
         route: 'interactive-broker',
@@ -2825,15 +2849,7 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    return json({
-      runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: result.runtime.runtimeId,
-      transport: 'tmux',
-      status: 'started',
-      supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
+    return result.runtime
   }
 
   private getHarnessBrokerController(): HarnessBrokerController {
@@ -3871,7 +3887,10 @@ class HrcServerInstance implements HrcServer {
       return json(existing)
     }
 
-    const tmuxPane = runtime.transport === 'tmux' ? requireTmuxPane(runtime) : null
+    const tmuxPane =
+      runtime.transport === 'tmux' && runtime.controllerKind !== 'harness-broker'
+        ? requireTmuxPane(runtime)
+        : null
     const now = timestamp()
     const binding = this.db.surfaceBindings.bind({
       surfaceKind: body.surfaceKind,
@@ -5350,6 +5369,48 @@ class HrcServerInstance implements HrcServer {
   private async reconcileTmuxRuntimeLiveness(
     runtime: HrcRuntimeSnapshot
   ): Promise<HrcRuntimeSnapshot> {
+    if (
+      runtime.controllerKind === 'harness-broker' &&
+      runtime.transport === 'tmux' &&
+      !isRuntimeUnavailableStatus(runtime.status)
+    ) {
+      const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+      if (!socketPath) {
+        const event = markRuntimeStale(
+          this.db,
+          requireSession(this.db, runtime.hostSessionId),
+          runtime,
+          {
+            runtimeId: runtime.runtimeId,
+            reason: 'broker_tmux_socket_missing',
+          }
+        )
+        this.notifyEvent(event)
+        return requireKnownRuntime(this.db, runtime.runtimeId)
+      }
+
+      const brokerTmux = createTmuxManager({ socketPath })
+      const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+      const inspected = await brokerTmux.inspectSession(sessionName)
+      if (inspected) {
+        return runtime
+      }
+
+      const event = markRuntimeStale(
+        this.db,
+        requireSession(this.db, runtime.hostSessionId),
+        runtime,
+        {
+          runtimeId: runtime.runtimeId,
+          sessionName,
+          socketPath,
+          reason: 'broker_tmux_session_missing',
+        }
+      )
+      this.notifyEvent(event)
+      return requireKnownRuntime(this.db, runtime.runtimeId)
+    }
+
     if (runtime.transport !== 'tmux' || isRuntimeUnavailableStatus(runtime.status)) {
       if (runtime.transport !== 'ghostty' || isRuntimeUnavailableStatus(runtime.status)) {
         return runtime
@@ -5415,7 +5476,10 @@ class HrcServerInstance implements HrcServer {
     }
 
     const operation = (async () => {
-      const existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
+      let existingRuntime = findLatestSessionRuntime(this.db, session.hostSessionId)
+      if (existingRuntime) {
+        existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
+      }
       const normalizedIntent = normalizeRuntimeProvisionIntent(intent)
       const expectedInteractiveTransport = shouldUseGhosttyTransport(normalizedIntent)
         ? 'ghostty'
@@ -5440,6 +5504,39 @@ class HrcServerInstance implements HrcServer {
         }
 
         return await this.runHeadlessStartLaunch(session, runtime, normalizedIntent)
+      }
+
+      const interactiveBrokerOptions = this.selectInteractiveTmuxBrokerOptions(normalizedIntent)
+      if (interactiveBrokerOptions) {
+        if (
+          existingRuntime &&
+          !isRuntimeUnavailableStatus(existingRuntime.status) &&
+          restartStyle === 'reuse_pty' &&
+          isMatchingInteractiveTmuxBrokerRuntime(
+            existingRuntime,
+            normalizedIntent,
+            interactiveBrokerOptions.allowedBrokerDriver
+          )
+        ) {
+          return existingRuntime
+        }
+
+        return await runInteractiveTmuxRoute('broker', {
+          broker: async () =>
+            this.startInteractiveTmuxBrokerRuntime(
+              session,
+              normalizedIntent,
+              `run-${randomUUID()}`,
+              interactiveBrokerOptions
+            ),
+          legacyTmux: async () => {
+            throw new HrcRuntimeUnavailableError('interactive broker start did not select broker', {
+              hostSessionId: session.hostSessionId,
+              route: 'interactive-broker',
+              flag: interactiveBrokerOptions.flagEnvName,
+            })
+          },
+        })
       }
 
       if (
@@ -5483,6 +5580,24 @@ class HrcServerInstance implements HrcServer {
     return await operation
   }
 
+  private selectInteractiveTmuxBrokerOptions(
+    intent: HrcRuntimeIntent
+  ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
+    const route = decideInteractiveTmuxBrokerStartRoute(intent, {
+      claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
+      codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
+    })
+
+    if (route.route !== 'broker') {
+      return undefined
+    }
+
+    return {
+      flagEnvName: route.flagEnvName,
+      allowedBrokerDriver: route.allowedBrokerDriver,
+    }
+  }
+
   private attachRuntime(runtime: HrcRuntimeSnapshot): Response {
     if (runtime.transport === 'ghostty') {
       const surface = requireGhosttySurface(runtime)
@@ -5494,6 +5609,37 @@ class HrcServerInstance implements HrcServer {
           runtimeId: runtime.runtimeId,
           generation: runtime.generation,
           surfaceId: surface.surfaceId,
+        },
+      } satisfies AttachDescriptorResponse)
+    }
+
+    if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
+      const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+      if (!socketPath) {
+        throw new HrcRuntimeUnavailableError(
+          `broker runtime "${runtime.runtimeId}" is missing tmux socket state`,
+          {
+            runtimeId: runtime.runtimeId,
+            transport: runtime.transport,
+            controllerKind: runtime.controllerKind,
+          }
+        )
+      }
+
+      return json({
+        transport: 'tmux',
+        argv: [
+          'tmux',
+          '-S',
+          socketPath,
+          'attach-session',
+          '-t',
+          getBrokerRuntimeTmuxSessionName(runtime),
+        ],
+        bindingFence: {
+          hostSessionId: runtime.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          generation: runtime.generation,
         },
       } satisfies AttachDescriptorResponse)
     }
@@ -5540,7 +5686,9 @@ class HrcServerInstance implements HrcServer {
     }
 
     const operation = (async () => {
-      const latestRuntime = requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
+      const latestRuntime = await this.reconcileTmuxRuntimeLiveness(
+        requireKnownRuntime(this.db, refreshedRuntime.runtimeId)
+      )
       if (
         (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
         !isRuntimeUnavailableStatus(latestRuntime.status)
@@ -10788,6 +10936,40 @@ export type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
 
 export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux'
 
+export type InteractiveTmuxBrokerStartRoute =
+  | {
+      route: 'broker'
+      flagEnvName: string
+      allowedBrokerDriver: InteractiveTmuxBrokerDriver
+    }
+  | { route: 'legacy-tmux' }
+
+export function decideInteractiveTmuxBrokerStartRoute(
+  intent: HrcRuntimeIntent,
+  options: {
+    claudeCodeTmuxBrokerEnabled: boolean
+    codexCliTmuxBrokerEnabled: boolean
+  }
+): InteractiveTmuxBrokerStartRoute {
+  if (options.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
+    return {
+      route: 'broker',
+      flagEnvName: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'claude-code-tmux',
+    }
+  }
+
+  if (options.codexCliTmuxBrokerEnabled && shouldConsiderCodexCliTmuxBrokerDispatch(intent)) {
+    return {
+      route: 'broker',
+      flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
+      allowedBrokerDriver: 'codex-cli-tmux',
+    }
+  }
+
+  return { route: 'legacy-tmux' }
+}
+
 export function decideInteractiveTmuxExecutionRoute(
   intent: HrcRuntimeIntent,
   profile: BrokerExecutionProfile,
@@ -10885,6 +11067,62 @@ function shouldConsiderCodexCliTmuxBrokerDispatch(intent: HrcRuntimeIntent): boo
     intent.harness.provider === 'openai' &&
     (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
   )
+}
+
+function isMatchingInteractiveTmuxBrokerRuntime(
+  runtime: HrcRuntimeSnapshot,
+  intent: HrcRuntimeIntent,
+  brokerDriver: InteractiveTmuxBrokerDriver
+): boolean {
+  return (
+    runtime.controllerKind === 'harness-broker' &&
+    runtime.transport === 'tmux' &&
+    runtime.provider === intent.harness.provider &&
+    getBrokerRuntimeDriver(runtime) === brokerDriver
+  )
+}
+
+function getBrokerRuntimeDriver(runtime: HrcRuntimeSnapshot): string | undefined {
+  const tmuxDriver = runtime.tmuxJson?.['brokerDriver']
+  if (typeof tmuxDriver === 'string' && tmuxDriver.length > 0) {
+    return tmuxDriver
+  }
+
+  const stateTmux = runtime.runtimeStateJson?.['tmux']
+  if (isRecord(stateTmux)) {
+    const stateDriver = stateTmux['brokerDriver']
+    if (typeof stateDriver === 'string' && stateDriver.length > 0) {
+      return stateDriver
+    }
+  }
+
+  return undefined
+}
+
+function getBrokerRuntimeTmuxSocketPath(runtime: HrcRuntimeSnapshot): string | undefined {
+  const tmuxSocketPath = runtime.tmuxJson?.['socketPath']
+  if (typeof tmuxSocketPath === 'string' && tmuxSocketPath.length > 0) {
+    return tmuxSocketPath
+  }
+
+  const stateTmux = runtime.runtimeStateJson?.['tmux']
+  if (isRecord(stateTmux)) {
+    const stateSocketPath = stateTmux['socketPath']
+    if (typeof stateSocketPath === 'string' && stateSocketPath.length > 0) {
+      return stateSocketPath
+    }
+  }
+
+  return undefined
+}
+
+function getBrokerRuntimeTmuxSessionName(runtime: HrcRuntimeSnapshot): string {
+  const sessionName = runtime.tmuxJson?.['sessionName']
+  if (typeof sessionName === 'string' && sessionName.length > 0) {
+    return sessionName
+  }
+
+  return `hrc-${runtime.hostSessionId.slice(0, 12)}`
 }
 
 function isInteractiveTmuxBrokerIntent(intent: HrcRuntimeIntent): boolean {
@@ -11082,6 +11320,16 @@ function toEnsureRuntimeResponse(runtime: HrcRuntimeSnapshot): EnsureRuntimeResp
         surfaceId: surface.surfaceId,
         ...(surface.title ? { title: surface.title } : {}),
       },
+    }
+  }
+
+  if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
+    return {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      transport: 'tmux',
+      status: runtime.status,
+      supportsInFlightInput: runtime.supportsInflightInput,
     }
   }
 

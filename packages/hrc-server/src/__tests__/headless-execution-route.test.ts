@@ -57,6 +57,13 @@ import { makeInteractiveTmuxProfile } from './broker-compile-fixtures'
 type Harness = HrcRuntimeIntent['harness']
 type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
 type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
+type InteractiveTmuxBrokerStartRoute =
+  | {
+      route: 'broker'
+      flagEnvName: string
+      allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux'
+    }
+  | { route: 'legacy-tmux' }
 
 // Minimal valid intent factory — only the fields the routing decision reads.
 function intent(
@@ -102,6 +109,18 @@ const decideInteractiveTmuxExecutionRoute = (
   }
 ).decideInteractiveTmuxExecutionRoute
 
+const decideInteractiveTmuxBrokerStartRoute = (
+  hrc as unknown as {
+    decideInteractiveTmuxBrokerStartRoute?: (
+      intent: HrcRuntimeIntent,
+      options: {
+        claudeCodeTmuxBrokerEnabled: boolean
+        codexCliTmuxBrokerEnabled: boolean
+      }
+    ) => InteractiveTmuxBrokerStartRoute
+  }
+).decideInteractiveTmuxBrokerStartRoute
+
 const runInteractiveTmuxRoute = (
   hrc as unknown as {
     runInteractiveTmuxRoute?: <T>(
@@ -135,6 +154,10 @@ describe('W4 cutover seam — exports exist', () => {
 
   it('exports decideInteractiveTmuxExecutionRoute', () => {
     expect(typeof decideInteractiveTmuxExecutionRoute).toBe('function')
+  })
+
+  it('exports decideInteractiveTmuxBrokerStartRoute', () => {
+    expect(typeof decideInteractiveTmuxBrokerStartRoute).toBe('function')
   })
 
   it('exports runInteractiveTmuxRoute', () => {
@@ -472,6 +495,52 @@ describe('decideInteractiveTmuxExecutionRoute — codex-cli-tmux flag', () => {
         allowedBrokerDriver: 'codex-cli-tmux',
       })
     ).toBe('legacy-tmux')
+  })
+})
+
+describe('decideInteractiveTmuxBrokerStartRoute — no-prompt interactive starts', () => {
+  it('selects the Claude Code tmux broker when the Claude flag is enabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'anthropic', interactive: true, id: 'claude-code' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: true,
+          codexCliTmuxBrokerEnabled: false,
+        }
+      )
+    ).toEqual({
+      route: 'broker',
+      flagEnvName: 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'claude-code-tmux',
+    })
+  })
+
+  it('selects the Codex CLI tmux broker when the Codex flag is enabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'openai', interactive: true, id: 'codex-cli' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: false,
+          codexCliTmuxBrokerEnabled: true,
+        }
+      )
+    ).toEqual({
+      route: 'broker',
+      flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
+      allowedBrokerDriver: 'codex-cli-tmux',
+    })
+  })
+
+  it('keeps no-prompt interactive starts on legacy tmux when the matching flag is disabled', () => {
+    expect(
+      decideInteractiveTmuxBrokerStartRoute!(
+        intent({ provider: 'anthropic', interactive: true, id: 'claude-code' }, 'interactive'),
+        {
+          claudeCodeTmuxBrokerEnabled: false,
+          codexCliTmuxBrokerEnabled: true,
+        }
+      )
+    ).toEqual({ route: 'legacy-tmux' })
   })
 })
 

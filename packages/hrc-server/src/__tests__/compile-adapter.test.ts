@@ -156,6 +156,39 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(req?.identity.runId).toBeUndefined()
   })
 
+  it('allocates initialInputId and runId for managed interactive starts without an explicit prompt', async () => {
+    const captured: { request?: RuntimeCompileRequest } = {}
+    const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
+      captured.request = request
+      const identity = request.identity as RuntimeIdentityAllocation
+      const { profile } = makeInteractiveTmuxProfile(identity)
+      return makeCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({
+          placement: {
+            agentRoot: '/tmp/agent',
+            projectRoot: '/tmp/project',
+            cwd: '/tmp/project',
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentName: 'clod', projectRoot: '/tmp/project' },
+          } as HrcRuntimeIntent['placement'],
+          harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
+          initialPrompt: undefined,
+        }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+      },
+      { compile, ids: makeIdAllocator() }
+    )
+
+    expect(captured.request?.identity.initialInputId).toBe('input_T1')
+    expect(captured.request?.identity.runId).toBe('run_T1')
+    expect(result.admitted).toBe(true)
+  })
+
   it('echoes the allocated invocationId into startRequest.spec.invocationId on the admitted result', async () => {
     const { compile } = makeCapturingCompile()
     const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })

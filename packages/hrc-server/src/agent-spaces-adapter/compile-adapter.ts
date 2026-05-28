@@ -110,7 +110,24 @@ export type BrokerCompileAdapterResult =
 
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
 function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
-  return intent.initialPrompt !== undefined || (intent.attachments?.length ?? 0) > 0
+  return (
+    intent.initialPrompt !== undefined ||
+    (intent.attachments?.length ?? 0) > 0 ||
+    hasManagedInteractiveStartupPrompt(intent)
+  )
+}
+
+function hasManagedInteractiveStartupPrompt(intent: HrcRuntimeIntent): boolean {
+  if (intent.harness.interactive !== true) {
+    return false
+  }
+  const bundle = intent.placement.bundle
+  return (
+    bundle !== null &&
+    typeof bundle === 'object' &&
+    'kind' in bundle &&
+    bundle.kind === 'agent-project'
+  )
 }
 
 /**
