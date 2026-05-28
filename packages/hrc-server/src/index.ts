@@ -500,6 +500,12 @@ export type HrcServerOptions = {
    * Env override: `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` (`1`/`true` enables).
    */
   claudeCodeTmuxBrokerEnabled?: boolean | undefined
+  /**
+   * Cut interactive Codex CLI tmux dispatch over to the Harness Broker. Default off.
+   *
+   * Env override: `HRC_CODEX_CLI_TMUX_BROKER_ENABLED` (`1`/`true` enables).
+   */
+  codexCliTmuxBrokerEnabled?: boolean | undefined
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
@@ -567,6 +573,7 @@ const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
   'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'
 const HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV = 'HRC_HEADLESS_CODEX_BROKER_ENABLED'
 const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
+const HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -603,6 +610,13 @@ function resolveClaudeCodeTmuxBrokerEnabled(options: HrcServerOptions): boolean 
     return options.claudeCodeTmuxBrokerEnabled
   }
   return isTruthyFeatureFlag(process.env[HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV])
+}
+
+function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boolean {
+  if (typeof options.codexCliTmuxBrokerEnabled === 'boolean') {
+    return options.codexCliTmuxBrokerEnabled
+  }
+  return isTruthyFeatureFlag(process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV])
 }
 
 function resolveClaudeGhosttyIdleCleanupMinutes(): number {
@@ -681,6 +695,7 @@ class HrcServerInstance implements HrcServer {
   private readonly staleGenerationThresholdSec: number
   private readonly headlessCodexBrokerEnabled: boolean
   private readonly claudeCodeTmuxBrokerEnabled: boolean
+  private readonly codexCliTmuxBrokerEnabled: boolean
   private harnessBrokerController: HarnessBrokerController | undefined
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
@@ -801,6 +816,7 @@ class HrcServerInstance implements HrcServer {
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
+    this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
@@ -2103,7 +2119,25 @@ class HrcServerInstance implements HrcServer {
     if (this.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
       return await runInteractiveTmuxRoute('broker', {
         broker: async () =>
-          this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId),
+          this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
+            flagEnvName: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+            allowedBrokerDriver: 'claude-code-tmux',
+          }),
+        legacyTmux: async () =>
+          this.handleLegacyInteractiveTmuxDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
+            latestRuntime,
+            ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
+          }),
+      })
+    }
+
+    if (this.codexCliTmuxBrokerEnabled && shouldConsiderCodexCliTmuxBrokerDispatch(intent)) {
+      return await runInteractiveTmuxRoute('broker', {
+        broker: async () =>
+          this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
+            flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
+            allowedBrokerDriver: 'codex-cli-tmux',
+          }),
         legacyTmux: async () =>
           this.handleLegacyInteractiveTmuxDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
             latestRuntime,
@@ -2694,7 +2728,8 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
-    runId: string
+    runId: string,
+    flagOptions: { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
   ): Promise<Response> {
     const turnIntent: HrcRuntimeIntent =
       prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
@@ -2709,7 +2744,7 @@ class HrcServerInstance implements HrcServer {
           hostSessionId: session.hostSessionId,
           runId,
           route: 'interactive-broker',
-          flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+          flag: flagOptions.flagEnvName,
         }
       )
     }
@@ -2742,23 +2777,24 @@ class HrcServerInstance implements HrcServer {
         runId,
         code: compiled.code,
         route: 'interactive-broker',
-        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        flag: flagOptions.flagEnvName,
       })
     }
 
     const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
       brokerFlagEnabled: true,
+      allowedBrokerDriver: flagOptions.allowedBrokerDriver,
     })
     if (route !== 'broker') {
       throw new HrcRuntimeUnavailableError(
-        'interactive broker profile did not resolve to claude-code-tmux',
+        `interactive broker profile did not resolve to ${flagOptions.allowedBrokerDriver}`,
         {
           hostSessionId: session.hostSessionId,
           runId,
           brokerDriver: compiled.profile.brokerDriver,
           brokerTerminal: compiled.profile.brokerTerminal,
           route: 'interactive-broker',
-          flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+          flag: flagOptions.flagEnvName,
         }
       )
     }
@@ -2773,7 +2809,7 @@ class HrcServerInstance implements HrcServer {
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
       routeDecision: {
         route: 'broker',
-        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        flag: flagOptions.flagEnvName,
         selectedBy: 'decideInteractiveTmuxExecutionRoute',
       },
     })
@@ -2785,7 +2821,7 @@ class HrcServerInstance implements HrcServer {
         code: result.error.code,
         message: result.error.message,
         route: 'interactive-broker',
-        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        flag: flagOptions.flagEnvName,
       })
     }
 
@@ -10750,10 +10786,12 @@ export async function runHeadlessRoute<T>(
 
 export type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
 
+export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux'
+
 export function decideInteractiveTmuxExecutionRoute(
   intent: HrcRuntimeIntent,
   profile: BrokerExecutionProfile,
-  options: { brokerFlagEnabled: boolean }
+  options: { brokerFlagEnabled: boolean; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
 ): InteractiveTmuxExecutionRoute {
   if (!options.brokerFlagEnabled) {
     return 'legacy-tmux'
@@ -10762,7 +10800,7 @@ export function decideInteractiveTmuxExecutionRoute(
     return 'legacy-tmux'
   }
   return profile.interactionMode === 'interactive' &&
-    profile.brokerDriver === 'claude-code-tmux' &&
+    profile.brokerDriver === options.allowedBrokerDriver &&
     profile.brokerTerminal?.host === 'tmux'
     ? 'broker'
     : 'legacy-tmux'
@@ -10838,6 +10876,14 @@ function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeIntent): b
     isInteractiveTmuxBrokerIntent(intent) &&
     intent.harness.provider === 'anthropic' &&
     (intent.harness.id === undefined || intent.harness.id === 'claude-code')
+  )
+}
+
+function shouldConsiderCodexCliTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
+  return (
+    isInteractiveTmuxBrokerIntent(intent) &&
+    intent.harness.provider === 'openai' &&
+    (intent.harness.id === undefined || intent.harness.id === 'codex-cli')
   )
 }
 
