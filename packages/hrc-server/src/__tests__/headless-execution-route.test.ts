@@ -49,16 +49,19 @@ import { describe, expect, it } from 'bun:test'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
+import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import * as hrc from '../index'
+import { makeInteractiveTmuxProfile } from './broker-compile-fixtures'
 
 type Harness = HrcRuntimeIntent['harness']
 type HeadlessExecutionRoute = 'sdk' | 'broker' | 'legacy-exec'
+type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
 
 // Minimal valid intent factory — only the fields the routing decision reads.
 function intent(
   harness: Harness,
-  preferredMode: 'headless' | 'nonInteractive' = 'headless'
+  preferredMode: 'headless' | 'interactive' | 'nonInteractive' = 'headless'
 ): HrcRuntimeIntent {
   return {
     placement: { kind: 'inline' } as unknown as HrcRuntimeIntent['placement'],
@@ -86,6 +89,25 @@ const runHeadlessRoute = (
   }
 ).runHeadlessRoute
 
+const decideInteractiveTmuxExecutionRoute = (
+  hrc as unknown as {
+    decideInteractiveTmuxExecutionRoute?: (
+      intent: HrcRuntimeIntent,
+      profile: BrokerExecutionProfile,
+      options: { brokerFlagEnabled: boolean }
+    ) => InteractiveTmuxExecutionRoute
+  }
+).decideInteractiveTmuxExecutionRoute
+
+const runInteractiveTmuxRoute = (
+  hrc as unknown as {
+    runInteractiveTmuxRoute?: <T>(
+      route: InteractiveTmuxExecutionRoute,
+      executors: { broker: () => Promise<T>; legacyTmux: () => Promise<T> }
+    ) => Promise<T>
+  }
+).runInteractiveTmuxRoute
+
 const filterBrokerDispatchEnvForLockedEnv = (
   hrc as unknown as {
     filterBrokerDispatchEnvForLockedEnv?: (
@@ -106,6 +128,14 @@ describe('W4 cutover seam — exports exist', () => {
 
   it('exports filterBrokerDispatchEnvForLockedEnv', () => {
     expect(typeof filterBrokerDispatchEnvForLockedEnv).toBe('function')
+  })
+
+  it('exports decideInteractiveTmuxExecutionRoute', () => {
+    expect(typeof decideInteractiveTmuxExecutionRoute).toBe('function')
+  })
+
+  it('exports runInteractiveTmuxRoute', () => {
+    expect(typeof runInteractiveTmuxRoute).toBe('function')
   })
 })
 
@@ -319,5 +349,114 @@ describe('filterBrokerDispatchEnvForLockedEnv — broker dispatch contract', () 
       AGENT_HOST_SESSION_ID: 'hostSession_w4',
       HRC_RUN_ID: 'run_w4',
     })
+  })
+})
+
+describe('decideInteractiveTmuxExecutionRoute — claude-code-tmux flag', () => {
+  const interactiveClaudeIntent = intent(
+    { provider: 'anthropic', interactive: true, id: 'claude-code' },
+    'interactive'
+  )
+
+  it('flag OFF keeps interactive claude-code-tmux on the legacy tmux launch path', () => {
+    const { profile } = makeInteractiveTmuxProfile()
+
+    expect(
+      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
+        brokerFlagEnabled: false,
+      })
+    ).toBe('legacy-tmux')
+  })
+
+  it('flag ON selects broker only by interactive tmux brokerDriver/terminal metadata', () => {
+    const { profile } = makeInteractiveTmuxProfile()
+
+    expect(
+      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, profile, {
+        brokerFlagEnabled: true,
+      })
+    ).toBe('broker')
+  })
+
+  it('does not let the claude-code-tmux flag affect the headless codex route', () => {
+    const headlessCodex = intent({ provider: 'openai', interactive: false, id: 'codex-cli' })
+
+    expect(decideHeadlessExecutionRoute!(headlessCodex, { brokerFlagEnabled: false })).toBe(
+      'legacy-exec'
+    )
+  })
+
+  it('does not select the claude-code-tmux route for another interactive tmux broker driver', () => {
+    const { profile } = makeInteractiveTmuxProfile()
+    const codexTmuxProfile = {
+      ...profile,
+      brokerDriver: 'codex-cli-tmux',
+    } as BrokerExecutionProfile
+
+    expect(
+      decideInteractiveTmuxExecutionRoute!(interactiveClaudeIntent, codexTmuxProfile, {
+        brokerFlagEnabled: true,
+      })
+    ).toBe('legacy-tmux')
+  })
+})
+
+describe('runInteractiveTmuxRoute — dispatch + fail-closed', () => {
+  function makeSpies(
+    overrides: Partial<Record<'broker' | 'legacyTmux', () => Promise<string>>> = {}
+  ): {
+    broker: () => Promise<string>
+    legacyTmux: () => Promise<string>
+    calls: string[]
+  } {
+    const calls: string[] = []
+    const wrap = (name: 'broker' | 'legacyTmux', fn?: () => Promise<string>) => async () => {
+      calls.push(name)
+      return fn ? await fn() : name
+    }
+    return {
+      calls,
+      broker: wrap('broker', overrides.broker),
+      legacyTmux: wrap('legacyTmux', overrides.legacyTmux),
+    }
+  }
+
+  it('route "broker" invokes only the broker executor', async () => {
+    const spies = makeSpies()
+    const result = await runInteractiveTmuxRoute!('broker', {
+      broker: spies.broker,
+      legacyTmux: spies.legacyTmux,
+    })
+
+    expect(result).toBe('broker')
+    expect(spies.calls).toEqual(['broker'])
+  })
+
+  it('route "broker" that fails propagates the error and does not fall back to legacy tmux', async () => {
+    const failure = new Error('interactive broker compile/admission rejected')
+    const spies = makeSpies({
+      broker: async () => {
+        throw failure
+      },
+    })
+
+    await expect(
+      runInteractiveTmuxRoute!('broker', {
+        broker: spies.broker,
+        legacyTmux: spies.legacyTmux,
+      })
+    ).rejects.toThrow('interactive broker compile/admission rejected')
+    expect(spies.calls).toEqual(['broker'])
+  })
+
+  it('route "legacy-tmux" invokes only the legacy tmux executor', async () => {
+    const spies = makeSpies()
+    const result = await runInteractiveTmuxRoute!('legacy-tmux', {
+      broker: spies.broker,
+      legacyTmux: spies.legacyTmux,
+    })
+
+    expect(result).toBe('legacyTmux')
+    expect(spies.calls).toEqual(['legacyTmux'])
   })
 })

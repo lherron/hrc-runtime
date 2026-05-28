@@ -29,7 +29,12 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
 
-import { makeBrokerProfile, makeCompileResponse, makeFailedCompileResponse } from './broker-compile-fixtures'
+import {
+  makeBrokerProfile,
+  makeCompileResponse,
+  makeFailedCompileResponse,
+  makeInteractiveTmuxProfile,
+} from './broker-compile-fixtures'
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -167,6 +172,36 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
     expect(captured.request?.materialization.initialPrompt).toBe('do the thing')
     expect(captured.request?.requested.interactionMode).toBe('headless')
+  })
+
+  it('translates interactive Claude tmux intent into explicit compiler route fields', async () => {
+    const captured: { request?: RuntimeCompileRequest } = {}
+    const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
+      captured.request = request
+      const identity = request.identity as RuntimeIdentityAllocation
+      const { profile } = makeInteractiveTmuxProfile(identity)
+      return makeCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({
+          harness: { provider: 'anthropic', interactive: true, id: 'claude-code' },
+          initialPrompt: 'hello claude',
+        }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+      },
+      { compile, ids: makeIdAllocator() }
+    )
+
+    expect(result.admitted).toBe(true)
+    expect(captured.request?.requested).toMatchObject({
+      modelProvider: 'anthropic',
+      harnessFamily: 'claude-code',
+      preferredHarnessRuntime: 'claude-code-cli',
+      interactionMode: 'interactive',
+    })
   })
 
   it('preserves dispatchEnv as a dispatch-only channel: on placement, on the result, NEVER in hashed material', async () => {

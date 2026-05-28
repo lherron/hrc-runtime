@@ -29,8 +29,11 @@
 import type {
   BrokerExecutionProfile,
   CompiledRuntimePlan,
+  HarnessFamily,
+  HarnessRuntime,
   HostSessionId,
   InputId,
+  ProviderDomain,
   InvocationId,
   RequestId,
   RunId,
@@ -138,6 +141,48 @@ function toCompileAttachments(
   })
 }
 
+function toRequestedHarnessRoute(
+  harness: HrcRuntimeIntent['harness']
+): {
+  modelProvider: ProviderDomain
+  harnessFamily?: HarnessFamily | undefined
+  preferredHarnessRuntime?: HarnessRuntime | undefined
+} {
+  const preferredHarnessRuntime = toPreferredHarnessRuntime(harness.id)
+  const harnessFamily = toHarnessFamily(harness.provider, preferredHarnessRuntime)
+  return {
+    modelProvider: harness.provider,
+    ...(harnessFamily ? { harnessFamily } : {}),
+    ...(preferredHarnessRuntime ? { preferredHarnessRuntime } : {}),
+  }
+}
+
+function toPreferredHarnessRuntime(harnessId: HrcRuntimeIntent['harness']['id']): HarnessRuntime | undefined {
+  switch (harnessId) {
+    case 'claude-code':
+      return 'claude-code-cli'
+    case 'codex-cli':
+      return 'codex-cli'
+    case 'pi':
+    case 'pi-cli':
+      return 'pi-cli'
+    case 'pi-sdk':
+      return 'pi-sdk'
+    default:
+      return undefined
+  }
+}
+
+function toHarnessFamily(
+  provider: HrcRuntimeIntent['harness']['provider'],
+  runtime: HarnessRuntime | undefined
+): HarnessFamily | undefined {
+  if (runtime === 'claude-code-cli' || runtime === 'claude-agent-sdk') return 'claude-code'
+  if (runtime === 'codex-cli') return 'codex'
+  if (runtime === 'pi-cli' || runtime === 'pi-sdk') return 'pi'
+  return provider === 'openai' ? 'codex' : 'claude-code'
+}
+
 /**
  * Allocate identities, build a RuntimeCompileRequest, compile, select+verify the
  * broker profile, and return a verified/frozen plan. Does not execute anything.
@@ -190,6 +235,7 @@ export async function compileBrokerRuntimePlan(
     identity,
     placement,
     requested: {
+      ...toRequestedHarnessRoute(intent.harness),
       interactionMode: intent.harness.interactive ? 'interactive' : 'headless',
       ...(intent.harness.model ? { model: intent.harness.model } : {}),
     },

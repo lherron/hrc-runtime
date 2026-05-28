@@ -199,7 +199,7 @@ import {
 } from './server-parsers.js'
 
 import type { InvocationInput, InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import type { RuntimeContinuationRef } from 'spaces-runtime-contracts'
+import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runtime-contracts'
 import {
   type GhostmuxManagerOptions,
   type GhostmuxSurfaceState,
@@ -494,6 +494,12 @@ export type HrcServerOptions = {
    * Env override: `HRC_HEADLESS_CODEX_BROKER_ENABLED` (`1`/`true` enables).
    */
   headlessCodexBrokerEnabled?: boolean | undefined
+  /**
+   * Cut interactive Claude Code tmux dispatch over to the Harness Broker. Default off.
+   *
+   * Env override: `HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED` (`1`/`true` enables).
+   */
+  claudeCodeTmuxBrokerEnabled?: boolean | undefined
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
@@ -560,6 +566,7 @@ const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
 const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
   'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'
 const HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV = 'HRC_HEADLESS_CODEX_BROKER_ENABLED'
+const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -589,6 +596,13 @@ function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): boolean {
     return options.headlessCodexBrokerEnabled
   }
   return isTruthyFeatureFlag(process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV])
+}
+
+function resolveClaudeCodeTmuxBrokerEnabled(options: HrcServerOptions): boolean {
+  if (typeof options.claudeCodeTmuxBrokerEnabled === 'boolean') {
+    return options.claudeCodeTmuxBrokerEnabled
+  }
+  return isTruthyFeatureFlag(process.env[HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV])
 }
 
 function resolveClaudeGhosttyIdleCleanupMinutes(): number {
@@ -666,6 +680,7 @@ class HrcServerInstance implements HrcServer {
   private readonly staleGenerationEnabled: boolean
   private readonly staleGenerationThresholdSec: number
   private readonly headlessCodexBrokerEnabled: boolean
+  private readonly claudeCodeTmuxBrokerEnabled: boolean
   private harnessBrokerController: HarnessBrokerController | undefined
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
@@ -785,6 +800,7 @@ class HrcServerInstance implements HrcServer {
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
+    this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
@@ -2084,16 +2100,51 @@ class HrcServerInstance implements HrcServer {
       // Fall through to tmux/headless path with the idle runtime
     }
 
+    if (this.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
+      return await runInteractiveTmuxRoute('broker', {
+        broker: async () =>
+          this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId),
+        legacyTmux: async () =>
+          this.handleLegacyInteractiveTmuxDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
+            latestRuntime,
+            ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
+          }),
+      })
+    }
+
+    return await this.handleLegacyInteractiveTmuxDispatchTurn(
+      session,
+      dispatchIntent,
+      dispatchPrompt,
+      runId,
+      {
+        latestRuntime,
+        ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
+      }
+    )
+  }
+
+  private async handleLegacyInteractiveTmuxDispatchTurn(
+    session: HrcSessionRecord,
+    dispatchIntent: HrcRuntimeIntent,
+    dispatchPrompt: string,
+    runId: string,
+    options: {
+      latestRuntime: HrcRuntimeSnapshot | null
+      ensureInteractiveRuntime: boolean
+    }
+  ): Promise<Response> {
+    const latestRuntime = options.latestRuntime
     const ensureTmuxRuntime = shouldEnsureTmuxRuntimeForDispatch(
       latestRuntime,
-      intent,
-      options.ensureInteractiveRuntime === true
+      dispatchIntent,
+      options.ensureInteractiveRuntime
     )
     const runtime = ensureTmuxRuntime
       ? await this.ensureRuntimeForSession(
           session,
           dispatchIntent,
-          selectEnsureRuntimeRestartStyle(latestRuntime, intent)
+          selectEnsureRuntimeRestartStyle(latestRuntime, dispatchIntent)
         )
       : requireLatestRuntime(this.db, session.hostSessionId)
     assertRuntimeNotBusy(this.db, runtime)
@@ -2637,6 +2688,116 @@ class HrcServerInstance implements HrcServer {
     }
 
     return await this.executeHeadlessBrokerStartTurn(session, intent, prompt, runId, options)
+  }
+
+  private async handleInteractiveTmuxBrokerDispatchTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string
+  ): Promise<Response> {
+    const turnIntent: HrcRuntimeIntent =
+      prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+    const now = timestamp()
+    this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
+
+    const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
+    if (typeof client.compileRuntimePlan !== 'function') {
+      throw new HrcRuntimeUnavailableError(
+        'agent-spaces client cannot compile interactive broker runtime plans',
+        {
+          hostSessionId: session.hostSessionId,
+          runId,
+          route: 'interactive-broker',
+          flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        }
+      )
+    }
+
+    const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
+    const compiled = await compileBrokerRuntimePlan(
+      {
+        intent: turnIntent,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+      },
+      {
+        compile: client.compileRuntimePlan,
+        ids: {
+          requestId: () => `req-${randomUUID()}`,
+          operationId: () => `op-${randomUUID()}`,
+          runtimeId: () => `rt-${randomUUID()}`,
+          invocationId: () => `inv-${randomUUID()}`,
+          initialInputId: () => `input-${randomUUID()}`,
+          runId: () => runId,
+          traceId: () => `trace-${randomUUID()}`,
+        },
+      }
+    )
+
+    if (!compiled.admitted) {
+      throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
+        hostSessionId: session.hostSessionId,
+        runId,
+        code: compiled.code,
+        route: 'interactive-broker',
+        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+      })
+    }
+
+    const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
+      brokerFlagEnabled: true,
+    })
+    if (route !== 'broker') {
+      throw new HrcRuntimeUnavailableError(
+        'interactive broker profile did not resolve to claude-code-tmux',
+        {
+          hostSessionId: session.hostSessionId,
+          runId,
+          brokerDriver: compiled.profile.brokerDriver,
+          brokerTerminal: compiled.profile.brokerTerminal,
+          route: 'interactive-broker',
+          flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        }
+      )
+    }
+
+    const result = await this.getHarnessBrokerController().start({
+      plan: compiled.plan,
+      profile: compiled.profile,
+      startRequest: compiled.startRequest,
+      specHash: compiled.specHash,
+      startRequestHash: compiled.startRequestHash,
+      identity: compiled.identity,
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
+      routeDecision: {
+        route: 'broker',
+        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+        selectedBy: 'decideInteractiveTmuxExecutionRoute',
+      },
+    })
+
+    if (!result.ok) {
+      throw new HrcRuntimeUnavailableError('interactive broker start failed', {
+        hostSessionId: session.hostSessionId,
+        runId,
+        code: result.error.code,
+        message: result.error.message,
+        route: 'interactive-broker',
+        flag: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
+      })
+    }
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: result.runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
   }
 
   private getHarnessBrokerController(): HarnessBrokerController {
@@ -10587,6 +10748,41 @@ export async function runHeadlessRoute<T>(
   }
 }
 
+export type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
+
+export function decideInteractiveTmuxExecutionRoute(
+  intent: HrcRuntimeIntent,
+  profile: BrokerExecutionProfile,
+  options: { brokerFlagEnabled: boolean }
+): InteractiveTmuxExecutionRoute {
+  if (!options.brokerFlagEnabled) {
+    return 'legacy-tmux'
+  }
+  if (!isInteractiveTmuxBrokerIntent(intent)) {
+    return 'legacy-tmux'
+  }
+  return profile.interactionMode === 'interactive' &&
+    profile.brokerDriver === 'claude-code-tmux' &&
+    profile.brokerTerminal?.host === 'tmux'
+    ? 'broker'
+    : 'legacy-tmux'
+}
+
+export async function runInteractiveTmuxRoute<T>(
+  route: InteractiveTmuxExecutionRoute,
+  executors: {
+    broker: () => Promise<T>
+    legacyTmux: () => Promise<T>
+  }
+): Promise<T> {
+  switch (route) {
+    case 'broker':
+      return await executors.broker()
+    case 'legacy-tmux':
+      return await executors.legacyTmux()
+  }
+}
+
 export function filterBrokerDispatchEnvForLockedEnv(
   dispatchEnv: Record<string, string> | undefined,
   startRequest: InvocationStartRequest
@@ -10635,6 +10831,23 @@ function shouldUseGhosttyTransport(intent: HrcRuntimeIntent): boolean {
     return false
   }
   return true
+}
+
+function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
+  return (
+    isInteractiveTmuxBrokerIntent(intent) &&
+    intent.harness.provider === 'anthropic' &&
+    (intent.harness.id === undefined || intent.harness.id === 'claude-code')
+  )
+}
+
+function isInteractiveTmuxBrokerIntent(intent: HrcRuntimeIntent): boolean {
+  return (
+    intent.harness.interactive === true &&
+    !shouldUseHeadlessTransport(intent) &&
+    !shouldUseSdkTransport(intent) &&
+    !shouldUseGhosttyTransport(intent)
+  )
 }
 
 function isGhosttyClaudeIntent(intent: HrcRuntimeIntent): boolean {
