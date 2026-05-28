@@ -267,6 +267,27 @@ export class TmuxManager {
     }
   }
 
+  /**
+   * List the names of every session on this socket. Returns an empty array when
+   * the server/socket is gone (treated as "no sessions"). Used by the startup
+   * orphan-lease sweep to detect leaked `hrc-`-named lease sessions.
+   */
+  async listSessionNames(): Promise<string[]> {
+    try {
+      const result = await this.exec(['list-sessions', '-F', '#{session_name}'])
+      return result.stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return []
+      }
+      throw error
+    }
+  }
+
   private async createNamedSession(sessionName: string): Promise<TmuxPaneState> {
     const args = ['new-session', '-d']
     const sanitizedPath = sanitizeTmuxServerPath(process.env['PATH'])

@@ -327,11 +327,13 @@ describe('HarnessBrokerController', () => {
       brokerDriver: 'claude-code-tmux',
       socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock',
       allocatedAt: NOW,
+      generation: 1,
     })
     expect(runtime?.runtimeStateJson?.['tmux']).toEqual({
       brokerDriver: 'claude-code-tmux',
       socketPath: '/tmp/hrc-runtime/claude-code-tmux/runtime_tmux/tmux.sock',
       allocatedAt: NOW,
+      generation: 1,
     })
   })
 
@@ -368,6 +370,47 @@ describe('HarnessBrokerController', () => {
 
     expect(seen).toEqual([event])
     expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.lastEventSeq).toBe(42)
+  })
+
+  it('marks a runtime stale when its active broker invocation exits', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const started = await controller.start(makeStartInput())
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 0, signal: null },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    const runtime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+    expect(runtime?.status).toBe('stale')
+    expect(runtime?.activeRunId).toBeUndefined()
+    expect(runtime?.runtimeStateJson?.['terminalInvocation']).toEqual({
+      invocationId: 'invocation_w2',
+      eventType: 'invocation.exited',
+      seq: 9,
+    })
+    expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('failed')
+    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.invocationState).toBe(
+      'exited'
+    )
+    expect(
+      fixture.db.hrcEvents
+        .listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+        .some((event) => event.eventKind === 'runtime.stale')
+    ).toBe(true)
+    expect(fake.callOrder).toContain('close')
   })
 
   it('default-denies and persists permission decisions when no request channel exists', async () => {

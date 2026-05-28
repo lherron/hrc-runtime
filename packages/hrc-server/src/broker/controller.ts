@@ -50,6 +50,7 @@ import type {
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 
+import { appendHrcEvent } from '../hrc-event-helper'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 
 const BROKER_PROTOCOL_VERSION = 'harness-broker/0.1'
@@ -124,6 +125,12 @@ export type BrokerTmuxAllocation = {
   paneId?: string | undefined
   sessionName?: string | undefined
   windowName?: string | undefined
+  /**
+   * The runtime generation this lease was allocated for. Persisted alongside the
+   * pane ids so restart reconcile can tell a re-associated lease from a stale one
+   * across a generation rotation (C-02889 / T-01733 GAP 2).
+   */
+  generation?: number | undefined
 }
 
 export type BrokerTmuxAllocator = {
@@ -784,6 +791,10 @@ export class HarnessBrokerController {
     return {
       socketPath: allocation.socketPath,
       allocatedAt: allocation.allocatedAt ?? this.now(),
+      // Source generation from the runtime identity (authoritative) so the
+      // persisted lease records the generation it belongs to even when the
+      // allocator does not echo it back.
+      generation: allocation.generation ?? input.identity.generation,
       ...(allocation.lease ? { lease: allocation.lease } : {}),
       ...(allocation.sessionId !== undefined ? { sessionId: allocation.sessionId } : {}),
       ...(allocation.windowId !== undefined ? { windowId: allocation.windowId } : {}),
@@ -1146,11 +1157,95 @@ export class HarnessBrokerController {
       })
     }
 
+    if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
+      this.markBrokerInvocationTerminal(runtimeId, envelope, result)
+    }
+
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.disposed') {
       void this.agentchat?.deregisterInvocation?.({
         runtimeId,
         invocationId: envelope.invocationId,
         reason: envelope.type,
+      })
+    }
+  }
+
+  private markBrokerInvocationTerminal(
+    runtimeId: string,
+    envelope: InvocationEventEnvelope,
+    result: BrokerProjectionResult
+  ): void {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (!runtime || runtime.activeInvocationId !== String(envelope.invocationId)) {
+      return
+    }
+    if (runtime.status === 'terminated' || runtime.status === 'dead' || runtime.status === 'stale') {
+      return
+    }
+
+    const now = this.now()
+    const invocation = this.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
+    const runId = invocation?.runId ?? runtime.activeRunId
+    if (runtime.activeRunId !== undefined) {
+      const activeRun = this.db.runs.getByRunId(runtime.activeRunId)
+      if (activeRun && isActiveBrokerRun(activeRun)) {
+        this.db.runs.markCompleted(activeRun.runId, {
+          status: 'failed',
+          completedAt: now,
+          updatedAt: now,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
+        })
+      }
+      this.db.runtimes.updateRunId(runtimeId, undefined, now)
+    }
+    this.db.runtimes.update(runtimeId, {
+      status: 'stale',
+      lastActivityAt: now,
+      updatedAt: now,
+      runtimeStateJson: {
+        ...(runtime.runtimeStateJson ?? {}),
+        status: 'stale',
+        updatedAt: now,
+        terminalInvocation: {
+          invocationId: String(envelope.invocationId),
+          eventType: envelope.type,
+          seq: envelope.seq,
+        },
+      },
+    })
+
+    if (!result.idempotent) {
+      appendHrcEvent(this.db, 'runtime.stale', {
+        ts: now,
+        hostSessionId: runtime.hostSessionId,
+        scopeRef: runtime.scopeRef,
+        laneRef: runtime.laneRef,
+        generation: runtime.generation,
+        runtimeId,
+        ...(runId !== undefined ? { runId } : {}),
+        ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
+          ? { transport: runtime.transport }
+          : {}),
+        payload: {
+          reason: 'broker_invocation_terminal',
+          invocationId: String(envelope.invocationId),
+          eventType: envelope.type,
+          seq: envelope.seq,
+        },
+      })
+    }
+
+    const active = this.active.get(runtimeId)
+    if (active?.invocationId === String(envelope.invocationId)) {
+      this.markBrokerClosing(runtimeId, 'broker_invocation_terminal')
+      this.active.delete(runtimeId)
+      void active.client.close().catch((error) => {
+        this.logger.warn?.('harness broker close after terminal invocation failed', {
+          runtimeId,
+          invocationId: String(envelope.invocationId),
+          error: error instanceof Error ? error.message : String(error),
+        })
       })
     }
   }
@@ -1292,6 +1387,10 @@ function runtimeStatusFromInvocationState(state: string): string {
   return 'starting'
 }
 
+function isActiveBrokerRun(run: HrcRunRecord): boolean {
+  return run.status === 'accepted' || run.status === 'started' || run.status === 'running'
+}
+
 function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
   return (
     profile.interactionMode === 'interactive' &&
@@ -1315,10 +1414,10 @@ function toDispatchRuntime(
   return { tmux: { socketPath: allocation.socketPath } }
 }
 
-/** Pane ids carried by the lease (or top-level allocation), if present. */
-function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string, string> {
+/** Pane ids (+ generation) carried by the lease (or top-level allocation), if present. */
+function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string, string | number> {
   const lease = allocation.lease
-  const ids: Record<string, string> = {}
+  const ids: Record<string, string | number> = {}
   const sessionId = lease?.sessionId ?? allocation.sessionId
   const windowId = lease?.windowId ?? allocation.windowId
   const paneId = lease?.paneId ?? allocation.paneId
@@ -1329,6 +1428,9 @@ function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string,
   if (typeof paneId === 'string') ids['paneId'] = paneId
   if (typeof sessionName === 'string') ids['sessionName'] = sessionName
   if (typeof windowName === 'string') ids['windowName'] = windowName
+  // Generation lets restart reconcile distinguish a re-associated lease from a
+  // stale one across a generation rotation (T-01733 GAP 2).
+  if (typeof allocation.generation === 'number') ids['generation'] = allocation.generation
   return ids
 }
 
@@ -1376,11 +1478,13 @@ function extractRuntimeStateTmux(
       passthrough[key] = value
     }
   }
+  const generation = tmuxJson['generation']
   return {
     brokerDriver,
     socketPath,
     ...(typeof allocatedAt === 'string' ? { allocatedAt } : {}),
     ...passthrough,
+    ...(typeof generation === 'number' ? { generation } : {}),
   }
 }
 

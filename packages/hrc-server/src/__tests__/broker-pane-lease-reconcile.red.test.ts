@@ -186,6 +186,17 @@ function readInvocationState(invocationId: string): string | undefined {
   }
 }
 
+function readEventPayloads(eventKind: string, runtimeId: string): Array<Record<string, unknown>> {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.hrcEvents
+      .listByKind(eventKind, { runtimeId })
+      .map((event) => (event.payload ?? {}) as Record<string, unknown>)
+  } finally {
+    db.close()
+  }
+}
+
 const UNAVAILABLE = ['dead', 'stale', 'terminated']
 
 describe('RED #4: broker-tmux restart reconcile (id-match re-associate vs GC)', () => {
@@ -219,4 +230,34 @@ describe('RED #4: broker-tmux restart reconcile (id-match re-associate vs GC)', 
       expect(readInvocationState(invocationId)).toBe('disposed')
     })
   }
+})
+
+describe('RED (GAP 2): reconcile diagnostics carry the runtime generation', () => {
+  it('includes generation in the stale (broker_tmux_lease_stale_on_restart) diagnostic', async () => {
+    const { runtimeId } = await seedBrokerLease({
+      driver: 'claude-code-tmux',
+      paneIdOverride: '%99999',
+    })
+
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    const stalePayloads = readEventPayloads('runtime.stale', runtimeId)
+    const stale = stalePayloads.find(
+      (payload) => payload['reason'] === 'broker_tmux_lease_stale_on_restart'
+    )
+    expect(stale).toBeDefined()
+    expect(stale?.['generation']).toBe(1)
+  })
+
+  it('emits a re-associate diagnostic carrying generation for a live id-matched lease', async () => {
+    const { runtimeId } = await seedBrokerLease({ driver: 'codex-cli-tmux' })
+
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    const reassociated = readEventPayloads('runtime.reassociated', runtimeId)
+    expect(reassociated.length).toBeGreaterThan(0)
+    expect(reassociated[0]?.['generation']).toBe(1)
+  })
 })

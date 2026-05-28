@@ -2859,7 +2859,7 @@ class HrcServerInstance implements HrcServer {
 
     const mapper = new BrokerEventMapper({ db: this.db })
     const tmuxAllocator: BrokerTmuxAllocator = {
-      allocate: async ({ runtimeId, brokerDriver }) => {
+      allocate: async ({ runtimeId, brokerDriver, generation }) => {
         const socketPath = getBrokerTmuxSocketPath(this.options, brokerDriver, runtimeId)
         await mkdir(dirname(socketPath), { recursive: true })
         const tmux = createTmuxManager({ socketPath })
@@ -2891,6 +2891,7 @@ class HrcServerInstance implements HrcServer {
           socketPath,
           allocatedAt: timestamp(),
           lease,
+          generation,
           sessionId: pane.sessionId,
           windowId: pane.windowId,
           paneId: pane.paneId,
@@ -3116,6 +3117,10 @@ class HrcServerInstance implements HrcServer {
       const errorMessage = result.ok
         ? (result.response.reason ?? 'broker rejected invocation input')
         : result.error.message
+      const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+      const terminalInputFailure =
+        isTerminalBrokerInvocationState(invocation?.invocationState) ||
+        isTerminalBrokerInputFailure(errorMessage)
       this.db.runs.markCompleted(runId, {
         status: 'failed',
         completedAt,
@@ -3125,9 +3130,22 @@ class HrcServerInstance implements HrcServer {
       })
       this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
       this.db.runtimes.update(runtime.runtimeId, {
-        status: 'ready',
+        status: terminalInputFailure ? 'stale' : 'ready',
         lastActivityAt: completedAt,
         updatedAt: completedAt,
+        ...(terminalInputFailure
+          ? {
+              runtimeStateJson: {
+                ...(runtime.runtimeStateJson ?? {}),
+                status: 'stale',
+                updatedAt: completedAt,
+                terminalInvocation: {
+                  invocationId,
+                  reason: errorMessage,
+                },
+              },
+            }
+          : {}),
       })
       throw new HrcRuntimeUnavailableError('headless broker input failed', {
         runtimeId: runtime.runtimeId,
@@ -9827,7 +9845,10 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     }
     const db = openHrcDatabase(options.dbPath)
     await replaySpool(options, db)
-    await reconcileStartupState(db, tmux, ghostmux, { reconcileGhostty: claudeGhosttyEnabled })
+    await reconcileStartupState(db, tmux, ghostmux, {
+      reconcileGhostty: claudeGhosttyEnabled,
+      runtimeRoot: options.runtimeRoot,
+    })
     writeServerLog('INFO', 'server.start.ready', {
       runtimeRoot: options.runtimeRoot,
       stateRoot: options.stateRoot,
@@ -10509,7 +10530,7 @@ async function reconcileStartupState(
   db: HrcDatabase,
   tmux: ServerTmuxManager,
   ghostmux: ServerGhostmuxManager,
-  options: { reconcileGhostty: boolean }
+  options: { reconcileGhostty: boolean; runtimeRoot: string }
 ): Promise<void> {
   for (const launch of db.launches.listAll()) {
     if (!isOrphanableLaunchStatus(launch.status)) {
@@ -10652,6 +10673,7 @@ async function reconcileStartupState(
       // prior daemon — so fall through to the blanket orphan sweep.
       if (runtime.transport === 'tmux') {
         if (await reassociateBrokerTmuxLease(runtime)) {
+          emitBrokerTmuxReassociated(db, runtime)
           continue
         }
         gcBrokerRuntimeOnRestart(db, runtime, 'broker_tmux_lease_stale_on_restart')
@@ -10664,6 +10686,107 @@ async function reconcileStartupState(
         { runtimeId: runtime.runtimeId },
         error
       )
+    }
+  }
+
+  // After re-associating persisted leases, sweep orphaned broker-tmux lease
+  // servers — a crash BETWEEN tmux allocate and the runtime-persist write leaks
+  // a lease server on a per-runtime socket under `<runtimeRoot>/btmux/` whose
+  // `hrc-<driver>-<runtimeId>` session no DB runtime references. The re-associate
+  // pass only walks persisted runtimes, so it can never reclaim such a leak.
+  // (C-02889 / T-01730 GAP 1)
+  await sweepOrphanedBrokerTmuxLeases(db, options.runtimeRoot)
+}
+
+const DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS = 5 * 60 * 1000
+
+function resolveBrokerOrphanSweepGraceMs(): number {
+  const raw = process.env['HRC_BROKER_ORPHAN_SWEEP_GRACE_MS']
+  if (raw === undefined) {
+    return DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS
+  }
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS
+}
+
+/**
+ * Sweep leaked broker-tmux lease servers under `<runtimeRoot>/btmux/`. A lease
+ * socket is reclaimed only when (a) no non-terminal harness-broker runtime
+ * claims it, (b) it carries an `hrc-`-named lease session, and (c) the session
+ * is older than the grace threshold (so a session still being allocated/drained
+ * by a live other daemon is left alone). Killing the lease server removes the
+ * session and its socket. The whole sweep runs under the startup server lock
+ * (`acquireServerLock`), so two daemons cannot race the same socket.
+ */
+async function sweepOrphanedBrokerTmuxLeases(db: HrcDatabase, runtimeRoot: string): Promise<void> {
+  const dir = join(runtimeRoot, 'btmux')
+  let entries: string[]
+  try {
+    entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
+  } catch {
+    // No btmux directory yet → nothing to sweep.
+    return
+  }
+  if (entries.length === 0) {
+    return
+  }
+
+  // Lease sockets claimed by a still-live (non-terminal) broker-tmux runtime.
+  const claimedSockets = new Set<string>()
+  for (const runtime of db.runtimes.listAll()) {
+    if (
+      runtime.controllerKind !== 'harness-broker' ||
+      runtime.transport !== 'tmux' ||
+      runtime.status === 'terminated' ||
+      runtime.status === 'dead' ||
+      isRuntimeUnavailableStatus(runtime.status)
+    ) {
+      continue
+    }
+    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    if (socketPath) {
+      claimedSockets.add(socketPath)
+    }
+  }
+
+  const graceMs = resolveBrokerOrphanSweepGraceMs()
+  const now = Date.now()
+
+  for (const entry of entries) {
+    const socketPath = join(dir, entry)
+    if (claimedSockets.has(socketPath)) {
+      continue
+    }
+    try {
+      let ageMs: number
+      try {
+        const stats = await stat(socketPath)
+        ageMs = now - stats.mtimeMs
+      } catch {
+        // Socket vanished between readdir and stat → nothing to sweep.
+        continue
+      }
+      if (ageMs < graceMs) {
+        // Still within grace: a live other daemon may be allocating/draining it.
+        continue
+      }
+
+      const leaseTmux = createTmuxManager({ socketPath })
+      const sessions = await leaseTmux.listSessionNames()
+      const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
+      if (orphanLeaseSessions.length === 0) {
+        continue
+      }
+
+      await leaseTmux.killServer()
+      writeServerLog('INFO', 'broker.orphan_lease_swept', {
+        socketPath,
+        sessions: orphanLeaseSessions,
+        ageMs,
+        graceMs,
+      })
+    } catch (error) {
+      logStartupIssue('broker orphan lease sweep failed', { socketPath }, error)
     }
   }
 }
@@ -10686,6 +10809,29 @@ async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): Promise<
     return false
   }
   return brokerLeaseIdsMatch(runtime, inspected)
+}
+
+/**
+ * Emit a `runtime.reassociated` diagnostic for a broker-tmux lease whose live
+ * pane matched the persisted ids on restart. Carries the runtime generation so
+ * consumers can tell a re-associated lease from a stale one across a generation
+ * rotation (C-02889 / T-01730 GAP 2).
+ */
+function emitBrokerTmuxReassociated(db: HrcDatabase, runtime: HrcRuntimeSnapshot): void {
+  const session = requireSession(db, runtime.hostSessionId)
+  appendHrcEvent(db, 'runtime.reassociated', {
+    ts: timestamp(),
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    payload: {
+      runtimeId: runtime.runtimeId,
+      reason: 'broker_tmux_lease_reassociated_on_restart',
+      generation: runtime.generation,
+    },
+  })
 }
 
 /** Compare the persisted lease ids against an observed live pane. */
@@ -10733,6 +10879,7 @@ function gcBrokerRuntimeOnRestart(
   markRuntimeStale(db, session, runtime, {
     runtimeId: runtime.runtimeId,
     reason,
+    generation: runtime.generation,
     ...(invocationId !== undefined ? { invocationId } : {}),
   })
 }
@@ -11503,6 +11650,15 @@ function getReusableHeadlessRuntimeForSession(
       // (e.g. a Codex CLI runtime cannot serve a pi-sdk turn).
       if (harnessId !== undefined && candidate.harness !== harnessId) {
         return false
+      }
+      if (candidate.controllerKind === 'harness-broker') {
+        if (candidate.activeInvocationId === undefined) {
+          return false
+        }
+        const invocation = db.brokerInvocations.getByInvocationId(candidate.activeInvocationId)
+        if (!invocation || isTerminalBrokerInvocationState(invocation.invocationState)) {
+          return false
+        }
       }
       return true
     })
@@ -13593,6 +13749,14 @@ function isBrokerRuntimeQueueCapable(db: HrcDatabase, runtime: HrcRuntimeSnapsho
   } catch {
     return false
   }
+}
+
+function isTerminalBrokerInvocationState(state: string | undefined): boolean {
+  return state === 'exited' || state === 'failed' || state === 'disposed'
+}
+
+function isTerminalBrokerInputFailure(message: string): boolean {
+  return /Cannot accept input in state: (exited|failed|disposed)/.test(message)
 }
 
 function isRunActive(run: HrcRunRecord): boolean {
