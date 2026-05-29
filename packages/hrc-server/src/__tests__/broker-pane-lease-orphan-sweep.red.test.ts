@@ -19,7 +19,8 @@
  * hold a fresh session inside grace — both deterministic with a real tmux binary.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -37,7 +38,7 @@ const leaseSockets: string[] = []
 let priorGrace: string | undefined
 
 beforeEach(async () => {
-  fixture = await createHrcTestFixture('hrc-pane-lease-orphan-sweep-')
+  fixture = await createHrcTestFixture('hbo-')
   priorGrace = process.env[GRACE_ENV]
 })
 
@@ -179,5 +180,84 @@ describe('RED (GAP 1): broker-tmux orphan-session sweep on restart', () => {
     servers.push(server)
 
     expect(await sessionAlive(socketPath, sessionName)).toBe(true)
+  })
+
+  it('removes an unclaimed dead lease socket file older than the grace threshold', async () => {
+    const socketPath = join(btmuxDir(), 'cc-deadA.sock')
+    await mkdir(btmuxDir(), { recursive: true })
+    await writeFile(socketPath, '')
+
+    process.env[GRACE_ENV] = '0'
+
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    expect(existsSync(socketPath)).toBe(false)
+  })
+
+  it('operator reap RPC does NOT remove a dead lease socket file claimed by a non-terminal runtime', async () => {
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    const driver = 'cc'
+    const runtimeId = 'claimDeadB'
+    const socketPath = join(btmuxDir(), `${driver}-${runtimeId}.sock`)
+    await mkdir(btmuxDir(), { recursive: true })
+    await writeFile(socketPath, '')
+    seedClaimingRuntime(driver, runtimeId, socketPath)
+
+    const response = await fixture.postJson('/v1/server/tmux/kill-broker-leases', {})
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      skippedClaimed: number
+      removedDeadSocketFiles: number
+    }
+
+    expect(existsSync(socketPath)).toBe(true)
+    expect(body.skippedClaimed).toBe(1)
+    expect(body.removedDeadSocketFiles).toBe(0)
+  })
+
+  it('does NOT remove a fresh dead lease socket file within grace', async () => {
+    const socketPath = join(btmuxDir(), 'cx-deadC.sock')
+    await mkdir(btmuxDir(), { recursive: true })
+    await writeFile(socketPath, '')
+
+    process.env[GRACE_ENV] = '600000'
+
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    expect(existsSync(socketPath)).toBe(true)
+  })
+
+  it('operator reap RPC kills unclaimed lease servers and preserves claimed leases', async () => {
+    const unclaimed = await createLeaseSession('cc', 'opA')
+    const claimed = await createLeaseSession('cx', 'opB')
+    seedClaimingRuntime('cx', 'opB', claimed.socketPath)
+
+    process.env[GRACE_ENV] = '600000'
+
+    const server = await createHrcServer(fixture.serverOpts())
+    servers.push(server)
+
+    expect(await sessionAlive(unclaimed.socketPath, unclaimed.sessionName)).toBe(true)
+    expect(await sessionAlive(claimed.socketPath, claimed.sessionName)).toBe(true)
+
+    const response = await fixture.postJson('/v1/server/tmux/kill-broker-leases', {})
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      ok: true
+      killedLiveLeaseServers: number
+      removedDeadSocketFiles: number
+      skippedClaimed: number
+    }
+
+    expect(body.ok).toBe(true)
+    expect(body.killedLiveLeaseServers).toBe(1)
+    expect(body.removedDeadSocketFiles).toBe(0)
+    expect(body.skippedClaimed).toBe(1)
+    expect(await sessionAlive(unclaimed.socketPath, unclaimed.sessionName)).toBe(false)
+    expect(await sessionAlive(claimed.socketPath, claimed.sessionName)).toBe(true)
   })
 })

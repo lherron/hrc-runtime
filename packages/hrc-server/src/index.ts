@@ -81,6 +81,7 @@ import type {
   HrcTargetState,
   HrcTargetView,
   InspectRuntimeResponse,
+  KillBrokerTmuxLeasesResponse,
   ListMessagesResponse,
   ReconcileActiveRunReason,
   ReconcileActiveRunResult,
@@ -713,6 +714,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/runtimes/inspect')]: (request) =>
       this.handleInspectRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => this.handleSweepRuntimes(request),
+    [exactRouteKey('POST', '/v1/server/tmux/kill-broker-leases')]: () =>
+      this.handleKillBrokerTmuxLeases(),
     [exactRouteKey('POST', '/v1/runs/sweep-zombies')]: (request) =>
       this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
@@ -2125,10 +2128,16 @@ class HrcServerInstance implements HrcServer {
             allowedBrokerDriver: 'claude-code-tmux',
           }),
         legacyTmux: async () =>
-          this.handleLegacyInteractiveTmuxDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
-            latestRuntime,
-            ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
-          }),
+          this.handleLegacyInteractiveTmuxDispatchTurn(
+            session,
+            dispatchIntent,
+            dispatchPrompt,
+            runId,
+            {
+              latestRuntime,
+              ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
+            }
+          ),
       })
     }
 
@@ -2140,10 +2149,16 @@ class HrcServerInstance implements HrcServer {
             allowedBrokerDriver: 'codex-cli-tmux',
           }),
         legacyTmux: async () =>
-          this.handleLegacyInteractiveTmuxDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
-            latestRuntime,
-            ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
-          }),
+          this.handleLegacyInteractiveTmuxDispatchTurn(
+            session,
+            dispatchIntent,
+            dispatchPrompt,
+            runId,
+            {
+              latestRuntime,
+              ensureInteractiveRuntime: options.ensureInteractiveRuntime === true,
+            }
+          ),
       })
     }
 
@@ -4582,6 +4597,18 @@ class HrcServerInstance implements HrcServer {
       results,
       summary,
     } satisfies SweepRuntimesResponse)
+  }
+
+  private async handleKillBrokerTmuxLeases(): Promise<Response> {
+    const result = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
+      graceMs: 0,
+      removeDeadSocketFiles: true,
+      killLiveLeaseServers: true,
+    })
+    return json({
+      ok: true,
+      ...result,
+    } satisfies KillBrokerTmuxLeasesResponse)
   }
 
   private async handleSweepZombieRuns(request: Request): Promise<Response> {
@@ -10712,7 +10739,11 @@ async function reconcileStartupState(
   // `hrc-<driver>-<runtimeId>` session no DB runtime references. The re-associate
   // pass only walks persisted runtimes, so it can never reclaim such a leak.
   // (C-02889 / T-01730 GAP 1)
-  await sweepOrphanedBrokerTmuxLeases(db, options.runtimeRoot)
+  await sweepOrphanedBrokerTmuxLeases(db, options.runtimeRoot, {
+    graceMs: resolveBrokerOrphanSweepGraceMs(),
+    removeDeadSocketFiles: true,
+    killLiveLeaseServers: true,
+  })
 }
 
 const DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS = 5 * 60 * 1000
@@ -10726,26 +10757,43 @@ function resolveBrokerOrphanSweepGraceMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS
 }
 
+type BrokerTmuxLeaseSweepOptions = {
+  graceMs: number
+  removeDeadSocketFiles: boolean
+  killLiveLeaseServers: boolean
+}
+
+type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
+
 /**
- * Sweep leaked broker-tmux lease servers under `<runtimeRoot>/btmux/`. A lease
- * socket is reclaimed only when (a) no non-terminal harness-broker runtime
- * claims it, (b) it carries an `hrc-`-named lease session, and (c) the session
- * is older than the grace threshold (so a session still being allocated/drained
- * by a live other daemon is left alone). Killing the lease server removes the
- * session and its socket. The whole sweep runs under the startup server lock
- * (`acquireServerLock`), so two daemons cannot race the same socket.
+ * Sweep leaked broker-tmux lease sockets under `<runtimeRoot>/btmux/`. A socket
+ * is reclaimed only when no non-terminal broker-tmux runtime claims it and it is
+ * past the grace threshold. Live orphan servers are killed; dead socket files
+ * are removed when requested. Claimed sockets are always preserved.
  */
-async function sweepOrphanedBrokerTmuxLeases(db: HrcDatabase, runtimeRoot: string): Promise<void> {
+async function sweepOrphanedBrokerTmuxLeases(
+  db: HrcDatabase,
+  runtimeRoot: string,
+  options: BrokerTmuxLeaseSweepOptions
+): Promise<BrokerTmuxLeaseSweepResult> {
+  const result: BrokerTmuxLeaseSweepResult = {
+    scanned: 0,
+    killedLiveLeaseServers: 0,
+    removedDeadSocketFiles: 0,
+    skippedClaimed: 0,
+    skippedWithinGrace: 0,
+    errors: 0,
+  }
   const dir = join(runtimeRoot, 'btmux')
   let entries: string[]
   try {
     entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
   } catch {
     // No btmux directory yet → nothing to sweep.
-    return
+    return result
   }
   if (entries.length === 0) {
-    return
+    return result
   }
 
   // Lease sockets claimed by a still-live (non-terminal) broker-tmux runtime.
@@ -10766,12 +10814,13 @@ async function sweepOrphanedBrokerTmuxLeases(db: HrcDatabase, runtimeRoot: strin
     }
   }
 
-  const graceMs = resolveBrokerOrphanSweepGraceMs()
   const now = Date.now()
 
   for (const entry of entries) {
     const socketPath = join(dir, entry)
+    result.scanned += 1
     if (claimedSockets.has(socketPath)) {
+      result.skippedClaimed += 1
       continue
     }
     try {
@@ -10783,8 +10832,9 @@ async function sweepOrphanedBrokerTmuxLeases(db: HrcDatabase, runtimeRoot: strin
         // Socket vanished between readdir and stat → nothing to sweep.
         continue
       }
-      if (ageMs < graceMs) {
+      if (ageMs < options.graceMs) {
         // Still within grace: a live other daemon may be allocating/draining it.
+        result.skippedWithinGrace += 1
         continue
       }
 
@@ -10792,20 +10842,35 @@ async function sweepOrphanedBrokerTmuxLeases(db: HrcDatabase, runtimeRoot: strin
       const sessions = await leaseTmux.listSessionNames()
       const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
       if (orphanLeaseSessions.length === 0) {
+        if (options.removeDeadSocketFiles) {
+          await rm(socketPath, { force: true })
+          result.removedDeadSocketFiles += 1
+          writeServerLog('INFO', 'broker.dead_lease_socket_removed', {
+            socketPath,
+            ageMs,
+            graceMs: options.graceMs,
+          })
+        }
         continue
       }
 
+      if (!options.killLiveLeaseServers) {
+        continue
+      }
       await leaseTmux.killServer()
+      result.killedLiveLeaseServers += 1
       writeServerLog('INFO', 'broker.orphan_lease_swept', {
         socketPath,
         sessions: orphanLeaseSessions,
         ageMs,
-        graceMs,
+        graceMs: options.graceMs,
       })
     } catch (error) {
+      result.errors += 1
       logStartupIssue('broker orphan lease sweep failed', { socketPath }, error)
     }
   }
+  return result
 }
 
 /**

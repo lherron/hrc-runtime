@@ -14,6 +14,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   InspectRuntimeResponse,
+  KillBrokerTmuxLeasesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
   SweepRuntimesRequest,
@@ -1129,13 +1130,35 @@ async function cmdTmuxStatus(args: string[]): Promise<void> {
 
 async function cmdTmuxKill(args: string[]): Promise<void> {
   if (!hasFlag(args, '--yes')) {
-    fatal('tmux kill is destructive; rerun with --yes to kill the HRC tmux server')
+    fatal(
+      'tmux kill is destructive; rerun with --yes to kill the HRC tmux server and broker-tmux lease servers'
+    )
+  }
+
+  let brokerLeaseResult: KillBrokerTmuxLeasesResponse
+  try {
+    const client = createClient()
+    brokerLeaseResult = await client.killBrokerTmuxLeases()
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    fatal(`daemon unavailable; broker-tmux lease servers were not reaped: ${detail}`)
   }
 
   const status = await collectTmuxStatus()
   if (!status.available) {
     fatal(status.error ?? 'tmux unavailable')
   }
+
+  process.stderr.write(
+    `hrc: broker-tmux lease server(s) reaped: ${brokerLeaseResult.killedLiveLeaseServers} killed, ${brokerLeaseResult.removedDeadSocketFiles} dead socket file(s) removed`
+  )
+  if (brokerLeaseResult.skippedClaimed > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.skippedClaimed} claimed preserved`)
+  }
+  if (brokerLeaseResult.errors > 0) {
+    process.stderr.write(`, ${brokerLeaseResult.errors} error(s)`)
+  }
+  process.stderr.write('\n')
 
   if (!status.running) {
     process.stderr.write('hrc: tmux server is not running\n')
@@ -2351,7 +2374,7 @@ SAFETY RULES
   Prefer inspection before mutation.
   clear-context changes continuity state.
   interrupt and terminate affect live runtimes.
-  tmux kill is destructive to all interactive HRC runtimes.
+  tmux kill is destructive to the default tmux server and unclaimed broker-tmux lease servers.
 
 USE HRCCHAT FOR MESSAGING
   hrc is not the semantic messaging interface.
@@ -2405,7 +2428,7 @@ Commands:
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
   server status [--json]                     Show daemon/socket/API health state
   server tmux status [--json]         Show HRC tmux socket/session state
-  server tmux kill --yes              Kill the HRC tmux server and all interactive runtimes
+  server tmux kill --yes              Kill the HRC tmux server and unclaimed broker-tmux leases
   session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
@@ -2558,7 +2581,7 @@ Exit codes:
       await cmdServerStatus(args)
     })
 
-  const serverTmux = server.command('tmux').description('tmux backend control')
+  const serverTmux = server.command('tmux').description('tmux and broker-tmux backend control')
 
   serverTmux
     .command('status')
@@ -2574,7 +2597,7 @@ Exit codes:
 
   serverTmux
     .command('kill')
-    .description('kill the HRC tmux server')
+    .description('kill the HRC tmux server and unclaimed broker-tmux leases')
     .option('--yes', 'confirm destructive operation')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {

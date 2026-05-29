@@ -28,6 +28,7 @@ export type {
   StartRuntimeRequest,
   StartRuntimeResponse,
   RuntimeActionResponse,
+  KillBrokerTmuxLeasesResponse,
   RuntimeListFilter,
   RunListFilter,
   SendInFlightInputRequest,

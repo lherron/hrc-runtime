@@ -303,6 +303,16 @@ export type DropContinuationResponse = {
   previousContinuationKey: string | null
 }
 
+export type KillBrokerTmuxLeasesResponse = {
+  ok: true
+  scanned: number
+  killedLiveLeaseServers: number
+  removedDeadSocketFiles: number
+  skippedClaimed: number
+  skippedWithinGrace: number
+  errors: number
+}
+
 export type SweepRuntimeTransport = 'tmux' | 'headless' | 'sdk' | 'ghostty'
 
 export type SweepRuntimesRequest = {

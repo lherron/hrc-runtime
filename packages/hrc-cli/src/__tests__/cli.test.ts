@@ -204,6 +204,7 @@ let agentsRoot: string
 let projectsRoot: string
 let originalPath: string | undefined
 let originalClaudePath: string | undefined
+const leaseSockets: string[] = []
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const CLAUDE_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'claude-shim')
@@ -262,6 +263,17 @@ afterEach(async () => {
   } catch {
     // fine when no tmux server was created
   }
+  for (const leaseSocketPath of leaseSockets.splice(0)) {
+    try {
+      const { exited } = Bun.spawn(['tmux', '-S', leaseSocketPath, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      await exited
+    } catch {
+      // fine when no lease server was created
+    }
+  }
   process.env.PATH = originalPath
   process.env.ASP_CLAUDE_PATH = originalClaudePath
   await rm(tmpDir, { recursive: true, force: true })
@@ -277,6 +289,73 @@ async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   )
   // Write a marker so the project dir is recognized by the walk-up resolver.
   await writeFile(join(projectsRoot, projectId, 'asp-targets.toml'), 'schema = 1\n', 'utf8')
+}
+
+async function createRawTmuxSession(
+  socketPath: string,
+  sessionName: string,
+  trackAsLease = false
+): Promise<void> {
+  if (trackAsLease) {
+    leaseSockets.push(socketPath)
+  }
+  const { exited } = Bun.spawn(
+    ['tmux', '-S', socketPath, 'new-session', '-d', '-s', sessionName, '-n', 'main'],
+    { stdout: 'ignore', stderr: 'ignore' }
+  )
+  expect(await exited).toBe(0)
+}
+
+async function rawTmuxSessionAlive(socketPath: string, sessionName: string): Promise<boolean> {
+  const { exited } = Bun.spawn(['tmux', '-S', socketPath, 'has-session', '-t', `=${sessionName}`], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+  return (await exited) === 0
+}
+
+function seedBrokerClaimingRuntime(driver: string, runtimeId: string, socketPath: string): void {
+  const db = openHrcDatabase(dbPath)
+  const now = new Date().toISOString()
+  const hostSessionId = `hs_${runtimeId}`
+  const scopeRef = testProjectScope(`tmux-kill-claimed-${runtimeId}`)
+  try {
+    db.sessions.insert({
+      hostSessionId,
+      scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: [],
+    })
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId,
+      scopeRef,
+      laneRef: 'main',
+      generation: 1,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      supportsInflightInput: true,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      tmuxJson: {
+        socketPath,
+        sessionName: `hrc-${driver}-${runtimeId}`,
+        windowName: 'main',
+        brokerDriver: driver,
+      },
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+  } finally {
+    db.close()
+  }
 }
 
 async function createTmuxAttachShim(): Promise<string> {
@@ -593,6 +672,33 @@ describe('server group commander help', () => {
     expect(result.exitCode).toBe(0)
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
+    expect(output).toContain('broker-tmux')
+  })
+})
+
+describe('server tmux kill broker leases', () => {
+  it('reaps unclaimed broker-tmux lease servers through the daemon and reports both counts', async () => {
+    server = await createHrcServer(serverOpts())
+
+    await createRawTmuxSession(tmuxSocketPath, 'hrc-default-kill-test')
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    await mkdir(btmuxDir, { recursive: true })
+    const unclaimedSocket = join(btmuxDir, 'cc-a.sock')
+    const claimedSocket = join(btmuxDir, 'cx-b.sock')
+    await createRawTmuxSession(unclaimedSocket, 'hrc-cc-a', true)
+    await createRawTmuxSession(claimedSocket, 'hrc-cx-b', true)
+    seedBrokerClaimingRuntime('cx', 'b', claimedSocket)
+
+    const killResult = await runCli(['server', 'tmux', 'kill', '--yes'], cliEnv())
+    expect(killResult.exitCode).toBe(0)
+    expect(killResult.stderr).toMatch(
+      /broker-tmux lease server\(s\) reaped: 1 killed, 0 dead socket file\(s\) removed/i
+    )
+    expect(killResult.stderr).toMatch(/tmux server killed \(1 session\(s\)\)/i)
+
+    expect(await rawTmuxSessionAlive(unclaimedSocket, 'hrc-cc-a')).toBe(false)
+    expect(await rawTmuxSessionAlive(claimedSocket, 'hrc-cx-b')).toBe(true)
+    expect(await rawTmuxSessionAlive(tmuxSocketPath, 'hrc-default-kill-test')).toBe(false)
   })
 })
 

@@ -159,6 +159,7 @@ export type {
   InterruptAppSessionRequest,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  KillBrokerTmuxLeasesResponse,
   ListAppSessionsRequest,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,

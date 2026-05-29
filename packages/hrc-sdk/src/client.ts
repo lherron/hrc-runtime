@@ -48,6 +48,7 @@ import type {
   HrcBridgeTargetResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  KillBrokerTmuxLeasesResponse,
   LatestEventBySessionFilter,
   LaunchListFilter,
   ListMessagesResponse,
@@ -276,6 +277,10 @@ export class HrcClient {
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {
     return this.postJson<SweepRuntimesResponse>('/v1/runtimes/sweep', request)
+  }
+
+  async killBrokerTmuxLeases(): Promise<KillBrokerTmuxLeasesResponse> {
+    return this.postJson<KillBrokerTmuxLeasesResponse>('/v1/server/tmux/kill-broker-leases', {})
   }
 
   async sweepZombieRuns(request: SweepZombieRunsRequest = {}): Promise<SweepZombieRunsResponse> {

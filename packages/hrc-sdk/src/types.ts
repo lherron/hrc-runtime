@@ -36,6 +36,7 @@ export type {
   StartRuntimeResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  KillBrokerTmuxLeasesResponse,
   RuntimeActionResponse,
   StatusResponse,
   SweepZombieRunsRequest,
