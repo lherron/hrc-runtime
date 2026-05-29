@@ -1606,7 +1606,23 @@ async function cmdRun(args: string[]): Promise<void> {
 
     const client = createClient()
 
+    // Launch-timing instrumentation (diagnostic). `--dry-run` returns above before
+    // any of this server round-trip work; these per-RPC durations localize where a
+    // real launch spends its wall time. Gated behind HRC_LAUNCH_TIMING (or --debug)
+    // so normal interactive runs keep a clean terminal. Emitted to stderr so it
+    // never pollutes the --no-attach JSON on stdout.
+    const launchTiming = debug || process.env['HRC_LAUNCH_TIMING'] === '1'
+    const launchT0 = performance.now()
+    const markLaunch = (phase: string, sinceMs: number): void => {
+      if (!launchTiming) return
+      process.stderr.write(
+        `[hrc-launch-timing] ${phase} dur=${(performance.now() - sinceMs).toFixed(1)}ms\n`
+      )
+    }
+
+    const tResolve = performance.now()
     const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    markLaunch('resolveSession', tResolve)
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
     // No prompt → use startRuntime so the server can ensure the pane and, if
@@ -1615,6 +1631,7 @@ async function cmdRun(args: string[]): Promise<void> {
     // injected into the pane. A prompt routes through ensureRuntime + dispatchTurn,
     // where the server picks literal send-keys for live harnesses and the
     // launch-artifact path for fresh panes.
+    const tRuntime = performance.now()
     const runtime = hasPrompt
       ? await client.ensureRuntime({
           hostSessionId: resolved.hostSessionId,
@@ -1626,8 +1643,10 @@ async function cmdRun(args: string[]): Promise<void> {
           intent,
           restartStyle,
         })
+    markLaunch(hasPrompt ? 'ensureRuntime' : 'startRuntime', tRuntime)
 
     if (hasPrompt) {
+      const tDispatch = performance.now()
       try {
         await client.dispatchTurn({
           hostSessionId: resolved.hostSessionId,
@@ -1638,6 +1657,7 @@ async function cmdRun(args: string[]): Promise<void> {
           throw err
         }
       }
+      markLaunch('dispatchTurn', tDispatch)
     }
 
     if (noAttach) {
@@ -1650,7 +1670,10 @@ async function cmdRun(args: string[]): Promise<void> {
       return
     }
 
+    const tAttach = performance.now()
     const descriptor = await client.getAttachDescriptor(runtime.runtimeId)
+    markLaunch('getAttachDescriptor', tAttach)
+    markLaunch('total(pre-attach)', launchT0)
     await attachDescriptor(client, descriptor)
   } catch (err) {
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)

@@ -285,9 +285,27 @@ export class HarnessBrokerController {
       env: compactEnv(this.env),
     }
 
+    // Launch-timing instrumentation (diagnostic). The broker has no log of its
+    // own — its stderr is swallowed into a tail buffer by the stdio transport and
+    // only surfaced on a transport error. These phase durations are the broker's
+    // first observable timing; they land in hrc-server.err.log via the server
+    // logger so we can localize the cost of a real (non-dry-run) launch.
+    const timingStartMs = performance.now()
+    let phaseStartMs = timingStartMs
+    const markPhase = (phase: string): void => {
+      const nowMs = performance.now()
+      this.logger.info?.('broker.timing', {
+        phase,
+        durMs: Number((nowMs - phaseStartMs).toFixed(1)),
+        runtimeId: String(input.identity.runtimeId),
+      })
+      phaseStartMs = nowMs
+    }
+
     let client: BrokerClientLike | undefined
     try {
       client = await this.brokerClientFactory(startOptions)
+      markPhase('broker-spawn')
       client.onPermissionRequest((request) => this.handlePermissionRequest(request))
 
       const identity = input.identity
@@ -300,6 +318,7 @@ export class HarnessBrokerController {
         protocolVersions: [BROKER_PROTOCOL_VERSION],
         capabilities: { permissionRequests: true },
       })
+      markPhase('broker-hello')
 
       const admission = this.admitBrokerHello(input.profile, hello)
       if (!admission.ok) {
@@ -317,6 +336,7 @@ export class HarnessBrokerController {
       }
 
       const tmuxAllocation = await this.allocateTmuxIfRequired(input)
+      markPhase('broker-tmux-alloc')
       const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
       const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
       const startResult = await client.startInvocationFromRequest(
@@ -324,6 +344,14 @@ export class HarnessBrokerController {
         input.dispatchEnv,
         dispatchRuntime
       )
+      // Encompasses the driver's start() (e.g. codex's load-bearing paste-readiness
+      // sleep + launch-command paste), so this is usually the largest broker phase.
+      markPhase('broker-invocation-start')
+      this.logger.info?.('broker.timing', {
+        phase: 'broker-start-total',
+        durMs: Number((performance.now() - timingStartMs).toFixed(1)),
+        runtimeId: String(input.identity.runtimeId),
+      })
 
       const invocationAdmission = this.admitStartedInvocation(
         input.profile,
