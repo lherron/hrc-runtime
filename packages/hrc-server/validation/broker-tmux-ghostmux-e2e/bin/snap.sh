@@ -134,7 +134,11 @@ stat_socket "$DEFAULT_SOCK" > "$EVIDENCE_DIR/default-sock.current"
   printf 'current:  %s\n' "$(cat "$EVIDENCE_DIR/default-sock.current")"
 } > "$EVIDENCE_DIR/default-sock.compare"
 
-hrc runtime list --json > "$EVIDENCE_DIR/runtime-list.json"
+# Capture only LIVE tmux runtimes (the pane-lease evidence). The unfiltered
+# `hrc runtime list --json` dumps every runtime the DB has ever held (1000s of
+# terminated/stale rows) — ~2MB per snap, hoarding tens of MB of near-identical
+# state per run. The lease invariant only cares about ready tmux runtimes.
+hrc runtime list --transport tmux --status ready --json > "$EVIDENCE_DIR/runtime-list.json"
 
 if [[ -n "$LOG_OUT" && -f "$LOG_OUT" ]]; then
   tail -n "$LOG_TAIL_LINES" "$LOG_OUT" > "$EVIDENCE_DIR/hrc-server.log.tail"
