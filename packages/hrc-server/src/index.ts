@@ -1781,10 +1781,11 @@ class HrcServerInstance implements HrcServer {
     validateAppSessionFence(body.fence, session)
     const runtime = requireLatestRuntime(this.db, session.hostSessionId)
 
-    const paneId = requireTmuxPane(runtime).paneId
-    await this.tmux.sendLiteral(paneId, body.text)
+    const pane = requireTmuxPane(runtime)
+    const tmux = this.tmuxForPane(pane)
+    await tmux.sendLiteral(pane.paneId, body.text)
     if (body.enter === true) {
-      await this.tmux.sendEnter(paneId)
+      await tmux.sendEnter(pane.paneId)
     }
 
     const now = timestamp()
@@ -2445,7 +2446,7 @@ class HrcServerInstance implements HrcServer {
         if (!tmuxPane) {
           throw new Error('missing tmux pane for tmux literal dispatch')
         }
-        await this.tmux.sendLiteral(tmuxPane.paneId, prompt)
+        await this.tmuxForPane(tmuxPane).sendLiteral(tmuxPane.paneId, prompt)
       }
       // Pause before Enter to avoid paste-burst classification in TUIs.
       await Bun.sleep(200)
@@ -2458,7 +2459,7 @@ class HrcServerInstance implements HrcServer {
         if (!tmuxPane) {
           throw new Error('missing tmux pane for tmux literal dispatch')
         }
-        await this.tmux.sendEnter(tmuxPane.paneId)
+        await this.tmuxForPane(tmuxPane).sendEnter(tmuxPane.paneId)
       }
       writeServerLog('INFO', 'launch.dispatch.literal_enqueued', {
         hostSessionId: session.hostSessionId,
@@ -4191,10 +4192,10 @@ class HrcServerInstance implements HrcServer {
 
     const runtime =
       bridge.runtimeId !== undefined ? this.db.runtimes.getByRuntimeId(bridge.runtimeId) : undefined
-    const paneId = await this.resolveBridgePaneId(bridge, runtime)
-    await this.tmux.sendLiteral(paneId, delivery.text + (delivery.oobSuffix ?? ''))
+    const { paneId, tmux } = await this.resolveBridgePane(bridge, runtime)
+    await tmux.sendLiteral(paneId, delivery.text + (delivery.oobSuffix ?? ''))
     if (delivery.enter) {
-      await this.tmux.sendEnter(paneId)
+      await tmux.sendEnter(paneId)
     }
 
     const event = appendHrcEvent(this.db, 'bridge.delivered', {
@@ -4230,33 +4231,30 @@ class HrcServerInstance implements HrcServer {
     } satisfies DeliverBridgeResponse)
   }
 
-  private async resolveBridgePaneId(
+  private async resolveBridgePane(
     bridge: HrcLocalBridgeRecord,
     runtime: HrcRuntimeSnapshot | null | undefined
-  ): Promise<string> {
+  ): Promise<{ paneId: string; tmux: ServerTmuxManager }> {
+    // Lease-aware controller: a broker-tmux runtime's pane lives on a per-runtime
+    // lease socket, not the default HRC tmux server. Probe + deliver through it.
+    const runtimePane = runtime?.transport === 'tmux' ? requireTmuxPane(runtime) : undefined
+    const tmux = runtimePane ? this.tmuxForPane(runtimePane) : this.tmux
+
     if (bridge.transport === 'tmux' || bridge.target.startsWith('%')) {
       try {
-        await this.tmux.capture(bridge.target)
-        return bridge.target
+        await tmux.capture(bridge.target)
+        return { paneId: bridge.target, tmux }
       } catch {
         // Fall back to the runtime binding or a reused pane below.
       }
     }
 
-    const fallbackPaneId = (() => {
-      if (runtime?.transport === 'tmux') {
-        return requireTmuxPane(runtime).paneId
-      }
-
-      return undefined
-    })()
-
-    if (fallbackPaneId) {
-      return fallbackPaneId
+    if (runtimePane) {
+      return { paneId: runtimePane.paneId, tmux }
     }
 
     const pane = await this.tmux.ensurePane(bridge.hostSessionId, 'reuse_pty')
-    return pane.paneId
+    return { paneId: pane.paneId, tmux: this.tmux }
   }
 
   private async resolveBridgeTargetBinding(
@@ -5403,10 +5401,13 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
-    const text =
-      runtime.transport === 'ghostty'
-        ? await this.ghostmux.capture(requireGhosttySurface(runtime).surfaceId)
-        : await this.tmux.capture(requireTmuxPane(runtime).paneId)
+    let text: string
+    if (runtime.transport === 'ghostty') {
+      text = await this.ghostmux.capture(requireGhosttySurface(runtime).surfaceId)
+    } else {
+      const pane = requireTmuxPane(runtime)
+      text = await this.tmuxForPane(pane).capture(pane.paneId)
+    }
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
@@ -6416,11 +6417,25 @@ class HrcServerInstance implements HrcServer {
     } satisfies RuntimeActionResponse)
   }
 
+  /**
+   * Resolve the tmux controller for a specific runtime pane. Broker-tmux
+   * pane-lease runtimes live on a per-runtime lease socket (not the default
+   * HRC tmux server), so literal delivery / capture / interrupt against them
+   * must target that lease socket. Returns the shared default-socket controller
+   * unchanged for legacy interactive runtimes (pane on the default server).
+   */
+  private tmuxForPane(pane: TmuxPaneState): ServerTmuxManager {
+    if (pane.socketPath && pane.socketPath !== getTmuxSocketPath(this.options)) {
+      return createTmuxManager({ socketPath: pane.socketPath })
+    }
+    return this.tmux
+  }
+
   private async interruptTmuxRuntime(runtime: HrcRuntimeSnapshot): Promise<Response> {
     const session = requireSession(this.db, runtime.hostSessionId)
     const tmux = requireTmuxPane(runtime)
 
-    await this.tmux.interrupt(tmux.paneId)
+    await this.tmuxForPane(tmux).interrupt(tmux.paneId)
 
     const now = timestamp()
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
@@ -7800,7 +7815,7 @@ class HrcServerInstance implements HrcServer {
         await this.ghostmux.sendLiteral(surface.surfaceId, payload)
       } else {
         const pane = requireTmuxPane(runtime)
-        await this.tmux.sendLiteral(pane.paneId, payload)
+        await this.tmuxForPane(pane).sendLiteral(pane.paneId, payload)
       }
       // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
       await Bun.sleep(200)
@@ -7809,7 +7824,7 @@ class HrcServerInstance implements HrcServer {
         await this.ghostmux.sendEnter(surface.surfaceId)
       } else {
         const pane = requireTmuxPane(runtime)
-        await this.tmux.sendEnter(pane.paneId)
+        await this.tmuxForPane(pane).sendEnter(pane.paneId)
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
@@ -8060,8 +8075,8 @@ class HrcServerInstance implements HrcServer {
                 const surface = requireGhosttySurface(liveInteractiveRuntime)
                 await this.ghostmux.sendLiteral(surface.surfaceId, payload)
               } else {
-                const paneId = requireTmuxPane(liveInteractiveRuntime).paneId
-                await this.tmux.sendLiteral(paneId, payload)
+                const pane = requireTmuxPane(liveInteractiveRuntime)
+                await this.tmuxForPane(pane).sendLiteral(pane.paneId, payload)
               }
               // Pause before Enter to avoid paste-burst classification in TUIs (Claude/Codex).
               await Bun.sleep(200)
@@ -8069,8 +8084,8 @@ class HrcServerInstance implements HrcServer {
                 const surface = requireGhosttySurface(liveInteractiveRuntime)
                 await this.ghostmux.sendEnter(surface.surfaceId)
               } else {
-                const paneId = requireTmuxPane(liveInteractiveRuntime).paneId
-                await this.tmux.sendEnter(paneId)
+                const pane = requireTmuxPane(liveInteractiveRuntime)
+                await this.tmuxForPane(pane).sendEnter(pane.paneId)
               }
               this.db.messages.updateExecution(record.messageId, {
                 state: 'completed',
@@ -9414,7 +9429,7 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const runtime = findLatestSessionRuntime(this.db, session.hostSessionId)
+    const runtime = findBoundSessionRuntime(this.db, session.hostSessionId)
     if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
       throw new HrcRuntimeUnavailableError('no capturable runtime is currently bound', {
         sessionRef,
@@ -9431,7 +9446,8 @@ class HrcServerInstance implements HrcServer {
         .map((chunk) => chunk.text)
         .join('')
     } else {
-      text = await this.tmux.capture(requireTmuxPane(runtime).paneId)
+      const pane = requireTmuxPane(runtime)
+      text = await this.tmuxForPane(pane).capture(pane.paneId)
     }
 
     if (lines !== undefined && lines > 0) {
@@ -9498,19 +9514,20 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const paneId = runtime.transport === 'tmux' ? requireTmuxPane(runtime).paneId : undefined
+    const pane = runtime.transport === 'tmux' ? requireTmuxPane(runtime) : undefined
+    const tmux = pane ? this.tmuxForPane(pane) : this.tmux
     const surfaceId =
       runtime.transport === 'ghostty' ? requireGhosttySurface(runtime).surfaceId : undefined
     if (runtime.transport === 'ghostty') {
       await this.ghostmux.sendLiteral(surfaceId as string, body['text'])
     } else {
-      await this.tmux.sendLiteral(paneId as string, body['text'])
+      await tmux.sendLiteral((pane as TmuxPaneState).paneId, body['text'])
     }
     if (body['enter'] !== false) {
       if (runtime.transport === 'ghostty') {
         await this.ghostmux.sendEnter(surfaceId as string)
       } else {
-        await this.tmux.sendEnter(paneId as string)
+        await tmux.sendEnter((pane as TmuxPaneState).paneId)
       }
     }
 
@@ -11699,6 +11716,34 @@ function findLatestSessionRuntime(
   return db.runtimes.listByHostSessionId(hostSessionId).at(-1) ?? null
 }
 
+/**
+ * Resolve the runtime that best represents a session for operator-facing views
+ * (getTarget/doctor/who) and pane capture/peek: prefer the latest live
+ * interactive (tmux/ghostty) runtime so a newer headless dm-runtime cannot
+ * shadow the live TUI. Falls back to the latest available runtime of any
+ * transport (headless/sdk buffer capture), then the latest runtime regardless
+ * of status so callers can still report a stale/unavailable binding.
+ */
+function findBoundSessionRuntime(
+  db: HrcDatabase,
+  hostSessionId: string
+): HrcRuntimeSnapshot | null {
+  const runtimes = db.runtimes.listByHostSessionId(hostSessionId)
+  const interactive = runtimes.filter(
+    (runtime) =>
+      (runtime.transport === 'tmux' || runtime.transport === 'ghostty') &&
+      !isRuntimeUnavailableStatus(runtime.status)
+  )
+  if (interactive.length > 0) {
+    return interactive.at(-1) ?? null
+  }
+  const available = runtimes.filter((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+  if (available.length > 0) {
+    return available.at(-1) ?? null
+  }
+  return runtimes.at(-1) ?? null
+}
+
 function findLatestRunForRuntime(db: HrcDatabase, runtimeId: string): HrcRunRecord | null {
   return db.runs.listByRuntimeId(runtimeId).at(-1) ?? null
 }
@@ -12534,7 +12579,7 @@ function toTargetRuntimeView(runtime: HrcRuntimeSnapshot | null): HrcTargetRunti
 }
 
 function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTargetView {
-  const runtime = toTargetRuntimeView(findLatestSessionRuntime(db, session.hostSessionId))
+  const runtime = toTargetRuntimeView(findBoundSessionRuntime(db, session.hostSessionId))
   const state = toTargetState(session, runtime)
   const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
 
