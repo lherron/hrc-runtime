@@ -4,6 +4,7 @@ import {
   type HrcMessageRecord,
   type SemanticDmRequest,
   type SemanticDmResponse,
+  HrcDomainError,
   parseSelector,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -310,6 +311,56 @@ describe('hrcchat CLI smoke fixture', () => {
 
     expect(result.exitCode).toBe(2)
     expect(result.stderr.length).toBeGreaterThan(0)
+  })
+
+  it('hrcchat dm --reply-to self-heals on an unknown anchor (T-01744)', async () => {
+    const seenReplyTo: (string | undefined)[] = []
+    const client = {
+      async semanticDm(request: SemanticDmRequest): Promise<SemanticDmResponse> {
+        seenReplyTo.push(request.replyToMessageId)
+        if (request.replyToMessageId !== undefined) {
+          throw new HrcDomainError(
+            'malformed_request',
+            `unknown replyToMessageId "${request.replyToMessageId}"`,
+            { field: 'replyToMessageId', replyToMessageId: request.replyToMessageId }
+          )
+        }
+        return {
+          request: makeMessageRecord({ body: request.body, from: request.from, to: request.to }),
+        }
+      },
+    } as HrcClient
+
+    const result = await runCommand(() =>
+      cmdDm(client, { replyTo: 'msg-gone' }, ['human', 'hi'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    // First attempt with the anchor, second (retry) without it.
+    expect(seenReplyTo).toEqual(['msg-gone', undefined])
+    expect(result.stderr).toContain('--reply-to anchor "msg-gone" is unknown')
+    expect(result.stdout).toContain('dm sent to')
+  })
+
+  it('hrcchat dm does NOT retry on an unrelated malformed_request', async () => {
+    process.env['ASP_PROJECT'] = 'agent-spaces'
+    Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
+    let calls = 0
+    const client = {
+      async semanticDm(_request: SemanticDmRequest): Promise<SemanticDmResponse> {
+        calls += 1
+        throw new HrcDomainError('malformed_request', 'body too long', { field: 'body' })
+      },
+    } as HrcClient
+
+    let caught: unknown
+    try {
+      await cmdDm(client, { replyTo: 'msg-x' }, ['human', 'hi'])
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(HrcDomainError)
+    expect(calls).toBe(1)
   })
 })
 

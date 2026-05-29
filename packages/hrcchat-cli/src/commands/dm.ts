@@ -1,4 +1,5 @@
 import { CliUsageError, consumeBody } from 'cli-kit'
+import { HrcDomainError } from 'hrc-core'
 import type { HrcMessageAddress, SemanticDmResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
@@ -40,16 +41,36 @@ export async function cmdDm(
   const runtimeIntent =
     to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined
 
-  const result = await client.semanticDm({
-    from,
-    to,
-    body,
-    mode: opts.mode,
-    respondTo,
-    replyToMessageId: opts.replyTo,
-    runtimeIntent,
-    createIfMissing: true,
-  })
+  const sendWith = (replyToMessageId: string | undefined): Promise<SemanticDmResponse> =>
+    client.semanticDm({
+      from,
+      to,
+      body,
+      mode: opts.mode,
+      respondTo,
+      replyToMessageId,
+      runtimeIntent,
+      createIfMissing: true,
+    })
+
+  // T-01744: a stale/unresolvable --reply-to anchor (e.g. the parent message was
+  // lost across an unclean daemon restart) must not block delivery. The server
+  // rejects an unknown anchor with malformed_request{field:'replyToMessageId'};
+  // when that happens, self-heal by resending unthreaded (the documented
+  // workaround) and warn, instead of failing the send outright.
+  let result: SemanticDmResponse
+  try {
+    result = await sendWith(opts.replyTo)
+  } catch (err) {
+    if (opts.replyTo !== undefined && isUnknownReplyAnchorError(err)) {
+      process.stderr.write(
+        `hrcchat: --reply-to anchor "${opts.replyTo}" is unknown; sending without threading\n`
+      )
+      result = await sendWith(undefined)
+    } else {
+      throw err
+    }
+  }
 
   if (opts.json) {
     printJsonLine(buildHandoffEnvelope(result, to))
@@ -66,6 +87,18 @@ export async function cmdDm(
     const toStr = formatAddress(to)
     process.stdout.write(`dm sent to ${toStr} (seq: ${result.request.messageSeq})\n`)
   }
+}
+
+/**
+ * True when the server rejected the request specifically because the
+ * `--reply-to` anchor could not be resolved (vs. any other malformed input).
+ */
+function isUnknownReplyAnchorError(err: unknown): boolean {
+  return (
+    err instanceof HrcDomainError &&
+    err.code === 'malformed_request' &&
+    err.detail?.['field'] === 'replyToMessageId'
+  )
 }
 
 // -- Handoff envelope ---------------------------------------------------------
