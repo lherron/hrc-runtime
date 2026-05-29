@@ -304,9 +304,19 @@ async function runReplayOrFollow(
     events.push(event)
   }
 
-  // For non-follow mode: apply default replay limit (last 100 per Q3 FROZEN)
-  const replayLimit = args.last ?? DEFAULT_REPLAY_LIMIT
-  const output = !follow && events.length > replayLimit ? events.slice(-replayLimit) : events
+  // Non-follow replay caps (T-01740 Fix B): an explicit --from-seq window is
+  // UNCAPPED so a full event dump is possible (the reader's fromSeq branch is
+  // likewise uncapped — see hrc-core watchEvents). Without --from-seq the default
+  // last-N cap still applies; --last overrides the count. NB: the bare-selector
+  // default cap also lives in the reader (matching.slice(-100)), so widening it
+  // beyond --from-seq would need the reader to surface the matched total — left as
+  // a follow-up; --from-seq is the documented full-dump path.
+  const explicitWindow = args.fromSeq !== undefined
+  const replayLimit = args.last ?? (explicitWindow ? undefined : DEFAULT_REPLAY_LIMIT)
+  const output =
+    replayLimit !== undefined && events.length > replayLimit
+      ? events.slice(-replayLimit)
+      : events
 
   for (const event of output) {
     // Mark all non-follow events as replayed

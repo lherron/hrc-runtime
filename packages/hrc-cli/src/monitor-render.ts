@@ -121,7 +121,32 @@ export function toMonitorJsonEvent(
   const exitCode = numberField(event, 'exitCode')
   if (exitCode !== undefined) output['exitCode'] = exitCode
 
+  // Correlation ids — let a dump be tied back to a runtime/turn/launch/scope.
+  for (const key of ['scopeRef', 'runId', 'launchId', 'transport', 'category']) {
+    const value = stringField(event, key)
+    if (value) output[key] = value
+  }
+  const generation = numberField(event, 'generation')
+  if (generation !== undefined) output['generation'] = generation
+  const streamSeq = numberField(event, 'streamSeq')
+  if (streamSeq !== undefined) output['streamSeq'] = streamSeq
+
+  // Full event payload — the structured body (e.g. surface-report
+  // kind/surfaceId/paneId, terminal turn message). The curated top-level fields
+  // above remain for back-compat; consumers needing detail read `payload`.
+  const payload = payloadFrom(event)
+  if (payload !== undefined && !isEmptyObject(payload)) output['payload'] = payload
+
   return output
+}
+
+function isEmptyObject(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length === 0
+  )
 }
 
 class JsonMonitorRenderer implements MonitorRenderer {

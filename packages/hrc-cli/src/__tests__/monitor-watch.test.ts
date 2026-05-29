@@ -359,6 +359,49 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     }
   })
 
+  test('--from-seq replays the full matching window with no default cap (T-01740 Fix B)', async () => {
+    const events = Array.from({ length: 150 }, (_, index) =>
+      event(index + 1, 'runtime.idle', { result: 'idle' })
+    )
+    const result = await invokeWatch(
+      { selector: SELECTOR, fromSeq: 1 },
+      createFixtureState({ events })
+    )
+
+    expect(result.exitCode).toBe(0)
+    // Explicit window => no truncation, no default-cap note.
+    expect(result.stderr).toBe('')
+    expect(result.events).toHaveLength(150)
+    expect(result.events[0]).toMatchObject({ seq: 1, replayed: true })
+    expect(result.events.at(-1)).toMatchObject({ seq: 150, replayed: true })
+  })
+
+  test('--json carries the full event payload and correlation ids (T-01740 Fix A)', async () => {
+    const result = await invokeWatch(
+      { selector: SELECTOR },
+      createFixtureState({
+        events: [
+          event(200, 'surface.reported', {
+            runId: 'run-xyz',
+            launchId: 'launch-xyz',
+            payload: { kind: 'tmux-pane', surfaceId: '%0', paneId: '%0' },
+          }),
+        ],
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({
+      event: 'surface.reported',
+      generation: 12,
+      scopeRef: SCOPE_REF,
+      runId: 'run-xyz',
+      launchId: 'launch-xyz',
+      payload: { kind: 'tmux-pane', surfaceId: '%0', paneId: '%0' },
+    })
+  })
+
   test('--last replays the last n matching events and marks them replayed', async () => {
     const events = Array.from({ length: 12 }, (_, index) =>
       event(index + 1, index % 2 === 0 ? 'runtime.idle' : 'runtime.busy', {
