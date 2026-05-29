@@ -4458,6 +4458,9 @@ class HrcServerInstance implements HrcServer {
         this.staleGenerationEnabled &&
         this.staleGenerationThresholdSec > 0 &&
         continuationAgeSec > this.staleGenerationThresholdSec,
+      ...(runtime.transport === 'tmux'
+        ? { tmux: toStatusTmuxView(runtime.tmuxJson) }
+        : {}),
     } satisfies InspectRuntimeResponse)
   }
 
@@ -8400,6 +8403,27 @@ class HrcServerInstance implements HrcServer {
     }
     if (runtime.adopted) {
       return json(runtime)
+    }
+    // T-01738 F-V5: a broker-tmux runtime's pane lives on a per-runtime lease
+    // server. Adopting one whose lease is dead (or whose live ids no longer
+    // match the persisted pane) would mark it `adopted` while pointing a later
+    // turn at a pane that does not exist. Verify lease liveness first.
+    if (runtime.controllerKind === 'harness-broker') {
+      const leaseSocketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+      const leaseLive = await reassociateBrokerTmuxLease(runtime)
+      if (!leaseLive) {
+        throw new HrcConflictError(
+          HrcErrorCode.CONFLICT,
+          `runtime ${runtimeId} cannot be adopted: its broker-tmux lease is not live${
+            leaseSocketPath ? ` (socket ${leaseSocketPath})` : ''
+          }`,
+          {
+            runtimeId,
+            status: runtime.status,
+            ...(leaseSocketPath ? { leaseSocketPath } : {}),
+          }
+        )
+      }
     }
     const updated = this.db.runtimes.update(runtimeId, {
       adopted: true,

@@ -16,6 +16,7 @@ import type {
   HrcRuntimeIntent,
   HrcSessionRecord,
   HrcStatusResponse,
+  HrcStatusTmuxView,
 } from './contracts.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
@@ -289,6 +290,12 @@ export type InspectRuntimeResponse = {
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
+  /**
+   * tmux pane/lease allocation for tmux-transport runtimes. For broker-tmux
+   * runtimes this carries the per-runtime lease socket/session/pane so operators
+   * can locate the lease (T-01738 F-V1). Undefined for non-tmux runtimes.
+   */
+  tmux?: HrcStatusTmuxView | undefined
 }
 
 export type DropContinuationRequest = {

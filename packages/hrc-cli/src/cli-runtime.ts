@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite'
 import { existsSync, openSync, readFileSync, statSync } from 'node:fs'
-import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -61,6 +62,12 @@ export type ServerRuntimeStatus = {
   error?: string | undefined
 }
 
+export type TmuxLeaseStatus = {
+  socketPath: string
+  running: boolean
+  sessions: string[]
+}
+
 export type TmuxStatus = {
   available: boolean
   version?: string | undefined
@@ -68,6 +75,12 @@ export type TmuxStatus = {
   running: boolean
   sessionCount: number
   sessions: string[]
+  /**
+   * Per-runtime broker-tmux lease servers under `<runtimeRoot>/btmux/`. Each is
+   * an independent tmux server on its own socket (T-01738 F-V2). Empty when no
+   * lease sockets exist.
+   */
+  leases?: TmuxLeaseStatus[] | undefined
   error?: string | undefined
 }
 
@@ -628,6 +641,44 @@ export async function stopServerProcess(options?: {
   } catch {}
 }
 
+/** List the sessions on a single tmux server socket, or null if no server. */
+async function listTmuxSessionsOnSocket(socketPath: string): Promise<string[] | null> {
+  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'])
+  if (listResult.exitCode !== 0) {
+    return null
+  }
+  return listResult.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+/**
+ * Enumerate per-runtime broker-tmux lease servers under `<runtimeRoot>/btmux/`.
+ * Each `*.sock` is an independent tmux server; a dead/leftover socket reports
+ * running:false (T-01738 F-V2). Read-only — never kills or removes anything.
+ */
+export async function collectBrokerTmuxLeases(): Promise<TmuxLeaseStatus[]> {
+  const dir = join(resolveRuntimeRoot(), 'btmux')
+  let entries: string[]
+  try {
+    entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
+  } catch {
+    return []
+  }
+  const leases: TmuxLeaseStatus[] = []
+  for (const entry of entries.sort()) {
+    const socketPath = join(dir, entry)
+    const sessions = await listTmuxSessionsOnSocket(socketPath)
+    leases.push({
+      socketPath,
+      running: sessions !== null,
+      sessions: sessions ?? [],
+    })
+  }
+  return leases
+}
+
 export async function collectTmuxStatus(): Promise<TmuxStatus> {
   const socketPath = resolveTmuxSocketPath()
   const versionResult = await execProcess(['tmux', '-V'])
@@ -644,6 +695,8 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
     }
   }
 
+  const leases = await collectBrokerTmuxLeases()
+
   const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'])
   if (listResult.exitCode !== 0) {
     const output = `${listResult.stderr}\n${listResult.stdout}`.trim().toLowerCase()
@@ -659,6 +712,7 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
       running: false,
       sessionCount: 0,
       sessions: [],
+      leases,
       ...(noServer ? {} : { error: `${listResult.stderr}\n${listResult.stdout}`.trim() }),
     }
   }
@@ -675,6 +729,7 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
     running: true,
     sessionCount: sessions.length,
     sessions,
+    leases,
   }
 }
 
@@ -691,6 +746,18 @@ export function formatTmuxStatus(status: TmuxStatus): string {
   if (status.sessions.length > 0) {
     lines.push(`  session list: ${status.sessions.join(', ')}`)
   }
+
+  const leases = status.leases ?? []
+  lines.push(`  btmux leases: ${leases.length}`)
+  for (const lease of leases) {
+    const state = lease.running
+      ? lease.sessions.length > 0
+        ? lease.sessions.join(', ')
+        : '(running, no sessions)'
+      : '(dead socket)'
+    lines.push(`    - ${lease.socketPath}: ${state}`)
+  }
+
   if (status.error) {
     lines.push(`  error:        ${status.error}`)
   }

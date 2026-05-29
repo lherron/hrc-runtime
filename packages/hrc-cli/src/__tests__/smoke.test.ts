@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHrcServer } from 'hrc-server'
@@ -200,5 +200,43 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.stdout).toBe('')
     expect(result.stderr).toContain('unknown command: definitely-not-a-command')
+  })
+
+  it('server tmux status enumerates broker-tmux lease sockets (T-01738 F-V2)', async () => {
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    await mkdir(btmuxDir, { recursive: true })
+
+    // A live lease server on its own per-runtime socket.
+    const liveSocket = join(btmuxDir, 'cc-rtFV2.sock')
+    const liveSession = 'hrc-cc-rtFV2'
+    const spawned = Bun.spawn(
+      ['tmux', '-S', liveSocket, 'new-session', '-d', '-s', liveSession, '-n', 'main'],
+      { stdout: 'ignore', stderr: 'ignore' }
+    )
+    expect(await spawned.exited).toBe(0)
+
+    // A leftover dead socket file (no server behind it).
+    const deadSocket = join(btmuxDir, 'cx-rtDeadFV2.sock')
+    await writeFile(deadSocket, '')
+
+    try {
+      const result = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
+      expect(result.exitCode).toBe(0)
+      const status = JSON.parse(result.stdout) as {
+        leases?: { socketPath: string; running: boolean; sessions: string[] }[]
+      }
+      const leases = status.leases ?? []
+      const live = leases.find((l) => l.socketPath === liveSocket)
+      const dead = leases.find((l) => l.socketPath === deadSocket)
+      expect(live?.running).toBe(true)
+      expect(live?.sessions).toContain(liveSession)
+      expect(dead?.running).toBe(false)
+    } finally {
+      const killed = Bun.spawn(['tmux', '-S', liveSocket, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      await killed.exited
+    }
   })
 })

@@ -1246,6 +1246,12 @@ function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
     `  childPid      ${runtime.childPid ?? '(none)'}`,
     `  continuation  ${continuation}`,
   ]
+  if (runtime.tmux) {
+    const t = runtime.tmux
+    if (t.socketPath) lines.push(`  tmux socket   ${t.socketPath}`)
+    if (t.sessionName) lines.push(`  tmux session  ${t.sessionName}`)
+    if (t.paneId) lines.push(`  tmux pane     ${t.paneId}`)
+  }
   process.stdout.write(`${lines.join('\n')}\n`)
 }
 
