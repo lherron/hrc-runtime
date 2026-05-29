@@ -33,7 +33,9 @@ CORE rows:
 4. `hrcchat peek <target>`
 5. `hrc capture <runtimeId>` and `hrc runtime capture <runtimeId>`
 6. `hrc runtime interrupt <runtimeId>`
-7. Cross-cutting default socket invariant
+7. `hrc run <scope>` → detach → `hrc run <scope>` reattaches the SAME runtime (legacy
+   reattach semantics — no new session; `--force-restart` is the only path to a fresh PTY)
+8. Cross-cutting default socket invariant
 
 FULL adds:
 

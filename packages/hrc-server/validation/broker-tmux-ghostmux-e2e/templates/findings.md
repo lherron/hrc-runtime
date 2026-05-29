@@ -42,6 +42,7 @@ Date: `REPLACE_WITH_DATE`
 | core-peek | `hrcchat peek` | TODO | TODO | `evidence/core-peek/` | Output matches lease-pane capture. |
 | core-capture | `hrc capture` / `hrc runtime capture` | TODO | TODO | `evidence/core-capture/` | Captures lease pane, not default server. |
 | core-interrupt | `hrc runtime interrupt` | TODO | TODO | `evidence/core-interrupt/` | C-c reaches lease pane and aborts in-flight turn. |
+| core-reattach | `hrc run` → detach → `hrc run` | TODO | TODO | `evidence/core-reattach/` | Legacy reattach: second `hrc run <scope>` reattaches the SAME runtimeId (no new session); runtime stays alive across detach (viewer close); `--force-restart` is the only path to a fresh PTY. |
 | core-default-socket | default socket invariant | TODO | TODO | all rows | Inode and mtime unchanged versus `default-sock.baseline`. |
 | core-event-journal | monitor journal invariant | TODO | TODO | `events/` | `runtime:<rt> --from-seq <start> --json` includes payload and ids. |
 

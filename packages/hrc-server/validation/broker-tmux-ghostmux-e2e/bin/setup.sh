@@ -14,6 +14,7 @@ CX_AGENT="cody"
 TIER=""
 WATCH=0
 ALLOW_RESTART=0
+ALLOW_BUSY=0
 DRY_RUN=0
 RUN_ID=""
 PROMPT="Reply ACK for broker-tmux ghostmux validation setup."
@@ -34,6 +35,9 @@ Options:
   --full                 Prepare the FULL matrix.
   --watch                Start live monitor watch streams after runtimes resolve.
   --allow-restart        Permit bootout/bootstrap if broker flags are not already on.
+  --allow-busy           Proceed with the restart even if runtimes are busy/starting
+                         (override the safety guard only after confirming they are
+                         stale/expendable; live runtimes are re-associated on restart).
   --dry-run              Print planned actions without mutating daemon, ghostmux, or files.
   --run-id <id>          Override UTC timestamp run id.
   --project <id>         Project id for validation targets (default: hrc-runtime).
@@ -99,6 +103,17 @@ restart_server_for_flags() {
   launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
   sleep 2
   launchctl bootstrap "gui/$(id -u)" "$PLIST_INSTALLED"
+  # bootstrap returns before the daemon is listening on its socket; wait for it
+  # so the next hrc call doesn't race a not-yet-ready server. Trap-safe (no die).
+  local deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    if hrc monitor show --json >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "setup.sh: WARNING hrc-server not confirmed ready within 60s after restart" >&2
+  return 0
 }
 
 new_surface() {
@@ -110,7 +125,20 @@ new_surface() {
 send_surface_command() {
   local surface="$1"
   local command="$2"
-  ghostmux send-keys -t "$surface" --literal "$command"
+  # ScriptableGhostty can transiently fail to realize a freshly-created surface
+  # (no surfaceModel yet -> send-keys prints "error: Terminal model unavailable"
+  # but still exits 0). Retry until the surface accepts input, then fail loudly so
+  # a wedged surface never silently becomes a 180s wait_for_runtime timeout.
+  local attempts=0 out
+  while (( attempts < 8 )); do
+    out="$(ghostmux send-keys -t "$surface" "$command" 2>&1)"
+    if [[ "$out" != *error* && "$out" != *unavailable* ]]; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 2
+  done
+  die "ghostmux send-keys failed for surface $surface after $attempts attempts: ${out:-<empty>} (ScriptableGhostty surface did not realize; focus/restart Ghostty and retry)"
 }
 
 scope_ref() {
@@ -190,6 +218,7 @@ while [[ $# -gt 0 ]]; do
     --full) TIER="full"; shift ;;
     --watch) WATCH=1; shift ;;
     --allow-restart) ALLOW_RESTART=1; shift ;;
+    --allow-busy) ALLOW_BUSY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --project) PROJECT_ID="${2:-}"; shift 2 ;;
@@ -256,7 +285,11 @@ if [[ "$FLAGS_ALREADY_ON" -ne 1 ]]; then
   [[ "$ALLOW_RESTART" -eq 1 ]] || die "broker flags are off; rerun with --allow-restart when it is safe to restart hrc-server"
   busy_count="$(busy_runtime_count)"
   if [[ "$busy_count" != "0" ]]; then
-    die "refusing daemon restart: $busy_count runtime(s) are busy or starting"
+    if [[ "$ALLOW_BUSY" -eq 1 ]]; then
+      echo "setup.sh: WARNING proceeding with $busy_count busy/starting runtime(s) (--allow-busy); live runtimes are re-associated on restart" >&2
+    else
+      die "refusing daemon restart: $busy_count runtime(s) are busy or starting (use --allow-busy to override after confirming they are stale/expendable)"
+    fi
   fi
   plist_set_env HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED 1
   plist_set_env HRC_CODEX_CLI_TMUX_BROKER_ENABLED 1
@@ -326,15 +359,15 @@ jq -n \
   --arg cxAgent "$CX_AGENT" \
   --argjson watch "$WATCH" \
   '{
-    schema,
-    runId,
-    tier,
-    createdAt,
-    repoRoot,
-    runtimeRoot,
-    btmuxDir,
-    defaultSock,
-    defaultBaseline,
+    schema: $schema,
+    runId: $runId,
+    tier: $tier,
+    createdAt: $createdAt,
+    repoRoot: $repoRoot,
+    runtimeRoot: $runtimeRoot,
+    btmuxDir: $btmuxDir,
+    defaultSock: $defaultSock,
+    defaultBaseline: $defaultBaseline,
     runStartSeq: ($runStartSeq | tonumber),
     daemonLogs: {stdout: $logOut, stderr: $logErr},
     flags: {

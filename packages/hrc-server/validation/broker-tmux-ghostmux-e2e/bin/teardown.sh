@@ -49,6 +49,16 @@ restart_server_for_flags() {
   launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
   sleep 2
   launchctl bootstrap "gui/$(id -u)" "$PLIST_INSTALLED"
+  # bootstrap returns before the daemon is listening; wait for readiness.
+  local deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    if hrc monitor show --json >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "teardown.sh: WARNING hrc-server not confirmed ready within 60s after restart" >&2
+  return 0
 }
 
 stat_socket() {
