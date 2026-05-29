@@ -2795,7 +2795,15 @@ class HrcServerInstance implements HrcServer {
         intent: turnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
-        continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+        // A fresh interactive launch must NOT attempt continuation. The reuse
+        // predicates in startRuntimeForSession / the dispatch path return an
+        // already-live runtime before reaching here, so arriving at this start
+        // means there is no live TUI to resume. Passing session.continuation would
+        // launch the harness with `codex resume <rollout>` (or claude --continue),
+        // replaying a prior transcript and — when the recorded cwd differs from the
+        // current one — blocking the TUI on a "choose working directory to resume"
+        // picker. No live tui pid ⇒ new session, no continuation.
+        continuation: undefined,
       },
       {
         compile: client.compileRuntimePlan,
