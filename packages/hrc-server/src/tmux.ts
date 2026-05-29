@@ -21,6 +21,21 @@ export type TmuxPaneState = {
   paneId: string
 }
 
+/**
+ * Liveness of the foreground process inside a leased pane. A broker runtime is
+ * only truly live when its harness (launched as the pane root via `exec bun …`,
+ * which re-execs to bun/node/codex/claude) is still running. If the harness
+ * exited — or its `exec` launch never landed (e.g. the paste/Enter raced and the
+ * pane was left at a bare shell) — the pane sits at a shell prompt or goes dead.
+ * `alive` distinguishes those: it is true only when the pane is not dead and its
+ * foreground command is NOT an interactive shell.
+ */
+export type TmuxPaneLiveness = {
+  alive: boolean
+  dead: boolean
+  currentCommand: string
+}
+
 type TmuxExecResult = {
   stdout: string
   stderr: string
@@ -105,6 +120,48 @@ export function parsePaneState(stdout: string, socketPath: string): TmuxPaneStat
     windowId,
     paneId,
   }
+}
+
+// Interactive shells a leased pane falls back to when the harness exits or never
+// launched. A login shell is reported with a leading dash (`-zsh`), stripped here.
+const SHELL_COMMANDS = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'dash',
+  'ksh',
+  'tcsh',
+  'csh',
+  'ash',
+  'login',
+])
+
+function isShellCommand(command: string): boolean {
+  const normalized = command.replace(/^-/, '').toLowerCase()
+  return SHELL_COMMANDS.has(normalized)
+}
+
+export function parsePaneLiveness(stdout: string): TmuxPaneLiveness {
+  const line = stdout
+    .trim()
+    .split('\n')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0)
+
+  if (!line) {
+    // No metadata returned for an existing pane: treat as not live so the caller
+    // relaunches rather than reusing an unknowable pane.
+    return { alive: false, dead: false, currentCommand: '' }
+  }
+
+  // We request `#{pane_dead}<sep>#{pane_current_command}`; tmux uses the tab we
+  // pass, but falls back to `_` under a C/POSIX locale (launchd), so accept both.
+  const [deadField = '', ...commandParts] = line.split(/[\t_]/)
+  const currentCommand = commandParts.join('_').trim()
+  const dead = deadField.trim() === '1'
+  const alive = !dead && currentCommand.length > 0 && !isShellCommand(currentCommand)
+  return { alive, dead, currentCommand }
 }
 
 export class TmuxManager {
@@ -259,6 +316,33 @@ export class TmuxManager {
     } catch (error) {
       // A missing target OR a gone/absent server (removed socket) both mean the
       // session does not exist — surface that as `null`, not a throw.
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Probe the foreground liveness of a single pane. Returns `null` when the pane
+   * (or its server/socket) is gone — the caller treats that the same as a dead
+   * pane. Used by broker-runtime liveness reconciliation: a leased tmux session
+   * can outlive the harness process inside it, so session existence alone is not
+   * proof the runtime is reusable.
+   */
+  async inspectPaneLiveness(paneId: string): Promise<TmuxPaneLiveness | null> {
+    try {
+      const result = await this.exec([
+        'display-message',
+        '-p',
+        '-t',
+        paneId,
+        '-F',
+        '#{pane_dead}\t#{pane_current_command}',
+      ])
+      return parsePaneLiveness(result.stdout)
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (isMissingTargetError(message) || isServerGoneError(message)) {
         return null

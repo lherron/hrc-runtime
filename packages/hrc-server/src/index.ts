@@ -5474,7 +5474,36 @@ class HrcServerInstance implements HrcServer {
       const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
       const inspected = await brokerTmux.inspectSession(sessionName)
       if (inspected) {
-        return runtime
+        // Session existence is necessary but NOT sufficient: the hrc-owned lease
+        // session can outlive the harness process inside the pane. If the harness
+        // exited — or its `exec` launch never landed and the pane was left at a
+        // bare shell — reusing this runtime would attach the user to a dead pane
+        // with no relaunch. Probe the leased pane's foreground and only reuse when
+        // the harness is genuinely live. (Legacy interactive runtimes gate reuse on
+        // a tracked launch PID via hasLiveInteractiveLaunch; broker runtimes paste
+        // into the pane and persist no child PID, so the pane foreground is the
+        // available liveness signal.)
+        const liveness = await brokerTmux.inspectPaneLiveness(inspected.paneId)
+        if (liveness?.alive) {
+          return runtime
+        }
+
+        const event = markRuntimeStale(
+          this.db,
+          requireSession(this.db, runtime.hostSessionId),
+          runtime,
+          {
+            runtimeId: runtime.runtimeId,
+            sessionName,
+            socketPath,
+            paneId: inspected.paneId,
+            paneDead: liveness?.dead ?? null,
+            paneCommand: liveness?.currentCommand ?? null,
+            reason: 'broker_tmux_harness_not_live',
+          }
+        )
+        this.notifyEvent(event)
+        return requireKnownRuntime(this.db, runtime.runtimeId)
       }
 
       const event = markRuntimeStale(

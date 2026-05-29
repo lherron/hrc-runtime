@@ -188,6 +188,49 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('initial-input-id-mismatch')
   })
 
+  it('ADMITS an interactive tmux profile primed via launch argv (no broker initialInput)', () => {
+    // The launch-primed contract: an initial turn exists, so the caller still
+    // allocates identity.initialInputId, but the compiler delivers the priming
+    // via spec.launch.initialPrompt and drops startRequest.initialInput. There
+    // is nothing to id-correlate — the priming is hash-bound through specHash
+    // and invocationId — so the selector must admit rather than reject.
+    const identity = makeIdentity({
+      runtimeId: 'runtime_tmux' as ReturnType<typeof makeIdentity>['runtimeId'],
+      invocationId: 'invocation_tmux' as ReturnType<typeof makeIdentity>['invocationId'],
+    })
+    expect(identity.initialInputId).toBeDefined() // precondition: id WAS allocated
+    const { profile } = makeInteractiveTmuxProfile(identity, {
+      launchInitialPrompt: 'PRIMING: hello clod',
+      withInitialInput: false,
+    })
+    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.startRequest.initialInput).toBeUndefined()
+    expect(selection.startRequest.spec.launch?.initialPrompt).toBe('PRIMING: hello clod')
+  })
+
+  it('REJECTS a launch-primed profile that ALSO carries a mismatched initialInput', () => {
+    // The relaxation is guarded on initialInput === undefined. If a profile
+    // both rides the launch argv AND echoes a (stale/forged) initialInput whose
+    // id does not match, strict id-binding must still fire.
+    const identity = makeIdentity({
+      runtimeId: 'runtime_tmux' as ReturnType<typeof makeIdentity>['runtimeId'],
+      invocationId: 'invocation_tmux' as ReturnType<typeof makeIdentity>['invocationId'],
+    })
+    const { profile } = makeInteractiveTmuxProfile(identity, {
+      launchInitialPrompt: 'PRIMING: hello clod',
+      withInitialInput: true,
+      initialInputId: 'input_other',
+    })
+    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+
+    expect(selection.admitted).toBe(false)
+    if (selection.admitted) return
+    expect(selection.code).toBe('initial-input-id-mismatch')
+  })
+
   it('verifies hashes with the exported project() helper (sanity on fixtures)', () => {
     // Guards the fixtures themselves: an unmutated profile must hash-verify.
     const identity = makeIdentity()

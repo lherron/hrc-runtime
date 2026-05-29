@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 
-import { parsePaneState } from '../tmux'
+import { parsePaneLiveness, parsePaneState } from '../tmux'
 
 const SOCKET = '/tmp/test-tmux.sock'
 
@@ -57,5 +57,63 @@ describe('parsePaneState', () => {
     expect(() => parsePaneState('garbage with no prefixes\n', SOCKET)).toThrow(
       /unexpected tmux metadata line/
     )
+  })
+})
+
+describe('parsePaneLiveness', () => {
+  it('treats a non-dead pane running the exec wrapper (bun) as live', () => {
+    expect(parsePaneLiveness('0\tbun\n')).toEqual({
+      alive: true,
+      dead: false,
+      currentCommand: 'bun',
+    })
+  })
+
+  it('treats a re-exec to node/codex/claude as live', () => {
+    expect(parsePaneLiveness('0\tnode').alive).toBe(true)
+    expect(parsePaneLiveness('0\tcodex').alive).toBe(true)
+    expect(parsePaneLiveness('0\tclaude').alive).toBe(true)
+  })
+
+  it('treats a bare shell foreground as NOT live (failed exec / harness exited)', () => {
+    expect(parsePaneLiveness('0\tzsh').alive).toBe(false)
+    expect(parsePaneLiveness('0\tbash').alive).toBe(false)
+    expect(parsePaneLiveness('0\tsh').alive).toBe(false)
+    expect(parsePaneLiveness('0\tfish').alive).toBe(false)
+  })
+
+  it('treats a login shell (leading dash) as NOT live', () => {
+    expect(parsePaneLiveness('0\t-zsh').alive).toBe(false)
+    expect(parsePaneLiveness('0\t-bash').alive).toBe(false)
+  })
+
+  it('treats a dead pane as NOT live regardless of command', () => {
+    expect(parsePaneLiveness('1\tbun')).toEqual({
+      alive: false,
+      dead: true,
+      currentCommand: 'bun',
+    })
+  })
+
+  it('parses the underscore-separated fallback (launchd/unset LANG)', () => {
+    expect(parsePaneLiveness('0_bun').alive).toBe(true)
+    expect(parsePaneLiveness('0_zsh').alive).toBe(false)
+    expect(parsePaneLiveness('1_bun').dead).toBe(true)
+  })
+
+  it('reassembles a command containing underscores under the fallback separator', () => {
+    expect(parsePaneLiveness('0_my_tool')).toEqual({
+      alive: true,
+      dead: false,
+      currentCommand: 'my_tool',
+    })
+  })
+
+  it('treats empty/whitespace output as NOT live without throwing', () => {
+    expect(parsePaneLiveness('\n\n')).toEqual({
+      alive: false,
+      dead: false,
+      currentCommand: '',
+    })
   })
 })

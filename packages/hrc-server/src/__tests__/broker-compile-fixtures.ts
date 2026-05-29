@@ -137,13 +137,33 @@ export function makeBrokerProfile(
   return { profile, startRequest }
 }
 
+/** Options for shaping the interactive tmux fixture's launch / initialInput shape. */
+export type InteractiveTmuxFixtureOpts = {
+  /**
+   * When set, attach `spec.launch.initialPrompt` (the launch-argv priming shape).
+   * Included in spec hashing, so the priming is hash-bound and invocationId-bound.
+   */
+  launchInitialPrompt?: string
+  /**
+   * Force-include (true) or omit (false) the broker initialInput. Defaults to
+   * including it whenever `identity.initialInputId` is allocated — the OLD
+   * compiler shape. Set false to model the new launch-primed shape where the
+   * priming rides the launch argv and there is no broker initialInput.
+   */
+  withInitialInput?: boolean
+  /** Override the initialInput.inputId (to test a stale/mismatched echo). */
+  initialInputId?: string
+}
+
 /** An interactive claude-code-tmux broker profile. */
 export function makeInteractiveTmuxProfile(
   identity: RuntimeIdentityAllocation = makeIdentity({
     runtimeId: 'runtime_tmux' as RuntimeIdentityAllocation['runtimeId'],
     invocationId: 'invocation_tmux' as RuntimeIdentityAllocation['invocationId'],
-  })
+  }),
+  opts: InteractiveTmuxFixtureOpts = {}
 ): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+  const withInitialInput = opts.withInitialInput ?? identity.initialInputId !== undefined
   const spec: HarnessInvocationSpec = {
     specVersion: 'harness-broker.invocation/v1',
     invocationId: identity.invocationId,
@@ -157,6 +177,9 @@ export function makeInteractiveTmuxProfile(
     },
     interaction: { mode: 'interactive', turnConcurrency: 'single', inputQueue: 'fifo' },
     driver: { kind: 'claude-code-tmux' },
+    ...(opts.launchInitialPrompt !== undefined
+      ? { launch: { initialPrompt: opts.launchInitialPrompt } }
+      : {}),
     correlation: {
       requestId: String(identity.requestId),
       operationId: String(identity.operationId),
@@ -166,16 +189,16 @@ export function makeInteractiveTmuxProfile(
   }
   const startRequest: InvocationStartRequest = {
     spec,
-    ...(identity.initialInputId
+    ...(withInitialInput && identity.initialInputId
       ? {
           initialInput: {
-            inputId: identity.initialInputId,
+            inputId: (opts.initialInputId ?? identity.initialInputId) as string,
             kind: 'user',
             content: [{ type: 'text', text: 'hello claude tmux' }],
           },
         }
       : {}),
-  }
+  } as InvocationStartRequest
   const specHash = (project(spec, 'spec') as { specHash: string }).specHash
   const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
     .startRequestHash

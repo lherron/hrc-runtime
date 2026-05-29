@@ -156,10 +156,17 @@ export function selectBrokerExecutionProfile(
     return { admitted: false, code: 'invocation-id-mismatch' }
   }
 
+  // Interactive tmux routes deliver the startup priming via the launch argv
+  // (carried in spec.launch), so they legitimately carry NO broker
+  // initialInput — there is nothing to id-correlate. For every other route the
+  // compiler must echo our allocated initialInputId (when one was allocated).
   const initialInput = startRequest.initialInput
-  if (identity.initialInputId !== undefined || initialInput !== undefined) {
-    if (initialInput?.inputId !== identity.initialInputId) {
-      return { admitted: false, code: 'initial-input-id-mismatch' }
+  const primingViaLaunch = startRequest.spec.launch?.initialPrompt !== undefined
+  if (!(primingViaLaunch && initialInput === undefined)) {
+    if (identity.initialInputId !== undefined || initialInput !== undefined) {
+      if (initialInput?.inputId !== identity.initialInputId) {
+        return { admitted: false, code: 'initial-input-id-mismatch' }
+      }
     }
   }
 
