@@ -29,11 +29,11 @@
     <key>HRC_STATE_DIR</key>
     <string>/Users/lherron/praesidium/var/state/hrc</string>
     <key>HRC_HEADLESS_CODEX_BROKER_ENABLED</key>
-    <string>1</string>
+    <string>0</string>
     <key>HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED</key>
-    <string>1</string>
+    <string>0</string>
     <key>HRC_CODEX_CLI_TMUX_BROKER_ENABLED</key>
-    <string>1</string>
+    <string>0</string>
   </dict>
 
   <key>WorkingDirectory</key>
