@@ -1,0 +1,4 @@
+runs/**/evidence/**
+runs/**/events/**
+runs/**/watcher-pids
+!runs/.gitkeep
