@@ -407,6 +407,56 @@ interface ResolveManagedScopeOptions {
   registerPolicy?: 'prompt' | 'never'
 }
 
+/**
+ * Decide the fallback projectId for a bare `<agent>` scope from the two
+ * ambient signals: ASP_PROJECT (caller env) and the cwd-inferred project.
+ *
+ * Default precedence is ASP_PROJECT → cwd. The exception: for an INTERACTIVE
+ * (TTY) invocation where the cwd resolves to a registered project that DIFFERS
+ * from ASP_PROJECT, the physical cwd wins — a human standing in project X and
+ * typing `hrc run <agent>` means X, and a stale ASP_PROJECT must not silently
+ * hijack it. Non-interactive callers (agent runtimes, scripts; no TTY) keep
+ * ASP_PROJECT authoritative regardless of cwd, since ASP_PROJECT is their
+ * canonical scope.
+ *
+ * Pure and exported for unit testing — the env/cwd/TTY reads and the stderr
+ * note live in resolveDefaultProjectId.
+ */
+export function chooseDefaultProjectId(input: {
+  aspProject: string | undefined
+  cwdProject: string | undefined
+  interactive: boolean
+}): { projectId: string | undefined; cwdOverrodeAsp: boolean } {
+  const { aspProject, cwdProject, interactive } = input
+  if (
+    interactive &&
+    aspProject !== undefined &&
+    cwdProject !== undefined &&
+    aspProject !== cwdProject
+  ) {
+    return { projectId: cwdProject, cwdOverrodeAsp: true }
+  }
+  return { projectId: aspProject ?? cwdProject, cwdOverrodeAsp: false }
+}
+
+function resolveDefaultProjectId(): string | undefined {
+  const aspProject = process.env['ASP_PROJECT']
+  const cwdProject = inferProjectIdFromCwd()
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+  const { projectId, cwdOverrodeAsp } = chooseDefaultProjectId({
+    aspProject,
+    cwdProject,
+    interactive,
+  })
+  if (cwdOverrodeAsp) {
+    process.stderr.write(
+      `[hrc] cwd is project '${cwdProject}' but ASP_PROJECT='${aspProject}'; using '${cwdProject}'. ` +
+        `Pass '<agent>@${aspProject}' or --project-id ${aspProject} to target ASP_PROJECT instead.\n`
+    )
+  }
+  return projectId
+}
+
 function resolveManagedScopeContext(
   scopeInput: string,
   options: ResolveManagedScopeOptions = {}
@@ -415,18 +465,25 @@ function resolveManagedScopeContext(
   //   explicit --project-id → ASP_PROJECT (caller env) → cwd inference → register prompt
   // The shared agent-scope resolver fills the task default ("primary") once a
   // projectId is known.
-  let projectIdHint: string | undefined =
-    options.projectIdOverride ?? process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+  //
+  // Probe first: only synthesize a fallback project — and apply the
+  // ASP_PROJECT/cwd conflict resolution in resolveDefaultProjectId — when the
+  // input is a bare agent with no explicit project. An explicit `agent@project`
+  // always wins and must never trigger a spurious cwd-override note.
+  const probe = resolveQualifiedScopeInput(scopeInput, {})
+  const projectIdHint: string | undefined = probe.parsed.projectId
+    ? undefined
+    : (options.projectIdOverride ?? resolveDefaultProjectId())
 
-  let resolved = resolveQualifiedScopeInput(scopeInput, {
-    ...(projectIdHint !== undefined ? { projectId: projectIdHint } : {}),
-  })
+  let resolved =
+    projectIdHint !== undefined
+      ? resolveQualifiedScopeInput(scopeInput, { projectId: projectIdHint })
+      : probe
 
   if (!resolved.parsed.projectId && (options.registerPolicy ?? 'never') === 'prompt') {
     const registered = maybePromptToRegisterProject()
     if (registered) {
-      projectIdHint = registered
-      resolved = resolveQualifiedScopeInput(scopeInput, { projectId: projectIdHint })
+      resolved = resolveQualifiedScopeInput(scopeInput, { projectId: registered })
     }
   }
 
