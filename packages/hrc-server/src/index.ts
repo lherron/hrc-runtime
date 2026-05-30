@@ -545,6 +545,101 @@ export type { GhostmuxManagerOptions }
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
 export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
 
+export type BrokerRunPreview = {
+  controllerKind: 'harness-broker'
+  brokerDriver: string
+  interactionMode: string
+  profileId: string
+  profileHash: string
+  specHash: string
+  startRequestHash: string
+  process: {
+    command: string
+    args: string[]
+    cwd: string
+  }
+  initialInput: boolean
+  launchInitialPromptLength?: number | undefined
+  inputQueue: string
+  interrupt: string
+  resource?: string | undefined
+  warnings: string[]
+}
+
+export async function buildBrokerRunPreview(
+  intent: HrcRuntimeIntent,
+  _options: {
+    sessionRef: string
+    restartStyle: RestartStyle
+    promptLength?: number | undefined
+  }
+): Promise<BrokerRunPreview | undefined> {
+  if (!isInteractiveTmuxBrokerIntent(intent) && !shouldUseHeadlessTransport(intent)) {
+    return undefined
+  }
+
+  const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
+  if (typeof client.compileRuntimePlan !== 'function') {
+    return undefined
+  }
+
+  const compiled = await compileBrokerRuntimePlan(
+    {
+      intent,
+      hostSessionId: 'dry-run-host-session',
+      generation: 0,
+      continuation: undefined,
+    },
+    {
+      compile: client.compileRuntimePlan,
+      ids: {
+        requestId: () => `dry-req-${randomUUID()}`,
+        operationId: () => `dry-op-${randomUUID()}`,
+        runtimeId: () => `dry-rt-${randomUUID()}`,
+        invocationId: () => `dry-inv-${randomUUID()}`,
+        initialInputId: () => `dry-input-${randomUUID()}`,
+        runId: () => `dry-run-${randomUUID()}`,
+        traceId: () => `dry-trace-${randomUUID()}`,
+      },
+    }
+  )
+
+  if (!compiled.admitted) {
+    return undefined
+  }
+
+  const spec = compiled.startRequest.spec
+  const launchInitialPrompt = spec.launch?.initialPrompt
+  const warnings = (compiled.profile.diagnostics ?? [])
+    .filter((diagnostic) => diagnostic.level !== 'error')
+    .map((diagnostic) => diagnostic.message)
+
+  return {
+    controllerKind: 'harness-broker',
+    brokerDriver: compiled.profile.brokerDriver,
+    interactionMode: compiled.profile.interactionMode,
+    profileId: compiled.profile.profileId,
+    profileHash: compiled.profile.profileHash,
+    specHash: compiled.specHash,
+    startRequestHash: compiled.startRequestHash,
+    process: {
+      command: spec.process.command,
+      args: spec.process.args,
+      cwd: spec.process.cwd,
+    },
+    initialInput: compiled.startRequest.initialInput !== undefined,
+    ...(typeof launchInitialPrompt === 'string'
+      ? { launchInitialPromptLength: launchInitialPrompt.length }
+      : {}),
+    inputQueue: spec.interaction?.inputQueue ?? 'none',
+    interrupt: compiled.profile.expectedCapabilities.turns.interrupt,
+    ...(compiled.profile.brokerTerminal?.host === 'tmux'
+      ? { resource: 'runtime-owned broker tmux lease socket' }
+      : {}),
+    warnings,
+  }
+}
+
 const STALE_LOCK_RETRY_DELAY_MS = 25
 const SOCKET_PROBE_TIMEOUT_MS = 200
 const MIN_SUPPORTED_TMUX_VERSION = {
@@ -2121,6 +2216,22 @@ class HrcServerInstance implements HrcServer {
     }
 
     if (this.claudeCodeTmuxBrokerEnabled && shouldConsiderClaudeCodeTmuxBrokerDispatch(intent)) {
+      if (
+        latestRuntime &&
+        !isRuntimeUnavailableStatus(latestRuntime.status) &&
+        isMatchingInteractiveTmuxBrokerRuntime(latestRuntime, intent, 'claude-code-tmux')
+      ) {
+        if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
+          assertRuntimeNotBusy(this.db, latestRuntime)
+        }
+        return await this.executeInteractiveBrokerInputTurn(
+          session,
+          latestRuntime,
+          dispatchPrompt,
+          runId
+        )
+      }
+
       return await runInteractiveTmuxRoute('broker', {
         broker: async () =>
           this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
@@ -2142,6 +2253,22 @@ class HrcServerInstance implements HrcServer {
     }
 
     if (this.codexCliTmuxBrokerEnabled && shouldConsiderCodexCliTmuxBrokerDispatch(intent)) {
+      if (
+        latestRuntime &&
+        !isRuntimeUnavailableStatus(latestRuntime.status) &&
+        isMatchingInteractiveTmuxBrokerRuntime(latestRuntime, intent, 'codex-cli-tmux')
+      ) {
+        if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
+          assertRuntimeNotBusy(this.db, latestRuntime)
+        }
+        return await this.executeInteractiveBrokerInputTurn(
+          session,
+          latestRuntime,
+          dispatchPrompt,
+          runId
+        )
+      }
+
       return await runInteractiveTmuxRoute('broker', {
         broker: async () =>
           this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
@@ -2755,6 +2882,125 @@ class HrcServerInstance implements HrcServer {
       runId,
       flagOptions
     )
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      status: 'started',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
+  }
+
+  private async executeInteractiveBrokerInputTurn(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    prompt: string,
+    runId: string
+  ): Promise<Response> {
+    const invocationId = runtime.activeInvocationId
+    if (invocationId === undefined) {
+      throw new HrcRuntimeUnavailableError('interactive broker runtime has no active invocation', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        route: 'interactive-broker',
+      })
+    }
+
+    const activeRun =
+      runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
+    const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
+    const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
+    const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
+    const now = timestamp()
+
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+      invocationId,
+      operationId: runtime.activeOperationId,
+      dispatchedInputId: inputId,
+    })
+
+    if (!queuedMode) {
+      this.db.runtimes.update(runtime.runtimeId, {
+        activeRunId: runId,
+        status: 'busy',
+        lastActivityAt: now,
+        updatedAt: now,
+      })
+      this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
+    }
+
+    const input: InvocationInput = {
+      inputId,
+      kind: 'user',
+      content: [{ type: 'text', text: prompt }],
+      metadata: { runId },
+    }
+
+    const result = await this.getHarnessBrokerController().dispatchInput({
+      runtimeId: runtime.runtimeId,
+      input,
+      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
+    })
+
+    if (!result.ok || !result.response.accepted) {
+      const completedAt = timestamp()
+      const errorMessage = result.ok
+        ? (result.response.reason ?? 'broker rejected invocation input')
+        : result.error.message
+      const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+      const terminalInputFailure =
+        isTerminalBrokerInvocationState(invocation?.invocationState) ||
+        isTerminalBrokerInputFailure(errorMessage)
+
+      this.db.runs.markCompleted(runId, {
+        status: 'failed',
+        completedAt,
+        updatedAt: completedAt,
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage,
+      })
+      if (!queuedMode) {
+        this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
+      }
+      this.db.runtimes.update(runtime.runtimeId, {
+        status: terminalInputFailure ? 'stale' : 'ready',
+        lastActivityAt: completedAt,
+        updatedAt: completedAt,
+        ...(terminalInputFailure
+          ? {
+              runtimeStateJson: {
+                ...(runtime.runtimeStateJson ?? {}),
+                status: 'stale',
+                updatedAt: completedAt,
+                terminalInvocation: {
+                  invocationId,
+                  reason: errorMessage,
+                },
+              },
+            }
+          : {}),
+      })
+      throw new HrcRuntimeUnavailableError('interactive broker input failed', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        invocationId,
+        route: 'interactive-broker',
+        error: errorMessage,
+      })
+    }
 
     return json({
       runId,
@@ -4466,9 +4712,7 @@ class HrcServerInstance implements HrcServer {
         this.staleGenerationEnabled &&
         this.staleGenerationThresholdSec > 0 &&
         continuationAgeSec > this.staleGenerationThresholdSec,
-      ...(runtime.transport === 'tmux'
-        ? { tmux: toStatusTmuxView(runtime.tmuxJson) }
-        : {}),
+      ...(runtime.transport === 'tmux' ? { tmux: toStatusTmuxView(runtime.tmuxJson) } : {}),
     } satisfies InspectRuntimeResponse)
   }
 
@@ -5491,7 +5735,16 @@ class HrcServerInstance implements HrcServer {
         // a tracked launch PID via hasLiveInteractiveLaunch; broker runtimes paste
         // into the pane and persist no child PID, so the pane foreground is the
         // available liveness signal.)
-        const liveness = await brokerTmux.inspectPaneLiveness(inspected.paneId)
+        let liveness = await brokerTmux.inspectPaneLiveness(inspected.paneId)
+        if (!liveness?.alive) {
+          for (const retryDelayMs of [100, 250, 500, 1000, 2000]) {
+            await delay(retryDelayMs)
+            liveness = await brokerTmux.inspectPaneLiveness(inspected.paneId)
+            if (liveness?.alive) {
+              return runtime
+            }
+          }
+        }
         if (liveness?.alive) {
           return runtime
         }
@@ -5511,6 +5764,15 @@ class HrcServerInstance implements HrcServer {
           }
         )
         this.notifyEvent(event)
+        await brokerTmux.killServer().catch((error) => {
+          writeServerLog('WARN', 'failed to remove stale broker tmux lease server', {
+            runtimeId: runtime.runtimeId,
+            sessionName,
+            socketPath,
+            reason: 'broker_tmux_harness_not_live',
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
         return requireKnownRuntime(this.db, runtime.runtimeId)
       }
 
@@ -5526,6 +5788,15 @@ class HrcServerInstance implements HrcServer {
         }
       )
       this.notifyEvent(event)
+      await brokerTmux.killServer().catch((error) => {
+        writeServerLog('WARN', 'failed to remove missing broker tmux lease server', {
+          runtimeId: runtime.runtimeId,
+          sessionName,
+          socketPath,
+          reason: 'broker_tmux_session_missing',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
       return requireKnownRuntime(this.db, runtime.runtimeId)
     }
 
@@ -5813,34 +6084,6 @@ class HrcServerInstance implements HrcServer {
       ) {
         return this.attachRuntime(latestRuntime)
       }
-      if (
-        (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
-        latestRuntime.provider !== 'openai'
-      ) {
-        this.assertTmuxRuntimeStillLive(latestRuntime)
-      }
-
-      const effectiveContinuation = latestRuntime.continuation ?? session.continuation
-      if (!effectiveContinuation?.key) {
-        throw new HrcRuntimeUnavailableError('headless runtime is missing continuation', {
-          runtimeId: latestRuntime.runtimeId,
-          hostSessionId: latestRuntime.hostSessionId,
-        })
-      }
-
-      const latestTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
-      if (
-        latestTmuxRuntime &&
-        !isRuntimeUnavailableStatus(latestTmuxRuntime.status) &&
-        latestTmuxRuntime.provider === latestRuntime.provider &&
-        (latestTmuxRuntime.transport === 'tmux' || latestTmuxRuntime.transport === 'ghostty') &&
-        (latestTmuxRuntime.harnessSessionJson?.['attachPrepared'] === true ||
-          latestTmuxRuntime.status === 'busy' ||
-          latestTmuxRuntime.status === 'starting' ||
-          hasLiveInteractiveLaunch(this.db, latestTmuxRuntime))
-      ) {
-        return this.attachRuntime(latestTmuxRuntime)
-      }
 
       const latestIntent =
         session.lastAppliedIntentJson ??
@@ -5872,6 +6115,44 @@ class HrcServerInstance implements HrcServer {
           preferredMode: 'interactive',
         },
       } satisfies HrcRuntimeIntent
+
+      if (latestRuntime.controllerKind === 'harness-broker' && latestRuntime.transport === 'tmux') {
+        const brokerRuntime = await this.startRuntimeForSession(
+          session,
+          interactiveIntent,
+          'reuse_pty'
+        )
+        return this.attachRuntime(requireKnownRuntime(this.db, brokerRuntime.runtimeId))
+      }
+
+      if (
+        (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
+        latestRuntime.provider !== 'openai'
+      ) {
+        this.assertTmuxRuntimeStillLive(latestRuntime)
+      }
+
+      const effectiveContinuation = latestRuntime.continuation ?? session.continuation
+      if (!effectiveContinuation?.key) {
+        throw new HrcRuntimeUnavailableError('headless runtime is missing continuation', {
+          runtimeId: latestRuntime.runtimeId,
+          hostSessionId: latestRuntime.hostSessionId,
+        })
+      }
+
+      const latestTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      if (
+        latestTmuxRuntime &&
+        !isRuntimeUnavailableStatus(latestTmuxRuntime.status) &&
+        latestTmuxRuntime.provider === latestRuntime.provider &&
+        (latestTmuxRuntime.transport === 'tmux' || latestTmuxRuntime.transport === 'ghostty') &&
+        (latestTmuxRuntime.harnessSessionJson?.['attachPrepared'] === true ||
+          latestTmuxRuntime.status === 'busy' ||
+          latestTmuxRuntime.status === 'starting' ||
+          hasLiveInteractiveLaunch(this.db, latestTmuxRuntime))
+      ) {
+        return this.attachRuntime(latestTmuxRuntime)
+      }
 
       const tmuxRuntime = await this.ensureRuntimeForSession(
         session,
@@ -7794,6 +8075,19 @@ class HrcServerInstance implements HrcServer {
 
       const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
       if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+        const liveBrokerRuntime =
+          liveTmuxRuntime.controllerKind === 'harness-broker' &&
+          liveTmuxRuntime.activeInvocationId !== undefined
+        if (liveBrokerRuntime) {
+          this.turnResponseFinalizers.set(runId, {
+            requestMessageId: record.messageId,
+            from: body.to,
+            to: respondTo,
+            mode: 'interactive',
+            sessionRef,
+          })
+        }
+
         const delivered = await this.tryDeliverSemanticTurnToInteractiveRuntime({
           session,
           runtime: liveTmuxRuntime,
@@ -7805,6 +8099,9 @@ class HrcServerInstance implements HrcServer {
         })
         if (delivered) {
           return json(delivered satisfies SemanticTurnHandoffResponse)
+        }
+        if (liveBrokerRuntime) {
+          this.turnResponseFinalizers.delete(runId)
         }
       }
 
@@ -7875,6 +8172,56 @@ class HrcServerInstance implements HrcServer {
   }): Promise<SemanticTurnHandoffResponse | undefined> {
     const { session, runtime, request, payload, runId, sessionRef, fromSeq } = input
     const transport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
+
+    if (runtime.controllerKind === 'harness-broker' && runtime.activeInvocationId !== undefined) {
+      if (!isBrokerRuntimeQueueCapable(this.db, runtime)) {
+        assertRuntimeNotBusy(this.db, runtime)
+      }
+
+      const turnResponse = await this.executeInteractiveBrokerInputTurn(
+        session,
+        runtime,
+        payload,
+        runId
+      )
+      const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+      const brokerTransport = turnBody.transport as 'tmux'
+
+      const finalizer = this.turnResponseFinalizers.get(runId)
+      if (finalizer) {
+        this.turnResponseFinalizers.set(runId, { ...finalizer, mode: 'interactive' })
+      }
+
+      this.db.messages.updateExecution(request.messageId, {
+        state: turnBody.status === 'completed' ? 'completed' : 'started',
+        mode: 'interactive',
+        sessionRef,
+        hostSessionId: turnBody.hostSessionId,
+        generation: turnBody.generation,
+        runtimeId: turnBody.runtimeId,
+        runId: turnBody.runId,
+        transport: brokerTransport,
+      })
+
+      writeServerLog('INFO', 'semantic_turn.interactive_broker_selected', {
+        messageId: request.messageId,
+        hostSessionId: session.hostSessionId,
+        runtimeId: runtime.runtimeId,
+        runId,
+      })
+
+      return {
+        messageId: request.messageId,
+        sessionRef,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        hostSessionId: turnBody.hostSessionId,
+        runtimeId: turnBody.runtimeId,
+        runId: turnBody.runId,
+        generation: turnBody.generation,
+        fromSeq,
+      }
+    }
 
     try {
       if (transport === 'ghostty') {
@@ -11118,6 +11465,16 @@ function markRuntimeStale(
   eventJson: Record<string, unknown>
 ): HrcLifecycleEvent {
   const now = timestamp()
+  const invocationId = runtime.activeInvocationId
+  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
+    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
+      db.brokerInvocations.update(invocationId, {
+        invocationState: 'disposed',
+        updatedAt: now,
+      })
+    }
+  }
   if (runtime.activeRunId !== undefined) {
     db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
     db.runs.markCompleted(runtime.activeRunId, {
@@ -11133,6 +11490,21 @@ function markRuntimeStale(
     status: 'stale',
     updatedAt: now,
     lastActivityAt: now,
+    runtimeStateJson: {
+      ...(runtime.runtimeStateJson ?? {}),
+      status: 'stale',
+      updatedAt: now,
+      staleReason: eventJson['reason'],
+      stalePayload: eventJson,
+      ...(invocationId !== undefined
+        ? {
+            terminalInvocation: {
+              invocationId,
+              eventType: 'hrc.runtime.stale',
+            },
+          }
+        : {}),
+    },
   })
   return appendHrcEvent(db, 'runtime.stale', {
     ts: now,

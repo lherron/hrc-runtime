@@ -24,7 +24,7 @@ import type {
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
-import { buildCliInvocation } from 'hrc-server'
+import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
 import {
   PROJECT_MARKER_FILENAME,
   type TargetDefinition,
@@ -1625,45 +1625,32 @@ async function cmdRun(args: string[]): Promise<void> {
     markLaunch('resolveSession', tResolve)
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
-    // No prompt → use startRuntime so the server can ensure the pane and, if
-    // no interactive harness is running, boot one via enqueueInteractiveStartLaunch.
-    // For an already-live runtime the server returns it unchanged and nothing is
-    // injected into the pane. A prompt routes through ensureRuntime + dispatchTurn,
-    // where the server picks literal send-keys for live harnesses and the
-    // launch-artifact path for fresh panes.
-    const tRuntime = performance.now()
-    const runtime = hasPrompt
-      ? await client.ensureRuntime({
+    const runtime = await (async () => {
+      if (!hasPrompt) {
+        const tRuntime = performance.now()
+        const started = await client.startRuntime({
           hostSessionId: resolved.hostSessionId,
           intent,
           restartStyle,
         })
-      : await client.startRuntime({
-          hostSessionId: resolved.hostSessionId,
-          intent,
-          restartStyle,
-        })
-    markLaunch(hasPrompt ? 'ensureRuntime' : 'startRuntime', tRuntime)
-
-    if (hasPrompt) {
-      const tDispatch = performance.now()
-      try {
-        await client.dispatchTurn({
-          hostSessionId: resolved.hostSessionId,
-          prompt,
-        })
-      } catch (err) {
-        if (!isHrcDomainErrorLike(err) || err.code !== HrcErrorCode.RUNTIME_BUSY) {
-          throw err
-        }
+        markLaunch('startRuntime', tRuntime)
+        return started
       }
+
+      const tDispatch = performance.now()
+      const dispatched = await client.dispatchTurn({
+        hostSessionId: resolved.hostSessionId,
+        prompt,
+        runtimeIntent: intent,
+      })
       markLaunch('dispatchTurn', tDispatch)
-    }
+      return dispatched
+    })()
 
     if (noAttach) {
       printJson({
         sessionRef,
-        hostSessionId: resolved.hostSessionId,
+        hostSessionId: runtime.hostSessionId,
         created: resolved.created,
         runtime,
       })
@@ -1760,6 +1747,55 @@ async function printLocalRunPreview(
   const w = (s: string) => process.stdout.write(`${s}\n`)
 
   w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
+
+  if (command === 'run') {
+    const brokerPreview = await buildBrokerRunPreview(intent, {
+      sessionRef,
+      restartStyle,
+      promptLength: prompt?.length,
+    }).catch((err: unknown) => {
+      w('')
+      w(`  (broker plan build failed: ${err instanceof Error ? err.message : String(err)})`)
+      return undefined
+    })
+    if (brokerPreview) {
+      w('')
+      w('  brokerPlan:   available')
+      w(`  sessionRef:   ${sessionRef}`)
+      w(`  restartStyle: ${restartStyle}`)
+      w(`  controller:   ${brokerPreview.controllerKind}`)
+      w(`  driver:       ${brokerPreview.brokerDriver}`)
+      w(`  interaction:  ${brokerPreview.interactionMode}`)
+      w(`  profileId:    ${brokerPreview.profileId}`)
+      w(`  profileHash:  ${brokerPreview.profileHash}`)
+      w(`  specHash:     ${brokerPreview.specHash}`)
+      w(`  requestHash:  ${brokerPreview.startRequestHash}`)
+      w(`  cwd:          ${brokerPreview.process.cwd}`)
+      w(
+        `  command:      ${formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args)}`
+      )
+      w(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
+      w(
+        `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : brokerPreview.launchInitialPromptLength !== undefined ? `${brokerPreview.launchInitialPromptLength} launch chars` : '(none)'}`
+      )
+      w(`  inputQueue:   ${brokerPreview.inputQueue}`)
+      w(`  interrupt:    ${brokerPreview.interrupt}`)
+      if (brokerPreview.resource) {
+        w(`  resource:     ${brokerPreview.resource}`)
+      }
+      if (brokerPreview.warnings.length > 0) {
+        w('')
+        w('  warnings:')
+        for (const warning of brokerPreview.warnings) {
+          w(`    - ${warning}`)
+        }
+      }
+      w('')
+      w('  Note: this preview compiles the broker plan locally and does not')
+      w('  inspect existing runtime, PTY, or tmux state. Run without --dry-run to execute.')
+      return
+    }
+  }
 
   // Build the actual argv/env that the harness would launch with, then render
   // it through the shared display module so this matches `asp run --dry-run`

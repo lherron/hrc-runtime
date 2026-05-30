@@ -35,7 +35,9 @@ CORE rows:
 6. `hrc runtime interrupt <runtimeId>`
 7. `hrc run <scope>` → detach → `hrc run <scope>` reattaches the SAME runtime (legacy
    reattach semantics — no new session; `--force-restart` is the only path to a fresh PTY)
-8. Cross-cutting default socket invariant
+8. `hrc run <scope>` → wait for idle → send `/quit` to the lease pane → `hrc run <scope>`
+   starts a NEW broker TUI session with the priming prompt and without continuation
+9. Cross-cutting default socket invariant
 
 FULL adds:
 
@@ -123,7 +125,33 @@ FULL adds:
    - No new headless runtime appears for the target.
    - The event journal shows the operation on the lease runtime.
 
-9. End the run:
+9. Validate `/quit` recovery for each target:
+
+   ```bash
+   TARGET=clod@hrc-runtime:<run-task>
+   TASK_FRAGMENT="task:<run-task>"
+   SURFACE_ID=$(ghostmux new --cwd /Users/lherron/praesidium/hrc-runtime --title "btmux-quit-$TARGET" --command "hrc run $TARGET" --json | jq -r '.short_id')
+   # Wait until the TUI is idle and all startup processing has finished.
+   BEFORE_RUNTIME_ID=$(hrc runtime list --json | jq -r --arg task "$TASK_FRAGMENT" 'map(select(.controllerKind == "harness-broker" and .transport == "tmux" and (.scopeRef | contains($task)))) | last | .runtimeId')
+   hrc runtime list --json | jq --arg rt "$BEFORE_RUNTIME_ID" '.[] | select(.runtimeId == $rt) | {runtimeId,status,controllerKind,activeInvocationId,runtimeStateJson}'
+   ghostmux send-keys -t "$SURFACE_ID" /quit
+   # Confirm the terminal exited and HRC reconciles it to a terminal/stale state.
+   hrc runtime list --json | jq --arg rt "$BEFORE_RUNTIME_ID" '.[] | select(.runtimeId == $rt) | {runtimeId,status,activeInvocationId,runtimeStateJson}'
+   SECOND_SURFACE_ID=$(ghostmux new --cwd /Users/lherron/praesidium/hrc-runtime --title "btmux-quit-$TARGET-2" --command "hrc run $TARGET" --json | jq -r '.short_id')
+   AFTER_RUNTIME_ID=$(hrc runtime list --json | jq -r --arg task "$TASK_FRAGMENT" 'map(select(.controllerKind == "harness-broker" and .transport == "tmux" and (.scopeRef | contains($task)))) | last | .runtimeId')
+   test "$AFTER_RUNTIME_ID" != "$BEFORE_RUNTIME_ID"
+   ghostmux capture-pane -t "$SECOND_SURFACE_ID" -S - -E - | rg "Priming Prompt|working on <run-task>|Continue here"
+   ```
+
+   The second `hrc run` must not return `runtime_unavailable`. It must allocate a
+   new broker runtime/session for the same scope, not resume or continue the
+   exited TUI. Validate that the new runtime id differs from the pre-quit id,
+   `runtimeStateJson.status` is live for the new runtime, the old runtime is
+   stale or terminated with a terminal/disposed broker invocation, and the pane
+   shows the normal priming prompt/startup content rather than a continuation
+   picker.
+
+10. End the run:
 
    ```bash
    packages/hrc-server/validation/broker-tmux-ghostmux-e2e/bin/teardown.sh "$RUN_DIR"
@@ -133,7 +161,7 @@ FULL adds:
    journals, verifies the default socket, and restores the original flag state
    if setup changed it.
 
-10. Commit only the lightweight run artifacts:
+11. Commit only the lightweight run artifacts:
 
    ```bash
    git add packages/hrc-server/validation/broker-tmux-ghostmux-e2e

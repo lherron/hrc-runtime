@@ -42,21 +42,21 @@ import { BrokerEventMapper } from '../broker/event-mapper'
 
 import {
   ASSISTANT_TEXT,
-  bufferTextForRun,
   CONTINUATION_KEY,
+  HOST_SESSION_ID,
+  INVOCATION_ID,
+  RUNTIME_ID,
+  RUN_ID,
+  type SeededFixture,
+  TOOL_CALL_ID,
+  TOOL_NAME,
+  bufferTextForRun,
   emittedEventsMentioning,
   envelope,
   headlessSequence,
-  HOST_SESSION_ID,
-  INVOCATION_ID,
   makeSeededFixture,
   permissionRequestId,
-  RUN_ID,
-  RUNTIME_ID,
-  TOOL_CALL_ID,
-  TOOL_NAME,
   ts,
-  type SeededFixture,
 } from './broker-event-mapper-fixtures'
 
 let fixture: SeededFixture
@@ -125,6 +125,31 @@ describe('emitted HRC events', () => {
     // The canonical turn.completed lands in hrc_events for the run (gates read this).
     const hrcCompleted = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.completed' })
     expect(hrcCompleted.length).toBe(1)
+  })
+
+  it('uses the runtime transport when projecting broker lifecycle events', () => {
+    const db = fixture.db
+    db.runtimes.update(RUNTIME_ID, {
+      transport: 'tmux',
+      updatedAt: ts(99),
+    })
+    const mapper = makeMapper()
+
+    const completed = mapper.apply(
+      envelope(
+        'turn.completed',
+        7,
+        { turnId: 'turn_x' as never, status: 'completed', producedContent: true },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    expect(completed.lifecycleEvents[0]!.transport).toBe('tmux')
+    expect(completed.lifecycleEvents[0]!.payload).toMatchObject({ transport: 'tmux' })
+
+    const hrcCompleted = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.completed' })
+    expect(hrcCompleted[0]!.transport).toBe('tmux')
+    expect(hrcCompleted[0]!.payload).toMatchObject({ transport: 'tmux' })
   })
 
   it('treats unmapped broker types as provenance-only (no lifecycle event)', () => {
@@ -271,9 +296,8 @@ describe('idempotency', () => {
     expect(first.events.length).toBeGreaterThan(0)
 
     const eventsAfterFirst = fixture.db.events.count({ runtimeId: RUNTIME_ID })
-    const brokerRowsAfterFirst = fixture.db.brokerInvocationEvents.listByInvocationId(
-      INVOCATION_ID
-    ).length
+    const brokerRowsAfterFirst =
+      fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).length
 
     const second = mapper.apply(env)
     expect(second.idempotent).toBe(true)
@@ -390,6 +414,71 @@ describe('transaction atomicity', () => {
     expect(stored).not.toBeNull()
     expect(stored!.projectionStatus).toBe('applied')
     expect(typeof stored!.hrcEventSeq).toBe('number')
+  })
+
+  it('clears runtime activeRunId when an interactive broker turn completes', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    db.runtimes.update(RUNTIME_ID, {
+      activeRunId: RUN_ID,
+      status: 'busy',
+      runtimeStateJson: { status: 'busy', activeRunId: RUN_ID },
+      updatedAt: ts(99),
+    })
+
+    mapper.apply(
+      envelope(
+        'turn.completed',
+        7,
+        { turnId: 'turn_x' as never, status: 'completed', producedContent: true },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    const runtime = db.runtimes.getByRuntimeId(RUNTIME_ID)!
+    expect(runtime.activeRunId).toBeUndefined()
+    expect(runtime.status).toBe('ready')
+    expect(runtime.runtimeStateJson).toEqual({ status: 'ready', updatedAt: ts(100) })
+  })
+
+  it('does not attach post-terminal broker events to the completed input run', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const dispatchedInputId = 'input_terminal_boundary'
+
+    db.runs.update(RUN_ID, {
+      dispatchedInputId,
+      updatedAt: ts(99),
+    })
+
+    mapper.apply(
+      envelope(
+        'input.accepted',
+        7,
+        { inputId: dispatchedInputId },
+        { inputId: dispatchedInputId as never }
+      )
+    )
+    mapper.apply(
+      envelope(
+        'turn.completed',
+        8,
+        { turnId: 'turn_terminal_boundary' as never, status: 'completed', producedContent: true },
+        { turnId: 'turn_terminal_boundary' as never }
+      )
+    )
+
+    const postTerminal = mapper.apply(
+      envelope('tool.call.started', 9, {
+        toolCallId: 'tool_after_terminal' as never,
+        name: 'Bash',
+        input: { command: 'date' },
+      })
+    )
+
+    expect(postTerminal.lifecycleEvents[0]!.runId).toBeUndefined()
+    expect(db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 9)!.runId).toBeUndefined()
+    expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.tool_call' })).toHaveLength(0)
   })
 })
 

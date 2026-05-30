@@ -29,6 +29,7 @@ import type {
   HrcContinuationRef,
   HrcEventEnvelope,
   HrcLifecycleEvent,
+  HrcLifecycleTransport,
   HrcProvider,
 } from 'hrc-core'
 import type {
@@ -67,6 +68,18 @@ import { appendHrcEvent } from '../hrc-event-helper'
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function omitRuntimeStateActiveRun(value: Record<string, unknown>): Record<string, unknown> {
+  const { activeRunId: _activeRunId, ...rest } = value
+  return rest
+}
+
+function lifecycleTransportFromRuntime(value: string): HrcLifecycleTransport {
+  if (value === 'sdk' || value === 'tmux' || value === 'headless' || value === 'ghostty') {
+    return value
+  }
+  return 'headless'
 }
 
 /**
@@ -144,6 +157,7 @@ type ProjectionContext = {
   scopeRef: string
   laneRef: string
   generation: number
+  transport: HrcLifecycleTransport
   operationId: string
   runId: string | undefined
 }
@@ -201,6 +215,7 @@ export class BrokerEventMapper {
       scopeRef: runtime.scopeRef,
       laneRef: runtime.laneRef,
       generation: runtime.generation,
+      transport: lifecycleTransportFromRuntime(runtime.transport),
       operationId: invocation.operationId,
       runId: resolvedRunId,
     }
@@ -274,14 +289,28 @@ export class BrokerEventMapper {
     // running input. For events without envelope.inputId (turn.*, assistant.*,
     // diagnostics, etc.), find the most-recent input.accepted at seq <=
     // envelope.seq — that's the input currently being applied by the driver.
-    const envelopeInputId =
-      envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
-    const inputId =
-      envelopeInputId ??
-      this.findPriorInputAcceptedInputId(envelope.invocationId, envelope.seq)
+    const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
+    let inputId = envelopeInputId
+    let terminalAfterPriorInput = false
+    if (inputId === undefined) {
+      const priorInput = this.findPriorInputAccepted(envelope.invocationId, envelope.seq)
+      if (priorInput) {
+        terminalAfterPriorInput = this.hasTerminalTurnAfter(
+          envelope.invocationId,
+          priorInput.seq,
+          envelope.seq
+        )
+        if (!terminalAfterPriorInput) {
+          inputId = priorInput.inputId
+        }
+      }
+    }
     if (inputId !== undefined) {
       const run = this.db.runs.getByDispatchedInputId(inputId)
       if (run?.runId) return run.runId
+    }
+    if (terminalAfterPriorInput) {
+      return undefined
     }
     return fallbackRunId
   }
@@ -294,23 +323,37 @@ export class BrokerEventMapper {
     return undefined
   }
 
-  private findPriorInputAcceptedInputId(
+  private findPriorInputAccepted(
     invocationId: string,
     seq: number
-  ): string | undefined {
+  ): { inputId: string; seq: number } | undefined {
     // json_extract on broker_event_json (the payload, which carries inputId
     // on input.accepted per broker contract). Filtering on type='input.accepted'
     // before json_extract keeps this O(log n) via the (invocation_id, seq) index.
     const row = this.db.sqlite
-      .query<{ inputId: string | null }, [string, number]>(
-        `SELECT json_extract(broker_event_json, '$.inputId') AS inputId
+      .query<{ inputId: string | null; seq: number }, [string, number]>(
+        `SELECT seq, json_extract(broker_event_json, '$.inputId') AS inputId
            FROM broker_invocation_events
           WHERE invocation_id = ? AND type = 'input.accepted' AND seq <= ?
           ORDER BY seq DESC
           LIMIT 1`
       )
       .get(invocationId, seq)
-    return row?.inputId ?? undefined
+    return row?.inputId ? { inputId: row.inputId, seq: row.seq } : undefined
+  }
+
+  private hasTerminalTurnAfter(invocationId: string, inputSeq: number, eventSeq: number): boolean {
+    const row = this.db.sqlite
+      .query<{ count: number }, [string, number, number]>(
+        `SELECT COUNT(*) AS count
+           FROM broker_invocation_events
+          WHERE invocation_id = ?
+            AND type IN ('turn.completed', 'turn.failed', 'turn.interrupted')
+            AND seq > ?
+            AND seq < ?`
+      )
+      .get(invocationId, inputSeq, eventSeq)
+    return (row?.count ?? 0) > 0
   }
 
   /** Apply the type-specific state mutation. Emission is handled separately. */
@@ -380,6 +423,7 @@ export class BrokerEventMapper {
       case 'turn.completed': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
+          this.markRuntimeTurnTerminal(ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -393,6 +437,7 @@ export class BrokerEventMapper {
             updatedAt: now,
             errorMessage: payload.message,
           })
+          this.markRuntimeTurnTerminal(ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -400,6 +445,7 @@ export class BrokerEventMapper {
       case 'turn.interrupted': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'cancelled', completedAt: now, updatedAt: now })
+          this.markRuntimeTurnTerminal(ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -519,6 +565,36 @@ export class BrokerEventMapper {
     }
   }
 
+  private markRuntimeTurnTerminal(ctx: ProjectionContext, runId: string, now: string): void {
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    if (!runtime) return
+    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
+      return
+    }
+
+    if (runtime.activeRunId === runId) {
+      this.db.runtimes.updateRunId(ctx.runtimeId, undefined, now)
+    }
+
+    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
+      ? omitRuntimeStateActiveRun(runtime.runtimeStateJson)
+      : runtime.runtimeStateJson
+    this.db.runtimes.update(ctx.runtimeId, {
+      status: 'ready',
+      lastActivityAt: now,
+      updatedAt: now,
+      ...(runtimeStateJson !== undefined
+        ? {
+            runtimeStateJson: {
+              ...runtimeStateJson,
+              status: 'ready',
+              updatedAt: now,
+            },
+          }
+        : {}),
+    })
+  }
+
   /** Emit a single broker-sourced HRC event mirroring the broker envelope. */
   private emit(
     envelope: InvocationEventEnvelope,
@@ -570,13 +646,16 @@ export class BrokerEventMapper {
       generation: ctx.generation,
       runtimeId: ctx.runtimeId,
       ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      transport: 'headless',
-      payload: this.lifecyclePayload(envelope),
+      transport: ctx.transport,
+      payload: this.lifecyclePayload(envelope, ctx.transport),
     })
   }
 
   /** Build the legacy-shaped lifecycle payload for a mapped broker event. */
-  private lifecyclePayload(envelope: InvocationEventEnvelope): Record<string, unknown> {
+  private lifecyclePayload(
+    envelope: InvocationEventEnvelope,
+    transport: HrcLifecycleTransport
+  ): Record<string, unknown> {
     switch (envelope.type) {
       case 'assistant.message.completed': {
         const payload = envelope.payload as AssistantMessageCompletedPayload
@@ -623,15 +702,15 @@ export class BrokerEventMapper {
         return event as unknown as Record<string, unknown>
       }
       case 'turn.completed':
-        return { success: true, transport: 'headless', source: 'broker' }
+        return { success: true, transport, source: 'broker' }
       case 'turn.failed': {
         const payload = envelope.payload as TurnFailedPayload
-        return { success: false, transport: 'headless', source: 'broker', message: payload.message }
+        return { success: false, transport, source: 'broker', message: payload.message }
       }
       case 'turn.interrupted':
-        return { success: false, interrupted: true, transport: 'headless', source: 'broker' }
+        return { success: false, interrupted: true, transport, source: 'broker' }
       default:
-        return { transport: 'headless' }
+        return { transport }
     }
   }
 
