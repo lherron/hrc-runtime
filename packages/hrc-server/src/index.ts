@@ -8930,6 +8930,35 @@ class HrcServerInstance implements HrcServer {
     if (!run || run.completedAt !== undefined || run.status === 'completed') {
       return
     }
+    const runtime =
+      request.execution.runtimeId !== undefined
+        ? this.db.runtimes.getByRuntimeId(request.execution.runtimeId)
+        : null
+
+    if (runtime?.controllerKind === 'harness-broker') {
+      this.db.messages.updateExecution(response.messageId, {
+        state: 'completed',
+        mode: 'interactive',
+        sessionRef: request.execution.sessionRef,
+        hostSessionId: request.execution.hostSessionId,
+        generation: request.execution.generation,
+        runtimeId: request.execution.runtimeId,
+        runId,
+        transport,
+      })
+      this.db.messages.updateExecution(request.messageId, {
+        state: 'completed',
+      })
+      this.turnResponseFinalizers.delete(runId)
+
+      writeServerLog('INFO', 'semantic_turn.interactive_broker_response_recorded', {
+        requestMessageId: request.messageId,
+        responseMessageId: response.messageId,
+        runId,
+        state: 'completed',
+      })
+      return
+    }
 
     const now = timestamp()
     this.db.runs.markCompleted(runId, {

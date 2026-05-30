@@ -697,6 +697,117 @@ if (cmd === 'app-server') {
     }
   })
 
+  it('semantic turn handoff does not synthesize completion for broker tmux reply DMs', async () => {
+    const scopeRef = 'agent:handoff-live-broker-reply:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-handoff-live-broker-reply-${Date.now()}`
+    const operationId = `op-handoff-live-broker-reply-${Date.now()}`
+    const invocationId = `inv-handoff-live-broker-reply-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        activeOperationId: operationId,
+        activeInvocationId: invocationId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+      })
+      db.brokerInvocations.insert({
+        invocationId,
+        operationId,
+        runtimeId,
+        brokerProtocol: 'harness-broker/0.1',
+        brokerDriver: 'codex-cli-tmux',
+        invocationState: 'ready',
+        capabilitiesJson: JSON.stringify({}),
+        specHash: 'sha256:spec-handoff-live-broker-reply',
+        startRequestHash: 'sha256:req-handoff-live-broker-reply',
+        selectedProfileHash: 'sha256:prof-handoff-live-broker-reply',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+    ;(server as any).getHarnessBrokerController = () => ({
+      dispatchInput: async () => ({ ok: true, response: { accepted: true } }),
+    })
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'broker reply should wait for broker completion',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+
+    const replyRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'session', sessionRef },
+      to: { kind: 'entity', entity: 'human' },
+      body: 'broker reply body',
+      replyToMessageId: handoff.messageId,
+    })
+    expect(replyRes.status).toBe(200)
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const run = verifyDb.runs.getByRunId(handoff.runId)
+      const completed = verifyDb.hrcEvents.listByRun(handoff.runId, {
+        eventKind: 'turn.completed',
+      })
+      const responseList = verifyDb.messages.query({
+        thread: { rootMessageId: handoff.messageId },
+        phases: ['response'],
+      })
+
+      expect(run?.status).toBe('accepted')
+      expect(run?.completedAt).toBeUndefined()
+      expect(completed).toHaveLength(0)
+      expect(responseList).toHaveLength(1)
+      expect(responseList[0]?.execution).toMatchObject({
+        state: 'completed',
+        mode: 'interactive',
+        runtimeId,
+        runId: handoff.runId,
+        transport: 'tmux',
+      })
+    } finally {
+      verifyDb.close()
+    }
+  })
+
   it('semantic turn handoff completes replies from live Ghostty runtimes', async () => {
     const scopeRef = 'agent:handoff-live-ghostty:project:agent-spaces'
     const sessionRef = `${scopeRef}/lane:default`
