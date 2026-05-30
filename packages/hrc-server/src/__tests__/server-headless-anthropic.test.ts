@@ -1,15 +1,10 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import type {
-  DispatchTurnResponse,
-  HrcTargetView,
-  SemanticDmResponse,
-  StartRuntimeResponse,
-} from 'hrc-core'
+import type { DispatchTurnResponse, SemanticDmResponse, StartRuntimeResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
@@ -114,10 +109,6 @@ function interactiveAnthropicIntent(): object {
   }
 }
 
-function expectedAnthropicContinuationKey(hostSessionId: string): string {
-  return `sdk-${createHash('sha1').update(hostSessionId).digest('hex').slice(0, 12)}`
-}
-
 async function createTestServer(options: { claudeGhostty?: boolean } = {}): Promise<void> {
   saveCodexEnv()
   if (options.claudeGhostty === true) {
@@ -169,29 +160,6 @@ function getRunHrcEvents(runId: string): any[] {
   const db = openHrcDatabase(fixture.dbPath)
   try {
     return db.hrcEvents.listByRun(runId)
-  } finally {
-    db.close()
-  }
-}
-
-function getRun(runId: string): any {
-  if (!fixture) throw new Error('fixture not initialized')
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    return db.runs.getByRunId(runId)
-  } finally {
-    db.close()
-  }
-}
-
-function getRunBufferText(runId: string): string {
-  if (!fixture) throw new Error('fixture not initialized')
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    return db.runtimeBuffers
-      .listByRunId(runId)
-      .map((chunk) => chunk.text)
-      .join('')
   } finally {
     db.close()
   }
@@ -392,145 +360,7 @@ afterEach(async () => {
   restoreCodexEnv()
 })
 
-describe('A. Anthropic headless dispatch', () => {
-  it('dispatches Anthropic preferredMode=headless via transport=headless and persists continuation', async () => {
-    await createTestServer()
-
-    const { hostSessionId } = await resolveSession('anthropic-headless-dispatch')
-    const expectedKey = expectedAnthropicContinuationKey(hostSessionId)
-
-    const res = await fixture!.postJson('/v1/turns', {
-      hostSessionId,
-      prompt: 'Dispatch an anthropic headless turn',
-      runtimeIntent: headlessIntent('anthropic'),
-    })
-
-    expect(res.status).toBe(200)
-    const data = (await res.json()) as DispatchTurnResponse
-    expect(data.transport).toBe('headless')
-    expect(data.status).toBe('completed')
-    expect(data.runtimeId).toBeString()
-
-    const session = await getSession(hostSessionId)
-    expect(session.continuation).toEqual({
-      provider: 'anthropic',
-      key: expectedKey,
-    })
-
-    const runtime = getRuntime(data.runtimeId)
-    expect(runtime).not.toBeNull()
-    expect(runtime?.transport).toBe('headless')
-    expect(runtime?.provider).toBe('anthropic')
-    expect(runtime?.tmuxJson).toBeUndefined()
-  })
-
-  it('reuses a headless Anthropic runtime across turns without runtime_buffer collisions', async () => {
-    await createTestServer()
-
-    const selector = { sessionRef: 'agent:rex:project:agent-spaces/lane:main' }
-
-    const firstRes = await fixture!.postJson('/v1/turns/by-selector', {
-      selector,
-      prompt: 'Prompt A',
-      runtimeIntent: headlessIntent('anthropic'),
-      createIfMissing: true,
-    })
-    expect(firstRes.status).toBe(200)
-    const first = (await firstRes.json()) as any
-    expect(first.transport).toBe('headless')
-    expect(first.status).toBe('completed')
-    expect(first.finalOutput).toBe('Dry run SDK response for: Prompt A')
-
-    const secondRes = await fixture!.postJson('/v1/turns/by-selector', {
-      selector,
-      prompt: 'Prompt B',
-      runtimeIntent: headlessIntent('anthropic'),
-      createIfMissing: true,
-    })
-    expect(secondRes.status).toBe(200)
-    const second = (await secondRes.json()) as any
-    expect(second.transport).toBe('headless')
-    expect(second.status).toBe('completed')
-    expect(second.runtimeId).toBe(first.runtimeId)
-    expect(second.finalOutput).toBe('Dry run SDK response for: Prompt B')
-
-    expect(getRun(first.runId)?.status).toBe('completed')
-    expect(getRun(second.runId)?.status).toBe('completed')
-    expect(getRunBufferText(first.runId)).toBe('Dry run SDK response for: Prompt A')
-    expect(getRunBufferText(second.runId)).toBe('Dry run SDK response for: Prompt B')
-
-    const runtime = getRuntime(String(second.runtimeId))
-    expect(runtime?.status).toBe('ready')
-    expect(runtime?.activeRunId).toBeUndefined()
-  })
-})
-
-describe('B. Anthropic headless start', () => {
-  it('starts Anthropic preferredMode=headless with transport=headless and reuses the runtime idempotently', async () => {
-    await createTestServer()
-
-    const { hostSessionId } = await resolveSession('anthropic-headless-start')
-    const expectedKey = expectedAnthropicContinuationKey(hostSessionId)
-    const startBody = {
-      hostSessionId,
-      intent: headlessIntent('anthropic', {
-        initialPrompt: 'Seed an Anthropic headless runtime',
-      }),
-    }
-
-    const firstRes = await fixture!.postJson('/v1/runtimes/start', startBody)
-    expect(firstRes.status).toBe(200)
-    const first = (await firstRes.json()) as StartRuntimeResponse
-    expect(first.transport).toBe('headless')
-
-    const secondRes = await fixture!.postJson('/v1/runtimes/start', startBody)
-    expect(secondRes.status).toBe(200)
-    const second = (await secondRes.json()) as StartRuntimeResponse
-    expect(second.transport).toBe('headless')
-    expect(second.runtimeId).toBe(first.runtimeId)
-
-    const session = await getSession(hostSessionId)
-    expect(session.continuation).toEqual({
-      provider: 'anthropic',
-      key: expectedKey,
-    })
-  })
-})
-
 describe('C. Attach from headless Anthropic runtime', () => {
-  it('rematerializes Ghostty from a headless Anthropic runtime with continuation', async () => {
-    await createTestServer({ claudeGhostty: true })
-
-    const fakeClaude = await installFakeClaude('fake-claude-attach')
-    const { hostSessionId } = await resolveSession('anthropic-headless-attach')
-    const startRes = await fixture!.postJson('/v1/runtimes/start', {
-      hostSessionId,
-      intent: headlessIntent('anthropic', {
-        pathPrepend: [fakeClaude.binDir],
-        initialPrompt: 'Seed before attach',
-      }),
-    })
-    expect(startRes.status).toBe(200)
-    const started = (await startRes.json()) as StartRuntimeResponse
-    expect(started.transport).toBe('headless')
-
-    const attachRes = await fixture!.postJson('/v1/runtimes/attach', {
-      runtimeId: started.runtimeId,
-    })
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.transport).toBe('ghostty')
-    expect(attachData.argv[0]).toBe('ghostmux')
-    expect(attachData.bindingFence.surfaceId).toBeString()
-    expect(attachData.bindingFence.runtimeId).toBeString()
-    expect(attachData.bindingFence.runtimeId).not.toBe(started.runtimeId)
-
-    const attachedRuntime = getRuntime(String(attachData.bindingFence.runtimeId))
-    expect(attachedRuntime).not.toBeNull()
-    expect(attachedRuntime?.transport).toBe('ghostty')
-    expect(attachedRuntime?.provider).toBe('anthropic')
-  }, 10_000)
-
   it('returns an error when a headless Anthropic runtime has no continuation', async () => {
     await createTestServer()
 
@@ -742,34 +572,4 @@ describe('E. Regression', () => {
       finalOutput: 'ok',
     })
   }, 10_000)
-})
-
-describe('F. Target state', () => {
-  it('reports an idle Anthropic headless runtime as summoned and headless-capable', async () => {
-    await createTestServer()
-
-    const sessionRef = 'agent:anthropic-target-state/lane:main'
-    const { hostSessionId } = await resolveSession('anthropic-target-state')
-
-    const startRes = await fixture!.postJson('/v1/runtimes/start', {
-      hostSessionId,
-      intent: headlessIntent('anthropic', {
-        initialPrompt: 'Seed for target state',
-      }),
-    })
-    expect(startRes.status).toBe(200)
-
-    const targetRes = await fixture!.fetchSocket(
-      `/v1/targets/by-session-ref?sessionRef=${encodeURIComponent(sessionRef)}`
-    )
-    expect(targetRes.status).toBe(200)
-    const target = (await targetRes.json()) as HrcTargetView
-
-    expect(target.state).toBe('summoned')
-    expect(target.runtime?.transport).toBe('headless')
-    expect(target.capabilities.modesSupported).toContain('headless')
-    expect(target.capabilities.sendReady).toBe(false)
-    expect(target.capabilities.peekReady).toBe(false)
-    expect(target.capabilities.dmReady).toBe(true)
-  })
 })

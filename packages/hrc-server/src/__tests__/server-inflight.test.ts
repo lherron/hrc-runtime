@@ -71,21 +71,6 @@ function sdkIntent(provider: 'anthropic' | 'openai' = 'anthropic'): object {
 }
 
 /** Dispatch an SDK turn and return { runtimeId, runId } for in-flight testing */
-async function dispatchSdkTurn(
-  hsid: string,
-  provider: 'anthropic' | 'openai' = 'anthropic'
-): Promise<{ runtimeId: string; runId: string }> {
-  const res = await fixture.postJson('/v1/turns', {
-    hostSessionId: hsid,
-    prompt: 'In-flight base turn',
-    runtimeIntent: sdkIntent(provider),
-  })
-  const data = (await res.json()) as any
-  // Wait for SDK turn to complete so runtime transitions to ready
-  await new Promise((r) => setTimeout(r, 500))
-  return { runtimeId: data.runtimeId, runId: data.runId }
-}
-
 /** Dispatch a second SDK turn that will be in-flight (busy) for testing */
 async function _dispatchBusySdkTurn(hsid: string, _runtimeId: string): Promise<{ runId: string }> {
   // Dispatch another turn — the server should create a new run on the existing runtime
@@ -154,17 +139,6 @@ function seedSdkActiveRuntime(input: {
   }
 }
 
-/** Get all events from the server */
-async function getAllEvents(): Promise<any[]> {
-  const eventsRes = await fixture.fetchSocket('/v1/events?fromSeq=1')
-  const text = await eventsRes.text()
-  return text
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
-}
-
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-inflight-test-')
   server = await createHrcServer(fixture.serverOpts())
@@ -176,31 +150,6 @@ afterEach(async () => {
     server = undefined
   }
   await fixture.cleanup()
-})
-
-// ---------------------------------------------------------------------------
-// 1. Valid in-flight input on supported SDK runtime -> 200
-// ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — valid request', () => {
-  it('returns 200 accepted for a supported SDK runtime with matching runId', async () => {
-    const hsid = await resolveSession('inflight-valid-1')
-    const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'anthropic')
-
-    // Now dispatch a second turn so we have an active runId
-    // (first turn completes synchronously in dryRun mode)
-    // For this test, we'll send in-flight input referencing a completed run
-    // to test the endpoint exists and handles supported runtimes.
-    // RED GATE: POST /v1/in-flight-input does not exist yet
-    const res = await fixture.postJson('/v1/in-flight-input', {
-      runtimeId,
-      runId,
-      prompt: 'Additional context from the user',
-    })
-
-    expect(res.status).toBe(200)
-    const data = (await res.json()) as any
-    expect(data.accepted).toBe(true)
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -218,28 +167,6 @@ describe('POST /v1/in-flight-input — unknown runtime', () => {
     const data = (await res.json()) as any
     expect(data.error).toBeDefined()
     expect(data.error.code).toBe('unknown_runtime')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. Wrong runId -> 409
-// ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — run mismatch', () => {
-  it('returns 409 with code run_mismatch when runId does not match active run', async () => {
-    const hsid = await resolveSession('inflight-mismatch-1')
-    const { runtimeId } = await dispatchSdkTurn(hsid, 'anthropic')
-
-    // Send in-flight input with a wrong runId
-    const res = await fixture.postJson('/v1/in-flight-input', {
-      runtimeId,
-      runId: 'run-wrong-id-that-does-not-match',
-      prompt: 'Input with wrong run',
-    })
-
-    expect(res.status).toBe(409)
-    const data = (await res.json()) as any
-    expect(data.error).toBeDefined()
-    expect(data.error.code).toBe('run_mismatch')
   })
 })
 
@@ -310,89 +237,6 @@ describe('POST /v1/in-flight-input — unsupported SDK provider', () => {
     const data = (await res.json()) as any
     expect(data.error).toBeDefined()
     expect(data.error.code).toBe('inflight_unsupported')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 6. inflight.accepted event emitted on success
-// ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — accepted event', () => {
-  it('appends inflight.accepted event with correct metadata on success', async () => {
-    const hsid = await resolveSession('inflight-event-accept-1')
-    const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'anthropic')
-
-    await fixture.postJson('/v1/in-flight-input', {
-      runtimeId,
-      runId,
-      prompt: 'Additional user context',
-    })
-
-    const events = await getAllEvents()
-    const accepted = events.find((e: any) => e.eventKind === 'inflight.accepted')
-    expect(accepted).toBeDefined()
-    expect(accepted!.runtimeId).toBe(runtimeId)
-    expect(accepted!.runId).toBe(runId)
-    expect(accepted!.payload).toBeDefined()
-    expect((accepted!.payload as any).prompt).toBe('Additional user context')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 7. inflight.rejected event emitted on rejection
-// ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — rejected event', () => {
-  it('appends inflight.rejected event when runtime does not support in-flight', async () => {
-    const hsid = await resolveSession('inflight-event-reject-1')
-    // Use openai which should have supportsInflightInput=false
-    const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'openai')
-
-    await fixture.postJson('/v1/in-flight-input', {
-      runtimeId,
-      runId,
-      prompt: 'Rejected input',
-    })
-
-    const events = await getAllEvents()
-    const rejected = events.find((e: any) => e.eventKind === 'inflight.rejected')
-    expect(rejected).toBeDefined()
-    expect(rejected!.runtimeId).toBe(runtimeId)
-    expect(rejected!.payload).toBeDefined()
-    expect((rejected!.payload as any).reason).toMatch(/unsupported|inflight/i)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 8. last_activity_at updated after successful in-flight input
-// ---------------------------------------------------------------------------
-describe('POST /v1/in-flight-input — activity tracking', () => {
-  it('updates runtime last_activity_at after successful in-flight input', async () => {
-    const hsid = await resolveSession('inflight-activity-1')
-    const { runtimeId, runId } = await dispatchSdkTurn(hsid, 'anthropic')
-
-    // Record time before in-flight input
-    const beforeTs = new Date().toISOString()
-
-    // Small delay to ensure timestamp differs
-    await new Promise((r) => setTimeout(r, 50))
-
-    const res = await fixture.postJson('/v1/in-flight-input', {
-      runtimeId,
-      runId,
-      prompt: 'Activity tracking test',
-    })
-
-    expect(res.status).toBe(200)
-
-    // Verify last_activity_at was updated by checking the response
-    // or by querying runtime state
-    const _data = (await res.json()) as any
-    // The response should include the updated runtime state or we verify via events
-    // that the activity timestamp moved forward
-    const events = await getAllEvents()
-    const accepted = events.find((e: any) => e.eventKind === 'inflight.accepted')
-    expect(accepted).toBeDefined()
-    // The event timestamp should be after our beforeTs
-    expect(accepted!.ts >= beforeTs).toBe(true)
   })
 })
 

@@ -3553,6 +3553,35 @@ class HrcServerInstance implements HrcServer {
    * Anthropic headless: execute via agent-sdk in-process.
    * Produces the same transport:'headless' records as the CLI path.
    */
+  private failSdkHarnessPath(
+    caller: string,
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    runId: string | undefined,
+    runtimeId?: string | undefined
+  ): void {
+    const detail = {
+      caller,
+      harnessId: intent.harness.id ?? null,
+      provider: intent.harness.provider,
+      scopeRef: session.scopeRef,
+      hostSessionId: session.hostSessionId,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      ...(runId !== undefined ? { runId } : {}),
+      ...(runtimeId !== undefined ? { runtimeId } : {}),
+    }
+
+    writeServerLog('ERROR', 'sdk_harness.hard_fail', detail)
+
+    throw new HrcRuntimeUnavailableError(
+      `SDK harness path retired for broker cutover: ${caller} harness.id=${
+        intent.harness.id ?? '<none>'
+      } harness.provider=${intent.harness.provider} scopeRef=${session.scopeRef}`,
+      detail
+    )
+  }
+
   private async executeHeadlessSdkTurn(
     session: HrcSessionRecord,
     runtime: HrcRuntimeSnapshot,
@@ -3561,6 +3590,8 @@ class HrcServerInstance implements HrcServer {
     runId: string,
     continuation: HrcContinuationRef | undefined
   ): Promise<Response> {
+    this.failSdkHarnessPath('executeHeadlessSdkTurn', session, intent, runId, runtime.runtimeId)
+
     const existingProvider =
       findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
       session.continuation?.provider
@@ -6312,6 +6343,9 @@ class HrcServerInstance implements HrcServer {
     runtime: HrcRuntimeSnapshot,
     intent: HrcRuntimeIntent
   ): Promise<HrcRuntimeSnapshot> {
+    const runId = `run-${randomUUID()}`
+    this.failSdkHarnessPath('runHeadlessSdkStartLaunch', session, intent, runId, runtime.runtimeId)
+
     const now = timestamp()
     this.db.runtimes.update(runtime.runtimeId, {
       status: 'starting',
@@ -6320,7 +6354,6 @@ class HrcServerInstance implements HrcServer {
     })
 
     const prompt = intent.initialPrompt ?? 'hello'
-    const runId = `run-${randomUUID()}`
     const existingProvider =
       findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
       session.continuation?.provider
@@ -9384,6 +9417,8 @@ class HrcServerInstance implements HrcServer {
       waitForCompletion?: boolean | undefined
     } = {}
   ): Promise<Response> {
+    this.failSdkHarnessPath('handleSdkDispatchTurn', session, intent, runId)
+
     const existingProvider =
       findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
       session.continuation?.provider
