@@ -1,8 +1,7 @@
 /**
- * dispatchTurn against a tmux runtime with a live interactive harness must
- * deliver the prompt via literal send-keys (mirroring the hrcchat dm path),
- * not write a launch artifact and inject `bun run exec.ts`. Without this
- * branch, the running harness CLI sees the bun command as keystrokes.
+ * dispatchTurn against a legacy tmux runtime with a live interactive harness
+ * must not deliver harness input via literal send-keys. The broker cutover
+ * stales the legacy runtime and fails closed if a broker cannot be started.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
@@ -22,7 +21,7 @@ let server: HrcServer
 
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-dispatch-literal-')
-  server = await createHrcServer(fixture.serverOpts())
+  server = await createHrcServer(fixture.serverOpts({ claudeCodeTmuxBrokerEnabled: true }))
 })
 
 afterEach(async () => {
@@ -31,7 +30,7 @@ afterEach(async () => {
 })
 
 describe('dispatchTurn against live interactive harness', () => {
-  it('delivers prompt via literal send-keys and writes no launch artifact', async () => {
+  it('does not literal-deliver into a live non-broker tmux runtime', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
 
@@ -103,46 +102,31 @@ describe('dispatchTurn against live interactive harness', () => {
         },
       },
     })
-    expect(turnRes.status).toBe(200)
+    expect(turnRes.status).toBe(503)
     const turnBody = (await turnRes.json()) as {
-      runtimeId: string
-      transport: string
-      status: string
+      error?: { code?: string; message?: string }
     }
-    expect(turnBody.runtimeId).toBe(runtimeId)
-    expect(turnBody.transport).toBe('tmux')
-    expect(turnBody.status).toBe('started')
+    expect(turnBody.error?.code).toBe('runtime_unavailable')
 
-    // No new launch artifact should be written for the literal path.
+    // No legacy launch artifact should be written.
     const afterFiles = await readdir(launchesDir).catch(() => [] as string[])
     expect(afterFiles.length).toBe(beforeFiles.length)
 
-    // The pane should contain the literal prompt (not `bun run exec.ts`).
-    // tmux can hard-wrap long lines so compare against the newline-stripped
-    // capture before asserting.
-    let compactCapture = ''
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await Bun.sleep(100)
-      const captured = await tmux.capture(pane.paneId)
-      compactCapture = captured.replaceAll('\n', '')
-      if (compactCapture.includes('live-harness literal payload')) {
-        break
-      }
-    }
-    expect(compactCapture).toContain('live-harness literal payload')
+    const captured = await tmux.capture(pane.paneId)
+    const compactCapture = captured.replaceAll('\n', '')
+    expect(compactCapture).not.toContain('live-harness literal payload')
     expect(compactCapture).not.toContain('bun run')
     expect(compactCapture).not.toContain('exec.ts')
 
-    // turn.accepted event tags the literal delivery mode (mirrors hrcchat dm path).
     const eventsDb = openHrcDatabase(fixture.dbPath)
     try {
+      expect(eventsDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
       const events = eventsDb.hrcEvents.listFromHrcSeq(1) as Array<{
         eventKind: string
         payload?: Record<string, unknown>
       }>
-      const accepted = events.find((e) => e.eventKind === 'turn.accepted')
-      expect(accepted).toBeDefined()
-      expect(accepted?.payload?.['delivery']).toBe('interactive-literal')
+      expect(events.some((e) => e.eventKind === 'turn.accepted')).toBe(false)
+      expect(events.some((e) => e.eventKind === 'runtime.stale')).toBe(true)
     } finally {
       eventsDb.close()
     }

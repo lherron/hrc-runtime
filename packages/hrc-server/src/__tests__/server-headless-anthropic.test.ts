@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import type { DispatchTurnResponse, SemanticDmResponse, StartRuntimeResponse } from 'hrc-core'
+import type { SemanticDmResponse } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
@@ -109,7 +109,9 @@ function interactiveAnthropicIntent(): object {
   }
 }
 
-async function createTestServer(options: { claudeGhostty?: boolean } = {}): Promise<void> {
+async function createTestServer(
+  options: { claudeGhostty?: boolean; claudeCodeTmuxBrokerEnabled?: boolean } = {}
+): Promise<void> {
   saveCodexEnv()
   if (options.claudeGhostty === true) {
     process.env['HRC_CLAUDE_GHOSTTY'] = '1'
@@ -118,7 +120,13 @@ async function createTestServer(options: { claudeGhostty?: boolean } = {}): Prom
     delete process.env['HRC_CLAUDE_GHOSTTY']
   }
   fixture = await createHrcTestFixture('hrc-headless-anthropic-')
-  server = await createHrcServer(fixture.serverOpts())
+  server = await createHrcServer(
+    fixture.serverOpts({
+      ...(options.claudeCodeTmuxBrokerEnabled !== undefined
+        ? { claudeCodeTmuxBrokerEnabled: options.claudeCodeTmuxBrokerEnabled }
+        : {}),
+    })
+  )
 }
 
 async function resolveSession(
@@ -133,36 +141,6 @@ async function getSession(hostSessionId: string): Promise<any> {
   const res = await fixture.fetchSocket(`/v1/sessions/by-host/${hostSessionId}`)
   expect(res.status).toBe(200)
   return await res.json()
-}
-
-function getRuntime(runtimeId: string): any {
-  if (!fixture) throw new Error('fixture not initialized')
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    return db.runtimes.getByRuntimeId(runtimeId)
-  } finally {
-    db.close()
-  }
-}
-
-function getRunEvents(runId: string): any[] {
-  if (!fixture) throw new Error('fixture not initialized')
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    return db.events.listFromSeq(1, { runId })
-  } finally {
-    db.close()
-  }
-}
-
-function getRunHrcEvents(runId: string): any[] {
-  if (!fixture) throw new Error('fixture not initialized')
-  const db = openHrcDatabase(fixture.dbPath)
-  try {
-    return db.hrcEvents.listByRun(runId)
-  } finally {
-    db.close()
-  }
 }
 
 function seedHeadlessRuntime(
@@ -362,7 +340,7 @@ afterEach(async () => {
 
 describe('C. Attach from headless Anthropic runtime', () => {
   it('returns an error when a headless Anthropic runtime has no continuation', async () => {
-    await createTestServer()
+    await createTestServer({ claudeCodeTmuxBrokerEnabled: false })
 
     const scopeRef = 'agent:anthropic-headless-no-continuation'
     const { hostSessionId, generation } = await resolveSession(scopeRef)
@@ -377,12 +355,12 @@ describe('C. Attach from headless Anthropic runtime', () => {
     expect(attachRes.status).toBeGreaterThanOrEqual(400)
     const data = (await attachRes.json()) as any
     expect(data.error).toBeDefined()
-    expect(String(data.error.message ?? '')).toContain('continuation')
+    expect(data.error.code).toBe('runtime_unavailable')
   })
 })
 
 describe('C2. Ghostty availability', () => {
-  it('uses tmux for interactive Claude when Ghostty is not enabled', async () => {
+  it('does not start legacy tmux for interactive Claude when Ghostty is not enabled', async () => {
     await createTestServer()
 
     const fakeClaude = await installFakeClaude('fake-claude-default-tmux')
@@ -397,9 +375,11 @@ describe('C2. Ghostty availability', () => {
       },
     })
 
-    expect(res.status).toBe(200)
-    const data = (await res.json()) as StartRuntimeResponse
-    expect(data.transport).toBe('tmux')
+    expect(res.status).toBe(503)
+    const data = (await res.json()) as any
+    expect(data.error?.code).toBe('runtime_unavailable')
+    const execLog = await readFile(fakeClaude.logPath, 'utf-8').catch(() => '')
+    expect(execLog).toBe('')
   }, 10_000)
 
   it('returns runtime_unavailable instead of internal_error when ghostmux cannot reach Ghostty', async () => {
@@ -427,13 +407,12 @@ describe('C2. Ghostty availability', () => {
     expect(res.status).toBeGreaterThanOrEqual(400)
     const data = (await res.json()) as any
     expect(data.error?.code).toBe('runtime_unavailable')
-    expect(String(data.error?.message ?? '')).toContain('Ghostty/ghostmux unavailable')
     expect(String(data.error?.message ?? '')).not.toContain('internal server error')
   })
 })
 
 describe('D. DM fallback', () => {
-  it('uses headless transport for Anthropic headless DM fallback when no tmux runtime exists', async () => {
+  it('fails closed for Anthropic headless DM fallback when no broker route exists', async () => {
     await createTestServer()
 
     const dmRes = await fixture!.postJson('/v1/messages/dm', {
@@ -445,20 +424,11 @@ describe('D. DM fallback', () => {
     expect(dmRes.status).toBe(200)
 
     const dm = (await dmRes.json()) as SemanticDmResponse
-    expect(dm.execution?.transport).toBe('headless')
-    expect(dm.execution?.mode).toBe('headless')
-    expect(dm.execution?.status).toBe('started')
-    expect(dm.execution?.runtimeId).toBeString()
-    expect(dm.execution?.continuationUpdated).toBe(false)
-
-    const runtime = getRuntime(String(dm.execution?.runtimeId))
-    expect(runtime).not.toBeNull()
-    expect(runtime?.transport).toBe('headless')
-    expect(runtime?.provider).toBe('anthropic')
-    expect(runtime?.tmuxJson).toBeUndefined()
+    expect(dm.execution).toBeUndefined()
+    expect(dm.request.execution.state).toBe('failed')
   })
 
-  it('returns from non-wait headless DM after dispatch starts instead of turn completion', async () => {
+  it('does not use legacy headless exec for non-wait Codex DM fallback', async () => {
     await createTestServer()
 
     const fakeCodex = await installFakeCodex('fake-codex-slow-dm', { execDelayMs: 5_000 })
@@ -476,28 +446,16 @@ describe('D. DM fallback', () => {
     expect(dmRes.status).toBe(200)
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(elapsedMs).toBeLessThan(5_500)
-    expect(dm.execution?.transport).toBe('headless')
-    expect(dm.execution?.status).toBe('started')
-    expect(dm.execution?.continuationUpdated).toBe(false)
+    expect(dm.execution).toBeUndefined()
+    expect(dm.request.execution.state).toBe('failed')
     expect(dm.reply).toBeUndefined()
     expect(dm.waited).toBeUndefined()
 
-    let execLog = ''
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      try {
-        execLog = await readFile(fakeCodex.logPath, 'utf-8')
-      } catch {
-        execLog = ''
-      }
-      if (execLog.includes('app-server:')) {
-        break
-      }
-      await Bun.sleep(100)
-    }
-    expect(execLog).toContain('app-server:')
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).not.toContain('app-server:')
   }, 10_000)
 
-  it('waits for a headless DM response timeout when wait is explicitly requested', async () => {
+  it('does not use legacy headless exec for waited Codex DM fallback', async () => {
     await createTestServer()
 
     const fakeCodex = await installFakeCodex('fake-codex-wait-dm')
@@ -516,16 +474,17 @@ describe('D. DM fallback', () => {
     expect(dmRes.status).toBe(200)
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(elapsedMs).toBeGreaterThanOrEqual(250)
-    expect(dm.execution?.transport).toBe('headless')
-    expect(dm.execution?.status).toBe('completed')
-    expect(dm.execution?.continuationUpdated).toBe(true)
+    expect(dm.execution).toBeUndefined()
+    expect(dm.request.execution.state).toBe('failed')
     expect(dm.reply).toBeUndefined()
     expect(dm.waited).toEqual({ matched: false, reason: 'timeout' })
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).not.toContain('app-server:')
   }, 10_000)
 })
 
 describe('E. Regression', () => {
-  it('keeps Codex headless dispatch on transport=headless', async () => {
+  it('does not route Codex headless dispatch through legacy headless exec', async () => {
     await createTestServer()
 
     const fakeCodex = await installFakeCodex('fake-codex-openai-headless')
@@ -539,37 +498,12 @@ describe('E. Regression', () => {
       }),
     })
 
-    expect(res.status).toBe(200)
-    const data = (await res.json()) as DispatchTurnResponse
-    expect(data.transport).toBe('headless')
-    expect(data.status).toBe('completed')
-
+    expect(res.status).toBe(503)
+    const data = (await res.json()) as { error?: { code?: string } }
+    expect(data.error?.code).toBe('runtime_unavailable')
     const session = await getSession(hostSessionId)
-    expect(session.continuation).toEqual({
-      provider: 'openai',
-      key: 'thread-openai-headless',
-    })
-
-    const messageEnd = getRunEvents(data.runId).find((event) => event.eventKind === 'message_end')
-    const hrcEvents = getRunHrcEvents(data.runId)
-    const hrcKinds = hrcEvents.map((event) => event.eventKind)
-    expect(messageEnd).toBeDefined()
-    expect(messageEnd?.eventJson).toMatchObject({
-      type: 'message_end',
-      messageId: 'item_0',
-      message: {
-        role: 'assistant',
-        content: 'ok',
-      },
-    })
-    expect(hrcKinds).toContain('turn.user_prompt')
-    expect(hrcKinds).toContain('turn.message')
-    expect(hrcKinds).toContain('turn.completed')
-    expect(hrcEvents.find((event) => event.eventKind === 'turn.completed')?.payload).toMatchObject({
-      success: true,
-      transport: 'headless',
-      source: 'codex_app_server',
-      finalOutput: 'ok',
-    })
+    expect(session.continuation).toBeUndefined()
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).not.toContain('app-server:')
   }, 10_000)
 })

@@ -699,10 +699,7 @@ describe('replay parity', () => {
 // 12.9 Idempotent runtime start
 // ---------------------------------------------------------------------------
 describe('idempotent runtime start', () => {
-  it('ready runtime with live launch is not double-started', async () => {
-    // This test seeds a tmux runtime with status=ready and a live child_started
-    // launch, then calls /v1/runtimes/start. The server should reuse the
-    // existing runtime rather than enqueuing a new launch.
+  it('ready legacy tmux runtime with live launch is staled, not reused', async () => {
     const scope = `test-idempotent-${randomUUID()}`
     const resolved = await fixture.resolveSession(scope)
     const hsid = resolved.hostSessionId
@@ -714,7 +711,6 @@ describe('idempotent runtime start', () => {
     fixture.seedTmuxRuntime(hsid, `agent:${scope}`, rtId, { status: 'ready', launchId })
     seedLaunch(hsid, rtId, launchId, 'child_started', { wrapperPid: 1, childPid: 1 })
 
-    // Request runtime start — should reuse existing
     const res = await fixture.postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
       intent: {
@@ -736,14 +732,13 @@ describe('idempotent runtime start', () => {
       },
     })
 
-    // The response should be successful and return the existing runtime
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(503)
     const data = (await res.json()) as any
-    expect(data.runtimeId).toBe(rtId)
+    expect(data.error?.code).toBe('runtime_unavailable')
 
-    // Verify no new launches were created
     const db = openHrcDatabase(fixture.dbPath)
     try {
+      expect(db.runtimes.getByRuntimeId(rtId)?.status).toBe('dead')
       const launches = db.launches.listByRuntimeId(rtId)
       expect(launches.length).toBe(1)
       expect(launches[0].launchId).toBe(launchId)

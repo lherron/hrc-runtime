@@ -11,7 +11,7 @@ import type {
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
-import type { HrcServer } from '../index'
+import type { HrcServer, HrcServerOptions } from '../index'
 import { TmuxManager } from '../tmux'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -54,6 +54,11 @@ afterEach(async () => {
 })
 
 describe('hrcchat minimal server routes', () => {
+  async function restartServer(overrides: Partial<HrcServerOptions>): Promise<void> {
+    await server.stop()
+    server = await createHrcServer(fixture.serverOpts(overrides))
+  }
+
   async function installFakeCodex(dirName: string): Promise<{ binDir: string; logPath: string }> {
     const binDir = join(fixture.tmpDir, dirName)
     const logPath = join(binDir, 'codex.log')
@@ -302,7 +307,8 @@ if (cmd === 'app-server') {
     }
   })
 
-  it('uses headless transport for openai nonInteractive dm fallback', async () => {
+  it('fails closed for openai nonInteractive dm when the broker is not admitted', async () => {
+    await restartServer({ headlessCodexBrokerEnabled: false })
     const fakeCodex = await installFakeCodex('fake-codex-dm-fallback')
 
     const dmRes = await fixture.postJson('/v1/messages/dm', {
@@ -333,40 +339,25 @@ if (cmd === 'app-server') {
     expect(dmRes.status).toBe(200)
 
     const dm = (await dmRes.json()) as SemanticDmResponse
-    expect(dm.execution?.transport).toBe('headless')
-    expect(dm.execution?.mode).toBe('headless')
-    expect(dm.execution?.status).toBe('started')
-    expect(dm.execution?.runtimeId).toBeString()
-    expect(dm.execution?.continuationUpdated).toBe(false)
+    expect(dm.execution).toBeUndefined()
+    expect(dm.request.execution.state).toBe('failed')
+    expect(dm.request.execution.errorMessage).toContain('headless legacy execution is unavailable')
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
-      const runtime = db.runtimes.getByRuntimeId(String(dm.execution?.runtimeId))
-      expect(runtime).not.toBeNull()
-      expect(runtime?.transport).toBe('headless')
-      expect(runtime?.provider).toBe('openai')
-      expect(runtime?.tmuxJson).toBeUndefined()
+      expect(db.runtimes.listByHostSessionId(String(dm.request.execution.hostSessionId))).toEqual(
+        []
+      )
     } finally {
       db.close()
     }
 
-    let execLog = ''
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      try {
-        execLog = await readFile(fakeCodex.logPath, 'utf-8')
-      } catch {
-        execLog = ''
-      }
-      if (execLog.includes('app-server:')) {
-        break
-      }
-      await Bun.sleep(100)
-    }
-
-    expect(execLog).toContain('app-server:')
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).not.toContain('app-server:')
   })
 
-  it('semantic turn handoff creates request immediately, returns replay filters, and finalizes response', async () => {
+  it('semantic turn handoff fails closed when headless codex would use legacy exec', async () => {
+    await restartServer({ headlessCodexBrokerEnabled: false })
     const fakeCodex = await installFakeCodex('fake-codex-turn-handoff')
     const sessionRef = 'agent:handoff:project:agent-spaces/lane:main'
 
@@ -395,64 +386,27 @@ if (cmd === 'app-server') {
         },
       },
     })
-    expect(handoffRes.status).toBe(200)
-
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
-    expect(handoff.messageId).toStartWith('msg-')
-    expect(handoff.sessionRef).toBe(sessionRef)
-    expect(handoff.scopeRef).toBe('agent:handoff:project:agent-spaces')
-    expect(handoff.laneRef).toBe('main')
-    expect(handoff.hostSessionId).toBeString()
-    expect(handoff.runtimeId).toBeString()
-    expect(handoff.runId).toBeString()
-    expect(handoff.generation).toBe(1)
-    expect(handoff.fromSeq).toBeGreaterThan(0)
+    expect(handoffRes.status).toBe(503)
+    const errorBody = (await handoffRes.json()) as {
+      error?: { code?: string; message?: string }
+    }
+    expect(errorBody.error?.code).toBe('runtime_unavailable')
+    expect(errorBody.error?.message).toContain('headless legacy execution is unavailable')
 
     const requestListRes = await fixture.postJson('/v1/messages/query', {
-      thread: { rootMessageId: handoff.messageId },
       phases: ['request'],
     })
     expect(requestListRes.status).toBe(200)
     const requestList = (await requestListRes.json()) as ListMessagesResponse
-    expect(requestList.messages).toHaveLength(1)
-    expect(requestList.messages[0]?.messageId).toBe(handoff.messageId)
-    expect(requestList.messages[0]?.execution.runId).toBe(handoff.runId)
-
-    const acceptedRes = await fixture.fetchSocket(
-      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.accepted`
+    const request = requestList.messages.find(
+      (message) => message.body === 'handoff to detached turn'
     )
-    expect(acceptedRes.status).toBe(200)
-    const acceptedText = await acceptedRes.text()
-    const accepted = acceptedText
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-    expect(accepted).toHaveLength(1)
-    expect(handoff.fromSeq).toBeLessThanOrEqual(accepted[0].hrcSeq)
-
-    let responseList: ListMessagesResponse = { messages: [] }
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const responseListRes = await fixture.postJson('/v1/messages/query', {
-        thread: { rootMessageId: handoff.messageId },
-        phases: ['response'],
-      })
-      expect(responseListRes.status).toBe(200)
-      responseList = (await responseListRes.json()) as ListMessagesResponse
-      if (responseList.messages.length > 0) {
-        break
-      }
-      await Bun.sleep(100)
-    }
-
-    expect(responseList.messages).toHaveLength(1)
-    expect(responseList.messages[0]?.replyToMessageId).toBe(handoff.messageId)
-    expect(responseList.messages[0]?.body).toBe('ok')
-    expect(responseList.messages[0]?.execution.runId).toBe(handoff.runId)
-    expect(responseList.messages[0]?.execution.state).toBe('completed')
+    expect(request?.execution.state).toBe('failed')
+    expect(request?.execution.errorMessage).toContain('headless legacy execution is unavailable')
   })
 
-  it('semantic turn handoff prefers live tmux over headless dispatch', async () => {
+  it('semantic turn handoff stales live non-broker tmux instead of literal delivery', async () => {
+    await restartServer({ headlessCodexBrokerEnabled: false })
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
     const fakeCodex = await installFakeCodex('fake-codex-turn-handoff-live-tmux')
@@ -483,22 +437,6 @@ if (cmd === 'app-server') {
         createdAt: timestamp,
         updatedAt: timestamp,
       })
-      db.runtimes.insert({
-        runtimeId: `rt-handoff-newer-headless-${Date.now()}`,
-        hostSessionId,
-        scopeRef,
-        laneRef: 'default',
-        generation,
-        transport: 'headless',
-        harness: 'codex-cli',
-        provider: 'openai',
-        status: 'ready',
-        supportsInflightInput: false,
-        adopted: false,
-        lastActivityAt: fixture.now(),
-        createdAt: fixture.now(),
-        updatedAt: fixture.now(),
-      })
     } finally {
       db.close()
     }
@@ -528,60 +466,25 @@ if (cmd === 'app-server') {
         },
       },
     })
-    expect(handoffRes.status).toBe(200)
-    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
-    expect(handoff.runId).toBeString()
-    expect(handoff.runtimeId).toBe(runtimeId)
-
-    let captured = ''
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await Bun.sleep(100)
-      captured = await tmux.capture(pane.paneId)
-      if (captured.includes('must be sent literally')) {
-        break
-      }
+    expect(handoffRes.status).toBe(503)
+    const errorBody = (await handoffRes.json()) as {
+      error?: { code?: string; message?: string }
     }
-    expect(captured).toContain('must be sent literally')
-    expect(captured).toContain('reply_cmd if reply requested:')
+    expect(errorBody.error?.code).toBe('runtime_unavailable')
+    expect(errorBody.error?.message).toContain('headless legacy execution is unavailable')
 
-    const requestListRes = await fixture.postJson('/v1/messages/query', {
-      thread: { rootMessageId: handoff.messageId },
-      phases: ['request'],
-    })
-    expect(requestListRes.status).toBe(200)
-    const requestList = (await requestListRes.json()) as ListMessagesResponse
-    expect(requestList.messages[0]?.execution).toMatchObject({
-      state: 'started',
-      mode: 'interactive',
-      runtimeId,
-      runId: handoff.runId,
-      transport: 'tmux',
-    })
+    const captured = await tmux.capture(pane.paneId)
+    expect(captured).not.toContain('must be sent literally')
 
-    const eventsRes = await fixture.fetchSocket(
-      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.accepted`
-    )
-    expect(eventsRes.status).toBe(200)
-    expect((await eventsRes.text()).trim()).toContain('"turn.accepted"')
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+    } finally {
+      verifyDb.close()
+    }
 
     const codexLog = await readFile(fakeCodex.logPath, 'utf8').catch(() => '')
     expect(codexLog).not.toContain('app-server:')
-
-    const replyRes = await fixture.postJson('/v1/messages/dm', {
-      from: { kind: 'session', sessionRef },
-      to: { kind: 'entity', entity: 'human' },
-      body: 'interactive reply',
-      replyToMessageId: handoff.messageId,
-    })
-    expect(replyRes.status).toBe(200)
-
-    const completedRes = await fixture.fetchSocket(
-      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.completed`
-    )
-    expect(completedRes.status).toBe(200)
-    const completed = (await completedRes.text()).trim()
-    expect(completed).toContain('"turn.completed"')
-    expect(completed).toContain('interactive reply')
   })
 
   it('semantic turn handoff dispatches through live broker tmux runtimes', async () => {
@@ -808,7 +711,8 @@ if (cmd === 'app-server') {
     }
   })
 
-  it('semantic turn handoff completes replies from live Ghostty runtimes', async () => {
+  it('semantic turn handoff stales live non-broker Ghostty instead of literal delivery', async () => {
+    await restartServer({ claudeCodeTmuxBrokerEnabled: false })
     const scopeRef = 'agent:handoff-live-ghostty:project:agent-spaces'
     const sessionRef = `${scopeRef}/lane:default`
     const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
@@ -867,7 +771,14 @@ if (cmd === 'app-server') {
     })
     expect(handoffRes.status).toBe(200)
     const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
-    expect(handoff.runtimeId).toBe(runtimeId)
+    expect(handoff.runtimeId).not.toBe(runtimeId)
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+    } finally {
+      verifyDb.close()
+    }
 
     const requestListRes = await fixture.postJson('/v1/messages/query', {
       thread: { rootMessageId: handoff.messageId },
@@ -875,33 +786,14 @@ if (cmd === 'app-server') {
     })
     expect(requestListRes.status).toBe(200)
     const requestList = (await requestListRes.json()) as ListMessagesResponse
-    expect(requestList.messages[0]?.execution).toMatchObject({
-      state: 'started',
-      mode: 'interactive',
-      runtimeId,
-      runId: handoff.runId,
-      transport: 'ghostty',
-    })
-
-    const replyRes = await fixture.postJson('/v1/messages/dm', {
-      from: { kind: 'session', sessionRef },
-      to: { kind: 'entity', entity: 'human' },
-      body: 'ghostty interactive reply',
-      replyToMessageId: handoff.messageId,
-    })
-    expect(replyRes.status).toBe(200)
-
-    const completedRes = await fixture.fetchSocket(
-      `/v1/events?fromSeq=${handoff.fromSeq}&runId=${encodeURIComponent(handoff.runId)}&eventKind=turn.completed`
+    const request = requestList.messages.find(
+      (message) => message.body === 'must be sent to ghostty literally'
     )
-    expect(completedRes.status).toBe(200)
-    const completed = (await completedRes.text()).trim()
-    expect(completed).toContain('"turn.completed"')
-    expect(completed).toContain('"transport":"ghostty"')
-    expect(completed).toContain('ghostty interactive reply')
+    expect(request?.execution.runtimeId).not.toBe(runtimeId)
+    expect(request?.execution.transport).not.toBe('ghostty')
   })
 
-  it('injects a heredoc-based reply hint for live tmux dm delivery', async () => {
+  it('stales live non-broker tmux dm targets instead of injecting reply hints', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
 
@@ -942,7 +834,7 @@ if (cmd === 'app-server') {
     })
     expect(dmRes.status).toBe(200)
 
-    const dm = (await dmRes.json()) as SemanticDmResponse
+    await dmRes.json()
 
     let captured = ''
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -955,15 +847,18 @@ if (cmd === 'app-server') {
 
     const compactCapture = captured.replaceAll('\n', '')
 
-    expect(captured).toContain('reply_cmd if reply requested:')
-    expect(compactCapture).toContain(
-      `hrcchat dm human --reply-to ${dm.request.messageId} - <<'__HRC_REPLY__'`
-    )
-    expect(captured).toContain('<your reply>')
-    expect(captured).not.toContain('"<your reply>"')
+    expect(captured).not.toContain('reply_cmd if reply requested:')
+    expect(compactCapture).not.toContain('hrcchat dm human --reply-to')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+    } finally {
+      verifyDb.close()
+    }
   })
 
-  it('includes non-main sender lanes in live tmux reply hints', async () => {
+  it('stales live non-broker tmux lane targets instead of injecting reply hints', async () => {
     const tmux = new TmuxManager(fixture.tmuxSocketPath)
     await tmux.initialize()
 
@@ -1007,7 +902,7 @@ if (cmd === 'app-server') {
     })
     expect(dmRes.status).toBe(200)
 
-    const dm = (await dmRes.json()) as SemanticDmResponse
+    await dmRes.json()
 
     let captured = ''
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -1020,9 +915,14 @@ if (cmd === 'app-server') {
 
     const compactCapture = captured.replaceAll('\n', '')
 
-    expect(compactCapture).toContain(
-      `hrcchat dm clod@agent-spaces:T-01128~repair --reply-to ${dm.request.messageId} - <<'__HRC_REPLY__'`
-    )
+    expect(compactCapture).not.toContain('hrcchat dm clod@agent-spaces:T-01128~repair')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
+    } finally {
+      verifyDb.close()
+    }
   })
 
   it('appends semantic turn.user_prompt for Codex tmux literal sends', async () => {

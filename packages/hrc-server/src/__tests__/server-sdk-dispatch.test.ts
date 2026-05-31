@@ -160,6 +160,9 @@ beforeEach(async () => {
     spoolDir,
     dbPath,
     tmuxSocketPath,
+    headlessCodexBrokerEnabled: false,
+    claudeCodeTmuxBrokerEnabled: false,
+    codexCliTmuxBrokerEnabled: false,
   })
 })
 
@@ -376,45 +379,6 @@ if (cmd === 'app-server') {
     }
   }
 
-  async function readLaunchArtifactForRuntime(runtimeId: string): Promise<{
-    argv: string[]
-    codexAppServer?: { resumeThreadId?: string | undefined } | undefined
-  }> {
-    let launchArtifactPath = ''
-    const db = openHrcDatabase(dbPath)
-    try {
-      const runtime = db.runtimes.getByRuntimeId(runtimeId)
-      expect(runtime?.launchId).toBeString()
-      const launch = db.launches.getByLaunchId(String(runtime?.launchId))
-      expect(launch?.launchArtifactPath).toBeString()
-      launchArtifactPath = String(launch?.launchArtifactPath)
-    } finally {
-      db.close()
-    }
-
-    return JSON.parse(await readFile(launchArtifactPath, 'utf-8')) as { argv: string[] }
-  }
-
-  async function waitForResumeLog(resumePath: string, expectedLines: number): Promise<string[]> {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        const resumeLog = await readFile(resumePath, 'utf-8')
-        const lines = resumeLog
-          .trim()
-          .split('\n')
-          .filter((line) => line.length > 0)
-        if (lines.length >= expectedLines) {
-          return lines
-        }
-      } catch {
-        // Resume log is written asynchronously by the fake Codex shim.
-      }
-      await Bun.sleep(100)
-    }
-
-    throw new Error(`resume log ${resumePath} did not reach ${expectedLines} lines in time`)
-  }
-
   async function waitForRuntimeStatus(
     runtimeId: string,
     expectedStatuses: string[],
@@ -439,8 +403,7 @@ if (cmd === 'app-server') {
     )
   }
 
-  it('interactive dispatch ignores stale session continuation when the fresh runtime has none', async () => {
-    const fakeCodex = await installFakeCodex('fake-codex-interactive-no-stale-resume')
+  it('interactive ensure fails closed when no broker-admissible route exists', async () => {
     const hsid = await resolveSession('interactive-dispatch-no-stale-session-continuation')
     seedTerminatedTmuxRuntime({
       hostSessionId: hsid,
@@ -451,62 +414,29 @@ if (cmd === 'app-server') {
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
-      intent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
+      intent: interactiveCliIntent('openai'),
     })
-    expect(ensureRes.status).toBe(200)
-
-    const turnRes = await postJson('/v1/turns', {
-      hostSessionId: hsid,
-      prompt: 'Dispatch without stale resume',
-      runtimeIntent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
-    })
-    if (turnRes.status !== 200) {
-      throw new Error(`expected /v1/turns 200, got ${turnRes.status}: ${await turnRes.text()}`)
-    }
-    const turnData = (await turnRes.json()) as { runtimeId: string }
-
-    const launchArtifact = await readLaunchArtifactForRuntime(turnData.runtimeId)
-    expect(launchArtifact.argv).not.toContain('--resume')
-    expect(launchArtifact.argv).not.toContain('stale-session-continuation')
+    expect(ensureRes.status).toBe(503)
+    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
   })
 
-  it('interactive dispatch uses the runtime continuation when present', async () => {
-    const fakeCodex = await installFakeCodex('fake-codex-interactive-runtime-resume')
+  it('interactive ensure does not mint legacy tmux runtimes with runtime continuation present', async () => {
     const hsid = await resolveSession('interactive-dispatch-runtime-continuation')
     seedSessionContinuation(hsid, 'stale-session-continuation')
 
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
-      intent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
+      intent: interactiveCliIntent('openai'),
     })
-    expect(ensureRes.status).toBe(200)
-    const ensureData = (await ensureRes.json()) as { runtimeId: string }
-
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.update(ensureData.runtimeId, {
-        continuation: { provider: 'openai', key: 'runtime-continuation' },
-        updatedAt: new Date().toISOString(),
-      })
-    } finally {
-      db.close()
-    }
-
-    const turnRes = await postJson('/v1/turns', {
-      hostSessionId: hsid,
-      prompt: 'Dispatch with runtime resume',
-      runtimeIntent: interactiveCliIntent('openai', { pathPrepend: [fakeCodex.binDir] }),
-    })
-    expect(turnRes.status).toBe(200)
-    const turnData = (await turnRes.json()) as { runtimeId: string }
-
-    const launchArtifact = await readLaunchArtifactForRuntime(turnData.runtimeId)
-    expect(launchArtifact.argv).toContain('resume')
-    expect(launchArtifact.argv).toContain('runtime-continuation')
-    expect(launchArtifact.argv).not.toContain('stale-session-continuation')
+    expect(ensureRes.status).toBe(503)
+    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
   })
 
-  it('headless dispatch still threads the session continuation fallback', async () => {
+  it('headless codex dispatch fails closed instead of using legacy exec', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-headless-session-continuation')
     const hsid = await resolveSession('headless-dispatch-session-continuation-fallback')
     const db = openHrcDatabase(dbPath)
@@ -528,12 +458,13 @@ if (cmd === 'app-server') {
         pathPrepend: [fakeCodex.binDir],
       }),
     })
-    expect(turnRes.status).toBe(200)
-    const turnData = (await turnRes.json()) as { runtimeId: string }
+    expect(turnRes.status).toBe(503)
+    const body = (await turnRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('headless legacy execution is unavailable')
 
-    const launchArtifact = await readLaunchArtifactForRuntime(turnData.runtimeId)
-    expect(launchArtifact.argv).not.toContain('session-headless-continuation')
-    expect(launchArtifact.codexAppServer?.resumeThreadId).toBe('session-headless-continuation')
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).not.toContain('app-server:')
   })
 
   it('POST /v1/runtimes/start is idempotent for headless codex startup and persists continuation', async () => {
@@ -622,7 +553,7 @@ if (cmd === 'app-server') {
     expect(nextSessionData.continuation).toBeUndefined()
   })
 
-  it('POST /v1/runtimes/attach blocks on in-flight start and is idempotent for codex resume', async () => {
+  it('POST /v1/runtimes/attach waits for in-flight start then fails closed without legacy resume', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach', {
       execDelayMs: 350,
       resumeDelayMs: 250,
@@ -655,22 +586,25 @@ if (cmd === 'app-server') {
     expect(attachSettled).toBe(false)
 
     const { startData, attachRes } = await attachPromise
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.bindingFence.runtimeId).toBeString()
-    expect(attachData.bindingFence.runtimeId).not.toBe(startData.runtimeId)
+    expect(attachRes.status).toBe(503)
+    const attachBody = (await attachRes.json()) as {
+      error?: { code?: string; message?: string }
+    }
+    expect(attachBody.error?.code).toBe('runtime_unavailable')
+    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
 
     await new Promise((resolve) => setTimeout(resolve, 400))
 
     const secondAttachRes = await postJson('/v1/runtimes/attach', {
       runtimeId: startData.runtimeId,
     })
-    expect(secondAttachRes.status).toBe(200)
+    expect(secondAttachRes.status).toBe(503)
 
-    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
+    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8').catch(() => '')
+    expect(resumeLog).toBe('')
   }, 10_000)
 
-  it('POST /v1/runtimes/attach resumes codex without replaying the original priming prompt', async () => {
+  it('POST /v1/runtimes/attach does not rematerialize legacy tmux from headless codex', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach-no-reprime')
     const hsid = await resolveSession('lifecycle-attach-no-reprime')
     const primingPrompt = 'Seed before attach'
@@ -689,38 +623,27 @@ if (cmd === 'app-server') {
     const attachRes = await postJson('/v1/runtimes/attach', {
       runtimeId: startData.runtimeId,
     })
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.bindingFence.runtimeId).toBeString()
-    expect(attachData.bindingFence.runtimeId).not.toBe(startData.runtimeId)
-
-    let launchArtifactPath = ''
-    const db = openHrcDatabase(dbPath)
-    try {
-      const attachedRuntime = db.runtimes.getByRuntimeId(String(attachData.bindingFence.runtimeId))
-      expect(attachedRuntime).not.toBeNull()
-      expect(attachedRuntime?.launchId).toBeString()
-      const launch = db.launches.getByLaunchId(String(attachedRuntime?.launchId))
-      expect(launch).not.toBeNull()
-      launchArtifactPath = String(launch?.launchArtifactPath)
-    } finally {
-      db.close()
+    expect(attachRes.status).toBe(503)
+    const attachBody = (await attachRes.json()) as {
+      error?: { code?: string; message?: string }
     }
+    expect(attachBody.error?.code).toBe('runtime_unavailable')
+    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
 
-    const launchArtifact = JSON.parse(await readFile(launchArtifactPath, 'utf-8')) as {
-      argv: string[]
-      lifecycleAction?: string
-    }
-    expect(launchArtifact.lifecycleAction).toBe('attach')
-    expect(launchArtifact.argv).not.toContain(primingPrompt)
+    const launchesRes = await fetchSocket(
+      `/v1/launches?runtimeId=${encodeURIComponent(startData.runtimeId)}`
+    )
+    const launches = (await launchesRes.json()) as Array<{ lifecycleAction?: string }>
+    expect(launches.some((launch) => launch.lifecycleAction === 'attach')).toBe(false)
 
-    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
+    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8').catch(() => '')
+    expect(resumeLog).toBe('')
+    expect(primingPrompt).toBeString()
   }, 10_000)
 
-  it('POST /v1/runtimes/attach prefers tmux sessionId when stored sessionName is stale', async () => {
+  it('POST /v1/runtimes/attach rejects legacy attach descriptor recovery', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-stale-session-name')
     const hsid = await resolveSession('lifecycle-attach-stale-session-name')
-    let sessionId = ''
 
     const startRes = await postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
@@ -736,44 +659,15 @@ if (cmd === 'app-server') {
     const initialAttachRes = await postJson('/v1/runtimes/attach', {
       runtimeId: startData.runtimeId,
     })
-    expect(initialAttachRes.status).toBe(200)
-    const initialAttachData = (await initialAttachRes.json()) as any
-    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
-
-    const db = openHrcDatabase(dbPath)
-    try {
-      const runtime = db.runtimes.getByRuntimeId(attachedRuntimeId)
-      expect(runtime).not.toBeNull()
-      expect(runtime?.tmuxJson?.['sessionId']).toBeString()
-      sessionId = String(runtime?.tmuxJson?.['sessionId'])
-
-      db.runtimes.update(attachedRuntimeId, {
-        tmuxJson: {
-          ...(runtime?.tmuxJson ?? {}),
-          sessionName: 'hrc-stale-session-name',
-        },
-        updatedAt: new Date().toISOString(),
-      })
-    } finally {
-      db.close()
+    expect(initialAttachRes.status).toBe(503)
+    const attachBody = (await initialAttachRes.json()) as {
+      error?: { code?: string; message?: string }
     }
-
-    const attachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: attachedRuntimeId,
-    })
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.argv).toEqual([
-      'tmux',
-      '-S',
-      tmuxSocketPath,
-      'attach-session',
-      '-t',
-      sessionId,
-    ])
+    expect(attachBody.error?.code).toBe('runtime_unavailable')
+    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
   }, 10_000)
 
-  it('POST /v1/runtimes/attach rematerializes tmux when the requested codex tmux runtime is already dead', async () => {
+  it('POST /v1/runtimes/attach does not rematerialize tmux when the requested runtime is dead', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach-dead-runtime')
     const hsid = await resolveSession('lifecycle-attach-dead-runtime')
 
@@ -791,15 +685,11 @@ if (cmd === 'app-server') {
     const initialAttachRes = await postJson('/v1/runtimes/attach', {
       runtimeId: startData.runtimeId,
     })
-    expect(initialAttachRes.status).toBe(200)
-    const initialAttachData = (await initialAttachRes.json()) as any
-    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
+    expect(initialAttachRes.status).toBe(503)
 
     const db = openHrcDatabase(dbPath)
     try {
-      const runtime = db.runtimes.getByRuntimeId(attachedRuntimeId)
-      expect(runtime).not.toBeNull()
-      db.runtimes.update(attachedRuntimeId, {
+      db.runtimes.update(startData.runtimeId, {
         status: 'dead',
         updatedAt: new Date().toISOString(),
       })
@@ -808,17 +698,14 @@ if (cmd === 'app-server') {
     }
 
     const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: attachedRuntimeId,
+      runtimeId: startData.runtimeId,
     })
-    expect(recoveredAttachRes.status).toBe(200)
-    const recoveredAttachData = (await recoveredAttachRes.json()) as any
-    expect(recoveredAttachData.bindingFence.runtimeId).toBeString()
-    expect(recoveredAttachData.argv).toContain('attach-session')
-
-    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toContain('resume:thread-123')
+    expect(recoveredAttachRes.status).toBe(503)
+    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8').catch(() => '')
+    expect(resumeLog).toBe('')
   }, 10_000)
 
-  it('POST /v1/runtimes/attach rematerializes tmux in one call after the prior attach runtime exits', async () => {
+  it('POST /v1/runtimes/attach does not rematerialize tmux after prior runtime exits', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-attach-terminated-runtime', {
       resumeDelayMs: 250,
     })
@@ -838,47 +725,31 @@ if (cmd === 'app-server') {
     const initialAttachRes = await postJson('/v1/runtimes/attach', {
       runtimeId: startData.runtimeId,
     })
-    expect(initialAttachRes.status).toBe(200)
-    const initialAttachData = (await initialAttachRes.json()) as any
-    const attachedRuntimeId = String(initialAttachData.bindingFence.runtimeId)
-
-    expect(await waitForResumeLog(fakeCodex.resumePath, 1)).toEqual(['resume:thread-123'])
-    expect(await waitForRuntimeStatus(attachedRuntimeId, ['terminated'])).toBe('terminated')
+    expect(initialAttachRes.status).toBe(503)
+    expect(await waitForRuntimeStatus(startData.runtimeId, ['ready', 'terminated'])).toBe('ready')
 
     const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: attachedRuntimeId,
+      runtimeId: startData.runtimeId,
     })
-    expect(recoveredAttachRes.status).toBe(200)
-    const recoveredAttachData = (await recoveredAttachRes.json()) as any
-    expect(recoveredAttachData.bindingFence.runtimeId).toBeString()
-    expect(recoveredAttachData.bindingFence.runtimeId).not.toBe(attachedRuntimeId)
+    expect(recoveredAttachRes.status).toBe(503)
 
-    expect(await waitForResumeLog(fakeCodex.resumePath, 2)).toEqual([
-      'resume:thread-123',
-      'resume:thread-123',
-    ])
+    const resumeLog = await readFile(fakeCodex.resumePath, 'utf-8').catch(() => '')
+    expect(resumeLog).toBe('')
   }, 10_000)
 
-  it('POST /v1/runtimes/attach attaches directly to a live codex tmux runtime without continuation', async () => {
+  it('POST /v1/runtimes/attach does not attach directly to legacy codex tmux', async () => {
     const hsid = await resolveSession('lifecycle-attach-live-no-continuation')
     const ensureRes = await postJson('/v1/runtimes/ensure', {
       hostSessionId: hsid,
       intent: interactiveCliIntent('openai'),
     })
-    expect(ensureRes.status).toBe(200)
-    const ensureData = (await ensureRes.json()) as any
-    const runtimeId = String(ensureData.runtimeId)
-
-    const attachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId,
-    })
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.argv[0]).toBe('tmux')
-    expect(attachData.argv).toContain('attach-session')
+    expect(ensureRes.status).toBe(503)
+    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('ensureRuntime supports only broker-admissible runtimes')
   })
 
-  it('POST /v1/internal/launches/:id/exited marks the runtime terminated when the harness exits', async () => {
+  it('POST /v1/runtimes/start fails closed for non-broker interactive harness start', async () => {
     const fakeCodex = await installFakeCodex('fake-codex-dead-after-exit', {
       interactiveDelayMs: 10_000,
     })
@@ -890,45 +761,16 @@ if (cmd === 'app-server') {
         pathPrepend: [fakeCodex.binDir],
       }),
     })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
+    expect(startRes.status).toBe(503)
+    const body = (await startRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('interactive runtime is not broker-admissible')
 
-    let launchId = ''
-    let sessionTarget = ''
-    const db = openHrcDatabase(dbPath)
-    try {
-      const runtime = db.runtimes.getByRuntimeId(startData.runtimeId)
-      expect(runtime).not.toBeNull()
-      expect(runtime?.launchId).toBeString()
-      launchId = String(runtime?.launchId)
-      sessionTarget = String(runtime?.tmuxJson?.['sessionId'] ?? runtime?.tmuxJson?.['sessionName'])
-    } finally {
-      db.close()
-    }
-
-    const killed = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-session', '-t', sessionTarget], {
-      stdout: 'ignore',
-      stderr: 'pipe',
-    })
-    const killStderr = await new Response(killed.stderr).text()
-    expect(await killed.exited).toBe(0)
-    expect(killStderr.trim()).toBe('')
-
-    const exitedRes = await postJson(`/v1/internal/launches/${launchId}/exited`, {
-      hostSessionId: hsid,
-      exitCode: 0,
-    })
-    expect(exitedRes.status).toBe(200)
-
-    const runtimeRes = await fetchSocket(`/v1/runtimes?hostSessionId=${encodeURIComponent(hsid)}`)
-    expect(runtimeRes.status).toBe(200)
-    const runtimes = (await runtimeRes.json()) as Array<{ runtimeId: string; status: string }>
-    expect(runtimes).toHaveLength(1)
-    expect(runtimes[0]?.runtimeId).toBe(startData.runtimeId)
-    expect(runtimes[0]?.status).toBe('terminated')
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).toBe('')
   })
 
-  it('POST /v1/runtimes/start launches the interactive harness before attach', async () => {
+  it('POST /v1/runtimes/start does not launch legacy interactive harness before attach', async () => {
     const interactiveBanner = 'INTERACTIVE_START_LAUNCHED'
     const fakeCodex = await installFakeCodex('fake-codex-interactive-start', {
       interactiveBanner,
@@ -942,31 +784,13 @@ if (cmd === 'app-server') {
         pathPrepend: [fakeCodex.binDir],
       }),
     })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
+    expect(startRes.status).toBe(503)
+    const body = (await startRes.json()) as { error?: { code?: string; message?: string } }
+    expect(body.error?.code).toBe('runtime_unavailable')
+    expect(body.error?.message).toContain('interactive runtime is not broker-admissible')
 
-    const attachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(attachRes.status).toBe(200)
-    const attachData = (await attachRes.json()) as any
-    expect(attachData.bindingFence.runtimeId).toBe(startData.runtimeId)
-
-    let captureText = ''
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const captureRes = await fetchSocket(`/v1/capture?runtimeId=${startData.runtimeId}`)
-      expect(captureRes.status).toBe(200)
-      captureText = ((await captureRes.json()) as any).text
-      if (captureText.includes(interactiveBanner)) {
-        break
-      }
-      await Bun.sleep(100)
-    }
-
-    expect(captureText).toContain(interactiveBanner)
-
-    const execLog = await readFile(fakeCodex.logPath, 'utf-8')
-    expect(execLog).toContain('interactive:')
+    const execLog = await readFile(fakeCodex.logPath, 'utf-8').catch(() => '')
+    expect(execLog).toBe('')
   })
 })
 

@@ -32,6 +32,7 @@
  * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 3
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
@@ -139,6 +140,43 @@ function seedSdkActiveRuntime(input: {
   }
 }
 
+function seedTmuxRuntime(hostSessionId: string, runtimeId: string): void {
+  const db = openHrcDatabase(fixture.dbPath)
+  const timestamp = fixture.now()
+  try {
+    const session = db.sessions.getByHostSessionId(hostSessionId)
+    if (!session) {
+      throw new Error(`missing session ${hostSessionId}`)
+    }
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: {
+        socketPath: fixture.tmuxSocketPath,
+        sessionName: 'hrc-test-legacy',
+        windowName: 'main',
+        sessionId: '$legacy',
+        windowId: '@legacy',
+        paneId: '%legacy',
+      },
+      supportsInflightInput: false,
+      adopted: false,
+      lastActivityAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+  } finally {
+    db.close()
+  }
+}
+
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-inflight-test-')
   server = await createHrcServer(fixture.serverOpts())
@@ -177,26 +215,8 @@ describe('POST /v1/in-flight-input — tmux runtime unsupported', () => {
   it('returns 422 with code inflight_unsupported for tmux transport runtime', async () => {
     const hsid = await resolveSession('inflight-tmux-1')
 
-    // Ensure a tmux runtime (interactive harness)
-    const ensureRes = await fixture.postJson('/v1/runtimes/ensure', {
-      hostSessionId: hsid,
-      intent: {
-        placement: {
-          agentRoot: '/tmp/agent',
-          projectRoot: '/tmp/project',
-          cwd: '/tmp/project',
-          runMode: 'task',
-          bundle: { kind: 'compose', compose: [] },
-          dryRun: true,
-        },
-        harness: {
-          provider: 'anthropic',
-          interactive: true,
-        },
-      },
-    })
-    const ensureData = (await ensureRes.json()) as any
-    const tmuxRuntimeId = ensureData.runtimeId
+    const tmuxRuntimeId = `rt-tmux-${randomUUID()}`
+    seedTmuxRuntime(hsid, tmuxRuntimeId)
 
     const res = await fixture.postJson('/v1/in-flight-input', {
       runtimeId: tmuxRuntimeId,

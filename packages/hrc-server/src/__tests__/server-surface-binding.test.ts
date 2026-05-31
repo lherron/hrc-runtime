@@ -39,6 +39,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 // RED GATE: These imports will fail until server surface endpoints are fully wired
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
+import { TmuxManager } from '../tmux'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -138,30 +139,38 @@ async function ensureInteractiveRuntime(scopeRef: string): Promise<{
     generation: number
   }
 
-  const ensureRes = await postJson('/v1/runtimes/ensure', {
-    hostSessionId: resolved.hostSessionId,
-    intent: {
-      placement: {
-        agentRoot: '/tmp/agent',
-        projectRoot: '/tmp/project',
-        cwd: '/tmp/project',
-        runMode: 'task',
-        bundle: { kind: 'compose', compose: [] },
-        dryRun: true,
-      },
-      harness: {
-        provider: 'anthropic',
-        interactive: true,
-      },
-    },
-    restartStyle: 'reuse_pty',
-  })
-  const runtime = (await ensureRes.json()) as { runtimeId: string }
+  const tmux = new TmuxManager(tmuxSocketPath)
+  await tmux.initialize()
+  const pane = await tmux.ensurePane(resolved.hostSessionId, 'reuse_pty')
+  const runtimeId = `rt-test-${randomUUID()}`
+  const now = ts()
+  const db = openHrcDatabase(dbPath)
+  try {
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: `agent:${scopeRef}`,
+      laneRef: 'default',
+      generation: resolved.generation,
+      transport: 'tmux',
+      harness: 'claude-code',
+      provider: 'anthropic',
+      status: 'ready',
+      tmuxJson: pane,
+      supportsInflightInput: false,
+      adopted: false,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+  } finally {
+    db.close()
+  }
 
   return {
     hostSessionId: resolved.hostSessionId,
     generation: resolved.generation,
-    runtimeId: runtime.runtimeId,
+    runtimeId,
   }
 }
 

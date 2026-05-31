@@ -5,7 +5,6 @@ import { join } from 'node:path'
 
 import type { HrcServer, HrcServerOptions } from '../index'
 import { createHrcServer } from '../index'
-import { readLaunchArtifact } from '../launch/launch-artifact'
 
 let tmpDir: string
 let runtimeRoot: string
@@ -95,7 +94,7 @@ describe('agentchat launch env regression', () => {
     }
   })
 
-  it('writes canonical tmux agentchat transport env into launch artifacts', async () => {
+  it('does not write legacy tmux launch artifacts during broker cutover', async () => {
     server = await createHrcServer(serverOpts())
 
     const session = await resolveSession('agent:larry:project:agent-spaces')
@@ -119,25 +118,21 @@ describe('agentchat launch env regression', () => {
       restartStyle: 'reuse_pty',
     })
 
-    expect(ensureRes.status).toBe(200)
+    expect(ensureRes.status).toBe(503)
+    const ensureBody = (await ensureRes.json()) as { error?: { code?: string } }
+    expect(ensureBody.error?.code).toBe('runtime_unavailable')
 
     const turnRes = await postJson('/v1/turns', {
       hostSessionId: session.hostSessionId,
       prompt: 'diagnostic prompt',
     })
 
-    expect(turnRes.status).toBe(200)
+    expect(turnRes.status).toBe(503)
 
     const launchDir = join(runtimeRoot, 'launches')
-    const launchFiles = (await readdir(launchDir)).filter((entry) => entry.endsWith('.json'))
-    expect(launchFiles).toHaveLength(1)
-
-    const artifact = await readLaunchArtifact(join(launchDir, launchFiles[0]!))
-    expect(artifact.env['AGENTCHAT_ID']).toBe('larry')
-    expect(artifact.env['ASP_PROJECT']).toBe('agent-spaces')
-    expect(artifact.env['AGENTCHAT_TRANSPORT']).toBe('tmux')
-    expect(artifact.env['AGENTCHAT_TARGET']).toBe(
-      `sock=${tmuxSocketPath};session=hrc-${session.hostSessionId.slice(0, 12)}`
+    const launchFiles = (await readdir(launchDir).catch(() => [])).filter((entry) =>
+      entry.endsWith('.json')
     )
+    expect(launchFiles).toHaveLength(0)
   }, 10_000)
 })

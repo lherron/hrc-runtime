@@ -32,17 +32,8 @@ describe('POST /v1/bridges/target — sessionRef selector', () => {
     const scopeRef = 'agent:larry:project:agent-spaces:task:T-01082'
     const sessionRef = `${scopeRef}/lane:default`
     const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
-
-    const ensureRes = await fixture.postJson('/v1/runtimes/ensure', {
-      hostSessionId,
-      intent: {
-        placement: { targetName: 'dev', targetDir: fixture.tmpDir },
-        harness: { provider: 'anthropic', interactive: true },
-      },
-      restartStyle: 'reuse_pty',
-    })
-    expect(ensureRes.status).toBe(200)
-    const runtime = (await ensureRes.json()) as { runtimeId: string }
+    const runtime = { runtimeId: 'rt-sessionref-selector' }
+    fixture.seedTmuxRuntime(hostSessionId, scopeRef, runtime.runtimeId, { status: 'ready' })
 
     const bridgeRes = await fixture.postJson('/v1/bridges/target', {
       selector: { sessionRef },

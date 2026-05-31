@@ -94,7 +94,9 @@ beforeEach(async () => {
   brainEnricherMock.reset()
   fixture = await createHrcTestFixture('hrc-brain-enricher-')
   const hrcServer = await import('../index')
-  server = await hrcServer.createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+  server = await hrcServer.createHrcServer(
+    fixture.serverOpts({ otelListenerEnabled: false, codexCliTmuxBrokerEnabled: false })
+  )
 })
 
 afterEach(async () => {
@@ -213,7 +215,7 @@ function expectEnricherCalledWith(prompt: string): BrainEnricherInput {
 }
 
 describe('dispatchTurnForSession brain enricher seam', () => {
-  it('enriches before tmux transport dispatch handles the prompt', async () => {
+  it('enriches before broker admission handles the prompt', async () => {
     const rawPrompt = 'Tmux should receive enriched prompt.'
     const enrichedPrompt = formatBrainPrompt(rawPrompt, {
       context: [{ slug: 'guides/tmux', mode: 'query', score: 0.8, text: 'tmux context' }],
@@ -225,19 +227,13 @@ describe('dispatchTurnForSession brain enricher seam', () => {
       sources: [{ slug: 'guides/tmux', score: 0.8 }],
     }))
     const hostSessionId = await resolveSession('brain-tmux')
-    const ensure = await fixture.postJson('/v1/runtimes/ensure', {
-      hostSessionId,
-      intent: tmuxIntent(),
-    })
-    expect(ensure.status).toBe(200)
 
     const { response, body } = await dispatchTurn(hostSessionId, rawPrompt, tmuxIntent())
 
-    expect(response.status).toBe(200)
-    expect(body.transport).toBe('tmux')
+    expect(response.status).toBe(503)
+    expect(body.error?.code).toBe('runtime_unavailable')
     expectEnricherCalledWith(rawPrompt)
-    expect(userPromptContentForRun(body.runId)).toBe(enrichedPrompt)
-
-    expect(acceptedPromptLengthForRun(body.runId)).toBe(enrichedPrompt.length)
+    expect(userPromptContentForRun(body.runId)).toBeUndefined()
+    expect(acceptedPromptLengthForRun(body.runId)).toBeUndefined()
   }, 10_000)
 })

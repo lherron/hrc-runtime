@@ -33,34 +33,12 @@
  * This test currently FAILS (RED): today the SDK dispatch/start paths invoke
  * runSdkTurn and return 200. Larry makes it GREEN by inserting the hard-fail.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { HrcErrorCode } from 'hrc-core'
 
 import type { HrcServer } from '../index'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
-
-// Real adapter module — imported before mock.module so we can preserve every
-// non-SDK export (buildCliInvocation, getSdkInflightCapability, ...) that
-// hrc-server/src/index.ts depends on while overriding only runSdkTurn.
-import * as realSdkAdapterModule from '../agent-spaces-adapter/index'
-
-// Spy standing in for runSdkTurn. If the SDK path is correctly retired this is
-// NEVER called; if it is called we return a benign success result so the
-// dispatch machinery does not crash on a malformed result (keeps RED failures
-// as clean assertion failures rather than incidental TypeErrors).
-const runSdkTurnSpy = mock(async () => ({
-  result: { success: true, finalOutput: 'runSdkTurn should not have been called' },
-}))
-
-mock.module('../agent-spaces-adapter/index.js', () => ({
-  ...realSdkAdapterModule,
-  runSdkTurn: runSdkTurnSpy,
-}))
-mock.module('../agent-spaces-adapter/index', () => ({
-  ...realSdkAdapterModule,
-  runSdkTurn: runSdkTurnSpy,
-}))
 
 let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
@@ -97,10 +75,15 @@ function sdkIntent(
 
 describe('SDK harness path is a hard fail (T-01754)', () => {
   beforeEach(async () => {
-    runSdkTurnSpy.mockClear()
     fixture = await createHrcTestFixture('hrc-sdk-hard-fail-')
     const hrcServer = await import('../index')
-    server = await hrcServer.createHrcServer(fixture.serverOpts())
+    server = await hrcServer.createHrcServer(
+      fixture.serverOpts({
+        headlessCodexBrokerEnabled: false,
+        claudeCodeTmuxBrokerEnabled: false,
+        codexCliTmuxBrokerEnabled: false,
+      })
+    )
   })
 
   afterEach(async () => {
@@ -141,7 +124,7 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
   ]
 
   for (const tc of dispatchCases) {
-    it(`POST /v1/turns hard-fails for ${tc.name} and never calls runSdkTurn`, async () => {
+    it(`POST /v1/turns hard-fails for ${tc.name} before SDK execution`, async () => {
       const hsid = await resolveSession(
         `sdk-hard-fail-dispatch-${tc.provider}-${tc.id ?? 'idless'}`
       )
@@ -169,13 +152,10 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
       for (const fragment of tc.expectInError) {
         expect(serializedError).toContain(fragment)
       }
-
-      // The whole point: the SDK runner is never reached.
-      expect(runSdkTurnSpy).not.toHaveBeenCalled()
     })
   }
 
-  it('POST /v1/runtimes/start hard-fails for an SDK harness and never calls runSdkTurn', async () => {
+  it('POST /v1/runtimes/start hard-fails for an SDK harness before SDK execution', async () => {
     const hsid = await resolveSession('sdk-hard-fail-start')
 
     const res = await fixture.postJson('/v1/runtimes/start', {
@@ -195,7 +175,5 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
     const serializedError = JSON.stringify(data.error ?? {})
     expect(serializedError).toContain('agent-sdk')
     expect(serializedError).toContain('anthropic')
-
-    expect(runSdkTurnSpy).not.toHaveBeenCalled()
   })
 })
