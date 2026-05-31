@@ -733,6 +733,12 @@ type TurnResponseFinalizer = {
   mode: 'headless' | 'interactive' | 'nonInteractive'
   sessionRef: string
 }
+type PendingBrokerLiteralInput = {
+  sessionRef: string
+  hostSessionId: string
+  generation: number
+  text: string
+}
 type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
 type ZombieObservedSource = SweepZombieRunResult['observedSource']
@@ -778,6 +784,7 @@ class HrcServerInstance implements HrcServer {
   private readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   private readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   private readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
+  private readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   private zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   private zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   private activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
@@ -4051,6 +4058,67 @@ class HrcServerInstance implements HrcServer {
         errorMessage: 'expectedRunId does not match active run',
       }
     } else if (
+      runtime.transport === 'tmux' &&
+      isPendingAskUserQuestionRun(this.db.hrcEvents.listByRun(runtime.activeRunId))
+    ) {
+      const session = requireSession(this.db, runtime.hostSessionId)
+      try {
+        const delivered = await this.deliverTmuxQuestionAnswer(session, runtime, {
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          inputApplicationId: body.inputApplicationId,
+          ...(body.idempotencyKey !== undefined ? { idempotencyKey: body.idempotencyKey } : {}),
+          prompt: body.prompt,
+          ...(body.inputType !== undefined ? { inputType: body.inputType } : {}),
+          ...(body.semantics !== undefined ? { semantics: body.semantics } : {}),
+        })
+        response = {
+          status: delivered.accepted ? 'accepted' : 'rejected',
+          inputApplicationId: body.inputApplicationId,
+          hostSessionId: runtime.hostSessionId,
+          generation: runtime.generation,
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          capability: {
+            supported: true,
+            deliverySemantics: 'same_turn_append',
+            ackSemantics: 'accepted_only',
+            ordering: 'fifo',
+            supportsAttachments: false,
+          },
+          ...(delivered.accepted
+            ? {}
+            : {
+                errorCode: 'provider_rejected',
+                errorMessage: 'provider rejected active-run contribution',
+              }),
+        }
+      } catch (error) {
+        this.db.activeInputDeliveries.markAmbiguous(
+          body.inputApplicationId,
+          'delivery_ambiguous',
+          error instanceof Error ? error.message : String(error),
+          timestamp()
+        )
+        return json({
+          status: 'pending',
+          inputApplicationId: body.inputApplicationId,
+          hostSessionId: runtime.hostSessionId,
+          generation: runtime.generation,
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          capability: {
+            supported: true,
+            deliverySemantics: 'same_turn_append',
+            ackSemantics: 'accepted_only',
+            ordering: 'fifo',
+            supportsAttachments: false,
+          },
+          errorCode: 'delivery_ambiguous',
+          errorMessage: error instanceof Error ? error.message : String(error),
+        } satisfies HrcActiveRunContributionResponse)
+      }
+    } else if (
       process.env['HRC_ACTIVE_RUN_CONTRIBUTIONS_ENABLED'] === '1' &&
       runtime.transport === 'sdk' &&
       runtime.supportsInflightInput
@@ -4286,6 +4354,80 @@ class HrcServerInstance implements HrcServer {
       runtimeId: runtime.runtimeId,
       runId: body.runId,
       ...(delivered.pendingTurns !== undefined ? { pendingTurns: delivered.pendingTurns } : {}),
+    } satisfies InFlightInputResponse
+  }
+
+  private async deliverTmuxQuestionAnswer(
+    session: HrcSessionRecord,
+    runtime: HrcRuntimeSnapshot,
+    body: InFlightInputRequest
+  ): Promise<InFlightInputResponse> {
+    const activeRun =
+      runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
+    if (!activeRun || !isRunActive(activeRun) || activeRun.runId !== body.runId) {
+      throw this.appendInflightRejected(
+        session,
+        runtime.runtimeId,
+        body.runId,
+        'run mismatch for interactive answer',
+        body.prompt,
+        body.inputType,
+        new HrcConflictError(HrcErrorCode.RUN_MISMATCH, 'run mismatch for interactive answer', {
+          runtimeId: runtime.runtimeId,
+          expectedRunId: activeRun?.runId,
+          actualRunId: body.runId,
+        })
+      )
+    }
+
+    if (!isPendingAskUserQuestionRun(this.db.hrcEvents.listByRun(body.runId))) {
+      throw this.appendInflightRejected(
+        session,
+        runtime.runtimeId,
+        body.runId,
+        'no pending AskUserQuestion is awaiting an answer',
+        body.prompt,
+        body.inputType,
+        new HrcConflictError(
+          HrcErrorCode.RUN_MISMATCH,
+          'no pending AskUserQuestion is awaiting an answer',
+          {
+            runtimeId: runtime.runtimeId,
+            runId: body.runId,
+          }
+        )
+      )
+    }
+
+    const pane = requireTmuxPane(runtime)
+    const tmux = this.tmuxForPane(pane)
+    await tmux.sendLiteral(pane.paneId, body.prompt)
+    await tmux.sendEnter(pane.paneId)
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    const acceptedEvent = appendHrcEvent(this.db, 'inflight.accepted', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId: body.runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        prompt: body.prompt,
+        delivery: 'tmux-interactive-answer',
+        ...(body.semantics ? { semantics: body.semantics } : {}),
+        ...(body.inputType ? { inputType: body.inputType } : {}),
+      },
+    })
+    this.notifyEvent(acceptedEvent)
+
+    return {
+      accepted: true,
+      runtimeId: runtime.runtimeId,
+      runId: body.runId,
     } satisfies InFlightInputResponse
   }
 
@@ -4841,6 +4983,9 @@ class HrcServerInstance implements HrcServer {
         ? Math.max(0, Math.floor((nowMs - lastActivityAtMs) / 1000))
         : null,
       activeRunId: runtime.activeRunId ?? null,
+      controllerKind: runtime.controllerKind ?? null,
+      activeOperationId: runtime.activeOperationId ?? null,
+      activeInvocationId: runtime.activeInvocationId ?? null,
       wrapperPid: runtime.wrapperPid ?? null,
       childPid: runtime.childPid ?? null,
       continuation,
@@ -10157,6 +10302,20 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
+    if (
+      runtime.controllerKind === 'harness-broker' &&
+      runtime.transport === 'tmux' &&
+      runtime.activeInvocationId !== undefined
+    ) {
+      return await this.handleBrokerLiteralInputBySelector({
+        session,
+        runtime,
+        sessionRef,
+        text: body['text'],
+        enter: body['enter'] !== false,
+      })
+    }
+
     const pane = runtime.transport === 'tmux' ? requireTmuxPane(runtime) : undefined
     const tmux = pane ? this.tmuxForPane(pane) : this.tmux
     const surfaceId =
@@ -10218,6 +10377,124 @@ class HrcServerInstance implements HrcServer {
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
+    } satisfies DeliverLiteralBySelectorResponse)
+  }
+
+  private async handleBrokerLiteralInputBySelector(input: {
+    session: HrcSessionRecord
+    runtime: HrcRuntimeSnapshot
+    sessionRef: string
+    text: string
+    enter: boolean
+  }): Promise<Response> {
+    const { session, runtime, sessionRef, text, enter } = input
+    const pending = this.pendingBrokerLiteralInputs.get(runtime.runtimeId)
+    const now = timestamp()
+    const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+
+    if (!enter) {
+      const buffered = `${pending?.text ?? ''}${text}`
+      this.pendingBrokerLiteralInputs.set(runtime.runtimeId, {
+        sessionRef,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        text: buffered,
+      })
+      this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+      const event = appendHrcEvent(this.db, 'target.literal-input', {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'tmux',
+        payload: {
+          sessionRef,
+          payloadLength: text.length,
+          enter: false,
+          delivery: 'broker-buffered-literal',
+        },
+      })
+      this.notifyEvent(event)
+      return json({
+        delivered: true,
+        sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+      } satisfies DeliverLiteralBySelectorResponse)
+    }
+
+    const prompt = `${pending?.text ?? ''}${text}`
+    if (prompt.trim().length === 0) {
+      this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
+      const pane = requireTmuxPane(runtime)
+      await this.tmuxForPane(pane).sendEnter(pane.paneId)
+      this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+      const event = appendHrcEvent(this.db, 'target.literal-input', {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'tmux',
+        payload: {
+          sessionRef,
+          payloadLength: 0,
+          enter: true,
+          delivery: 'broker-empty-enter',
+        },
+      })
+      this.notifyEvent(event)
+      return json({
+        delivered: true,
+        sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+      } satisfies DeliverLiteralBySelectorResponse)
+    }
+
+    this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
+    const runId = `run-${randomUUID()}`
+    const turnResponse = await this.executeInteractiveBrokerInputTurn(
+      session,
+      runtime,
+      prompt,
+      runId,
+      {
+        waitForCompletion: false,
+      }
+    )
+    const turnBody = (await turnResponse.json()) as DispatchTurnResponse
+    const event = appendHrcEvent(this.db, 'target.literal-input', {
+      ts: timestamp(),
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runId: turnBody.runId,
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        sessionRef,
+        payloadLength: prompt.length,
+        enter: true,
+        delivery: 'broker-dispatch-input',
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      delivered: true,
+      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      runId: turnBody.runId,
+      status: turnBody.status,
     } satisfies DeliverLiteralBySelectorResponse)
   }
 
@@ -14598,6 +14875,32 @@ function isTerminalBrokerInputFailure(message: string): boolean {
 
 function isRunActive(run: HrcRunRecord): boolean {
   return run.status === 'accepted' || run.status === 'started' || run.status === 'running'
+}
+
+function isPendingAskUserQuestionRun(events: HrcLifecycleEvent[]): boolean {
+  const pendingToolUseIds = new Set<string>()
+
+  for (const event of events) {
+    if (event.eventKind === 'turn.completed') {
+      pendingToolUseIds.clear()
+      continue
+    }
+
+    const payload = isRecord(event.payload) ? event.payload : {}
+    const toolUseId = typeof payload['toolUseId'] === 'string' ? payload['toolUseId'] : undefined
+    if (event.eventKind === 'turn.tool_call') {
+      if (payload['toolName'] === 'AskUserQuestion' && toolUseId !== undefined) {
+        pendingToolUseIds.add(toolUseId)
+      }
+      continue
+    }
+
+    if (event.eventKind === 'turn.tool_result' && toolUseId !== undefined) {
+      pendingToolUseIds.delete(toolUseId)
+    }
+  }
+
+  return pendingToolUseIds.size > 0
 }
 
 function parseLaunchLifecyclePayload(

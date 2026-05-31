@@ -34,6 +34,9 @@ type SeedRuntimeOptions = {
   status?: string | undefined
   generation?: number | undefined
   activeRunId?: string | undefined
+  controllerKind?: 'harness-broker' | undefined
+  activeOperationId?: string | undefined
+  activeInvocationId?: string | undefined
   wrapperPid?: number | undefined
   childPid?: number | undefined
   continuationKey?: string | undefined
@@ -67,6 +70,9 @@ function seedRuntime(options: SeedRuntimeOptions): void {
       provider: options.provider ?? 'anthropic',
       status: options.status ?? 'ready',
       ...(options.activeRunId ? { activeRunId: options.activeRunId } : {}),
+      ...(options.controllerKind ? { controllerKind: options.controllerKind } : {}),
+      ...(options.activeOperationId ? { activeOperationId: options.activeOperationId } : {}),
+      ...(options.activeInvocationId ? { activeInvocationId: options.activeInvocationId } : {}),
       ...(options.wrapperPid !== undefined ? { wrapperPid: options.wrapperPid } : {}),
       ...(options.childPid !== undefined ? { childPid: options.childPid } : {}),
       ...(continuation ? { continuation } : {}),
@@ -154,6 +160,29 @@ describe('POST /v1/runtimes/inspect', () => {
       wrapperPid: null,
       childPid: null,
       activeRunId: 'run-inspect-headless',
+    })
+  })
+
+  it('returns broker controller linkage fields when present', async () => {
+    fixture.seedSession('hsid-inspect-broker', 'inspect-broker')
+    seedRuntime({
+      runtimeId: 'rt-inspect-broker',
+      hostSessionId: 'hsid-inspect-broker',
+      scopeRef: 'inspect-broker',
+      transport: 'tmux',
+      controllerKind: 'harness-broker',
+      activeOperationId: 'op-inspect-broker',
+      activeInvocationId: 'inv-inspect-broker',
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-broker')
+
+    expect(body).toMatchObject({
+      runtimeId: 'rt-inspect-broker',
+      transport: 'tmux',
+      controllerKind: 'harness-broker',
+      activeOperationId: 'op-inspect-broker',
+      activeInvocationId: 'inv-inspect-broker',
     })
   })
 

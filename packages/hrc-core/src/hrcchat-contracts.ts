@@ -168,6 +168,8 @@ export type DeliverLiteralBySelectorResponse = {
   hostSessionId: string
   generation: number
   runtimeId?: string | undefined
+  runId?: string | undefined
+  status?: string | undefined
 }
 
 // POST /v1/capture/by-selector

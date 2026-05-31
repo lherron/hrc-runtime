@@ -13,6 +13,7 @@ import type {
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
   HrcProvider,
+  HrcRuntimeControllerKind,
   HrcRuntimeIntent,
   HrcSessionRecord,
   HrcStatusResponse,
@@ -285,6 +286,9 @@ export type InspectRuntimeResponse = {
   lastActivityAt: string | null
   lastActivityAgeSec: number | null
   activeRunId: string | null
+  controllerKind?: HrcRuntimeControllerKind | null | undefined
+  activeOperationId?: string | null | undefined
+  activeInvocationId?: string | null | undefined
   wrapperPid: number | null
   childPid: number | null
   continuation: HrcContinuationRef | null

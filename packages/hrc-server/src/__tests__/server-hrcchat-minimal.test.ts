@@ -1097,4 +1097,118 @@ if (cmd === 'app-server') {
       verifyDb.close()
     }
   })
+
+  it('routes split literal sends for broker tmux runtimes through broker input', async () => {
+    const scopeRef = 'agent:literal-live-broker:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-literal-live-broker-${Date.now()}`
+    const operationId = `op-literal-live-broker-${Date.now()}`
+    const invocationId = `inv-literal-live-broker-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        activeOperationId: operationId,
+        activeInvocationId: invocationId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+      })
+      db.brokerInvocations.insert({
+        invocationId,
+        operationId,
+        runtimeId,
+        brokerProtocol: 'harness-broker/0.1',
+        brokerDriver: 'claude-code-tmux',
+        invocationState: 'ready',
+        capabilitiesJson: JSON.stringify({}),
+        specHash: 'sha256:spec-literal-live-broker',
+        startRequestHash: 'sha256:req-literal-live-broker',
+        selectedProfileHash: 'sha256:prof-literal-live-broker',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dispatchedInputs: any[] = []
+    ;(server as any).getHarnessBrokerController = () => ({
+      dispatchInput: async (request: any) => {
+        dispatchedInputs.push(request)
+        return { ok: true, response: { accepted: true } }
+      },
+    })
+
+    const pasteRes = await fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef },
+      text: 'What is 2+2?',
+      enter: false,
+    })
+    expect(pasteRes.status).toBe(200)
+    expect(dispatchedInputs).toHaveLength(0)
+
+    const enterRes = await fixture.postJson('/v1/literal-input/by-selector', {
+      selector: { sessionRef },
+      text: '',
+      enter: true,
+    })
+    expect(enterRes.status).toBe(200)
+    const enterBody = await enterRes.json()
+    expect(enterBody.runtimeId).toBe(runtimeId)
+    expect(enterBody.runId).toStartWith('run-')
+    expect(enterBody.status).toBe('started')
+
+    expect(dispatchedInputs).toHaveLength(1)
+    expect(dispatchedInputs[0]).toMatchObject({
+      runtimeId,
+      input: {
+        kind: 'user',
+        metadata: { runId: enterBody.runId },
+      },
+    })
+    expect(dispatchedInputs[0].input.inputId).toStartWith('input-')
+    expect(dispatchedInputs[0].input.content[0].text).toBe('What is 2+2?')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const run = verifyDb.runs.getByRunId(enterBody.runId)
+      const invocation = verifyDb.brokerInvocations.getByInvocationId(invocationId)
+      expect(run?.runtimeId).toBe(runtimeId)
+      expect(run?.invocationId).toBe(invocationId)
+      expect(run?.dispatchedInputId).toBe(dispatchedInputs[0].input.inputId)
+      expect(invocation?.runId).toBe(enterBody.runId)
+
+      const literalEvents = verifyDb.hrcEvents.listByScope(scopeRef, {
+        eventKind: 'target.literal-input',
+      })
+      expect(literalEvents).toHaveLength(2)
+      expect(literalEvents[0]?.runId).toBeUndefined()
+      expect(literalEvents[0]?.payload).toMatchObject({
+        delivery: 'broker-buffered-literal',
+        enter: false,
+      })
+      expect(literalEvents[1]?.runId).toBe(enterBody.runId)
+      expect(literalEvents[1]?.payload).toMatchObject({
+        delivery: 'broker-dispatch-input',
+        enter: true,
+      })
+    } finally {
+      verifyDb.close()
+    }
+  })
 })
