@@ -1159,6 +1159,19 @@ export class HarnessBrokerController {
     void (async () => {
       try {
         for await (const envelope of events) {
+          const invocation = this.db.brokerInvocations.getByInvocationId(
+            String(envelope.invocationId)
+          )
+          if (!invocation || invocation.runtimeId !== runtimeId) {
+            this.logger.warn?.('dropped broker event for non-consuming runtime', {
+              runtimeId,
+              invocationId: String(envelope.invocationId),
+              invocationRuntimeId: invocation?.runtimeId,
+              eventType: envelope.type,
+              seq: envelope.seq,
+            })
+            continue
+          }
           const result = this.mapper.apply(envelope)
           this.afterMappedEvent(runtimeId, envelope, result)
         }

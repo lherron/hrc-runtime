@@ -372,6 +372,75 @@ describe('HarnessBrokerController', () => {
     expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.lastEventSeq).toBe(42)
   })
 
+  it('drops broker events whose invocationId belongs to a different runtime', async () => {
+    const fake = new FakeBrokerClient()
+    const seen: InvocationEventEnvelope[] = []
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = []
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      mapper: {
+        apply(envelope) {
+          seen.push(envelope)
+          return { idempotent: false, events: [] }
+        },
+      },
+      now: () => NOW,
+      logger: {
+        warn(message, fields) {
+          warnings.push({ message, fields })
+        },
+      },
+    })
+
+    const started = await controller.start(makeStartInput())
+    expect(started.ok).toBe(true)
+    fixture.db.brokerInvocations.insert({
+      invocationId: 'invocation_foreign',
+      operationId: 'operation_foreign',
+      runtimeId: 'runtime_foreign',
+      brokerProtocol: 'harness-broker/0.1',
+      brokerDriver: 'claude-code-tmux',
+      invocationState: 'ready',
+      capabilitiesJson: JSON.stringify({}),
+      specHash: 'sha256:spec-foreign',
+      startRequestHash: 'sha256:req-foreign',
+      selectedProfileHash: 'sha256:profile-foreign',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+
+    fake.events.push(
+      envelope(
+        'diagnostic',
+        43,
+        {
+          level: 'info',
+          message: 'foreign payload marker',
+        },
+        { invocationId: 'invocation_foreign' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+
+    expect(seen).toEqual([])
+    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_foreign')?.lastEventSeq).toBe(
+      undefined
+    )
+    expect(warnings).toEqual([
+      {
+        message: 'dropped broker event for non-consuming runtime',
+        fields: {
+          runtimeId: 'runtime_w2',
+          invocationId: 'invocation_foreign',
+          invocationRuntimeId: 'runtime_foreign',
+          eventType: 'diagnostic',
+          seq: 43,
+        },
+      },
+    ])
+  })
+
   it('marks a runtime stale when its active broker invocation exits', async () => {
     const fake = new FakeBrokerClient()
     const controller = new HarnessBrokerController({
