@@ -126,6 +126,64 @@ acp-server source. Those are ACP-owned. If you need to ensure cross-renderer
 parity, write the assertion against `agent-action-render` so both renderers
 can be tested against the shared contract independently in their own repos.
 
+## Consuming ASP Changes (`sync:asp`)
+
+HRC consumes ASP (`agent-spaces`) code **only** as Verdaccio dev-snapshot pins —
+`0.1.1-dev.<timestamp>` versions pinned in every `packages/*/package.json`.
+**Editing `../agent-spaces` source has zero effect on HRC until the change is
+published to Verdaccio and synced into HRC**, and the running launchd binary
+needs a rebuild + kickstart on top of that. There is no source-level cross-repo
+import; the snapshot pin is the only seam.
+
+The two halves of the pipeline:
+
+- **Publish (run in `../agent-spaces`):** `just install` cleans, builds,
+  `bun link`s the CLI, runs `publish-dev` (publishes a timestamped dev set
+  `0.1.1-dev.<ts>` to Verdaccio at `http://127.0.0.1:4873/` under dist-tag
+  `latest`), then fires `bun run sync:asp` in **both** `../hrc-runtime` and
+  `../agent-control-plane` in parallel. `just install no-sync=1` skips the
+  downstream sync; `just sync-downstream` re-runs just the two syncs.
+- **Sync (run in `hrc-runtime`):** `bun run sync:asp`
+  (`scripts/sync-asp-from-verdaccio.ts`) queries Verdaccio for each ASP
+  package's `latest` dist-tag, rewrites every `package.json` pin to that
+  version, runs `bun install`, and verifies `installed === latest`. This is what
+  produces the `chore: bump spaces-repo dev-snapshot pins` diff (package.json +
+  bun.lock). Commit that diff.
+
+The 13 synced packages (`ASP_PACKAGES` in the sync script): `agent-scope`,
+`cli-kit`, `spaces-config`, `spaces-runtime`, `spaces-execution`,
+`spaces-harness-broker-protocol`, `spaces-harness-broker-client`,
+`spaces-runtime-contracts`, `spaces-harness-claude`, `spaces-harness-codex`,
+`spaces-harness-pi`, `spaces-harness-pi-sdk`, `agent-spaces`.
+
+Gotchas worth not re-deriving:
+
+- **Coherence guard.** `sync:asp` rejects a half-published snapshot — all ASP
+  packages must share the same `latest` version, else it errors with `ASP
+  Verdaccio latest set is incoherent`. You cannot publish/sync one package in
+  isolation; publish the whole set from agent-spaces.
+- **Verdaccio must be running** at `127.0.0.1:4873`, or both publish and sync
+  fail.
+- **Sync ≠ live.** `sync:asp` runs `bun install` here, but the launchd HRC
+  binary still runs the old code until `bun run build` +
+  `launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server`.
+- **Compile dep vs runtime dep.** HRC code that references new ASP *types/exports*
+  needs the sync before it will typecheck — that serializes ASP→sync→HRC. A pure
+  ASP *behavior/data* change (e.g. flipping a capability flag value, adding an
+  argv) flows through existing contracts, so HRC logic can be written in parallel
+  and only needs the sync for runtime/e2e. Decide parallel-vs-serialize by
+  whether the HRC diff names a new ASP symbol.
+
+End-to-end order for a cross-repo change:
+
+```bash
+# 1. edit ../agent-spaces source
+cd ../agent-spaces && just install        # build + publish-dev + sync hrc & acp
+# (or: just build && just publish-dev; then in hrc-runtime: bun run sync:asp)
+cd ../hrc-runtime && git add -p            # commit the dev-snapshot pin bump
+bun run build && launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
+```
+
 ## Cross-Repo Publishing
 
 HRC publishes these packages to the local Verdaccio for ACP consumption:
