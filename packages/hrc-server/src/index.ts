@@ -2142,7 +2142,7 @@ class HrcServerInstance implements HrcServer {
 
   private async dispatchTurnForSession(
     session: HrcSessionRecord,
-    intent: HrcRuntimeIntent,
+    inputIntent: HrcRuntimeIntent,
     prompt: string,
     options: {
       runId?: string | undefined
@@ -2152,6 +2152,17 @@ class HrcServerInstance implements HrcServer {
     } = {}
   ): Promise<Response> {
     const runId = options.runId ?? `run-${randomUUID()}`
+    // T-01770 Phase B: admit ariadne-class (explicit id:claude-code dispatched
+    // headless) and SDK-shaped Claude intents into the claude-code-tmux broker
+    // path BEFORE the headless/SDK branches. Without this they fall onto legacy
+    // exec.ts (fresh conversation each turn) or the hard-failing SDK executor.
+    // Normalizing to an interactive claude-code intent makes the predicates
+    // below route them to the broker branch (and NOT runSdkTurn /
+    // executeHeadlessCliTurn). Flag-gated so a disabled broker is unchanged.
+    const intent =
+      this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
+        ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
+        : inputIntent
     let dispatchPrompt = prompt
     if (options.skipBrainEnrichment !== true) {
       const originalPromptLength = prompt.length
@@ -2174,6 +2185,7 @@ class HrcServerInstance implements HrcServer {
     ) {
       latestRuntime = await this.reconcileTmuxRuntimeLiveness(latestRuntime)
     }
+
     const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
 
     if (shouldUseHeadlessTransport(intent)) {
@@ -2235,7 +2247,8 @@ class HrcServerInstance implements HrcServer {
           session,
           latestRuntime,
           dispatchPrompt,
-          runId
+          runId,
+          { waitForCompletion: options.waitForCompletion }
         )
       }
 
@@ -2244,6 +2257,7 @@ class HrcServerInstance implements HrcServer {
           this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
             flagEnvName: HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
             allowedBrokerDriver: 'claude-code-tmux',
+            waitForCompletion: options.waitForCompletion,
           }),
         legacyTmux: async () =>
           this.handleLegacyInteractiveTmuxDispatchTurn(
@@ -2268,11 +2282,14 @@ class HrcServerInstance implements HrcServer {
         if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
           assertRuntimeNotBusy(this.db, latestRuntime)
         }
+        // codex-cli-tmux is out of T-01770 scope; preserve its current
+        // non-blocking ('started') behavior by opting out of the Phase C wait.
         return await this.executeInteractiveBrokerInputTurn(
           session,
           latestRuntime,
           dispatchPrompt,
-          runId
+          runId,
+          { waitForCompletion: false }
         )
       }
 
@@ -2281,6 +2298,7 @@ class HrcServerInstance implements HrcServer {
           this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
             flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
             allowedBrokerDriver: 'codex-cli-tmux',
+            waitForCompletion: false,
           }),
         legacyTmux: async () =>
           this.handleLegacyInteractiveTmuxDispatchTurn(
@@ -2879,24 +2897,42 @@ class HrcServerInstance implements HrcServer {
     intent: HrcRuntimeIntent,
     prompt: string,
     runId: string,
-    flagOptions: { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
+    flagOptions: {
+      flagEnvName: string
+      allowedBrokerDriver: InteractiveTmuxBrokerDriver
+      waitForCompletion?: boolean | undefined
+    }
   ): Promise<Response> {
     const turnIntent: HrcRuntimeIntent =
       prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
-    const runtime = await this.startInteractiveTmuxBrokerRuntime(
-      session,
-      turnIntent,
-      runId,
-      flagOptions
-    )
+    const runtime = await this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
+      flagEnvName: flagOptions.flagEnvName,
+      allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+    })
 
+    // T-01770 Phase C: block the synchronous caller on the first broker turn
+    // (the start delivers the initial prompt under diagnosticRunId). Async
+    // reply-bridge callers pass waitForCompletion:false to get status:'started'.
+    if (!shouldBlockForBrokerTurnCompletion(flagOptions.waitForCompletion)) {
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'tmux',
+        status: 'started',
+        supportsInFlightInput: true,
+      } satisfies DispatchTurnResponse)
+    }
+
+    await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
     return json({
       runId,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
-      status: 'started',
+      status: 'completed',
       supportsInFlightInput: true,
     } satisfies DispatchTurnResponse)
   }
@@ -2905,7 +2941,8 @@ class HrcServerInstance implements HrcServer {
     session: HrcSessionRecord,
     runtime: HrcRuntimeSnapshot,
     prompt: string,
-    runId: string
+    runId: string,
+    options: { waitForCompletion?: boolean | undefined } = {}
   ): Promise<Response> {
     const invocationId = runtime.activeInvocationId
     if (invocationId === undefined) {
@@ -3013,13 +3050,29 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
+    // T-01770 Phase C: a synchronous caller (ACP/Discord round-trip via
+    // dispatchTurnForSession) blocks until the Claude turn completes; the async
+    // reply-bridge callers pass waitForCompletion:false and get status:'started'.
+    if (!shouldBlockForBrokerTurnCompletion(options.waitForCompletion)) {
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'tmux',
+        status: 'started',
+        supportsInFlightInput: true,
+      } satisfies DispatchTurnResponse)
+    }
+
+    await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
     return json({
       runId,
       hostSessionId: session.hostSessionId,
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
-      status: 'started',
+      status: 'completed',
       supportsInFlightInput: true,
     } satisfies DispatchTurnResponse)
   }
@@ -3052,15 +3105,21 @@ class HrcServerInstance implements HrcServer {
         intent: turnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
-        // A fresh interactive launch must NOT attempt continuation. The reuse
-        // predicates in startRuntimeForSession / the dispatch path return an
-        // already-live runtime before reaching here, so arriving at this start
-        // means there is no live TUI to resume. Passing session.continuation would
-        // launch the harness with `codex resume <rollout>` (or claude --continue),
-        // replaying a prior transcript and — when the recorded cwd differs from the
-        // current one — blocking the TUI on a "choose working directory to resume"
-        // picker. No live tui pid ⇒ new session, no continuation.
-        continuation: undefined,
+        // T-01770 Phase D: arriving here means there is no live TUI to reuse
+        // (the reuse predicates return an already-live runtime first). A fresh
+        // first launch must NOT attempt continuation — passing session.continuation
+        // for codex would emit `codex resume <rollout>` (or `claude --continue`),
+        // replaying a transcript and, when the recorded cwd differs, blocking the
+        // TUI on a "choose working directory to resume" picker (commit 120eb7a).
+        // We REVERSE that disable ONLY for the safe recreate case: claude-code-tmux
+        // + a captured Claude session id ⇒ pass the continuation so the adapter
+        // emits `--resume <uuid>` (no cwd picker). All other cases stay undefined.
+        continuation: toRuntimeContinuationRef(
+          decideInteractiveTmuxBrokerContinuation({
+            allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+            sessionContinuation: session.continuation,
+          })
+        ),
       },
       {
         compile: client.compileRuntimePlan,
@@ -3463,6 +3522,39 @@ class HrcServerInstance implements HrcServer {
       status: 'completed',
       supportsInFlightInput: true,
     } satisfies DispatchTurnResponse)
+  }
+
+  // T-01770 Phase C: block a synchronous caller until an interactive broker turn
+  // reaches a terminal run state. Unlike the headless variant this does NOT mutate
+  // runtime pointers — the broker event-mapper owns the interactive runtime
+  // lifecycle (pane stays live across turns); we only observe the run row.
+  private async waitForInteractiveBrokerRunCompletion(
+    runId: string,
+    runtimeId: string
+  ): Promise<HrcRunRecord> {
+    const deadline = Date.now() + 10 * 60 * 1000
+    while (Date.now() < deadline) {
+      const run = this.db.runs.getByRunId(runId)
+      if (run && !isRunActive(run)) {
+        if (run.status !== 'completed') {
+          throw new HrcRuntimeUnavailableError('interactive broker turn failed', {
+            runtimeId,
+            runId,
+            status: run.status,
+            errorCode: run.errorCode,
+            errorMessage: run.errorMessage,
+          })
+        }
+        return run
+      }
+      await delay(100)
+    }
+
+    throw new HrcRuntimeUnavailableError('interactive broker turn timed out', {
+      runtimeId,
+      runId,
+      route: 'interactive-broker',
+    })
   }
 
   private async waitForHeadlessBrokerRunCompletion(
@@ -8178,7 +8270,25 @@ class HrcServerInstance implements HrcServer {
       })
       const turnBody = (await turnResponse.json()) as DispatchTurnResponse
       const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
-      const mode = transport === 'sdk' ? 'nonInteractive' : 'headless'
+      // T-01770 Phase B/C: a harness-broker tmux turn here means
+      // dispatchTurnForSession admitted an ariadne-class/SDK-shaped Claude intent
+      // into the claude-code-tmux broker (no live runtime existed yet, so this is
+      // the first/recreate start). The reply bridge
+      // (maybeCompleteInteractiveSemanticTurn) only finalizes a broker turn when
+      // the request execution mode is 'interactive', so the started broker tmux
+      // turn must be recorded as interactive — not 'headless'. Scoped to broker
+      // runtimes so legacy-tmux DM behavior (out of scope) is unchanged.
+      const startedRuntime =
+        turnBody.runtimeId !== undefined
+          ? this.db.runtimes.getByRuntimeId(turnBody.runtimeId)
+          : null
+      const startedInteractiveBroker =
+        transport === 'tmux' && startedRuntime?.controllerKind === 'harness-broker'
+      const mode = startedInteractiveBroker
+        ? 'interactive'
+        : transport === 'sdk'
+          ? 'nonInteractive'
+          : 'headless'
 
       const updatedFinalizer = this.turnResponseFinalizers.get(runId)
       if (updatedFinalizer) {
@@ -8241,11 +8351,15 @@ class HrcServerInstance implements HrcServer {
         assertRuntimeNotBusy(this.db, runtime)
       }
 
+      // Async reply-bridge delivery: do NOT block here. The Claude reply is
+      // bridged back as a separate DM via maybeCompleteInteractiveSemanticTurn
+      // (8a0979b), so the semantic-turn handoff returns 'started' immediately.
       const turnResponse = await this.executeInteractiveBrokerInputTurn(
         session,
         runtime,
         payload,
-        runId
+        runId,
+        { waitForCompletion: false }
       )
       const turnBody = (await turnResponse.json()) as DispatchTurnResponse
       const brokerTransport = turnBody.transport as 'tmux'
@@ -11891,7 +12005,7 @@ export function filterBrokerDispatchEnvForLockedEnv(
   return Object.keys(filtered).length > 0 ? filtered : undefined
 }
 
-function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
+export function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
   const preferredMode = intent.execution?.preferredMode
   if (preferredMode === 'headless') return true
   if (preferredMode === 'nonInteractive') {
@@ -11900,7 +12014,7 @@ function shouldUseHeadlessTransport(intent: HrcRuntimeIntent): boolean {
   return false
 }
 
-function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
+export function shouldUseSdkTransport(intent: HrcRuntimeIntent): boolean {
   if (shouldUseHeadlessTransport(intent)) {
     return false
   }
@@ -11926,12 +12040,98 @@ function shouldUseGhosttyTransport(intent: HrcRuntimeIntent): boolean {
   return true
 }
 
-function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
+export function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
   return (
     isInteractiveTmuxBrokerIntent(intent) &&
     intent.harness.provider === 'anthropic' &&
     (intent.harness.id === undefined || intent.harness.id === 'claude-code')
   )
+}
+
+/**
+ * T-01770 Phase B (admission). Admit non-interactive Claude turns into the
+ * claude-code-tmux broker path EVEN WHEN preferredMode is headless/nonInteractive
+ * — the broker pane is HRC-leased, not a user TTY, so "no terminal" is not a
+ * blocker. The redirect set is exactly the intents that today lose Claude memory:
+ *   - ariadne-class: explicit {provider:anthropic, id:claude-code} dispatched
+ *     headless → today lands on legacy exec.ts (no Claude continuation capture).
+ *   - SDK-shaped: {harness.id agent-sdk|pi-sdk} or id-less provider:anthropic →
+ *     today hits the SDK executor (hard-failed by T-01754).
+ * Both must move to the interactive claude-code-tmux broker. We key on
+ * deriveInteractiveHarness resolving to 'claude-code' (the normalize target) so
+ * openai/codex intents (incl. openai pi-sdk → codex-cli) are NOT captured here —
+ * those keep the headless-codex / codex-cli-tmux routes. The second clause
+ * restricts to the SDK-shaped / claude-code id set so an interactive `pi`/`pi-cli`
+ * intent is left untouched.
+ */
+export function shouldRedirectClaudeToInteractiveBroker(intent: HrcRuntimeIntent): boolean {
+  const harness = intent.harness
+  return (
+    deriveInteractiveHarness(harness) === 'claude-code' &&
+    (harness.id === undefined ||
+      harness.id === 'claude-code' ||
+      harness.id === 'agent-sdk' ||
+      harness.id === 'pi-sdk')
+  )
+}
+
+/**
+ * T-01770 Phase B (normalize). Rewrite a redirected Claude intent into an
+ * interactive claude-code-tmux intent so the dispatch predicates send it to the
+ * broker branch (and NOT to shouldUseHeadlessTransport/shouldUseSdkTransport).
+ * Uses deriveInteractiveHarness for the harness label per the spec; clears the
+ * headless/nonInteractive preferredMode that caused the mis-route.
+ */
+export function normalizeClaudeInteractiveBrokerIntent(intent: HrcRuntimeIntent): HrcRuntimeIntent {
+  return {
+    ...intent,
+    harness: {
+      ...intent.harness,
+      id: deriveInteractiveHarness(intent.harness),
+      interactive: true,
+    },
+    execution: {
+      ...intent.execution,
+      preferredMode: 'interactive',
+    },
+  }
+}
+
+/**
+ * T-01770 Phase C (block). Headless-parity convention for whether a broker turn
+ * blocks the synchronous caller: undefined/true => block until the run reaches a
+ * terminal state; false => return status:'started' immediately (the async reply
+ * bridge / a polling caller finalizes the turn).
+ */
+export function shouldBlockForBrokerTurnCompletion(
+  waitForCompletion: boolean | undefined
+): boolean {
+  return waitForCompletion !== false
+}
+
+/**
+ * T-01770 Phase D (durable continuation, recreate case). startInteractiveTmuxBroker
+ * Runtime is only reached when there is no live TUI to reuse (the reuse predicates
+ * return an already-live runtime first). A fresh first launch has no captured
+ * session id ⇒ undefined ⇒ the adapter does a fresh `--session-id <uuid>` launch.
+ * A RECREATE for an existing session that already captured a Claude session id
+ * passes that continuation so the claude adapter emits `--resume <uuid>` — which,
+ * unlike `--continue`/`codex resume`, does NOT trigger a "choose working directory"
+ * picker. This reverses commit 120eb7a's blanket disable ONLY for the safe
+ * --resume case: strictly gated on (a) the claude-code-tmux driver and (b) a
+ * captured session id key.
+ */
+export function decideInteractiveTmuxBrokerContinuation(options: {
+  allowedBrokerDriver: InteractiveTmuxBrokerDriver
+  sessionContinuation: HrcContinuationRef | undefined
+}): HrcContinuationRef | undefined {
+  if (options.allowedBrokerDriver !== 'claude-code-tmux') {
+    return undefined
+  }
+  if (options.sessionContinuation?.key === undefined) {
+    return undefined
+  }
+  return options.sessionContinuation
 }
 
 function shouldConsiderCodexCliTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {
