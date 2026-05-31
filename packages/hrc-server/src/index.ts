@@ -2166,7 +2166,14 @@ class HrcServerInstance implements HrcServer {
       })
     }
 
-    const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    let latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    if (
+      latestRuntime?.controllerKind === 'harness-broker' &&
+      latestRuntime.transport === 'tmux' &&
+      getBrokerRuntimeTmuxSocketPath(latestRuntime) !== undefined
+    ) {
+      latestRuntime = await this.reconcileTmuxRuntimeLiveness(latestRuntime)
+    }
     const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
 
     if (shouldUseHeadlessTransport(intent)) {
@@ -2993,12 +3000,16 @@ class HrcServerInstance implements HrcServer {
             }
           : {}),
       })
-      throw new HrcRuntimeUnavailableError('interactive broker input failed', {
+      throw new HrcRuntimeUnavailableError(`interactive broker input failed: ${errorMessage}`, {
         runtimeId: runtime.runtimeId,
         runId,
         invocationId,
         route: 'interactive-broker',
+        cause: errorMessage,
         error: errorMessage,
+        recommendation: terminalInputFailure
+          ? 'retry the turn; HRC marked the stale broker runtime unavailable'
+          : 'inspect hrc server logs and retry after the broker is healthy',
       })
     }
 
@@ -3417,12 +3428,16 @@ class HrcServerInstance implements HrcServer {
             }
           : {}),
       })
-      throw new HrcRuntimeUnavailableError('headless broker input failed', {
+      throw new HrcRuntimeUnavailableError(`headless broker input failed: ${errorMessage}`, {
         runtimeId: runtime.runtimeId,
         runId,
         invocationId,
         route: 'broker',
+        cause: errorMessage,
         error: errorMessage,
+        recommendation: terminalInputFailure
+          ? 'retry the turn; HRC marked the stale broker runtime unavailable'
+          : 'inspect hrc server logs and retry after the broker is healthy',
       })
     }
 
@@ -8106,8 +8121,19 @@ class HrcServerInstance implements HrcServer {
         record.messageId
       )
 
-      const liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
-      if (liveTmuxRuntime && !isRuntimeUnavailableStatus(liveTmuxRuntime.status)) {
+      let liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+      if (
+        liveTmuxRuntime?.controllerKind === 'harness-broker' &&
+        liveTmuxRuntime.transport === 'tmux' &&
+        getBrokerRuntimeTmuxSocketPath(liveTmuxRuntime) !== undefined
+      ) {
+        liveTmuxRuntime = await this.reconcileTmuxRuntimeLiveness(liveTmuxRuntime)
+      }
+      if (
+        liveTmuxRuntime &&
+        (liveTmuxRuntime.transport === 'tmux' || liveTmuxRuntime.transport === 'ghostty') &&
+        !isRuntimeUnavailableStatus(liveTmuxRuntime.status)
+      ) {
         const liveBrokerRuntime =
           liveTmuxRuntime.controllerKind === 'harness-broker' &&
           liveTmuxRuntime.activeInvocationId !== undefined
@@ -8204,6 +8230,10 @@ class HrcServerInstance implements HrcServer {
     fromSeq: number
   }): Promise<SemanticTurnHandoffResponse | undefined> {
     const { session, runtime, request, payload, runId, sessionRef, fromSeq } = input
+    if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
+      return undefined
+    }
+
     const transport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
 
     if (runtime.controllerKind === 'harness-broker' && runtime.activeInvocationId !== undefined) {

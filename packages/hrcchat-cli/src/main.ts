@@ -17,6 +17,7 @@ import { cmdShow } from './commands/show.js'
 import { cmdSummon } from './commands/summon.js'
 import { TurnExitError, cmdTurn } from './commands/turn.js'
 import { cmdWho } from './commands/who.js'
+import { formatHrcDomainError } from './domain-error-format.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -305,7 +306,7 @@ if (import.meta.main) {
     }
     // HRC server/network errors → exit 1
     if (err instanceof HrcDomainError) {
-      exitWithError(new Error(`[${err.code}] ${err.message}`), { json, binName: 'hrcchat' })
+      exitWithError(new Error(formatHrcDomainError(err)), { json, binName: 'hrcchat' })
     }
     // Unknown errors → exit 1
     exitWithError(err, { json, binName: 'hrcchat' })
