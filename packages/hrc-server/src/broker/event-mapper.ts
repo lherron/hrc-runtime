@@ -495,6 +495,20 @@ export class BrokerEventMapper {
         break
       }
 
+      // ── Continuation cleared -> DUAL clear: runtime AND session ──────────────
+      // A user-initiated end (Claude `/quit`) drops the captured continuation so
+      // the next `hrc run` starts fresh instead of `--resume`-ing the quit
+      // session. Must clear BOTH sides: the next-launch resolution reads
+      // `runtime.continuation ?? session.continuation` (index.ts ~2728/3120), so
+      // clearing only one leaves the other as a fallback that re-resumes.
+      // External pane-kill / crash reports reason `other` and never reaches here,
+      // so resume durability survives pane recreation (T-01761 ariadne case).
+      case 'continuation.cleared': {
+        db.runtimes.clearContinuation(ctx.runtimeId, now)
+        db.sessions.updateContinuation(ctx.hostSessionId, undefined, now)
+        break
+      }
+
       // ── Terminal surface binding ────────────────────────────────────────────
       case 'terminal.surface.reported': {
         const payload = envelope.payload as TerminalSurfaceReportedPayload

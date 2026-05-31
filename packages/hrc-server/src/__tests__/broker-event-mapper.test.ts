@@ -535,6 +535,23 @@ describe('projection mapping (ordered sequence)', () => {
     }
   })
 
+  it('continuation.cleared drops BOTH runtime AND session continuation', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    // Seed a captured continuation on both runtime and session.
+    mapper.apply(envelope('continuation.updated', 8, { provider: 'anthropic', key: CONTINUATION_KEY }))
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeDefined()
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeDefined()
+
+    // A user-initiated SessionEnd (Claude /quit) clears it on both sides so the
+    // next launch resolution (`runtime.continuation ?? session.continuation`)
+    // finds nothing and starts fresh.
+    mapper.apply(envelope('continuation.cleared', 9, { reason: 'prompt_input_exit' }))
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeUndefined()
+    expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeUndefined()
+  })
+
   it('reflects invocation lifecycle state transitions in order', () => {
     const mapper = makeMapper()
     const db = fixture.db
