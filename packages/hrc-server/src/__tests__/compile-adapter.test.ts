@@ -19,13 +19,10 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { project } from 'spaces-runtime-contracts'
-import type {
-  RuntimeCompileRequest,
-  RuntimeCompileResponse,
-  RuntimeIdentityAllocation,
-} from 'spaces-runtime-contracts'
 import type { HrcRuntimeIntent } from 'hrc-core'
+import type { AspcCompileHarnessInvocationResponse } from 'spaces-aspc-protocol'
+import { project } from 'spaces-runtime-contracts'
+import type { RuntimeCompileRequest, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { compileBrokerRuntimePlan } from '../agent-spaces-adapter/compile-adapter'
 
@@ -76,13 +73,55 @@ function makeIntent(overrides: Partial<HrcRuntimeIntent> = {}): HrcRuntimeIntent
  */
 function makeCapturingCompile() {
   const captured: { request?: RuntimeCompileRequest } = {}
-  const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
-    captured.request = request
-    const identity = request.identity as RuntimeIdentityAllocation
+  const compileHarnessInvocation = async (request: {
+    compileRequest: RuntimeCompileRequest
+    dispatchEnv?: Record<string, string> | undefined
+  }): Promise<AspcCompileHarnessInvocationResponse> => {
+    captured.request = request.compileRequest
+    const identity = request.compileRequest.identity as RuntimeIdentityAllocation
     const { profile } = makeBrokerProfile(identity)
-    return makeCompileResponse(identity, [profile])
+    return makeAspcCompileResponse(identity, [profile], request.dispatchEnv)
   }
-  return { compile, captured }
+  return { compileHarnessInvocation, captured }
+}
+
+function makeAspcCompileResponse(
+  identity: RuntimeIdentityAllocation,
+  profiles: ReturnType<typeof makeBrokerProfile>['profile'][],
+  dispatchEnv?: Record<string, string> | undefined
+): AspcCompileHarnessInvocationResponse {
+  const compileResponse = makeCompileResponse(identity, profiles)
+  if (!compileResponse.ok) {
+    throw new Error('fixture compile response unexpectedly failed')
+  }
+  const selectedProfile = profiles[0]
+  if (!selectedProfile) {
+    throw new Error('fixture requires one selected profile')
+  }
+  const startRequest = selectedProfile.harnessInvocation.startRequest
+  return {
+    schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+    ok: true,
+    compileResponse,
+    plan: compileResponse.plan,
+    selectedProfile,
+    startRequest,
+    dispatchRequest: {
+      startRequest,
+      ...(dispatchEnv ? { dispatchEnv } : {}),
+    },
+    diagnostics: compileResponse.diagnostics,
+  }
+}
+
+function makeAspcFailedCompileResponse(): AspcCompileHarnessInvocationResponse {
+  const compileResponse = makeFailedCompileResponse()
+  return {
+    schemaVersion: 'aspc-compile-harness-invocation-response/v1',
+    ok: false,
+    compileResponse,
+    diagnostics: compileResponse.diagnostics,
+  }
 }
 
 const STANDARD_INPUT = () => ({
@@ -97,8 +136,11 @@ const STANDARD_INPUT = () => ({
 
 describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   it('compiles a headless-codex intent to exactly one admitted broker profile', async () => {
-    const { compile } = makeCapturingCompile()
-    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation } = makeCapturingCompile()
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
 
     expect(result.admitted).toBe(true)
     if (!result.admitted) return
@@ -109,8 +151,11 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('allocates identities BEFORE compile and uses the SAME ids in identity + correlation', async () => {
-    const { compile, captured } = makeCapturingCompile()
-    await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
+    await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
 
     const req = captured.request
     expect(req).toBeDefined()
@@ -136,21 +181,24 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('allocates initialInputId AND runId only when an initial user turn exists', async () => {
-    const { compile, captured } = makeCapturingCompile()
-    await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
+    await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     const withTurn = captured.request
     expect(withTurn?.identity.initialInputId).toBe('input_T1')
     expect(withTurn?.identity.runId).toBe('run_T1')
   })
 
   it('omits initialInputId and runId when there is no initial turn', async () => {
-    const { compile, captured } = makeCapturingCompile()
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
     const input = {
       intent: makeIntent({ initialPrompt: undefined }),
       hostSessionId: 'hostSession_T1',
       generation: 1,
     }
-    await compileBrokerRuntimePlan(input, { compile, ids: makeIdAllocator() })
+    await compileBrokerRuntimePlan(input, { compileHarnessInvocation, ids: makeIdAllocator() })
     const req = captured.request
     expect(req?.identity.initialInputId).toBeUndefined()
     expect(req?.identity.runId).toBeUndefined()
@@ -158,11 +206,13 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
 
   it('allocates initialInputId and runId for managed interactive starts without an explicit prompt', async () => {
     const captured: { request?: RuntimeCompileRequest } = {}
-    const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
-      captured.request = request
-      const identity = request.identity as RuntimeIdentityAllocation
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.request = request.compileRequest
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
       const { profile } = makeInteractiveTmuxProfile(identity)
-      return makeCompileResponse(identity, [profile])
+      return makeAspcCompileResponse(identity, [profile])
     }
 
     const result = await compileBrokerRuntimePlan(
@@ -181,7 +231,7 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
         hostSessionId: 'hostSession_T1',
         generation: 1,
       },
-      { compile, ids: makeIdAllocator() }
+      { compileHarnessInvocation, ids: makeIdAllocator() }
     )
 
     expect(captured.request?.identity.initialInputId).toBe('input_T1')
@@ -190,8 +240,11 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('echoes the allocated invocationId into startRequest.spec.invocationId on the admitted result', async () => {
-    const { compile } = makeCapturingCompile()
-    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation } = makeCapturingCompile()
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     expect(result.admitted).toBe(true)
     if (!result.admitted) return
     expect(result.startRequest.spec.invocationId).toBe('invocation_T1')
@@ -201,19 +254,24 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('translates intent materialization (initialPrompt) into the compile request', async () => {
-    const { compile, captured } = makeCapturingCompile()
-    await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
+    await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     expect(captured.request?.materialization.initialPrompt).toBe('do the thing')
     expect(captured.request?.requested.interactionMode).toBe('headless')
   })
 
   it('translates interactive Claude tmux intent into explicit compiler route fields', async () => {
     const captured: { request?: RuntimeCompileRequest } = {}
-    const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
-      captured.request = request
-      const identity = request.identity as RuntimeIdentityAllocation
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.request = request.compileRequest
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
       const { profile } = makeInteractiveTmuxProfile(identity)
-      return makeCompileResponse(identity, [profile])
+      return makeAspcCompileResponse(identity, [profile])
     }
 
     const result = await compileBrokerRuntimePlan(
@@ -225,7 +283,7 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
         hostSessionId: 'hostSession_T1',
         generation: 1,
       },
-      { compile, ids: makeIdAllocator() }
+      { compileHarnessInvocation, ids: makeIdAllocator() }
     )
 
     expect(result.admitted).toBe(true)
@@ -238,14 +296,19 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('preserves dispatchEnv as a dispatch-only channel: on placement, on the result, NEVER in hashed material', async () => {
-    const { compile, captured } = makeCapturingCompile()
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
     const dispatchEnv = { DISCORD_CHANNEL_ID: '1234567890', ASP_DISPATCH_TOKEN: 'sekret-token' }
     const input = { ...STANDARD_INPUT(), dispatchEnv }
 
-    const result = await compileBrokerRuntimePlan(input, { compile, ids: makeIdAllocator() })
+    const result = await compileBrokerRuntimePlan(input, {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
 
     // (1) carried into the compile request as a dispatch-time channel on placement
-    expect((captured.request?.placement as { dispatchEnv?: unknown }).dispatchEnv).toEqual(dispatchEnv)
+    expect((captured.request?.placement as { dispatchEnv?: unknown }).dispatchEnv).toEqual(
+      dispatchEnv
+    )
 
     expect(result.admitted).toBe(true)
     if (!result.admitted) return
@@ -261,16 +324,23 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('returns a frozen startRequest on the admitted result (cannot be mutated post-verification)', async () => {
-    const { compile } = makeCapturingCompile()
-    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const { compileHarnessInvocation } = makeCapturingCompile()
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     expect(result.admitted).toBe(true)
     if (!result.admitted) return
     expect(Object.isFrozen(result.startRequest)).toBe(true)
   })
 
   it('propagates a selector rejection without falling back (ok:false compile)', async () => {
-    const compile = async (): Promise<RuntimeCompileResponse> => makeFailedCompileResponse()
-    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const compileHarnessInvocation = async (): Promise<AspcCompileHarnessInvocationResponse> =>
+      makeAspcFailedCompileResponse()
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     expect(result.admitted).toBe(false)
     if (result.admitted) return
     expect(result.code).toBe('compile-not-ok')
@@ -279,12 +349,17 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
   })
 
   it('rejects (no fallback) when the compiler echoes a mismatched invocationId', async () => {
-    const compile = async (request: RuntimeCompileRequest): Promise<RuntimeCompileResponse> => {
-      const identity = request.identity as RuntimeIdentityAllocation
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
       const { profile } = makeBrokerProfile(identity, { invocationId: 'invocation_WRONG' })
-      return makeCompileResponse(identity, [profile])
+      return makeAspcCompileResponse(identity, [profile])
     }
-    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), { compile, ids: makeIdAllocator() })
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
     expect(result.admitted).toBe(false)
     if (result.admitted) return
     expect(result.code).toBe('invocation-id-mismatch')

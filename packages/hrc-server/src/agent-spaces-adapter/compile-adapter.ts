@@ -2,10 +2,10 @@
  * Broker COMPILE ADAPTER (T-01695 / T-01690 Wave W2).
  *
  * Translates an HrcRuntimeIntent (+ overlays) into a RuntimeCompileRequest,
- * compiles it (via an injected compile fn — no live compiler is required here),
- * runs the W2 profile selector, and returns a verified + frozen plan / profile /
- * startRequest / dispatchEnv / identities. It does NOT spawn the broker or wire
- * any route (W3B/W4 own that).
+ * compiles it through the injected ASPC JSON-RPC facade client, runs the W2
+ * profile selector, and returns a verified + frozen plan / profile /
+ * startRequest / dispatchEnv / identities. It does NOT spawn the broker route
+ * itself (W3B/W4 own that).
  *
  * Key invariants:
  *  - Runtime identities are allocated BEFORE compile and mirrored into both
@@ -26,31 +26,36 @@
  * HRC_HEADLESS_CODEX_BROKER_ENABLED) invokes it.
  */
 
+import type { HrcRuntimeIntent } from 'hrc-core'
+import type {
+  AspcCompileHarnessInvocationRequest,
+  AspcCompileHarnessInvocationResponse,
+  AspcProfileSelector,
+} from 'spaces-aspc-protocol'
+import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import type {
   BrokerExecutionProfile,
+  CompileDiagnostic,
   CompiledRuntimePlan,
   HarnessFamily,
   HarnessRuntime,
   HostSessionId,
   InputId,
-  ProviderDomain,
   InvocationId,
+  ProviderDomain,
   RequestId,
   RunId,
   RuntimeCompileRequest,
-  RuntimeCompileResponse,
   RuntimeCorrelation,
   RuntimeId,
   RuntimeIdentityAllocation,
   RuntimeOperationId,
   TraceId,
 } from 'spaces-runtime-contracts'
-import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import type { HrcRuntimeIntent } from 'hrc-core'
 
 import {
-  selectBrokerExecutionProfile,
   type BrokerProfileRejectionCode,
+  selectBrokerExecutionProfile,
 } from './compile-profile-selector'
 
 /**
@@ -67,11 +72,13 @@ export type RuntimeIdAllocator = {
   traceId: () => string
 }
 
-export type CompileFn = (request: RuntimeCompileRequest) => Promise<RuntimeCompileResponse>
+export type CompileHarnessInvocationFn = (
+  request: AspcCompileHarnessInvocationRequest
+) => Promise<AspcCompileHarnessInvocationResponse>
 
 export type BrokerCompileAdapterDeps = {
-  /** Compiles a runtime plan. W3B binds this to createAgentSpacesClient().compileRuntimePlan. */
-  compile: CompileFn
+  /** Compiles through the ASPC facade. W3B binds this to aspc.compileHarnessInvocation. */
+  compileHarnessInvocation: CompileHarnessInvocationFn
   ids: RuntimeIdAllocator
 }
 
@@ -101,11 +108,13 @@ export type BrokerCompileAdapterResult =
       identity: RuntimeIdentityAllocation
       /** Dispatch-time channel for W3B; absent from all hashed material. */
       dispatchEnv?: Record<string, string> | undefined
+      diagnostics: CompileDiagnostic[]
     }
   | {
       admitted: false
       code: BrokerProfileRejectionCode
       identity: RuntimeIdentityAllocation
+      diagnostics?: CompileDiagnostic[] | undefined
     }
 
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
@@ -158,9 +167,7 @@ function toCompileAttachments(
   })
 }
 
-function toRequestedHarnessRoute(
-  harness: HrcRuntimeIntent['harness']
-): {
+function toRequestedHarnessRoute(harness: HrcRuntimeIntent['harness']): {
   modelProvider: ProviderDomain
   harnessFamily?: HarnessFamily | undefined
   preferredHarnessRuntime?: HarnessRuntime | undefined
@@ -174,7 +181,9 @@ function toRequestedHarnessRoute(
   }
 }
 
-function toPreferredHarnessRuntime(harnessId: HrcRuntimeIntent['harness']['id']): HarnessRuntime | undefined {
+function toPreferredHarnessRuntime(
+  harnessId: HrcRuntimeIntent['harness']['id']
+): HarnessRuntime | undefined {
   switch (harnessId) {
     case 'claude-code':
       return 'claude-code-cli'
@@ -198,6 +207,29 @@ function toHarnessFamily(
   if (runtime === 'codex-cli') return 'codex'
   if (runtime === 'pi-cli' || runtime === 'pi-sdk') return 'pi'
   return provider === 'openai' ? 'codex' : 'claude-code'
+}
+
+function toProfileSelector(intent: HrcRuntimeIntent): AspcProfileSelector | undefined {
+  if (intent.harness.interactive === true) {
+    const runtime = toPreferredHarnessRuntime(intent.harness.id)
+    if (runtime === 'claude-code-cli') {
+      return { brokerDriver: 'claude-code-tmux' }
+    }
+    if (runtime === 'codex-cli') {
+      return { brokerDriver: 'codex-cli-tmux' }
+    }
+    return undefined
+  }
+
+  const runtime = toPreferredHarnessRuntime(intent.harness.id)
+  if (runtime === 'codex-cli' || intent.harness.provider === 'openai') {
+    return { brokerDriver: 'codex-app-server' }
+  }
+  return undefined
+}
+
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
 /**
@@ -266,18 +298,43 @@ export async function compileBrokerRuntimePlan(
     ...(input.continuation ? { continuation: input.continuation } : {}),
   }
 
-  // (4) Compile, then statically admit + hash-verify the broker profile.
-  const response = await deps.compile(request)
-  const selection = selectBrokerExecutionProfile(response, identity)
-
-  if (!selection.admitted) {
-    return { admitted: false, code: selection.code, identity }
+  // (4) Compile through ASPC, then statically admit + hash-verify the broker
+  //     profile HRC will dispatch. ASPC returns the exact dispatch envelope; HRC
+  //     still verifies the selected startRequest/hash/identity contract before
+  //     trusting it.
+  const profileSelector = toProfileSelector(intent)
+  const response = await deps.compileHarnessInvocation({
+    compileRequest: request,
+    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
+    ...(profileSelector ? { profileSelector } : {}),
+  })
+  if (!response.ok) {
+    return {
+      admitted: false,
+      code: 'compile-not-ok',
+      identity,
+      diagnostics: response.diagnostics,
+    }
   }
 
-  // selection.admitted ⇒ response.ok was true; this guard re-narrows for TS and
-  // keeps the invariant honest.
-  if (!response.ok) {
-    return { admitted: false, code: 'compile-not-ok', identity }
+  const selection = selectBrokerExecutionProfile(response.compileResponse, identity)
+
+  if (!selection.admitted) {
+    return {
+      admitted: false,
+      code: selection.code,
+      identity,
+      diagnostics: response.diagnostics,
+    }
+  }
+
+  if (!jsonEqual(response.dispatchRequest.startRequest, response.startRequest)) {
+    return {
+      admitted: false,
+      code: 'start-request-hash-mismatch',
+      identity,
+      diagnostics: response.diagnostics,
+    }
   }
 
   return {
@@ -289,5 +346,6 @@ export async function compileBrokerRuntimePlan(
     plan: response.plan,
     identity,
     ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
+    diagnostics: response.diagnostics,
   }
 }

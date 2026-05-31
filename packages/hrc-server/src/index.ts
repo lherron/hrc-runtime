@@ -4,7 +4,6 @@ import { connect } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { createAgentSpacesClient } from 'agent-spaces'
 /** Workspace root derived from this module's location (packages/hrc-server/src/index.ts → ../../..) */
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')
 
@@ -117,8 +116,12 @@ import type {
   HrcLifecycleQueryFilters,
 } from 'hrc-store-sqlite'
 import { resolveHarnessFrontendForProvider } from 'spaces-config'
+import {
+  AspcFacadeBrokerClient,
+  asBrokerClient,
+} from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
-import { type CompileFn, compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
   type SdkInflightInputClient,
   buildCliInvocation,
@@ -127,7 +130,11 @@ import {
   runSdkTurn,
 } from './agent-spaces-adapter/index.js'
 import { enrichTurnPromptForBrain } from './brain-enricher.js'
-import { type BrokerTmuxAllocator, HarnessBrokerController } from './broker/controller.js'
+import {
+  BrokerControllerError,
+  type BrokerTmuxAllocator,
+  HarnessBrokerController,
+} from './broker/controller.js'
 import { BrokerEventMapper } from './broker/event-mapper.js'
 import {
   appendHrcEvent,
@@ -578,65 +585,66 @@ export async function buildBrokerRunPreview(
     return undefined
   }
 
-  const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
-  if (typeof client.compileRuntimePlan !== 'function') {
-    return undefined
-  }
+  const client = await startAspcFacadeBrokerClient()
 
-  const compiled = await compileBrokerRuntimePlan(
-    {
-      intent,
-      hostSessionId: 'dry-run-host-session',
-      generation: 0,
-      continuation: undefined,
-    },
-    {
-      compile: client.compileRuntimePlan,
-      ids: {
-        requestId: () => `dry-req-${randomUUID()}`,
-        operationId: () => `dry-op-${randomUUID()}`,
-        runtimeId: () => `dry-rt-${randomUUID()}`,
-        invocationId: () => `dry-inv-${randomUUID()}`,
-        initialInputId: () => `dry-input-${randomUUID()}`,
-        runId: () => `dry-run-${randomUUID()}`,
-        traceId: () => `dry-trace-${randomUUID()}`,
+  try {
+    const compiled = await compileBrokerRuntimePlan(
+      {
+        intent,
+        hostSessionId: 'dry-run-host-session',
+        generation: 0,
+        continuation: undefined,
       },
+      {
+        compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+        ids: {
+          requestId: () => `dry-req-${randomUUID()}`,
+          operationId: () => `dry-op-${randomUUID()}`,
+          runtimeId: () => `dry-rt-${randomUUID()}`,
+          invocationId: () => `dry-inv-${randomUUID()}`,
+          initialInputId: () => `dry-input-${randomUUID()}`,
+          runId: () => `dry-run-${randomUUID()}`,
+          traceId: () => `dry-trace-${randomUUID()}`,
+        },
+      }
+    )
+
+    if (!compiled.admitted) {
+      return undefined
     }
-  )
 
-  if (!compiled.admitted) {
-    return undefined
-  }
+    const spec = compiled.startRequest.spec
+    const launchInitialPrompt = spec.launch?.initialPrompt
+    const warnings = (compiled.profile.diagnostics ?? [])
+      .filter((diagnostic) => diagnostic.level !== 'error')
+      .map((diagnostic) => diagnostic.message)
 
-  const spec = compiled.startRequest.spec
-  const launchInitialPrompt = spec.launch?.initialPrompt
-  const warnings = (compiled.profile.diagnostics ?? [])
-    .filter((diagnostic) => diagnostic.level !== 'error')
-    .map((diagnostic) => diagnostic.message)
-
-  return {
-    controllerKind: 'harness-broker',
-    brokerDriver: compiled.profile.brokerDriver,
-    interactionMode: compiled.profile.interactionMode,
-    profileId: compiled.profile.profileId,
-    profileHash: compiled.profile.profileHash,
-    specHash: compiled.specHash,
-    startRequestHash: compiled.startRequestHash,
-    process: {
-      command: spec.process.command,
-      args: spec.process.args,
-      cwd: spec.process.cwd,
-    },
-    initialInput: compiled.startRequest.initialInput !== undefined,
-    ...(typeof launchInitialPrompt === 'string'
-      ? { launchInitialPromptLength: launchInitialPrompt.length }
-      : {}),
-    inputQueue: spec.interaction?.inputQueue ?? 'none',
-    interrupt: compiled.profile.expectedCapabilities.turns.interrupt,
-    ...(compiled.profile.brokerTerminal?.host === 'tmux'
-      ? { resource: 'runtime-owned broker tmux lease socket' }
-      : {}),
-    warnings,
+    return {
+      controllerKind: 'harness-broker',
+      brokerDriver: compiled.profile.brokerDriver,
+      interactionMode: compiled.profile.interactionMode,
+      profileId: compiled.profile.profileId,
+      profileHash: compiled.profile.profileHash,
+      specHash: compiled.specHash,
+      startRequestHash: compiled.startRequestHash,
+      process: {
+        command: spec.process.command,
+        args: spec.process.args,
+        cwd: spec.process.cwd,
+      },
+      initialInput: compiled.startRequest.initialInput !== undefined,
+      ...(typeof launchInitialPrompt === 'string'
+        ? { launchInitialPromptLength: launchInitialPrompt.length }
+        : {}),
+      inputQueue: spec.interaction?.inputQueue ?? 'none',
+      interrupt: compiled.profile.expectedCapabilities.turns.interrupt,
+      ...(compiled.profile.brokerTerminal?.host === 'tmux'
+        ? { resource: 'runtime-owned broker tmux lease socket' }
+        : {}),
+      warnings,
+    }
+  } finally {
+    await client.close().catch(() => undefined)
   }
 }
 
@@ -670,6 +678,10 @@ const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
 const HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV = 'HRC_HEADLESS_CODEX_BROKER_ENABLED'
 const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
 const HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
+const HRC_ASPC_FACADE_CMD_ENV = 'HRC_ASPC_FACADE_CMD'
+const HRC_ASPC_FACADE_ARGS_ENV = 'HRC_ASPC_FACADE_ARGS'
+const DEFAULT_ASPC_FACADE_COMMAND = join(WORKSPACE_ROOT, 'node_modules', '.bin', 'aspc-facade')
+const DEFAULT_ASPC_FACADE_ARGS = ['run', '--transport', 'stdio']
 
 function resolveStaleGenerationEnabled(options: HrcServerOptions): boolean {
   if (typeof options.staleGenerationEnabled === 'boolean') {
@@ -713,6 +725,48 @@ function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boolean {
     return options.codexCliTmuxBrokerEnabled
   }
   return isTruthyFeatureFlag(process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV])
+}
+
+function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {
+  const command = process.env[HRC_ASPC_FACADE_CMD_ENV]?.trim() || DEFAULT_ASPC_FACADE_COMMAND
+  const rawArgs = process.env[HRC_ASPC_FACADE_ARGS_ENV]
+  const args =
+    rawArgs === undefined
+      ? DEFAULT_ASPC_FACADE_ARGS
+      : rawArgs
+          .split(/\s+/)
+          .map((arg) => arg.trim())
+          .filter((arg) => arg.length > 0)
+  return { command, args }
+}
+
+async function startAspcFacadeBrokerClient(): Promise<AspcFacadeBrokerClient> {
+  const client = await AspcFacadeBrokerClient.start({
+    ...resolveAspcFacadeStartOptions(),
+    env: process.env as Record<string, string>,
+  })
+  try {
+    const hello = await client.hello()
+    if (!hello.capabilities.compileHarnessInvocation) {
+      throw new HrcRuntimeUnavailableError(
+        'ASPC facade does not support harness invocation compilation',
+        {
+          facadeInfo: hello.facadeInfo,
+          protocolVersion: hello.protocolVersion,
+        }
+      )
+    }
+    if (!hello.capabilities.cohostedBroker) {
+      throw new HrcRuntimeUnavailableError('ASPC facade did not co-host a broker', {
+        facadeInfo: hello.facadeInfo,
+        protocolVersion: hello.protocolVersion,
+      })
+    }
+    return client
+  } catch (error) {
+    await client.close().catch(() => undefined)
+    throw error
+  }
 }
 
 function resolveClaudeGhosttyIdleCleanupMinutes(): number {
@@ -3093,110 +3147,109 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
 
-    const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
-    if (typeof client.compileRuntimePlan !== 'function') {
-      throw new HrcRuntimeUnavailableError(
-        'agent-spaces client cannot compile interactive broker runtime plans',
-        {
-          hostSessionId: session.hostSessionId,
-          runId: diagnosticRunId,
-          route: 'interactive-broker',
-          flag: flagOptions.flagEnvName,
-        }
-      )
-    }
-
+    const client = await startAspcFacadeBrokerClient()
+    let handedOffToController = false
     const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: turnIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        // T-01770 Phase D: arriving here means there is no live TUI to reuse
-        // (the reuse predicates return an already-live runtime first). A fresh
-        // first launch must NOT attempt continuation — passing session.continuation
-        // for codex would emit `codex resume <rollout>` (or `claude --continue`),
-        // replaying a transcript and, when the recorded cwd differs, blocking the
-        // TUI on a "choose working directory to resume" picker (commit 120eb7a).
-        // We REVERSE that disable ONLY for the safe recreate case: claude-code-tmux
-        // + a captured Claude session id ⇒ pass the continuation so the adapter
-        // emits `--resume <uuid>` (no cwd picker). All other cases stay undefined.
-        continuation: toRuntimeContinuationRef(
-          decideInteractiveTmuxBrokerContinuation({
-            allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-            sessionContinuation: session.continuation,
-          })
-        ),
-      },
-      {
-        compile: client.compileRuntimePlan,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => `rt-${randomUUID()}`,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => diagnosticRunId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
-      }
-    )
-
-    if (!compiled.admitted) {
-      throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
-        hostSessionId: session.hostSessionId,
-        runId: diagnosticRunId,
-        code: compiled.code,
-        route: 'interactive-broker',
-        flag: flagOptions.flagEnvName,
-      })
-    }
-
-    const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
-      brokerFlagEnabled: true,
-      allowedBrokerDriver: flagOptions.allowedBrokerDriver,
-    })
-    if (route !== 'broker') {
-      throw new HrcRuntimeUnavailableError(
-        `interactive broker profile did not resolve to ${flagOptions.allowedBrokerDriver}`,
+    try {
+      const compiled = await compileBrokerRuntimePlan(
         {
+          intent: turnIntent,
           hostSessionId: session.hostSessionId,
-          runId: diagnosticRunId,
-          brokerDriver: compiled.profile.brokerDriver,
-          brokerTerminal: compiled.profile.brokerTerminal,
-          route: 'interactive-broker',
-          flag: flagOptions.flagEnvName,
+          generation: session.generation,
+          // T-01770 Phase D: arriving here means there is no live TUI to reuse
+          // (the reuse predicates return an already-live runtime first). A fresh
+          // first launch must NOT attempt continuation — passing session.continuation
+          // for codex would emit `codex resume <rollout>` (or `claude --continue`),
+          // replaying a transcript and, when the recorded cwd differs, blocking the
+          // TUI on a "choose working directory to resume" picker (commit 120eb7a).
+          // We REVERSE that disable ONLY for the safe recreate case: claude-code-tmux
+          // + a captured Claude session id ⇒ pass the continuation so the adapter
+          // emits `--resume <uuid>` (no cwd picker). All other cases stay undefined.
+          continuation: toRuntimeContinuationRef(
+            decideInteractiveTmuxBrokerContinuation({
+              allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+              sessionContinuation: session.continuation,
+            })
+          ),
+        },
+        {
+          compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+          ids: {
+            requestId: () => `req-${randomUUID()}`,
+            operationId: () => `op-${randomUUID()}`,
+            runtimeId: () => `rt-${randomUUID()}`,
+            invocationId: () => `inv-${randomUUID()}`,
+            initialInputId: () => `input-${randomUUID()}`,
+            runId: () => diagnosticRunId,
+            traceId: () => `trace-${randomUUID()}`,
+          },
         }
       )
-    }
 
-    const result = await this.getHarnessBrokerController().start({
-      plan: compiled.plan,
-      profile: compiled.profile,
-      startRequest: compiled.startRequest,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
-      identity: compiled.identity,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
-      routeDecision: {
-        route: 'broker',
-        flag: flagOptions.flagEnvName,
-        selectedBy: 'decideInteractiveTmuxExecutionRoute',
-      },
-    })
+      if (!compiled.admitted) {
+        throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
+          hostSessionId: session.hostSessionId,
+          runId: diagnosticRunId,
+          code: compiled.code,
+          diagnostics: compiled.diagnostics,
+          route: 'interactive-broker',
+          flag: flagOptions.flagEnvName,
+        })
+      }
 
-    if (!result.ok) {
-      throw new HrcRuntimeUnavailableError('interactive broker start failed', {
-        hostSessionId: session.hostSessionId,
-        runId: diagnosticRunId,
-        code: result.error.code,
-        message: result.error.message,
-        route: 'interactive-broker',
-        flag: flagOptions.flagEnvName,
+      const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
+        brokerFlagEnabled: true,
+        allowedBrokerDriver: flagOptions.allowedBrokerDriver,
       })
-    }
+      if (route !== 'broker') {
+        throw new HrcRuntimeUnavailableError(
+          `interactive broker profile did not resolve to ${flagOptions.allowedBrokerDriver}`,
+          {
+            hostSessionId: session.hostSessionId,
+            runId: diagnosticRunId,
+            brokerDriver: compiled.profile.brokerDriver,
+            brokerTerminal: compiled.profile.brokerTerminal,
+            route: 'interactive-broker',
+            flag: flagOptions.flagEnvName,
+          }
+        )
+      }
 
-    return result.runtime
+      handedOffToController = true
+      const result = await this.getHarnessBrokerController().start({
+        plan: compiled.plan,
+        profile: compiled.profile,
+        startRequest: compiled.startRequest,
+        specHash: compiled.specHash,
+        startRequestHash: compiled.startRequestHash,
+        identity: compiled.identity,
+        dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
+        brokerClient: asBrokerClient(client),
+        routeDecision: {
+          route: 'broker',
+          flag: flagOptions.flagEnvName,
+          selectedBy: 'decideInteractiveTmuxExecutionRoute',
+        },
+      })
+
+      if (!result.ok) {
+        throw new HrcRuntimeUnavailableError('interactive broker start failed', {
+          hostSessionId: session.hostSessionId,
+          runId: diagnosticRunId,
+          code: result.error.code,
+          message: result.error.message,
+          route: 'interactive-broker',
+          flag: flagOptions.flagEnvName,
+        })
+      }
+
+      return result.runtime
+    } catch (error) {
+      if (!handedOffToController) {
+        await client.close().catch(() => undefined)
+      }
+      throw error
+    }
   }
 
   private getHarnessBrokerController(): HarnessBrokerController {
@@ -3288,97 +3341,97 @@ class HrcServerInstance implements HrcServer {
     const now = timestamp()
     this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
 
-    const client = createAgentSpacesClient() as unknown as { compileRuntimePlan?: CompileFn }
-    if (typeof client.compileRuntimePlan !== 'function') {
-      throw new HrcRuntimeUnavailableError(
-        'agent-spaces client cannot compile broker runtime plans',
+    const client = await startAspcFacadeBrokerClient()
+    let handedOffToController = false
+    const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
+    try {
+      const compiled = await compileBrokerRuntimePlan(
         {
+          intent: turnIntent,
           hostSessionId: session.hostSessionId,
-          runId,
-          route: 'broker',
+          generation: session.generation,
+          continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+        },
+        {
+          compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+          ids: {
+            requestId: () => `req-${randomUUID()}`,
+            operationId: () => `op-${randomUUID()}`,
+            runtimeId: () => `rt-${randomUUID()}`,
+            invocationId: () => `inv-${randomUUID()}`,
+            initialInputId: () => `input-${randomUUID()}`,
+            runId: () => runId,
+            traceId: () => `trace-${randomUUID()}`,
+          },
         }
       )
-    }
-    const compile = client.compileRuntimePlan
-    const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent: turnIntent,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
-      },
-      {
-        compile,
-        ids: {
-          requestId: () => `req-${randomUUID()}`,
-          operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => `rt-${randomUUID()}`,
-          invocationId: () => `inv-${randomUUID()}`,
-          initialInputId: () => `input-${randomUUID()}`,
-          runId: () => runId,
-          traceId: () => `trace-${randomUUID()}`,
-        },
+
+      if (!compiled.admitted) {
+        throw new HrcRuntimeUnavailableError('headless broker compile/admission rejected', {
+          hostSessionId: session.hostSessionId,
+          runId,
+          code: compiled.code,
+          diagnostics: compiled.diagnostics,
+          route: 'broker',
+        })
       }
-    )
 
-    if (!compiled.admitted) {
-      throw new HrcRuntimeUnavailableError('headless broker compile/admission rejected', {
-        hostSessionId: session.hostSessionId,
-        runId,
-        code: compiled.code,
-        route: 'broker',
+      const controller = this.getHarnessBrokerController()
+      handedOffToController = true
+      const result = await controller.start({
+        plan: compiled.plan,
+        profile: compiled.profile,
+        startRequest: compiled.startRequest,
+        specHash: compiled.specHash,
+        startRequestHash: compiled.startRequestHash,
+        identity: compiled.identity,
+        dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
+        brokerClient: asBrokerClient(client),
+        routeDecision: {
+          route: 'broker',
+          flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+          selectedBy: 'decideHeadlessExecutionRoute',
+        },
       })
-    }
 
-    const controller = this.getHarnessBrokerController()
-    const result = await controller.start({
-      plan: compiled.plan,
-      profile: compiled.profile,
-      startRequest: compiled.startRequest,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
-      identity: compiled.identity,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
-      routeDecision: {
-        route: 'broker',
-        flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-        selectedBy: 'decideHeadlessExecutionRoute',
-      },
-    })
+      if (!result.ok) {
+        throw new HrcRuntimeUnavailableError('headless broker start failed', {
+          hostSessionId: session.hostSessionId,
+          runId,
+          code: result.error.code,
+          message: result.error.message,
+          route: 'broker',
+        })
+      }
 
-    if (!result.ok) {
-      throw new HrcRuntimeUnavailableError('headless broker start failed', {
-        hostSessionId: session.hostSessionId,
-        runId,
-        code: result.error.code,
-        message: result.error.message,
-        route: 'broker',
-      })
-    }
+      if (options.waitForCompletion === false) {
+        return json({
+          runId,
+          hostSessionId: session.hostSessionId,
+          generation: session.generation,
+          runtimeId: result.runtime.runtimeId,
+          transport: 'headless',
+          status: 'started',
+          supportsInFlightInput: true,
+        } satisfies DispatchTurnResponse)
+      }
 
-    if (options.waitForCompletion === false) {
+      await this.waitForHeadlessBrokerRunCompletion(runId, result.runtime.runtimeId)
       return json({
         runId,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
         runtimeId: result.runtime.runtimeId,
         transport: 'headless',
-        status: 'started',
+        status: 'completed',
         supportsInFlightInput: true,
       } satisfies DispatchTurnResponse)
+    } catch (error) {
+      if (!handedOffToController) {
+        await client.close().catch(() => undefined)
+      }
+      throw error
     }
-
-    await this.waitForHeadlessBrokerRunCompletion(runId, result.runtime.runtimeId)
-    return json({
-      runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: result.runtime.runtimeId,
-      transport: 'headless',
-      status: 'completed',
-      supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
   }
 
   private async executeHeadlessBrokerInputTurn(
@@ -7167,6 +7220,26 @@ class HrcServerInstance implements HrcServer {
     // the lease down via a TmuxManager bound to the lease socket and kill its
     // server (removing the socket); never touch the default server.
     if (runtime.controllerKind === 'harness-broker') {
+      const disposeResult = await this.getHarnessBrokerController()
+        .dispose(runtime.runtimeId)
+        .catch((error: unknown) => ({
+          ok: false as const,
+          error:
+            error instanceof BrokerControllerError
+              ? error
+              : new BrokerControllerError(
+                  'broker_dispose_failed',
+                  error instanceof Error ? error.message : String(error)
+                ),
+        }))
+      if (!disposeResult.ok && disposeResult.error.code !== 'broker_runtime_not_active') {
+        writeServerLog('WARN', 'broker runtime dispose failed during tmux terminate', {
+          runtimeId: runtime.runtimeId,
+          error: disposeResult.error.message,
+          code: disposeResult.error.code,
+        })
+      }
+
       const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime) ?? tmux.socketPath
       const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
       const leaseTmux = createTmuxManager({ socketPath: leaseSocket })

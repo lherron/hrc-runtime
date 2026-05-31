@@ -166,6 +166,7 @@ export type BrokerControllerStartInput = {
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
   routeDecision?: unknown
+  brokerClient?: BrokerClientLike | undefined
 }
 
 export type BrokerControllerStartResult =
@@ -304,8 +305,8 @@ export class HarnessBrokerController {
 
     let client: BrokerClientLike | undefined
     try {
-      client = await this.brokerClientFactory(startOptions)
-      markPhase('broker-spawn')
+      client = input.brokerClient ?? (await this.brokerClientFactory(startOptions))
+      markPhase(input.brokerClient ? 'broker-client-ready' : 'broker-spawn')
       client.onPermissionRequest((request) => this.handlePermissionRequest(request))
 
       const identity = input.identity
@@ -571,7 +572,18 @@ export class HarnessBrokerController {
     }
     this.markBrokerClosing(runtimeId, 'dispose')
     try {
-      await active.client.dispose({ invocationId: active.invocationId as InvocationId })
+      await active.client.stop({
+        invocationId: active.invocationId as InvocationId,
+        reason: 'dispose',
+      })
+      await active.client
+        .dispose({ invocationId: active.invocationId as InvocationId })
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.message === 'Broker transport is closed') {
+            return
+          }
+          throw error
+        })
       await active.client.close()
       this.active.delete(runtimeId)
       const now = this.now()
@@ -1220,7 +1232,11 @@ export class HarnessBrokerController {
     if (!runtime || runtime.activeInvocationId !== String(envelope.invocationId)) {
       return
     }
-    if (runtime.status === 'terminated' || runtime.status === 'dead' || runtime.status === 'stale') {
+    if (
+      runtime.status === 'terminated' ||
+      runtime.status === 'dead' ||
+      runtime.status === 'stale'
+    ) {
       return
     }
 

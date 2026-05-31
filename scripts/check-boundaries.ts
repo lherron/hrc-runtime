@@ -161,9 +161,7 @@ function resolvesToHrcLaunchExec(file: string, specifier: string): boolean {
   const resolved = resolve(dirname(file), specifier)
   const launchExec = resolve('packages/hrc-server/src/launch/exec')
   return (
-    resolved === launchExec ||
-    resolved === `${launchExec}.ts` ||
-    resolved === `${launchExec}.js`
+    resolved === launchExec || resolved === `${launchExec}.ts` || resolved === `${launchExec}.js`
   )
 }
 
