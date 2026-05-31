@@ -24,18 +24,18 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "agent-scope": "0.1.1-dev.20260530163832",
-    "agent-spaces": "0.1.1-dev.20260530163832",
+    "agent-scope": "0.1.1-dev.20260530230817",
+    "agent-spaces": "0.1.1-dev.20260530230817",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
-    "spaces-config": "0.1.1-dev.20260530163832",
-    "spaces-execution": "0.1.1-dev.20260530163832",
-    "spaces-harness-broker-client": "0.1.1-dev.20260530163832",
-    "spaces-harness-broker-protocol": "0.1.1-dev.20260530163832",
-    "spaces-harness-codex": "0.1.1-dev.20260530163832",
-    "spaces-runtime": "0.1.1-dev.20260530163832",
-    "spaces-runtime-contracts": "0.1.1-dev.20260530163832"
+    "spaces-config": "0.1.1-dev.20260530230817",
+    "spaces-execution": "0.1.1-dev.20260530230817",
+    "spaces-harness-broker-client": "0.1.1-dev.20260530230817",
+    "spaces-harness-broker-protocol": "0.1.1-dev.20260530230817",
+    "spaces-harness-codex": "0.1.1-dev.20260530230817",
+    "spaces-runtime": "0.1.1-dev.20260530230817",
+    "spaces-runtime-contracts": "0.1.1-dev.20260530230817"
   },
   "devDependencies": {
     "@types/bun": "latest",
