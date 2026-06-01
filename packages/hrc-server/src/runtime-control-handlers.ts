@@ -970,7 +970,31 @@ export async function invalidateHostContext(
       continue
     }
 
-    if (runtime.transport === 'tmux' && runtime.tmuxJson) {
+    if (
+      runtime.transport === 'tmux' &&
+      runtime.controllerKind === 'harness-broker' &&
+      runtime.tmuxJson
+    ) {
+      const disposeResult = await this.getHarnessBrokerController()
+        .dispose(runtime.runtimeId)
+        .catch((error: unknown) => ({
+          ok: false as const,
+          error:
+            error instanceof BrokerControllerError
+              ? error
+              : new BrokerControllerError(
+                  'broker_dispose_failed',
+                  error instanceof Error ? error.message : String(error)
+                ),
+        }))
+      if (!disposeResult.ok && disposeResult.error.code !== 'broker_runtime_not_active') {
+        writeServerLog('WARN', 'broker runtime dispose failed during context invalidation', {
+          runtimeId: runtime.runtimeId,
+          error: disposeResult.error.message,
+          code: disposeResult.error.code,
+        })
+      }
+    } else if (runtime.transport === 'tmux' && runtime.tmuxJson) {
       const tmuxPane = requireTmuxPane(runtime)
       const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)
       if (inspected) {

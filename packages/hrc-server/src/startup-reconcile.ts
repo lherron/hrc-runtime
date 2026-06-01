@@ -1,4 +1,5 @@
-import { readdir, rm, stat } from 'node:fs/promises'
+import { readFile, readdir, rm, stat } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { HrcErrorCode } from 'hrc-core'
 import type {
@@ -10,33 +11,33 @@ import type {
   KillBrokerTmuxLeasesResponse,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideLegacyRuntimeStartupDisposition,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
+import {
+  type BrokerControllerAttachResult,
+  type BrokerUnixClientFactory,
+  HarnessBrokerController,
+} from './broker/controller.js'
+import {
+  extractBrokerEndpoint,
+  extractRuntimeControlState,
+  withDirectTmuxDegradedControlState,
+} from './broker/runtime-state.js'
+import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import {
-  isLiveProcess,
-} from './server-lock.js'
+import { isRunActive, isTerminalBrokerInvocationState, requireSession } from './require-helpers.js'
+import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
+import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import {
-  isRuntimeUnavailableStatus,
-  timestamp,
-} from './server-util.js'
-import {
-  isRunActive,
-  isTerminalBrokerInvocationState,
-  requireSession,
-} from './require-helpers.js'
-import {
-  createTmuxManager,
   type TmuxManager as ServerTmuxManager,
   type TmuxPaneState,
+  createTmuxManager,
 } from './tmux.js'
-import type {
-  GhostmuxManager as ServerGhostmuxManager,
-} from './ghostmux.js'
 
 const DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS = 5 * 60 * 1000
 const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
@@ -49,6 +50,33 @@ type BrokerTmuxLeaseSweepOptions = {
 }
 
 type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
+
+export type BrokerReattachProbe = {
+  brokerSocketLive: boolean
+  brokerWindow: TmuxPaneState | null
+  tuiWindow: TmuxPaneState | null
+  userExited?: boolean | undefined
+}
+
+export type DurableBrokerReattachDeps = {
+  controller: Pick<HarnessBrokerController, 'attachAndReplay'>
+  brokerUnixClientFactory: BrokerUnixClientFactory
+  resolveAttachToken(runtime: HrcRuntimeSnapshot): Promise<string | undefined>
+  probeBrokerLease(runtime: HrcRuntimeSnapshot): Promise<BrokerReattachProbe>
+}
+
+export type BrokerReattachOutcome = {
+  runtimeId: string
+  state: 'broker-attached' | 'direct-tmux-degraded' | 'terminated' | 'stale'
+  brokerAttached: boolean
+  replayedThroughSeq?: number | undefined
+  reason?: string | undefined
+}
+
+export type BrokerWindowObservation = {
+  brokerWindow: TmuxPaneState | null
+  tuiWindow: TmuxPaneState | null
+}
 
 export async function reconcileStartupState(
   db: HrcDatabase,
@@ -176,6 +204,15 @@ export async function reconcileStartupState(
     }
   }
 
+  await reconcileDurableBrokerStartup(db, {
+    controller: new HarnessBrokerController({ db }),
+    brokerUnixClientFactory: (options) =>
+      BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>,
+    resolveAttachToken: resolvePersistedBrokerAttachToken,
+    probeBrokerLease: probePersistedBrokerLease,
+    sweepOrphans: async () => undefined,
+  })
+
   // Harness-broker runtimes cannot survive a daemon restart: the broker child
   // process was parented by the prior daemon and is gone, but its invocation may
   // persist as `ready`. Feeding such an invocation `invocation.input` on the next
@@ -196,6 +233,10 @@ export async function reconcileStartupState(
       // runtimes (headless) cannot survive — their child was parented by the
       // prior daemon — so fall through to the blanket orphan sweep.
       if (runtime.transport === 'tmux') {
+        const control = extractRuntimeControlState(runtime.runtimeStateJson)
+        if (control?.mode === 'direct-tmux-degraded') {
+          continue
+        }
         if (await reassociateBrokerTmuxLease(runtime)) {
           emitBrokerTmuxReassociated(db, runtime)
           continue
@@ -255,6 +296,158 @@ export async function reconcileStartupState(
       logStartupIssue('legacy runtime sweep failed', { runtimeId: runtime.runtimeId }, error)
     }
   }
+}
+
+export async function reconcileDurableBrokerRuntimeReattach(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  deps: DurableBrokerReattachDeps
+): Promise<BrokerReattachOutcome> {
+  const probe = await deps.probeBrokerLease(runtime)
+  const runtimeId = runtime.runtimeId
+
+  if (probe.brokerSocketLive) {
+    const endpoint = getPersistedDurableBrokerEndpoint(runtime)
+    if (!endpoint) {
+      return markBrokerReattachStale(db, runtime, 'missing_durable_broker_endpoint')
+    }
+    if (!brokerLeaseWindowsMatch(runtime, probe)) {
+      return markBrokerReattachStale(db, runtime, 'broker_window_identity_mismatch')
+    }
+    const attachToken = await deps.resolveAttachToken(runtime)
+    if (!attachToken) {
+      return markBrokerReattachStale(db, runtime, 'missing_attach_token')
+    }
+
+    let result: BrokerControllerAttachResult
+    try {
+      const client = await deps.brokerUnixClientFactory({ socketPath: endpoint.socketPath })
+      result = await deps.controller.attachAndReplay({
+        runtimeId,
+        client,
+        attachToken,
+      })
+    } catch (error) {
+      return markBrokerReattachStale(db, runtime, 'broker_attach_replay_failed', error)
+    }
+
+    if (!result.ok) {
+      return {
+        runtimeId,
+        state: 'stale',
+        brokerAttached: false,
+        reason: result.error.code,
+      }
+    }
+
+    return {
+      runtimeId,
+      state: 'broker-attached',
+      brokerAttached: true,
+      replayedThroughSeq: result.replayedThroughSeq,
+    }
+  }
+
+  if (probe.userExited === true && !probe.brokerWindow && !probe.tuiWindow) {
+    const session = requireSession(db, runtime.hostSessionId)
+    markRuntimeTerminatedAfterUserExit(db, session, runtime, {
+      runtimeId,
+      reason: 'broker_runtime_user_exited_while_down',
+      userExitReason: 'reconcile_probe_user_exited',
+    })
+    return { runtimeId, state: 'terminated', brokerAttached: false, reason: 'user_exited' }
+  }
+
+  if (brokerTuiWindowMatches(runtime, probe.tuiWindow)) {
+    const now = timestamp()
+    db.runtimes.update(runtimeId, {
+      runtimeStateJson: {
+        ...withDirectTmuxDegradedControlState(runtime.runtimeStateJson),
+        status: runtime.status,
+        updatedAt: now,
+      },
+      updatedAt: now,
+      lastActivityAt: now,
+    })
+    return {
+      runtimeId,
+      state: 'direct-tmux-degraded',
+      brokerAttached: false,
+      reason: 'broker_socket_unavailable_tui_live',
+    }
+  }
+
+  return markBrokerReattachStale(db, runtime, 'broker_socket_and_tui_unavailable')
+}
+
+export async function reconcileDurableBrokerStartup(
+  db: HrcDatabase,
+  deps: DurableBrokerReattachDeps & { sweepOrphans(): Promise<void> }
+): Promise<BrokerReattachOutcome[]> {
+  const outcomes: BrokerReattachOutcome[] = []
+  for (const runtime of db.runtimes.listAll()) {
+    if (
+      runtime.controllerKind !== 'harness-broker' ||
+      runtime.transport !== 'tmux' ||
+      isRuntimeUnavailableStatus(runtime.status) ||
+      !getPersistedDurableBrokerEndpoint(runtime)
+    ) {
+      continue
+    }
+    outcomes.push(await reconcileDurableBrokerRuntimeReattach(db, runtime, deps))
+  }
+  await deps.sweepOrphans()
+  return outcomes
+}
+
+async function resolvePersistedBrokerAttachToken(
+  runtime: HrcRuntimeSnapshot
+): Promise<string | undefined> {
+  const broker = getRuntimeStateBrokerRecord(runtime)
+  const endpoint = extractBrokerEndpoint(getRecord(broker?.['endpoint']))
+  if (endpoint?.kind !== 'unix-jsonrpc-ndjson') {
+    return undefined
+  }
+  return (await readFile(endpoint.attachTokenRef.path, 'utf8')).trim()
+}
+
+async function probePersistedBrokerLease(
+  runtime: HrcRuntimeSnapshot
+): Promise<BrokerReattachProbe> {
+  const endpoint = getPersistedDurableBrokerEndpoint(runtime)
+  const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+  let brokerWindow: TmuxPaneState | null = null
+  let tuiWindow: TmuxPaneState | null = null
+  if (socketPath) {
+    const leaseTmux = createTmuxManager({ socketPath })
+    brokerWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' })
+    tuiWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' })
+  }
+  return {
+    brokerSocketLive: endpoint ? await probeUnixSocketLive(endpoint.socketPath) : false,
+    brokerWindow,
+    tuiWindow,
+  }
+}
+
+function probeUnixSocketLive(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath)
+    let settled = false
+    const finish = (live: boolean) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      socket.destroy()
+      resolve(live)
+    }
+    socket.setTimeout(250)
+    socket.once('connect', () => finish(true))
+    socket.once('timeout', () => finish(false))
+    socket.once('error', () => finish(false))
+  })
 }
 
 export function appendMissingHeadlessTurnCompleted(
@@ -654,11 +847,39 @@ export async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): P
   }
   const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
   const leaseTmux = createTmuxManager({ socketPath })
-  const inspected = await leaseTmux.inspectSession(sessionName)
-  if (!inspected) {
+  const persistedWindows = getPersistedBrokerWindows(runtime)
+  if (!persistedWindows?.brokerWindow && !persistedWindows?.tuiWindow) {
+    const inspected = await leaseTmux.inspectSession(sessionName)
+    if (!inspected) {
+      return false
+    }
+    return brokerLeaseIdsMatch(runtime, inspected)
+  }
+  return reassociateBrokerTmuxWindows(runtime, async () => ({
+    brokerWindow: await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' }),
+    tuiWindow: await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' }),
+  }))
+}
+
+export async function reassociateBrokerTmuxWindows(
+  runtime: HrcRuntimeSnapshot,
+  inspect: (runtime: HrcRuntimeSnapshot) => Promise<BrokerWindowObservation>
+): Promise<boolean> {
+  return brokerLeaseWindowsMatch(runtime, await inspect(runtime))
+}
+
+export function brokerLeaseWindowsMatch(
+  runtime: HrcRuntimeSnapshot,
+  observed: BrokerWindowObservation
+): boolean {
+  const persisted = getPersistedBrokerWindows(runtime)
+  if (!persisted?.brokerWindow || !persisted.tuiWindow) {
     return false
   }
-  return brokerLeaseIdsMatch(runtime, inspected)
+  return (
+    tmuxPaneIdentityMatches(persisted.brokerWindow, observed.brokerWindow) &&
+    tmuxPaneIdentityMatches(persisted.tuiWindow, observed.tuiWindow)
+  )
 }
 
 function emitBrokerTmuxReassociated(db: HrcDatabase, runtime: HrcRuntimeSnapshot): void {
@@ -694,6 +915,127 @@ export function brokerLeaseIdsMatch(runtime: HrcRuntimeSnapshot, observed: TmuxP
     }
   }
   return true
+}
+
+function brokerTuiWindowMatches(
+  runtime: HrcRuntimeSnapshot,
+  observed: TmuxPaneState | null
+): boolean {
+  const persisted = getPersistedBrokerWindows(runtime)
+  return tmuxPaneIdentityMatches(persisted?.tuiWindow, observed)
+}
+
+function getPersistedDurableBrokerEndpoint(
+  runtime: HrcRuntimeSnapshot
+): { socketPath: string } | undefined {
+  const broker = getRuntimeStateBrokerRecord(runtime)
+  const endpoint = extractBrokerEndpoint(getRecord(broker?.['endpoint']))
+  return endpoint?.kind === 'unix-jsonrpc-ndjson' ? { socketPath: endpoint.socketPath } : undefined
+}
+
+function getPersistedBrokerWindows(
+  runtime: HrcRuntimeSnapshot
+): { brokerWindow?: TmuxPaneState | undefined; tuiWindow?: TmuxPaneState | undefined } | undefined {
+  const broker = getRuntimeStateBrokerRecord(runtime)
+  if (!broker) {
+    return undefined
+  }
+  return {
+    brokerWindow: toTmuxPaneState(broker['brokerWindow']),
+    tuiWindow: toTmuxPaneState(broker['tuiWindow']),
+  }
+}
+
+function getRuntimeStateBrokerRecord(
+  runtime: HrcRuntimeSnapshot
+): Record<string, unknown> | undefined {
+  return getRecord(runtime.runtimeStateJson?.['broker'])
+}
+
+function toTmuxPaneState(value: unknown): TmuxPaneState | undefined {
+  const record = getRecord(value)
+  if (!record) {
+    return undefined
+  }
+  const socketPath = record['socketPath']
+  const sessionName = record['sessionName']
+  const windowName = record['windowName']
+  const sessionId = record['sessionId']
+  const windowId = record['windowId']
+  const paneId = record['paneId']
+  if (
+    typeof socketPath !== 'string' ||
+    typeof sessionName !== 'string' ||
+    typeof windowName !== 'string' ||
+    typeof sessionId !== 'string' ||
+    typeof windowId !== 'string' ||
+    typeof paneId !== 'string'
+  ) {
+    return undefined
+  }
+  return { socketPath, sessionName, windowName, sessionId, windowId, paneId }
+}
+
+function tmuxPaneIdentityMatches(
+  persisted: TmuxPaneState | undefined,
+  observed: TmuxPaneState | null
+): boolean {
+  if (!persisted || !observed) {
+    return false
+  }
+  return (
+    persisted.socketPath === observed.socketPath &&
+    persisted.sessionName === observed.sessionName &&
+    persisted.windowName === observed.windowName &&
+    persisted.sessionId === observed.sessionId &&
+    persisted.windowId === observed.windowId &&
+    persisted.paneId === observed.paneId
+  )
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function markBrokerReattachStale(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  reason: string,
+  error?: unknown
+): BrokerReattachOutcome {
+  const session = requireSession(db, runtime.hostSessionId)
+  markRuntimeStale(db, session, runtime, {
+    runtimeId: runtime.runtimeId,
+    reason,
+    generation: runtime.generation,
+    ...(error instanceof Error ? { error: error.message } : {}),
+  })
+  const now = timestamp()
+  const latest = db.runtimes.getByRuntimeId(runtime.runtimeId)
+  db.runtimes.update(runtime.runtimeId, {
+    runtimeStateJson: {
+      ...(latest?.runtimeStateJson ?? runtime.runtimeStateJson ?? {}),
+      control: {
+        mode: 'broker-ipc',
+        brokerAttached: false,
+        lastAttachError: {
+          code: reason,
+          message: error instanceof Error ? error.message : reason,
+        },
+      },
+      updatedAt: now,
+    },
+    updatedAt: now,
+    lastActivityAt: now,
+  })
+  return {
+    runtimeId: runtime.runtimeId,
+    state: 'stale',
+    brokerAttached: false,
+    reason,
+  }
 }
 
 function gcBrokerRuntimeOnRestart(
