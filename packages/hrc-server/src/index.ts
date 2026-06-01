@@ -39,6 +39,7 @@ import {
   brokerInteractiveHandlersMethods,
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
+import { extractRuntimeControlState } from './broker/runtime-state.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -847,6 +848,7 @@ class HrcServerInstance implements HrcServer {
     const lastActivityAt = runtime.lastActivityAt ?? null
     const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
     const continuation = runtime.continuation ?? session.continuation ?? null
+    const control = extractRuntimeControlState(runtime.runtimeStateJson)
     const sessionCreatedAtMs = Date.parse(session.createdAt)
     const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
       ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
@@ -883,6 +885,7 @@ class HrcServerInstance implements HrcServer {
         this.staleGenerationEnabled &&
         this.staleGenerationThresholdSec > 0 &&
         continuationAgeSec > this.staleGenerationThresholdSec,
+      ...(control ? { control } : {}),
       ...(runtime.transport === 'tmux' ? { tmux: toStatusTmuxView(runtime.tmuxJson) } : {}),
     } satisfies InspectRuntimeResponse)
   }

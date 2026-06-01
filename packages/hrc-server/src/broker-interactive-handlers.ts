@@ -17,6 +17,7 @@ import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter
 import { type BrokerTmuxAllocator, HarnessBrokerController } from './broker/controller.js'
 import { BrokerEventMapper } from './broker/event-mapper.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
+import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -363,7 +364,7 @@ export async function executeInteractiveBrokerInputTurn(
         generation: session.generation,
         runtimeId: runtime.runtimeId,
         transport: 'tmux',
-        status: 'completed',
+        status: 'started',
         supportsInFlightInput: true,
       } satisfies DispatchTurnResponse)
     }
@@ -498,10 +499,18 @@ export async function deliverReassociatedBrokerTmuxInput(
   await brokerTmux.sendKeys(pane.paneId, prompt)
 
   const startedAt = timestamp()
+  const latestRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId) ?? runtime
   this.db.runs.update(runId, {
     status: 'started',
     startedAt,
     updatedAt: startedAt,
+  })
+  this.db.runtimes.update(runtime.runtimeId, {
+    status: 'busy',
+    activeRunId: runId,
+    lastActivityAt: startedAt,
+    updatedAt: startedAt,
+    runtimeStateJson: withDirectTmuxDegradedControlState(latestRuntime.runtimeStateJson),
   })
   this.notifyEvent(
     appendHrcEvent(this.db, 'turn.started', {
@@ -518,22 +527,9 @@ export async function deliverReassociatedBrokerTmuxInput(
       },
     })
   )
-
-  const completedAt = timestamp()
-  this.db.runs.markCompleted(runId, {
-    status: 'completed',
-    completedAt,
-    updatedAt: completedAt,
-  })
-  this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
-  this.db.runtimes.update(runtime.runtimeId, {
-    status: 'ready',
-    lastActivityAt: completedAt,
-    updatedAt: completedAt,
-  })
   this.notifyEvent(
-    appendHrcEvent(this.db, 'turn.completed', {
-      ts: completedAt,
+    appendHrcEvent(this.db, 'turn.degraded_input_delivered', {
+      ts: startedAt,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,
@@ -542,9 +538,10 @@ export async function deliverReassociatedBrokerTmuxInput(
       runtimeId: runtime.runtimeId,
       transport: 'tmux',
       payload: {
-        success: true,
-        transport: 'tmux',
         source: 'reassociated-broker-tmux-fallback',
+        controlMode: 'direct-tmux-degraded',
+        brokerAttached: false,
+        paneId: pane.paneId,
       },
     })
   )

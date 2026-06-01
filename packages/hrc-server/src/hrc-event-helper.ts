@@ -44,6 +44,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.accepted': 'turn',
   'turn.started': 'turn',
   'turn.completed': 'turn',
+  'turn.degraded_input_delivered': 'turn',
   'turn.zombied': 'turn',
   'turn.reaped': 'turn',
   'turn.user_prompt': 'turn',

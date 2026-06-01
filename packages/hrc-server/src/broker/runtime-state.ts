@@ -4,6 +4,39 @@ import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import type { BrokerTmuxAllocation } from './controller'
 
+export type RuntimeControlState = {
+  mode: string
+  brokerAttached: boolean
+}
+
+export function withDirectTmuxDegradedControlState(
+  runtimeStateJson: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  return {
+    ...(runtimeStateJson ?? {}),
+    control: {
+      mode: 'direct-tmux-degraded',
+      brokerAttached: false,
+    },
+  }
+}
+
+export function extractRuntimeControlState(
+  runtimeStateJson: Record<string, unknown> | undefined
+): RuntimeControlState | undefined {
+  const control = runtimeStateJson?.['control']
+  if (!control || typeof control !== 'object' || Array.isArray(control)) {
+    return undefined
+  }
+  const record = control as Record<string, unknown>
+  const mode = record['mode']
+  const brokerAttached = record['brokerAttached']
+  if (typeof mode !== 'string' || typeof brokerAttached !== 'boolean') {
+    return undefined
+  }
+  return { mode, brokerAttached }
+}
+
 export function runtimeStatusFromInvocationState(state: string): string {
   if (state === 'ready') return 'ready'
   if (state === 'turn_active') return 'busy'

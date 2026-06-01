@@ -294,6 +294,10 @@ export type InspectRuntimeResponse = {
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
+  control?: {
+    mode: string
+    brokerAttached: boolean
+  } | undefined
   /**
    * tmux pane/lease allocation for tmux-transport runtimes. For broker-tmux
    * runtimes this carries the per-runtime lease socket/session/pane so operators
