@@ -70,6 +70,7 @@ import {
 import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT } from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import {
+  type BrokerAttachTokenRef,
   extractRuntimeStateTmux,
   isBrokerTmuxProfile,
   runtimeHarness,
@@ -168,6 +169,18 @@ export function isDurableBrokerClient(client: unknown): client is DurableBrokerC
  */
 export type BrokerClientFactory = (options: StdioTransportStartOptions) => Promise<BrokerClientLike>
 
+/**
+ * T-01812 Phase 3 — Unix durable-client connect factory. The durable interactive
+ * route DIALS an already-launched broker (running in its btmux 'broker' window
+ * over `--transport unix`) rather than spawning a stdio child. Deliberately split
+ * from `BrokerClientFactory`: the launch (stdio spawn) and connect (Unix dial)
+ * shapes differ (contract C-03099). Default dials `BrokerClient.connectUnix`.
+ */
+export type BrokerUnixClientFactory = (options: {
+  socketPath: string
+  timeoutMs?: number | undefined
+}) => Promise<DurableBrokerClientLike>
+
 export type BrokerPermissionChannel = {
   request(request: PermissionRequestParams): Promise<PermissionDecision>
 }
@@ -186,6 +199,20 @@ export type BrokerAgentchatLifecycle = {
 
 /** The runtime-owned tmux pane lease handed to the broker at dispatch time. */
 export type BrokerTmuxLease = NonNullable<InvocationRuntimeContext['terminalSurface']>
+
+/**
+ * A named tmux window's pane identity (broker or tui). Persisted by NAME beyond
+ * bare pane ids because pane ids alone are known weak across restart/reconcile
+ * (C-03099 Phase 3).
+ */
+export type BrokerWindowIdentity = {
+  socketPath: string
+  sessionId: string
+  windowId: string
+  paneId: string
+  sessionName: string
+  windowName: string
+}
 
 export type BrokerTmuxAllocation = {
   socketPath: string
@@ -209,6 +236,21 @@ export type BrokerTmuxAllocation = {
    * across a generation rotation (C-02889 / T-01733 GAP 2).
    */
   generation?: number | undefined
+  /**
+   * T-01812 Phase 3 — durable interactive broker identity. Present when the
+   * allocator launched a two-window btmux lease (broker window over Unix IPC +
+   * TUI pane lease). The controller dials `brokerIpcSocketPath` via
+   * `brokerUnixClientFactory` and persists this identity (everything EXCEPT the
+   * raw `attachToken`, which is referenced redacted via `attachTokenRef`).
+   */
+  brokerIpcSocketPath?: string | undefined
+  /** Raw attach-token secret — used in-process only, NEVER persisted. */
+  attachToken?: string | undefined
+  attachTokenRef?: BrokerAttachTokenRef | undefined
+  brokerCommand?: string | undefined
+  brokerPid?: number | undefined
+  brokerWindow?: BrokerWindowIdentity | undefined
+  tuiWindow?: BrokerWindowIdentity | undefined
 }
 
 export type BrokerTmuxAllocator = {
@@ -224,6 +266,7 @@ export type HarnessBrokerControllerDeps = {
   db: HrcDatabase
   mapper?: Pick<BrokerEventMapper, 'apply'>
   brokerClientFactory?: BrokerClientFactory
+  brokerUnixClientFactory?: BrokerUnixClientFactory
   permissionChannel?: BrokerPermissionChannel | undefined
   agentchat?: BrokerAgentchatLifecycle | undefined
   tmuxAllocator?: BrokerTmuxAllocator | undefined
@@ -344,6 +387,7 @@ export class HarnessBrokerController {
   private readonly db: HrcDatabase
   private readonly mapper: Pick<BrokerEventMapper, 'apply'>
   private readonly brokerClientFactory: BrokerClientFactory
+  private readonly brokerUnixClientFactory: BrokerUnixClientFactory
   private readonly permissionChannel: BrokerPermissionChannel | undefined
   private readonly agentchat: BrokerAgentchatLifecycle | undefined
   private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
@@ -366,6 +410,9 @@ export class HarnessBrokerController {
       })
     this.brokerClientFactory =
       deps.brokerClientFactory ?? ((options) => BrokerClient.start(options))
+    this.brokerUnixClientFactory =
+      deps.brokerUnixClientFactory ??
+      ((options) => BrokerClient.connectUnix(options) as Promise<DurableBrokerClientLike>)
     this.permissionChannel = deps.permissionChannel
     this.agentchat = deps.agentchat
     this.tmuxAllocator = deps.tmuxAllocator
@@ -403,9 +450,27 @@ export class HarnessBrokerController {
     }
 
     let client: BrokerClientLike | undefined
+    let tmuxAllocation: BrokerTmuxAllocation | undefined
     try {
-      client = input.brokerClient ?? (await this.brokerClientFactory(startOptions))
-      markPhase(input.brokerClient ? 'broker-client-ready' : 'broker-spawn')
+      // T-01812 Phase 3 — for an interactive broker-tmux profile, allocate the
+      // per-runtime btmux lease UP FRONT. A durable allocator launches a 'broker'
+      // window over `--transport unix` and yields a broker IPC socket path we
+      // DIAL (instead of spawning a stdio child); a legacy allocator yields no
+      // IPC socket and we keep the stdio launch. Preflight already ran inside the
+      // durable allocator BEFORE any tmux spawn.
+      if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
+        tmuxAllocation = await this.allocateTmuxIfRequired(input)
+        markPhase('broker-tmux-alloc')
+      }
+
+      const durableSocketPath = tmuxAllocation?.brokerIpcSocketPath
+      if (durableSocketPath) {
+        client = await this.brokerUnixClientFactory({ socketPath: durableSocketPath })
+        markPhase('broker-connect-unix')
+      } else {
+        client = input.brokerClient ?? (await this.brokerClientFactory(startOptions))
+        markPhase(input.brokerClient ? 'broker-client-ready' : 'broker-spawn')
+      }
       client.onPermissionRequest((request) => this.handlePermissionRequest(request))
 
       const identity = input.identity
@@ -442,8 +507,10 @@ export class HarnessBrokerController {
       // validation remains authoritative.
       preflightBrokerLifecyclePolicy(input.profile, input.lifecyclePolicy)
 
-      const tmuxAllocation = await this.allocateTmuxIfRequired(input)
-      markPhase('broker-tmux-alloc')
+      if (tmuxAllocation === undefined) {
+        tmuxAllocation = await this.allocateTmuxIfRequired(input)
+        markPhase('broker-tmux-alloc')
+      }
       const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
       const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
       // The lifecycle overlay rides ONLY on the dispatch options envelope —
@@ -506,7 +573,13 @@ export class HarnessBrokerController {
         activeOperationId: String(identity.operationId),
         activeRunId: identity.runId !== undefined ? String(identity.runId) : undefined,
         lastActivityAt: now,
-        runtimeStateJson: this.buildRuntimeStateJson(input, hello, startResult.response, now),
+        runtimeStateJson: this.buildRuntimeStateJson(
+          input,
+          hello,
+          startResult.response,
+          now,
+          tmuxAllocation
+        ),
         updatedAt: now,
       })
 
@@ -1024,9 +1097,39 @@ export class HarnessBrokerController {
     input: BrokerControllerStartInput,
     hello: BrokerHelloResponse,
     response: InvocationStartResponse,
-    now: string
+    now: string,
+    tmuxAllocation?: BrokerTmuxAllocation | undefined
   ): Record<string, unknown> {
     const identity = input.identity
+    // T-01812 Phase 3 — durable broker identity persisted BEYOND pane ids: the
+    // Unix endpoint + redacted attach-token ref, generation, broker command/pid,
+    // and both named windows. The raw attach token is NEVER persisted.
+    const durable = tmuxAllocation?.brokerIpcSocketPath
+      ? {
+          endpoint: {
+            kind: 'unix-jsonrpc-ndjson' as const,
+            socketPath: tmuxAllocation.brokerIpcSocketPath,
+            ...(tmuxAllocation.attachTokenRef
+              ? {
+                  attachTokenRef: {
+                    kind: tmuxAllocation.attachTokenRef.kind,
+                    path: tmuxAllocation.attachTokenRef.path,
+                    redacted: true as const,
+                  },
+                }
+              : {}),
+          },
+          generation: tmuxAllocation.generation ?? identity.generation,
+          ...(tmuxAllocation.brokerCommand
+            ? { brokerCommand: tmuxAllocation.brokerCommand }
+            : {}),
+          ...(tmuxAllocation.brokerPid !== undefined
+            ? { brokerPid: tmuxAllocation.brokerPid }
+            : {}),
+          ...(tmuxAllocation.brokerWindow ? { brokerWindow: tmuxAllocation.brokerWindow } : {}),
+          ...(tmuxAllocation.tuiWindow ? { tuiWindow: tmuxAllocation.tuiWindow } : {}),
+        }
+      : { endpoint: { kind: BROKER_TRANSPORT } }
     return {
       schemaVersion: 'runtime-state/v1',
       kind: 'harness-broker',
@@ -1047,10 +1150,10 @@ export class HarnessBrokerController {
       },
       broker: {
         protocolVersion: hello.protocolVersion,
-        endpoint: { kind: BROKER_TRANSPORT },
         multiInvocation: hello.capabilities.multiInvocation,
         startedAt: now,
         ownerServerInstanceId: this.serverInstanceId,
+        ...durable,
       },
       ...(isBrokerTmuxProfile(input.profile)
         ? {
@@ -1124,6 +1227,18 @@ export class HarnessBrokerController {
       ...(allocation.paneId !== undefined ? { paneId: allocation.paneId } : {}),
       ...(allocation.sessionName !== undefined ? { sessionName: allocation.sessionName } : {}),
       ...(allocation.windowName !== undefined ? { windowName: allocation.windowName } : {}),
+      // T-01812 Phase 3 — carry durable broker identity through unchanged.
+      ...(allocation.brokerIpcSocketPath !== undefined
+        ? { brokerIpcSocketPath: allocation.brokerIpcSocketPath }
+        : {}),
+      ...(allocation.attachToken !== undefined ? { attachToken: allocation.attachToken } : {}),
+      ...(allocation.attachTokenRef !== undefined
+        ? { attachTokenRef: allocation.attachTokenRef }
+        : {}),
+      ...(allocation.brokerCommand !== undefined ? { brokerCommand: allocation.brokerCommand } : {}),
+      ...(allocation.brokerPid !== undefined ? { brokerPid: allocation.brokerPid } : {}),
+      ...(allocation.brokerWindow !== undefined ? { brokerWindow: allocation.brokerWindow } : {}),
+      ...(allocation.tuiWindow !== undefined ? { tuiWindow: allocation.tuiWindow } : {}),
     }
   }
 

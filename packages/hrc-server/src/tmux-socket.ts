@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
+import { assertSocketPathWithinBudget } from 'spaces-harness-broker-client'
 
 import type { HrcServerOptions } from './server-types.js'
 import { requireTmuxPane } from './require-helpers.js'
@@ -26,6 +28,35 @@ export function getBrokerTmuxSocketPath(
 
 export function sanitizeBrokerTmuxPathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+/**
+ * Allocate the per-runtime broker Unix IPC socket path. The durable interactive
+ * broker is reached over a Unix-domain socket whose `sockaddr_un.sun_path` budget
+ * is tiny (104B macOS / 108B Linux), so the path is SHORT BY CONSTRUCTION: a
+ * 12-hex hash of (driver, runtimeId) under `<runtimeRoot>/bipc/<hash>/b.sock`.
+ * The owner-only dir + attach token live alongside `b.sock`. T-01812 Phase 3.
+ */
+export function getBrokerIpcSocketPath(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  brokerDriver: string,
+  runtimeId: string
+): string {
+  const hash = createHash('sha256')
+    .update(`${brokerDriver}:${runtimeId}`)
+    .digest('hex')
+    .slice(0, 12)
+  return join(options.runtimeRoot, 'bipc', hash, 'b.sock')
+}
+
+/**
+ * HARD preflight a broker Unix IPC socket path against the platform
+ * `sockaddr_un` budget BEFORE any tmux spawn / connect — so an over-long path
+ * fails EARLY with a readable "socket path too long" error rather than a
+ * low-level bind/connect errno later. Wraps the ASP budget assertion.
+ */
+export function preflightBrokerIpcSocketPath(socketPath: string): void {
+  assertSocketPathWithinBudget(socketPath)
 }
 
 export async function detectTmuxBackend(): Promise<{ available: boolean; version?: string | undefined }> {

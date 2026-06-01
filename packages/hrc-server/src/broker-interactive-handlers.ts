@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
 import type {
@@ -14,7 +14,12 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
-import { type BrokerTmuxAllocator, HarnessBrokerController } from './broker/controller.js'
+import {
+  type BrokerTmuxAllocation,
+  type BrokerTmuxAllocator,
+  type BrokerWindowIdentity,
+  HarnessBrokerController,
+} from './broker/controller.js'
 import { BrokerEventMapper } from './broker/event-mapper.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
@@ -45,8 +50,13 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch } from './startup-reconcile.js'
-import { getBrokerTmuxSocketPath } from './tmux-socket.js'
+import {
+  getBrokerIpcSocketPath,
+  getBrokerTmuxSocketPath,
+  preflightBrokerIpcSocketPath,
+} from './tmux-socket.js'
 import { createTmuxManager } from './tmux.js'
+import type { HrcServerOptions } from './server-types.js'
 
 export async function handleHeadlessDispatchTurn(
   this: HrcServerInstanceForHandlers,
@@ -671,6 +681,140 @@ export async function startInteractiveTmuxBrokerRuntime(
       await client.close().catch(() => undefined)
     }
     throw error
+  }
+}
+
+/**
+ * A named-window tmux manager sufficient for the durable broker allocator: it
+ * hosts a 'broker' window (launched exec-form with the harness-broker Unix
+ * command) and an idempotent 'tui' lease window under ONE per-runtime socket.
+ */
+export type DurableTmuxManagerLike = {
+  initialize(): Promise<void>
+  createWindowWithCommand(input: {
+    sessionName: string
+    windowName: string
+    command: string
+  }): Promise<BrokerWindowIdentity>
+  createOrInspectWindow(input: {
+    sessionName: string
+    windowName: string
+  }): Promise<BrokerWindowIdentity>
+  inspectPaneProcess?(
+    paneId: string
+  ): Promise<{ command: string; pid: number; dead: boolean } | null>
+}
+
+export type BrokerDurableTmuxAllocatorDeps = {
+  tmuxManagerFactory: (opts: { socketPath: string }) => DurableTmuxManagerLike
+  generateAttachToken: () => string
+  now?: () => string
+}
+
+/**
+ * T-01812 Phase 3 — durable interactive broker allocator. Carves a per-runtime
+ * btmux lease hosting TWO named windows under ONE socket/session:
+ *   - a 'broker' window launched EXEC-FORM with `harness-broker … --transport
+ *     unix <ipcSocket>` (the broker is the pane root process, NOT pasted keys),
+ *   - a 'tui' window whose pane lease is handed to runtime.terminalSurface.
+ * Allocates an owner-only (0700) broker IPC dir + attach token (referenced
+ * redacted, never persisted raw) and runs the sockaddr_un HARD preflight BEFORE
+ * any tmux spawn. The controller dials `brokerIpcSocketPath` via connectUnix.
+ */
+export function createBrokerDurableTmuxAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  const now = deps.now ?? timestamp
+  return {
+    allocate: async ({ runtimeId, brokerDriver, generation }): Promise<BrokerTmuxAllocation> => {
+      const brokerIpcSocketPath = getBrokerIpcSocketPath(options, brokerDriver, runtimeId)
+      // HARD preflight BEFORE any tmux spawn / IPC dir creation: an over-long
+      // sockaddr_un path fails EARLY with a readable error, never a later
+      // bind/connect errno.
+      preflightBrokerIpcSocketPath(brokerIpcSocketPath)
+
+      const btmuxSocketPath = getBrokerTmuxSocketPath(
+        options as HrcServerOptions,
+        brokerDriver,
+        runtimeId
+      )
+      const ipcDir = dirname(brokerIpcSocketPath)
+      await mkdir(dirname(btmuxSocketPath), { recursive: true })
+      // Owner-only broker IPC dir (0700). mkdir mode is umask-masked, so chmod
+      // the leaf explicitly to guarantee rwx------.
+      await mkdir(ipcDir, { recursive: true, mode: 0o700 })
+      await chmod(ipcDir, 0o700)
+
+      // Allocate the attach token and persist it by REFERENCE (owner-only file).
+      // The raw secret never enters runtime_state_json — only the redacted ref.
+      const attachToken = deps.generateAttachToken()
+      const attachTokenPath = join(ipcDir, 'attach.token')
+      await writeFile(attachTokenPath, attachToken, { mode: 0o600 })
+
+      const tmux = deps.tmuxManagerFactory({ socketPath: btmuxSocketPath })
+      await tmux.initialize()
+
+      const sessionName = `hrc-${brokerDriver}-${runtimeId}`
+      const brokerCommand = `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}`
+      const brokerWindow = await tmux.createWindowWithCommand({
+        sessionName,
+        windowName: 'broker',
+        command: brokerCommand,
+      })
+      const tuiWindow = await tmux.createOrInspectWindow({ sessionName, windowName: 'tui' })
+
+      // Capture the broker pane's running pid for persisted identity (best
+      // effort — pane ids alone are known weak; the pid/command corroborate).
+      let brokerPid: number | undefined
+      if (typeof tmux.inspectPaneProcess === 'function') {
+        const proc = await tmux.inspectPaneProcess(brokerWindow.paneId)
+        if (proc && !proc.dead && proc.pid > 0) {
+          brokerPid = proc.pid
+        }
+      }
+
+      // The lease handed to runtime.terminalSurface is the TUI pane (operators
+      // attach here) — NEVER the broker pane.
+      const lease = {
+        kind: 'tmux-pane' as const,
+        ownership: 'hrc' as const,
+        socketPath: tuiWindow.socketPath,
+        sessionId: tuiWindow.sessionId,
+        windowId: tuiWindow.windowId,
+        paneId: tuiWindow.paneId,
+        sessionName: tuiWindow.sessionName,
+        windowName: tuiWindow.windowName,
+        allowedOps: {
+          inspect: true as const,
+          sendInput: true as const,
+          sendInterrupt: true as const,
+          capture: true,
+          resize: false,
+        },
+      }
+
+      return {
+        socketPath: btmuxSocketPath,
+        allocatedAt: now(),
+        generation,
+        lease,
+        brokerIpcSocketPath,
+        attachToken,
+        attachTokenRef: { kind: 'file', path: attachTokenPath, redacted: true },
+        brokerCommand,
+        ...(brokerPid !== undefined ? { brokerPid } : {}),
+        brokerWindow,
+        tuiWindow,
+        // Legacy single-pane fields mirror the TUI pane for restart reconcile /
+        // teardown that still reads the flat shape.
+        sessionId: tuiWindow.sessionId,
+        windowId: tuiWindow.windowId,
+        paneId: tuiWindow.paneId,
+        sessionName: tuiWindow.sessionName,
+        windowName: tuiWindow.windowName,
+      }
+    },
   }
 }
 

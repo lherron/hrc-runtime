@@ -166,6 +166,31 @@ export function parsePaneLiveness(stdout: string): TmuxPaneLiveness {
   return { alive, dead, currentCommand }
 }
 
+/**
+ * Parse `#{pane_pid}<sep>#{pane_dead}<sep>#{pane_current_command}`. tmux uses the
+ * tab we request, but falls back to `_` under a C/POSIX locale (launchd), so
+ * accept both. The command field is last so any internal separators stay with it.
+ */
+export function parsePaneProcess(
+  stdout: string
+): { command: string; pid: number; dead: boolean } | null {
+  const line = stdout
+    .trim()
+    .split('\n')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0)
+
+  if (!line) {
+    return null
+  }
+
+  const [pidField = '', deadField = '', ...commandParts] = line.split(/[\t_]/)
+  const command = commandParts.join('_').trim()
+  const pid = Number.parseInt(pidField.trim(), 10)
+  const dead = deadField.trim() === '1'
+  return { command, pid: Number.isFinite(pid) ? pid : 0, dead }
+}
+
 export class TmuxManager {
   constructor(
     private readonly socketPath: string,
@@ -249,6 +274,165 @@ export class TmuxManager {
   async capture(paneId: string): Promise<string> {
     const result = await this.exec(['capture-pane', '-t', paneId, '-p'])
     return result.stdout
+  }
+
+  /**
+   * Create a NAMED window whose pane root process IS `command`, launched
+   * exec-form (`new-window … '<command>'`) so the broker runs as the pane's
+   * foreground process — NOT a shell receiving pasted keys. Creates the session
+   * if it does not yet exist (the named window becomes the session's first
+   * window). T-01812 Phase 3: the per-runtime btmux lease now hosts a 'broker'
+   * window (this) and a 'tui' window under ONE socket/session.
+   */
+  async createWindowWithCommand(input: {
+    sessionName: string
+    windowName: string
+    command: string
+  }): Promise<TmuxPaneState> {
+    await this.startServer()
+    const pane = await this.createNamedWindow(input.sessionName, input.windowName, input.command)
+    // The pane launches via the shell, which `exec`s into the command. Wait for
+    // that hand-off to land so the pane root is the launched binary (NOT the
+    // transient shell) before we return — callers inspect the process identity
+    // immediately for broker-pid/liveness, and a bare shell is a launch failure.
+    await this.waitForPaneCommandSettled(pane.paneId)
+    return pane
+  }
+
+  /**
+   * Idempotent named-window create/inspect. Returns the existing window pane
+   * when present, otherwise creates a bare (shell) window. Used for the TUI
+   * lease window the driver attaches to.
+   */
+  async createOrInspectWindow(input: {
+    sessionName: string
+    windowName: string
+  }): Promise<TmuxPaneState> {
+    await this.startServer()
+    const existing = await this.inspectWindow(input)
+    if (existing) {
+      return existing
+    }
+    return this.createNamedWindow(input.sessionName, input.windowName, undefined)
+  }
+
+  /**
+   * Inspect a window BY NAME — replaces the hardcoded `:main` assumption so the
+   * manager can resolve the distinct 'broker' and 'tui' windows of a durable
+   * broker lease. Returns `null` when the window/session/server is gone.
+   */
+  async inspectWindow(input: {
+    sessionName: string
+    windowName: string
+  }): Promise<TmuxPaneState | null> {
+    try {
+      const result = await this.exec([
+        'list-panes',
+        '-t',
+        `=${input.sessionName}:${input.windowName}`,
+        '-F',
+        '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}',
+      ])
+      const base = parsePaneState(result.stdout, this.socketPath)
+      return { ...base, windowName: input.windowName }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Resolve the running process identity of a specific pane (pane_current_command
+   * + pane_pid + pane_dead). Used to prove a broker window's pane root is the
+   * exec'd broker binary, and to capture broker pid for persisted identity.
+   * Returns `null` when the pane/server is gone.
+   */
+  async inspectPaneProcess(
+    paneId: string
+  ): Promise<{ command: string; pid: number; dead: boolean } | null> {
+    try {
+      const result = await this.exec([
+        'display-message',
+        '-p',
+        '-t',
+        paneId,
+        '-F',
+        '#{pane_pid}\t#{pane_dead}\t#{pane_current_command}',
+      ])
+      return parsePaneProcess(result.stdout)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  private async createNamedWindow(
+    sessionName: string,
+    windowName: string,
+    command: string | undefined
+  ): Promise<TmuxPaneState> {
+    const exists = await this.sessionExists(sessionName)
+    const args: string[] = exists ? ['new-window', '-d'] : ['new-session', '-d']
+    const sanitizedPath = sanitizeTmuxServerPath(process.env['PATH'])
+    if (sanitizedPath) {
+      args.push('-e', `PATH=${sanitizedPath}`)
+    }
+    args.push('-P')
+    if (exists) {
+      args.push('-t', `=${sessionName}:`)
+    } else {
+      args.push('-s', sessionName)
+    }
+    args.push(
+      '-n',
+      windowName,
+      '-F',
+      '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}'
+    )
+    if (command !== undefined) {
+      args.push(command)
+    }
+    const result = await this.exec(args)
+    const base = parsePaneState(result.stdout, this.socketPath)
+    return { ...base, windowName }
+  }
+
+  private async waitForPaneCommandSettled(paneId: string): Promise<void> {
+    const deadlineMs = 2_000
+    const stepMs = 25
+    const start = performance.now()
+    for (;;) {
+      const proc = await this.inspectPaneProcess(paneId)
+      if (!proc) {
+        return
+      }
+      if (proc.dead || !isShellCommand(proc.command)) {
+        return
+      }
+      if (performance.now() - start >= deadlineMs) {
+        return
+      }
+      await delay(stepMs)
+    }
+  }
+
+  private async sessionExists(sessionName: string): Promise<boolean> {
+    try {
+      await this.exec(['has-session', '-t', `=${sessionName}`])
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return false
+      }
+      throw error
+    }
   }
 
   getAttachDescriptor(sessionName: string): { argv: string[] } {
