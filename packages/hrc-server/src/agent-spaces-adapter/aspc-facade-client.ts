@@ -12,6 +12,7 @@ import type {
   BrokerHealthResponse,
   BrokerHelloRequest,
   BrokerHelloResponse,
+  BrokerLifecyclePolicyOverlay,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
   InvocationInputRequest,
@@ -40,6 +41,17 @@ export type InvocationStartResult = {
   invocationId: string
   response: InvocationStartResponse
   events: AsyncIterable<InvocationEventEnvelope>
+}
+
+/**
+ * Dispatch-options envelope. Mirrors spaces-harness-broker-client's
+ * InvocationStartDispatchOptions and controller.ts's BrokerDispatchOptions: the
+ * broker lifecycle overlay rides ONLY here, never inside the start request.
+ */
+export type AspcFacadeDispatchOptions = {
+  dispatchEnv?: Record<string, string> | undefined
+  runtime?: InvocationRuntimeContext | undefined
+  lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
 }
 
 export class AspcFacadeBrokerClient {
@@ -100,18 +112,36 @@ export class AspcFacadeBrokerClient {
 
   async startInvocationFromRequest(
     request: InvocationStartRequest,
-    dispatchEnv?: Record<string, string>,
+    dispatchEnvOrOptions?: Record<string, string> | AspcFacadeDispatchOptions,
     runtime?: InvocationRuntimeContext
   ): Promise<InvocationStartResult> {
     const expectedInvocationId = request.spec.invocationId
     const expectedEvents =
       expectedInvocationId !== undefined ? this.#eventStream(expectedInvocationId) : undefined
 
+    // The 2nd arg may be a flat dispatchEnv map OR a dispatch-options envelope
+    // {dispatchEnv,runtime,lifecyclePolicy}. Mirror spaces-harness-broker-client
+    // so the lifecycle-overlay path (controller.ts) is forwarded as top-level
+    // invocation.start fields instead of being nested under params.dispatchEnv.
+    const options: AspcFacadeDispatchOptions =
+      dispatchEnvOrOptions !== undefined &&
+      ('dispatchEnv' in dispatchEnvOrOptions ||
+        'runtime' in dispatchEnvOrOptions ||
+        'lifecyclePolicy' in dispatchEnvOrOptions)
+        ? (dispatchEnvOrOptions as AspcFacadeDispatchOptions)
+        : {
+            dispatchEnv: dispatchEnvOrOptions as Record<string, string> | undefined,
+            runtime,
+          }
+
     try {
       const response = await this.#transport.request<InvocationStartResponse>('invocation.start', {
         startRequest: structuredClone(request),
-        ...(dispatchEnv !== undefined ? { dispatchEnv } : {}),
-        ...(runtime !== undefined ? { runtime } : {}),
+        ...(options.dispatchEnv !== undefined ? { dispatchEnv: options.dispatchEnv } : {}),
+        ...(options.runtime !== undefined ? { runtime: options.runtime } : {}),
+        ...(options.lifecyclePolicy !== undefined
+          ? { lifecyclePolicy: options.lifecyclePolicy }
+          : {}),
       })
       const events = expectedEvents ?? this.#eventStream(response.invocationId)
       return {
@@ -223,7 +253,7 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
   health(req?: BrokerHealthRequest): Promise<BrokerHealthResponse>
   startInvocationFromRequest(
     request: InvocationStartRequest,
-    dispatchEnv?: Record<string, string>,
+    dispatchEnvOrOptions?: Record<string, string> | AspcFacadeDispatchOptions,
     runtime?: InvocationRuntimeContext
   ): Promise<InvocationStartResult>
   input(req: InvocationInputRequest): Promise<InvocationInputResponse>
@@ -238,8 +268,8 @@ export function asBrokerClient(client: AspcFacadeBrokerClient): {
   return {
     hello: (req) => client.brokerHello(req),
     health: (req) => client.health(req),
-    startInvocationFromRequest: (request, dispatchEnv, runtime) =>
-      client.startInvocationFromRequest(request, dispatchEnv, runtime),
+    startInvocationFromRequest: (request, dispatchEnvOrOptions, runtime) =>
+      client.startInvocationFromRequest(request, dispatchEnvOrOptions, runtime),
     input: (req) => client.input(req),
     interrupt: (req) => client.interrupt(req),
     stop: (req) => client.stop(req),
