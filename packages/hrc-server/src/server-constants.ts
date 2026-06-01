@@ -28,3 +28,13 @@ export const HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV = 'HRC_CODEX_CLI_TMUX_BROKER_
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15
+
+export const HRC_ZOMBIE_SWEEP_ENABLED = true
+export const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
+export const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
+export const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
+export const HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS = 30_000
+
+export const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
+export const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
+  'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'

@@ -24,8 +24,8 @@
   },
   "dependencies": {
     "agent-action-render": "*",
-    "agent-scope": "0.1.1-dev.20260601113040",
-    "spaces-runtime": "0.1.1-dev.20260601113040"
+    "agent-scope": "0.1.1-dev.20260601125636",
+    "spaces-runtime": "0.1.1-dev.20260601125636"
   },
   "devDependencies": {
     "@types/bun": "latest",
