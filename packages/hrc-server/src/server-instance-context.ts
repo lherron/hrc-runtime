@@ -79,7 +79,6 @@ export type HrcServerInstanceForHandlers = {
   finalizeSemanticTurnResponse: HandlerMethod
   getHarnessBrokerController: HandlerMethod
   handleActiveRunContribution: HandlerMethod
-  handleAdoptRuntime: HandlerMethod
   handleAppSessionAttach: HandlerMethod
   handleAppSessionCapture: HandlerMethod
   handleAppSessionClearContext: HandlerMethod
@@ -129,10 +128,7 @@ export type HrcServerInstanceForHandlers = {
   handleLaunchEvent: HandlerMethod
   handleListAppSessions: HandlerMethod
   handleListBridges: HandlerMethod
-  handleListLaunches: HandlerMethod
   handleListManagedAppSessions: HandlerMethod
-  handleListRuns: HandlerMethod
-  handleListRuntimes: HandlerMethod
   handleListSessions: HandlerMethod
   handleListSurfaces: HandlerMethod
   handleListTargets: HandlerMethod

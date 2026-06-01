@@ -5,55 +5,70 @@ import {
   HrcInternalError,
   HrcNotFoundError,
 } from 'hrc-core'
-import type { HrcLaunchRecord } from 'hrc-core'
+import type {
+  HrcEventEnvelope,
+  HrcLaunchRecord,
+  HrcLifecycleEvent,
+  HrcRuntimeSnapshot,
+} from 'hrc-core'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import { getBrokerRuntimeTmuxSocketPath } from './broker-decisions.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   isRecord,
   parseJsonBody,
   parseListRunsFilter,
   parseListRuntimesFilter,
 } from './server-parsers.js'
+import type { ExactRouteHandler } from './server-types.js'
 import { json, timestamp } from './server-util.js'
 import { reassociateBrokerTmuxLease } from './startup-reconcile.js'
 import { filterRuntimes } from './sweep-helpers.js'
 
-export async function handleListRuntimes(
-  this: HrcServerInstanceForHandlers,
-  url: URL
-): Promise<Response> {
+export type RuntimeListAdoptDependencies = {
+  readonly db: HrcDatabase
+  reconcileTmuxRuntimeLiveness(runtime: HrcRuntimeSnapshot): Promise<HrcRuntimeSnapshot>
+  notifyEvent(event: HrcEventEnvelope | HrcLifecycleEvent): void
+}
+
+export type RuntimeListAdoptRoute = {
+  method: 'GET' | 'POST'
+  pathname: string
+  handler: ExactRouteHandler
+}
+
+async function handleListRuntimes(deps: RuntimeListAdoptDependencies, url: URL): Promise<Response> {
   const filter = parseListRuntimesFilter(url)
   const runtimes = filter.hostSessionId
-    ? this.db.runtimes.listByHostSessionId(filter.hostSessionId)
-    : this.db.runtimes.listAll()
+    ? deps.db.runtimes.listByHostSessionId(filter.hostSessionId)
+    : deps.db.runtimes.listAll()
   const reconciled = await Promise.all(
-    runtimes.map((runtime) => this.reconcileTmuxRuntimeLiveness(runtime))
+    runtimes.map((runtime) => deps.reconcileTmuxRuntimeLiveness(runtime))
   )
   return json(filterRuntimes(reconciled, filter))
 }
 
-export function handleListRuns(this: HrcServerInstanceForHandlers, url: URL): Response {
+function handleListRuns(deps: RuntimeListAdoptDependencies, url: URL): Response {
   const filter = parseListRunsFilter(url)
-  return json(this.db.runs.listRuns(filter))
+  return json(deps.db.runs.listRuns(filter))
 }
 
-export function handleListLaunches(this: HrcServerInstanceForHandlers, url: URL): Response {
+function handleListLaunches(deps: RuntimeListAdoptDependencies, url: URL): Response {
   const hostSessionId = url.searchParams.get('hostSessionId') ?? undefined
   const runtimeId = url.searchParams.get('runtimeId') ?? undefined
   let launches: HrcLaunchRecord[]
   if (runtimeId) {
-    launches = this.db.launches.listByRuntimeId(runtimeId)
+    launches = deps.db.launches.listByRuntimeId(runtimeId)
   } else if (hostSessionId) {
-    launches = this.db.launches.listByHostSessionId(hostSessionId)
+    launches = deps.db.launches.listByHostSessionId(hostSessionId)
   } else {
-    launches = this.db.launches.listAll()
+    launches = deps.db.launches.listAll()
   }
   return json(launches)
 }
 
-export async function handleAdoptRuntime(
-  this: HrcServerInstanceForHandlers,
+async function handleAdoptRuntime(
+  deps: RuntimeListAdoptDependencies,
   request: Request
 ): Promise<Response> {
   const body = await parseJsonBody(request)
@@ -61,7 +76,7 @@ export async function handleAdoptRuntime(
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
   }
   const runtimeId = body['runtimeId'] as string
-  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+  const runtime = deps.db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
   }
@@ -109,7 +124,7 @@ export async function handleAdoptRuntime(
       )
     }
   }
-  const updated = this.db.runtimes.update(runtimeId, {
+  const updated = deps.db.runtimes.update(runtimeId, {
     adopted: true,
     status: 'adopted',
     updatedAt: timestamp(),
@@ -117,9 +132,9 @@ export async function handleAdoptRuntime(
   if (!updated) {
     throw new HrcInternalError(`failed to adopt runtime ${runtimeId}`)
   }
-  const session = this.db.sessions.getByHostSessionId(runtime.hostSessionId)
+  const session = deps.db.sessions.getByHostSessionId(runtime.hostSessionId)
   if (session) {
-    const event = appendHrcEvent(this.db, 'runtime.adopted', {
+    const event = appendHrcEvent(deps.db, 'runtime.adopted', {
       ts: timestamp(),
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
@@ -127,16 +142,34 @@ export async function handleAdoptRuntime(
       generation: session.generation,
       runtimeId,
     })
-    this.notifyEvent(event)
+    deps.notifyEvent(event)
   }
   return json(updated)
 }
 
-export const runtimeListAdoptHandlersMethods = {
-  handleListRuntimes,
-  handleListRuns,
-  handleListLaunches,
-  handleAdoptRuntime,
+export function createRuntimeListAdoptRoutes(
+  deps: RuntimeListAdoptDependencies
+): RuntimeListAdoptRoute[] {
+  return [
+    {
+      method: 'GET',
+      pathname: '/v1/runs',
+      handler: (_request, url) => handleListRuns(deps, url),
+    },
+    {
+      method: 'GET',
+      pathname: '/v1/runtimes',
+      handler: (_request, url) => handleListRuntimes(deps, url),
+    },
+    {
+      method: 'GET',
+      pathname: '/v1/launches',
+      handler: (_request, url) => handleListLaunches(deps, url),
+    },
+    {
+      method: 'POST',
+      pathname: '/v1/runtimes/adopt',
+      handler: (request) => handleAdoptRuntime(deps, request),
+    },
+  ]
 }
-
-export type RuntimeListAdoptHandlersMethods = typeof runtimeListAdoptHandlersMethods

@@ -54,6 +54,79 @@ FULL adds:
 11. `RECONCILE-ACROSS-RESTART`
 12. `scripts/pre-hrc-broker-matrix-e2e.ts`
 
+SCENARIO rows (`--scenario`):
+
+These exercise behavior, not just lease-socket routing. Run on both drivers
+unless a row says otherwise. Each row still asserts the default-socket invariant.
+
+1. `BUSY-TUI-QUEUE` — dispatch a long turn to a live broker runtime, then while it
+   is mid-flight send a second `hrcchat dm <target>` and `hrcchat turn <target>`.
+   The second input must QUEUE onto the same interactive runtime (fifo) and run
+   after the first completes. PASS requires: no new headless runtime appears
+   (headless count unchanged), `transport=tmux`/`runtimeId` is unchanged, the
+   second turn's `turn.completed` fires after the first's, and the lease pane
+   shows both turns in order. (Regression guard for T-01801.)
+2. `COLD-VS-LIVE-ROUTING` — (a) `hrcchat dm`/`turn` to a COLD scope (no live
+   runtime) is allowed to produce a HEADLESS turn; record the headless runtimeId.
+   (b) `hrc run <scope>` to make it live, then `hrcchat dm`/`turn` again — this
+   must route to the INTERACTIVE lease runtime, NOT spawn a new headless one, and
+   reuse the same interactive runtimeId. PASS requires the (b) ops land on the
+   live lease pane with no headless-count increase.
+3. `CONTINUITY-SEMANTICS` — on one live broker runtime: (a) `hrc session clear-context
+   <hostSessionId>` rotates the generation (new `generation` in monitor payload)
+   and the next turn starts with no prior context; (b) `hrc session drop-continuation
+   <hostSessionId>` removes stored continuation so a subsequent cold `hrc run`
+   starts fresh; (c) `hrc run <scope>` after a `/quit` shows the priming prompt and
+   NO continuation/resume picker (cross-check with `core-quit-restart`).
+
+INTERACTION rows (`--interaction`) — multi-agent, cross-scope, concurrency:
+
+1. `CROSS-AGENT-DM` — agent A (`clod`) `hrcchat dm`/`turn` → agent B (`cody`) at a
+   different scope. The message lands on B's lease pane / durable history and B's
+   reply threads back via `--reply-to`. Neither runtime headless-forks; each op
+   hits the correct per-runtime lease socket.
+2. `RESPOND-TO-HUMAN` — `hrcchat turn <B> "…" --respond-to human` (and the `dm`
+   `--respond-to human` form): the reply routes back to the originating surface
+   (operator/Discord) rather than only to the durable thread. Assert the reply
+   message carries the human recipient address.
+3. `CONCURRENT-TURNS` — two `hrcchat turn` dispatches race the SAME runtime. They
+   must serialize fifo (no interleaved/garbled pane output, no lost turn); both
+   emit distinct `turn.completed` with intact `finalBody`. Pairs with `BUSY-TUI-QUEUE`
+   but starts both turns near-simultaneously rather than strictly after-busy.
+
+SEMANTIC rows (`--semantic`) — `hrcchat turn` / `hrcchat dm` flag behavior
+(routing already covered by CORE; these assert the flags change behavior):
+
+1. `turn --fresh-context` / `--new` — clears context before dispatch; the turn has
+   no memory of the prior turn on the same runtime.
+2. `turn --dry-run` — resolves and prints the dispatch plan WITHOUT dispatching; no
+   `turn.accepted`/`turn.completed` event is emitted and the pane is untouched.
+3. `turn --format <tree|compact|ndjson|json>` — each format renders the terminal
+   turn frame in the expected shape (`--stacked` already covers ndjson; confirm the
+   other three and the `--pretty` non-TTY override).
+4. `turn --reply-to <id>` — the dispatched turn threads under the given message ID.
+5. `turn --file <path>` — prompt body is read from the file (parity with `- ` stdin).
+6. `turn --stall-after <dur>` — a turn idle past the threshold ABORTS with a terminal
+   stall/error event rather than hanging.
+7. `dm --follow <dur>` — `dm` dispatches as a tracked turn and streams `turn_stacked`
+   ndjson at the interval (the Monitor-tool path), distinct from a bare status-note `dm`.
+8. `dm --respond-to <human|agent|system>` — the durable reply carries the correct
+   recipient kind for each value.
+9. `dm <target> --reply-to <id>` and `dm human|system` targets — threading and the
+   `human`/`system` pseudo-targets resolve and deliver.
+
+TRANSPORT rows (`--transport-matrix`) — `hrcchat turn` / `hrcchat dm` across all
+three transports, not just the interactive tmux broker:
+
+1. `headless` — `hrcchat dm`/`turn` to a cold scope produces a headless runtime; the
+   turn completes and `turn.completed` fires on a `transport=headless` runtime.
+2. `tmux` (broker) — the interactive lease path already validated by CORE `core-dm`
+   / `core-turn-stacked`; cross-reference rather than re-run.
+3. `sdk` — if an sdk-transport driver is live, `hrcchat dm`/`turn` completes on a
+   `transport=sdk` runtime; otherwise record as N/A (no sdk driver configured).
+   Confirm `hrc runtime list --transport <t>` lists the runtime under the expected
+   transport for each case.
+
 ## Runbook
 
 1. Check that monitor fixes are installed:

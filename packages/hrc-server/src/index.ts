@@ -88,10 +88,7 @@ import {
   runtimeControlHandlersMethods,
 } from './runtime-control-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
-import {
-  type RuntimeListAdoptHandlersMethods,
-  runtimeListAdoptHandlersMethods,
-} from './runtime-list-adopt-handlers.js'
+import { createRuntimeListAdoptRoutes } from './runtime-list-adopt-handlers.js'
 import { findLatestRunForRuntime } from './runtime-select.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
@@ -324,7 +321,6 @@ interface HrcServerInstance
     RuntimeIoHandlersMethods,
     RuntimeControlHandlersMethods,
     TargetMessageHandlersMethods,
-    RuntimeListAdoptHandlersMethods,
     EventNotificationHandlersMethods,
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods {}
@@ -378,7 +374,6 @@ class HrcServerInstance implements HrcServer {
       this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
       this.handleReconcileActiveRuns(request),
-    [exactRouteKey('GET', '/v1/runs')]: (_request, url) => this.handleListRuns(url),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),
@@ -425,9 +420,6 @@ class HrcServerInstance implements HrcServer {
       this.handleDispatchTurnBySelector(request),
     [exactRouteKey('POST', '/v1/messages/wait')]: (request) => this.handleWaitMessage(request),
     [exactRouteKey('POST', '/v1/messages/watch')]: (request) => this.handleWatchMessages(request),
-    [exactRouteKey('GET', '/v1/runtimes')]: (_request, url) => this.handleListRuntimes(url),
-    [exactRouteKey('GET', '/v1/launches')]: (_request, url) => this.handleListLaunches(url),
-    [exactRouteKey('POST', '/v1/runtimes/adopt')]: (request) => this.handleAdoptRuntime(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>
@@ -483,6 +475,13 @@ class HrcServerInstance implements HrcServer {
       tmux: this.tmux,
       ghostmux: this.ghostmux,
       notifyEvent: (event) => this.notifyEvent(event),
+    }
+    for (const route of createRuntimeListAdoptRoutes({
+      db: this.db,
+      reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
+      notifyEvent: (event) => this.notifyEvent(event),
+    })) {
+      this.exactRouteHandlers[exactRouteKey(route.method, route.pathname)] = route.handler
     }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
@@ -1312,7 +1311,6 @@ Object.assign(
   runtimeIoHandlersMethods,
   runtimeControlHandlersMethods,
   targetMessageHandlersMethods,
-  runtimeListAdoptHandlersMethods,
   eventNotificationHandlersMethods,
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods

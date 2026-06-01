@@ -245,6 +245,14 @@ export async function dispatchTurnForSession(
     })
   }
 
+  if (admission.decision === 'broker-start' && isProviderOnlyOpenAiInteractiveIntent(inputIntent)) {
+    throw new HrcRuntimeUnavailableError('runtime intent is not broker-admissible', {
+      hostSessionId: session.hostSessionId,
+      provider: inputIntent.harness.provider,
+      route: 'interactive-broker',
+    })
+  }
+
   if (admission.decision === 'broker-reuse') {
     if (!latestRuntime) {
       throw new HrcRuntimeUnavailableError('interactive broker runtime is unavailable', {
@@ -272,6 +280,13 @@ export async function dispatchTurnForSession(
       reason: 'interactive-broker-admission-reprovision',
       allowedBrokerDriver: admission.allowedBrokerDriver,
     })
+    if (isProviderOnlyInteractiveIntent(inputIntent)) {
+      throw new HrcRuntimeUnavailableError('runtime intent is not broker-admissible', {
+        hostSessionId: session.hostSessionId,
+        provider: inputIntent.harness.provider,
+        route: 'interactive-broker',
+      })
+    }
   }
 
   return await runInteractiveTmuxRoute('broker', {
@@ -283,6 +298,14 @@ export async function dispatchTurnForSession(
           admission.allowedBrokerDriver === 'codex-cli-tmux' ? false : options.waitForCompletion,
       }),
   })
+}
+
+function isProviderOnlyInteractiveIntent(intent: HrcRuntimeIntent): boolean {
+  return intent.harness.interactive === true && intent.harness.id === undefined
+}
+
+function isProviderOnlyOpenAiInteractiveIntent(intent: HrcRuntimeIntent): boolean {
+  return isProviderOnlyInteractiveIntent(intent) && intent.harness.provider === 'openai'
 }
 
 export function markRuntimeStaleForBrokerReprovision(

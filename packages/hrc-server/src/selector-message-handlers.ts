@@ -120,6 +120,7 @@ export async function ensureRuntimeForSession(
   restartStyle: RestartStyle
 ): Promise<HrcRuntimeSnapshot> {
   validateEnsureRuntimeIntent(intent)
+  this.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
   const brokerOptions = this.selectInteractiveTmuxBrokerOptions(intent)
   if (!brokerOptions) {
     throw new HrcRuntimeUnavailableError('ensureRuntime supports only broker-admissible runtimes', {

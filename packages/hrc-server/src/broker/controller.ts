@@ -19,20 +19,14 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import {
-  CONSERVATIVE_LIFECYCLE_CAPABILITIES,
-  canonicalLifecyclePolicyJson,
-} from 'spaces-harness-broker-protocol'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
+import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import type {
   BrokerHealthResponse,
   BrokerHelloResponse,
   BrokerLifecyclePolicyOverlay,
-  DriverSummary,
   InputPolicy,
-  InvocationCapabilities,
-  InvocationLifecycleCapabilities,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
   InvocationId,
@@ -51,17 +45,28 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import type {
   BrokerExecutionProfile,
-  CapabilityRequirements,
   CompiledRuntimePlan,
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 
 import { appendHrcEvent } from '../hrc-event-helper'
+import {
+  admitBrokerHello,
+  admitStartedInvocation,
+  preflightBrokerLifecyclePolicy,
+} from './capabilities'
+import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT } from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
-import { preflightLifecyclePolicyCapabilities } from './lifecycle-overlay'
+import {
+  extractRuntimeStateTmux,
+  isBrokerTmuxProfile,
+  runtimeHarness,
+  runtimeStatusFromInvocationState,
+  toBrokerTmuxJson,
+  toDispatchRuntime,
+  toRuntimeStateTmux,
+} from './runtime-state'
 
-const BROKER_PROTOCOL_VERSION = 'harness-broker/0.1'
-const BROKER_TRANSPORT = 'stdio-jsonrpc-ndjson'
 const DEFAULT_BROKER_COMMAND = 'harness-broker'
 const DEFAULT_BROKER_ARGS = ['run', '--transport', 'stdio']
 const USER_INITIATED_CONTINUATION_CLEAR_REASONS = new Set(['prompt_input_exit', 'logout', 'clear'])
@@ -259,12 +264,6 @@ type ActiveBrokerRuntime = {
   closeReason?: string | undefined
 }
 
-type CapabilityCheck = {
-  ok: boolean
-  missing: string[]
-  detail: Record<string, unknown>
-}
-
 export class HarnessBrokerController {
   readonly kind = 'harness-broker' as const
 
@@ -347,7 +346,7 @@ export class HarnessBrokerController {
       })
       markPhase('broker-hello')
 
-      const admission = this.admitBrokerHello(input.profile, hello)
+      const admission = admitBrokerHello(input.profile, hello)
       if (!admission.ok) {
         this.logger.warn?.('harness broker pre-start admission rejected', admission.detail)
         this.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected')
@@ -367,12 +366,7 @@ export class HarnessBrokerController {
       // the route/profile lifecycle capabilities. This gate refuses to dispatch
       // an uncertified idle-ttl/recycle-child/safe-retry overlay. Broker dispatch
       // validation remains authoritative.
-      if (input.lifecyclePolicy) {
-        preflightLifecyclePolicyCapabilities(
-          input.lifecyclePolicy,
-          routeLifecycleCapabilities(input.profile)
-        )
-      }
+      preflightBrokerLifecyclePolicy(input.profile, input.lifecyclePolicy)
 
       const tmuxAllocation = await this.allocateTmuxIfRequired(input)
       markPhase('broker-tmux-alloc')
@@ -400,7 +394,7 @@ export class HarnessBrokerController {
         runtimeId: String(input.identity.runtimeId),
       })
 
-      const invocationAdmission = this.admitStartedInvocation(
+      const invocationAdmission = admitStartedInvocation(
         input.profile,
         hello,
         startResult.response.capabilities
@@ -789,9 +783,7 @@ export class HarnessBrokerController {
       specProjectionJson: JSON.stringify(input.startRequest.spec),
       startRequestProjectionJson: JSON.stringify(input.startRequest),
       ownerServerInstanceId: this.serverInstanceId,
-      ...(input.lifecyclePolicy
-        ? { lifecyclePolicyHash: input.lifecyclePolicy.policyHash }
-        : {}),
+      ...(input.lifecyclePolicy ? { lifecyclePolicyHash: input.lifecyclePolicy.policyHash } : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -903,227 +895,6 @@ export class HarnessBrokerController {
       ...(allocation.paneId !== undefined ? { paneId: allocation.paneId } : {}),
       ...(allocation.sessionName !== undefined ? { sessionName: allocation.sessionName } : {}),
       ...(allocation.windowName !== undefined ? { windowName: allocation.windowName } : {}),
-    }
-  }
-
-  private admitBrokerHello(
-    profile: BrokerExecutionProfile,
-    hello: BrokerHelloResponse
-  ): CapabilityCheck {
-    const missing: string[] = []
-    const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
-    if (hello.protocolVersion !== BROKER_PROTOCOL_VERSION) {
-      missing.push(`protocolVersion:${BROKER_PROTOCOL_VERSION}`)
-    }
-    if (!hello.capabilities.eventNotifications) {
-      missing.push('broker.capabilities.eventNotifications')
-    }
-    if (!hello.capabilities.transports.includes(BROKER_TRANSPORT)) {
-      missing.push(`broker.capabilities.transports.${BROKER_TRANSPORT}`)
-    }
-    if (
-      profile.policy.permissionPolicy.mode === 'ask-client' &&
-      !hello.capabilities.brokerToClientRequests
-    ) {
-      missing.push('broker.capabilities.brokerToClientRequests')
-    }
-    if (
-      profile.expectedCapabilities.control?.attachReplay === 'forbidden' &&
-      hello.capabilities.attachReplay === true
-    ) {
-      missing.push('broker.capabilities.attachReplay.forbidden')
-    }
-
-    if (!driver) {
-      missing.push(`driver.${profile.brokerDriver}`)
-    } else if (!driver.available) {
-      missing.push(`driver.${profile.brokerDriver}.available`)
-    } else {
-      missing.push(...this.checkPreStartDriverCapabilities(profile.expectedCapabilities, driver))
-    }
-
-    return {
-      ok: missing.length === 0,
-      missing,
-      detail: this.buildAdmissionDetail('pre-start-hello', profile, hello, driver, missing),
-    }
-  }
-
-  private admitStartedInvocation(
-    profile: BrokerExecutionProfile,
-    hello: BrokerHelloResponse,
-    capabilities: InvocationCapabilities
-  ): CapabilityCheck {
-    const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
-    const missing = this.checkInvocationCapabilities(profile.expectedCapabilities, capabilities)
-    return {
-      ok: missing.length === 0,
-      missing,
-      detail: this.buildAdmissionDetail(
-        'post-start-invocation',
-        profile,
-        hello,
-        driver,
-        missing,
-        capabilities
-      ),
-    }
-  }
-
-  private checkPreStartDriverCapabilities(
-    requirements: CapabilityRequirements,
-    driver: DriverSummary
-  ): string[] {
-    const caps = driver.capabilities
-    if (!caps) {
-      return []
-    }
-    const missing: string[] = []
-    checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
-    checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
-    checkNeed(
-      missing,
-      'input.appendContext',
-      requirements.input?.appendContext,
-      caps.input.appendContext
-    )
-    checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
-    checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
-    // input.queue is broker-composed from the start request. A raw driver
-    // queue:true can become effective queue:false post-start.
-    checkNeed(missing, 'input.queue', requiredOnly(requirements.input?.queue), caps.input.queue)
-    if (
-      requirements.turns?.concurrency === 'multiple' &&
-      requirements.turns.concurrency !== caps.turns.concurrency
-    ) {
-      missing.push(`turns.concurrency.${requirements.turns.concurrency}`)
-    }
-    checkNeed(
-      missing,
-      'turns.interrupt',
-      requirements.turns?.interrupt,
-      caps.turns.interrupt !== 'unsupported'
-    )
-    checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
-    if (requirements.permissions === 'client-mediated') {
-      checkNeed(
-        missing,
-        'permissions.brokerToClientRequests',
-        'required',
-        caps.permissions?.brokerToClientRequests ?? false
-      )
-    }
-    checkNeed(
-      missing,
-      'events.assistantDeltas',
-      requirements.events?.assistantDeltas,
-      caps.events.assistantDeltas
-    )
-    checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
-    checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
-    checkNeed(
-      missing,
-      'events.diagnostics',
-      requirements.events?.diagnostics,
-      caps.events.diagnostics
-    )
-    checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
-    checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
-    checkNeed(
-      missing,
-      'control.reconcile',
-      requirements.control?.reconcile,
-      caps.control.status ?? false
-    )
-    return missing
-  }
-
-  private checkInvocationCapabilities(
-    requirements: CapabilityRequirements,
-    caps: InvocationCapabilities
-  ): string[] {
-    const missing: string[] = []
-    checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
-    checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
-    checkNeed(
-      missing,
-      'input.appendContext',
-      requirements.input?.appendContext,
-      caps.input.appendContext
-    )
-    checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
-    checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
-    checkNeed(missing, 'input.queue', requirements.input?.queue, caps.input.queue)
-    if (
-      requirements.turns?.concurrency &&
-      requirements.turns.concurrency !== 'any' &&
-      requirements.turns.concurrency !== caps.turns.concurrency
-    ) {
-      missing.push(`turns.concurrency.${requirements.turns.concurrency}`)
-    }
-    checkNeed(
-      missing,
-      'turns.interrupt',
-      requirements.turns?.interrupt,
-      caps.turns.interrupt !== 'unsupported'
-    )
-    checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
-    if (requirements.permissions === 'client-mediated') {
-      checkNeed(
-        missing,
-        'permissions.brokerToClientRequests',
-        'required',
-        caps.permissions?.brokerToClientRequests ?? false
-      )
-    }
-    checkNeed(
-      missing,
-      'events.assistantDeltas',
-      requirements.events?.assistantDeltas,
-      caps.events.assistantDeltas
-    )
-    checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
-    checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
-    checkNeed(
-      missing,
-      'events.diagnostics',
-      requirements.events?.diagnostics,
-      caps.events.diagnostics
-    )
-    checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
-    checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
-    checkNeed(
-      missing,
-      'control.reconcile',
-      requirements.control?.reconcile,
-      caps.control.status ?? false
-    )
-    return missing
-  }
-
-  private buildAdmissionDetail(
-    phase: 'pre-start-hello' | 'post-start-invocation',
-    profile: BrokerExecutionProfile,
-    hello: BrokerHelloResponse,
-    driver: DriverSummary | undefined,
-    missing: string[],
-    effectiveCapabilities?: InvocationCapabilities | undefined
-  ): Record<string, unknown> {
-    return {
-      phase,
-      missing,
-      protocolVersion: hello.protocolVersion,
-      brokerCapabilities: hello.capabilities,
-      driver: driver
-        ? {
-            kind: driver.kind,
-            available: driver.available,
-            rawCapabilities: driver.capabilities,
-            ...(driver.unavailableReason ? { unavailableReason: driver.unavailableReason } : {}),
-          }
-        : { kind: profile.brokerDriver, available: false, missing: true },
-      expectedCapabilities: profile.expectedCapabilities,
-      ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
     }
   }
 
@@ -1310,8 +1081,7 @@ export class HarnessBrokerController {
         ? this.findUserInitiatedContinuationClearReason(String(envelope.invocationId), envelope.seq)
         : undefined
     const terminalStatus = userExitReason !== undefined ? 'terminated' : 'stale'
-    const terminalEventKind =
-      userExitReason !== undefined ? 'runtime.terminated' : 'runtime.stale'
+    const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.stale'
     const terminalReason =
       userExitReason !== undefined ? 'user_initiated_session_end' : 'broker_invocation_terminal'
     if (runtime.activeRunId !== undefined) {
@@ -1509,167 +1279,8 @@ export class HarnessBrokerController {
   }
 }
 
-function checkNeed(
-  missing: string[],
-  path: string,
-  need: 'required' | 'optional' | 'forbidden' | undefined,
-  actual: boolean
-): void {
-  if (need === 'required' && !actual) {
-    missing.push(path)
-  }
-  if (need === 'forbidden' && actual) {
-    missing.push(`${path}.forbidden`)
-  }
-}
-
-function requiredOnly(
-  need: 'required' | 'optional' | 'forbidden' | undefined
-): 'required' | 'optional' | undefined {
-  return need === 'required' ? 'required' : need === 'optional' ? 'optional' : undefined
-}
-
-function runtimeStatusFromInvocationState(state: string): string {
-  if (state === 'ready') return 'ready'
-  if (state === 'turn_active') return 'busy'
-  if (state === 'stopping') return 'stopping'
-  if (state === 'exited') return 'stopped'
-  if (state === 'failed') return 'failed'
-  if (state === 'disposed') return 'disposed'
-  return 'starting'
-}
-
 function isActiveBrokerRun(run: HrcRunRecord): boolean {
   return run.status === 'accepted' || run.status === 'started' || run.status === 'running'
-}
-
-/**
- * The lifecycle capability baseline a dispatched overlay is preflighted against.
- * In v1 no profile advertises a richer lifecycle capability set, so this falls
- * back to the conservative baseline (keep-alive / none / none) that every
- * certified driver supports. If a profile ever publishes explicit lifecycle
- * capabilities, those take precedence.
- */
-function routeLifecycleCapabilities(
-  profile: BrokerExecutionProfile
-): InvocationLifecycleCapabilities {
-  const lifecycle = profile.expectedCapabilities.lifecycle
-  if (lifecycle && Array.isArray(lifecycle.runtimeRetention)) {
-    return {
-      runtimeRetention: lifecycle.runtimeRetention,
-      harnessRecovery: lifecycle.harnessRecovery,
-      turnRetry: lifecycle.turnRetry,
-      generationFencing: lifecycle.generationFencing === 'required',
-      permissionCancellation: lifecycle.permissionCancellation === 'required',
-    }
-  }
-  return CONSERVATIVE_LIFECYCLE_CAPABILITIES
-}
-
-function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
-  return (
-    profile.interactionMode === 'interactive' &&
-    profile.brokerTerminal?.host === 'tmux' &&
-    typeof profile.brokerDriver === 'string'
-  )
-}
-
-function toDispatchRuntime(
-  allocation: BrokerTmuxAllocation | undefined
-): InvocationRuntimeContext | undefined {
-  if (!allocation) {
-    return undefined
-  }
-  // Phase C/D flip: dispatch the pane lease via `terminalSurface` (the driver
-  // reads only this). The legacy `runtime.tmux` socket shim is used solely for
-  // legacy socket-only allocations that carry no lease.
-  if (allocation.lease) {
-    return { terminalSurface: allocation.lease }
-  }
-  return { tmux: { socketPath: allocation.socketPath } }
-}
-
-/** Pane ids (+ generation) carried by the lease (or top-level allocation), if present. */
-function paneIdsFromAllocation(allocation: BrokerTmuxAllocation): Record<string, string | number> {
-  const lease = allocation.lease
-  const ids: Record<string, string | number> = {}
-  const sessionId = lease?.sessionId ?? allocation.sessionId
-  const windowId = lease?.windowId ?? allocation.windowId
-  const paneId = lease?.paneId ?? allocation.paneId
-  const sessionName = lease?.sessionName ?? allocation.sessionName
-  const windowName = lease?.windowName ?? allocation.windowName
-  if (typeof sessionId === 'string') ids['sessionId'] = sessionId
-  if (typeof windowId === 'string') ids['windowId'] = windowId
-  if (typeof paneId === 'string') ids['paneId'] = paneId
-  if (typeof sessionName === 'string') ids['sessionName'] = sessionName
-  if (typeof windowName === 'string') ids['windowName'] = windowName
-  // Generation lets restart reconcile distinguish a re-associated lease from a
-  // stale one across a generation rotation (T-01733 GAP 2).
-  if (typeof allocation.generation === 'number') ids['generation'] = allocation.generation
-  return ids
-}
-
-function toBrokerTmuxJson(
-  brokerDriver: string,
-  allocation: BrokerTmuxAllocation
-): Record<string, unknown> {
-  return {
-    kind: 'broker-tmux-allocation',
-    brokerDriver,
-    socketPath: allocation.socketPath,
-    allocatedAt: allocation.allocatedAt,
-    ...paneIdsFromAllocation(allocation),
-  }
-}
-
-function toRuntimeStateTmux(
-  brokerDriver: string,
-  allocation: BrokerTmuxAllocation
-): Record<string, unknown> {
-  return {
-    brokerDriver,
-    socketPath: allocation.socketPath,
-    allocatedAt: allocation.allocatedAt,
-    ...paneIdsFromAllocation(allocation),
-  }
-}
-
-function extractRuntimeStateTmux(
-  tmuxJson: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined {
-  if (!tmuxJson) {
-    return undefined
-  }
-  const brokerDriver = tmuxJson['brokerDriver']
-  const socketPath = tmuxJson['socketPath']
-  const allocatedAt = tmuxJson['allocatedAt']
-  if (typeof brokerDriver !== 'string' || typeof socketPath !== 'string') {
-    return undefined
-  }
-  const passthrough: Record<string, string> = {}
-  for (const key of ['sessionId', 'windowId', 'paneId', 'sessionName', 'windowName']) {
-    const value = tmuxJson[key]
-    if (typeof value === 'string') {
-      passthrough[key] = value
-    }
-  }
-  const generation = tmuxJson['generation']
-  return {
-    brokerDriver,
-    socketPath,
-    ...(typeof allocatedAt === 'string' ? { allocatedAt } : {}),
-    ...passthrough,
-    ...(typeof generation === 'number' ? { generation } : {}),
-  }
-}
-
-function runtimeHarness(runtime: string): HrcRuntimeSnapshot['harness'] {
-  if (runtime === 'codex-cli') return 'codex-cli'
-  if (runtime === 'claude-code-cli') return 'claude-code'
-  if (runtime === 'claude-agent-sdk') return 'agent-sdk'
-  if (runtime === 'pi-cli') return 'pi-cli'
-  if (runtime === 'pi-sdk') return 'pi-sdk'
-  return 'codex-cli'
 }
 
 function compactEnv(

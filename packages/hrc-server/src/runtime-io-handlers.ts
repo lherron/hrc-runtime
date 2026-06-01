@@ -408,6 +408,10 @@ export function selectInteractiveTmuxBrokerOptions(
   this: HrcServerInstanceForHandlers,
   intent: HrcRuntimeIntent
 ): { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver } | undefined {
+  if (!isExplicitInteractiveTmuxBrokerStartIntent(intent)) {
+    return undefined
+  }
+
   const route = decideInteractiveTmuxBrokerStartRoute(intent, {
     claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
     codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
@@ -421,6 +425,13 @@ export function selectInteractiveTmuxBrokerOptions(
     flagEnvName: route.flagEnvName,
     allowedBrokerDriver: route.allowedBrokerDriver,
   }
+}
+
+function isExplicitInteractiveTmuxBrokerStartIntent(intent: HrcRuntimeIntent): boolean {
+  return (
+    (intent.harness.provider === 'anthropic' && intent.harness.id === 'claude-code') ||
+    (intent.harness.provider === 'openai' && intent.harness.id === 'codex-cli')
+  )
 }
 
 export function attachRuntime(
