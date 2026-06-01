@@ -1,15 +1,18 @@
 /**
  * Regression: a headless-preferred dispatch (a cross-agent `hrcchat dm` / any
- * nonInteractive turn) for a scope that ALREADY has a live, idle interactive
- * broker runtime (the open TUI) must be delivered INTO that runtime via
- * broker-reuse — never spawned as a competing headless run.
+ * nonInteractive turn) for a scope that ALREADY has a live interactive broker
+ * runtime (the open TUI) must be delivered INTO that runtime via broker-reuse —
+ * never spawned as a competing headless run, and never rejected because the TUI
+ * is mid-turn. A busy interactive broker queues the input (whenBusy:'queue')
+ * and drains it on the next turn.completed.
  *
  * The original defect: dispatchTurnForSession's headless branch fired BEFORE
  * consulting the live interactive runtime, so a codex DM spawned a headless
  * codex-app-server that resumed the same continuation thread the live TUI owned,
  * found no rollout in its re-derived codex home, and wedged at `starting`
- * (the turn silently died). The SDK branch already deferred to a live idle
- * interactive runtime; this pins the same guard for the headless branch.
+ * (the turn silently died). A first patch deferred only when the TUI was idle,
+ * leaving busy TUIs (a non-finalized boot/priming turn) to still fork headless;
+ * this drops the idle gate so any live interactive TUI receives the turn.
  *
  * shouldDeferHeadlessToInteractiveBrokerReuse is the pure seam the call site
  * gates on. true => skip headless, fall through to decideInteractiveBrokerAdmission.
@@ -60,10 +63,10 @@ describe('shouldDeferHeadlessToInteractiveBrokerReuse', () => {
     expect(shouldDeferHeadlessToInteractiveBrokerReuse(codexIntent(), null)).toBe(false)
   })
 
-  it('does NOT defer when the interactive runtime is busy (mid-turn)', () => {
+  it('DOES defer when the interactive runtime is busy (mid-turn) — the TUI queues the input', () => {
     expect(
       shouldDeferHeadlessToInteractiveBrokerReuse(codexIntent(), liveCodexTui({ idle: false }))
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('does NOT defer when the runtime is in an unavailable status', () => {

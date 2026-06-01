@@ -12167,10 +12167,18 @@ function toLiveInteractiveRuntimeReuseView(
 /**
  * True when dispatchTurnForSession should SKIP the headless branch and fall
  * through to decideInteractiveBrokerAdmission (→ broker-reuse), delivering the
- * turn INTO a live, idle interactive broker runtime rather than spawning a
- * competing headless run on the same continuation thread. Restricted to a
- * harness-broker runtime whose provider matches the intent so admission resolves
- * to broker-reuse, not an interactive reprovision of a genuinely-headless target.
+ * turn INTO a live interactive broker runtime rather than spawning a competing
+ * headless run on the same continuation thread. Restricted to a harness-broker
+ * runtime whose provider matches the intent so admission resolves to
+ * broker-reuse, not an interactive reprovision of a genuinely-headless target.
+ *
+ * NOT gated on idle: an active interactive TUI must still receive the turn. A
+ * busy interactive broker queues the input (whenBusy:'queue') and drains it on
+ * the next turn.completed — forking a parallel headless run, or rejecting
+ * RUNTIME_BUSY, both leave the human-visible TUI silently without the message.
+ * The broker-reuse call site queues vs. rejects based on the active invocation's
+ * composed queue capability (isBrokerRuntimeQueueCapable); the interactive tmux
+ * drivers advertise input.queue:true so a busy TUI queues rather than rejects.
  * Pure; the SDK branch keeps its own equivalent guard.
  */
 export function shouldDeferHeadlessToInteractiveBrokerReuse(
@@ -12183,8 +12191,7 @@ export function shouldDeferHeadlessToInteractiveBrokerReuse(
     (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
     latestRuntime.hasLiveSurface &&
     latestRuntime.provider === intent.harness.provider &&
-    !isRuntimeUnavailableStatus(latestRuntime.status) &&
-    latestRuntime.idle
+    !isRuntimeUnavailableStatus(latestRuntime.status)
   )
 }
 
