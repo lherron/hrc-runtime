@@ -312,6 +312,10 @@ class FakeDurableBrokerClient {
       transports: ['stdio-jsonrpc-ndjson', 'unix-jsonrpc-ndjson'],
       eventNotifications: true,
       brokerToClientRequests: true,
+      // The durable broker advertises attachReplay (T-01816 Phase 7): the
+      // durable-ipc route REQUIRES it, so the real harness-broker/0.2 hello
+      // carries attachReplay:true. Fixture must reflect the real durable broker.
+      attachReplay: true,
     },
     drivers: [
       {

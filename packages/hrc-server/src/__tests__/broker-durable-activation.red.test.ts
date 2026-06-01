@@ -197,6 +197,11 @@ class FakeBrokerClient {
         transports: ['stdio-jsonrpc-ndjson', 'unix-jsonrpc-ndjson'],
         eventNotifications: true,
         brokerToClientRequests: true,
+        // The durable (harness-broker/0.2) broker advertises attachReplay, which
+        // the durable-ipc route REQUIRES (T-01816 Phase 7). The legacy v1 broker
+        // does not. Reflect that per-version so durable admission is realistic
+        // while the legacy stdio route stays unchanged.
+        attachReplay: protocolVersion === 'harness-broker/0.2',
       },
       drivers: [
         {

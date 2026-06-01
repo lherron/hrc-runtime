@@ -40,6 +40,16 @@ export function preflightBrokerLifecyclePolicy(
 export type ExpectedBrokerNegotiation = {
   protocolVersion: BrokerProtocolVersion
   transport: BrokerTransportKind
+  /**
+   * OPTIONAL per-route broker CONTROL-capabilities overlay (T-01816 / T-01801
+   * Phase 7). When the durable-ipc route passes control.attachReplay:'required'
+   * the route REQUIRES attach/replay and the overlay WINS over the compiled
+   * profile's expectedCapabilities.control.attachReplay (e.g. 'forbidden') — the
+   * frozen audit profile is NOT mutated. When omitted, the profile's own
+   * control.attachReplay still applies so capability drift outside the durable
+   * route is still caught.
+   */
+  control?: { attachReplay?: 'required' | 'optional' | 'forbidden' }
 }
 
 export function admitBrokerHello(
@@ -66,10 +76,20 @@ export function admitBrokerHello(
   ) {
     missing.push('broker.capabilities.brokerToClientRequests')
   }
-  if (
+  const routeAttachReplay = expected?.control?.attachReplay
+  if (routeAttachReplay === 'required') {
+    // Route overlay WINS for the route HRC selected: the durable-ipc route
+    // REQUIRES attach/replay, so the profile's 'forbidden' is suppressed and a
+    // hello that does NOT advertise attachReplay:true is rejected as missing.
+    if (hello.capabilities.attachReplay !== true) {
+      missing.push('broker.capabilities.attachReplay')
+    }
+  } else if (
     profile.expectedCapabilities.control?.attachReplay === 'forbidden' &&
     hello.capabilities.attachReplay === true
   ) {
+    // No durable overlay → the compiled profile's 'forbidden' still applies so
+    // accidental broker capability drift outside the durable route is caught.
     missing.push('broker.capabilities.attachReplay.forbidden')
   }
 

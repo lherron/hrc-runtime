@@ -485,7 +485,11 @@ export class HarnessBrokerController {
       })
 
       const expectedNegotiation: ExpectedBrokerNegotiation = durableSocketPath
-        ? { protocolVersion: BROKER_PROTOCOL_VERSION_V2, transport: BROKER_TRANSPORT_UNIX }
+        ? {
+            protocolVersion: BROKER_PROTOCOL_VERSION_V2,
+            transport: BROKER_TRANSPORT_UNIX,
+            control: { attachReplay: 'required' },
+          }
         : { protocolVersion: BROKER_PROTOCOL_VERSION, transport: BROKER_TRANSPORT }
       const hello = await client.hello({
         clientInfo: { name: 'hrc-server' },
