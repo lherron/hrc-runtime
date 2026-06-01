@@ -44,7 +44,16 @@ import type {
   AssistantMessageCompletedPayload,
   AssistantMessageDeltaPayload,
   ContinuationUpdate,
+  HarnessExitedPayload,
+  HarnessRecoveryCompletedPayload,
+  HarnessRecoveryFailedPayload,
+  HarnessStartedPayload,
   InvocationEventEnvelope,
+  InvocationExitedPayload,
+  InvocationFailedPayload,
+  LifecycleEscalationPayload,
+  LifecyclePolicyAcceptedPayload,
+  PermissionCancelledPayload,
   PermissionRequestedPayload,
   PermissionResolvedPayload,
   TerminalSurfaceReportedPayload,
@@ -52,6 +61,7 @@ import type {
   ToolCallFailedPayload,
   ToolCallStartedPayload,
   TurnFailedPayload,
+  TurnRetryPayload,
 } from 'spaces-harness-broker-protocol'
 
 import { appendHrcEvent } from '../hrc-event-helper'
@@ -80,6 +90,20 @@ function lifecycleTransportFromRuntime(value: string): HrcLifecycleTransport {
     return value
   }
   return 'headless'
+}
+
+function permissionIdentityKey(input: {
+  invocationId: string
+  harnessGeneration?: number | null | undefined
+  turnAttempt?: number | null | undefined
+  permissionRequestId: string
+}): string {
+  return JSON.stringify([
+    input.invocationId,
+    input.harnessGeneration ?? null,
+    input.turnAttempt ?? null,
+    input.permissionRequestId,
+  ])
 }
 
 /**
@@ -239,9 +263,10 @@ export class BrokerEventMapper {
 
     // (b) Project state into HRC, then emit the raw provenance mirror plus the
     // canonical lifecycle event (the latter is what clients/notifyEvent see).
-    this.projectState(envelope, ctx, now)
+    const stale = this.isStaleLifecycleEnvelope(envelope, invocation, runtime)
+    this.projectState(envelope, ctx, now, stale)
     const emitted = this.emit(envelope, ctx, now)
-    const lifecycleEvent = this.emitLifecycle(envelope, ctx, now)
+    const lifecycleEvent = stale ? undefined : this.emitLifecycle(envelope, ctx, now)
 
     // (c) Record projection outcome on the broker event row.
     db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
@@ -360,11 +385,21 @@ export class BrokerEventMapper {
   private projectState(
     envelope: InvocationEventEnvelope,
     ctx: ProjectionContext,
-    now: string
+    now: string,
+    stale: boolean
   ): void {
     const db = this.db
     const invocationId = envelope.invocationId
     const { runId } = ctx
+
+    if (stale) {
+      if (envelope.type === 'permission.resolved') {
+        this.auditPermissionResolved(envelope, ctx, now, true)
+      } else if (envelope.type === 'permission.cancelled') {
+        this.auditPermissionCancelled(envelope, ctx, now, true)
+      }
+      return
+    }
 
     switch (envelope.type) {
       // ── Invocation lifecycle -> runtime linkage + invocation state ──────────
@@ -387,15 +422,114 @@ export class BrokerEventMapper {
         break
       }
       case 'invocation.exited': {
-        db.brokerInvocations.update(invocationId, { invocationState: 'exited', updatedAt: now })
+        const payload = envelope.payload as InvocationExitedPayload
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'exited',
+          lifecycleTerminalReason: payload.reason ?? 'process-exit',
+          updatedAt: now,
+        })
         break
       }
       case 'invocation.failed': {
-        db.brokerInvocations.update(invocationId, { invocationState: 'failed', updatedAt: now })
+        const payload = envelope.payload as InvocationFailedPayload
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'failed',
+          lifecycleTerminalReason: payload.reason ?? payload.code ?? 'failed',
+          updatedAt: now,
+        })
         break
       }
       case 'invocation.disposed': {
-        db.brokerInvocations.update(invocationId, { invocationState: 'disposed', updatedAt: now })
+        const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+        db.brokerInvocations.update(invocationId, {
+          invocationState: 'disposed',
+          ...(invocation?.lifecycleTerminalReason === undefined
+            ? { lifecycleTerminalReason: 'disposed' }
+            : {}),
+          updatedAt: now,
+        })
+        break
+      }
+
+      // ── Lifecycle policy / recovery vocabulary ────────────────────────────
+      case 'lifecycle.policy.accepted': {
+        const payload = envelope.payload as LifecyclePolicyAcceptedPayload
+        const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+        if (
+          invocation?.lifecyclePolicyHash !== undefined &&
+          invocation.lifecyclePolicyHash !== payload.policyHash
+        ) {
+          throw new Error(
+            `accepted lifecycle policy hash mismatch for ${invocationId}: expected ${invocation.lifecyclePolicyHash}, got ${payload.policyHash}`
+          )
+        }
+        db.runtimes.update(ctx.runtimeId, {
+          lifecyclePolicyHash: payload.policyHash,
+          lastActivityAt: now,
+          updatedAt: now,
+        })
+        db.brokerInvocations.update(invocationId, {
+          lifecyclePolicyHash: payload.policyHash,
+          updatedAt: now,
+        })
+        break
+      }
+      case 'lifecycle.escalation': {
+        const payload = envelope.payload as LifecycleEscalationPayload
+        db.brokerInvocations.update(invocationId, {
+          lastLifecycleEscalationJson: JSON.stringify({
+            reason: payload.reason,
+            requestedAction: payload.requestedAction,
+            ...(payload.harnessGeneration !== undefined
+              ? { harnessGeneration: payload.harnessGeneration }
+              : {}),
+            ...(payload.inputId !== undefined ? { inputId: payload.inputId } : {}),
+            ...(payload.turnId !== undefined ? { turnId: payload.turnId } : {}),
+            ...(payload.turnAttempt !== undefined ? { turnAttempt: payload.turnAttempt } : {}),
+            ...(payload.policyHash !== undefined ? { policyHash: payload.policyHash } : {}),
+          }),
+          updatedAt: now,
+        })
+        break
+      }
+      case 'harness.started': {
+        const payload = envelope.payload as HarnessStartedPayload
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+          currentHarnessGeneration: payload.generation,
+        })
+        break
+      }
+      case 'harness.exited': {
+        const payload = envelope.payload as HarnessExitedPayload
+        db.brokerInvocations.update(invocationId, {
+          lifecycleTerminalReason: payload.reason,
+          updatedAt: now,
+        })
+        break
+      }
+      case 'harness.recovery.started': {
+        // Evidence-only; appendEvent/emit retain the broker record.
+        break
+      }
+      case 'harness.recovery.completed': {
+        const payload = envelope.payload as HarnessRecoveryCompletedPayload
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+          currentHarnessGeneration: payload.toGeneration,
+        })
+        break
+      }
+      case 'harness.recovery.failed': {
+        const payload = envelope.payload as HarnessRecoveryFailedPayload
+        db.brokerInvocations.update(invocationId, {
+          lastLifecycleEscalationJson: JSON.stringify({
+            reason: payload.reason,
+            ...(payload.requestedAction !== undefined
+              ? { requestedAction: payload.requestedAction }
+              : {}),
+            fromGeneration: payload.fromGeneration,
+          }),
+          updatedAt: now,
+        })
         break
       }
 
@@ -448,6 +582,18 @@ export class BrokerEventMapper {
           this.markRuntimeTurnTerminal(ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
+        break
+      }
+      case 'turn.stalled': {
+        // Evidence-only; appendEvent/emit retain the broker record.
+        break
+      }
+      case 'turn.retry': {
+        const payload = envelope.payload as TurnRetryPayload
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+          currentHarnessGeneration: payload.toHarnessGeneration,
+          currentTurnAttempt: payload.toAttempt,
+        })
         break
       }
 
@@ -541,27 +687,11 @@ export class BrokerEventMapper {
         break
       }
       case 'permission.resolved': {
-        const payload = envelope.payload as PermissionResolvedPayload
-        if (db.permissionDecisions.getByPermissionRequestId(payload.permissionRequestId)) {
-          break
-        }
-        const requested = this.findRequestedPayload(invocationId, payload.permissionRequestId)
-        db.permissionDecisions.insert({
-          permissionRequestId: payload.permissionRequestId,
-          invocationId,
-          runtimeId: ctx.runtimeId,
-          ...(runId !== undefined ? { runId } : {}),
-          kind: requested?.payload.kind ?? 'unknown',
-          subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
-          defaultDecision: requested?.payload.defaultDecision ?? 'deny',
-          decision: payload.decision,
-          decidedBy: payload.decidedBy,
-          policyJson: JSON.stringify(
-            payload.message !== undefined ? { message: payload.message } : {}
-          ),
-          requestedAt: requested?.time ?? now,
-          decidedAt: now,
-        })
+        this.auditPermissionResolved(envelope, ctx, now, false)
+        break
+      }
+      case 'permission.cancelled': {
+        this.auditPermissionCancelled(envelope, ctx, now, false)
         break
       }
 
@@ -577,6 +707,136 @@ export class BrokerEventMapper {
         break
       }
     }
+  }
+
+  private updateLifecyclePosition(
+    invocationId: string,
+    runtimeId: string,
+    now: string,
+    patch: {
+      currentHarnessGeneration?: number | undefined
+      currentTurnAttempt?: number | undefined
+    }
+  ): void {
+    this.db.runtimes.update(runtimeId, { ...patch, lastActivityAt: now, updatedAt: now })
+    this.db.brokerInvocations.update(invocationId, { ...patch, updatedAt: now })
+  }
+
+  private isStaleLifecycleEnvelope(
+    envelope: InvocationEventEnvelope,
+    invocation: {
+      currentHarnessGeneration?: number | undefined
+      currentTurnAttempt?: number | undefined
+    },
+    runtime: {
+      currentHarnessGeneration?: number | undefined
+      currentTurnAttempt?: number | undefined
+    }
+  ): boolean {
+    const currentHarnessGeneration =
+      invocation.currentHarnessGeneration ?? runtime.currentHarnessGeneration
+    if (
+      currentHarnessGeneration !== undefined &&
+      envelope.harnessGeneration !== undefined &&
+      envelope.harnessGeneration < currentHarnessGeneration
+    ) {
+      return true
+    }
+
+    const currentTurnAttempt = invocation.currentTurnAttempt ?? runtime.currentTurnAttempt
+    if (
+      currentTurnAttempt !== undefined &&
+      envelope.turnAttempt !== undefined &&
+      envelope.turnAttempt < currentTurnAttempt
+    ) {
+      return true
+    }
+
+    return false
+  }
+
+  private auditPermissionResolved(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    stale: boolean
+  ): void {
+    const payload = envelope.payload as PermissionResolvedPayload
+    const identityKey = permissionIdentityKey({
+      invocationId: envelope.invocationId,
+      harnessGeneration: envelope.harnessGeneration,
+      turnAttempt: envelope.turnAttempt,
+      permissionRequestId: payload.permissionRequestId,
+    })
+    if (this.db.permissionDecisions.getByPermissionIdentityKey(identityKey)) {
+      return
+    }
+    const requested = this.findRequestedPayload(envelope.invocationId, payload.permissionRequestId)
+    this.db.permissionDecisions.insert({
+      permissionIdentityKey: identityKey,
+      permissionRequestId: payload.permissionRequestId,
+      invocationId: envelope.invocationId,
+      ...(envelope.harnessGeneration !== undefined
+        ? { harnessGeneration: envelope.harnessGeneration }
+        : {}),
+      ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      kind: requested?.payload.kind ?? 'unknown',
+      subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
+      defaultDecision: requested?.payload.defaultDecision ?? 'deny',
+      decision: payload.decision,
+      decidedBy: payload.decidedBy,
+      policyJson: JSON.stringify({
+        ...(payload.message !== undefined ? { message: payload.message } : {}),
+        ...(stale ? { stale: true } : {}),
+      }),
+      requestedAt: requested?.time ?? now,
+      decidedAt: now,
+    })
+  }
+
+  private auditPermissionCancelled(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    stale: boolean
+  ): void {
+    const payload = envelope.payload as PermissionCancelledPayload
+    const identityKey = permissionIdentityKey({
+      invocationId: envelope.invocationId,
+      harnessGeneration: envelope.harnessGeneration ?? payload.harnessGeneration,
+      turnAttempt: envelope.turnAttempt ?? payload.turnAttempt,
+      permissionRequestId: payload.permissionRequestId,
+    })
+    if (this.db.permissionDecisions.getByPermissionIdentityKey(identityKey)) {
+      return
+    }
+    const requested = this.findRequestedPayload(envelope.invocationId, payload.permissionRequestId)
+    const harnessGeneration = envelope.harnessGeneration ?? payload.harnessGeneration
+    const turnAttempt = envelope.turnAttempt ?? payload.turnAttempt
+    const defaultDecision = requested?.payload.defaultDecision ?? 'deny'
+    this.db.permissionDecisions.insert({
+      permissionIdentityKey: identityKey,
+      permissionRequestId: payload.permissionRequestId,
+      invocationId: envelope.invocationId,
+      ...(harnessGeneration !== undefined ? { harnessGeneration } : {}),
+      ...(turnAttempt !== undefined ? { turnAttempt } : {}),
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      kind: requested?.payload.kind ?? 'unknown',
+      subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
+      defaultDecision,
+      decision: defaultDecision,
+      decidedBy: 'policy',
+      policyJson: JSON.stringify({
+        cancelled: true,
+        reason: payload.reason,
+        ...(stale ? { stale: true } : {}),
+      }),
+      requestedAt: requested?.time ?? now,
+      decidedAt: now,
+    })
   }
 
   private markRuntimeTurnTerminal(ctx: ProjectionContext, runId: string, now: string): void {

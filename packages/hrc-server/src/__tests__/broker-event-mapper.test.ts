@@ -540,7 +540,9 @@ describe('projection mapping (ordered sequence)', () => {
     const db = fixture.db
 
     // Seed a captured continuation on both runtime and session.
-    mapper.apply(envelope('continuation.updated', 8, { provider: 'anthropic', key: CONTINUATION_KEY }))
+    mapper.apply(
+      envelope('continuation.updated', 8, { provider: 'anthropic', key: CONTINUATION_KEY })
+    )
     expect(db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toBeDefined()
     expect(db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toBeDefined()
 
@@ -562,8 +564,27 @@ describe('projection mapping (ordered sequence)', () => {
     mapper.apply(envelope('invocation.ready', 2, { state: 'ready' }))
     expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe('ready')
 
-    mapper.apply(envelope('invocation.exited', 9, { exitCode: 0, signal: null }))
-    expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe('exited')
+    mapper.apply(
+      envelope('invocation.exited', 9, { exitCode: 0, signal: null, reason: 'idle-ttl' })
+    )
+    let invocation = db.brokerInvocations.getByInvocationId(INVOCATION_ID)!
+    expect(invocation.invocationState).toBe('exited')
+    expect(invocation.lifecycleTerminalReason).toBe('idle-ttl')
+
+    mapper.apply(
+      envelope('invocation.failed', 10, {
+        message: 'runner degraded',
+        reason: 'runner-degraded',
+      })
+    )
+    invocation = db.brokerInvocations.getByInvocationId(INVOCATION_ID)!
+    expect(invocation.invocationState).toBe('failed')
+    expect(invocation.lifecycleTerminalReason).toBe('runner-degraded')
+
+    mapper.apply(envelope('invocation.disposed', 11, { disposed: true }))
+    invocation = db.brokerInvocations.getByInvocationId(INVOCATION_ID)!
+    expect(invocation.invocationState).toBe('disposed')
+    expect(invocation.lifecycleTerminalReason).toBe('runner-degraded')
   })
 })
 
