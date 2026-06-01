@@ -107,6 +107,58 @@ describe('GhostmuxManager', () => {
     expect(calls).toContainEqual(['equalize-panes', '-t', 'pane-1'])
   })
 
+  it('understands ghostmux metadata responses wrapped in data', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      const key = args.join(' ')
+      if (key === 'list-surfaces --json') {
+        return {
+          stdout: JSON.stringify({
+            terminals: [{ id: 'anchor-1', title: 'Claude Surfaces', columns: 160, rows: 40 }],
+          }),
+          stderr: '',
+        }
+      }
+      if (key === 'metadata get -t anchor-1 --window --json') {
+        return {
+          stdout: JSON.stringify({
+            data: { hrc_role: 'claude-surfaces', hrc_project: 'agent-spaces' },
+          }),
+          stderr: '',
+        }
+      }
+      if (key === 'new-pane -t anchor-1 -d right --cwd /tmp/agent-spaces --json') {
+        return {
+          stdout: JSON.stringify({ id: 'pane-1', title: '/tmp/agent-spaces' }),
+          stderr: '',
+        }
+      }
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const surface = await manager.ensureSurface('hsid-1', 'reuse_pty', {
+      cwd: '/tmp/agent-spaces',
+      title: 'claude-code: clod@agent-spaces:primary',
+      runtimeId: 'rt-1',
+      hostSessionId: 'hsid-1',
+      scopeRef: 'agent:clod:project:agent-spaces:task:primary',
+      generation: 1,
+      projectId: 'agent-spaces',
+    })
+
+    expect(surface.anchorSurfaceId).toBe('anchor-1')
+    expect(calls).not.toContainEqual([
+      'new',
+      '--tab',
+      '--cwd',
+      '/tmp/agent-spaces',
+      '--title',
+      'Claude Surfaces',
+      '--json',
+    ])
+  })
+
   it('sends literal text without enter and enter separately', async () => {
     const calls: string[][] = []
     const manager = new GhostmuxManager('ghostmux', async (args) => {

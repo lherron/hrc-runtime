@@ -57,6 +57,7 @@ const BROKER_PROTOCOL_VERSION = 'harness-broker/0.1'
 const BROKER_TRANSPORT = 'stdio-jsonrpc-ndjson'
 const DEFAULT_BROKER_COMMAND = 'harness-broker'
 const DEFAULT_BROKER_ARGS = ['run', '--transport', 'stdio']
+const USER_INITIATED_CONTINUATION_CLEAR_REASONS = new Set(['prompt_input_exit', 'logout', 'clear'])
 
 export type BrokerControllerLogger = {
   info?: (message: string, fields?: Record<string, unknown>) => void
@@ -1243,6 +1244,15 @@ export class HarnessBrokerController {
     const now = this.now()
     const invocation = this.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
     const runId = invocation?.runId ?? runtime.activeRunId
+    const userExitReason =
+      envelope.type === 'invocation.exited'
+        ? this.findUserInitiatedContinuationClearReason(String(envelope.invocationId), envelope.seq)
+        : undefined
+    const terminalStatus = userExitReason !== undefined ? 'terminated' : 'stale'
+    const terminalEventKind =
+      userExitReason !== undefined ? 'runtime.terminated' : 'runtime.stale'
+    const terminalReason =
+      userExitReason !== undefined ? 'user_initiated_session_end' : 'broker_invocation_terminal'
     if (runtime.activeRunId !== undefined) {
       const activeRun = this.db.runs.getByRunId(runtime.activeRunId)
       if (activeRun && isActiveBrokerRun(activeRun)) {
@@ -1251,19 +1261,24 @@ export class HarnessBrokerController {
           completedAt: now,
           updatedAt: now,
           errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-          errorMessage: `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
+          errorMessage:
+            userExitReason !== undefined
+              ? `broker invocation ${String(envelope.invocationId)} ended by user request (${userExitReason})`
+              : `broker invocation ${String(envelope.invocationId)} reached terminal state ${envelope.type}`,
         })
       }
       this.db.runtimes.updateRunId(runtimeId, undefined, now)
     }
     this.db.runtimes.update(runtimeId, {
-      status: 'stale',
+      status: terminalStatus,
       lastActivityAt: now,
       updatedAt: now,
       runtimeStateJson: {
         ...(runtime.runtimeStateJson ?? {}),
-        status: 'stale',
+        status: terminalStatus,
         updatedAt: now,
+        terminalReason,
+        ...(userExitReason !== undefined ? { userExitReason } : {}),
         terminalInvocation: {
           invocationId: String(envelope.invocationId),
           eventType: envelope.type,
@@ -1273,7 +1288,7 @@ export class HarnessBrokerController {
     })
 
     if (!result.idempotent) {
-      appendHrcEvent(this.db, 'runtime.stale', {
+      appendHrcEvent(this.db, terminalEventKind, {
         ts: now,
         hostSessionId: runtime.hostSessionId,
         scopeRef: runtime.scopeRef,
@@ -1285,7 +1300,8 @@ export class HarnessBrokerController {
           ? { transport: runtime.transport }
           : {}),
         payload: {
-          reason: 'broker_invocation_terminal',
+          reason: terminalReason,
+          ...(userExitReason !== undefined ? { userExitReason } : {}),
           invocationId: String(envelope.invocationId),
           eventType: envelope.type,
           seq: envelope.seq,
@@ -1305,6 +1321,24 @@ export class HarnessBrokerController {
         })
       })
     }
+  }
+
+  private findUserInitiatedContinuationClearReason(
+    invocationId: string,
+    beforeSeq: number
+  ): string | undefined {
+    const row = this.db.sqlite
+      .query<{ reason: string | null }, [string, number]>(
+        `SELECT json_extract(broker_event_json, '$.reason') AS reason
+           FROM broker_invocation_events
+          WHERE invocation_id = ? AND type = 'continuation.cleared' AND seq < ?
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, beforeSeq)
+    return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
+      ? row.reason
+      : undefined
   }
 
   private handleBrokerClose(runtimeId: string, error: Error): void {

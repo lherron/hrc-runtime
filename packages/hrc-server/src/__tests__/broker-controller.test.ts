@@ -482,6 +482,52 @@ describe('HarnessBrokerController', () => {
     expect(fake.callOrder).toContain('close')
   })
 
+  it('marks a runtime terminated when a user-ended continuation exits', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+    })
+
+    const started = await controller.start(makeStartInput())
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'continuation.cleared',
+        8,
+        { reason: 'prompt_input_exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    fake.events.push(
+      envelope(
+        'invocation.exited',
+        9,
+        { exitCode: 0, signal: null },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    await tick()
+
+    const runtime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+    expect(runtime?.status).toBe('terminated')
+    expect(runtime?.runtimeStateJson?.['terminalReason']).toBe('user_initiated_session_end')
+    expect(runtime?.runtimeStateJson?.['userExitReason']).toBe('prompt_input_exit')
+    expect(runtime?.runtimeStateJson?.['terminalInvocation']).toEqual({
+      invocationId: 'invocation_w2',
+      eventType: 'invocation.exited',
+      seq: 9,
+    })
+
+    const runtimeEvents = fixture.db.hrcEvents.listFromHrcSeq(1, { runtimeId: 'runtime_w2' })
+    expect(runtimeEvents.some((event) => event.eventKind === 'runtime.terminated')).toBe(true)
+    expect(runtimeEvents.some((event) => event.eventKind === 'runtime.stale')).toBe(false)
+    expect(fake.callOrder).toContain('close')
+  })
+
   it('default-denies and persists permission decisions when no request channel exists', async () => {
     const fake = new FakeBrokerClient()
     const controller = new HarnessBrokerController({

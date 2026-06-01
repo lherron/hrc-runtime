@@ -120,6 +120,11 @@ function metadataHasClaudeTabRole(metadata: unknown, projectId?: string | undefi
   return metadataProject === undefined || metadataProject === projectId
 }
 
+function unwrapGhostmuxMetadata(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  return isRecord(value['data']) ? value['data'] : value
+}
+
 function isMissingSurfaceError(stderr: string): boolean {
   const normalized = stderr.toLowerCase()
   return (
@@ -300,17 +305,19 @@ export class GhostmuxManager {
   }
 
   private async getMetadata(surfaceId: string, window = false): Promise<unknown> {
-    return parseJson(
-      (
-        await this.exec([
-          'metadata',
-          'get',
-          '-t',
-          surfaceId,
-          ...(window ? ['--window'] : []),
-          '--json',
-        ])
-      ).stdout
+    return unwrapGhostmuxMetadata(
+      parseJson(
+        (
+          await this.exec([
+            'metadata',
+            'get',
+            '-t',
+            surfaceId,
+            ...(window ? ['--window'] : []),
+            '--json',
+          ])
+        ).stdout
+      )
     )
   }
 

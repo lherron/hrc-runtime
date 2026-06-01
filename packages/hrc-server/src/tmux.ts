@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   listInheritedEnvKeysToScrub,
@@ -47,6 +48,7 @@ const MIN_SUPPORTED_TMUX_VERSION = {
 }
 
 const WINDOW_NAME = 'main'
+const SEND_KEYS_ENTER_DELAY_MS = 1_000
 
 // Match the metadata format we request: session_id, window_id, pane_id, session_name.
 // tmux separates the fields with the tab we pass in the -F string, but falls back to
@@ -300,6 +302,9 @@ export class TmuxManager {
 
   async sendKeys(paneId: string, keys: string): Promise<void> {
     await this.sendLiteral(paneId, keys)
+    // Match the broker's interactive tmux input path: give TUIs time to
+    // classify the literal paste before Enter arrives.
+    await delay(SEND_KEYS_ENTER_DELAY_MS)
     await this.sendEnter(paneId)
   }
 
