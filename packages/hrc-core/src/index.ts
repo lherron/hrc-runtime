@@ -82,6 +82,7 @@ export type {
   HrcHookBridgeConfig,
   HrcIoMode,
   HrcLifecycleEvent,
+  HrcLifecyclePolicyRecord,
   HrcLifecycleTransport,
   HrcLaunchArtifact,
   HrcLaunchPromptMaterial,

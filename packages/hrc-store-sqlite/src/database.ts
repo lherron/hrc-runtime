@@ -15,6 +15,7 @@ import {
   EventRepository,
   HrcLifecycleEventRepository,
   LaunchRepository,
+  LifecyclePolicyRepository,
   LocalBridgeRepository,
   PermissionDecisionRepository,
   RunRepository,
@@ -47,6 +48,7 @@ export type HrcDatabase = {
   activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
+  lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
   brokerInvocations: BrokerInvocationRepository
   brokerInvocationEvents: BrokerInvocationEventRepository
@@ -97,6 +99,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
+    lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),
     brokerInvocations: new BrokerInvocationRepository(sqlite),
     brokerInvocationEvents: new BrokerInvocationEventRepository(sqlite),

@@ -14,6 +14,7 @@ import {
   type HrcEventEnvelope,
   type HrcLaunchRecord,
   type HrcLifecycleEvent,
+  type HrcLifecyclePolicyRecord,
   type HrcLocalBridgeRecord,
   type HrcManagedSessionRecord,
   type HrcPermissionDecisionRecord,
@@ -170,6 +171,11 @@ type RuntimeRow = {
   plan_hash: string | null
   selected_profile_hash: string | null
   runtime_state_json: string | null
+  lifecycle_policy_hash: string | null
+  current_harness_generation: number | null
+  current_turn_attempt: number | null
+  lifecycle_terminal_reason: string | null
+  last_lifecycle_escalation_json: string | null
   created_at: string
   updated_at: string
 }
@@ -431,6 +437,11 @@ const RUNTIME_COLUMNS = `
   plan_hash,
   selected_profile_hash,
   runtime_state_json,
+  lifecycle_policy_hash,
+  current_harness_generation,
+  current_turn_attempt,
+  lifecycle_terminal_reason,
+  last_lifecycle_escalation_json,
   created_at,
   updated_at`
 
@@ -662,6 +673,11 @@ function mapRuntimeRow(row: RuntimeRow): HrcRuntimeSnapshot {
       row.runtime_state_json,
       'runtime_state_json'
     ),
+    lifecyclePolicyHash: row.lifecycle_policy_hash ?? undefined,
+    currentHarnessGeneration: row.current_harness_generation ?? undefined,
+    currentTurnAttempt: row.current_turn_attempt ?? undefined,
+    lifecycleTerminalReason: row.lifecycle_terminal_reason ?? undefined,
+    lastLifecycleEscalationJson: row.last_lifecycle_escalation_json ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1478,9 +1494,14 @@ export class RuntimeRepository {
           plan_hash,
           selected_profile_hash,
           runtime_state_json,
+          lifecycle_policy_hash,
+          current_harness_generation,
+          current_turn_attempt,
+          lifecycle_terminal_reason,
+          last_lifecycle_escalation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
       record.runtimeKind ?? 'harness',
@@ -1511,6 +1532,11 @@ export class RuntimeRepository {
       record.planHash ?? null,
       record.selectedProfileHash ?? null,
       serializeJson(record.runtimeStateJson),
+      record.lifecyclePolicyHash ?? null,
+      record.currentHarnessGeneration ?? null,
+      record.currentTurnAttempt ?? null,
+      record.lifecycleTerminalReason ?? null,
+      record.lastLifecycleEscalationJson ?? null,
       record.createdAt,
       record.updatedAt
     )
@@ -1638,6 +1664,21 @@ export class RuntimeRepository {
     }
     if (patch.runtimeStateJson !== undefined) {
       entries.push(['runtime_state_json', serializeJson(patch.runtimeStateJson)])
+    }
+    if (patch.lifecyclePolicyHash !== undefined) {
+      entries.push(['lifecycle_policy_hash', patch.lifecyclePolicyHash ?? null])
+    }
+    if (patch.currentHarnessGeneration !== undefined) {
+      entries.push(['current_harness_generation', patch.currentHarnessGeneration ?? null])
+    }
+    if (patch.currentTurnAttempt !== undefined) {
+      entries.push(['current_turn_attempt', patch.currentTurnAttempt ?? null])
+    }
+    if (patch.lifecycleTerminalReason !== undefined) {
+      entries.push(['lifecycle_terminal_reason', patch.lifecycleTerminalReason ?? null])
+    }
+    if (patch.lastLifecycleEscalationJson !== undefined) {
+      entries.push(['last_lifecycle_escalation_json', patch.lastLifecycleEscalationJson ?? null])
     }
     if (patch.createdAt !== undefined) {
       entries.push(['created_at', patch.createdAt])
@@ -3064,6 +3105,14 @@ export class RuntimeBufferRepository {
 // harness-broker controller (W4) and event mapper (W3A) are the only callers,
 // and they are unreachable unless HRC_HEADLESS_CODEX_BROKER_ENABLED is set.
 
+type LifecyclePolicyRow = {
+  policy_id: string
+  lifecycle_policy_hash: string
+  canonical_policy_json: string
+  schema_version: string
+  created_at: string
+}
+
 type CompiledRuntimePlanRow = {
   plan_hash: string
   compile_id: string
@@ -3120,6 +3169,11 @@ type BrokerInvocationRow = {
   start_request_projection_json: string | null
   last_event_seq: number | null
   owner_server_instance_id: string | null
+  lifecycle_policy_hash: string | null
+  current_harness_generation: number | null
+  current_turn_attempt: number | null
+  lifecycle_terminal_reason: string | null
+  last_lifecycle_escalation_json: string | null
   created_at: string
   updated_at: string
 }
@@ -3151,8 +3205,11 @@ type RuntimeArtifactRow = {
 }
 
 type PermissionDecisionRow = {
+  permission_identity_key: string
   permission_request_id: string
   invocation_id: string
+  harness_generation: number | null
+  turn_attempt: number | null
   runtime_id: string
   run_id: string | null
   kind: string
@@ -3164,6 +3221,13 @@ type PermissionDecisionRow = {
   requested_at: string
   decided_at: string
 }
+
+const LIFECYCLE_POLICY_COLUMNS = `
+  policy_id,
+  lifecycle_policy_hash,
+  canonical_policy_json,
+  schema_version,
+  created_at`
 
 const COMPILED_RUNTIME_PLAN_COLUMNS = `
   plan_hash,
@@ -3219,6 +3283,11 @@ const BROKER_INVOCATION_COLUMNS = `
   start_request_projection_json,
   last_event_seq,
   owner_server_instance_id,
+  lifecycle_policy_hash,
+  current_harness_generation,
+  current_turn_attempt,
+  lifecycle_terminal_reason,
+  last_lifecycle_escalation_json,
   created_at,
   updated_at`
 
@@ -3247,8 +3316,11 @@ const RUNTIME_ARTIFACT_COLUMNS = `
   created_at`
 
 const PERMISSION_DECISION_COLUMNS = `
+  permission_identity_key,
   permission_request_id,
   invocation_id,
+  harness_generation,
+  turn_attempt,
   runtime_id,
   run_id,
   kind,
@@ -3259,6 +3331,16 @@ const PERMISSION_DECISION_COLUMNS = `
   policy_json,
   requested_at,
   decided_at`
+
+function mapLifecyclePolicyRow(row: LifecyclePolicyRow): HrcLifecyclePolicyRecord {
+  return {
+    policyId: row.policy_id,
+    lifecyclePolicyHash: row.lifecycle_policy_hash,
+    canonicalPolicyJson: row.canonical_policy_json,
+    schemaVersion: row.schema_version,
+    createdAt: row.created_at,
+  }
+}
 
 function mapCompiledRuntimePlanRow(row: CompiledRuntimePlanRow): HrcCompiledRuntimePlanRecord {
   return {
@@ -3331,6 +3413,19 @@ function mapBrokerInvocationRow(row: BrokerInvocationRow): HrcBrokerInvocationRe
     ...(row.owner_server_instance_id !== null
       ? { ownerServerInstanceId: row.owner_server_instance_id }
       : {}),
+    ...(row.lifecycle_policy_hash !== null
+      ? { lifecyclePolicyHash: row.lifecycle_policy_hash }
+      : {}),
+    ...(row.current_harness_generation !== null
+      ? { currentHarnessGeneration: row.current_harness_generation }
+      : {}),
+    ...(row.current_turn_attempt !== null ? { currentTurnAttempt: row.current_turn_attempt } : {}),
+    ...(row.lifecycle_terminal_reason !== null
+      ? { lifecycleTerminalReason: row.lifecycle_terminal_reason }
+      : {}),
+    ...(row.last_lifecycle_escalation_json !== null
+      ? { lastLifecycleEscalationJson: row.last_lifecycle_escalation_json }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -3370,8 +3465,11 @@ function mapRuntimeArtifactRow(row: RuntimeArtifactRow): HrcRuntimeArtifactRecor
 
 function mapPermissionDecisionRow(row: PermissionDecisionRow): HrcPermissionDecisionRecord {
   return {
+    permissionIdentityKey: row.permission_identity_key,
     permissionRequestId: row.permission_request_id,
     invocationId: row.invocation_id,
+    ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
+    ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
     runtimeId: row.runtime_id,
     ...(row.run_id !== null ? { runId: row.run_id } : {}),
     kind: row.kind,
@@ -3382,6 +3480,47 @@ function mapPermissionDecisionRow(row: PermissionDecisionRow): HrcPermissionDeci
     policyJson: row.policy_json,
     requestedAt: row.requested_at,
     decidedAt: row.decided_at,
+  }
+}
+
+export class LifecyclePolicyRepository {
+  constructor(private readonly db: Database) {}
+
+  insert(record: HrcLifecyclePolicyRecord): HrcLifecyclePolicyRecord {
+    execute(
+      this.db,
+      `
+        INSERT INTO lifecycle_policies (
+          policy_id,
+          lifecycle_policy_hash,
+          canonical_policy_json,
+          schema_version,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(lifecycle_policy_hash) DO NOTHING
+      `,
+      record.policyId,
+      record.lifecyclePolicyHash,
+      record.canonicalPolicyJson,
+      record.schemaVersion,
+      record.createdAt
+    )
+
+    return requireRecord(
+      this.getByPolicyHash(record.lifecyclePolicyHash),
+      `failed to reload lifecycle policy ${record.lifecyclePolicyHash}`
+    )
+  }
+
+  getByPolicyHash(lifecyclePolicyHash: string): HrcLifecyclePolicyRecord | null {
+    const row = this.db
+      .query<LifecyclePolicyRow, [string]>(
+        `SELECT ${LIFECYCLE_POLICY_COLUMNS} FROM lifecycle_policies
+          WHERE lifecycle_policy_hash = ?`
+      )
+      .get(lifecyclePolicyHash)
+
+    return row ? mapLifecyclePolicyRow(row) : null
   }
 }
 
@@ -3614,9 +3753,14 @@ export class BrokerInvocationRepository {
           start_request_projection_json,
           last_event_seq,
           owner_server_instance_id,
+          lifecycle_policy_hash,
+          current_harness_generation,
+          current_turn_attempt,
+          lifecycle_terminal_reason,
+          last_lifecycle_escalation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.invocationId,
       record.operationId,
@@ -3637,6 +3781,11 @@ export class BrokerInvocationRepository {
       record.startRequestProjectionJson ?? null,
       record.lastEventSeq ?? null,
       record.ownerServerInstanceId ?? null,
+      record.lifecyclePolicyHash ?? null,
+      record.currentHarnessGeneration ?? null,
+      record.currentTurnAttempt ?? null,
+      record.lifecycleTerminalReason ?? null,
+      record.lastLifecycleEscalationJson ?? null,
       record.createdAt,
       record.updatedAt
     )
@@ -3703,6 +3852,16 @@ export class BrokerInvocationRepository {
       entries.push(['last_event_seq', patch.lastEventSeq ?? null])
     if (patch.ownerServerInstanceId !== undefined)
       entries.push(['owner_server_instance_id', patch.ownerServerInstanceId ?? null])
+    if (patch.lifecyclePolicyHash !== undefined)
+      entries.push(['lifecycle_policy_hash', patch.lifecyclePolicyHash ?? null])
+    if (patch.currentHarnessGeneration !== undefined)
+      entries.push(['current_harness_generation', patch.currentHarnessGeneration ?? null])
+    if (patch.currentTurnAttempt !== undefined)
+      entries.push(['current_turn_attempt', patch.currentTurnAttempt ?? null])
+    if (patch.lifecycleTerminalReason !== undefined)
+      entries.push(['lifecycle_terminal_reason', patch.lifecycleTerminalReason ?? null])
+    if (patch.lastLifecycleEscalationJson !== undefined)
+      entries.push(['last_lifecycle_escalation_json', patch.lastLifecycleEscalationJson ?? null])
     if (patch.updatedAt !== undefined) entries.push(['updated_at', patch.updatedAt])
 
     if (entries.length === 0) {
@@ -3948,16 +4107,42 @@ export class RuntimeArtifactRepository {
   }
 }
 
+export function computePermissionIdentityKey(input: {
+  invocationId: string
+  harnessGeneration?: number | null | undefined
+  turnAttempt?: number | null | undefined
+  permissionRequestId: string
+}): string {
+  return JSON.stringify([
+    input.invocationId,
+    input.harnessGeneration ?? null,
+    input.turnAttempt ?? null,
+    input.permissionRequestId,
+  ])
+}
+
 export class PermissionDecisionRepository {
   constructor(private readonly db: Database) {}
 
   insert(record: HrcPermissionDecisionRecord): HrcPermissionDecisionRecord {
+    const permissionIdentityKey =
+      record.permissionIdentityKey ??
+      computePermissionIdentityKey({
+        invocationId: record.invocationId,
+        harnessGeneration: record.harnessGeneration,
+        turnAttempt: record.turnAttempt,
+        permissionRequestId: record.permissionRequestId,
+      })
+
     execute(
       this.db,
       `
         INSERT INTO permission_decisions (
+          permission_identity_key,
           permission_request_id,
           invocation_id,
+          harness_generation,
+          turn_attempt,
           runtime_id,
           run_id,
           kind,
@@ -3968,10 +4153,13 @@ export class PermissionDecisionRepository {
           policy_json,
           requested_at,
           decided_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
+      permissionIdentityKey,
       record.permissionRequestId,
       record.invocationId,
+      record.harnessGeneration ?? null,
+      record.turnAttempt ?? null,
       record.runtimeId,
       record.runId ?? null,
       record.kind,
@@ -3985,15 +4173,29 @@ export class PermissionDecisionRepository {
     )
 
     return requireRecord(
-      this.getByPermissionRequestId(record.permissionRequestId),
-      `failed to reload permission decision ${record.permissionRequestId}`
+      this.getByPermissionIdentityKey(permissionIdentityKey),
+      `failed to reload permission decision ${permissionIdentityKey}`
     )
+  }
+
+  getByPermissionIdentityKey(permissionIdentityKey: string): HrcPermissionDecisionRecord | null {
+    const row = this.db
+      .query<PermissionDecisionRow, [string]>(
+        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
+          WHERE permission_identity_key = ?`
+      )
+      .get(permissionIdentityKey)
+
+    return row ? mapPermissionDecisionRow(row) : null
   }
 
   getByPermissionRequestId(permissionRequestId: string): HrcPermissionDecisionRecord | null {
     const row = this.db
       .query<PermissionDecisionRow, [string]>(
-        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions WHERE permission_request_id = ?`
+        `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
+          WHERE permission_request_id = ?
+          ORDER BY requested_at ASC, permission_identity_key ASC
+          LIMIT 1`
       )
       .get(permissionRequestId)
 
@@ -4005,7 +4207,7 @@ export class PermissionDecisionRepository {
       .query<PermissionDecisionRow, [string]>(
         `SELECT ${PERMISSION_DECISION_COLUMNS} FROM permission_decisions
           WHERE invocation_id = ?
-          ORDER BY requested_at ASC, permission_request_id ASC`
+          ORDER BY requested_at ASC, permission_identity_key ASC`
       )
       .all(invocationId)
 

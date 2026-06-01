@@ -302,6 +302,11 @@ export type HrcRuntimeSnapshot = {
   selectedProfileHash?: string | undefined
   /** Opaque RuntimeState blob (runtime-state/v1). Validated at the hrc-server boundary. */
   runtimeStateJson?: Record<string, unknown> | undefined
+  lifecyclePolicyHash?: string | undefined
+  currentHarnessGeneration?: number | undefined
+  currentTurnAttempt?: number | undefined
+  lifecycleTerminalReason?: string | undefined
+  lastLifecycleEscalationJson?: string | undefined
   createdAt: string
   updatedAt: string
 }
@@ -456,6 +461,14 @@ export type HrcBrokerInvocationState =
 
 export type HrcBrokerEventProjectionStatus = 'pending' | 'applied' | 'duplicate' | 'failed' | string
 
+export type HrcLifecyclePolicyRecord = {
+  policyId: string
+  lifecyclePolicyHash: string
+  canonicalPolicyJson: string
+  schemaVersion: string
+  createdAt: string
+}
+
 export type HrcCompiledRuntimePlanRecord = {
   planHash: string
   compileId: string
@@ -512,6 +525,11 @@ export type HrcBrokerInvocationRecord = {
   startRequestProjectionJson?: string | undefined
   lastEventSeq?: number | undefined
   ownerServerInstanceId?: string | undefined
+  lifecyclePolicyHash?: string | undefined
+  currentHarnessGeneration?: number | undefined
+  currentTurnAttempt?: number | undefined
+  lifecycleTerminalReason?: string | undefined
+  lastLifecycleEscalationJson?: string | undefined
   createdAt: string
   updatedAt: string
 }
@@ -544,8 +562,11 @@ export type HrcRuntimeArtifactRecord = {
 }
 
 export type HrcPermissionDecisionRecord = {
+  permissionIdentityKey?: string | undefined
   permissionRequestId: string
   invocationId: string
+  harnessGeneration?: number | undefined
+  turnAttempt?: number | undefined
   runtimeId: string
   runId?: string | undefined
   kind: string

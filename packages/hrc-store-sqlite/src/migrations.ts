@@ -1060,6 +1060,250 @@ const runsDispatchedInputIdMigration: HrcMigration = {
   },
 }
 
+const lifecyclePolicyAuditMigration: HrcMigration = {
+  id: '0019_lifecycle_policy_audit',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lifecycle_policies (
+        policy_id TEXT NOT NULL,
+        lifecycle_policy_hash TEXT PRIMARY KEY,
+        canonical_policy_json TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_lifecycle_policies_policy_id
+        ON lifecycle_policies(policy_id);
+    `)
+
+    const invocationColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(broker_invocations)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!invocationColumns.has('lifecycle_policy_hash')) {
+      db.exec('ALTER TABLE broker_invocations ADD COLUMN lifecycle_policy_hash TEXT')
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_lifecycle_policy_hash
+        ON broker_invocations(lifecycle_policy_hash);
+    `)
+  },
+}
+
+const runtimeLifecycleStateMigration: HrcMigration = {
+  id: '0020_runtime_lifecycle_state',
+  apply(db) {
+    const additions: Array<[column: string, type: string]> = [
+      ['lifecycle_policy_hash', 'TEXT'],
+      ['current_harness_generation', 'INTEGER'],
+      ['current_turn_attempt', 'INTEGER'],
+      ['lifecycle_terminal_reason', 'TEXT'],
+      ['last_lifecycle_escalation_json', 'TEXT'],
+    ]
+
+    for (const table of ['runtimes', 'broker_invocations']) {
+      const columns = new Set(
+        db
+          .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+          .all()
+          .map((row) => row.name)
+      )
+      for (const [column, type] of additions) {
+        if (!columns.has(column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+        }
+      }
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtimes_lifecycle_policy_hash
+        ON runtimes(lifecycle_policy_hash);
+
+      CREATE INDEX IF NOT EXISTS idx_runtimes_lifecycle_current
+        ON runtimes(current_harness_generation, current_turn_attempt);
+
+      CREATE INDEX IF NOT EXISTS idx_broker_invocations_lifecycle_current
+        ON broker_invocations(current_harness_generation, current_turn_attempt);
+    `)
+  },
+}
+
+function computeMigrationPermissionIdentityKey(input: {
+  invocationId: string
+  harnessGeneration?: number | null | undefined
+  turnAttempt?: number | null | undefined
+  permissionRequestId: string
+}): string {
+  return JSON.stringify([
+    input.invocationId,
+    input.harnessGeneration ?? null,
+    input.turnAttempt ?? null,
+    input.permissionRequestId,
+  ])
+}
+
+const permissionIdentityMigration: HrcMigration = {
+  id: '0021_permission_identity',
+  apply(db) {
+    const columns = db
+      .query<{ name: string; pk: number }, []>('PRAGMA table_info(permission_decisions)')
+      .all()
+    const hasIdentityKey = columns.some((row) => row.name === 'permission_identity_key')
+    const identityKeyIsPrimary = columns.some(
+      (row) => row.name === 'permission_identity_key' && row.pk > 0
+    )
+
+    if (!hasIdentityKey || !identityKeyIsPrimary) {
+      db.exec('ALTER TABLE permission_decisions RENAME TO permission_decisions_legacy_0021')
+      db.exec(`
+        CREATE TABLE permission_decisions (
+          permission_identity_key TEXT PRIMARY KEY,
+          permission_request_id TEXT NOT NULL,
+          invocation_id TEXT NOT NULL,
+          harness_generation INTEGER,
+          turn_attempt INTEGER,
+          runtime_id TEXT NOT NULL,
+          run_id TEXT,
+          kind TEXT NOT NULL,
+          subject_display_json TEXT NOT NULL,
+          default_decision TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          decided_by TEXT NOT NULL,
+          policy_json TEXT NOT NULL,
+          requested_at TEXT NOT NULL,
+          decided_at TEXT NOT NULL,
+          UNIQUE (invocation_id, harness_generation, turn_attempt, permission_request_id)
+        );
+      `)
+
+      const legacyRows = db
+        .query<
+          {
+            permission_request_id: string
+            invocation_id: string
+            runtime_id: string
+            run_id: string | null
+            kind: string
+            subject_display_json: string
+            default_decision: string
+            decision: string
+            decided_by: string
+            policy_json: string
+            requested_at: string
+            decided_at: string
+          },
+          []
+        >(
+          `
+            SELECT
+              permission_request_id,
+              invocation_id,
+              runtime_id,
+              run_id,
+              kind,
+              subject_display_json,
+              default_decision,
+              decision,
+              decided_by,
+              policy_json,
+              requested_at,
+              decided_at
+            FROM permission_decisions_legacy_0021
+          `
+        )
+        .all()
+
+      const insert = db.prepare<
+        never,
+        [
+          string,
+          string,
+          string,
+          number | null,
+          number | null,
+          string,
+          string | null,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ]
+      >(`
+        INSERT INTO permission_decisions (
+          permission_identity_key,
+          permission_request_id,
+          invocation_id,
+          harness_generation,
+          turn_attempt,
+          runtime_id,
+          run_id,
+          kind,
+          subject_display_json,
+          default_decision,
+          decision,
+          decided_by,
+          policy_json,
+          requested_at,
+          decided_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+
+      for (const row of legacyRows) {
+        insert.run(
+          computeMigrationPermissionIdentityKey({
+            invocationId: row.invocation_id,
+            harnessGeneration: null,
+            turnAttempt: null,
+            permissionRequestId: row.permission_request_id,
+          }),
+          row.permission_request_id,
+          row.invocation_id,
+          null,
+          null,
+          row.runtime_id,
+          row.run_id,
+          row.kind,
+          row.subject_display_json,
+          row.default_decision,
+          row.decision,
+          row.decided_by,
+          row.policy_json,
+          row.requested_at,
+          row.decided_at
+        )
+      }
+
+      db.exec('DROP TABLE permission_decisions_legacy_0021')
+    }
+
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_permission_decisions_identity_tuple
+        ON permission_decisions(
+          invocation_id,
+          harness_generation,
+          turn_attempt,
+          permission_request_id
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_permission_decisions_permission_request_id
+        ON permission_decisions(permission_request_id);
+
+      CREATE INDEX IF NOT EXISTS idx_permission_decisions_invocation_id
+        ON permission_decisions(invocation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_permission_decisions_runtime_id
+        ON permission_decisions(runtime_id);
+    `)
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1079,6 +1323,9 @@ export const phase1Migrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
   runsDispatchedInputIdMigration,
+  lifecyclePolicyAuditMigration,
+  runtimeLifecycleStateMigration,
+  permissionIdentityMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
