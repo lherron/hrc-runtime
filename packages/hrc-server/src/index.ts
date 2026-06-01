@@ -5828,6 +5828,29 @@ class HrcServerInstance implements HrcServer {
       runtime.transport === 'tmux' &&
       !isRuntimeUnavailableStatus(runtime.status)
     ) {
+      // Precedence (T-01783 WS-D): a broker terminal event (harness.exited /
+      // invocation.exited, incl. the future idle-ttl retire) projected by WS-C
+      // is the authoritative classification. When the active invocation already
+      // carries a persisted lifecycle terminal reason, defer to it and propagate
+      // it onto the runtime — do NOT synthesize a generic stale/dead/orphan
+      // reason from raw pane/session liveness inspection below.
+      const lifecycleTerminalReason = findPersistedLifecycleTerminalReason(this.db, runtime)
+      if (lifecycleTerminalReason !== undefined) {
+        const session = requireSession(this.db, runtime.hostSessionId)
+        const event = markRuntimeStale(this.db, session, runtime, {
+          runtimeId: runtime.runtimeId,
+          reason: lifecycleTerminalReason,
+          classification: 'lifecycle_terminal',
+          invocationId: runtime.activeInvocationId ?? null,
+        })
+        this.notifyEvent(event)
+        this.db.runtimes.update(runtime.runtimeId, {
+          lifecycleTerminalReason,
+          updatedAt: timestamp(),
+        })
+        return requireKnownRuntime(this.db, runtime.runtimeId)
+      }
+
       const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
       if (!socketPath) {
         const session = requireSession(this.db, runtime.hostSessionId)
@@ -11383,6 +11406,29 @@ function findUserInitiatedContinuationClearReason(
   return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
     ? row.reason
     : undefined
+}
+
+/**
+ * Read the lifecycle terminal reason already projected onto a broker runtime's
+ * active invocation (WS-C persists this for terminal broker events such as
+ * `harness.exited` / `invocation.exited { reason: 'idle-ttl' }`).
+ *
+ * When present, the broker has authoritatively classified this runtime's
+ * termination; liveness/orphan reconciliation must DEFER to it rather than
+ * synthesize a generic stale/dead reason from pane/session inspection.
+ */
+function findPersistedLifecycleTerminalReason(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot
+): string | undefined {
+  if (runtime.controllerKind !== 'harness-broker') {
+    return undefined
+  }
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined) {
+    return undefined
+  }
+  return db.brokerInvocations.getByInvocationId(invocationId)?.lifecycleTerminalReason
 }
 
 function markRuntimeTerminatedAfterUserExit(
