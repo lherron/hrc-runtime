@@ -137,6 +137,7 @@ import {
   HarnessBrokerController,
 } from './broker/controller.js'
 import { BrokerEventMapper } from './broker/event-mapper.js'
+import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import {
   appendHrcEvent,
   createUserPromptPayload,
@@ -3110,6 +3111,10 @@ class HrcServerInstance implements HrcServer {
           flag: flagOptions.flagEnvName,
           selectedBy: 'decideInteractiveTmuxExecutionRoute',
         },
+        lifecyclePolicy: resolveLifecyclePolicyOverlay({
+          routeId: `interactive-broker:${compiled.profile.brokerDriver}`,
+          brokerRoute: true,
+        }),
       })
 
       if (!result.ok) {
@@ -3282,6 +3287,10 @@ class HrcServerInstance implements HrcServer {
           flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
           selectedBy: 'decideHeadlessExecutionRoute',
         },
+        lifecyclePolicy: resolveLifecyclePolicyOverlay({
+          routeId: `headless-broker:${compiled.profile.brokerDriver}`,
+          brokerRoute: true,
+        }),
       })
 
       if (!result.ok) {

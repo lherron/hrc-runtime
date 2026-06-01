@@ -19,14 +19,20 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import {
+  CONSERVATIVE_LIFECYCLE_CAPABILITIES,
+  canonicalLifecyclePolicyJson,
+} from 'spaces-harness-broker-protocol'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import type {
   BrokerHealthResponse,
   BrokerHelloResponse,
+  BrokerLifecyclePolicyOverlay,
   DriverSummary,
   InputPolicy,
   InvocationCapabilities,
+  InvocationLifecycleCapabilities,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
   InvocationId,
@@ -52,6 +58,7 @@ import type {
 
 import { appendHrcEvent } from '../hrc-event-helper'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
+import { preflightLifecyclePolicyCapabilities } from './lifecycle-overlay'
 
 const BROKER_PROTOCOL_VERSION = 'harness-broker/0.1'
 const BROKER_TRANSPORT = 'stdio-jsonrpc-ndjson'
@@ -65,12 +72,23 @@ export type BrokerControllerLogger = {
   error?: (message: string, fields?: Record<string, unknown>) => void
 }
 
+/**
+ * The broker client's dispatch-options form. Mirrors
+ * spaces-harness-broker-client's InvocationStartDispatchOptions: the broker
+ * lifecycle overlay rides ONLY here, never inside the start request.
+ */
+export type BrokerDispatchOptions = {
+  dispatchEnv?: Record<string, string> | undefined
+  runtime?: InvocationRuntimeContext | undefined
+  lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
+}
+
 export type BrokerClientLike = {
   hello(req: Parameters<BrokerClient['hello']>[0]): Promise<BrokerHelloResponse>
   health(req?: Parameters<BrokerClient['health']>[0]): Promise<BrokerHealthResponse>
   startInvocationFromRequest(
     request: InvocationStartRequest,
-    dispatchEnv?: Record<string, string>,
+    dispatchEnvOrOptions?: Record<string, string> | BrokerDispatchOptions,
     runtime?: InvocationRuntimeContext
   ): Promise<{
     invocationId: string
@@ -168,6 +186,13 @@ export type BrokerControllerStartInput = {
   dispatchEnv?: Record<string, string> | undefined
   routeDecision?: unknown
   brokerClient?: BrokerClientLike | undefined
+  /**
+   * Broker lifecycle policy overlay for this dispatch. Audit/dispatch material:
+   * it rides ONLY on the broker dispatch options and is persisted as audit
+   * evidence — it is NEVER folded into spec / start request / profile /
+   * startRequestHash (INV-14.4 compiler closure).
+   */
+  lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
 }
 
 export type BrokerControllerStartResult =
@@ -337,15 +362,35 @@ export class HarnessBrokerController {
         }
       }
 
+      // Capability preflight (advisory, fail-closed): the only overlay v1 ever
+      // materializes is the conservative default, which is trivially a subset of
+      // the route/profile lifecycle capabilities. This gate refuses to dispatch
+      // an uncertified idle-ttl/recycle-child/safe-retry overlay. Broker dispatch
+      // validation remains authoritative.
+      if (input.lifecyclePolicy) {
+        preflightLifecyclePolicyCapabilities(
+          input.lifecyclePolicy,
+          routeLifecycleCapabilities(input.profile)
+        )
+      }
+
       const tmuxAllocation = await this.allocateTmuxIfRequired(input)
       markPhase('broker-tmux-alloc')
       const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
       const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
-      const startResult = await client.startInvocationFromRequest(
-        input.startRequest,
-        input.dispatchEnv,
-        dispatchRuntime
-      )
+      // The lifecycle overlay rides ONLY on the dispatch options envelope —
+      // never on input.startRequest (INV-14.4 compiler closure).
+      const startResult = input.lifecyclePolicy
+        ? await client.startInvocationFromRequest(input.startRequest, {
+            dispatchEnv: input.dispatchEnv,
+            runtime: dispatchRuntime,
+            lifecyclePolicy: input.lifecyclePolicy,
+          })
+        : await client.startInvocationFromRequest(
+            input.startRequest,
+            input.dispatchEnv,
+            dispatchRuntime
+          )
       // Encompasses the driver's start() (e.g. codex's load-bearing paste-readiness
       // sleep + launch-command paste), so this is usually the largest broker phase.
       markPhase('broker-invocation-start')
@@ -716,6 +761,19 @@ export class HarnessBrokerController {
           })
         : undefined
 
+    // Persist the dispatched lifecycle overlay as AUDIT material (never compiler
+    // closure): record the canonical policy in lifecycle_policies and stamp the
+    // invocation's lifecycle_policy_hash. WS-B owns the DDL; we only call it.
+    if (input.lifecyclePolicy) {
+      this.db.lifecyclePolicies.insert({
+        policyId: input.lifecyclePolicy.policyId,
+        lifecyclePolicyHash: input.lifecyclePolicy.policyHash,
+        canonicalPolicyJson: canonicalLifecyclePolicyJson(input.lifecyclePolicy),
+        schemaVersion: input.lifecyclePolicy.schemaVersion,
+        createdAt: now,
+      })
+    }
+
     const invocation = this.db.brokerInvocations.insert({
       invocationId: String(identity.invocationId),
       operationId: String(identity.operationId),
@@ -731,6 +789,9 @@ export class HarnessBrokerController {
       specProjectionJson: JSON.stringify(input.startRequest.spec),
       startRequestProjectionJson: JSON.stringify(input.startRequest),
       ownerServerInstanceId: this.serverInstanceId,
+      ...(input.lifecyclePolicy
+        ? { lifecyclePolicyHash: input.lifecyclePolicy.policyHash }
+        : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -1480,6 +1541,29 @@ function runtimeStatusFromInvocationState(state: string): string {
 
 function isActiveBrokerRun(run: HrcRunRecord): boolean {
   return run.status === 'accepted' || run.status === 'started' || run.status === 'running'
+}
+
+/**
+ * The lifecycle capability baseline a dispatched overlay is preflighted against.
+ * In v1 no profile advertises a richer lifecycle capability set, so this falls
+ * back to the conservative baseline (keep-alive / none / none) that every
+ * certified driver supports. If a profile ever publishes explicit lifecycle
+ * capabilities, those take precedence.
+ */
+function routeLifecycleCapabilities(
+  profile: BrokerExecutionProfile
+): InvocationLifecycleCapabilities {
+  const lifecycle = profile.expectedCapabilities.lifecycle
+  if (lifecycle && Array.isArray(lifecycle.runtimeRetention)) {
+    return {
+      runtimeRetention: lifecycle.runtimeRetention,
+      harnessRecovery: lifecycle.harnessRecovery,
+      turnRetry: lifecycle.turnRetry,
+      generationFencing: lifecycle.generationFencing === 'required',
+      permissionCancellation: lifecycle.permissionCancellation === 'required',
+    }
+  }
+  return CONSERVATIVE_LIFECYCLE_CAPABILITIES
 }
 
 function isBrokerTmuxProfile(profile: BrokerExecutionProfile): boolean {
