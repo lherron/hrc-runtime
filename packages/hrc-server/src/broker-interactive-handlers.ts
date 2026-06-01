@@ -27,6 +27,7 @@ import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
+  decideBrokerDurableInteractiveRoute,
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxExecutionRoute,
   filterBrokerDispatchEnvForLockedEnv,
@@ -37,7 +38,7 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
-import { startAspcFacadeBrokerClient } from './option-resolvers.js'
+import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
   assertRuntimeNotBusy,
   isBrokerRuntimeQueueCapable,
@@ -48,6 +49,7 @@ import {
 import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import type { HrcServerOptions } from './server-types.js'
 import { json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch } from './startup-reconcile.js'
 import {
@@ -56,7 +58,6 @@ import {
   preflightBrokerIpcSocketPath,
 } from './tmux-socket.js'
 import { createTmuxManager } from './tmux.js'
-import type { HrcServerOptions } from './server-types.js'
 
 export async function handleHeadlessDispatchTurn(
   this: HrcServerInstanceForHandlers,
@@ -643,6 +644,17 @@ export async function startInteractiveTmuxBrokerRuntime(
       )
     }
 
+    const durableInteractiveRoute = decideBrokerDurableInteractiveRoute({
+      durableIpcEnabled: resolveBrokerDurableIpcEnabled(this.options),
+      endpointKind: 'unix-jsonrpc-ndjson',
+      interactionMode: 'interactive',
+    })
+    const brokerClient =
+      durableInteractiveRoute === 'durable-ipc' ? undefined : asBrokerClient(client)
+    if (durableInteractiveRoute === 'durable-ipc') {
+      await client.close().catch(() => undefined)
+    }
+
     handedOffToController = true
     const result = await this.getHarnessBrokerController().start({
       plan: compiled.plan,
@@ -652,11 +664,17 @@ export async function startInteractiveTmuxBrokerRuntime(
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
-      brokerClient: asBrokerClient(client),
+      ...(brokerClient ? { brokerClient } : {}),
       routeDecision: {
         route: 'broker',
         flag: flagOptions.flagEnvName,
         selectedBy: 'decideInteractiveTmuxExecutionRoute',
+        durableInteractiveRoute,
+        brokerTransport:
+          durableInteractiveRoute === 'durable-ipc'
+            ? 'unix-jsonrpc-ndjson'
+            : 'stdio-jsonrpc-ndjson',
+        durableRouteSelectedBy: 'decideBrokerDurableInteractiveRoute',
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({
         routeId: `interactive-broker:${compiled.profile.brokerDriver}`,
@@ -826,48 +844,66 @@ export function getHarnessBrokerController(
   }
 
   const mapper = new BrokerEventMapper({ db: this.db })
-  const tmuxAllocator: BrokerTmuxAllocator = {
-    allocate: async ({ runtimeId, brokerDriver, generation }) => {
-      const socketPath = getBrokerTmuxSocketPath(this.options, brokerDriver, runtimeId)
-      await mkdir(dirname(socketPath), { recursive: true })
-      const tmux = createTmuxManager({ socketPath })
-      await tmux.initialize()
-      // Allocate the runtime-owned tmux pane on its dedicated lease socket and
-      // hand the broker a narrow pane lease (it attaches to the pane, never
-      // owns the server). Session name is deterministic from runtimeId so
-      // restart reconcile can re-scan it (C-02889).
-      const sessionName = `hrc-${brokerDriver}-${runtimeId}`
-      const pane = await tmux.createLeaseSession(sessionName)
-      const lease = {
-        kind: 'tmux-pane' as const,
-        ownership: 'hrc' as const,
-        socketPath,
-        sessionId: pane.sessionId,
-        windowId: pane.windowId,
-        paneId: pane.paneId,
-        sessionName: pane.sessionName,
-        windowName: pane.windowName,
-        allowedOps: {
-          inspect: true as const,
-          sendInput: true as const,
-          sendInterrupt: true as const,
-          capture: true,
-          resize: false,
-        },
-      }
-      return {
-        socketPath,
-        allocatedAt: timestamp(),
-        lease,
-        generation,
-        sessionId: pane.sessionId,
-        windowId: pane.windowId,
-        paneId: pane.paneId,
-        sessionName: pane.sessionName,
-        windowName: pane.windowName,
-      }
-    },
+  const tmuxManagerFactory = this.brokerTmuxManagerFactory ?? createTmuxManager
+  const brokerClientFactories = {
+    ...(this.brokerClientFactory ? { brokerClientFactory: this.brokerClientFactory } : {}),
+    ...(this.brokerUnixClientFactory
+      ? { brokerUnixClientFactory: this.brokerUnixClientFactory }
+      : {}),
   }
+  const durableRoute = decideBrokerDurableInteractiveRoute({
+    durableIpcEnabled: resolveBrokerDurableIpcEnabled(this.options),
+    endpointKind: 'unix-jsonrpc-ndjson',
+    interactionMode: 'interactive',
+  })
+  const tmuxAllocator: BrokerTmuxAllocator =
+    durableRoute === 'durable-ipc'
+      ? createBrokerDurableTmuxAllocator(this.options, {
+          tmuxManagerFactory,
+          generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
+        })
+      : {
+          allocate: async ({ runtimeId, brokerDriver, generation }) => {
+            const socketPath = getBrokerTmuxSocketPath(this.options, brokerDriver, runtimeId)
+            await mkdir(dirname(socketPath), { recursive: true })
+            const tmux = tmuxManagerFactory({ socketPath })
+            await tmux.initialize()
+            // Allocate the runtime-owned tmux pane on its dedicated lease socket and
+            // hand the broker a narrow pane lease (it attaches to the pane, never
+            // owns the server). Session name is deterministic from runtimeId so
+            // restart reconcile can re-scan it (C-02889).
+            const sessionName = `hrc-${brokerDriver}-${runtimeId}`
+            const pane = await tmux.createLeaseSession(sessionName)
+            const lease = {
+              kind: 'tmux-pane' as const,
+              ownership: 'hrc' as const,
+              socketPath,
+              sessionId: pane.sessionId,
+              windowId: pane.windowId,
+              paneId: pane.paneId,
+              sessionName: pane.sessionName,
+              windowName: pane.windowName,
+              allowedOps: {
+                inspect: true as const,
+                sendInput: true as const,
+                sendInterrupt: true as const,
+                capture: true,
+                resize: false,
+              },
+            }
+            return {
+              socketPath,
+              allocatedAt: timestamp(),
+              lease,
+              generation,
+              sessionId: pane.sessionId,
+              windowId: pane.windowId,
+              paneId: pane.paneId,
+              sessionName: pane.sessionName,
+              windowName: pane.windowName,
+            }
+          },
+        }
   this.harnessBrokerController = new HarnessBrokerController({
     db: this.db,
     mapper: {
@@ -884,6 +920,7 @@ export function getHarnessBrokerController(
       },
     },
     tmuxAllocator,
+    ...brokerClientFactories,
     env: process.env,
     serverInstanceId: `hrc-server:${process.pid}`,
     logger: {

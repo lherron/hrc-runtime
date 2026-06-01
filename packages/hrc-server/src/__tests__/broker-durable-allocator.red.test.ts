@@ -38,9 +38,9 @@ import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   BrokerHelloResponse,
   InvocationEventEnvelope,
+  InvocationRuntimeContext,
   InvocationStartRequest,
   InvocationStartResponse,
-  InvocationRuntimeContext,
 } from 'spaces-harness-broker-protocol'
 
 import * as brokerInteractiveHandlers from '../broker-interactive-handlers'
@@ -113,7 +113,12 @@ class FakeWindowTmuxManager {
     return this.pane(input.sessionName, input.windowName, '@2', '%2')
   }
 
-  private pane(sessionName: string, windowName: string, windowId: string, paneId: string): PaneShape {
+  private pane(
+    sessionName: string,
+    windowName: string,
+    windowId: string,
+    paneId: string
+  ): PaneShape {
     return {
       socketPath: this.socketPath,
       sessionId: '$1',
@@ -205,7 +210,8 @@ describe('T-01812 Phase 3 — createBrokerDurableTmuxAllocator shape', () => {
     const allocator = createBrokerDurableTmuxAllocator(
       { runtimeRoot: dir },
       {
-        tmuxManagerFactory: (opts: { socketPath: string }) => new FakeWindowTmuxManager(opts.socketPath),
+        tmuxManagerFactory: (opts: { socketPath: string }) =>
+          new FakeWindowTmuxManager(opts.socketPath),
         generateAttachToken: () => 'tok',
         now: () => NOW,
       }
@@ -289,8 +295,10 @@ function fullInvocationCapabilities(): InvocationStartResponse['capabilities'] {
 
 class PushableEvents implements AsyncIterable<InvocationEventEnvelope> {
   close(): void {}
-  async *[Symbol.asyncIterator](): AsyncIterator<InvocationEventEnvelope> {
-    return
+  [Symbol.asyncIterator](): AsyncIterator<InvocationEventEnvelope> {
+    return {
+      next: async () => ({ done: true, value: undefined }),
+    }
   }
 }
 
@@ -298,7 +306,7 @@ class FakeDurableBrokerClient {
   readonly events = new PushableEvents()
   helloResponse: BrokerHelloResponse = {
     brokerInfo: { name: 'harness-broker', version: '0.1.1-test' },
-    protocolVersion: 'harness-broker/0.1',
+    protocolVersion: 'harness-broker/0.2',
     capabilities: {
       multiInvocation: false,
       transports: ['stdio-jsonrpc-ndjson', 'unix-jsonrpc-ndjson'],
@@ -337,7 +345,11 @@ class FakeDurableBrokerClient {
     response: InvocationStartResponse
     events: AsyncIterable<InvocationEventEnvelope>
   }> {
-    return { invocationId: this.startResponse.invocationId, response: this.startResponse, events: this.events }
+    return {
+      invocationId: this.startResponse.invocationId,
+      response: this.startResponse,
+      events: this.events,
+    }
   }
   async input(): Promise<{ inputId: string; accepted: boolean; disposition: 'started' }> {
     return { inputId: 'i', accepted: true, disposition: 'started' }

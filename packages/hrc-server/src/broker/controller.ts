@@ -63,11 +63,17 @@ import type {
 
 import { appendHrcEvent } from '../hrc-event-helper'
 import {
+  type ExpectedBrokerNegotiation,
   admitBrokerHello,
   admitStartedInvocation,
   preflightBrokerLifecyclePolicy,
 } from './capabilities'
-import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT } from './constants'
+import {
+  BROKER_PROTOCOL_VERSION,
+  BROKER_PROTOCOL_VERSION_V2,
+  BROKER_TRANSPORT,
+  BROKER_TRANSPORT_UNIX,
+} from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import {
   type BrokerAttachTokenRef,
@@ -478,14 +484,17 @@ export class HarnessBrokerController {
         this.handleBrokerClose(String(identity.runtimeId), error)
       })
 
+      const expectedNegotiation: ExpectedBrokerNegotiation = durableSocketPath
+        ? { protocolVersion: BROKER_PROTOCOL_VERSION_V2, transport: BROKER_TRANSPORT_UNIX }
+        : { protocolVersion: BROKER_PROTOCOL_VERSION, transport: BROKER_TRANSPORT }
       const hello = await client.hello({
         clientInfo: { name: 'hrc-server' },
-        protocolVersions: [BROKER_PROTOCOL_VERSION],
+        protocolVersions: [expectedNegotiation.protocolVersion],
         capabilities: { permissionRequests: true },
       })
       markPhase('broker-hello')
 
-      const admission = admitBrokerHello(input.profile, hello)
+      const admission = admitBrokerHello(input.profile, hello, expectedNegotiation)
       if (!admission.ok) {
         this.logger.warn?.('harness broker pre-start admission rejected', admission.detail)
         this.markBrokerClosing(String(identity.runtimeId), 'pre-start-admission-rejected')
@@ -1120,9 +1129,7 @@ export class HarnessBrokerController {
               : {}),
           },
           generation: tmuxAllocation.generation ?? identity.generation,
-          ...(tmuxAllocation.brokerCommand
-            ? { brokerCommand: tmuxAllocation.brokerCommand }
-            : {}),
+          ...(tmuxAllocation.brokerCommand ? { brokerCommand: tmuxAllocation.brokerCommand } : {}),
           ...(tmuxAllocation.brokerPid !== undefined
             ? { brokerPid: tmuxAllocation.brokerPid }
             : {}),
@@ -1155,6 +1162,9 @@ export class HarnessBrokerController {
         ownerServerInstanceId: this.serverInstanceId,
         ...durable,
       },
+      ...(tmuxAllocation?.brokerIpcSocketPath
+        ? { control: { mode: 'broker-ipc', brokerAttached: true } }
+        : {}),
       ...(isBrokerTmuxProfile(input.profile)
         ? {
             tmux: extractRuntimeStateTmux(
@@ -1235,7 +1245,9 @@ export class HarnessBrokerController {
       ...(allocation.attachTokenRef !== undefined
         ? { attachTokenRef: allocation.attachTokenRef }
         : {}),
-      ...(allocation.brokerCommand !== undefined ? { brokerCommand: allocation.brokerCommand } : {}),
+      ...(allocation.brokerCommand !== undefined
+        ? { brokerCommand: allocation.brokerCommand }
+        : {}),
       ...(allocation.brokerPid !== undefined ? { brokerPid: allocation.brokerPid } : {}),
       ...(allocation.brokerWindow !== undefined ? { brokerWindow: allocation.brokerWindow } : {}),
       ...(allocation.tuiWindow !== undefined ? { tuiWindow: allocation.tuiWindow } : {}),

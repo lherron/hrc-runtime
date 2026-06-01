@@ -9,7 +9,11 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import type { HarnessBrokerController } from './broker/controller.js'
+import type {
+  BrokerClientFactory,
+  BrokerUnixClientFactory,
+  HarnessBrokerController,
+} from './broker/controller.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { ServerContext } from './server-context.js'
 import type {
@@ -51,6 +55,10 @@ export type HrcServerInstanceForHandlers = {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   harnessBrokerController: HarnessBrokerController | undefined
+  brokerTmuxManagerFactory?: ((opts: { socketPath: string }) => ServerTmuxManager) | undefined
+  generateBrokerAttachToken?: (() => string) | undefined
+  brokerClientFactory?: BrokerClientFactory | undefined
+  brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
   readonly followSubscribers: Set<(event: HrcEventEnvelope | HrcLifecycleEvent) => void>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
   appendEvent: HandlerMethod
