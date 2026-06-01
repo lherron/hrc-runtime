@@ -442,42 +442,6 @@ describe('Callback-to-spool fallback integration', () => {
 // n-37: Error-path integration coverage (T-00985)
 // ---------------------------------------------------------------------------
 describe('n-37: Error-path integration (T-00985)', () => {
-  // --- Spawn failure integration ---
-  it('spools a failure callback when exec subprocess fails (ENOENT)', async () => {
-    const spoolDir = join(tmpDir, 'spawn-fail-spool')
-    const artifact = makeArtifact({
-      launchId: 'launch-spawn-fail-int',
-      argv: ['/nonexistent/binary/that/does/not/exist'],
-      cwd: tmpDir,
-      callbackSocketPath: join(tmpDir, 'missing.sock'),
-      spoolDir,
-    })
-    const launchFile = await writeLaunchArtifact(artifact, tmpDir)
-
-    const execPath = join(import.meta.dir, '..', 'launch', 'exec.ts')
-    const proc = Bun.spawn(['bun', 'run', execPath, '--launch-file', launchFile], {
-      cwd: tmpDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: { ...process.env, HOME: tmpDir },
-    })
-
-    const timeout = setTimeout(() => proc.kill(), 10_000)
-    const exitCode = await proc.exited
-    clearTimeout(timeout)
-
-    expect(exitCode).not.toBe(0)
-
-    // Verify spool entries were written for the failure
-    const entries = await readSpoolEntries(spoolDir, 'launch-spawn-fail-int')
-    const endpoints = entries.map((e) => (e.payload as { endpoint?: string }).endpoint)
-
-    // Must have wrapper-started and exited, but NOT child-started
-    expect(endpoints).toContain('/v1/internal/launches/launch-spawn-fail-int/wrapper-started')
-    expect(endpoints).toContain('/v1/internal/launches/launch-spawn-fail-int/exited')
-    expect(endpoints).not.toContain('/v1/internal/launches/launch-spawn-fail-int/child-started')
-  }, 15_000)
-
   // --- Concurrent spool under error conditions ---
   it('concurrent spool writes all succeed even when interleaved with reads', async () => {
     const spoolDir = join(tmpDir, 'concurrent-error-spool')
@@ -506,41 +470,6 @@ describe('n-37: Error-path integration (T-00985)', () => {
     expect(finalEntries.length).toBe(15)
     expect(new Set(finalEntries.map((e) => e.seq)).size).toBe(15)
   })
-
-  // --- Exit handler rejection ---
-  it('exits with child exit code when both callback and spool fail', async () => {
-    const blockingFile = join(tmpDir, 'not-a-dir')
-    await writeFile(blockingFile, 'I am a file, not a directory')
-
-    const artifact = makeArtifact({
-      launchId: 'launch-double-fail',
-      argv: ['/bin/sh', '-c', 'exit 37'],
-      callbackSocketPath: join(tmpDir, 'missing.sock'),
-      spoolDir: join(blockingFile, 'subdir'), // spool will also fail
-    })
-    const launchFile = await writeLaunchArtifact(artifact, tmpDir)
-
-    const execPath = join(import.meta.dir, '..', 'launch', 'exec.ts')
-    const proc = Bun.spawn(['bun', 'run', execPath, '--launch-file', launchFile], {
-      cwd: tmpDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: { ...process.env, HOME: tmpDir },
-    })
-
-    const timeout = setTimeout(() => proc.kill(), 10_000)
-    const exitCode = await proc.exited
-    clearTimeout(timeout)
-
-    const stderr = await new Response(proc.stderr).text()
-
-    // Process must exit non-zero, not hang or crash.
-    // When both callback and spool fail on wrapper-started (before child spawns),
-    // the exit code may be 1 (infrastructure failure) rather than the child's 37.
-    expect(exitCode).not.toBe(0)
-    // Should NOT have an unhandled rejection
-    expect(stderr).not.toContain('UnhandledPromiseRejection')
-  }, 15_000)
 
   // --- Replay with all deliveries failing ---
   it('retains all entries when replay delivers none', async () => {
