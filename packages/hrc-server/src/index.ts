@@ -149,7 +149,7 @@ import {
   deriveSemanticTurnUserPromptFromHookPayload,
   shouldSuppressDuplicateCodexInitialUserPrompt,
 } from './hrc-event-helper.js'
-import { readLaunchArtifact, readSpoolEntries, writeLaunchArtifact } from './launch/index.js'
+import { readLaunchArtifact, readSpoolEntries } from './launch/index.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
   OTLP_LOGS_PATH,
@@ -319,55 +319,6 @@ function redactForServerLog(value: unknown, key?: string): unknown {
   }
 
   return String(value)
-}
-
-function buildLaunchLogDetails(
-  launchArtifactPath: string,
-  artifact: HrcLaunchArtifact
-): Record<string, unknown> {
-  return {
-    launchId: artifact.launchId,
-    hostSessionId: artifact.hostSessionId,
-    generation: artifact.generation,
-    runtimeId: artifact.runtimeId,
-    ...(artifact.runId ? { runId: artifact.runId } : {}),
-    harness: artifact.harness,
-    provider: artifact.provider,
-    artifactPath: launchArtifactPath,
-    codexHome: artifact.env['CODEX_HOME'],
-    execution: {
-      argv: artifact.argv,
-      cwd: artifact.cwd,
-      env: artifact.env,
-      callbackSocketPath: artifact.callbackSocketPath,
-      spoolDir: artifact.spoolDir,
-      correlationEnv: artifact.correlationEnv,
-      ...(artifact.launchEnv ? { launchEnv: artifact.launchEnv } : {}),
-      ...(artifact.hookBridge ? { hookBridge: artifact.hookBridge } : {}),
-      ...(artifact.launchMode ? { launchMode: artifact.launchMode } : {}),
-      ...(artifact.codexAppServer ? { codexAppServer: artifact.codexAppServer } : {}),
-    },
-  }
-}
-
-function buildLaunchOtelConfig(
-  harness: HrcHarness,
-  launchId: string,
-  endpoint: string | undefined,
-  interactionMode?: 'headless' | 'interactive' | undefined
-): HrcLaunchArtifact['otel'] {
-  if (harness !== 'codex-cli' || !endpoint || interactionMode === 'headless') {
-    return undefined
-  }
-
-  const secret = randomUUID()
-  return {
-    transport: 'otlp-http-json',
-    endpoint,
-    authHeaderName: OTEL_AUTH_HEADER_NAME,
-    authHeaderValue: `${launchId}.${secret}`,
-    secret,
-  }
 }
 
 type LaunchLifecyclePayload = {
@@ -2219,8 +2170,8 @@ class HrcServerInstance implements HrcServer {
     // path BEFORE the headless/SDK branches. Without this they fall onto legacy
     // exec.ts (fresh conversation each turn) or the hard-failing SDK executor.
     // Normalizing to an interactive claude-code intent makes the predicates
-    // below route them to the broker branch (and NOT runSdkTurn /
-    // executeHeadlessCliTurn). Flag-gated so a disabled broker is unchanged.
+    // below route them to the broker branch (and NOT runSdkTurn / the retired
+    // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
     const intent =
       this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
         ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
@@ -2406,243 +2357,6 @@ class HrcServerInstance implements HrcServer {
       payload,
     })
     this.notifyEvent(event)
-  }
-
-  private async handleLegacyInteractiveTmuxDispatchTurn(
-    session: HrcSessionRecord,
-    dispatchIntent: HrcRuntimeIntent,
-    dispatchPrompt: string,
-    runId: string,
-    options: {
-      latestRuntime: HrcRuntimeSnapshot | null
-      ensureInteractiveRuntime: boolean
-    }
-  ): Promise<Response> {
-    const latestRuntime = options.latestRuntime
-    const ensureTmuxRuntime = shouldEnsureTmuxRuntimeForDispatch(
-      latestRuntime,
-      dispatchIntent,
-      options.ensureInteractiveRuntime
-    )
-    const runtime = ensureTmuxRuntime
-      ? await this.ensureRuntimeForSession(
-          session,
-          dispatchIntent,
-          selectEnsureRuntimeRestartStyle(latestRuntime, dispatchIntent)
-        )
-      : requireLatestRuntime(this.db, session.hostSessionId)
-    assertRuntimeNotBusy(this.db, runtime)
-
-    // If an interactive harness is already running in the pane, deliver the
-    // prompt as literal user input instead of injecting `bun run exec.ts`
-    // (which the running harness would otherwise eat as keystrokes). Mirrors
-    // the hrcchat dm path that uses sendLiteral against live tmux runtimes.
-    if (hasLiveInteractiveLaunch(this.db, runtime)) {
-      return await this.dispatchTurnViaLiteral(session, runtime, dispatchPrompt, runId)
-    }
-
-    const launchId = `launch-${randomUUID()}`
-    const now = timestamp()
-    const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const continuationForDispatch = runtime.continuation
-    const dispatchLaunchIntent =
-      dispatchPrompt.length > 0
-        ? { ...dispatchIntent, initialPrompt: dispatchPrompt }
-        : dispatchIntent
-    const cliInvocation = await buildDispatchInvocation(
-      dispatchLaunchIntent,
-      continuationForDispatch ? { continuation: continuationForDispatch } : undefined
-    )
-    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
-    let tmuxPane: TmuxPaneState | undefined
-    let ghosttySurface: GhostmuxSurfaceState | undefined
-    let agentchatTarget: string
-    let ghosttyEnv: Record<string, string> = {}
-    if (interactiveTransport === 'ghostty') {
-      ghosttySurface = requireGhosttySurface(runtime)
-      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
-      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
-    } else {
-      tmuxPane = requireTmuxPane(runtime)
-      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
-    }
-    const launchEnv = {
-      ...cliInvocation.env,
-      AGENTCHAT_TRANSPORT: interactiveTransport,
-      AGENTCHAT_TARGET: agentchatTarget,
-      ...ghosttyEnv,
-    }
-    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(
-      runtime.harness,
-      launchId,
-      this.otelEndpoint,
-      cliInvocation.interactionMode
-    )
-    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
-      launchId,
-      runtimeId: runtime.runtimeId,
-      generation: session.generation,
-    })
-    const launchArtifact = {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      runId,
-      harness: runtime.harness,
-      frontend: cliInvocation.frontend,
-      provider: runtime.provider,
-      argv: cliInvocation.argv,
-      env: artifactEnv,
-      cwd: cliInvocation.cwd,
-      callbackSocketPath: this.options.socketPath,
-      spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(artifactEnv),
-      ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
-      ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
-      ...(cliInvocation.codexAppServer ? { codexAppServer: cliInvocation.codexAppServer } : {}),
-      ...(launchOtel ? { otel: launchOtel } : {}),
-    } satisfies Parameters<typeof writeLaunchArtifact>[0]
-
-    await writeLaunchArtifact(launchArtifact, launchesDir)
-    writeServerLog(
-      'INFO',
-      'launch.dispatch.prepared',
-      buildLaunchLogDetails(launchArtifactPath, launchArtifact)
-    )
-
-    const run = this.db.runs.insert({
-      runId,
-      hostSessionId: session.hostSessionId,
-      runtimeId: runtime.runtimeId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      transport: interactiveTransport,
-      status: 'accepted',
-      acceptedAt: now,
-      updatedAt: now,
-    })
-    let launchCreated = false
-    try {
-      this.db.runtimes.update(runtime.runtimeId, {
-        activeRunId: run.runId,
-        launchId,
-        status: 'busy',
-        lastActivityAt: now,
-        updatedAt: now,
-      })
-
-      this.db.launches.insert({
-        launchId,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        runtimeId: runtime.runtimeId,
-        harness: runtime.harness,
-        provider: runtime.provider,
-        launchArtifactPath,
-        tmuxJson: runtime.tmuxJson,
-        surfaceJson: runtime.surfaceJson,
-        status: 'accepted',
-        createdAt: now,
-        updatedAt: now,
-      })
-      launchCreated = true
-
-      if (interactiveTransport === 'ghostty') {
-        if (!ghosttySurface) {
-          throw new Error('missing Ghostty surface for Ghostty dispatch')
-        }
-        await this.ghostmux.sendKeys(
-          ghosttySurface.surfaceId,
-          buildLaunchCommand(launchArtifactPath)
-        )
-      } else {
-        if (!tmuxPane) {
-          throw new Error('missing tmux pane for tmux dispatch')
-        }
-        await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
-      }
-      writeServerLog('INFO', 'launch.dispatch.enqueued', {
-        launchId,
-        hostSessionId: session.hostSessionId,
-        runtimeId: runtime.runtimeId,
-        runId: run.runId,
-        ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
-        ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
-        launchArtifactPath,
-      })
-    } catch (error) {
-      rollbackFailedTmuxDispatch(this.db, runtime, run.runId, launchCreated ? launchId : undefined)
-      throw new HrcInternalError(`${interactiveTransport} dispatch failed before launch start`, {
-        runtimeId: runtime.runtimeId,
-        runId: run.runId,
-        launchId,
-        cause: error instanceof Error ? error.message : String(error),
-      })
-    }
-
-    const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runId,
-      runtimeId: runtime.runtimeId,
-      launchId,
-      transport: interactiveTransport,
-      payload: {
-        promptLength: dispatchPrompt.length,
-      },
-    })
-    this.notifyEvent(acceptedEvent)
-
-    const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runId,
-      runtimeId: runtime.runtimeId,
-      launchId,
-      transport: interactiveTransport,
-      payload: createUserPromptPayload(dispatchPrompt),
-    })
-    this.notifyEvent(userPromptEvent)
-
-    const startedAt = timestamp()
-    this.db.runs.update(runId, {
-      status: 'started',
-      startedAt,
-      updatedAt: startedAt,
-    })
-    this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
-
-    const startedEvent = appendHrcEvent(this.db, 'turn.started', {
-      ts: startedAt,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runId,
-      runtimeId: runtime.runtimeId,
-      launchId,
-      transport: interactiveTransport,
-    })
-    this.notifyEvent(startedEvent)
-
-    return json({
-      runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: interactiveTransport,
-      status: 'started',
-      supportsInFlightInput: false,
-    } satisfies DispatchTurnResponse)
   }
 
   /**
@@ -3351,15 +3065,25 @@ class HrcServerInstance implements HrcServer {
     return this.harnessBrokerController
   }
 
-  private async executeHeadlessBrokerStartTurn(
+  /**
+   * Provision a headless codex runtime THROUGH the HarnessBrokerController and
+   * return its HrcRuntimeSnapshot (controllerKind='harness-broker'). Compiles
+   * the headless plan via the ASPC facade and hands off to controller.start;
+   * the controller owns runtime allocation + controllerKind persistence, so
+   * callers MUST NOT createHeadlessRuntimeForSession beforehand.
+   *
+   * Shared by (T-01757, Wave C, A2):
+   *   - startRuntimeForSession's headless codex START path (replaces exec.ts;
+   *     parent acceptance: "Codex headless sessions start through HarnessBrokerController").
+   *   - executeHeadlessBrokerStartTurn (first-turn dispatch), which wraps the
+   *     returned snapshot in a DispatchTurnResponse.
+   */
+  private async startHeadlessBrokerRuntime(
     session: HrcSessionRecord,
     intent: HrcRuntimeIntent,
     prompt: string,
-    runId: string,
-    options: {
-      waitForCompletion?: boolean | undefined
-    }
-  ): Promise<Response> {
+    runId: string
+  ): Promise<HrcRuntimeSnapshot> {
     const turnIntent: HrcRuntimeIntent =
       prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
     const now = timestamp()
@@ -3428,34 +3152,48 @@ class HrcServerInstance implements HrcServer {
         })
       }
 
-      if (options.waitForCompletion === false) {
-        return json({
-          runId,
-          hostSessionId: session.hostSessionId,
-          generation: session.generation,
-          runtimeId: result.runtime.runtimeId,
-          transport: 'headless',
-          status: 'started',
-          supportsInFlightInput: true,
-        } satisfies DispatchTurnResponse)
-      }
-
-      await this.waitForHeadlessBrokerRunCompletion(runId, result.runtime.runtimeId)
-      return json({
-        runId,
-        hostSessionId: session.hostSessionId,
-        generation: session.generation,
-        runtimeId: result.runtime.runtimeId,
-        transport: 'headless',
-        status: 'completed',
-        supportsInFlightInput: true,
-      } satisfies DispatchTurnResponse)
+      return result.runtime
     } catch (error) {
       if (!handedOffToController) {
         await client.close().catch(() => undefined)
       }
       throw error
     }
+  }
+
+  private async executeHeadlessBrokerStartTurn(
+    session: HrcSessionRecord,
+    intent: HrcRuntimeIntent,
+    prompt: string,
+    runId: string,
+    options: {
+      waitForCompletion?: boolean | undefined
+    }
+  ): Promise<Response> {
+    const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId)
+
+    if (options.waitForCompletion === false) {
+      return json({
+        runId,
+        hostSessionId: session.hostSessionId,
+        generation: session.generation,
+        runtimeId: runtime.runtimeId,
+        transport: 'headless',
+        status: 'started',
+        supportsInFlightInput: true,
+      } satisfies DispatchTurnResponse)
+    }
+
+    await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'headless',
+      status: 'completed',
+      supportsInFlightInput: true,
+    } satisfies DispatchTurnResponse)
   }
 
   private async executeHeadlessBrokerInputTurn(
@@ -3899,135 +3637,6 @@ class HrcServerInstance implements HrcServer {
         result.result.error?.message ?? 'headless sdk turn failed',
         { runtimeId: runtime.runtimeId, runId }
       )
-    }
-
-    return json({
-      runId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'headless',
-      status: 'completed',
-      supportsInFlightInput: false,
-    } satisfies DispatchTurnResponse)
-  }
-
-  /**
-   * OpenAI headless: execute via exec.ts CLI subprocess.
-   * Continuation is persisted by the launch wrapper callback.
-   */
-  private async executeHeadlessCliTurn(
-    session: HrcSessionRecord,
-    runtime: HrcRuntimeSnapshot,
-    intent: HrcRuntimeIntent,
-    prompt: string,
-    runId: string,
-    continuation: HrcContinuationRef | undefined
-  ): Promise<Response> {
-    const launchId = `launch-${randomUUID()}`
-    const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const turnIntent: HrcRuntimeIntent =
-      prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
-    const cliInvocation = await buildDispatchInvocation(turnIntent, { continuation })
-    const launchCwd = await resolveDispatchCwd(cliInvocation.cwd, turnIntent)
-    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(
-      runtime.harness,
-      launchId,
-      this.otelEndpoint,
-      cliInvocation.interactionMode
-    )
-    const artifactEnv = injectArtifactIdentityEnv(cliInvocation.env, {
-      launchId,
-      runtimeId: runtime.runtimeId,
-      generation: session.generation,
-    })
-    const launchArtifact = {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      runId,
-      harness: runtime.harness,
-      frontend: cliInvocation.frontend,
-      provider: runtime.provider,
-      argv: cliInvocation.argv,
-      env: artifactEnv,
-      cwd: launchCwd,
-      callbackSocketPath: this.options.socketPath,
-      spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(artifactEnv),
-      ...(cliInvocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
-      interactionMode: cliInvocation.interactionMode,
-      ioMode: cliInvocation.ioMode,
-      ...(cliInvocation.prompts ? { prompts: cliInvocation.prompts } : {}),
-      ...(cliInvocation.codexAppServer ? { codexAppServer: cliInvocation.codexAppServer } : {}),
-      ...(launchOtel ? { otel: launchOtel } : {}),
-    } satisfies Parameters<typeof writeLaunchArtifact>[0]
-
-    await writeLaunchArtifact(launchArtifact, launchesDir)
-    writeServerLog(
-      'INFO',
-      'launch.dispatch.prepared',
-      buildLaunchLogDetails(launchArtifactPath, launchArtifact)
-    )
-
-    const now = timestamp()
-    this.db.runtimes.update(runtime.runtimeId, {
-      launchId,
-      updatedAt: now,
-    })
-    this.db.launches.insert({
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      launchArtifactPath,
-      continuation,
-      status: 'accepted',
-      createdAt: now,
-      updatedAt: now,
-    })
-
-    const proc = Bun.spawn(
-      [
-        process.execPath,
-        join(WORKSPACE_ROOT, 'packages/hrc-server/src/launch/exec.ts'),
-        '--launch-file',
-        launchArtifactPath,
-      ],
-      {
-        cwd: WORKSPACE_ROOT,
-        stdin: 'ignore',
-        stdout: 'ignore',
-        stderr: 'pipe',
-        env: process.env,
-      }
-    )
-    const stderrTextPromise = new Response(proc.stderr).text().catch(() => '')
-    const exitCode = await proc.exited
-    const stderrText = await stderrTextPromise
-    if (exitCode !== 0) {
-      throw new HrcRuntimeUnavailableError('headless turn dispatch failed', {
-        runtimeId: runtime.runtimeId,
-        runId,
-        launchId,
-        exitCode,
-        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
-      })
-    }
-
-    const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
-    const refreshedSession = requireSession(this.db, session.hostSessionId)
-    if (!(refreshedRuntime.continuation?.key ?? refreshedSession.continuation?.key)) {
-      throw new HrcRuntimeUnavailableError('headless turn dispatch did not persist continuation', {
-        runtimeId: runtime.runtimeId,
-        runId,
-        launchId,
-        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
-      })
     }
 
     return json({
@@ -6230,12 +5839,66 @@ class HrcServerInstance implements HrcServer {
         existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
       }
       const normalizedIntent = normalizeRuntimeProvisionIntent(intent)
-      const expectedInteractiveTransport = shouldUseGhosttyTransport(normalizedIntent)
-        ? 'ghostty'
-        : 'tmux'
       if (shouldUseHeadlessTransport(intent)) {
         const now = timestamp()
         this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
+
+        // T-01757 (Wave C, A2): codex headless START provisions THROUGH the
+        // HarnessBrokerController (parent acceptance: "Codex headless sessions
+        // start through HarnessBrokerController") — never exec.ts. SDK start
+        // still hard-fails; legacy-exec still fails closed.
+        const headlessRoute = decideHeadlessExecutionRoute(intent, {
+          brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+        })
+        if (headlessRoute === 'broker') {
+          const reusableBrokerRuntime = getReusableHeadlessRuntimeForSession(
+            this.db,
+            session.hostSessionId,
+            intent.harness.provider,
+            intent.harness.id
+          )
+          // Idempotent reuse ONLY for a real broker headless runtime that has a
+          // continuation. A legacy (non-broker) or continuation-less runtime is
+          // staled + reprovisioned through the broker, never returned as-is.
+          if (
+            reusableBrokerRuntime &&
+            reusableBrokerRuntime.controllerKind === 'harness-broker' &&
+            !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
+            (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
+          ) {
+            return reusableBrokerRuntime
+          }
+          if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
+            this.markRuntimeStaleForBrokerReprovision(session, reusableBrokerRuntime, {
+              reason: 'headless-broker-start-reprovision',
+              route: 'headless-broker',
+            })
+          }
+
+          // The broker controller owns runtime allocation — do NOT pre-create a
+          // runtime record here. Pass the RAW intent (not normalizedIntent): the
+          // broker headless plan needs interactive:false; normalizeRuntimeProvisionIntent
+          // flips headless intents to interactive:true for tmux provisioning,
+          // which would compile the broker plan in interactive mode.
+          const startRunId = `run-${randomUUID()}`
+          const initialPrompt = intent.initialPrompt ?? ''
+          const brokerRuntime = await this.startHeadlessBrokerRuntime(
+            session,
+            intent,
+            initialPrompt,
+            startRunId
+          )
+          // Explicit start WITH an initial prompt: wait for the startup turn to
+          // complete (continuation established) via broker events, as the old
+          // exec.ts start did. With NO initial user turn there is no run to wait
+          // on — return once the controller yields the runtime.
+          if (initialPrompt.length > 0) {
+            await this.waitForHeadlessBrokerRunCompletion(startRunId, brokerRuntime.runtimeId)
+          }
+          return requireRuntime(this.db, brokerRuntime.runtimeId)
+        }
+
+        // SDK (anthropic) start hard-fails; legacy-exec start fails closed.
         const reusableRuntime = getReusableHeadlessRuntimeForSession(
           this.db,
           session.hostSessionId,
@@ -6276,6 +5939,8 @@ class HrcServerInstance implements HrcServer {
           })
         }
 
+        // T-01757 (Wave C): the route is hardcoded 'broker', so the legacyTmux
+        // closure was dead. Dropped — only the broker executor is reachable.
         return await runInteractiveTmuxRoute('broker', {
           broker: async () =>
             this.startInteractiveTmuxBrokerRuntime(
@@ -6284,58 +5949,22 @@ class HrcServerInstance implements HrcServer {
               `run-${randomUUID()}`,
               interactiveBrokerOptions
             ),
-          legacyTmux: async () => {
-            throw new HrcRuntimeUnavailableError('interactive broker start did not select broker', {
-              hostSessionId: session.hostSessionId,
-              route: 'interactive-broker',
-              flag: interactiveBrokerOptions.flagEnvName,
-            })
-          },
         })
       }
 
-      if (!shouldUseHeadlessTransport(intent)) {
-        throw new HrcRuntimeUnavailableError('interactive runtime is not broker-admissible', {
-          hostSessionId: session.hostSessionId,
-          provider: normalizedIntent.harness.provider,
-          harnessId: normalizedIntent.harness.id,
-          route: 'interactive-broker',
-        })
-      }
-
-      if (
-        existingRuntime &&
-        !isRuntimeUnavailableStatus(existingRuntime.status) &&
-        !requiresHeadlessStart(intent) &&
-        restartStyle === 'reuse_pty' &&
-        existingRuntime.transport === expectedInteractiveTransport &&
-        (existingRuntime.status === 'busy' ||
-          existingRuntime.status === 'starting' ||
-          hasLiveInteractiveLaunch(this.db, existingRuntime))
-      ) {
-        return existingRuntime
-      }
-
-      if (
-        existingRuntime &&
-        !isRuntimeUnavailableStatus(existingRuntime.status) &&
-        requiresHeadlessStart(intent) &&
-        (existingRuntime.continuation?.key ?? session.continuation?.key)
-      ) {
-        return existingRuntime
-      }
-
-      const runtime = await this.ensureRuntimeForSession(session, normalizedIntent, restartStyle)
-      if (!requiresHeadlessStart(intent)) {
-        return await this.enqueueInteractiveStartLaunch(session, runtime, normalizedIntent)
-      }
-
-      const refreshedSession = requireSession(this.db, session.hostSessionId)
-      if (runtime.continuation?.key ?? refreshedSession.continuation?.key) {
-        return requireRuntime(this.db, runtime.runtimeId)
-      }
-
-      return await this.runHeadlessStartLaunch(refreshedSession, runtime, normalizedIntent)
+      // T-01757 (Wave C) reachability note: the headless branch above always
+      // returns; the interactive-broker block above always returns-or-throws.
+      // By here the intent is therefore NOT headless, so this guard ALWAYS
+      // throws RuntimeUnavailable for any non-headless, non-broker-admissible
+      // interactive intent. The legacy interactive/headless START fall-through
+      // that used to follow (ensureRuntimeForSession + enqueueInteractiveStartLaunch
+      // + a second runHeadlessStartLaunch) was provably unreachable and is removed.
+      throw new HrcRuntimeUnavailableError('interactive runtime is not broker-admissible', {
+        hostSessionId: session.hostSessionId,
+        provider: normalizedIntent.harness.provider,
+        harnessId: normalizedIntent.harness.id,
+        route: 'interactive-broker',
+      })
     })().finally(() => {
       this.runtimeStartOperations.delete(session.hostSessionId)
     })
@@ -6534,129 +6163,6 @@ class HrcServerInstance implements HrcServer {
     return await operation
   }
 
-  private async enqueueInteractiveStartLaunch(
-    session: HrcSessionRecord,
-    runtime: HrcRuntimeSnapshot,
-    intent: HrcRuntimeIntent
-  ): Promise<HrcRuntimeSnapshot> {
-    const invocation = await buildDispatchInvocation(intent)
-    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
-    let tmuxPane: TmuxPaneState | undefined
-    let ghosttySurface: GhostmuxSurfaceState | undefined
-    let agentchatTarget: string
-    let ghosttyEnv: Record<string, string> = {}
-    if (interactiveTransport === 'ghostty') {
-      ghosttySurface = requireGhosttySurface(runtime)
-      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
-      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
-    } else {
-      tmuxPane = requireTmuxPane(runtime)
-      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
-    }
-    const launchId = `launch-${randomUUID()}`
-    const now = timestamp()
-    const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const launchEnv = {
-      ...invocation.env,
-      AGENTCHAT_TRANSPORT: interactiveTransport,
-      AGENTCHAT_TARGET: agentchatTarget,
-      ...ghosttyEnv,
-    }
-    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(
-      runtime.harness,
-      launchId,
-      this.otelEndpoint,
-      invocation.interactionMode
-    )
-    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
-      launchId,
-      runtimeId: runtime.runtimeId,
-      generation: session.generation,
-    })
-    const launchArtifact = {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      frontend: invocation.frontend,
-      provider: runtime.provider,
-      argv: invocation.argv,
-      env: artifactEnv,
-      cwd: invocation.cwd,
-      callbackSocketPath: this.options.socketPath,
-      spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(artifactEnv),
-      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
-      interactionMode: invocation.interactionMode,
-      ioMode: invocation.ioMode,
-      lifecycleAction: 'start',
-      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
-      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
-      ...(launchOtel ? { otel: launchOtel } : {}),
-    } satisfies Parameters<typeof writeLaunchArtifact>[0]
-
-    await writeLaunchArtifact(launchArtifact, launchesDir)
-    this.db.launches.insert({
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      launchArtifactPath,
-      continuation: runtime.continuation,
-      tmuxJson: runtime.tmuxJson,
-      surfaceJson: runtime.surfaceJson,
-      status: 'accepted',
-      createdAt: now,
-      updatedAt: now,
-    })
-    this.db.runtimes.update(runtime.runtimeId, {
-      launchId,
-      status: 'starting',
-      continuation: runtime.continuation,
-      updatedAt: now,
-      lastActivityAt: now,
-    })
-
-    try {
-      if (interactiveTransport === 'ghostty') {
-        if (!ghosttySurface) {
-          throw new Error('missing Ghostty surface for Ghostty interactive start')
-        }
-        await this.ghostmux.sendKeys(
-          ghosttySurface.surfaceId,
-          buildLaunchCommand(launchArtifactPath)
-        )
-      } else {
-        if (!tmuxPane) {
-          throw new Error('missing tmux pane for tmux interactive start')
-        }
-        await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
-      }
-    } catch (error) {
-      rollbackFailedInteractiveStartLaunch(this.db, runtime, launchId)
-      throw new HrcInternalError('interactive start failed before launch start', {
-        runtimeId: runtime.runtimeId,
-        launchId,
-        cause: error instanceof Error ? error.message : String(error),
-      })
-    }
-
-    writeServerLog('INFO', 'launch.start.enqueued', {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      runtimeId: runtime.runtimeId,
-      ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
-      ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
-      launchArtifactPath,
-    })
-
-    return requireRuntime(this.db, runtime.runtimeId)
-  }
-
   private async runHeadlessStartLaunch(
     session: HrcSessionRecord,
     runtime: HrcRuntimeSnapshot,
@@ -6666,7 +6172,12 @@ class HrcServerInstance implements HrcServer {
       return await this.runHeadlessSdkStartLaunch(session, runtime, intent)
     }
 
-    return await this.runHeadlessCliStartLaunch(session, runtime, intent)
+    // T-01757 (Wave C, A2): codex headless START is broker-routed in
+    // startRuntimeForSession BEFORE reaching here. The only non-SDK case that
+    // still falls through is the 'legacy-exec' route (decideHeadlessExecutionRoute) —
+    // exec.ts is retired, so it fails closed (runtime_unavailable).
+    const runId = `run-${randomUUID()}`
+    this.failCliStartPath('runHeadlessStartLaunch', session, intent, runId, runtime.runtimeId)
   }
 
   /** Anthropic headless start: run an initial SDK turn to establish continuation. */
@@ -6781,117 +6292,33 @@ class HrcServerInstance implements HrcServer {
     return refreshedRuntime
   }
 
-  /** OpenAI headless start: run exec.ts CLI subprocess. */
-  private async runHeadlessCliStartLaunch(
+  private failCliStartPath(
+    caller: string,
     session: HrcSessionRecord,
-    runtime: HrcRuntimeSnapshot,
-    intent: HrcRuntimeIntent
-  ): Promise<HrcRuntimeSnapshot> {
-    const invocation = await buildDispatchInvocation(intent)
-    const launchId = `launch-${randomUUID()}`
-    const now = timestamp()
-    const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(
-      runtime.harness,
-      launchId,
-      this.otelEndpoint,
-      invocation.interactionMode
-    )
-    const artifactEnv = injectArtifactIdentityEnv(invocation.env, {
-      launchId,
-      runtimeId: runtime.runtimeId,
-      generation: session.generation,
-    })
-    const launchArtifact = {
-      launchId,
+    intent: HrcRuntimeIntent,
+    runId: string | undefined,
+    runtimeId?: string | undefined
+  ): never {
+    const detail = {
+      caller,
+      harnessId: intent.harness.id ?? null,
+      provider: intent.harness.provider,
+      scopeRef: session.scopeRef,
       hostSessionId: session.hostSessionId,
+      laneRef: session.laneRef,
       generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      frontend: invocation.frontend,
-      provider: runtime.provider,
-      argv: invocation.argv,
-      env: artifactEnv,
-      cwd: invocation.cwd,
-      callbackSocketPath: this.options.socketPath,
-      spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(artifactEnv),
-      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
-      interactionMode: invocation.interactionMode,
-      ioMode: invocation.ioMode,
-      lifecycleAction: 'start',
-      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
-      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
-      ...(launchOtel ? { otel: launchOtel } : {}),
-    } satisfies Parameters<typeof writeLaunchArtifact>[0]
-
-    await writeLaunchArtifact(launchArtifact, launchesDir)
-    this.db.launches.insert({
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      launchArtifactPath,
-      tmuxJson: runtime.tmuxJson,
-      status: 'accepted',
-      createdAt: now,
-      updatedAt: now,
-    })
-    this.db.runtimes.update(runtime.runtimeId, {
-      launchId,
-      status: 'starting',
-      updatedAt: now,
-      lastActivityAt: now,
-    })
-
-    writeServerLog(
-      'INFO',
-      'launch.start.prepared',
-      buildLaunchLogDetails(launchArtifactPath, launchArtifact)
-    )
-
-    const proc = Bun.spawn(
-      [
-        process.execPath,
-        join(WORKSPACE_ROOT, 'packages/hrc-server/src/launch/exec.ts'),
-        '--launch-file',
-        launchArtifactPath,
-      ],
-      {
-        cwd: WORKSPACE_ROOT,
-        stdin: 'ignore',
-        stdout: 'ignore',
-        stderr: 'pipe',
-        env: process.env,
-      }
-    )
-    const stderrTextPromise = new Response(proc.stderr).text().catch(() => '')
-    const exitCode = await proc.exited
-    const stderrText = await stderrTextPromise
-    if (exitCode !== 0) {
-      throw new HrcRuntimeUnavailableError('headless runtime start failed', {
-        runtimeId: runtime.runtimeId,
-        launchId,
-        exitCode,
-        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
-      })
+      ...(runId !== undefined ? { runId } : {}),
+      ...(runtimeId !== undefined ? { runtimeId } : {}),
     }
 
-    const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
-    const refreshedSession = requireSession(this.db, session.hostSessionId)
-    if (!(refreshedRuntime.continuation?.key ?? refreshedSession.continuation?.key)) {
-      throw new HrcRuntimeUnavailableError('headless runtime start did not persist continuation', {
-        runtimeId: runtime.runtimeId,
-        launchId,
-        provider: runtime.provider,
-        ...(stderrText ? { stderr: stderrText.slice(0, 500) } : {}),
-      })
-    }
+    writeServerLog('ERROR', 'cli_start.hard_fail', detail)
 
-    return refreshedRuntime
+    throw new HrcRuntimeUnavailableError(
+      `headless CLI start path retired for broker cutover: ${caller} harness.id=${
+        intent.harness.id ?? '<none>'
+      } harness.provider=${intent.harness.provider} scopeRef=${session.scopeRef} — provision via the first broker dispatch turn instead`,
+      detail
+    )
   }
 
   private createHeadlessRuntimeForSession(
@@ -6938,152 +6365,6 @@ class HrcServerInstance implements HrcServer {
     this.notifyEvent(event)
 
     return runtime
-  }
-
-  private async enqueueAttachLaunch(
-    session: HrcSessionRecord,
-    runtime: HrcRuntimeSnapshot,
-    continuation: { provider: HrcProvider; key?: string | undefined }
-  ): Promise<void> {
-    const latestIntent =
-      session.lastAppliedIntentJson ??
-      ({
-        placement: {
-          agentRoot: process.cwd(),
-          projectRoot: process.cwd(),
-          cwd: process.cwd(),
-          runMode: 'task',
-          bundle: { kind: 'compose', compose: [] },
-          dryRun: true,
-        },
-        harness: {
-          provider: runtime.provider,
-          interactive: true,
-        },
-        execution: {
-          preferredMode: 'interactive',
-        },
-      } satisfies HrcRuntimeIntent)
-
-    const attachIntent = {
-      ...latestIntent,
-      execution: {
-        ...latestIntent.execution,
-        preferredMode: 'interactive',
-      },
-    } satisfies HrcRuntimeIntent
-
-    const invocation = await buildCliInvocation(attachIntent, {
-      continuation,
-      suppressInitialPrompt: true,
-    })
-    const launchCwd = await resolveDispatchCwd(invocation.cwd, attachIntent)
-
-    const interactiveTransport = runtime.transport === 'ghostty' ? 'ghostty' : 'tmux'
-    let tmuxPane: TmuxPaneState | undefined
-    let ghosttySurface: GhostmuxSurfaceState | undefined
-    let agentchatTarget: string
-    let ghosttyEnv: Record<string, string> = {}
-    if (interactiveTransport === 'ghostty') {
-      ghosttySurface = requireGhosttySurface(runtime)
-      agentchatTarget = `surface=${ghosttySurface.surfaceId}`
-      ghosttyEnv = { GHOSTTY_SURFACE_UUID: ghosttySurface.surfaceId }
-    } else {
-      tmuxPane = requireTmuxPane(runtime)
-      agentchatTarget = `sock=${tmuxPane.socketPath};session=${tmuxPane.sessionName}`
-    }
-    const launchId = `launch-${randomUUID()}`
-    const now = timestamp()
-    const launchesDir = join(this.options.runtimeRoot, 'launches')
-    const launchEnv = {
-      ...invocation.env,
-      AGENTCHAT_TRANSPORT: interactiveTransport,
-      AGENTCHAT_TARGET: agentchatTarget,
-      ...ghosttyEnv,
-    }
-    const launchArtifactPath = join(launchesDir, `${launchId}.json`)
-    const launchOtel = buildLaunchOtelConfig(
-      runtime.harness,
-      launchId,
-      this.otelEndpoint,
-      invocation.interactionMode
-    )
-    const artifactEnv = injectArtifactIdentityEnv(launchEnv, {
-      launchId,
-      runtimeId: runtime.runtimeId,
-      generation: session.generation,
-    })
-    const launchArtifact = {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      frontend: invocation.frontend,
-      provider: runtime.provider,
-      argv: invocation.argv,
-      env: artifactEnv,
-      cwd: launchCwd,
-      callbackSocketPath: this.options.socketPath,
-      spoolDir: this.options.spoolDir,
-      correlationEnv: extractCorrelationEnv(artifactEnv),
-      ...(invocation.codexAppServer ? { launchMode: 'app-server' as const } : {}),
-      interactionMode: invocation.interactionMode,
-      ioMode: invocation.ioMode,
-      lifecycleAction: 'attach',
-      ...(invocation.prompts ? { prompts: invocation.prompts } : {}),
-      ...(invocation.codexAppServer ? { codexAppServer: invocation.codexAppServer } : {}),
-      ...(launchOtel ? { otel: launchOtel } : {}),
-    } satisfies Parameters<typeof writeLaunchArtifact>[0]
-
-    await writeLaunchArtifact(launchArtifact, launchesDir)
-    this.db.launches.insert({
-      launchId,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      launchArtifactPath,
-      tmuxJson: runtime.tmuxJson,
-      surfaceJson: runtime.surfaceJson,
-      continuation,
-      status: 'accepted',
-      createdAt: now,
-      updatedAt: now,
-    })
-    this.db.runtimes.update(runtime.runtimeId, {
-      launchId,
-      status: 'busy',
-      continuation,
-      harnessSessionJson: {
-        ...(runtime.harnessSessionJson ?? {}),
-        attachPrepared: true,
-        attachPreparedAt: now,
-      },
-      updatedAt: now,
-      lastActivityAt: now,
-    })
-
-    if (interactiveTransport === 'ghostty') {
-      if (!ghosttySurface) {
-        throw new Error('missing Ghostty surface for Ghostty attach')
-      }
-      await this.ghostmux.sendKeys(ghosttySurface.surfaceId, buildLaunchCommand(launchArtifactPath))
-    } else {
-      if (!tmuxPane) {
-        throw new Error('missing tmux pane for tmux attach')
-      }
-      await this.tmux.sendKeys(tmuxPane.paneId, buildLaunchCommand(launchArtifactPath))
-    }
-    writeServerLog('INFO', 'launch.attach.enqueued', {
-      launchId,
-      hostSessionId: session.hostSessionId,
-      runtimeId: runtime.runtimeId,
-      ...(tmuxPane ? { paneId: tmuxPane.paneId } : {}),
-      ...(ghosttySurface ? { surfaceId: ghosttySurface.surfaceId } : {}),
-      launchArtifactPath,
-    })
   }
 
   private async interruptRuntime(runtime: HrcRuntimeSnapshot, hard: boolean): Promise<Response> {
@@ -7718,11 +6999,10 @@ class HrcServerInstance implements HrcServer {
       if (effectiveSpec) {
         if (effectiveSpec.kind === 'harness') {
           if (effectiveSpec.runtimeIntent.harness.interactive) {
-            await this.ensureRuntimeForSession(
-              nextSession,
-              effectiveSpec.runtimeIntent,
-              'fresh_pty'
-            )
+            // T-01759 (Wave C): route relaunch through the same broker-only start
+            // path as `hrc start` so it always produces a harness-broker runtime,
+            // never a legacy tmux runtime.
+            await this.startRuntimeForSession(nextSession, effectiveSpec.runtimeIntent, 'fresh_pty')
           } else {
             this.db.sessions.updateIntent(
               nextSession.hostSessionId,
@@ -7746,7 +7026,9 @@ class HrcServerInstance implements HrcServer {
             'cannot relaunch without a prior runtime intent'
           )
         }
-        await this.ensureRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
+        // T-01759 (Wave C): relaunch through the broker-only start path used by
+        // `hrc start` so the rematerialized runtime is always harness-broker.
+        await this.startRuntimeForSession(nextSession, relaunchIntent, 'fresh_pty')
       }
     }
 
@@ -11533,6 +10815,37 @@ async function reconcileStartupState(
     removeDeadSocketFiles: true,
     killLiveLeaseServers: true,
   })
+
+  // T-01760 (Wave C): legacy runtime sweep. The broker passes above
+  // reassociate/GC harness-broker runtimes; this final pass stales any still
+  // reusable LEGACY runtime (controllerKind unset OR != 'harness-broker') so it
+  // can never be reused for a harness turn. The pure decision NEVER stales a
+  // harness-broker runtime (preserved regardless of socket path VALUE) and
+  // no-ops anything already unavailable, so broker tmux leases + attach
+  // descriptors survive. (C-03008 landmine.)
+  for (const runtime of db.runtimes.listAll()) {
+    try {
+      const decision = decideLegacyRuntimeStartupDisposition({
+        controllerKind: runtime.controllerKind,
+        transport: runtime.transport,
+        status: runtime.status,
+        brokerTmuxSocketPath: getBrokerRuntimeTmuxSocketPath(runtime),
+        hasAttachDescriptor: runtime.surfaceJson !== undefined || runtime.tmuxJson !== undefined,
+      })
+      if (decision.disposition !== 'stale') {
+        continue
+      }
+      markRuntimeStale(db, requireSession(db, runtime.hostSessionId), runtime, {
+        runtimeId: runtime.runtimeId,
+        reason: decision.reason,
+        priorStatus: runtime.status,
+        sweep: 'legacy_startup_reconciliation',
+        ...(runtime.launchId ? { launchId: runtime.launchId } : {}),
+      })
+    } catch (error) {
+      logStartupIssue('legacy runtime sweep failed', { runtimeId: runtime.runtimeId }, error)
+    }
+  }
 }
 
 const DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS = 5 * 60 * 1000
@@ -11757,19 +11070,6 @@ function gcBrokerRuntimeOnRestart(
 
 function isOrphanableLaunchStatus(status: string): boolean {
   return status === 'started' || status === 'wrapper_started' || status === 'child_started'
-}
-
-function hasLiveInteractiveLaunch(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') return false
-  if (!runtime.launchId) return false
-
-  const launch = db.launches.getByLaunchId(runtime.launchId)
-  if (!launch) return false
-  if (launch.runtimeId !== runtime.runtimeId) return false
-  if (!isOrphanableLaunchStatus(launch.status)) return false
-
-  const trackedPid = getTrackedLaunchPid(launch)
-  return trackedPid === undefined || isLiveProcess(trackedPid)
 }
 
 function getTrackedLaunchPid(launch: HrcLaunchRecord): number | undefined {
@@ -12125,6 +11425,72 @@ export type InteractiveTmuxBrokerStartRoute =
       allowedBrokerDriver: InteractiveTmuxBrokerDriver
     }
   | { route: 'legacy-tmux' }
+
+/**
+ * T-01760 (Wave C) — the minimal view the daemon-startup legacy sweep consults
+ * for one persisted runtime. Derived from HrcRuntimeSnapshot:
+ *   controllerKind / transport / status → direct snapshot fields
+ *   brokerTmuxSocketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+ *       (PRESENCE only — NEVER compared against the legacy default
+ *        <runtimeRoot>/tmux.sock; broker leases live under <runtimeRoot>/btmux/)
+ *   hasAttachDescriptor = whether an attach descriptor persists for it
+ */
+export type LegacyStartupRuntimeView = {
+  controllerKind: HrcRuntimeControllerKind | undefined
+  transport: string
+  status: string
+  brokerTmuxSocketPath: string | undefined
+  hasAttachDescriptor: boolean
+}
+
+export type LegacyStartupReconciliationDecision =
+  | {
+      disposition: 'stale'
+      reason: 'legacy_no_controller_kind' | 'legacy_non_broker_controller_kind'
+    }
+  | {
+      disposition: 'preserve'
+      reason: 'broker_tmux_lease' | 'broker_attach_descriptor' | 'broker_runtime'
+    }
+  | { disposition: 'noop' }
+
+/**
+ * Decide how the daemon-startup legacy sweep treats one persisted runtime.
+ *
+ * Wave B (T-01755/56/58) made dispatch/ensure/attach broker-only + fail-closed,
+ * so no NEW legacy non-broker runtime is created or reused. T-01760 cleans up
+ * EXISTING state: on startup, legacy harness runtimes (controllerKind unset OR
+ * != 'harness-broker') are marked stale so they can never be reused for a
+ * harness turn — WHILE preserving broker tmux LEASE runtimes and attach
+ * descriptors (those are reconciled by the dedicated broker pass).
+ *
+ * Evaluated in this order:
+ *   1. status unavailable (terminated/dead/stale) → noop (idempotent).
+ *   2. controllerKind === 'harness-broker' → preserve. The legacy sweep NEVER
+ *      touches a broker runtime; the path VALUE is never inspected (LANDMINE
+ *      C-03008: a broker tmux lease off the old default socket is still preserved).
+ *   3. otherwise (controllerKind unset, or any non-broker kind) → stale.
+ */
+export function decideLegacyRuntimeStartupDisposition(
+  view: LegacyStartupRuntimeView
+): LegacyStartupReconciliationDecision {
+  if (isRuntimeUnavailableStatus(view.status)) {
+    return { disposition: 'noop' }
+  }
+  if (view.controllerKind === 'harness-broker') {
+    if (view.brokerTmuxSocketPath !== undefined) {
+      return { disposition: 'preserve', reason: 'broker_tmux_lease' }
+    }
+    if (view.hasAttachDescriptor) {
+      return { disposition: 'preserve', reason: 'broker_attach_descriptor' }
+    }
+    return { disposition: 'preserve', reason: 'broker_runtime' }
+  }
+  if (view.controllerKind === undefined) {
+    return { disposition: 'stale', reason: 'legacy_no_controller_kind' }
+  }
+  return { disposition: 'stale', reason: 'legacy_non_broker_controller_kind' }
+}
 
 export function decideInteractiveBrokerAdmission(
   intent: HrcRuntimeIntent,
@@ -12548,45 +11914,6 @@ function normalizeRuntimeProvisionIntent(intent: HrcRuntimeIntent): HrcRuntimeIn
       interactive: true,
     },
   }
-}
-
-function shouldEnsureTmuxRuntimeForDispatch(
-  runtime: HrcRuntimeSnapshot | null,
-  intent: HrcRuntimeIntent,
-  ensureInteractiveRuntime: boolean
-): boolean {
-  if (
-    !ensureInteractiveRuntime &&
-    !shouldUseHeadlessTransport(intent) &&
-    !shouldUseGhosttyTransport(intent)
-  ) {
-    return false
-  }
-
-  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
-    return true
-  }
-
-  const expectedTransport = shouldUseGhosttyTransport(intent) ? 'ghostty' : 'tmux'
-  return runtime.transport !== expectedTransport || runtime.provider !== intent.harness.provider
-}
-
-function selectEnsureRuntimeRestartStyle(
-  runtime: HrcRuntimeSnapshot | null,
-  intent: HrcRuntimeIntent
-): RestartStyle {
-  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
-    return 'reuse_pty'
-  }
-
-  const expectedTransport = shouldUseGhosttyTransport(intent) ? 'ghostty' : 'tmux'
-  return runtime.transport === expectedTransport && runtime.provider === intent.harness.provider
-    ? 'reuse_pty'
-    : 'fresh_pty'
-}
-
-function requiresHeadlessStart(intent: HrcRuntimeIntent): boolean {
-  return shouldUseHeadlessTransport(intent)
 }
 
 function toTmuxJson(tmuxPane: TmuxPaneState): Record<string, unknown> {
@@ -14402,24 +13729,6 @@ function rollbackFailedTmuxDispatch(
   }
 }
 
-function rollbackFailedInteractiveStartLaunch(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot,
-  launchId: string
-): void {
-  const now = timestamp()
-  db.runtimes.update(runtime.runtimeId, {
-    launchId: undefined,
-    status: 'ready',
-    updatedAt: now,
-    lastActivityAt: now,
-  })
-  db.launches.update(launchId, {
-    status: 'failed',
-    updatedAt: now,
-  })
-}
-
 function finalizeRuntimeTermination(
   db: HrcDatabase,
   runtime: HrcRuntimeSnapshot,
@@ -14793,35 +14102,8 @@ async function resolveDispatchCwd(preferredCwd: string, intent: HrcRuntimeIntent
   return preferredCwd
 }
 
-function buildLaunchCommand(launchArtifactPath: string): string {
-  return `bun run ${shellQuote(join(WORKSPACE_ROOT, 'packages/hrc-server/src/launch/exec.ts'))} --launch-file ${shellQuote(launchArtifactPath)}`
-}
-
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`
-}
-
-function extractCorrelationEnv(env: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).filter(([key]) => key.startsWith('HRC_') || key.startsWith('AGENT_'))
-  )
-}
-
-/**
- * Inject identity vars that are otherwise only set in the exec wrapper's
- * process env into the artifact's env map so consumers can read them from
- * the artifact without reaching into process.env.
- */
-function injectArtifactIdentityEnv(
-  env: Record<string, string>,
-  ids: { launchId: string; runtimeId: string; generation: number }
-): Record<string, string> {
-  return {
-    ...env,
-    HRC_LAUNCH_ID: ids.launchId,
-    HRC_RUNTIME_ID: ids.runtimeId,
-    HRC_GENERATION: String(ids.generation),
-  }
 }
 
 async function isLaunchCommandAvailable(command: string | undefined): Promise<boolean> {

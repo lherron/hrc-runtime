@@ -126,7 +126,10 @@ async function ensureRuntime(scopeRef: string): Promise<{
   }
 }
 
-async function ensureInteractiveRuntime(scopeRef: string): Promise<{
+async function ensureInteractiveRuntime(
+  scopeRef: string,
+  options: { controllerKind?: string } = {}
+): Promise<{
   hostSessionId: string
   generation: number
   runtimeId: string
@@ -159,6 +162,7 @@ async function ensureInteractiveRuntime(scopeRef: string): Promise<{
       tmuxJson: pane,
       supportsInflightInput: false,
       adopted: false,
+      ...(options.controllerKind ? { controllerKind: options.controllerKind } : {}),
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,
@@ -545,9 +549,19 @@ describe('GET /v1/surfaces', () => {
 // ---------------------------------------------------------------------------
 describe('restart survival', () => {
   it('bindings survive daemon stop and restart while tmux sessions stay alive', async () => {
-    // Start server, bind a surface
+    // Start server, bind a surface. T-01760 (Wave C): the daemon-startup legacy
+    // sweep stales any non-'harness-broker' runtime, so this restart-survival
+    // invariant is asserted on a HARNESS-BROKER runtime — its live tmux lease
+    // re-associates on restart and its surface binding survives, while a legacy
+    // (unset controllerKind) runtime would be swept. The sweep keys strictly on
+    // controllerKind!=='harness-broker'.
     let server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureInteractiveRuntime('restart-test')
+    const { hostSessionId, generation, runtimeId } = await ensureInteractiveRuntime(
+      'restart-test',
+      {
+        controllerKind: 'harness-broker',
+      }
+    )
 
     await postJson('/v1/surfaces/bind', {
       surfaceKind: 'ghostty',
