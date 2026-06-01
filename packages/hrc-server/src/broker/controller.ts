@@ -11,6 +11,7 @@
 
 import { HrcErrorCode } from 'hrc-core'
 import type {
+  HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcPermissionDecisionRecord,
   HrcProvider,
@@ -19,6 +20,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
@@ -275,6 +277,26 @@ export type BrokerControllerDispatchInput = {
 export type BrokerControllerDispatchResult =
   | { ok: true; response: InvocationInputResponse }
   | { ok: false; error: BrokerControllerError }
+
+export type BrokerControllerAttachInput = {
+  runtimeId: string
+  client: DurableBrokerClientLike
+  attachToken: string
+}
+
+export type BrokerControllerAttachResult =
+  | {
+      ok: true
+      brokerAttached: true
+      replayedThroughSeq: number
+      ackedThroughSeq: number
+      acceptedInputIds: string[]
+    }
+  | {
+      ok: false
+      brokerAttached: false
+      error: BrokerControllerError
+    }
 
 export type BrokerControllerRpcResult<T> =
   | { ok: true; response: T }
@@ -557,6 +579,161 @@ export class HarnessBrokerController {
       return { ok: true, response }
     } catch (error) {
       return { ok: false, error: toControllerError('broker_input_failed', error) }
+    }
+  }
+
+  async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
+    const runtime = this.db.runtimes.getByRuntimeId(input.runtimeId)
+    const invocation = this.resolveAttachInvocation(runtime, input.runtimeId)
+    if (!runtime || !invocation) {
+      return {
+        ok: false,
+        brokerAttached: false,
+        error: new BrokerControllerError(
+          'broker_attach_unknown_runtime',
+          `cannot attach broker runtime ${input.runtimeId}: persisted runtime/invocation not found`,
+          {
+            runtimeFound: runtime !== null,
+            invocationFound: invocation !== null,
+          }
+        ),
+      }
+    }
+
+    const lastProjectedSeq = this.lastProjectedBrokerSeq(invocation.invocationId)
+    try {
+      const attach = await input.client.attach({
+        runtimeId: runtime.runtimeId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        invocationId: invocation.invocationId as InvocationId,
+        startRequestHash: invocation.startRequestHash,
+        selectedProfileHash: invocation.selectedProfileHash,
+        controllerInstanceId: this.serverInstanceId,
+        attachToken: input.attachToken,
+        lastProjectedSeq,
+      })
+      const snapshot = await input.client.snapshot({
+        invocationId: invocation.invocationId as InvocationId,
+      })
+
+      const retentionFloorSeq = Math.max(
+        attach.retentionFloorSeq,
+        attach.snapshot.retentionFloorSeq,
+        snapshot.retentionFloorSeq
+      )
+      if (retentionFloorSeq > lastProjectedSeq + 1) {
+        const error = new BrokerControllerError(
+          'broker_replay_retention_gap',
+          'broker event retention floor is past HRC projected high-water',
+          {
+            runtimeId: runtime.runtimeId,
+            invocationId: invocation.invocationId,
+            lastProjectedSeq,
+            retentionFloorSeq,
+          }
+        )
+        await this.failReplayStale(runtime, invocation, input.client, error)
+        return { ok: false, brokerAttached: false, error }
+      }
+
+      const replay = await input.client.eventsSince({
+        invocationId: invocation.invocationId as InvocationId,
+        afterSeq: lastProjectedSeq,
+      })
+
+      let replayedThroughSeq = lastProjectedSeq
+      let ackedThroughSeq = lastProjectedSeq
+      for (const envelope of replay.events) {
+        const result = this.mapper.apply(envelope)
+        this.afterMappedEvent(runtime.runtimeId, envelope, result)
+        replayedThroughSeq = Math.max(replayedThroughSeq, envelope.seq)
+        const projected = this.db.brokerInvocationEvents.getByInvocationAndSeq(
+          String(envelope.invocationId),
+          envelope.seq
+        )
+        if (projected?.projectionStatus === 'applied') {
+          ackedThroughSeq = Math.max(ackedThroughSeq, envelope.seq)
+        }
+      }
+
+      if (ackedThroughSeq > 0) {
+        const ack = await input.client.ackEvents({
+          invocationId: invocation.invocationId as InvocationId,
+          throughSeq: ackedThroughSeq,
+          controllerInstanceId: this.serverInstanceId,
+        })
+        ackedThroughSeq = ack.ackedThroughSeq
+      }
+
+      const status = runtimeStatusFromInvocationState(snapshot.state)
+      const now = this.now()
+      this.db.brokerInvocations.update(invocation.invocationId, {
+        invocationState: snapshot.state,
+        capabilitiesJson: JSON.stringify(snapshot.capabilities),
+        ownerServerInstanceId: this.serverInstanceId,
+        updatedAt: now,
+      })
+      this.db.runtimes.update(runtime.runtimeId, {
+        status,
+        activeInvocationId: invocation.invocationId,
+        lastActivityAt: now,
+        runtimeStateJson: {
+          ...(runtime.runtimeStateJson ?? {}),
+          status,
+          updatedAt: now,
+          control: {
+            mode: 'broker-ipc',
+            brokerAttached: true,
+          },
+          brokerReplay: {
+            brokerInstanceId: attach.brokerInstanceId,
+            activeControllerInstanceId: attach.activeControllerInstanceId,
+            lastProjectedSeq,
+            replayedThroughSeq,
+            ackedThroughSeq,
+            currentSeq: Math.max(attach.currentSeq, snapshot.currentSeq, replay.currentSeq),
+            retentionFloorSeq: Math.max(retentionFloorSeq, replay.retentionFloorSeq),
+          },
+        },
+        updatedAt: now,
+      })
+
+      input.client.onClose((error) => {
+        this.handleBrokerClose(runtime.runtimeId, error)
+      })
+      this.active.set(runtime.runtimeId, {
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        client: input.client,
+        closing: false,
+      })
+
+      return {
+        ok: true,
+        brokerAttached: true,
+        replayedThroughSeq,
+        ackedThroughSeq,
+        acceptedInputIds: Object.entries(snapshot.inputDispositions ?? {})
+          .filter(([, disposition]) => disposition.accepted)
+          .map(([inputId]) => inputId),
+      }
+    } catch (error) {
+      const controllerError =
+        error instanceof BrokerInvocationEventConflictError
+          ? new BrokerControllerError(
+              'broker_replay_conflict',
+              'broker replay produced a conflicting durable event payload',
+              {
+                conflict: true,
+                invocationId: error.invocationId,
+                seq: error.seq,
+                name: error.name,
+              }
+            )
+          : toControllerError('broker_attach_replay_failed', error)
+      await this.failReplayStale(runtime, invocation, input.client, controllerError)
+      return { ok: false, brokerAttached: false, error: controllerError }
     }
   }
 
@@ -1106,6 +1283,68 @@ export class HarnessBrokerController {
         reason: envelope.type,
       })
     }
+  }
+
+  private resolveAttachInvocation(
+    runtime: HrcRuntimeSnapshot | null,
+    runtimeId: string
+  ): HrcBrokerInvocationRecord | null {
+    if (runtime?.activeInvocationId) {
+      const active = this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+      if (active) {
+        return active
+      }
+    }
+    return this.db.brokerInvocations.listByRuntimeId(runtimeId).at(-1) ?? null
+  }
+
+  private lastProjectedBrokerSeq(invocationId: string): number {
+    return this.db.brokerInvocationEvents
+      .listByInvocationId(invocationId)
+      .filter((event: HrcBrokerInvocationEventRecord) => event.projectionStatus === 'applied')
+      .reduce((max, event) => Math.max(max, event.seq), 0)
+  }
+
+  private async failReplayStale(
+    runtime: HrcRuntimeSnapshot,
+    invocation: HrcBrokerInvocationRecord,
+    client: DurableBrokerClientLike,
+    error: BrokerControllerError
+  ): Promise<void> {
+    this.active.delete(runtime.runtimeId)
+    this.markBrokerClosing(runtime.runtimeId, error.code)
+    const now = this.now()
+    this.db.brokerInvocations.update(invocation.invocationId, {
+      invocationState: 'failed',
+      ownerServerInstanceId: this.serverInstanceId,
+      updatedAt: now,
+    })
+    this.db.runtimes.update(runtime.runtimeId, {
+      status: 'stale',
+      lastActivityAt: now,
+      runtimeStateJson: {
+        ...(runtime.runtimeStateJson ?? {}),
+        status: 'stale',
+        updatedAt: now,
+        control: {
+          mode: 'broker-ipc',
+          brokerAttached: false,
+          lastAttachError: {
+            code: error.code,
+            message: error.message,
+            detail: error.detail,
+          },
+        },
+      },
+      updatedAt: now,
+    })
+    await client.close().catch((closeError: unknown) => {
+      this.logger.warn?.('harness broker close after replay failure failed', {
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        error: closeError instanceof Error ? closeError.message : String(closeError),
+      })
+    })
   }
 
   private markBrokerInvocationTerminal(
