@@ -87,9 +87,7 @@ import type {
   TerminateRuntimeResponse,
   WaitMessageResponse,
 } from 'hrc-core'
-import {
-  normalizeCodexOtelEvent,
-} from 'hrc-events'
+
 import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
@@ -130,10 +128,8 @@ import {
 import {
   appendHrcEvent,
   createUserPromptPayload,
-  deriveSemanticTurnEventFromHookDerivedEvent,
   deriveSemanticTurnEventFromLaunchEvent,
   deriveSemanticTurnEventFromSdkEvent,
-  deriveSemanticTurnUserPromptFromCodexOtelRecord,
   shouldSuppressDuplicateCodexInitialUserPrompt,
 } from './hrc-event-helper.js'
 import {
@@ -141,15 +137,10 @@ import {
 } from './launch/index.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
-  OTLP_LOGS_PATH,
-  OtelAuthError,
-  type OtlpLaunchContext,
   type OtlpListenerControl,
-  buildHrcEventFromOtelRecord,
-  isOtelTransportDeltaRecord,
-  normalizeOtlpJsonRequest,
+  handleHookIngest,
+  handleOtlpRequest,
   startOtlpListener,
-  validateOtelLaunchAuth,
 } from './otel-ingest.js'
 import {
   type BridgeTargetRequest,
@@ -333,9 +324,7 @@ import {
   sweepOrphanedBrokerTmuxLeases,
 } from './startup-reconcile.js'
 import {
-  applyHookLifecycleEnvelope,
   buildStaleLaunchCallbackRejection,
-  parseHookEnvelope,
   parseLaunchContinuationPayload,
   parseLaunchEventPayload,
   parseLaunchLifecyclePayload,
@@ -571,8 +560,6 @@ export async function buildBrokerRunPreview(
 
 const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
-const OTEL_AUTH_HEADER_NAME = 'x-hrc-launch-auth'
-const OTLP_CONTENT_TYPE_JSON = 'application/json'
 
 // Default stale-generation threshold: sessions older than 24 hours are
 // auto-rotated to a fresh generation unless the caller opts out.
@@ -6570,12 +6557,7 @@ class HrcServerInstance implements HrcServer {
   }
 
   private async handleHookIngest(request: Request): Promise<Response> {
-    const envelope = parseHookEnvelope(await parseJsonBody(request))
-    const events = applyHookLifecycleEnvelope(this.db, envelope, { replayed: false })
-    for (const event of events) {
-      this.notifyEvent(event)
-    }
-    return json({ ok: true })
+    return handleHookIngest(this.ctx, request)
   }
 
   /**
@@ -6583,173 +6565,7 @@ class HrcServerInstance implements HrcServer {
    * socket server). Only POST /v1/logs is accepted.
    */
   private async handleOtlpRequest(request: Request): Promise<Response> {
-    try {
-      const url = new URL(request.url)
-      if (request.method !== 'POST' || url.pathname !== OTLP_LOGS_PATH) {
-        return new Response('Not Found', { status: 404 })
-      }
-      return await this.handleOtlpLogs(request)
-    } catch (error) {
-      writeServerLog('ERROR', 'otel.ingest.unhandled', { error })
-      return new Response('Internal Server Error', { status: 500 })
-    }
-  }
-
-  private async handleOtlpLogs(request: Request): Promise<Response> {
-    const contentType = request.headers.get('content-type') ?? ''
-    if (!contentType.toLowerCase().startsWith(OTLP_CONTENT_TYPE_JSON)) {
-      return new Response('OTLP/HTTP JSON only', {
-        status: 415,
-        headers: { 'content-type': 'text/plain' },
-      })
-    }
-
-    const authHeader = request.headers.get(OTEL_AUTH_HEADER_NAME)
-
-    let ctx: OtlpLaunchContext
-    try {
-      ctx = await validateOtelLaunchAuth({
-        authHeader,
-        getLaunch: (launchId) => this.db.launches.getByLaunchId(launchId),
-        readArtifact: (path) => readLaunchArtifact(path),
-      })
-    } catch (error) {
-      if (error instanceof OtelAuthError) {
-        writeServerLog('WARN', 'otel.ingest.auth_failed', {
-          status: error.status,
-          message: error.message,
-        })
-        return new Response(error.message, {
-          status: error.status,
-          headers: { 'content-type': 'text/plain' },
-        })
-      }
-      throw error
-    }
-
-    let body: unknown
-    try {
-      body = await request.json()
-    } catch {
-      return new Response('invalid JSON body', {
-        status: 400,
-        headers: { 'content-type': 'text/plain' },
-      })
-    }
-
-    const { records, rejected, errorMessage } = normalizeOtlpJsonRequest(body)
-    if (records.length === 0 && rejected === 0) {
-      // body wasn't shaped like an OTLP ExportLogsServiceRequest at all.
-      return new Response(errorMessage ?? 'invalid OTLP request body', {
-        status: 400,
-        headers: { 'content-type': 'text/plain' },
-      })
-    }
-
-    const session = this.db.sessions.getByHostSessionId(ctx.hostSessionId)
-    if (!session) {
-      // Launch exists without a matching session — shouldn't happen in
-      // practice, but fail closed.
-      return new Response('launch session not found', {
-        status: 403,
-        headers: { 'content-type': 'text/plain' },
-      })
-    }
-
-    const fallbackTs = timestamp()
-    for (const record of records) {
-      if (isOtelTransportDeltaRecord(record)) {
-        continue
-      }
-
-      const eventInput = buildHrcEventFromOtelRecord({
-        record,
-        launchCtx: ctx,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        fallbackTimestamp: fallbackTs,
-      })
-      const appendedEvent = this.db.events.append(eventInput)
-      this.notifyEvent(appendedEvent)
-
-      const semanticUserPrompt = deriveSemanticTurnUserPromptFromCodexOtelRecord(record)
-      const codexPrompt =
-        typeof record.logRecord.attributes?.['prompt'] === 'string'
-          ? record.logRecord.attributes['prompt']
-          : undefined
-      if (
-        semanticUserPrompt &&
-        codexPrompt &&
-        !shouldSuppressDuplicateCodexInitialUserPrompt({
-          db: this.db,
-          launchId: ctx.launchId,
-          artifact: ctx.artifact,
-          hostSessionId: eventInput.hostSessionId,
-          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
-          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
-          prompt: codexPrompt,
-          currentEventSeq: appendedEvent.seq,
-        })
-      ) {
-        const appendedSemanticEvent = appendHrcEvent(this.db, semanticUserPrompt.eventKind, {
-          ts: eventInput.ts,
-          hostSessionId: eventInput.hostSessionId,
-          scopeRef: eventInput.scopeRef,
-          laneRef: eventInput.laneRef,
-          generation: eventInput.generation,
-          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
-          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
-          launchId: ctx.launchId,
-          payload: semanticUserPrompt.payload,
-        })
-        this.notifyEvent(appendedSemanticEvent)
-      }
-
-      // Codex sessions emit typed lifecycle events via OTEL; Claude Code
-      // sessions emit them via hooks. Those paths are disjoint per session
-      // today, so we append both the raw audit row and any derived typed rows.
-      const normalized = normalizeCodexOtelEvent(record)
-      for (const typedEvent of normalized.events) {
-        const appendedTypedEvent = this.db.events.append({
-          ts: eventInput.ts,
-          hostSessionId: eventInput.hostSessionId,
-          scopeRef: eventInput.scopeRef,
-          laneRef: eventInput.laneRef,
-          generation: eventInput.generation,
-          ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
-          ...(eventInput.runId ? { runId: eventInput.runId } : {}),
-          source: 'otel' as const,
-          eventKind: typedEvent.type,
-          eventJson: typedEvent,
-        })
-        this.notifyEvent(appendedTypedEvent)
-        const semanticEvent = deriveSemanticTurnEventFromHookDerivedEvent(typedEvent)
-        if (semanticEvent) {
-          const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
-            ts: eventInput.ts,
-            hostSessionId: eventInput.hostSessionId,
-            scopeRef: eventInput.scopeRef,
-            laneRef: eventInput.laneRef,
-            generation: eventInput.generation,
-            ...(eventInput.runtimeId ? { runtimeId: eventInput.runtimeId } : {}),
-            ...(eventInput.runId ? { runId: eventInput.runId } : {}),
-            launchId: ctx.launchId,
-            payload: semanticEvent.payload,
-          })
-          this.notifyEvent(appendedSemanticEvent)
-        }
-      }
-    }
-
-    if (rejected > 0) {
-      return json({
-        partialSuccess: {
-          rejectedLogRecords: String(rejected),
-          errorMessage: errorMessage ?? 'some log records could not be ingested',
-        },
-      })
-    }
-    return json({})
+    return handleOtlpRequest(this.ctx, request)
   }
 
   private handleHealth(): Response {
