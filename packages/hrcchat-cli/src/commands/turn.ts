@@ -9,6 +9,7 @@ import type { HrcClient } from 'hrc-sdk'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { resolveCallerAddress, resolveTargetToSessionRef } from '../normalize.js'
+import { printJson } from '../print.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
@@ -22,6 +23,7 @@ import { FlushReason, Phase, Result } from '../stacked-types.js'
 
 export type TurnOptions = {
   new?: boolean | undefined
+  dryRun?: boolean | undefined
   format?: RenderFrameFormatInput | undefined
   pretty?: boolean | undefined
   stallAfter?: string | undefined
@@ -122,6 +124,35 @@ export async function cmdTurn(
     ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
   })
   const sessionRef = resolveTargetToSessionRef(targetInput)
+  const runtimeIntent = resolveRuntimeIntentForTarget(targetInput)
+
+  // ── --dry-run: print the resolved dispatch plan and exit ──
+  // Purely local resolution — consults no server state, mutates nothing
+  // (no clearContext), and dispatches no turn.
+  if (opts.dryRun) {
+    printJson({
+      command: 'turn',
+      dryRun: true,
+      note: 'local plan preview — no server state consulted, nothing dispatched',
+      target: targetInput,
+      sessionRef,
+      scopeRef: resolved.scopeRef,
+      laneRef: resolved.laneRef,
+      projectId: resolved.parsed.projectId ?? null,
+      bodySource: bodyFromFile ? 'file' : bodyFromStdin ? 'stdin' : 'positional',
+      bodyLength: body.length,
+      clearContextFirst: opts.new === true,
+      replyToMessageId: opts.replyTo ?? null,
+      output: {
+        format: opts.format ?? null,
+        pretty: opts.pretty === true,
+        stackedWindowMs: stackedWindowMs ?? null,
+        stallAfterMs,
+      },
+      runtimeIntent,
+    })
+    return
+  }
 
   // ── --new: clearContext if host exists ──
   if (opts.new) {
@@ -146,7 +177,6 @@ export async function cmdTurn(
   // not from anything resolved before clearContext.
   const from = resolveCallerAddress()
   const to = { kind: 'session' as const, sessionRef }
-  const runtimeIntent = resolveRuntimeIntentForTarget(targetInput)
 
   const handoff = await client.semanticTurnHandoff({
     from,
