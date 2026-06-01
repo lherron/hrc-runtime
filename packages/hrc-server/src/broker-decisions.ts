@@ -139,6 +139,30 @@ export async function runHeadlessRoute<T>(
 
 export type InteractiveTmuxExecutionRoute = 'broker' | 'legacy-tmux'
 
+export type BrokerDurableInteractiveRoute = 'durable-ipc' | 'legacy'
+
+/**
+ * T-01810 (T-01801 Phase 1) — select the durable-interactive broker route only
+ * when the durable-IPC flag is ON and the persisted broker endpoint rides a Unix
+ * socket. Any other combination (flag off, or a stdio endpoint) keeps the legacy
+ * route. Gated additionally on an interactive interaction mode — the durable
+ * route is for the persistent interactive TUI, not a headless turn. Pure.
+ */
+export function decideBrokerDurableInteractiveRoute(input: {
+  durableIpcEnabled: boolean
+  endpointKind: 'stdio-jsonrpc-ndjson' | 'unix-jsonrpc-ndjson'
+  interactionMode: 'interactive' | 'headless'
+}): BrokerDurableInteractiveRoute {
+  if (
+    input.durableIpcEnabled &&
+    input.endpointKind === 'unix-jsonrpc-ndjson' &&
+    input.interactionMode === 'interactive'
+  ) {
+    return 'durable-ipc'
+  }
+  return 'legacy'
+}
+
 export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux'
 
 export type LatestRuntimeAdmissionView = {

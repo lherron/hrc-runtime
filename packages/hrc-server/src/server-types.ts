@@ -220,6 +220,13 @@ export type HrcServerOptions = {
    * Env override: `HRC_CODEX_CLI_TMUX_BROKER_ENABLED` (`0`/`false` disables).
    */
   codexCliTmuxBrokerEnabled?: boolean | undefined
+  /**
+   * Enable the durable Unix-IPC broker route (T-01810 / T-01801 Phase 1). OFF by
+   * default (truthy-only), unlike the default-on broker cutover flags.
+   *
+   * Env override: `HRC_BROKER_DURABLE_IPC_ENABLED` (truthy enables).
+   */
+  brokerDurableIpcEnabled?: boolean | undefined
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined

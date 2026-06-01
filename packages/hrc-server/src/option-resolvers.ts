@@ -3,10 +3,11 @@ import { join, resolve } from 'node:path'
 import { HrcRuntimeUnavailableError } from 'hrc-core'
 
 import { AspcFacadeBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
-import { isFalsyFeatureFlag } from './broker-decisions.js'
+import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
 import {
   DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
+  HRC_BROKER_DURABLE_IPC_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
@@ -63,6 +64,18 @@ export function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boo
     return options.codexCliTmuxBrokerEnabled
   }
   return !isFalsyFeatureFlag(process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV])
+}
+
+/**
+ * T-01810 (T-01801 Phase 1) — durable Unix-IPC broker route flag. OFF by default
+ * (truthy-only), UNLIKE the default-on broker cutover flags above: the route is
+ * dark until explicitly enabled. An explicit `options` override wins over env.
+ */
+export function resolveBrokerDurableIpcEnabled(options: HrcServerOptions): boolean {
+  if (typeof options.brokerDurableIpcEnabled === 'boolean') {
+    return options.brokerDurableIpcEnabled
+  }
+  return isTruthyFeatureFlag(process.env[HRC_BROKER_DURABLE_IPC_ENABLED_ENV])
 }
 
 export function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {

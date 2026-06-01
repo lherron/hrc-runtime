@@ -4,6 +4,8 @@ import {
 } from 'spaces-harness-broker-protocol'
 import type {
   BrokerHelloResponse,
+  BrokerProtocolVersion,
+  BrokerTransportKind,
   DriverSummary,
   InvocationCapabilities,
   InvocationLifecycleCapabilities,
@@ -29,20 +31,34 @@ export function preflightBrokerLifecyclePolicy(
   preflightLifecyclePolicyCapabilities(lifecyclePolicy, routeLifecycleCapabilities(profile))
 }
 
+/**
+ * The PER-ROUTE transport/protocol the broker.hello is negotiated against
+ * (T-01810 / T-01801 Phase 1, contract C-03099). The headless stdio route
+ * expects stdio/v1; the durable interactive route expects unix/v2. When omitted
+ * the legacy stdio/v1 module consts are used so the headless route is unchanged.
+ */
+export type ExpectedBrokerNegotiation = {
+  protocolVersion: BrokerProtocolVersion
+  transport: BrokerTransportKind
+}
+
 export function admitBrokerHello(
   profile: BrokerExecutionProfile,
-  hello: BrokerHelloResponse
+  hello: BrokerHelloResponse,
+  expected?: ExpectedBrokerNegotiation
 ): CapabilityCheck {
+  const expectedProtocol = expected?.protocolVersion ?? BROKER_PROTOCOL_VERSION
+  const expectedTransport = expected?.transport ?? BROKER_TRANSPORT
   const missing: string[] = []
   const driver = hello.drivers.find((candidate) => candidate.kind === profile.brokerDriver)
-  if (hello.protocolVersion !== BROKER_PROTOCOL_VERSION) {
-    missing.push(`protocolVersion:${BROKER_PROTOCOL_VERSION}`)
+  if (hello.protocolVersion !== expectedProtocol) {
+    missing.push(`protocolVersion:${expectedProtocol}`)
   }
   if (!hello.capabilities.eventNotifications) {
     missing.push('broker.capabilities.eventNotifications')
   }
-  if (!hello.capabilities.transports.includes(BROKER_TRANSPORT)) {
-    missing.push(`broker.capabilities.transports.${BROKER_TRANSPORT}`)
+  if (!hello.capabilities.transports.includes(expectedTransport)) {
+    missing.push(`broker.capabilities.transports.${expectedTransport}`)
   }
   if (
     profile.policy.permissionPolicy.mode === 'ask-client' &&

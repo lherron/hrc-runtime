@@ -9,6 +9,77 @@ export type RuntimeControlState = {
   brokerAttached: boolean
 }
 
+/**
+ * T-01810 (T-01801 Phase 1) — a broker runtime endpoint persisted in
+ * runtime_state_json. The SAME JSON-RPC/NDJSON broker protocol rides either a
+ * stdio pipe (headless) or a Unix-domain socket (durable interactive, C-03078).
+ * The attach token is persisted by REFERENCE (redacted) — never the raw secret.
+ */
+export type BrokerAttachTokenRef = {
+  kind: 'file'
+  path: string
+  redacted: true
+}
+
+export type BrokerRuntimeEndpoint =
+  | { kind: 'stdio-jsonrpc-ndjson' }
+  | {
+      kind: 'unix-jsonrpc-ndjson'
+      socketPath: string
+      attachTokenRef: BrokerAttachTokenRef
+    }
+
+export function toBrokerEndpointJson(
+  endpoint: BrokerRuntimeEndpoint
+): Record<string, unknown> {
+  if (endpoint.kind === 'unix-jsonrpc-ndjson') {
+    return {
+      kind: 'unix-jsonrpc-ndjson',
+      socketPath: endpoint.socketPath,
+      attachTokenRef: {
+        kind: endpoint.attachTokenRef.kind,
+        path: endpoint.attachTokenRef.path,
+        redacted: true,
+      },
+    }
+  }
+  return { kind: 'stdio-jsonrpc-ndjson' }
+}
+
+export function extractBrokerEndpoint(
+  json: Record<string, unknown> | undefined
+): BrokerRuntimeEndpoint | undefined {
+  if (!json) {
+    return undefined
+  }
+  const kind = json['kind']
+  if (kind === 'stdio-jsonrpc-ndjson') {
+    return { kind: 'stdio-jsonrpc-ndjson' }
+  }
+  if (kind === 'unix-jsonrpc-ndjson') {
+    const socketPath = json['socketPath']
+    const tokenRef = json['attachTokenRef']
+    if (typeof socketPath !== 'string' || !isRecord(tokenRef)) {
+      return undefined
+    }
+    const path = tokenRef['path']
+    const tokenKind = tokenRef['kind']
+    if (tokenKind !== 'file' || typeof path !== 'string') {
+      return undefined
+    }
+    return {
+      kind: 'unix-jsonrpc-ndjson',
+      socketPath,
+      attachTokenRef: { kind: 'file', path, redacted: true },
+    }
+  }
+  return undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export function withDirectTmuxDegradedControlState(
   runtimeStateJson: Record<string, unknown> | undefined
 ): Record<string, unknown> {

@@ -23,18 +23,28 @@ import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import type {
+  BrokerAttachRequest,
+  BrokerAttachResponse,
   BrokerHealthResponse,
   BrokerHelloResponse,
   BrokerLifecyclePolicyOverlay,
   InputPolicy,
+  InvocationAckEventsRequest,
+  InvocationAckEventsResponse,
   InvocationDisposeRequest,
   InvocationEventEnvelope,
+  InvocationEventsSinceRequest,
+  InvocationEventsSinceResponse,
   InvocationId,
   InvocationInput,
   InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
+  InvocationPermissionRespondRequest,
+  InvocationPermissionRespondResponse,
   InvocationRuntimeContext,
+  InvocationSnapshot,
+  InvocationSnapshotRequest,
   InvocationStartRequest,
   InvocationStartResponse,
   InvocationStatusResponse,
@@ -112,6 +122,48 @@ export type BrokerClientLike = {
   close(): Promise<void>
 }
 
+/**
+ * T-01810 (T-01801 Phase 1) — the v2 durability surface a Unix-socket broker
+ * client adds OVER AND ABOVE the stdio BrokerClientLike shape: re-attach to a
+ * surviving invocation, read a state snapshot, replay/ack the durable event log,
+ * and respond to a pending permission request out-of-band. Wire-level connect
+ * logic lands Phase 3; replay logic lands Phase 2 — this only pins the contract.
+ */
+export type DurableBrokerClientLike = BrokerClientLike & {
+  attach(req: BrokerAttachRequest): Promise<BrokerAttachResponse>
+  snapshot(req: InvocationSnapshotRequest): Promise<InvocationSnapshot>
+  eventsSince(req: InvocationEventsSinceRequest): Promise<InvocationEventsSinceResponse>
+  ackEvents(req: InvocationAckEventsRequest): Promise<InvocationAckEventsResponse>
+  permissionRespond(
+    req: InvocationPermissionRespondRequest
+  ): Promise<InvocationPermissionRespondResponse>
+}
+
+/**
+ * Runtime guard: true iff `client` carries every v2 durability method
+ * (attach/snapshot/eventsSince/ackEvents/permissionRespond) on top of the stdio
+ * BrokerClientLike shape. A stdio-only client returns false.
+ */
+export function isDurableBrokerClient(client: unknown): client is DurableBrokerClientLike {
+  if (typeof client !== 'object' || client === null) {
+    return false
+  }
+  const candidate = client as Record<string, unknown>
+  return (
+    typeof candidate['attach'] === 'function' &&
+    typeof candidate['snapshot'] === 'function' &&
+    typeof candidate['eventsSince'] === 'function' &&
+    typeof candidate['ackEvents'] === 'function' &&
+    typeof candidate['permissionRespond'] === 'function'
+  )
+}
+
+/**
+ * Stdio (headless) broker-client factory. The Unix durable-client connect path
+ * lands Phase 3 as a SEPARATE factory rather than overloading this one — the
+ * launch (stdio spawn) and connect (Unix dial) shapes are deliberately split
+ * (contract C-03099).
+ */
 export type BrokerClientFactory = (options: StdioTransportStartOptions) => Promise<BrokerClientLike>
 
 export type BrokerPermissionChannel = {
