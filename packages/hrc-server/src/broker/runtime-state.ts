@@ -108,6 +108,139 @@ export function extractRuntimeControlState(
   return { mode, brokerAttached }
 }
 
+/**
+ * T-01814 (T-01801 Phase 5) — the FULL operator-facing control surface for a
+ * durable broker IPC runtime. Layers three DISTINCT sections on top of the
+ * minimal {mode,brokerAttached}:
+ *   (1) brokerIpc      — broker control over Unix IPC (socket + REDACTED token ref)
+ *   (2) operatorAttach — the `tui` pane a human attaches to (NEVER the broker pane)
+ *   (3) brokerProcess  — the broker child diagnostics (the `broker` pane)
+ * The raw attach token is NEVER read into the output; only the redacted ref from
+ * the endpoint is exposed.
+ */
+export type BrokerWindowView = {
+  socketPath: string
+  sessionName: string
+  windowName: string
+  sessionId: string
+  windowId: string
+  paneId: string
+}
+
+export type BrokerIpcControlView = {
+  socketPath: string
+  attachTokenRef: BrokerAttachTokenRef
+  eventHighWaterSeq: number | null
+  replayStatus: string | null
+  degradedReason: string | null
+  lastAttachError: { code: string; message: string } | null
+}
+
+export type OperatorAttachView = BrokerWindowView & { attachCommand: string }
+
+export type BrokerProcessView = BrokerWindowView & {
+  command: string
+  pid: number | null
+  generation: number | null
+}
+
+export type FullRuntimeControlState = RuntimeControlState & {
+  brokerIpc?: BrokerIpcControlView
+  operatorAttach?: OperatorAttachView
+  brokerProcess?: BrokerProcessView
+}
+
+function extractBrokerWindow(value: unknown): BrokerWindowView | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+  const fields: (keyof BrokerWindowView)[] = [
+    'socketPath',
+    'sessionName',
+    'windowName',
+    'sessionId',
+    'windowId',
+    'paneId',
+  ]
+  const out: Record<string, string> = {}
+  for (const key of fields) {
+    const v = value[key]
+    if (typeof v !== 'string') {
+      return undefined
+    }
+    out[key] = v
+  }
+  return out as unknown as BrokerWindowView
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function extractAttachError(
+  value: unknown
+): { code: string; message: string } | null {
+  if (!isRecord(value)) {
+    return null
+  }
+  const code = value['code']
+  const message = value['message']
+  if (typeof code !== 'string' || typeof message !== 'string') {
+    return null
+  }
+  return { code, message }
+}
+
+export function extractFullRuntimeControlState(
+  runtimeStateJson: Record<string, unknown> | undefined,
+  eventHighWaterSeq: number | null
+): FullRuntimeControlState | undefined {
+  const base = extractRuntimeControlState(runtimeStateJson)
+  if (!base) {
+    return undefined
+  }
+  const result: FullRuntimeControlState = { ...base }
+  const broker = runtimeStateJson?.['broker']
+  const control = isRecord(runtimeStateJson?.['control'])
+    ? (runtimeStateJson?.['control'] as Record<string, unknown>)
+    : undefined
+  if (isRecord(broker)) {
+    // (1) Broker control over Unix IPC. Token exposed by REDACTED ref only.
+    const endpoint = extractBrokerEndpoint(
+      isRecord(broker['endpoint']) ? (broker['endpoint'] as Record<string, unknown>) : undefined
+    )
+    if (endpoint && endpoint.kind === 'unix-jsonrpc-ndjson') {
+      result.brokerIpc = {
+        socketPath: endpoint.socketPath,
+        attachTokenRef: endpoint.attachTokenRef,
+        eventHighWaterSeq,
+        replayStatus: stringOrNull(control?.['replayStatus']),
+        degradedReason: stringOrNull(control?.['degradedReason']),
+        lastAttachError: extractAttachError(control?.['lastAttachError']),
+      }
+    }
+    // (2) Operator TUI attach — the `tui` window.
+    const tuiWindow = extractBrokerWindow(broker['tuiWindow'])
+    if (tuiWindow) {
+      result.operatorAttach = {
+        ...tuiWindow,
+        attachCommand: `tmux -S ${tuiWindow.socketPath} attach -t ${tuiWindow.sessionName}:${tuiWindow.windowName}`,
+      }
+    }
+    // (3) Broker PROCESS diagnostics — the `broker` window child.
+    const brokerWindow = extractBrokerWindow(broker['brokerWindow'])
+    if (brokerWindow) {
+      result.brokerProcess = {
+        ...brokerWindow,
+        command: typeof broker['brokerCommand'] === 'string' ? broker['brokerCommand'] : '',
+        pid: typeof broker['brokerPid'] === 'number' ? broker['brokerPid'] : null,
+        generation: typeof broker['generation'] === 'number' ? broker['generation'] : null,
+      }
+    }
+  }
+  return result
+}
+
 export function runtimeStatusFromInvocationState(state: string): string {
   if (state === 'ready') return 'ready'
   if (state === 'turn_active') return 'busy'

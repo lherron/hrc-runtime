@@ -66,6 +66,15 @@ export type TmuxLeaseStatus = {
   socketPath: string
   running: boolean
   sessions: string[]
+  /**
+   * T-01814 (T-01801 Phase 5) — per-lease control state + both named panes so an
+   * operator can tell the broker control pane from the operator TUI pane and see
+   * whether the runtime is broker-attached or degraded.
+   */
+  controlMode?: string | undefined
+  brokerAttached?: boolean | undefined
+  brokerPane?: { windowName: string; paneId: string; pid?: number | undefined } | undefined
+  tuiPane?: { windowName: string; paneId: string } | undefined
 }
 
 export type TmuxStatus = {
@@ -756,6 +765,21 @@ export function formatTmuxStatus(status: TmuxStatus): string {
         : '(running, no sessions)'
       : '(dead socket)'
     lines.push(`    - ${lease.socketPath}: ${state}`)
+    if (lease.controlMode !== undefined || lease.brokerAttached !== undefined) {
+      const attached = lease.brokerAttached ? 'yes' : 'no'
+      lines.push(`        control: ${lease.controlMode ?? '(unknown)'} (attached=${attached})`)
+    }
+    if (lease.brokerPane) {
+      const pid = lease.brokerPane.pid !== undefined ? lease.brokerPane.pid : '(unknown)'
+      lines.push(
+        `        broker:  window=${lease.brokerPane.windowName} pane=${lease.brokerPane.paneId} pid=${pid}`
+      )
+    }
+    if (lease.tuiPane) {
+      lines.push(
+        `        tui:     window=${lease.tuiPane.windowName} pane=${lease.tuiPane.paneId}`
+      )
+    }
   }
 
   if (status.error) {

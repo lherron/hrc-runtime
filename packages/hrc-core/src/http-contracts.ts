@@ -297,6 +297,40 @@ export type InspectRuntimeResponse = {
   control?: {
     mode: string
     brokerAttached: boolean
+    /**
+     * (1) Broker control over Unix IPC — the durable control channel. The attach
+     * token is exposed by REDACTED reference only; the raw secret never appears.
+     */
+    brokerIpc?: {
+      socketPath: string
+      attachTokenRef: { kind: 'file'; path: string; redacted: true }
+      eventHighWaterSeq: number | null
+      replayStatus: string | null
+      degradedReason: string | null
+      lastAttachError: { code: string; message: string } | null
+    } | undefined
+    /** (2) Operator TUI attach — where a human attaches (the `tui` window). */
+    operatorAttach?: {
+      socketPath: string
+      sessionName: string
+      windowName: string
+      sessionId: string
+      windowId: string
+      paneId: string
+      attachCommand: string
+    } | undefined
+    /** (3) Broker PROCESS diagnostics — the broker child (the `broker` window). */
+    brokerProcess?: {
+      command: string
+      pid: number | null
+      generation: number | null
+      socketPath: string
+      sessionName: string
+      windowName: string
+      sessionId: string
+      windowId: string
+      paneId: string
+    } | undefined
   } | undefined
   /**
    * tmux pane/lease allocation for tmux-transport runtimes. For broker-tmux

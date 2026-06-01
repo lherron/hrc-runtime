@@ -39,7 +39,7 @@ import {
   brokerInteractiveHandlersMethods,
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
-import { extractRuntimeControlState } from './broker/runtime-state.js'
+import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -848,7 +848,10 @@ class HrcServerInstance implements HrcServer {
     const lastActivityAt = runtime.lastActivityAt ?? null
     const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
     const continuation = runtime.continuation ?? session.continuation ?? null
-    const control = extractRuntimeControlState(runtime.runtimeStateJson)
+    const eventHighWaterSeq = runtime.activeInvocationId
+      ? this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ?? null
+      : null
+    const control = extractFullRuntimeControlState(runtime.runtimeStateJson, eventHighWaterSeq)
     const sessionCreatedAtMs = Date.parse(session.createdAt)
     const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
       ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
