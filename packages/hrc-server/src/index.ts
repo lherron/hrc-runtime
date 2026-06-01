@@ -67,9 +67,7 @@ import type {
   InspectRuntimeResponse,
   KillBrokerTmuxLeasesResponse,
   ListMessagesResponse,
-  ReconcileActiveRunResult,
   ReconcileActiveRunsResponse,
-  ReconcileActiveRunsSummary,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   RemoveAppSessionResponse,
@@ -85,9 +83,7 @@ import type {
   SweepRuntimeTransport,
   SweepRuntimesResponse,
   SweepRuntimesSummary,
-  SweepZombieRunResult,
   SweepZombieRunsResponse,
-  SweepZombieRunsSummary,
   TerminateRuntimeResponse,
   WaitMessageResponse,
 } from 'hrc-core'
@@ -220,12 +216,26 @@ import {
 import {
   HRC_EVENTS_KEEPALIVE_MS,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
-  HRC_SERVER_RUN_COLUMNS,
   NDJSON_HEADERS,
 } from './server-constants.js'
 import {
   writeServerLog,
 } from './server-log.js'
+import type {
+  ServerContext,
+} from './server-context.js'
+import {
+  finalizeRuntimeTermination,
+  mapSessionRow,
+  matchesHrcLifecycleEventFilter,
+  parseOptionalIntegerQuery,
+  parseRuntimeIdQuery,
+} from './server-misc.js'
+import {
+  cleanupIdleClaudeGhosttyRuntimes,
+  reconcileActiveRunsOnce,
+  sweepZombieRunsOnce,
+} from './sweep-reconcile.js'
 import {
   createHostSessionId,
   encodeNdjson,
@@ -361,9 +371,7 @@ import {
 import {
   filterRuntimes,
   isInteractiveRuntimeLive,
-  mapServerRunRow,
   parseSweepDurationMs,
-  reconcileResultTransport,
   runtimeMatchesSweepRequest,
 } from './sweep-helpers.js'
 import {
@@ -398,24 +406,18 @@ import type {
   InteractiveTmuxBrokerDriver,
 } from './broker-decisions.js'
 import type {
-  ActiveRunReconcileCandidate,
-  ActiveRunReconcilePlan,
   AttachDescriptorResponse,
   ExactRouteHandler,
   FollowSubscriber,
   HrcEventsRouteFilters,
   HrcServer,
   HrcServerOptions,
-  HrcServerRunRow,
   InFlightInputResponse,
-  LatestRunEventRow,
   MessageSubscriber,
-  ObservedRunActivity,
   PendingBrokerLiteralInput,
   PreparedSemanticDmPayload,
   SessionRow,
   TurnResponseFinalizer,
-  ZombieRunCandidate,
 } from './server-types.js'
 
 
@@ -577,11 +579,8 @@ const OTLP_CONTENT_TYPE_JSON = 'application/json'
 const HRC_ZOMBIE_SWEEP_ENABLED = true
 const HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS = 300
 const HRC_ZOMBIE_RUN_TIMEOUT_SECONDS = 1800
-const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
-const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
 const HRC_ACTIVE_RUN_RECONCILE_ENABLED = true
 const HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS = 30_000
-const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
 const HRC_BUSY_HEADLESS_DM_REJECTION_CODE = 'runtime_busy_dm_rejected'
 const HRC_BUSY_HEADLESS_DM_REJECTION_MESSAGE =
   'target session has a busy headless runtime; hrcchat dm will not spawn a parallel runtime'
@@ -616,6 +615,7 @@ class HrcServerInstance implements HrcServer {
   private readonly claudeCodeTmuxBrokerEnabled: boolean
   private readonly codexCliTmuxBrokerEnabled: boolean
   private harnessBrokerController: HarnessBrokerController | undefined
+  private readonly ctx: ServerContext
   private readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
@@ -738,6 +738,12 @@ class HrcServerInstance implements HrcServer {
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
+    this.ctx = {
+      db: this.db,
+      tmux: this.tmux,
+      ghostmux: this.ghostmux,
+      notifyEvent: (event) => this.notifyEvent(event),
+    }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
@@ -4662,7 +4668,7 @@ class HrcServerInstance implements HrcServer {
   private async handleSweepZombieRuns(request: Request): Promise<Response> {
     const body = parseSweepZombieRunsRequest(await parseJsonBody(request))
     const olderThanMs = parseSweepDurationMs(body.olderThan ?? '30m')
-    const result = await this.sweepZombieRunsOnce({
+    const result = await sweepZombieRunsOnce(this.ctx, {
       olderThanMs,
       dryRun: body.dryRun === true,
       thresholdSeconds: Math.floor(olderThanMs / 1000),
@@ -4684,7 +4690,7 @@ class HrcServerInstance implements HrcServer {
       return
     }
 
-    const sweep = this.sweepZombieRunsOnce({
+    const sweep = sweepZombieRunsOnce(this.ctx, {
       olderThanMs: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS * 1000,
       dryRun: false,
       thresholdSeconds: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
@@ -4701,236 +4707,10 @@ class HrcServerInstance implements HrcServer {
     }
   }
 
-  private async sweepZombieRunsOnce(input: {
-    olderThanMs: number
-    dryRun: boolean
-    thresholdSeconds: number
-  }): Promise<SweepZombieRunsResponse> {
-    const nowMs = Date.now()
-    const cutoffMs = nowMs - input.olderThanMs
-    const candidates = this.listZombieRunCandidates(cutoffMs)
-    const results: SweepZombieRunResult[] = []
-
-    for (const candidate of candidates) {
-      if (input.dryRun) {
-        results.push({
-          type: 'run',
-          runId: candidate.run.runId,
-          hostSessionId: candidate.run.hostSessionId,
-          ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-          status: 'matched',
-          observedAt: candidate.observedAt,
-          observedSource: candidate.observedSource,
-          runtimeOwnershipCleared: false,
-        })
-        continue
-      }
-
-      try {
-        const result = await this.zombieRun(candidate, input.thresholdSeconds)
-        results.push(result)
-      } catch (error) {
-        results.push({
-          type: 'run',
-          runId: candidate.run.runId,
-          hostSessionId: candidate.run.hostSessionId,
-          ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-          status: 'error',
-          observedAt: candidate.observedAt,
-          observedSource: candidate.observedSource,
-          runtimeOwnershipCleared: false,
-          errorCode: error instanceof HrcDomainError ? error.code : HrcErrorCode.INTERNAL_ERROR,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
-
-    const summary: SweepZombieRunsSummary = {
-      type: 'summary',
-      matched: candidates.length,
-      zombied: results.filter((result) => result.status === 'zombied').length,
-      skipped: results.filter((result) => result.status === 'skipped').length,
-      errors: results.filter((result) => result.status === 'error').length,
-    }
-
-    return {
-      ok: true,
-      results,
-      summary,
-    } satisfies SweepZombieRunsResponse
-  }
-
-  private listZombieRunCandidates(cutoffMs: number): ZombieRunCandidate[] {
-    const placeholders = HRC_ZOMBIE_ACTIVE_RUN_STATUSES.map(() => '?').join(', ')
-    const rows = this.db.sqlite
-      .query<HrcServerRunRow, string[]>(
-        `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
-          WHERE status IN (${placeholders})
-            AND transport = 'headless'
-            AND completed_at IS NULL
-          ORDER BY updated_at ASC, run_id ASC`
-      )
-      .all(...HRC_ZOMBIE_ACTIVE_RUN_STATUSES)
-
-    const candidates: ZombieRunCandidate[] = []
-    for (const row of rows) {
-      const run = mapServerRunRow(row)
-      const observed = this.latestObservedRunActivity(run)
-      const observedMs = Date.parse(observed.observedAt)
-      if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
-        continue
-      }
-      candidates.push({
-        run,
-        ...observed,
-      })
-    }
-    return candidates
-  }
-
-  private latestObservedRunActivity(run: HrcRunRecord): ObservedRunActivity {
-    const latestEvent = this.db.sqlite
-      .query<LatestRunEventRow, [string]>(
-        `
-          SELECT ts FROM hrc_events
-          WHERE run_id = ?
-          ORDER BY ts DESC, hrc_seq DESC
-          LIMIT 1
-        `
-      )
-      .get(run.runId)
-    if (latestEvent) {
-      return {
-        observedAt: latestEvent.ts,
-        observedSource: 'event',
-        latestEventAt: latestEvent.ts,
-      }
-    }
-
-    if (run.startedAt) {
-      return { observedAt: run.startedAt, observedSource: 'started_at' }
-    }
-    if (run.acceptedAt) {
-      return { observedAt: run.acceptedAt, observedSource: 'accepted_at' }
-    }
-    return { observedAt: run.updatedAt, observedSource: 'updated_at' }
-  }
-
-  private async zombieRun(
-    candidate: ZombieRunCandidate,
-    thresholdSeconds: number
-  ): Promise<SweepZombieRunResult> {
-    const now = timestamp()
-    const claim = this.db.sqlite
-      .query(
-        `
-          UPDATE runs
-          SET
-            status = ?,
-            completed_at = ?,
-            updated_at = ?,
-            error_code = ?,
-            error_message = ?
-          WHERE run_id = ?
-            AND status IN ('accepted', 'started', 'running')
-            AND transport = 'headless'
-            AND completed_at IS NULL
-        `
-      )
-      .run(
-        'zombie',
-        now,
-        now,
-        HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
-        HRC_ZOMBIE_ERROR_MESSAGE,
-        candidate.run.runId
-      ) as { changes?: number }
-
-    if ((claim.changes ?? 0) === 0) {
-      return {
-        type: 'run',
-        runId: candidate.run.runId,
-        hostSessionId: candidate.run.hostSessionId,
-        ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-        status: 'skipped',
-        observedAt: candidate.observedAt,
-        observedSource: candidate.observedSource,
-        runtimeOwnershipCleared: false,
-      }
-    }
-
-    const runtime = candidate.run.runtimeId
-      ? this.db.runtimes.getByRuntimeId(candidate.run.runtimeId)
-      : null
-    let runtimeOwnershipCleared = false
-    let runtimeStatus: string | undefined
-    if (runtime?.activeRunId === candidate.run.runId) {
-      runtimeStatus = 'stale'
-      const runtimeUpdate = this.db.sqlite
-        .query(
-          `
-            UPDATE runtimes
-            SET active_run_id = NULL,
-                status = ?,
-                updated_at = ?,
-                last_activity_at = ?
-            WHERE runtime_id = ?
-              AND active_run_id = ?
-          `
-        )
-        .run(runtimeStatus, now, now, runtime.runtimeId, candidate.run.runId) as {
-        changes?: number
-      }
-      runtimeOwnershipCleared = (runtimeUpdate.changes ?? 0) > 0
-    }
-
-    const event = appendHrcEvent(this.db, 'turn.zombied', {
-      ts: now,
-      hostSessionId: candidate.run.hostSessionId,
-      scopeRef: candidate.run.scopeRef,
-      laneRef: candidate.run.laneRef,
-      generation: candidate.run.generation,
-      runId: candidate.run.runId,
-      ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-      ...(candidate.run.transport === 'sdk' ||
-      candidate.run.transport === 'tmux' ||
-      candidate.run.transport === 'headless' ||
-      candidate.run.transport === 'ghostty'
-        ? { transport: candidate.run.transport }
-        : {}),
-      errorCode: HrcErrorCode.RUN_ZOMBIE_TIMEOUT,
-      payload: {
-        runId: candidate.run.runId,
-        ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-        thresholdSeconds,
-        lastObservedAt: candidate.observedAt,
-        observedSource: candidate.observedSource,
-        ...(candidate.latestEventAt ? { latestEventAt: candidate.latestEventAt } : {}),
-        fallbackTimestampSource:
-          candidate.observedSource === 'event' ? undefined : candidate.observedSource,
-        runtimeOwnershipCleared,
-        ...(runtimeStatus ? { runtimeStatus } : {}),
-      },
-    })
-    this.notifyEvent(event)
-
-    return {
-      type: 'run',
-      runId: candidate.run.runId,
-      hostSessionId: candidate.run.hostSessionId,
-      ...(candidate.run.runtimeId ? { runtimeId: candidate.run.runtimeId } : {}),
-      status: 'zombied',
-      observedAt: candidate.observedAt,
-      observedSource: candidate.observedSource,
-      runtimeOwnershipCleared,
-      ...(runtimeStatus ? { runtimeStatus } : {}),
-    }
-  }
-
   private async handleReconcileActiveRuns(request: Request): Promise<Response> {
     const body = parseReconcileActiveRunsRequest(await parseJsonBody(request))
     const olderThanMs = parseSweepDurationMs(body.olderThan ?? '30m')
-    const result = await this.reconcileActiveRunsOnce({
+    const result = await reconcileActiveRunsOnce(this.ctx, {
       olderThanMs,
       dryRun: body.dryRun === true,
       thresholdSeconds: Math.floor(olderThanMs / 1000),
@@ -4952,7 +4732,7 @@ class HrcServerInstance implements HrcServer {
       return
     }
 
-    const reconcile = this.reconcileActiveRunsOnce({
+    const reconcile = reconcileActiveRunsOnce(this.ctx, {
       olderThanMs: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS * 1000,
       dryRun: false,
       thresholdSeconds: HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
@@ -4981,7 +4761,7 @@ class HrcServerInstance implements HrcServer {
 
   private async runClaudeGhosttyIdleCleanup(): Promise<void> {
     if (this.idleCleanupInFlight) return
-    const cleanup = this.cleanupIdleClaudeGhosttyRuntimes()
+    const cleanup = cleanupIdleClaudeGhosttyRuntimes(this.ctx)
     this.idleCleanupInFlight = cleanup
     try {
       await cleanup
@@ -4992,424 +4772,6 @@ class HrcServerInstance implements HrcServer {
         this.idleCleanupInFlight = undefined
       }
     }
-  }
-
-  private async cleanupIdleClaudeGhosttyRuntimes(): Promise<void> {
-    const cleanupMinutes = resolveClaudeGhosttyIdleCleanupMinutes()
-    if (cleanupMinutes === 0) return
-
-    const nowMs = Date.now()
-    const cutoffMs = nowMs - cleanupMinutes * 60_000
-    for (const runtime of this.db.runtimes.listAll()) {
-      if (
-        runtime.transport !== 'ghostty' ||
-        runtime.harness !== 'claude-code' ||
-        runtime.activeRunId !== undefined ||
-        runtime.status === 'busy' ||
-        runtime.status === 'starting' ||
-        isRuntimeUnavailableStatus(runtime.status)
-      ) {
-        continue
-      }
-
-      const activityMs = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
-      if (!Number.isFinite(activityMs) || activityMs > cutoffMs) continue
-
-      const latest = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
-      if (
-        !latest ||
-        latest.activeRunId !== undefined ||
-        latest.status === 'busy' ||
-        latest.status === 'starting' ||
-        latest.generation !== runtime.generation
-      ) {
-        continue
-      }
-
-      const surface = requireGhosttySurface(latest)
-      const session = requireSession(this.db, latest.hostSessionId)
-      const startedAt = timestamp()
-      const startedEvent = appendHrcEvent(this.db, 'runtime.idle_cleanup_started', {
-        ts: startedAt,
-        hostSessionId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        runtimeId: latest.runtimeId,
-        transport: 'ghostty',
-        payload: {
-          transport: 'ghostty',
-          surfaceId: surface.surfaceId,
-          reason: 'claude-ghostty-idle',
-          idleMinutes: cleanupMinutes,
-        },
-      })
-      this.notifyEvent(startedEvent)
-
-      try {
-        await this.ghostmux.sendKeys(surface.surfaceId, '/quit')
-        await delay(1_000)
-        await this.ghostmux.terminate(surface.surfaceId)
-      } catch (error) {
-        const inspected = await this.ghostmux.inspectSurface(surface.surfaceId).catch(() => null)
-        if (inspected) throw error
-      }
-
-      const completedAt = timestamp()
-      finalizeRuntimeTermination(this.db, latest, completedAt)
-      const terminatedEvent = appendHrcEvent(this.db, 'runtime.terminated', {
-        ts: completedAt,
-        hostSessionId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        runtimeId: latest.runtimeId,
-        transport: 'ghostty',
-        payload: {
-          transport: 'ghostty',
-          surfaceId: surface.surfaceId,
-          reason: 'claude-ghostty-idle',
-          droppedContinuation: false,
-        },
-      })
-      this.notifyEvent(terminatedEvent)
-    }
-  }
-
-  private async reconcileActiveRunsOnce(input: {
-    olderThanMs: number
-    dryRun: boolean
-    thresholdSeconds: number
-  }): Promise<ReconcileActiveRunsResponse> {
-    const nowMs = Date.now()
-    const cutoffMs = nowMs - input.olderThanMs
-    const candidates = this.listActiveRunReconcileCandidates(cutoffMs)
-    const results: ReconcileActiveRunResult[] = []
-
-    for (const candidate of candidates) {
-      try {
-        const plan = await this.planActiveRunReconcile(candidate)
-        if (plan.action === 'suspect') {
-          results.push(this.activeRunReconcileResult(candidate, plan, 'suspect', false))
-          continue
-        }
-        if (input.dryRun) {
-          results.push(this.activeRunReconcileResult(candidate, plan, 'matched', false))
-          continue
-        }
-
-        results.push(this.reapActiveRun(candidate, plan, input.thresholdSeconds))
-      } catch (error) {
-        results.push({
-          type: 'run',
-          runId: candidate.run.runId,
-          hostSessionId: candidate.run.hostSessionId,
-          runtimeId: candidate.runtime.runtimeId,
-          transport: reconcileResultTransport(candidate.run),
-          status: 'error',
-          reason: 'runtime_unavailable_with_active_run',
-          observedAt: candidate.observedAt,
-          observedSource: candidate.observedSource,
-          runtimeStatus: candidate.runtime.status,
-          runtimeOwnershipCleared: false,
-          errorCode: error instanceof HrcDomainError ? error.code : HrcErrorCode.INTERNAL_ERROR,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
-
-    const summary: ReconcileActiveRunsSummary = {
-      type: 'summary',
-      matched: results.filter((result) => result.status === 'matched').length,
-      reaped: results.filter((result) => result.status === 'reaped').length,
-      suspect: results.filter((result) => result.status === 'suspect').length,
-      skipped: results.filter((result) => result.status === 'skipped').length,
-      errors: results.filter((result) => result.status === 'error').length,
-    }
-
-    return {
-      ok: true,
-      results,
-      summary,
-    } satisfies ReconcileActiveRunsResponse
-  }
-
-  private listActiveRunReconcileCandidates(cutoffMs: number): ActiveRunReconcileCandidate[] {
-    const rows = this.db.sqlite
-      .query<HrcServerRunRow, []>(
-        `SELECT ${HRC_SERVER_RUN_COLUMNS} FROM runs
-          WHERE status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
-            AND runtime_id IS NOT NULL
-            AND completed_at IS NULL
-          ORDER BY updated_at ASC, run_id ASC`
-      )
-      .all()
-
-    const candidates: ActiveRunReconcileCandidate[] = []
-    for (const row of rows) {
-      const run = mapServerRunRow(row)
-      if (!run.runtimeId) continue
-
-      const runtime = this.db.runtimes.getByRuntimeId(run.runtimeId)
-      if (!runtime || runtime.activeRunId !== run.runId) continue
-
-      const launch = runtime.launchId ? this.db.launches.getByLaunchId(runtime.launchId) : null
-      if (run.transport === 'headless' && launch?.status !== 'orphaned') continue
-
-      const observed = this.latestObservedRunActivity(run)
-      const observedMs = Date.parse(observed.observedAt)
-      if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
-        continue
-      }
-
-      candidates.push({
-        run,
-        runtime,
-        ...(launch ? { launch } : {}),
-        ...observed,
-      })
-    }
-    return candidates
-  }
-
-  private async planActiveRunReconcile(
-    candidate: ActiveRunReconcileCandidate
-  ): Promise<ActiveRunReconcilePlan> {
-    const { runtime, launch } = candidate
-
-    if (runtime.transport === 'headless' && launch?.status === 'orphaned') {
-      return {
-        action: 'reap',
-        reason: 'orphaned-headless',
-        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-        nextRuntimeStatus: 'stale',
-      }
-    }
-
-    if (runtime.status === 'terminated') {
-      return {
-        action: 'reap',
-        reason: 'runtime_terminated_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_TERMINATED_WITH_ACTIVE_RUN,
-      }
-    }
-
-    if (runtime.status === 'dead') {
-      return {
-        action: 'reap',
-        reason: 'runtime_dead_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_DEAD_WITH_ACTIVE_RUN,
-      }
-    }
-
-    if (runtime.status === 'stale') {
-      return {
-        action: 'reap',
-        reason: 'runtime_unavailable_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-      }
-    }
-
-    if (runtime.status === 'ready') {
-      return {
-        action: 'reap',
-        reason: 'runtime_ready_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_READY_WITH_ACTIVE_RUN,
-      }
-    }
-
-    if (launch && (launch.status === 'exited' || launch.status === 'failed')) {
-      return {
-        action: 'reap',
-        reason: 'runtime_process_exited_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_PROCESS_EXITED_WITH_ACTIVE_RUN,
-      }
-    }
-
-    if (launch?.status === 'orphaned') {
-      return {
-        action: 'reap',
-        reason: 'runtime_unavailable_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-        nextRuntimeStatus: 'stale',
-      }
-    }
-
-    if (runtime.transport === 'tmux') {
-      const tmuxSessionName = getObservedTmuxSessionName(runtime)
-      if (!tmuxSessionName) {
-        return {
-          action: 'reap',
-          reason: 'runtime_unavailable_with_active_run',
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-          nextRuntimeStatus: 'dead',
-        }
-      }
-
-      const inspected = await this.tmux.inspectSession(tmuxSessionName)
-      if (!inspected) {
-        return {
-          action: 'reap',
-          reason: 'runtime_unavailable_with_active_run',
-          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
-          nextRuntimeStatus: 'dead',
-        }
-      }
-    }
-
-    if (runtime.status === 'busy') {
-      return {
-        action: 'reap',
-        reason: 'runtime_busy_timeout_with_active_run',
-        errorCode: HrcErrorCode.RUNTIME_BUSY_TIMEOUT_WITH_ACTIVE_RUN,
-        nextRuntimeStatus: 'stale',
-      }
-    }
-
-    return {
-      action: 'suspect',
-      reason: 'runtime_may_still_be_live',
-    }
-  }
-
-  private activeRunReconcileResult(
-    candidate: ActiveRunReconcileCandidate,
-    plan: ActiveRunReconcilePlan,
-    status: ReconcileActiveRunResult['status'],
-    runtimeOwnershipCleared: boolean
-  ): ReconcileActiveRunResult {
-    return {
-      type: 'run',
-      runId: candidate.run.runId,
-      hostSessionId: candidate.run.hostSessionId,
-      runtimeId: candidate.runtime.runtimeId,
-      transport: reconcileResultTransport(candidate.run),
-      status,
-      reason: plan.reason,
-      observedAt: candidate.observedAt,
-      observedSource: candidate.observedSource,
-      runtimeStatus: candidate.runtime.status,
-      ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
-      runtimeOwnershipCleared,
-      ...(candidate.launch ? { launchId: candidate.launch.launchId } : {}),
-      ...(candidate.launch ? { launchStatus: candidate.launch.status } : {}),
-      ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
-    }
-  }
-
-  private reapActiveRun(
-    candidate: ActiveRunReconcileCandidate,
-    plan: ActiveRunReconcilePlan,
-    thresholdSeconds: number
-  ): ReconcileActiveRunResult {
-    const now = timestamp()
-    const errorCode = plan.errorCode ?? HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN
-    const errorMessage = `${HRC_REAPED_RUN_ERROR_MESSAGE}: ${plan.reason}`
-    const claim = this.db.sqlite
-      .query(
-        `
-          UPDATE runs
-          SET
-            status = ?,
-            completed_at = ?,
-            updated_at = ?,
-            error_code = ?,
-            error_message = ?
-          WHERE run_id = ?
-            AND runtime_id = ?
-            AND status IN ('accepted', 'started', 'running')
-            AND transport IN ('sdk', 'tmux', 'headless', 'ghostty')
-            AND completed_at IS NULL
-            AND EXISTS (
-              SELECT 1 FROM runtimes
-              WHERE runtime_id = ?
-                AND active_run_id = ?
-            )
-        `
-      )
-      .run(
-        'failed',
-        now,
-        now,
-        errorCode,
-        errorMessage,
-        candidate.run.runId,
-        candidate.runtime.runtimeId,
-        candidate.runtime.runtimeId,
-        candidate.run.runId
-      ) as { changes?: number }
-
-    if ((claim.changes ?? 0) === 0) {
-      return this.activeRunReconcileResult(candidate, plan, 'skipped', false)
-    }
-
-    let runtimeOwnershipCleared = false
-    const runtimeUpdate = this.db.sqlite
-      .query(
-        `
-          UPDATE runtimes
-          SET active_run_id = NULL,
-              status = ?,
-              updated_at = ?,
-              last_activity_at = ?
-          WHERE runtime_id = ?
-            AND active_run_id = ?
-        `
-      )
-      .run(
-        plan.nextRuntimeStatus ?? candidate.runtime.status,
-        now,
-        now,
-        candidate.runtime.runtimeId,
-        candidate.run.runId
-      ) as { changes?: number }
-    runtimeOwnershipCleared = (runtimeUpdate.changes ?? 0) > 0
-
-    const event = appendHrcEvent(this.db, 'turn.reaped', {
-      ts: now,
-      hostSessionId: candidate.run.hostSessionId,
-      scopeRef: candidate.run.scopeRef,
-      laneRef: candidate.run.laneRef,
-      generation: candidate.run.generation,
-      runId: candidate.run.runId,
-      runtimeId: candidate.runtime.runtimeId,
-      ...(candidate.run.transport === 'sdk' ||
-      candidate.run.transport === 'tmux' ||
-      candidate.run.transport === 'headless' ||
-      candidate.run.transport === 'ghostty'
-        ? { transport: candidate.run.transport }
-        : {}),
-      errorCode,
-      payload: {
-        runId: candidate.run.runId,
-        runtimeId: candidate.runtime.runtimeId,
-        reason: plan.reason,
-        thresholdSeconds,
-        lastObservedAt: candidate.observedAt,
-        observedSource: candidate.observedSource,
-        ...(candidate.latestEventAt ? { latestEventAt: candidate.latestEventAt } : {}),
-        fallbackTimestampSource:
-          candidate.observedSource === 'event' ? undefined : candidate.observedSource,
-        priorRunStatus: candidate.run.status,
-        priorRuntimeStatus: candidate.runtime.status,
-        ...(plan.nextRuntimeStatus ? { nextRuntimeStatus: plan.nextRuntimeStatus } : {}),
-        ...(candidate.launch
-          ? {
-              launchId: candidate.launch.launchId,
-              launchStatus: candidate.launch.status,
-              wrapperPid: candidate.launch.wrapperPid,
-              childPid: candidate.launch.childPid,
-              exitCode: candidate.launch.exitCode,
-              signal: candidate.launch.signal,
-            }
-          : {}),
-        runtimeOwnershipCleared,
-      },
-    })
-    this.notifyEvent(event)
-
-    return this.activeRunReconcileResult(candidate, plan, 'reaped', runtimeOwnershipCleared)
   }
 
   private claimRuntimeForSweep(runtimeId: string, statuses: string[], now: string): boolean {
@@ -9697,118 +9059,4 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
   }
 }
 
-
-function parseRuntimeIdQuery(url: URL): string {
-  const runtimeId = normalizeOptionalQuery(url.searchParams.get('runtimeId'))
-  if (!runtimeId) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
-  }
-  return runtimeId
-}
-
-function finalizeRuntimeTermination(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot,
-  now: string
-): void {
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} was terminated`,
-    })
-  }
-
-  if (runtime.launchId !== undefined) {
-    db.launches.update(runtime.launchId, {
-      status: 'terminated',
-      exitedAt: now,
-      signal: 'SIGTERM',
-      updatedAt: now,
-    })
-  }
-
-  db.runtimes.update(runtime.runtimeId, {
-    status: 'terminated',
-    updatedAt: now,
-    lastActivityAt: now,
-  })
-}
-
-function mapSessionRow(row: SessionRow): HrcSessionRecord {
-  return {
-    hostSessionId: row.host_session_id,
-    scopeRef: row.scope_ref,
-    laneRef: row.lane_ref,
-    generation: row.generation,
-    status: row.status,
-    priorHostSessionId: row.prior_host_session_id ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    parsedScopeJson: parseJsonValue<Record<string, unknown>>(row.parsed_scope_json),
-    ancestorScopeRefs: parseJsonValue<string[]>(row.ancestor_scope_refs_json) ?? [],
-    lastAppliedIntentJson: parseJsonValue(row.last_applied_intent_json),
-    continuation: parseJsonValue(row.continuation_json),
-  }
-}
-
-function parseJsonValue<T>(value: string | null): T | undefined {
-  if (value === null) {
-    return undefined
-  }
-
-  return JSON.parse(value) as T
-}
-
-function parseOptionalIntegerQuery(raw: string | null, field: string): number | undefined {
-  const normalized = normalizeOptionalQuery(raw)
-  if (normalized === undefined) {
-    return undefined
-  }
-
-  const parsed = Number(normalized)
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      `${field} must be a non-negative integer`,
-      { field }
-    )
-  }
-
-  return parsed
-}
-
-function matchesHrcLifecycleEventFilter(
-  event: HrcLifecycleEvent,
-  filters: HrcEventsRouteFilters
-): boolean {
-  if (filters.hostSessionId !== undefined && event.hostSessionId !== filters.hostSessionId) {
-    return false
-  }
-  if (filters.generation !== undefined && event.generation !== filters.generation) {
-    return false
-  }
-  if (filters.scopeRef !== undefined && event.scopeRef !== filters.scopeRef) {
-    return false
-  }
-  if (filters.laneRef !== undefined && event.laneRef !== filters.laneRef) {
-    return false
-  }
-  if (filters.runtimeId !== undefined && event.runtimeId !== filters.runtimeId) {
-    return false
-  }
-  if (filters.runId !== undefined && event.runId !== filters.runId) {
-    return false
-  }
-  if (filters.category !== undefined && event.category !== filters.category) {
-    return false
-  }
-  if (filters.eventKind !== undefined && event.eventKind !== filters.eventKind) {
-    return false
-  }
-  return true
-}
 
