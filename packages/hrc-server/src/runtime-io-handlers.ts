@@ -13,6 +13,7 @@ import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerStartRoute,
+  getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   isMatchingInteractiveTmuxBrokerRuntime,
@@ -487,7 +488,7 @@ export function attachRuntime(
         socketPath,
         'attach-session',
         '-t',
-        getBrokerRuntimeTmuxSessionName(runtime),
+        getBrokerRuntimeTmuxAttachTarget(runtime),
       ],
       bindingFence: {
         hostSessionId: runtime.hostSessionId,

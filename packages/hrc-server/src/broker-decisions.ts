@@ -694,6 +694,26 @@ export function getBrokerRuntimeTmuxSessionName(runtime: HrcRuntimeSnapshot): st
   return `hrc-${runtime.hostSessionId.slice(0, 12)}`
 }
 
+// The tmux target an operator should `attach-session -t` for a broker runtime.
+//
+// T-01801: a durable broker lease hosts TWO windows under one session — 'broker'
+// (the headless harness-broker IPC controller, which renders nothing) and 'tui'
+// (the harness the operator actually attaches to). The session is created with the
+// 'broker' window active, so a bare `attach-session -t <session>` lands the operator
+// on the blank controller window while codex renders unseen in 'tui'. Target the
+// recorded leased window explicitly so attach always lands on the harness. Legacy
+// single-window broker runtimes record windowName='main', so this stays correct for
+// them too; if no window is recorded we fall back to the bare session name.
+export function getBrokerRuntimeTmuxAttachTarget(runtime: HrcRuntimeSnapshot): string {
+  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+  const windowName = runtime.tmuxJson?.['windowName']
+  if (typeof windowName === 'string' && windowName.length > 0) {
+    return `${sessionName}:${windowName}`
+  }
+
+  return sessionName
+}
+
 export function isInteractiveTmuxBrokerIntent(intent: HrcRuntimeIntent): boolean {
   return (
     intent.harness.interactive === true &&
