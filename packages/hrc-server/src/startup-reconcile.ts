@@ -400,6 +400,43 @@ export async function reconcileDurableBrokerStartup(
   return outcomes
 }
 
+/**
+ * T-01801: LAZY IPC re-attach for the DISPATCH path. A durable broker that
+ * survived a daemon restart has live broker state and a re-associated tmux lease,
+ * but the request-serving `HarnessBrokerController` is rebuilt fresh on boot and
+ * holds NO in-memory active client — startup reconciliation does its attach on a
+ * SEPARATE controller instance (it runs before the server instance, hence the
+ * request-serving controller, exists). The first input therefore fails
+ * `broker_runtime_not_active`. Re-attach the persisted durable endpoint onto the
+ * REQUEST-SERVING controller passed in here, so the caller can retry the dispatch
+ * on the SAME broker (continuity, no re-alloc). Returns true iff the controller
+ * is now broker-attached. No-ops to false for a runtime with no persisted durable
+ * IPC endpoint, so the caller falls back to legacy pane-lease reassociation.
+ */
+export async function reattachDurableBrokerForDispatch(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  deps: {
+    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
+    brokerUnixClientFactory: BrokerUnixClientFactory
+    // Default to the persisted-state probe/token resolvers (production). Tests
+    // script these to avoid touching a live socket / on-disk attach token.
+    resolveAttachToken?: (runtime: HrcRuntimeSnapshot) => Promise<string | undefined>
+    probeBrokerLease?: (runtime: HrcRuntimeSnapshot) => Promise<BrokerReattachProbe>
+  }
+): Promise<boolean> {
+  if (!getPersistedDurableBrokerEndpoint(runtime)) {
+    return false
+  }
+  const outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
+    controller: deps.controller,
+    brokerUnixClientFactory: deps.brokerUnixClientFactory,
+    resolveAttachToken: deps.resolveAttachToken ?? resolvePersistedBrokerAttachToken,
+    probeBrokerLease: deps.probeBrokerLease ?? probePersistedBrokerLease,
+  })
+  return outcome.state === 'broker-attached'
+}
+
 async function resolvePersistedBrokerAttachToken(
   runtime: HrcRuntimeSnapshot
 ): Promise<string | undefined> {

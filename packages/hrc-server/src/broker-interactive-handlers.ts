@@ -17,6 +17,7 @@ import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter
 import {
   type BrokerTmuxAllocation,
   type BrokerTmuxAllocator,
+  type BrokerUnixClientFactory,
   type BrokerWindowIdentity,
   HarnessBrokerController,
 } from './broker/controller.js'
@@ -25,6 +26,7 @@ import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 
+import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   decideBrokerDurableInteractiveRoute,
@@ -51,7 +53,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { HrcServerOptions } from './server-types.js'
 import { json, timestamp } from './server-util.js'
-import { brokerLeaseIdsMatch } from './startup-reconcile.js'
+import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
   getBrokerIpcSocketPath,
   getBrokerTmuxSocketPath,
@@ -352,11 +354,36 @@ export async function executeInteractiveBrokerInputTurn(
     metadata: { runId },
   }
 
-  const result = await this.getHarnessBrokerController().dispatchInput({
-    runtimeId: runtime.runtimeId,
-    input,
-    ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
-  })
+  const dispatchToBroker = () =>
+    this.getHarnessBrokerController().dispatchInput({
+      runtimeId: runtime.runtimeId,
+      input,
+      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
+    })
+
+  let result = await dispatchToBroker()
+
+  // T-01801: a durable IPC broker that survived a daemon restart has live broker
+  // state but no in-memory active client on THIS daemon's freshly-built
+  // request-serving controller (startup reconcile attaches on a throwaway
+  // controller). The first input therefore fails `broker_runtime_not_active`.
+  // Lazily re-attach the persisted durable endpoint onto the request-serving
+  // controller and retry on the SAME broker (continuity, no re-alloc) BEFORE
+  // falling back to legacy pane-lease reassociation. No-ops for non-durable
+  // runtimes, so legacy reassociation still handles them below.
+  if (
+    !result.ok &&
+    result.error.code === 'broker_runtime_not_active' &&
+    runtime.transport === 'tmux' &&
+    (await reattachDurableBrokerForDispatch(this.db, runtime, {
+      controller: this.getHarnessBrokerController(),
+      brokerUnixClientFactory:
+        this.brokerUnixClientFactory ??
+        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+    }))
+  ) {
+    result = await dispatchToBroker()
+  }
 
   if (!result.ok || !result.response.accepted) {
     const completedAt = timestamp()
@@ -745,7 +772,12 @@ export function createBrokerDurableTmuxAllocator(
 ): BrokerTmuxAllocator {
   const now = deps.now ?? timestamp
   return {
-    allocate: async ({ runtimeId, brokerDriver, generation }): Promise<BrokerTmuxAllocation> => {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+    }): Promise<BrokerTmuxAllocation> => {
       const brokerIpcSocketPath = getBrokerIpcSocketPath(options, brokerDriver, runtimeId)
       // HARD preflight BEFORE any tmux spawn / IPC dir creation: an over-long
       // sockaddr_un path fails EARLY with a readable error, never a later
@@ -774,7 +806,21 @@ export function createBrokerDurableTmuxAllocator(
       await tmux.initialize()
 
       const sessionName = `hrc-${brokerDriver}-${runtimeId}`
-      const brokerCommand = `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}`
+      // T-01801: wire the broker's durability surface so attach-replay across a
+      // daemon restart works. WITHOUT `--event-ledger` the broker still advertises
+      // attachReplay:true but has no on-disk ledger, so the post-restart
+      // `invocation.eventsSince` replay fails ('no durable ledger configured') and
+      // the runtime goes stale. The attach-identity flags (runtime/host-session/
+      // generation + token file) arm the broker's latest-valid-attach-wins gate so
+      // it validates the controller's attach token instead of accepting any peer.
+      const eventLedgerPath = join(ipcDir, 'events.ndjson')
+      const brokerCommand =
+        `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}` +
+        ` --event-ledger ${eventLedgerPath}` +
+        ` --runtime-id ${runtimeId}` +
+        ` --host-session-id ${hostSessionId}` +
+        ` --generation ${generation}` +
+        ` --attach-token-file ${attachTokenPath}`
       const brokerWindow = await tmux.createWindowWithCommand({
         sessionName,
         windowName: 'broker',

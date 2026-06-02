@@ -23,7 +23,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
-import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
+import { BrokerErrorCode, canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -146,6 +146,14 @@ export type DurableBrokerClientLike = BrokerClientLike & {
   permissionRespond(
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse>
+  /**
+   * T-01801: live event stream for an invocation re-attached over `broker.attach`
+   * (unlike `startInvocationFromRequest`, attach returns no stream). The controller
+   * consumes this after replay so post-reattach turn events project live. Optional
+   * so existing scripted test mocks need not implement it; the real connectUnix
+   * client always provides it.
+   */
+  streamInvocationEvents?(invocationId: string): AsyncIterable<InvocationEventEnvelope>
 }
 
 /**
@@ -794,6 +802,21 @@ export class HarnessBrokerController {
         client: input.client,
         closing: false,
       })
+
+      // T-01801: subscribe to the broker's LIVE event stream after the one-shot
+      // `eventsSince` replay. Without this the runtime is re-attached for INPUT
+      // but every subsequent turn's events stay in the broker's durable ledger
+      // and never project into hrc_events, so the semantic turn never finalizes.
+      // `streamInvocationEvents` drains events buffered since the attach (de-duped
+      // by seq) then yields live ones; `consumeEvents` projects idempotently
+      // (mapper marks already-applied seqs idempotent + the events table is UNIQUE
+      // on (invocation_id, seq)), so the overlap with the replay above is safe.
+      const liveEvents = input.client.streamInvocationEvents?.(
+        invocation.invocationId as InvocationId
+      )
+      if (liveEvents) {
+        this.consumeEvents(runtime.runtimeId, liveEvents)
+      }
 
       return {
         ok: true,
@@ -1610,6 +1633,21 @@ export class HarnessBrokerController {
       this.intentionalClosingRuntimeIds.delete(runtimeId)
       return
     }
+    // T-01801: a `control.fenced` close means a NEWER controller legitimately
+    // re-attached (e.g. a fresh-on-boot reconcile attach superseded by the live
+    // request-serving controller on the first post-restart dispatch). This
+    // controller LOST ownership; it must release SILENTLY and must NOT mark the
+    // runtime crash-terminal — the runtime/run state in the shared DB is now
+    // owned by the winning controller, and crashing it here corrupts an active
+    // turn that is succeeding on the new attach.
+    if (isControllerFencedError(error)) {
+      this.logger.info?.('harness broker controller fenced by a newer attach; releasing', {
+        runtimeId,
+        error: error.message,
+      })
+      this.active.delete(runtimeId)
+      return
+    }
     this.logger.error?.('harness broker process closed', {
       runtimeId,
       error: error.message,
@@ -1718,6 +1756,19 @@ function compactEnv(
     }
   }
   return compact
+}
+
+/**
+ * True iff a broker close error is the `control.fenced` signal (a newer
+ * controller re-attached and superseded this one). The unix transport surfaces
+ * it as a `BrokerRpcError` carrying `BrokerErrorCode.ControllerFenced`.
+ */
+function isControllerFencedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: number }).code === BrokerErrorCode.ControllerFenced
+  )
 }
 
 function toControllerError(code: string, error: unknown): BrokerControllerError {

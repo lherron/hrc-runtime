@@ -128,7 +128,20 @@ export async function reconcileTmuxRuntimeLiveness(
 
     const brokerTmux = createTmuxManager({ socketPath })
     const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
-    const inspected = await brokerTmux.inspectSession(sessionName)
+    // T-01801: a durable broker lease (T-01812) hosts TWO named windows under one
+    // session — 'broker' (the harness-broker IPC server) and 'tui' (the harness the
+    // operator attaches to) — and has NO 'main' window. `inspectSession` probes
+    // `<session>:main`, so for a durable runtime it returns null and this reconcile
+    // declares the live session "missing" and kills the lease server out from under
+    // the running broker (SIGHUP) on every routine `hrc runtime list`. Probe the
+    // runtime's RECORDED leased pane by id instead — it mirrors the tui pane for
+    // durable runtimes and the main pane for legacy ones, so it is topology-agnostic.
+    const leasedPaneId = runtime.tmuxJson?.['paneId']
+    const inspected =
+      typeof leasedPaneId === 'string' &&
+      (await brokerTmux.inspectPaneLiveness(leasedPaneId)) !== null
+        ? { paneId: leasedPaneId }
+        : null
     if (inspected) {
       // Session existence is necessary but NOT sufficient: the hrc-owned lease
       // session can outlive the harness process inside the pane. If the harness
