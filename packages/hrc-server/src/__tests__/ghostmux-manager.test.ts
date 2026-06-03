@@ -187,3 +187,88 @@ describe('GhostmuxManager', () => {
     ])
   })
 })
+
+describe('GhostmuxManager.ensureHeadlessViewer', () => {
+  const scopeRef = 'agent:clod:project:hrc-runtime:task:primary'
+
+  it('creates an unfocused window, tags it, and sends the attach command', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      const key = args.join(' ')
+      if (key === 'list-surfaces --json') return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
+      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-1' }), stderr: '' }
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-9',
+      attachCommand: 'hrc attach rt-9',
+      title: `hrc headless ${scopeRef}`,
+    })
+
+    expect(result).toEqual({ status: 'created', surfaceId: 'viewer-1' })
+    // new window must NOT request focus
+    expect(calls).toContainEqual(['new', '--window', '--title', `hrc headless ${scopeRef}`, '--json'])
+    expect(calls.flat()).not.toContain('--focus')
+    expect(calls).toContainEqual([
+      'metadata',
+      'set',
+      '-t',
+      'viewer-1',
+      JSON.stringify({
+        hrc_role: 'hrc-headless-viewer',
+        hrc_scope_ref: scopeRef,
+        hrc_runtime_id: 'rt-9',
+      }),
+      '--window',
+      '--json',
+    ])
+    expect(calls).toContainEqual(['send-keys', '-t', 'viewer-1', 'hrc attach rt-9'])
+  })
+
+  it('reuses an existing viewer for the same scope and does not create a new window', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      const key = args.join(' ')
+      if (key === 'list-surfaces --json') {
+        return { stdout: JSON.stringify({ terminals: [{ id: 'existing-viewer' }] }), stderr: '' }
+      }
+      if (key === 'metadata get -t existing-viewer --window --json') {
+        return {
+          stdout: JSON.stringify({ hrc_role: 'hrc-headless-viewer', hrc_scope_ref: scopeRef }),
+          stderr: '',
+        }
+      }
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-10',
+      attachCommand: 'hrc attach rt-10',
+      title: 'hrc headless',
+    })
+
+    expect(result).toEqual({ status: 'reused', surfaceId: 'existing-viewer' })
+    expect(calls.some((c) => c[0] === 'new')).toBe(false)
+    expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
+  })
+
+  it('returns failed (never throws) when ghostmux is unavailable', async () => {
+    const manager = new GhostmuxManager('ghostmux', async () => {
+      throw new Error('libghostty API call failed [error code: surface_not_realized]')
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-11',
+      attachCommand: 'hrc attach rt-11',
+      title: 'hrc headless',
+    })
+
+    expect(result.status).toBe('failed')
+  })
+})

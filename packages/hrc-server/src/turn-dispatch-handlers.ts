@@ -284,6 +284,15 @@ export async function dispatchTurnForSession(
     this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
       : inputIntent
+  // Capture whether this is a headless/non-interactive claude coerced into the
+  // interactive broker BEFORE normalization rewrites preferredMode to
+  // 'interactive'. Such a runtime has no operator terminal of its own, so on a
+  // fresh broker-start we pop a best-effort ghostmux viewer attached to its TUI.
+  const isHeadlessClaudeRedirect =
+    this.claudeCodeTmuxBrokerEnabled &&
+    shouldRedirectClaudeToInteractiveBroker(inputIntent) &&
+    (inputIntent.execution?.preferredMode === 'headless' ||
+      inputIntent.execution?.preferredMode === 'nonInteractive')
   let dispatchPrompt = prompt
   if (options.skipBrainEnrichment !== true) {
     const originalPromptLength = prompt.length
@@ -437,6 +446,7 @@ export async function dispatchTurnForSession(
         ...(options.attachBeforeInvocationStart
           ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
           : {}),
+        spawnHeadlessViewer: isHeadlessClaudeRedirect,
         waitForCompletion:
           admission.allowedBrokerDriver === 'codex-cli-tmux' ? false : options.waitForCompletion,
       }),

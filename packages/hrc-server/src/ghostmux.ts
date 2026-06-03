@@ -41,6 +41,12 @@ export type GhostmuxRuntimeSurfaceOptions = {
 const CLAUDE_TAB_TITLE = 'Claude Surfaces'
 const CLAUDE_TAB_ROLE = 'claude-surfaces'
 const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
+const HEADLESS_VIEWER_ROLE = 'hrc-headless-viewer'
+
+export type HeadlessViewerResult =
+  | { status: 'created'; surfaceId: string }
+  | { status: 'reused'; surfaceId: string }
+  | { status: 'failed'; error: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -118,6 +124,12 @@ function metadataHasClaudeTabRole(metadata: unknown, projectId?: string | undefi
   if (projectId === undefined) return true
   const metadataProject = metadata['hrc_project']
   return metadataProject === undefined || metadataProject === projectId
+}
+
+function metadataHasHeadlessViewerRole(metadata: unknown, scopeRef: string): boolean {
+  if (!isRecord(metadata)) return false
+  if (metadata['hrc_role'] !== HEADLESS_VIEWER_ROLE) return false
+  return metadata['hrc_scope_ref'] === scopeRef
 }
 
 function unwrapGhostmuxMetadata(value: unknown): unknown {
@@ -287,6 +299,80 @@ export class GhostmuxManager {
     return {
       argv: [this.ghostmuxBinary, 'stream-surface', '-t', surfaceId],
     }
+  }
+
+  /**
+   * Best-effort: spawn a standalone, unfocused Ghostty window that attaches to a
+   * headless broker runtime's TUI, making an otherwise-invisible headless claude
+   * run watchable. Deduped per scope — if a live viewer window for this scope
+   * already exists, it is reused and NO new window is created (so subsequent turns
+   * into the same scope do not stack windows). Never throws: any ghostmux failure
+   * (transient surface-realize race, unavailable libghostty API, no Ghostty) is
+   * surfaced as { status: 'failed' } so the caller can log and continue headless.
+   */
+  async ensureHeadlessViewer(options: {
+    scopeRef: string
+    runtimeId: string
+    attachCommand: string
+    title: string
+  }): Promise<HeadlessViewerResult> {
+    try {
+      const existing = await this.findHeadlessViewer(options.scopeRef)
+      if (existing) return { status: 'reused', surfaceId: existing.surfaceId }
+
+      // `ghostmux new` itself frequently hits the transient libghostty
+      // surface_not_realize race under load; ghostmux's own guidance is to retry
+      // with backoff (clears in 1-2 tries), so wrap both the window create and the
+      // attach send-keys in the same bounded retry.
+      const created = await this.withGhostmuxBackoff(async () =>
+        parseGhostmuxSurfaceState(
+          (await this.exec(['new', '--window', '--title', options.title, '--json'])).stdout
+        )
+      )
+      await this.setMetadata(
+        created.surfaceId,
+        {
+          hrc_role: HEADLESS_VIEWER_ROLE,
+          hrc_scope_ref: options.scopeRef,
+          hrc_runtime_id: options.runtimeId,
+        },
+        true
+      ).catch(() => undefined)
+      await this.withGhostmuxBackoff(() =>
+        this.exec(['send-keys', '-t', created.surfaceId, options.attachCommand])
+      )
+      return { status: 'created', surfaceId: created.surfaceId }
+    } catch (error) {
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  private async findHeadlessViewer(scopeRef: string): Promise<GhostmuxSurfaceState | null> {
+    const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
+    for (const surface of surfaces) {
+      const metadata = await this.getMetadata(surface.surfaceId, true).catch(() => undefined)
+      if (metadataHasHeadlessViewerRole(metadata, scopeRef)) return surface
+    }
+    return null
+  }
+
+  // libghostty surface creation/realization races transiently under load; ghostmux
+  // itself recommends retrying with the 0.5/1/2/4s backoff schedule before giving up.
+  private async withGhostmuxBackoff<T>(operation: () => Promise<T>): Promise<T> {
+    const delaysMs = [0, 500, 1000, 2000, 4000]
+    let lastError: unknown
+    for (const delayMs of delaysMs) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+      try {
+        return await operation()
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('ghostmux operation failed')
   }
 
   private async findClaudeTab(

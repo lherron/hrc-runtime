@@ -263,6 +263,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    spawnHeadlessViewer?: boolean | undefined
   }
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
@@ -274,6 +275,15 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
   })
+
+  // A headless claude turn is coerced into this interactive broker runtime
+  // (normalizeClaudeInteractiveBrokerIntent) and otherwise runs in a detached
+  // tmux session nobody is watching. Pop a best-effort ghostmux viewer window
+  // attached to its TUI so the run is observable. Claude-only, deduped per scope,
+  // and fully non-blocking — a ghostmux failure must not break the turn.
+  if (flagOptions.spawnHeadlessViewer === true && flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
+    await this.spawnHeadlessClaudeViewer(runtime)
+  }
 
   // T-01770 Phase C: block the synchronous caller on the first broker turn
   // (the start delivers the initial prompt under diagnosticRunId). Async
@@ -1053,6 +1063,40 @@ export function getHarnessBrokerController(
   return this.harnessBrokerController
 }
 
+/**
+ * Best-effort: open a ghostmux viewer window attached to a freshly-started
+ * headless claude broker runtime's TUI. Reuses `hrc attach <runtimeId>` so the
+ * viewer rides the same attach-descriptor logic operators use (which already
+ * targets the `:tui` window, not the headless broker window). Never throws — the
+ * viewer is purely observational and must not gate the dispatch.
+ */
+export async function spawnHeadlessClaudeViewer(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): Promise<void> {
+  try {
+    const result = await this.ghostmux.ensureHeadlessViewer({
+      scopeRef: runtime.scopeRef,
+      runtimeId: runtime.runtimeId,
+      attachCommand: `hrc attach ${runtime.runtimeId}`,
+      title: `hrc headless ${runtime.scopeRef}`,
+    })
+    writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      ...(result.status === 'failed'
+        ? { error: result.error }
+        : { surfaceId: result.surfaceId }),
+    })
+  } catch (error) {
+    writeServerLog('WARN', 'headless_claude_viewer.unexpected_error', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 export const brokerInteractiveHandlersMethods = {
   handleHeadlessDispatchTurn,
   handleHeadlessBrokerDispatchTurn,
@@ -1060,6 +1104,7 @@ export const brokerInteractiveHandlersMethods = {
   executeInteractiveBrokerInputTurn,
   deliverReassociatedBrokerTmuxInput,
   startInteractiveTmuxBrokerRuntime,
+  spawnHeadlessClaudeViewer,
   getHarnessBrokerController,
 }
 

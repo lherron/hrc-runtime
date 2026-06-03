@@ -200,6 +200,7 @@ export type HrcServerInstanceForHandlers = {
   startActiveRunReconciler: HandlerMethod
   startClaudeGhosttyIdleCleanup: HandlerMethod
   startHeadlessBrokerRuntime: HandlerMethod
+  spawnHeadlessClaudeViewer: HandlerMethod
   startInteractiveTmuxBrokerRuntime: HandlerMethod
   startRuntimeForSession: HandlerMethod
   startZombieRunSweeper: HandlerMethod
