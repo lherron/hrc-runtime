@@ -41,6 +41,7 @@ export type HrcServerInstanceForHandlers = {
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>
+  readonly attachedRunOperations: Map<string, Promise<unknown>>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -142,12 +143,14 @@ export type HrcServerInstanceForHandlers = {
   handleListTargets: HandlerMethod
   handleLiteralInputBySelector: HandlerMethod
   handleOtlpRequest: HandlerMethod
+  handlePrepareAttachedRun: HandlerMethod
   handleQueryMessages: HandlerMethod
   handleReconcileActiveRuns: HandlerMethod
   handleRegisterBridgeTarget: HandlerMethod
   handleRemoveAppSession: HandlerMethod
   handleRequest: HandlerMethod
   handleResolveSession: HandlerMethod
+  handleResumeAttachedRun: HandlerMethod
   handleSdkDispatchTurn: HandlerMethod
   handleSemanticDm: HandlerMethod
   handleSemanticTurnHandoff: HandlerMethod

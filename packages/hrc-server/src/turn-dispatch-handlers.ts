@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto'
 
 import { HrcConflictError, HrcErrorCode, HrcRuntimeUnavailableError, validateFence } from 'hrc-core'
 import type {
+  DispatchTurnResponse,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  PrepareAttachedRunResponse,
+  ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
 import { enrichTurnPromptForBrain } from './brain-enricher.js'
@@ -28,15 +31,19 @@ import {
   assertRuntimeNotBusy,
   isBrokerRuntimeQueueCapable,
   requireContinuity,
+  requireKnownRuntime,
   requireSession,
 } from './require-helpers.js'
 import { findDispatchInteractiveRuntime } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import {
   parseDispatchTurnRequest,
   parseEnsureRuntimeRequest,
   parseJsonBody,
+  parsePrepareAttachedRunRequest,
+  parseResumeAttachedRunRequest,
   parseStartRuntimeRequest,
 } from './server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
@@ -120,6 +127,138 @@ export async function handleDispatchTurn(
   })
 }
 
+type AttachedRunResult = StartRuntimeResponse | DispatchTurnResponse
+
+async function dispatchTurnResponseJson(response: Response) {
+  return (await response.json()) as {
+    runId: string
+    hostSessionId: string
+    generation: number
+    runtimeId: string
+    transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+    status: 'completed' | 'started'
+    supportsInFlightInput: boolean
+  }
+}
+
+function runtimeIdFromAttachedRunResult(result: AttachedRunResult): string {
+  return result.runtimeId
+}
+
+async function attachDescriptorBody(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+) {
+  return (await server.attachRuntime(runtime).json()) as PrepareAttachedRunResponse['attach']
+}
+
+export async function handlePrepareAttachedRun(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parsePrepareAttachedRunRequest(await parseJsonBody(request))
+  const requested = requireSession(this.db, body.hostSessionId)
+  const { session } = await this.maybeAutoRotateStaleSession(requested, {
+    allowStaleGeneration: body.allowStaleGeneration,
+    trigger: 'prepare-attached-run',
+  })
+  const pendingStartId = `attached-${randomUUID()}`
+  const controller = this.getHarnessBrokerController()
+
+  const operation = (async (): Promise<AttachedRunResult> => {
+    if (body.prompt && body.prompt.length > 0) {
+      const response = await this.dispatchTurnForSession(session, body.intent, body.prompt, {
+        runId: `run-${randomUUID()}`,
+        waitForCompletion: false,
+        attachBeforeInvocationStart: { pendingStartId },
+      })
+      return await dispatchTurnResponseJson(response)
+    }
+
+    const runtime = await this.startRuntimeForSession(
+      session,
+      body.intent,
+      body.restartStyle ?? 'reuse_pty',
+      { attachBeforeInvocationStart: { pendingStartId } }
+    )
+    return toStartRuntimeResponse(runtime)
+  })()
+
+  this.attachedRunOperations.set(pendingStartId, operation)
+  void operation
+    .finally(() => {
+      this.attachedRunOperations.delete(pendingStartId)
+    })
+    .catch(() => undefined)
+
+  try {
+    const winner = await Promise.race([
+      controller
+        .waitForAttachedStartReady(pendingStartId)
+        .then((ready: { pendingStartId: string; runtime: HrcRuntimeSnapshot }) => ({
+          kind: 'prepared' as const,
+          ready,
+        })),
+      operation.then((result) => ({ kind: 'started' as const, result })),
+    ])
+
+    if (winner.kind === 'prepared') {
+      return json({
+        status: 'prepared',
+        pendingStartId,
+        hostSessionId: winner.ready.runtime.hostSessionId,
+        runtimeId: winner.ready.runtime.runtimeId,
+        attach: await attachDescriptorBody(this, winner.ready.runtime),
+      } satisfies PrepareAttachedRunResponse)
+    }
+
+    controller.cancelAttachedStart(pendingStartId, 'attached run completed without a pending start')
+    const runtime = requireKnownRuntime(this.db, runtimeIdFromAttachedRunResult(winner.result))
+    return json({
+      status: 'started',
+      result: winner.result,
+      attach: await attachDescriptorBody(this, runtime),
+    } satisfies PrepareAttachedRunResponse)
+  } catch (error) {
+    controller.cancelAttachedStart(
+      pendingStartId,
+      error instanceof Error ? error.message : String(error)
+    )
+    throw error
+  }
+}
+
+export async function handleResumeAttachedRun(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parseResumeAttachedRunRequest(await parseJsonBody(request))
+  const operation = this.attachedRunOperations.get(body.pendingStartId) as
+    | Promise<AttachedRunResult>
+    | undefined
+  if (!operation) {
+    throw new HrcRuntimeUnavailableError('attached run is not pending', {
+      pendingStartId: body.pendingStartId,
+      route: 'attached-run',
+    })
+  }
+
+  const resumed = this.getHarnessBrokerController().resumeAttachedStart(body.pendingStartId)
+  if (!resumed.ok) {
+    throw new HrcRuntimeUnavailableError(resumed.error.message, {
+      pendingStartId: body.pendingStartId,
+      code: resumed.error.code,
+      route: 'attached-run',
+    })
+  }
+
+  const result = await operation
+  return json({
+    status: 'started',
+    result,
+  } satisfies ResumeAttachedRunResponse)
+}
+
 export async function dispatchTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -130,6 +269,7 @@ export async function dispatchTurnForSession(
     ensureInteractiveRuntime?: boolean | undefined
     waitForCompletion?: boolean | undefined
     skipBrainEnrichment?: boolean | undefined
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   } = {}
 ): Promise<Response> {
   const runId = options.runId ?? `run-${randomUUID()}`
@@ -294,6 +434,9 @@ export async function dispatchTurnForSession(
       this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
         flagEnvName: admission.flagEnvName,
         allowedBrokerDriver: admission.allowedBrokerDriver,
+        ...(options.attachBeforeInvocationStart
+          ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+          : {}),
         waitForCompletion:
           admission.allowedBrokerDriver === 'codex-cli-tmux' ? false : options.waitForCompletion,
       }),
@@ -364,6 +507,8 @@ export const turnDispatchHandlersMethods = {
   handleEnsureRuntime,
   handleStartRuntime,
   handleDispatchTurn,
+  handlePrepareAttachedRun,
+  handleResumeAttachedRun,
   dispatchTurnForSession,
   markRuntimeStaleForBrokerReprovision,
 }

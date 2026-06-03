@@ -20,6 +20,8 @@ export {
   parseInspectRuntimeRequest,
   parseListRunsFilter,
   parseListRuntimesFilter,
+  parsePrepareAttachedRunRequest,
+  parseResumeAttachedRunRequest,
   parseRuntimeActionBody,
   parseStartRuntimeRequest,
   parseTerminateRuntimeRequest,

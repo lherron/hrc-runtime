@@ -21,6 +21,7 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
+import { setTimeout as delay } from 'node:timers/promises'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import { BrokerErrorCode, canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
@@ -89,6 +90,11 @@ import {
 const DEFAULT_BROKER_COMMAND = 'harness-broker'
 const DEFAULT_BROKER_ARGS = ['run', '--transport', 'stdio']
 const USER_INITIATED_CONTINUATION_CLEAR_REASONS = new Set(['prompt_input_exit', 'logout', 'clear'])
+// Lever 2 graceful exit: the SUBSET of user-initiated continuation-clear reasons
+// that mean the operator is LEAVING the session (so the broker-tmux lease should
+// be torn down). `clear` is deliberately EXCLUDED — a `/clear` wipes context but
+// keeps the harness running, so reaping on it would kill a live session.
+const BROKER_TMUX_PROMPT_EXIT_REASONS = new Set(['prompt_input_exit', 'logout'])
 
 export type BrokerControllerLogger = {
   info?: (message: string, fields?: Record<string, unknown>) => void
@@ -276,6 +282,28 @@ export type BrokerTmuxAllocator = {
   }): Promise<BrokerTmuxAllocation>
 }
 
+export type BrokerAttachedLaunchInput = {
+  pendingStartId: string
+  timeoutMs?: number | undefined
+}
+
+export type BrokerAttachedLaunchReady = {
+  pendingStartId: string
+  runtime: HrcRuntimeSnapshot
+}
+
+type PendingAttachedBrokerStart = BrokerAttachedLaunchReady & {
+  allocation: BrokerTmuxAllocation
+  resume: () => void
+  reject: (error: Error) => void
+}
+
+type AttachedStartReadyWaiter = {
+  resolve: (ready: BrokerAttachedLaunchReady) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 export type HarnessBrokerControllerDeps = {
   db: HrcDatabase
   mapper?: Pick<BrokerEventMapper, 'apply'>
@@ -284,6 +312,28 @@ export type HarnessBrokerControllerDeps = {
   permissionChannel?: BrokerPermissionChannel | undefined
   agentchat?: BrokerAgentchatLifecycle | undefined
   tmuxAllocator?: BrokerTmuxAllocator | undefined
+  waitForAttachedTerminal?: ((input: {
+    runtime: HrcRuntimeSnapshot
+    allocation: BrokerTmuxAllocation
+  }) => Promise<void>) | undefined
+  /**
+   * Lever 2 graceful exit (T-01751 sibling): on a USER-INITIATED interactive
+   * terminal (`invocation.exited` whose preceding `continuation.cleared` reason
+   * is a /quit-class reason), the durable unix broker process does NOT die when
+   * the controller closes its IPC client (that close intentionally preserves the
+   * broker for reattach). This callback tears the per-runtime broker-tmux lease
+   * session down — killing the broker window's process and the now-dead TUI
+   * window so the operator's attached client auto-detaches instead of being left
+   * on a live broker pane to Ctrl-C. Best-effort; only invoked for user-initiated
+   * exits, never for crashes / idle-ttl (those keep durability for reattach).
+   */
+  reapBrokerTmuxLease?: ((runtimeId: string) => Promise<void>) | undefined
+  /**
+   * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
+   * terminal exit closes the broker IPC socket before a clean terminal event path
+   * can reap the lease.
+   */
+  reconcileBrokerTmuxLivenessOnClose?: ((runtimeId: string) => Promise<void>) | undefined
   brokerCommand?: string | undefined
   brokerArgs?: string[] | undefined
   env?: Record<string, string | undefined> | undefined
@@ -302,6 +352,7 @@ export type BrokerControllerStartInput = {
   dispatchEnv?: Record<string, string> | undefined
   routeDecision?: unknown
   brokerClient?: BrokerClientLike | undefined
+  attachBeforeInvocationStart?: BrokerAttachedLaunchInput | undefined
   /**
    * Broker lifecycle policy overlay for this dispatch. Audit/dispatch material:
    * it rides ONLY on the broker dispatch options and is persisted as audit
@@ -405,6 +456,13 @@ export class HarnessBrokerController {
   private readonly permissionChannel: BrokerPermissionChannel | undefined
   private readonly agentchat: BrokerAgentchatLifecycle | undefined
   private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
+  private readonly waitForAttachedTerminal:
+    | ((input: { runtime: HrcRuntimeSnapshot; allocation: BrokerTmuxAllocation }) => Promise<void>)
+    | undefined
+  private readonly reapBrokerTmuxLease: ((runtimeId: string) => Promise<void>) | undefined
+  private readonly reconcileBrokerTmuxLivenessOnClose:
+    | ((runtimeId: string) => Promise<void>)
+    | undefined
   private readonly brokerCommand: string
   private readonly brokerArgs: string[]
   private readonly env: Record<string, string | undefined> | undefined
@@ -413,6 +471,12 @@ export class HarnessBrokerController {
   private readonly logger: BrokerControllerLogger
   private readonly active = new Map<string, ActiveBrokerRuntime>()
   private readonly intentionalClosingRuntimeIds = new Map<string, string>()
+  // Lever 2 graceful exit: runtimes whose broker-tmux lease reap has been fired,
+  // so the several user-exit signals that can arrive for one /quit (continuation
+  // clear, then invocation.exited and/or broker close) reap exactly once.
+  private readonly reapedBrokerTmuxRuntimeIds = new Set<string>()
+  private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
+  private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
 
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
@@ -430,6 +494,9 @@ export class HarnessBrokerController {
     this.permissionChannel = deps.permissionChannel
     this.agentchat = deps.agentchat
     this.tmuxAllocator = deps.tmuxAllocator
+    this.waitForAttachedTerminal = deps.waitForAttachedTerminal
+    this.reapBrokerTmuxLease = deps.reapBrokerTmuxLease
+    this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
     this.brokerArgs = deps.brokerArgs ?? DEFAULT_BROKER_ARGS
@@ -534,6 +601,14 @@ export class HarnessBrokerController {
       }
       const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
       const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
+      if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
+        await this.pauseForAttachedInvocationStart({
+          pending: input.attachBeforeInvocationStart,
+          runtime: persisted.runtime,
+          allocation: tmuxAllocation,
+        })
+        markPhase('broker-attached-launch-gate')
+      }
       // The lifecycle overlay rides ONLY on the dispatch options envelope —
       // never on input.startRequest (INV-14.4 compiler closure).
       const startResult = input.lifecyclePolicy
@@ -647,6 +722,54 @@ export class HarnessBrokerController {
         code: controllerError.code,
       })
       return { ok: false, error: controllerError }
+    }
+  }
+
+  async waitForAttachedStartReady(
+    pendingStartId: string,
+    timeoutMs = 15_000
+  ): Promise<BrokerAttachedLaunchReady> {
+    const pending = this.pendingAttachedStarts.get(pendingStartId)
+    if (pending) {
+      return { pendingStartId, runtime: pending.runtime }
+    }
+
+    return await new Promise<BrokerAttachedLaunchReady>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.attachedStartReadyWaiters.delete(pendingStartId)
+        reject(new Error(`attached broker start did not become ready: ${pendingStartId}`))
+      }, timeoutMs)
+      this.attachedStartReadyWaiters.set(pendingStartId, { resolve, reject, timer })
+    })
+  }
+
+  resumeAttachedStart(pendingStartId: string): BrokerControllerRpcResult<{ runtimeId: string }> {
+    const pending = this.pendingAttachedStarts.get(pendingStartId)
+    if (!pending) {
+      return {
+        ok: false,
+        error: new BrokerControllerError(
+          'broker_attached_start_not_pending',
+          `attached broker start is not pending: ${pendingStartId}`,
+          { pendingStartId }
+        ),
+      }
+    }
+    pending.resume()
+    return { ok: true, response: { runtimeId: pending.runtime.runtimeId } }
+  }
+
+  cancelAttachedStart(pendingStartId: string, reason: string): void {
+    const pending = this.pendingAttachedStarts.get(pendingStartId)
+    if (pending) {
+      pending.reject(new Error(reason))
+      this.pendingAttachedStarts.delete(pendingStartId)
+    }
+    const waiter = this.attachedStartReadyWaiters.get(pendingStartId)
+    if (waiter) {
+      clearTimeout(waiter.timer)
+      this.attachedStartReadyWaiters.delete(pendingStartId)
+      waiter.reject(new Error(reason))
     }
   }
 
@@ -974,6 +1097,50 @@ export class HarnessBrokerController {
       return { ok: true, response: { disposed: true } }
     } catch (error) {
       return { ok: false, error: toControllerError('broker_dispose_failed', error) }
+    }
+  }
+
+  private async pauseForAttachedInvocationStart(input: {
+    pending: BrokerAttachedLaunchInput
+    runtime: HrcRuntimeSnapshot
+    allocation: BrokerTmuxAllocation
+  }): Promise<void> {
+    const { pending, runtime, allocation } = input
+    let resume!: () => void
+    let reject!: (error: Error) => void
+    const resumed = new Promise<void>((resolve, rejectPromise) => {
+      resume = resolve
+      reject = rejectPromise
+    })
+
+    const pendingRecord: PendingAttachedBrokerStart = {
+      pendingStartId: pending.pendingStartId,
+      runtime,
+      allocation,
+      resume,
+      reject,
+    }
+    this.pendingAttachedStarts.set(pending.pendingStartId, pendingRecord)
+
+    const waiter = this.attachedStartReadyWaiters.get(pending.pendingStartId)
+    if (waiter) {
+      clearTimeout(waiter.timer)
+      this.attachedStartReadyWaiters.delete(pending.pendingStartId)
+      waiter.resolve({ pendingStartId: pending.pendingStartId, runtime })
+    }
+
+    try {
+      await Promise.race([
+        resumed,
+        delay(pending.timeoutMs ?? 120_000).then(() => {
+          throw new Error(`timed out waiting for attached launch resume: ${pending.pendingStartId}`)
+        }),
+      ])
+      if (this.waitForAttachedTerminal) {
+        await this.waitForAttachedTerminal({ runtime, allocation })
+      }
+    } finally {
+      this.pendingAttachedStarts.delete(pending.pendingStartId)
     }
   }
 
@@ -1437,6 +1604,21 @@ export class HarnessBrokerController {
         reason: envelope.type,
       })
     }
+
+    // Lever 2 graceful exit — PRIMARY hook. On an interactive /quit a DURABLE
+    // broker stays alive (no `invocation.exited`, no socket close): the only live
+    // terminal signal is a `continuation.cleared` carrying a prompt-exit reason,
+    // delivered here through the event consumer. Tear the broker-tmux lease down
+    // now so the operator is detached promptly instead of being left on a live
+    // broker pane until the next on-demand reconcile. Gated to LEAVING reasons so
+    // a `/clear` (which keeps the session) never reaps a live runtime.
+    if (envelope.type === 'continuation.cleared') {
+      const reason = (envelope.payload as { reason?: string } | undefined)?.reason
+      if (reason !== undefined && BROKER_TMUX_PROMPT_EXIT_REASONS.has(reason)) {
+        this.logger.info?.('broker-tmux prompt exit; reaping lease', { runtimeId, reason })
+        this.fireBrokerTmuxLeaseReap(runtimeId, `prompt_exit:${reason}`)
+      }
+    }
   }
 
   private resolveAttachInvocation(
@@ -1597,6 +1779,15 @@ export class HarnessBrokerController {
         })
       })
     }
+
+    // Lever 2 graceful exit (defensive — secondary to the continuation.cleared
+    // hook): if a /quit DOES surface as a clean invocation.exited, the durable
+    // unix broker survives the client close above by design, so tear the lease
+    // down here too. Deduped against the continuation-clear reap. Gated on
+    // userExitReason so crashes / idle-ttl terminals keep durability for reattach.
+    if (userExitReason !== undefined) {
+      this.fireBrokerTmuxLeaseReap(runtimeId, 'invocation_exited')
+    }
   }
 
   private findUserInitiatedContinuationClearReason(
@@ -1615,6 +1806,55 @@ export class HarnessBrokerController {
     return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
       ? row.reason
       : undefined
+  }
+
+  /**
+   * Latest continuation.cleared reason for a runtime's active invocation, when it
+   * is a user-initiated /quit class reason. Runtime-scoped variant of
+   * {@link findUserInitiatedContinuationClearReason} (which is invocation+seq
+   * scoped) — used on the close path where there is no terminal envelope/seq.
+   */
+  private findUserInitiatedContinuationClearReasonForRuntime(
+    runtimeId: string
+  ): string | undefined {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    const invocationId = runtime?.activeInvocationId
+    if (invocationId === undefined) {
+      return undefined
+    }
+    const row = this.db.sqlite
+      .query<{ reason: string | null }, [string]>(
+        `SELECT json_extract(broker_event_json, '$.reason') AS reason
+           FROM broker_invocation_events
+          WHERE invocation_id = ? AND type = 'continuation.cleared'
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId)
+    return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
+      ? row.reason
+      : undefined
+  }
+
+  /**
+   * Fire the broker-tmux lease reap once per runtime. A single /quit surfaces as
+   * up to three user-exit signals (continuation clear → invocation.exited and/or
+   * broker close); this dedupes them so the lease is torn down exactly once. The
+   * reap itself (kill lease + mark terminated) is idempotent, so the guard is an
+   * efficiency/cleanliness measure, not a correctness gate.
+   */
+  private fireBrokerTmuxLeaseReap(runtimeId: string, reason: string): void {
+    if (!this.reapBrokerTmuxLease || this.reapedBrokerTmuxRuntimeIds.has(runtimeId)) {
+      return
+    }
+    this.reapedBrokerTmuxRuntimeIds.add(runtimeId)
+    void this.reapBrokerTmuxLease(runtimeId).catch((error) => {
+      this.logger.warn?.('broker tmux lease reap failed', {
+        runtimeId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 
   private handleBrokerClose(runtimeId: string, error: Error): void {
@@ -1646,6 +1886,37 @@ export class HarnessBrokerController {
         error: error.message,
       })
       this.active.delete(runtimeId)
+      return
+    }
+    // Lever 2 graceful exit: an interactive /quit typically tears the broker IPC
+    // socket down (rather than emitting a clean `invocation.exited`), surfacing
+    // here as a non-intentional close. When the runtime carries a user-initiated
+    // continuation clear, this is a graceful operator exit — NOT a crash. Reconcile
+    // the lease liveness (mark terminated + kill the lease server) so the operator
+    // is detached promptly, and avoid the alarming crash-terminal classification.
+    const userExitReason = this.findUserInitiatedContinuationClearReasonForRuntime(runtimeId)
+    if (
+      userExitReason !== undefined &&
+      (this.reconcileBrokerTmuxLivenessOnClose || this.reapBrokerTmuxLease)
+    ) {
+      this.logger.info?.('harness broker closed after user-initiated exit; reaping lease', {
+        runtimeId,
+        userExitReason,
+        error: error.message,
+      })
+      this.active.delete(runtimeId)
+      this.intentionalClosingRuntimeIds.delete(runtimeId)
+      if (this.reconcileBrokerTmuxLivenessOnClose) {
+        void this.reconcileBrokerTmuxLivenessOnClose(runtimeId).catch((reapError) => {
+          this.logger.warn?.('broker tmux close-path reconcile after user exit failed', {
+            runtimeId,
+            userExitReason,
+            error: reapError instanceof Error ? reapError.message : String(reapError),
+          })
+        })
+      } else {
+        this.fireBrokerTmuxLeaseReap(runtimeId, 'broker_close')
+      }
       return
     }
     this.logger.error?.('harness broker process closed', {

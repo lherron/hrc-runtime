@@ -898,8 +898,8 @@ async function bindGhosttySurfaceIfPresent(
 
   await client.bindSurface({
     surfaceKind: 'ghostty',
-    surfaceId: ghosttySurfaceId,
     ...descriptor.bindingFence,
+    surfaceId: ghosttySurfaceId,
   })
 }
 
@@ -914,6 +914,25 @@ async function attachDescriptor(client: HrcClient, descriptor: AttachDescriptor)
 
   if (attached.exitCode !== 0) {
     fatal(`attach command exited with code ${attached.exitCode}`)
+  }
+}
+
+async function spawnAttachDescriptor(
+  client: HrcClient,
+  descriptor: AttachDescriptor
+): Promise<ReturnType<typeof Bun.spawn>> {
+  await bindGhosttySurfaceIfPresent(client, descriptor)
+  return Bun.spawn(descriptor.argv, {
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+}
+
+async function waitForAttachProcess(attached: ReturnType<typeof Bun.spawn>): Promise<void> {
+  const exitCode = await attached.exited
+  if (exitCode !== 0) {
+    fatal(`attach command exited with code ${exitCode}`)
   }
 }
 
@@ -1682,29 +1701,28 @@ async function cmdRun(args: string[]): Promise<void> {
     markLaunch('resolveSession', tResolve)
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
-    const runtime = await (async () => {
-      if (!hasPrompt) {
-        const tRuntime = performance.now()
-        const started = await client.startRuntime({
-          hostSessionId: resolved.hostSessionId,
-          intent,
-          restartStyle,
-        })
-        markLaunch('startRuntime', tRuntime)
-        return started
-      }
-
-      const tDispatch = performance.now()
-      const dispatched = await client.dispatchTurn({
-        hostSessionId: resolved.hostSessionId,
-        prompt,
-        runtimeIntent: intent,
-      })
-      markLaunch('dispatchTurn', tDispatch)
-      return dispatched
-    })()
-
     if (noAttach) {
+      const runtime = await (async () => {
+        if (!hasPrompt) {
+          const tRuntime = performance.now()
+          const started = await client.startRuntime({
+            hostSessionId: resolved.hostSessionId,
+            intent,
+            restartStyle,
+          })
+          markLaunch('startRuntime', tRuntime)
+          return started
+        }
+
+        const tDispatch = performance.now()
+        const dispatched = await client.dispatchTurn({
+          hostSessionId: resolved.hostSessionId,
+          prompt,
+          runtimeIntent: intent,
+        })
+        markLaunch('dispatchTurn', tDispatch)
+        return dispatched
+      })()
       printJson({
         sessionRef,
         hostSessionId: runtime.hostSessionId,
@@ -1714,11 +1732,26 @@ async function cmdRun(args: string[]): Promise<void> {
       return
     }
 
+    const tPrepare = performance.now()
+    const prepared = await client.prepareAttachedRun({
+      hostSessionId: resolved.hostSessionId,
+      intent,
+      restartStyle,
+      ...(hasPrompt ? { prompt } : {}),
+    })
+    markLaunch('prepareAttachedRun', tPrepare)
+
     const tAttach = performance.now()
-    const descriptor = await client.getAttachDescriptor(runtime.runtimeId)
-    markLaunch('getAttachDescriptor', tAttach)
+    const attached = await spawnAttachDescriptor(client, prepared.attach)
+    markLaunch('spawnAttach', tAttach)
+
+    if (prepared.status === 'prepared') {
+      const tResume = performance.now()
+      await client.resumeAttachedRun({ pendingStartId: prepared.pendingStartId })
+      markLaunch('resumeAttachedRun', tResume)
+    }
     markLaunch('total(pre-attach)', launchT0)
-    await attachDescriptor(client, descriptor)
+    await waitForAttachProcess(attached)
   } catch (err) {
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)
   }
@@ -2206,8 +2239,8 @@ async function cmdSurfaceBind(args: string[]): Promise<void> {
   const descriptor = await client.getAttachDescriptor(runtimeId)
   const result = await client.bindSurface({
     surfaceKind,
-    surfaceId,
     ...descriptor.bindingFence,
+    surfaceId,
   })
   printJson(result)
 }

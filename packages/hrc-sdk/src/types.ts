@@ -27,10 +27,14 @@ export type {
   HrcBridgeTargetResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
+  PrepareAttachedRunRequest,
+  PrepareAttachedRunResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
+  ResumeAttachedRunRequest,
+  ResumeAttachedRunResponse,
   RestartStyle,
   StartRuntimeRequest,
   StartRuntimeResponse,
@@ -104,7 +108,7 @@ export type SendInFlightInputResponse = {
 }
 
 export type AttachDescriptor = {
-  transport: 'tmux'
+  transport: 'tmux' | 'ghostty'
   argv: string[]
   bindingFence: {
     hostSessionId: string
@@ -113,6 +117,7 @@ export type AttachDescriptor = {
     windowId?: string | undefined
     tabId?: string | undefined
     paneId?: string | undefined
+    surfaceId?: string | undefined
   }
 }
 

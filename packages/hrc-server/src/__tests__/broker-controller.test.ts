@@ -337,6 +337,92 @@ describe('HarnessBrokerController', () => {
     })
   })
 
+  it('pauses attached broker-tmux launch before invocation.start until resumed', async () => {
+    const fake = new FakeBrokerClient()
+    const identity = makeIdentity({
+      runtimeId: 'runtime_attach_first',
+      invocationId: 'invocation_attach_first',
+      runId: 'run_attach_first',
+    })
+    const { profile, startRequest } = makeInteractiveTmuxProfile(identity)
+    const response = makeCompileResponse(identity, [profile])
+    if (!response.ok) throw new Error('fixture compile response unexpectedly failed')
+    fake.helloResponse.drivers = [
+      {
+        kind: 'claude-code-tmux',
+        version: '0.1.1-test',
+        available: true,
+        capabilities: invocationCapabilities(),
+      },
+    ]
+    fake.startResponse = {
+      ...fake.startResponse,
+      invocationId: 'invocation_attach_first',
+    }
+    const lease = {
+      kind: 'tmux-pane' as const,
+      ownership: 'hrc' as const,
+      socketPath: '/tmp/hrc-runtime/btmux/claude-code-tmux-runtime_attach_first.sock',
+      sessionId: '$1',
+      windowId: '@2',
+      paneId: '%3',
+      sessionName: 'hrc-claude-code-tmux-runtime_attach_first',
+      windowName: 'tui',
+      allowedOps: {
+        inspect: true as const,
+        sendInput: true as const,
+        sendInterrupt: true as const,
+        capture: true,
+        resize: false,
+      },
+    }
+    const waitOrder: string[] = []
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      tmuxAllocator: {
+        async allocate() {
+          return {
+            socketPath: lease.socketPath,
+            allocatedAt: NOW,
+            generation: 1,
+            lease,
+          }
+        },
+      },
+      waitForAttachedTerminal: async ({ runtime, allocation }) => {
+        waitOrder.push(`${runtime.runtimeId}:${allocation.lease?.windowName}`)
+      },
+      now: () => NOW,
+    })
+
+    const startPromise = controller.start({
+      plan: response.plan,
+      profile,
+      startRequest,
+      specHash: profile.harnessInvocation.specHash,
+      startRequestHash: profile.harnessInvocation.startRequestHash,
+      identity,
+      dispatchEnv: { HRC_DISPATCH: 'yes' },
+      attachBeforeInvocationStart: { pendingStartId: 'pending-attach-first' },
+    })
+
+    const ready = await controller.waitForAttachedStartReady('pending-attach-first')
+    expect(ready.runtime.runtimeId).toBe('runtime_attach_first')
+    expect(ready.runtime.tmuxJson?.['windowName']).toBe('tui')
+    expect(fake.startCalls).toHaveLength(0)
+    expect(fake.callOrder).toEqual(['permission', 'hello'])
+
+    const resumed = controller.resumeAttachedStart('pending-attach-first')
+    expect(resumed.ok).toBe(true)
+    const result = await startPromise
+
+    expect(result.ok).toBe(true)
+    expect(waitOrder).toEqual(['runtime_attach_first:tui'])
+    expect(fake.callOrder).toEqual(['permission', 'hello', 'start'])
+    expect(fake.startCalls[0]?.runtime).toEqual({ terminalSurface: lease })
+  })
+
   it('delegates ordered broker events to the mapper without interpreting payloads', async () => {
     const fake = new FakeBrokerClient()
     const seen: InvocationEventEnvelope[] = []
@@ -443,9 +529,13 @@ describe('HarnessBrokerController', () => {
 
   it('marks a runtime stale when its active broker invocation exits', async () => {
     const fake = new FakeBrokerClient()
+    const reaped: string[] = []
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        reaped.push(runtimeId)
+      },
       now: () => NOW,
     })
 
@@ -461,6 +551,11 @@ describe('HarnessBrokerController', () => {
       )
     )
     await tick()
+    await tick()
+
+    // A NON-user terminal (no preceding user /quit) must preserve durability: the
+    // lease must NOT be reaped so the broker survives for reattach.
+    expect(reaped).toEqual([])
 
     const runtime = fixture.db.runtimes.getByRuntimeId('runtime_w2')
     expect(runtime?.status).toBe('stale')
@@ -484,9 +579,13 @@ describe('HarnessBrokerController', () => {
 
   it('marks a runtime terminated when a user-ended continuation exits', async () => {
     const fake = new FakeBrokerClient()
+    const reaped: string[] = []
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        reaped.push(runtimeId)
+      },
       now: () => NOW,
     })
 
@@ -526,6 +625,9 @@ describe('HarnessBrokerController', () => {
     expect(runtimeEvents.some((event) => event.eventKind === 'runtime.terminated')).toBe(true)
     expect(runtimeEvents.some((event) => event.eventKind === 'runtime.stale')).toBe(false)
     expect(fake.callOrder).toContain('close')
+    // Lever 2: a user-initiated /quit reaps the broker-tmux lease so the durable
+    // broker process exits instead of stranding the operator on a live pane.
+    expect(reaped).toEqual(['runtime_w2'])
   })
 
   it('default-denies and persists permission decisions when no request channel exists', async () => {
@@ -619,6 +721,85 @@ describe('HarnessBrokerController', () => {
       .listFromSeq(1, { runtimeId: 'runtime_w2' })
       .find((event) => event.eventKind === 'broker.process.closed')
     expect(brokerClosed).toBeDefined()
+  })
+
+  it('reaps the lease (no crash-terminal) when the broker closes after a user /quit', async () => {
+    const fake = new FakeBrokerClient()
+    const reaped: string[] = []
+    const errors: Array<{ message: string }> = []
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        reaped.push(runtimeId)
+      },
+      now: () => NOW,
+      logger: {
+        error(message) {
+          errors.push({ message })
+        },
+      },
+    })
+
+    await controller.start(makeStartInput())
+
+    // The operator typed /quit: the broker emits a user-initiated continuation
+    // clear, then (the real interactive path) its IPC socket drops — surfacing as
+    // a non-intentional broker close rather than a clean invocation.exited.
+    fake.events.push(
+      envelope(
+        'continuation.cleared',
+        8,
+        { reason: 'prompt_input_exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    fake.emitClose(new Error('Broker socket closed unexpectedly'))
+    await tick()
+
+    // A graceful user exit reaps the lease exactly once (deduped across the
+    // continuation-clear and broker-close signals) and must NOT be recorded as a
+    // crash-terminal.
+    expect(reaped).toEqual(['runtime_w2'])
+    expect(errors.some((entry) => entry.message.includes('harness broker process closed'))).toBe(
+      false
+    )
+    const crashEvent = fixture.db.events
+      .listFromSeq(1, { runtimeId: 'runtime_w2' })
+      .find((event) => event.eventKind === 'broker.process.closed')
+    expect(crashEvent).toBeUndefined()
+  })
+
+  it('does NOT reap the lease on a /clear continuation clear (session keeps running)', async () => {
+    const fake = new FakeBrokerClient()
+    const reaped: string[] = []
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        reaped.push(runtimeId)
+      },
+      now: () => NOW,
+    })
+
+    await controller.start(makeStartInput())
+
+    // `/clear` wipes context but keeps the harness running — it must NOT tear the
+    // lease down, even though `clear` is a user-initiated continuation-clear reason.
+    fake.events.push(
+      envelope(
+        'continuation.cleared',
+        8,
+        { reason: 'clear' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    await tick()
+
+    expect(reaped).toEqual([])
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).not.toBe('terminated')
   })
 
   it('admits raw queue-capable codex drivers and validates queue on effective start caps', async () => {

@@ -149,6 +149,51 @@ export type DispatchTurnResponse = {
   supportsInFlightInput: boolean
 }
 
+export type OperatorAttachDescriptor = {
+  transport: 'tmux' | 'ghostty'
+  argv: string[]
+  bindingFence: {
+    hostSessionId: string
+    runtimeId: string
+    generation: number
+    windowId?: string | undefined
+    tabId?: string | undefined
+    paneId?: string | undefined
+    surfaceId?: string | undefined
+  }
+}
+
+export type PrepareAttachedRunRequest = {
+  hostSessionId: string
+  intent: HrcRuntimeIntent
+  restartStyle?: RestartStyle | undefined
+  prompt?: string | undefined
+  allowStaleGeneration?: boolean | undefined
+}
+
+export type PrepareAttachedRunResponse =
+  | {
+      status: 'prepared'
+      pendingStartId: string
+      hostSessionId: string
+      runtimeId: string
+      attach: OperatorAttachDescriptor
+    }
+  | {
+      status: 'started'
+      result: StartRuntimeResponse | DispatchTurnResponse
+      attach: OperatorAttachDescriptor
+    }
+
+export type ResumeAttachedRunRequest = {
+  pendingStartId: string
+}
+
+export type ResumeAttachedRunResponse = {
+  status: 'started'
+  result: StartRuntimeResponse | DispatchTurnResponse
+}
+
 export type ActiveRunContributionCapabilityReason =
   | 'feature_disabled'
   | 'transport_unsupported'

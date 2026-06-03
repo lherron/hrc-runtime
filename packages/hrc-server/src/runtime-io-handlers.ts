@@ -33,7 +33,7 @@ import {
 import { findLatestSessionRuntime, getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import type { AttachDescriptorResponse } from './server-types.js'
+import type { AttachBeforeInvocationStartOption, AttachDescriptorResponse } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import {
   findPersistedLifecycleTerminalReason,
@@ -271,7 +271,8 @@ export async function startRuntimeForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
-  restartStyle: RestartStyle
+  restartStyle: RestartStyle,
+  options: { attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
@@ -392,7 +393,12 @@ export async function startRuntimeForSession(
             session,
             normalizedIntent,
             `run-${randomUUID()}`,
-            interactiveBrokerOptions
+            {
+              ...interactiveBrokerOptions,
+              ...(options.attachBeforeInvocationStart
+                ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+                : {}),
+            }
           ),
       })
     }
@@ -479,6 +485,12 @@ export function attachRuntime(
         }
       )
     }
+    const brokerTmuxWindowId =
+      typeof runtime.tmuxJson?.['windowId'] === 'string'
+        ? runtime.tmuxJson['windowId']
+        : undefined
+    const brokerTmuxPaneId =
+      typeof runtime.tmuxJson?.['paneId'] === 'string' ? runtime.tmuxJson['paneId'] : undefined
 
     return json({
       transport: 'tmux',
@@ -494,6 +506,8 @@ export function attachRuntime(
         hostSessionId: runtime.hostSessionId,
         runtimeId: runtime.runtimeId,
         generation: runtime.generation,
+        ...(brokerTmuxWindowId ? { windowId: brokerTmuxWindowId } : {}),
+        ...(brokerTmuxPaneId ? { paneId: brokerTmuxPaneId } : {}),
       },
     } satisfies AttachDescriptorResponse)
   }

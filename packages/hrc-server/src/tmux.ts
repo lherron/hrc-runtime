@@ -441,6 +441,62 @@ export class TmuxManager {
     }
   }
 
+  async hasAttachedClient(
+    target: string,
+    options: {
+      activeWindowId?: string | undefined
+      activeWindowName?: string | undefined
+    } = {}
+  ): Promise<boolean> {
+    try {
+      const format =
+        options.activeWindowId !== undefined
+          ? '#{window_id}'
+          : options.activeWindowName !== undefined
+            ? '#{window_name}'
+            : '#{client_tty}'
+      const result = await this.exec(['list-clients', '-t', target, '-F', format])
+      const values = result.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+      if (options.activeWindowId !== undefined) {
+        return values.includes(options.activeWindowId)
+      }
+      if (options.activeWindowName !== undefined) {
+        return values.includes(options.activeWindowName)
+      }
+      return values.length > 0
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isMissingTargetError(message) || isServerGoneError(message)) {
+        return false
+      }
+      throw error
+    }
+  }
+
+  async waitForAttachedClient(
+    target: string,
+    options: {
+      timeoutMs?: number | undefined
+      intervalMs?: number | undefined
+      activeWindowId?: string | undefined
+      activeWindowName?: string | undefined
+    } = {}
+  ): Promise<void> {
+    const timeoutMs = options.timeoutMs ?? 5_000
+    const intervalMs = options.intervalMs ?? 25
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() <= deadline) {
+      if (await this.hasAttachedClient(target, options)) {
+        return
+      }
+      await delay(intervalMs)
+    }
+    throw new Error(`tmux target has no attached client: ${target}`)
+  }
+
   async interrupt(paneId: string): Promise<void> {
     await this.exec(['send-keys', '-t', paneId, 'C-c'])
   }

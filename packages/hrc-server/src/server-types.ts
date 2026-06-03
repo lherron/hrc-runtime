@@ -67,6 +67,12 @@ export type PendingBrokerLiteralInput = {
   text: string
 }
 
+export type AttachBeforeInvocationStartOption = {
+  pendingStartId: string
+}
+
+export type PendingAttachedRunOperation = Promise<unknown>
+
 export type ExactRouteHandler = (request: Request, url: URL) => Response | Promise<Response>
 
 export type LaunchLifecyclePayload = {

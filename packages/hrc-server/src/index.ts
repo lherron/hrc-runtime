@@ -335,6 +335,7 @@ class HrcServerInstance implements HrcServer {
   public readonly otelEndpoint: string | undefined
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
+  readonly attachedRunOperations = new Map<string, Promise<unknown>>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -375,6 +376,10 @@ class HrcServerInstance implements HrcServer {
       this.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
       this.handleReconcileActiveRuns(request),
+    [exactRouteKey('POST', '/v1/runs/prepare-attached')]: (request) =>
+      this.handlePrepareAttachedRun(request),
+    [exactRouteKey('POST', '/v1/runs/resume-attached')]: (request) =>
+      this.handleResumeAttachedRun(request),
     [exactRouteKey('POST', '/v1/turns')]: (request) => this.handleDispatchTurn(request),
     [exactRouteKey('POST', '/v1/active-run-contributions')]: (request) =>
       this.handleActiveRunContribution(request),

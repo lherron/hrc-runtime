@@ -9,6 +9,8 @@ import type {
   HrcProvider,
   HrcRuntimeIntent,
   InspectRuntimeRequest,
+  PrepareAttachedRunRequest,
+  ResumeAttachedRunRequest,
   StartRuntimeRequest,
   TerminateRuntimeRequest,
 } from 'hrc-core'
@@ -277,6 +279,38 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
 
 export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
   return parseEnsureRuntimeRequest(input)
+}
+
+export function parsePrepareAttachedRunRequest(input: unknown): PrepareAttachedRunRequest {
+  const parsed = parseEnsureRuntimeRequest(input)
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const prompt = input['prompt']
+  if (prompt !== undefined && typeof prompt !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt must be a string', {
+      field: 'prompt',
+    })
+  }
+  return {
+    ...parsed,
+    ...(typeof prompt === 'string' && prompt.trim().length > 0 ? { prompt } : {}),
+  }
+}
+
+export function parseResumeAttachedRunRequest(input: unknown): ResumeAttachedRunRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const pendingStartId = input['pendingStartId']
+  if (typeof pendingStartId !== 'string' || pendingStartId.trim().length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'pendingStartId is required',
+      { field: 'pendingStartId' }
+    )
+  }
+  return { pendingStartId: pendingStartId.trim() }
 }
 
 export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {

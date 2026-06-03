@@ -56,6 +56,8 @@ import type {
   ReconcileActiveRunsResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
+  PrepareAttachedRunRequest,
+  PrepareAttachedRunResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RunListFilter,
@@ -65,6 +67,8 @@ import type {
   SemanticDmResponse,
   SemanticTurnHandoffRequest,
   SemanticTurnHandoffResponse,
+  ResumeAttachedRunRequest,
+  ResumeAttachedRunResponse,
   SendInFlightInputRequest,
   SendInFlightInputResponse,
   SessionFilter,
@@ -218,6 +222,16 @@ export class HrcClient {
 
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
     return this.postJson<DispatchTurnResponse>('/v1/turns', request)
+  }
+
+  async prepareAttachedRun(
+    request: PrepareAttachedRunRequest
+  ): Promise<PrepareAttachedRunResponse> {
+    return this.postJson<PrepareAttachedRunResponse>('/v1/runs/prepare-attached', request)
+  }
+
+  async resumeAttachedRun(request: ResumeAttachedRunRequest): Promise<ResumeAttachedRunResponse> {
+    return this.postJson<ResumeAttachedRunResponse>('/v1/runs/resume-attached', request)
   }
 
   async sendInFlightInput(request: SendInFlightInputRequest): Promise<SendInFlightInputResponse> {

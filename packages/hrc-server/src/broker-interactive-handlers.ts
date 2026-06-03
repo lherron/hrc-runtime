@@ -51,8 +51,9 @@ import {
 import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import type { HrcServerOptions } from './server-types.js'
-import { json, timestamp } from './server-util.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import {
   getBrokerIpcSocketPath,
@@ -261,6 +262,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     flagEnvName: string
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   }
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
@@ -268,6 +270,9 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   const runtime = await this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
     flagEnvName: flagOptions.flagEnvName,
     allowedBrokerDriver: flagOptions.allowedBrokerDriver,
+    ...(flagOptions.attachBeforeInvocationStart
+      ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
+      : {}),
   })
 
   // T-01770 Phase C: block the synchronous caller on the first broker turn
@@ -598,7 +603,11 @@ export async function startInteractiveTmuxBrokerRuntime(
   session: HrcSessionRecord,
   turnIntent: HrcRuntimeIntent,
   diagnosticRunId: string,
-  flagOptions: { flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
+  flagOptions: {
+    flagEnvName: string
+    allowedBrokerDriver: InteractiveTmuxBrokerDriver
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+  }
 ): Promise<HrcRuntimeSnapshot> {
   const now = timestamp()
   this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
@@ -692,6 +701,9 @@ export async function startInteractiveTmuxBrokerRuntime(
       identity: compiled.identity,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
       ...(brokerClient ? { brokerClient } : {}),
+      ...(flagOptions.attachBeforeInvocationStart
+        ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
+        : {}),
       routeDecision: {
         route: 'broker',
         flag: flagOptions.flagEnvName,
@@ -748,6 +760,15 @@ export type DurableTmuxManagerLike = {
   inspectPaneProcess?(
     paneId: string
   ): Promise<{ command: string; pid: number; dead: boolean } | null>
+  waitForAttachedClient?(
+    target: string,
+    options?: {
+      timeoutMs?: number | undefined
+      intervalMs?: number | undefined
+      activeWindowId?: string | undefined
+      activeWindowName?: string | undefined
+    }
+  ): Promise<void>
 }
 
 export type BrokerDurableTmuxAllocatorDeps = {
@@ -966,6 +987,60 @@ export function getHarnessBrokerController(
       },
     },
     tmuxAllocator,
+    waitForAttachedTerminal: async ({ allocation }) => {
+      const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
+      const windowName = allocation.lease?.windowName ?? allocation.windowName
+      if (!sessionName || !windowName) {
+        throw new Error('broker attached launch missing TUI session/window identity')
+      }
+      const leaseTmux = tmuxManagerFactory({ socketPath: allocation.socketPath })
+      if (typeof leaseTmux.waitForAttachedClient !== 'function') {
+        return
+      }
+      await leaseTmux.waitForAttachedClient(sessionName, {
+        timeoutMs: 5_000,
+        intervalMs: 25,
+        activeWindowId:
+          typeof allocation.lease?.windowId === 'string' ? allocation.lease.windowId : undefined,
+        activeWindowName: windowName,
+      })
+    },
+    reapBrokerTmuxLease: async (runtimeId: string) => {
+      // Lever 2 graceful exit: tear the per-runtime broker-tmux lease down after a
+      // user-initiated /quit so the operator is not stranded on a live broker pane.
+      // The broker owns a dedicated tmux server on its lease socket, so terminate
+      // the session then kill the server (removing the lease socket). After the
+      // session is gone, run the standard liveness reconcile to mark the runtime
+      // terminated (user_initiated_session_end) via its session-missing branch —
+      // unless the controller already marked it terminal (clean invocation.exited
+      // path), in which case reconcile is a no-op. Mirrors terminateTmuxRuntime's
+      // broker teardown minus the controller dispose the terminal paths own.
+      const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+      if (
+        !runtime ||
+        runtime.controllerKind !== 'harness-broker' ||
+        runtime.transport !== 'tmux'
+      ) {
+        return
+      }
+      const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime)
+      if (leaseSocket === undefined) {
+        writeServerLog('WARN', 'broker.user_exit_reap.skipped_no_lease_socket', { runtimeId })
+        return
+      }
+      const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+      const leaseTmux = tmuxManagerFactory({ socketPath: leaseSocket })
+      const inspected = await leaseTmux.inspectSession(sessionName)
+      if (inspected) {
+        await leaseTmux.terminate(sessionName)
+      }
+      await leaseTmux.killServer()
+      writeServerLog('INFO', 'broker.user_exit_reap.session_killed', { runtimeId, sessionName })
+      const afterKill = this.db.runtimes.getByRuntimeId(runtimeId)
+      if (afterKill && !isRuntimeUnavailableStatus(afterKill.status)) {
+        await this.reconcileTmuxRuntimeLiveness(afterKill)
+      }
+    },
     ...brokerClientFactories,
     env: process.env,
     serverInstanceId: `hrc-server:${process.pid}`,
