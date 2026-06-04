@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite'
-import { existsSync, openSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { join } from 'node:path'
@@ -100,6 +100,72 @@ export function writeServerProcessLog(
   const ts = new Date().toISOString()
   const suffix = details === undefined ? '' : ` ${JSON.stringify(details)}`
   process.stderr.write(`${ts} [hrc-server] INFO ${event}${suffix}\n`)
+}
+
+/**
+ * Attribution for a daemon stop/restart. The CLI process that runs
+ * `hrc server stop|restart` knows who is asking (HRC_SESSION_REF / HRC_RUN_ID
+ * from its env), but it tears the daemon down with a bare SIGTERM — a signal
+ * carries no payload, and the launchd-supervised daemon's own env is fixed, so
+ * it cannot otherwise learn the initiator. We hand the identity over via a
+ * short-lived intent file the daemon consumes in its shutdown handler.
+ */
+export type ShutdownIntent = {
+  action: 'stop' | 'restart'
+  requestedBy: string | null
+  requestedRunId: string | null
+  byPid: number
+  at: string
+}
+
+function shutdownIntentPath(): string {
+  return `${resolveRuntimeRoot()}/shutdown-intent.json`
+}
+
+/**
+ * Record who is initiating a stop/restart, just before signalling the daemon.
+ * Best-effort: a failure here must never block the actual stop/restart.
+ */
+export function writeShutdownIntent(action: 'stop' | 'restart'): void {
+  const intent: ShutdownIntent = {
+    action,
+    requestedBy: process.env['HRC_SESSION_REF'] ?? null,
+    requestedRunId: process.env['HRC_RUN_ID'] ?? null,
+    byPid: process.pid,
+    at: new Date().toISOString(),
+  }
+  try {
+    writeFileSync(shutdownIntentPath(), `${JSON.stringify(intent)}\n`)
+  } catch {}
+}
+
+/**
+ * Read and delete the shutdown intent, returning it only when fresh. Called by
+ * the daemon's shutdown handler so it can attribute `server.shutting_down`. A
+ * missing/stale file means the SIGTERM came from outside the CLI (manual kill,
+ * launchctl, crash supervisor) — the caller logs that as an unattributed stop.
+ */
+export function consumeShutdownIntent(maxAgeMs = 30_000): ShutdownIntent | undefined {
+  const path = shutdownIntentPath()
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
+  try {
+    unlinkSync(path)
+  } catch {}
+  try {
+    const intent = JSON.parse(raw) as ShutdownIntent
+    const age = Date.now() - new Date(intent.at).getTime()
+    if (!Number.isFinite(age) || age < 0 || age > maxAgeMs) {
+      return undefined
+    }
+    return intent
+  } catch {
+    return undefined
+  }
 }
 
 export function resolveServerPaths(): ServerPaths {
