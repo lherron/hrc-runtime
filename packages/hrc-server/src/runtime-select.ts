@@ -13,6 +13,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import { isRunActive, isTerminalBrokerInvocationState } from './require-helpers.js'
+import { hasDurableBrokerEndpoint, hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 
 export type InteractiveRuntimeSelectionView = {
   transport: string
@@ -84,6 +85,51 @@ export function getReusableHeadlessRuntimeForSession(
     return null
   }
   return runtime
+}
+
+/**
+ * T-01884: find a durable HEADLESS harness-broker runtime for this session that
+ * is a candidate for lazy REATTACH after a daemon restart.
+ *
+ * Unlike {@link getReusableHeadlessRuntimeForSession}, this DELIBERATELY includes
+ * unavailable-status (stale / broker-ipc-unavailable) runtimes: a durable broker
+ * that survived the restart still has a live leased-tmux substrate + unix endpoint,
+ * even though this daemon's request-serving controller is cold and the row was left
+ * stale by startup reconcile. Selection is keyed by runtime-hosting TRUTH (durable
+ * endpoint + leased substrate), NOT runtime.status and NOT the interactive selector.
+ * Only truly terminal rows (terminated/dead) are excluded — those are gone. The
+ * caller reattaches onto the request-serving controller and REUSES this runtime
+ * instead of provisioning a new broker over a still-live lease.
+ */
+export function getDurableHeadlessRuntimeForReattach(
+  db: HrcDatabase,
+  hostSessionId: string,
+  provider: HrcProvider,
+  harnessId?: HrcHarness | undefined
+): HrcRuntimeSnapshot | null {
+  return (
+    db.runtimes
+      .listByHostSessionId(hostSessionId)
+      .filter((candidate) => {
+        if (
+          candidate.transport !== 'headless' ||
+          candidate.provider !== provider ||
+          candidate.controllerKind !== 'harness-broker'
+        ) {
+          return false
+        }
+        if (harnessId !== undefined && candidate.harness !== harnessId) {
+          return false
+        }
+        // Truly terminal runtimes are gone — only recover non-terminal-but-cold
+        // rows (stale / broker-ipc-unavailable included on purpose).
+        if (candidate.status === 'terminated' || candidate.status === 'dead') {
+          return false
+        }
+        return hasDurableBrokerEndpoint(candidate) && hasLeasedBrokerSubstrate(candidate)
+      })
+      .at(-1) ?? null
+  )
 }
 
 export function findBusyHeadlessRuntimeForSession(

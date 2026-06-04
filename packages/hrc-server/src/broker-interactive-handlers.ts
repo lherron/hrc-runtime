@@ -55,7 +55,10 @@ import {
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
 } from './require-helpers.js'
-import { getReusableHeadlessRuntimeForSession } from './runtime-select.js'
+import {
+  getDurableHeadlessRuntimeForReattach,
+  getReusableHeadlessRuntimeForSession,
+} from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { AttachBeforeInvocationStartOption } from './server-types.js'
@@ -254,6 +257,67 @@ export async function handleHeadlessBrokerDispatchTurn(
       reason: 'headless-broker-nonbroker-reuse-rejected',
       route: 'headless-broker',
     })
+  }
+
+  // T-01884: durable HEADLESS reattach BEFORE provisioning a new broker. A durable
+  // headless runtime that survived a daemon restart has a live leased-tmux substrate
+  // + unix broker, but this daemon's request-serving controller is cold and the row
+  // was left stale/broker-ipc-unavailable by startup reconcile — so the reuse
+  // selector above excluded it. If we fell straight through to start, we would
+  // provision a SECOND broker over the still-live lease, orphaning the first
+  // (the Ph4c live failure). Instead, lazily reattach the persisted durable endpoint
+  // onto the REQUEST-SERVING controller (ownership) and REUSE the same runtime id.
+  // On reattach failure (dead/unreachable broker) reap it before reprovisioning so
+  // no second broker tmux session remains (no-silent-duplicate).
+  const durableHeadless = getDurableHeadlessRuntimeForReattach(
+    this.db,
+    session.hostSessionId,
+    intent.harness.provider,
+    intent.harness.id
+  )
+  if (durableHeadless) {
+    const reattached = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
+      controller: this.getHarnessBrokerController(),
+      brokerUnixClientFactory:
+        this.brokerUnixClientFactory ??
+        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+    })
+    const recovered = reattached
+      ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
+      : null
+    if (recovered && recovered.activeInvocationId !== undefined) {
+      writeServerLog('INFO', 'headless.durable_reattach.reused', {
+        hostSessionId: session.hostSessionId,
+        runtimeId: recovered.runtimeId,
+      })
+      if (!isBrokerRuntimeQueueCapable(this.db, recovered)) {
+        assertRuntimeNotBusy(this.db, recovered)
+      }
+      return await this.executeHeadlessBrokerInputTurn(
+        session,
+        recovered,
+        prompt,
+        runId,
+        options
+      )
+    }
+    // Reattach failed or the persisted invocation is gone: terminate the cold
+    // durable runtime (reaps its broker dispose path; the orphan sweeper reaps the
+    // leased substrate since a terminal runtime no longer claims it) BEFORE we
+    // provision a fresh broker below — no second live broker tmux may remain.
+    writeServerLog('WARN', 'headless.durable_reattach.failed_reprovision', {
+      hostSessionId: session.hostSessionId,
+      runtimeId: durableHeadless.runtimeId,
+      reattached,
+    })
+    await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
+      (error: unknown) => {
+        writeServerLog('WARN', 'headless.durable_reattach.reprovision_cleanup_failed', {
+          runtimeId: durableHeadless.runtimeId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    )
   }
 
   return await this.executeHeadlessBrokerStartTurn(session, intent, prompt, runId, options)
