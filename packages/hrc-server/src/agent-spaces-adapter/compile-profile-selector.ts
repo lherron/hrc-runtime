@@ -49,6 +49,21 @@ export type BrokerProfileSelection =
   | { admitted: false; code: BrokerProfileRejectionCode }
 
 /**
+ * Admissible broker-protocol versions for the static selector (T-01878 Ph4b).
+ *
+ * The selector ADMITS both the v0.1 legacy default and the v0.2 durable headless
+ * profile (emitted by ASP under the operator dev flag). It must NOT branch on any
+ * flag/env (daedalus C-03314 #2): the selector only SELECTS the profile; the
+ * controller/runtime-hosting derive durability from the (echoed-through, unchanged)
+ * profile.brokerProtocol + persisted endpoint/substrate — never from the activation
+ * flag. The Ph3 route selector (broker-headless-handlers.ts) reads brokerProtocol to
+ * distinguish v0.2 → durable vs v0.1 → legacy, so the value is never coerced here.
+ */
+function isAdmissibleBrokerProtocol(brokerProtocol: unknown): boolean {
+  return brokerProtocol === 'harness-broker/0.1' || brokerProtocol === 'harness-broker/0.2'
+}
+
+/**
  * Static admission predicate for broker-controller profiles. Headless Codex and
  * interactive broker-owned tmux drivers share the same HRC controller; the
  * interactive path is selected by profile driver/terminal metadata, not harness
@@ -59,7 +74,7 @@ export function isBrokerControllerProfile(
 ): profile is BrokerExecutionProfile {
   return (
     profile.kind === 'harness-broker' &&
-    profile.brokerProtocol === 'harness-broker/0.1' &&
+    isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     (isHeadlessCodexBrokerProfile(profile) || isInteractiveTmuxBrokerProfile(profile))
   )
 }
@@ -70,7 +85,7 @@ export function isHeadlessCodexBrokerProfile(
   return (
     profile.kind === 'harness-broker' &&
     profile.interactionMode === 'headless' &&
-    profile.brokerProtocol === 'harness-broker/0.1' &&
+    isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     profile.brokerDriver === 'codex-app-server'
   )
 }
@@ -81,7 +96,7 @@ export function isInteractiveTmuxBrokerProfile(
   return (
     profile.kind === 'harness-broker' &&
     profile.interactionMode === 'interactive' &&
-    profile.brokerProtocol === 'harness-broker/0.1' &&
+    isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     typeof profile.brokerDriver === 'string' &&
     (profile.brokerDriver === 'claude-code-tmux' || profile.brokerDriver === 'codex-cli-tmux') &&
     profile.brokerTerminal?.host === 'tmux'
