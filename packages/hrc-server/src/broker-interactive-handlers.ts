@@ -33,6 +33,7 @@ import {
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxExecutionRoute,
   filterBrokerDispatchEnvForLockedEnv,
+  getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   shouldBlockForBrokerTurnCompletion,
@@ -1065,9 +1066,11 @@ export function getHarnessBrokerController(
 
 /**
  * Best-effort: open a ghostmux viewer window attached to a freshly-started
- * headless claude broker runtime's TUI. Reuses `hrc attach <runtimeId>` so the
- * viewer rides the same attach-descriptor logic operators use (which already
- * targets the `:tui` window, not the headless broker window). Never throws — the
+ * headless claude broker runtime's TUI. Sends the same `tmux -S <socket>
+ * attach-session -t <session>:tui` argv an operator attach uses (the `:tui`
+ * target is the 7530bd4 fix — NOT the headless broker window). We send the tmux
+ * argv directly rather than `hrc attach <id>`, which only prints the descriptor
+ * JSON to a non-interactive invocation instead of attaching. Never throws — the
  * viewer is purely observational and must not gate the dispatch.
  */
 export async function spawnHeadlessClaudeViewer(
@@ -1075,10 +1078,19 @@ export async function spawnHeadlessClaudeViewer(
   runtime: HrcRuntimeSnapshot
 ): Promise<void> {
   try {
+    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    if (!socketPath) {
+      writeServerLog('INFO', 'headless_claude_viewer.skipped_no_socket', {
+        runtimeId: runtime.runtimeId,
+        scopeRef: runtime.scopeRef,
+      })
+      return
+    }
+    const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       runtimeId: runtime.runtimeId,
-      attachCommand: `hrc attach ${runtime.runtimeId}`,
+      attachCommand: `tmux -S ${socketPath} attach-session -t ${attachTarget}`,
       title: `hrc headless ${runtime.scopeRef}`,
     })
     writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {
