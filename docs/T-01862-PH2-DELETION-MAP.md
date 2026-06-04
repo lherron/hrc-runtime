@@ -58,7 +58,31 @@ target-message-handlers.ts:197-198,318 filter predicates
 Serialize side (toBrokerTmuxJson/toRuntimeStateTmux, controller 1331/1349) stays as allocator
 output; only the READ/deserialize callers move to the choke point.
 
-## Load-bearing-first order for Ph2
+## Ph2 OUTCOME (T-01873 GREEN @ 7b4a5cc) — what was migrated vs deferred
+MIGRATED in Ph2 (old transport durability proxy → choke point, verified no residual transport inference):
+- turn-dispatch-handlers.ts ~311  `transport==='tmux' && getBrokerRuntimeTmuxSocketPath` → `hasLeasedBrokerSubstrate`
+- target-message-handlers.ts ~188  same → `hasLeasedBrokerSubstrate`
+- runtime-list-adopt-handlers.ts ~111 (decorative) → `parseBrokerRuntimeHostingState(...).substrate.tmuxSocketPath`
+DEVIATION (verified correct): map suggested `hasDurableBrokerEndpoint` for the two reconcile gates; curly used
+`hasLeasedBrokerSubstrate` because the interactive selectors (runtime-select.ts selectLatest/Dispatch
+InteractiveRuntime) filter to transport∈{tmux,ghostty} — headless never reaches these gates, so leased-substrate
+(tmux→true, ghostty→false) is the faithful predicate and forward-safe through Ph3. Map's `hasDurableBrokerEndpoint`
+would have wrongly matched a durable ghostty/headless broker.
+
+DEFERRED TO Ph4 (T-01875) — curly withheld with reasoning (do NOT redo in Ph2):
+1. broker-decisions.ts:671-715 getBrokerRuntimeTmuxSocketPath/SessionName/AttachTarget internals — shared with
+   reassociateBrokerTmuxLease (startup-reconcile 880-899, inside the Ph4 808-955 zone); lifecycle-timing risk
+   (tmuxJson vs broker-block populated at different moments). Ph4.
+2. broker-interactive-handlers.ts:505-513 deliverReassociatedBrokerTmuxInput: brokerLeaseIdsMatch →
+   brokerLeaseIdentityMatches CHANGES match semantics (adds broker-window identity, needs 2-window probe). Ph4.
+3. controller.ts:1481 extractRuntimeStateTmux — SERIALIZE side, stays (no clean choke-point read replacement).
+4. RECLASSIFIED SPLIT→STAYS: runtime-control-handlers.ts:280-287,421-424 + runtime-io-handlers.ts:229-231 route
+   interrupt/terminate/liveness by surface KIND (tmux vs ghostty vs headless) — route-label, NOT a durability proxy.
+   A durable-HEADLESS broker has a leased-tmux substrate but must route to the headless handler, so
+   hasLeasedBrokerSubstrate would MISROUTE. These STAY as transport route-labels.
+5. runtime-io-handlers.ts:75-84,140-145 degraded reads + startup-reconcile/sweep GC/claimed-lease — Ph4 behavior change.
+
+## Load-bearing-first order for Ph2 (COMPLETE)
 1. startup-reconcile.ts (most reads; also feeds Ph4)  2. runtime-io-handlers.ts  3. broker-interactive-handlers.ts
 4. sweep-reconcile.ts  5. broker-decisions.ts  6. controller.ts allocator split  7. the dispatch/adopt/target one-liners.
 Note: startup-reconcile 808-955 + sweep are also Ph4 (G3 GC-loop replacement, sweeper-by-substrate);
