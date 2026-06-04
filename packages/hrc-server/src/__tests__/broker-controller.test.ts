@@ -17,13 +17,20 @@ import type {
   BrokerHealthResponse,
   BrokerHelloRequest,
   BrokerHelloResponse,
+  BrokerListInvocationsRequest,
+  BrokerListInvocationsResponse,
   InvocationCapabilities,
   InvocationEventEnvelope,
   InvocationInputRequest,
   InvocationInputResponse,
+  InvocationInspectionSummary,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
+  InvocationLifecycleView,
+  InvocationLivenessView,
   InvocationRuntimeContext,
+  InvocationSnapshot,
+  InvocationSnapshotRequest,
   InvocationStartRequest,
   InvocationStartResponse,
   InvocationStatusRequest,
@@ -109,6 +116,9 @@ class FakeBrokerClient implements BrokerClientLike {
     runtime?: InvocationRuntimeContext | undefined
   }> = []
   readonly healthCalls: BrokerHealthRequest[] = []
+  readonly statusCalls: InvocationStatusRequest[] = []
+  readonly listInvocationsCalls: BrokerListInvocationsRequest[] = []
+  readonly snapshotCalls: InvocationSnapshotRequest[] = []
   emitCloseOnClose = false
   permissionHandler?: (request: PermissionRequestParams) => Promise<PermissionDecision>
   private closeHandler?: (error: Error) => void
@@ -142,6 +152,19 @@ class FakeBrokerClient implements BrokerClientLike {
     invocationId: 'invocation_w2',
     state: 'ready',
     capabilities: invocationCapabilities(),
+  }
+
+  listInvocationsResponse: BrokerListInvocationsResponse = { invocations: [] }
+
+  snapshotResponse: InvocationSnapshot = {
+    invocationId: 'invocation_w2' as InvocationSnapshot['invocationId'],
+    state: 'ready',
+    capabilities: invocationCapabilities(),
+    pendingInputIds: [],
+    inputDispositions: {},
+    pendingPermissionRequests: [],
+    currentSeq: 0,
+    retentionFloorSeq: 0,
   }
 
   healthResponse: BrokerHealthResponse = {
@@ -205,9 +228,22 @@ class FakeBrokerClient implements BrokerClientLike {
     return { accepted: true, state: 'stopping' }
   }
 
-  async status(_req: InvocationStatusRequest): Promise<InvocationStatusResponse> {
+  async status(req: InvocationStatusRequest): Promise<InvocationStatusResponse> {
     this.callOrder.push('status')
+    this.statusCalls.push(req)
     return this.statusResponse
+  }
+
+  async listInvocations(req: BrokerListInvocationsRequest = {}): Promise<BrokerListInvocationsResponse> {
+    this.callOrder.push('listInvocations')
+    this.listInvocationsCalls.push(req)
+    return this.listInvocationsResponse
+  }
+
+  async snapshot(req: InvocationSnapshotRequest): Promise<InvocationSnapshot> {
+    this.callOrder.push('snapshot')
+    this.snapshotCalls.push(req)
+    return this.snapshotResponse
   }
 
   async dispose(): Promise<void> {
@@ -884,6 +920,404 @@ describe('HarnessBrokerController', () => {
       'failed'
     )
   })
+
+  // ── T-01855 reds: inspection read model + capability negotiation ─────────────
+  //
+  // These tests are intentionally RED: controller.listInvocations / the
+  // extended controller.status(runtimeId, {probeLiveness}) / capability-gating
+  // do not exist yet. They go green when the implementation in
+  // packages/hrc-server/src/broker/controller.ts lands.
+
+  describe('inspection read model — listInvocations', () => {
+    it('returns InvocationInspectionSummary[] from the broker client', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      const summary: InvocationInspectionSummary = {
+        invocationId: 'invocation_w2' as InvocationInspectionSummary['invocationId'],
+        state: 'ready',
+        driver: 'codex-app-server',
+        startedAt: NOW,
+        lastActivityAt: NOW,
+      }
+      fake.listInvocationsResponse = { invocations: [summary] }
+
+      // RED: controller.listInvocations does not exist yet
+      const result = await (controller as any).listInvocations('runtime_w2')
+
+      expect(result).toEqual([summary])
+      expect(fake.listInvocationsCalls).toHaveLength(1)
+    })
+
+    it('does NOT mutate runtime or session DB state', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      const runtimeBefore = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+      const sessionBefore = fixture.db.sessions.getByHostSessionId('hostSession_w2')
+      const invocationBefore = fixture.db.brokerInvocations.getByInvocationId('invocation_w2')
+
+      fake.listInvocationsResponse = { invocations: [] }
+
+      // RED: controller.listInvocations does not exist yet
+      await (controller as any).listInvocations('runtime_w2')
+
+      // DB state must be byte-for-byte identical after the read-only call
+      expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')).toEqual(runtimeBefore)
+      expect(fixture.db.sessions.getByHostSessionId('hostSession_w2')).toEqual(sessionBefore)
+      expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')).toEqual(
+        invocationBefore
+      )
+    })
+
+    it('returns an error (not throws) when the runtime is not active', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+
+      // No start() — 'runtime_w2' is not active
+      // RED: controller.listInvocations does not exist yet
+      const result = await (controller as any).listInvocations('runtime_w2')
+
+      expect(result.ok).toBe(false)
+      expect(result.error).toBeInstanceOf(BrokerControllerError)
+    })
+
+    it('older broker (no inspection block): degrades cleanly without throwing and returns empty', async () => {
+      const fake = new FakeBrokerClient()
+      // Default helloResponse has NO inspection field → behaves like an older broker
+      expect((fake.helloResponse.capabilities as any).inspection).toBeUndefined()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.listInvocations does not exist yet;
+      // when implemented: must return [] without calling fake.listInvocations
+      const result = await (controller as any).listInvocations('runtime_w2')
+
+      expect(Array.isArray(result)).toBe(true)
+      // Broker must NOT be called when inspection is not advertised
+      expect(fake.listInvocationsCalls).toHaveLength(0)
+    })
+  })
+
+  describe('inspection read model — status with probeLiveness', () => {
+    it('plumbs probeLiveness: true into client.status() and returns extended summary fields', async () => {
+      const fake = new FakeBrokerClient()
+      const lifecycle: InvocationLifecycleView = {
+        retention: { mode: 'keep-alive' },
+        harnessRecovery: { mode: 'restart' },
+        turnRetry: { mode: 'none' },
+      }
+      const liveness: InvocationLivenessView = {
+        mode: 'probe',
+        checkedAt: NOW,
+        driver: { state: 'healthy' },
+      }
+      fake.statusResponse = {
+        ...fake.statusResponse,
+        lifecycle,
+        liveness,
+      }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.status currently ignores extra args;
+      // when implemented: must forward probeLiveness to client.status()
+      const result = await (controller as any).status('runtime_w2', { probeLiveness: true })
+
+      expect(result.ok).toBe(true)
+      // The broker client must have received probeLiveness: true
+      const statusCall = fake.statusCalls.find((c) => c.probeLiveness === true)
+      expect(statusCall).toBeDefined()
+      expect(statusCall?.probeLiveness).toBe(true)
+      // The response must carry the extended InvocationInspectionSummary fields
+      expect(result.response.invocation?.lifecycle).toEqual(lifecycle)
+      expect(result.response.invocation?.liveness).toEqual(liveness)
+    })
+
+    it('does NOT forward probeLiveness when called without the option', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      await controller.status('runtime_w2')
+
+      // probeLiveness must be absent/falsy when not requested
+      expect(fake.statusCalls.every((c) => !c.probeLiveness)).toBe(true)
+    })
+  })
+
+  describe('inspection read model — snapshot', () => {
+    it('returns InvocationSnapshot via a direct client.snapshot() call', async () => {
+      const fake = new FakeBrokerClient()
+      const lifecycle: InvocationLifecycleView = {
+        retention: { mode: 'keep-alive' },
+        harnessRecovery: { mode: 'restart' },
+        turnRetry: { mode: 'none' },
+      }
+      fake.snapshotResponse = {
+        ...fake.snapshotResponse,
+        lifecycle,
+      }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.snapshot does not exist yet
+      const result = await (controller as any).snapshot('runtime_w2')
+
+      expect(result.ok).toBe(true)
+      expect(result.response.lifecycle).toEqual(lifecycle)
+      // Must have called snapshot exactly once with the right invocationId
+      expect(fake.snapshotCalls).toHaveLength(1)
+      expect(fake.snapshotCalls[0]?.invocationId).toBe('invocation_w2')
+    })
+
+    it('snapshot does NOT call eventsSince or ackEvents (direct read, no replay)', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.snapshot does not exist yet;
+      // when implemented: must be a direct snapshot() only — no replay machinery
+      await (controller as any).snapshot('runtime_w2')
+
+      expect(fake.callOrder).not.toContain('eventsSince')
+      expect(fake.callOrder).not.toContain('ackEvents')
+      expect(fake.callOrder).toContain('snapshot')
+    })
+
+    it('snapshot does NOT mutate runtime or session DB state', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      const runtimeBefore = fixture.db.runtimes.getByRuntimeId('runtime_w2')
+      const sessionBefore = fixture.db.sessions.getByHostSessionId('hostSession_w2')
+      const invocationBefore = fixture.db.brokerInvocations.getByInvocationId('invocation_w2')
+
+      // RED: controller.snapshot does not exist yet
+      await (controller as any).snapshot('runtime_w2')
+
+      expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')).toEqual(runtimeBefore)
+      expect(fixture.db.sessions.getByHostSessionId('hostSession_w2')).toEqual(sessionBefore)
+      expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')).toEqual(
+        invocationBefore
+      )
+    })
+
+    it('snapshot returns an error (not throws) when the runtime is not active', async () => {
+      const fake = new FakeBrokerClient()
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+
+      // No start() — runtime_w2 not active
+      // RED: controller.snapshot does not exist yet
+      const result = await (controller as any).snapshot('runtime_w2')
+
+      expect(result.ok).toBe(false)
+      expect(result.error).toBeInstanceOf(BrokerControllerError)
+    })
+  })
+
+  describe('capability tri-state gating', () => {
+    it('inspection.liveness === probe: controller passes probeLiveness: true on listInvocations', async () => {
+      const fake = new FakeBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'probe',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      fake.listInvocationsResponse = { invocations: [] }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.listInvocations does not exist yet
+      await (controller as any).listInvocations('runtime_w2', { probeLiveness: true })
+
+      // With liveness:'probe', controller must honor the caller's flag
+      expect(fake.listInvocationsCalls).toHaveLength(1)
+      expect(fake.listInvocationsCalls[0]?.probeLiveness).toBe(true)
+    })
+
+    it('inspection.liveness === cached: controller does NOT pass probeLiveness on listInvocations', async () => {
+      const fake = new FakeBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'cached',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      fake.listInvocationsResponse = { invocations: [] }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.listInvocations does not exist yet;
+      // when implemented: cached → must NOT forward probeLiveness: true
+      await (controller as any).listInvocations('runtime_w2', { probeLiveness: true })
+
+      expect(fake.listInvocationsCalls).toHaveLength(1)
+      expect(fake.listInvocationsCalls[0]?.probeLiveness).not.toBe(true)
+    })
+
+    it('inspection.liveness === none: controller omits probeLiveness on listInvocations', async () => {
+      const fake = new FakeBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: false,
+            liveness: 'none',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      fake.listInvocationsResponse = { invocations: [] }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.listInvocations does not exist yet;
+      // when implemented: none → must NOT forward probeLiveness
+      await (controller as any).listInvocations('runtime_w2', { probeLiveness: true })
+
+      expect(fake.listInvocationsCalls).toHaveLength(1)
+      expect(fake.listInvocationsCalls[0]?.probeLiveness).not.toBe(true)
+    })
+
+    it('inspection.liveness === probe: controller passes probeLiveness: true on status()', async () => {
+      const fake = new FakeBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'probe',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      const liveness: InvocationLivenessView = {
+        mode: 'probe',
+        checkedAt: NOW,
+        driver: { state: 'healthy' },
+      }
+      fake.statusResponse = { ...fake.statusResponse, liveness }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: controller.status currently ignores extra opts;
+      // when implemented: must forward probeLiveness to client.status()
+      await (controller as any).status('runtime_w2', { probeLiveness: true })
+
+      const statusCall = fake.statusCalls.find((c) => c.probeLiveness === true)
+      expect(statusCall).toBeDefined()
+    })
+
+    it('inspection.liveness === cached: controller does NOT probe on status()', async () => {
+      const fake = new FakeBrokerClient()
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'cached',
+            eventTypeFilter: false,
+          },
+        },
+      }
+      const controller = new HarnessBrokerController({
+        db: fixture.db,
+        brokerClientFactory: async () => fake,
+        now: () => NOW,
+      })
+      await controller.start(makeStartInput())
+
+      // RED: when implemented: cached → status must NOT request a live probe
+      await (controller as any).status('runtime_w2', { probeLiveness: true })
+
+      expect(fake.statusCalls.every((c) => !c.probeLiveness)).toBe(true)
+    })
+  })
+  // ── end T-01855 reds ─────────────────────────────────────────────────────────
 
   it('fails closed when broker hello cannot admit the requested driver', async () => {
     const fake = new FakeBrokerClient()
