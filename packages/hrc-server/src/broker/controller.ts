@@ -325,6 +325,18 @@ export type HarnessBrokerControllerDeps = {
   permissionChannel?: BrokerPermissionChannel | undefined
   agentchat?: BrokerAgentchatLifecycle | undefined
   tmuxAllocator?: BrokerTmuxAllocator | undefined
+  /**
+   * T-01874 Ph3 — durable HEADLESS substrate allocator (presentation='none'):
+   * allocates a leased-tmux broker window + Unix IPC socket + attach token +
+   * event ledger with NO operator TUI window. Selected for the default headless
+   * harness-broker route (the escape hatch reverts to the legacy stdio/daemon-
+   * child path). Kept SEPARATE from {@link tmuxAllocator} (which is the
+   * interactive presentation='tmux-tui' allocator) so the controller never
+   * carves a TUI pane for a headless runtime. When unset, the controller falls
+   * back to a deterministic in-process synthesis used by route/unit tests;
+   * production wires `createBrokerDurableHeadlessAllocator`.
+   */
+  headlessSubstrateAllocator?: BrokerTmuxAllocator | undefined
   waitForAttachedTerminal?: ((input: {
     runtime: HrcRuntimeSnapshot
     allocation: BrokerTmuxAllocation
@@ -482,6 +494,7 @@ export class HarnessBrokerController {
   private readonly permissionChannel: BrokerPermissionChannel | undefined
   private readonly agentchat: BrokerAgentchatLifecycle | undefined
   private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
+  private readonly headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
   private readonly waitForAttachedTerminal:
     | ((input: { runtime: HrcRuntimeSnapshot; allocation: BrokerTmuxAllocation }) => Promise<void>)
     | undefined
@@ -520,6 +533,7 @@ export class HarnessBrokerController {
     this.permissionChannel = deps.permissionChannel
     this.agentchat = deps.agentchat
     this.tmuxAllocator = deps.tmuxAllocator
+    this.headlessSubstrateAllocator = deps.headlessSubstrateAllocator
     this.waitForAttachedTerminal = deps.waitForAttachedTerminal
     this.reapBrokerTmuxLease = deps.reapBrokerTmuxLease
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
@@ -565,9 +579,33 @@ export class HarnessBrokerController {
       // DIAL (instead of spawning a stdio child); a legacy allocator yields no
       // IPC socket and we keep the stdio launch. Preflight already ran inside the
       // durable allocator BEFORE any tmux spawn.
+      // T-01874 Ph3 — headless escape hatch. Read the env flag HERE (route
+      // selection ONLY) and NOWHERE in runtime-hosting/reconcile predicates
+      // (C-03291 #2). HRC_HEADLESS_BROKER_LEGACY_STDIO=1 reverts a headless start
+      // to the legacy non-durable route (stdio/daemon-child); unset / '0' /
+      // anything-else = the default durable leased-tmux + Unix v0.2 route. The
+      // hatch selects ONLY legacy v0.1/stdio — never a v0.2-over-stdio path.
+      const headlessLegacyStdioHatch =
+        this.env?.['HRC_HEADLESS_BROKER_LEGACY_STDIO'] === '1'
       if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
         tmuxAllocation = await this.allocateTmuxIfRequired(input)
         markPhase('broker-tmux-alloc')
+      } else if (
+        input.brokerClient === undefined &&
+        input.profile.interactionMode === 'headless' &&
+        // The compiled-profile type narrows brokerProtocol to the v0.1 admission
+        // marker; durable cutover profiles carry v0.2 at runtime, so compare as a
+        // widened string. (Durability truth still comes from the negotiated hello
+        // + substrate/endpoint, never from this compile-time marker.)
+        String(input.profile.brokerProtocol) === BROKER_PROTOCOL_VERSION_V2 &&
+        !headlessLegacyStdioHatch
+      ) {
+        // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
+        // with presentation='none' (broker window + Unix IPC + token + ledger, NO
+        // TUI, NO operator attach) and DIAL it over Unix v0.2 instead of spawning
+        // a stdio daemon-child. Public/API identity stays transport='headless'.
+        tmuxAllocation = await this.allocateHeadlessSubstrate(input)
+        markPhase('broker-headless-substrate-alloc')
       }
 
       const durableSocketPath = tmuxAllocation?.brokerIpcSocketPath
@@ -625,7 +663,14 @@ export class HarnessBrokerController {
         tmuxAllocation = await this.allocateTmuxIfRequired(input)
         markPhase('broker-tmux-alloc')
       }
-      const dispatchRuntime = toDispatchRuntime(tmuxAllocation)
+      // T-01874 Ph3 — a headless durable runtime has presentation='none' and no
+      // operator pane, so it dispatches NO runtime.terminalSurface (and no tmux
+      // shim): the broker-window pane must never become a terminalSurface. Only
+      // the interactive tmux-tui route carries the operator pane lease.
+      const dispatchRuntime =
+        tmuxAllocation !== undefined && input.profile.interactionMode === 'headless'
+          ? undefined
+          : toDispatchRuntime(tmuxAllocation)
       const persisted = this.persistStartGraph(input, hello, tmuxAllocation)
       if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
         await this.pauseForAttachedInvocationStart({
@@ -1312,7 +1357,11 @@ export class HarnessBrokerController {
       updatedAt: now,
     })
 
-    const transport = tmuxAllocation ? 'tmux' : 'headless'
+    // T-01874 Ph3 — public/API transport tracks the PROFILE, not the substrate.
+    // A headless durable runtime now carries a leased-tmux substrate
+    // (`tmuxAllocation` set) but its identity stays transport='headless'
+    // (presentation='none'); only the interactive tmux-tui profile is 'tmux'.
+    const transport = tmuxAllocation && isBrokerTmuxProfile(input.profile) ? 'tmux' : 'headless'
     const runtime = this.db.runtimes.insert({
       runtimeId: String(identity.runtimeId),
       runtimeKind: 'harness',
@@ -1326,7 +1375,7 @@ export class HarnessBrokerController {
       status: 'starting',
       supportsInflightInput: true,
       adopted: false,
-      ...(tmuxAllocation
+      ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
         ? {
             tmuxJson: toBrokerTmuxJson(input.profile.brokerDriver, tmuxAllocation),
           }
@@ -1345,7 +1394,7 @@ export class HarnessBrokerController {
         hostSessionId: String(identity.hostSessionId),
         generation: identity.generation,
         status: 'starting',
-        ...(tmuxAllocation
+        ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
           ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
           : {}),
       },
@@ -1389,7 +1438,12 @@ export class HarnessBrokerController {
       operationId: String(identity.operationId),
       runtimeId: String(identity.runtimeId),
       ...(identity.runId !== undefined ? { runId: String(identity.runId) } : {}),
-      brokerProtocol: BROKER_PROTOCOL_VERSION,
+      // G1 (daedalus, T-01874 Ph3) — persist the protocol NEGOTIATED in
+      // broker.hello, not a compile-time constant. Durable v0.2 rows must record
+      // 'harness-broker/0.2' because that is what hello returned; legacy stdio
+      // rows record whatever the stdio broker advertised. Stamping the constant
+      // lied about the wire protocol for every durable runtime.
+      brokerProtocol: hello.protocolVersion,
       brokerDriver: input.profile.brokerDriver,
       invocationState: 'starting',
       capabilitiesJson: JSON.stringify({}),
@@ -1519,7 +1573,58 @@ export class HarnessBrokerController {
         }
       )
     }
-    const allocation = await this.tmuxAllocator.allocate({
+    return this.allocateSubstrateVia(this.tmuxAllocator, input)
+  }
+
+  /**
+   * T-01874 Ph3 — allocate the durable HEADLESS substrate (presentation='none').
+   * Uses the injected {@link headlessSubstrateAllocator} when present; otherwise
+   * synthesizes a deterministic leased-tmux + unix endpoint identity in-process.
+   * The synthesized fallback exists so the controller's route logic is testable
+   * without spawning tmux; it is only ever persisted AFTER a (mocked, in tests)
+   * Unix dial + broker.hello succeed, so it never fabricates durable state in
+   * front of a live broker. Production injects `createBrokerDurableHeadlessAllocator`.
+   */
+  private async allocateHeadlessSubstrate(
+    input: BrokerControllerStartInput
+  ): Promise<BrokerTmuxAllocation> {
+    if (this.headlessSubstrateAllocator) {
+      return this.allocateSubstrateVia(this.headlessSubstrateAllocator, input)
+    }
+    const runtimeId = String(input.identity.runtimeId)
+    const driver = input.profile.brokerDriver
+    const runtimeRoot = this.env?.['HRC_RUNTIME_ROOT'] ?? '/tmp/hrc-runtime'
+    const ipcDir = `${runtimeRoot}/bipc/${runtimeId}`
+    const brokerIpcSocketPath = `${ipcDir}/b.sock`
+    const btmuxSocketPath = `${runtimeRoot}/btmux/${driver}-${runtimeId}.sock`
+    const sessionName = `hrc-${driver}-${runtimeId}`
+    return {
+      socketPath: btmuxSocketPath,
+      allocatedAt: this.now(),
+      generation: input.identity.generation,
+      brokerIpcSocketPath,
+      // Raw token is used in-process only and never persisted (the redacted ref
+      // below is what lands in runtime_state_json).
+      attachToken: 'synthesized-headless-attach-token',
+      attachTokenRef: { kind: 'file', path: `${ipcDir}/attach.token`, redacted: true },
+      brokerCommand: `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}`,
+      // Broker process window only — NO tuiWindow, NO lease (presentation='none').
+      brokerWindow: {
+        socketPath: btmuxSocketPath,
+        sessionId: `$hb-${runtimeId}`,
+        windowId: '@hb',
+        paneId: '%hb',
+        sessionName,
+        windowName: 'broker',
+      },
+    }
+  }
+
+  private async allocateSubstrateVia(
+    allocator: BrokerTmuxAllocator,
+    input: BrokerControllerStartInput
+  ): Promise<BrokerTmuxAllocation> {
+    const allocation = await allocator.allocate({
       runtimeId: String(input.identity.runtimeId),
       hostSessionId: String(input.identity.hostSessionId),
       generation: input.identity.generation,

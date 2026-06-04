@@ -35,6 +35,18 @@ export type HrcTargetRuntimeView = {
   supportsCapture: boolean
   activeRunId?: string | undefined
   lastActivityAt?: string | undefined
+  /**
+   * T-01874 Ph3 — per-runtime broker hosting observability. Present only for
+   * harness-broker runtimes with a parseable hosting state. `brokerSubstrate`
+   * exposes WHERE the broker process lives ('leased-tmux' durable vs
+   * 'daemon-child' legacy); `headlessRoute` summarizes the selected headless
+   * route ('durable-leased' default vs 'legacy-stdio' escape hatch) so an
+   * operator can tell a rolled-back hatch runtime from a durable leased one in
+   * status/inspect output. Derived from endpoint/substrate facts only — never
+   * from the hatch env flag (which is route-selection state, not runtime state).
+   */
+  brokerSubstrate?: 'leased-tmux' | 'daemon-child' | undefined
+  headlessRoute?: 'durable-leased' | 'legacy-stdio' | undefined
 }
 
 export type HrcTargetView = {

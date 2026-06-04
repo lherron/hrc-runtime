@@ -80,6 +80,27 @@ export async function startHeadlessBrokerRuntime(
       })
     }
 
+    // T-01874 Ph3 — headless durable cutover route selection. A durable headless
+    // profile (v0.2) with the escape hatch unset goes through the controller's
+    // leased-tmux + Unix-IPC allocation: it must NOT receive a pre-created stdio
+    // broker client (that bypasses substrate allocation and reintroduces the
+    // daemon-child lifecycle — spec §10.4). The ASPC facade is still used for
+    // compile; on the durable route it is closed and dropped here. The legacy
+    // route (v0.1, or the HRC_HEADLESS_BROKER_LEGACY_STDIO escape hatch) keeps the
+    // facade as the broker client exactly as before.
+    const headlessLegacyStdioHatch =
+      process.env['HRC_HEADLESS_BROKER_LEGACY_STDIO'] === '1'
+    const durableHeadlessRoute =
+      compiled.profile.interactionMode === 'headless' &&
+      // brokerProtocol is typed as the v0.1 admission marker; durable cutover
+      // profiles carry v0.2 at runtime, so compare as a widened string.
+      String(compiled.profile.brokerProtocol) === 'harness-broker/0.2' &&
+      !headlessLegacyStdioHatch
+    const brokerClient = durableHeadlessRoute ? undefined : asBrokerClient(client)
+    if (durableHeadlessRoute) {
+      await client.close().catch(() => undefined)
+    }
+
     const controller = this.getHarnessBrokerController()
     handedOffToController = true
     const result = await controller.start({
@@ -90,11 +111,15 @@ export async function startHeadlessBrokerRuntime(
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
-      brokerClient: asBrokerClient(client),
+      ...(brokerClient ? { brokerClient } : {}),
       routeDecision: {
         route: 'broker',
         flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
         selectedBy: 'decideHeadlessExecutionRoute',
+        headlessRoute: durableHeadlessRoute ? 'durable-leased' : 'legacy-stdio',
+        brokerTransport: durableHeadlessRoute
+          ? 'unix-jsonrpc-ndjson'
+          : 'stdio-jsonrpc-ndjson',
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,

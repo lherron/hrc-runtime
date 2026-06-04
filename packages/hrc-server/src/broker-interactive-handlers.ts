@@ -1041,6 +1041,54 @@ export function createBrokerDurableTmuxAllocator(
   }
 }
 
+/**
+ * T-01874 Ph3 — durable HEADLESS broker allocator. A thin adapter over
+ * {@link allocateBrokerSubstrate} with presentation='none': it carves the leased
+ * broker substrate (broker window over Unix IPC + token + ledger) but creates NO
+ * TUI window and NO operator attach command, then maps the substrate/endpoint
+ * axes back to the legacy flat BrokerTmuxAllocation the controller persists. The
+ * controller dials `brokerIpcSocketPath` via connectUnix. Unlike the interactive
+ * allocator it carries NO `lease`/`tuiWindow`, so the controller dispatches no
+ * `runtime.terminalSurface` and persists presentation='none'.
+ */
+export function createBrokerDurableHeadlessAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  return {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+    }): Promise<BrokerTmuxAllocation> => {
+      const sub = await allocateBrokerSubstrate(options, deps, {
+        runtimeId,
+        hostSessionId,
+        generation,
+        driverKind: brokerDriver,
+        endpoint: 'unix-jsonrpc-ndjson',
+        presentation: 'none',
+      })
+      return {
+        socketPath: sub.substrate.tmuxSocketPath,
+        allocatedAt: sub.allocatedAt,
+        generation: sub.substrate.generation,
+        // No lease / tuiWindow: presentation='none' has no operator pane.
+        brokerIpcSocketPath:
+          sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
+        attachToken: sub.attachToken,
+        ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
+          ? { attachTokenRef: sub.endpoint.attachTokenRef }
+          : {}),
+        brokerCommand: sub.brokerCommand,
+        ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
+        brokerWindow: sub.brokerWindow,
+      }
+    },
+  }
+}
+
 export function getHarnessBrokerController(
   this: HrcServerInstanceForHandlers
 ): HarnessBrokerController {
@@ -1109,6 +1157,17 @@ export function getHarnessBrokerController(
             }
           },
         }
+  // T-01874 Ph3 — the durable HEADLESS substrate allocator (presentation='none').
+  // Selected by the controller only for the default durable headless route; the
+  // escape hatch (HRC_HEADLESS_BROKER_LEGACY_STDIO) reverts to the legacy stdio
+  // path and never reaches this allocator.
+  const headlessSubstrateAllocator: BrokerTmuxAllocator = createBrokerDurableHeadlessAllocator(
+    this.options,
+    {
+      tmuxManagerFactory,
+      generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
+    }
+  )
   this.harnessBrokerController = new HarnessBrokerController({
     db: this.db,
     mapper: {
@@ -1125,6 +1184,7 @@ export function getHarnessBrokerController(
       },
     },
     tmuxAllocator,
+    headlessSubstrateAllocator,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
       const windowName = allocation.lease?.windowName ?? allocation.windowName

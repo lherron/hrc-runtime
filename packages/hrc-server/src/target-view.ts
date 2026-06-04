@@ -22,6 +22,7 @@ import {
   requireContinuity,
   requireSession,
 } from './require-helpers.js'
+import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
 import { parseSessionRef, type BridgeTargetRequest } from './server-parsers.js'
 
@@ -162,6 +163,20 @@ export function toTargetRuntimeView(
     return undefined
   }
 
+  // T-01874 Ph3 — surface broker hosting facts per-runtime (observability). This
+  // reads ONLY the persisted hosting state (endpoint/substrate), never the hatch
+  // env flag, so a rolled-back (legacy stdio/daemon-child) headless runtime is
+  // distinguishable from a durable leased-tmux one in status/inspect output.
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  const brokerSubstrate = hosting?.substrate.kind
+  const headlessRoute =
+    runtime.transport === 'headless' && hosting !== undefined
+      ? hosting.substrate.kind === 'leased-tmux' &&
+        hosting.endpoint.kind === 'unix-jsonrpc-ndjson'
+        ? ('durable-leased' as const)
+        : ('legacy-stdio' as const)
+      : undefined
+
   return {
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
@@ -170,6 +185,8 @@ export function toTargetRuntimeView(
     supportsCapture: runtime.transport !== 'headless',
     activeRunId: runtime.activeRunId,
     lastActivityAt: runtime.lastActivityAt,
+    ...(brokerSubstrate !== undefined ? { brokerSubstrate } : {}),
+    ...(headlessRoute !== undefined ? { headlessRoute } : {}),
   }
 }
 
