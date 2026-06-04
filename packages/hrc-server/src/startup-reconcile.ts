@@ -27,6 +27,13 @@ import {
   extractRuntimeControlState,
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
+import {
+  type BrokerLeaseProbe,
+  brokerLeaseIdentityMatches,
+  hasDurableBrokerEndpoint,
+  hasLeasedBrokerSubstrate,
+  parseBrokerRuntimeHostingState,
+} from './broker/runtime-hosting.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, isTerminalBrokerInvocationState, requireSession } from './require-helpers.js'
@@ -67,7 +74,7 @@ export type DurableBrokerReattachDeps = {
 
 export type BrokerReattachOutcome = {
   runtimeId: string
-  state: 'broker-attached' | 'direct-tmux-degraded' | 'terminated' | 'stale'
+  state: 'broker-attached' | 'direct-tmux-degraded' | 'terminated' | 'stale' | 'broker-ipc-unavailable'
   brokerAttached: boolean
   replayedThroughSeq?: number | undefined
   reason?: string | undefined
@@ -213,26 +220,37 @@ export async function reconcileStartupState(
     sweepOrphans: async () => undefined,
   })
 
-  // Harness-broker runtimes cannot survive a daemon restart: the broker child
-  // process was parented by the prior daemon and is gone, but its invocation may
-  // persist as `ready`. Feeding such an invocation `invocation.input` on the next
-  // turn surfaces as `runtime_unavailable: headless broker input failed`. Mark
-  // these runtimes stale (reaping any active run) and dispose the orphaned
-  // invocation so the next turn starts a FRESH invocation — continuation persists
-  // on the session, so the conversation still resumes. (T-01711)
+  // T-01875 G3: the durable endpoint/substrate-driven pass above
+  // (reconcileDurableBrokerStartup) is now the SINGLE authority for every
+  // harness-broker runtime that carries a parseable broker hosting state — it
+  // reattaches the durable ones (unix endpoint + leased-tmux substrate) and
+  // classify-once-stales the legacy/v0.1 ones with a precise reason. The blanket
+  // `broker_orphaned_on_restart` GC loop (and its headless fallthrough) is GONE:
+  // a durable runtime that reattached above must NEVER fall through to an orphan
+  // path, so this loop SKIPS durable runtimes outright.
+  //
+  // What remains here is the PRE-DURABLE broker-tmux lease path: legacy
+  // harness-broker runtimes whose lease lives in the old `tmuxJson` shape (no
+  // `runtime_state_json.broker` hosting state at all). Those tmux servers outlive
+  // the daemon, so on restart re-scan the LEASE socket and id-match RE-ASSOCIATE
+  // (leave usable + invocation intact) or GC on mismatch. (T-01711 / T-01730)
   for (const runtime of db.runtimes.listAll()) {
     if (runtime.controllerKind !== 'harness-broker' || isRuntimeUnavailableStatus(runtime.status)) {
       continue
     }
+    // Durable runtimes are reconciled by reconcileDurableBrokerStartup above.
+    // Skipping them here closes the G3 trap (a reattached durable runtime must
+    // not then hit a transport-driven orphan/stale path).
+    if (hasDurableBrokerEndpoint(runtime) && hasLeasedBrokerSubstrate(runtime)) {
+      continue
+    }
     try {
-      // Broker-TMUX runtimes lease a tmux server that outlives the daemon. On
-      // restart re-scan the LEASE socket (NOT `tmux attach-session`): if the
-      // leased pane is alive AND its ids match the persisted lease,
-      // RE-ASSOCIATE (leave the runtime usable + invocation intact); otherwise
-      // GC the runtime and dispose its orphaned invocation. Other broker
-      // runtimes (headless) cannot survive — their child was parented by the
-      // prior daemon — so fall through to the blanket orphan sweep.
-      if (runtime.transport === 'tmux') {
+      // Legacy broker-tmux lease persisted in the pre-durable tmuxJson shape
+      // (no parseable broker hosting state). Runtimes WITH a parseable hosting
+      // state but no durable endpoint (v0.1 stdio / daemon-child) were already
+      // classified+staled above, so they are isRuntimeUnavailableStatus here and
+      // never reach this branch.
+      if (runtime.transport === 'tmux' && parseBrokerRuntimeHostingState(runtime) === undefined) {
         const control = extractRuntimeControlState(runtime.runtimeStateJson)
         if (control?.mode === 'direct-tmux-degraded') {
           continue
@@ -242,9 +260,7 @@ export async function reconcileStartupState(
           continue
         }
         gcBrokerRuntimeOnRestart(db, runtime, 'broker_tmux_lease_stale_on_restart')
-        continue
       }
-      gcBrokerRuntimeOnRestart(db, runtime, 'broker_orphaned_on_restart')
     } catch (error) {
       logStartupIssue(
         'broker runtime reconciliation failed',
@@ -311,12 +327,16 @@ export async function reconcileDurableBrokerRuntimeReattach(
     if (!endpoint) {
       return markBrokerReattachStale(db, runtime, 'missing_durable_broker_endpoint')
     }
-    if (!brokerLeaseWindowsMatch(runtime, probe)) {
-      return markBrokerReattachStale(db, runtime, 'broker_window_identity_mismatch')
+    // G4: verify the live lease identity via the hosting-state model — brokerWindow
+    // for EVERY leased substrate, tuiWindow ONLY when presentation=tmux-tui. Handles
+    // both the flat and normalized persisted shapes through the choke-point parser.
+    const leaseProbe = toBrokerLeaseProbe(probe)
+    if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
+      return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
     }
     const attachToken = await deps.resolveAttachToken(runtime)
     if (!attachToken) {
-      return markBrokerReattachStale(db, runtime, 'missing_attach_token')
+      return markBrokerReattachStale(db, runtime, 'broker_attach_token_missing')
     }
 
     let result: BrokerControllerAttachResult
@@ -332,11 +352,27 @@ export async function reconcileDurableBrokerRuntimeReattach(
     }
 
     if (!result.ok) {
+      // G6: a retention gap is terminal for the in-flight run. Surface the spec
+      // reason (broker_event_retention_gap) and explicitly fail the active run so
+      // a subsequent zombie sweep cannot race it (attachAndReplay's failReplayStale
+      // stales the runtime but leaves the run untouched).
+      if (result.error.code === 'broker_replay_retention_gap') {
+        return markBrokerReattachStale(db, runtime, 'broker_event_retention_gap')
+      }
       return {
         runtimeId,
         state: 'stale',
         brokerAttached: false,
         reason: result.error.code,
+      }
+    }
+
+    // G6: a successful attach + replay proves the in-flight run is live. Refresh
+    // its activity timestamp so the zombie sweep leaves the recovered run alone.
+    if (runtime.activeRunId !== undefined) {
+      const activeRun = db.runs.getByRunId(runtime.activeRunId)
+      if (activeRun && isRunActive(activeRun)) {
+        db.runs.update(runtime.activeRunId, { updatedAt: timestamp() })
       }
     }
 
@@ -377,6 +413,23 @@ export async function reconcileDurableBrokerRuntimeReattach(
     }
   }
 
+  // T-01875 G5: a durable HEADLESS runtime (leased substrate, presentation=none)
+  // has no operator TUI degraded fallback. Do NOT tear it down just because its
+  // broker IPC socket was unreachable in this startup probe — the leased tmux
+  // substrate may still host a live broker, and the next dispatch lazily reattaches
+  // (reattachDurableBrokerForDispatch). Leave the runtime intact so it keeps
+  // CLAIMING its lease (the orphan sweeper still reaps genuinely dead/leaked
+  // leases that no non-terminal runtime references).
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.substrate.kind === 'leased-tmux' && hosting.presentation.kind === 'none') {
+    return {
+      runtimeId,
+      state: 'broker-ipc-unavailable',
+      brokerAttached: false,
+      reason: 'broker_ipc_unavailable',
+    }
+  }
+
   return markBrokerReattachStale(db, runtime, 'broker_socket_and_tui_unavailable')
 }
 
@@ -388,13 +441,43 @@ export async function reconcileDurableBrokerStartup(
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
-      runtime.transport !== 'tmux' ||
-      isRuntimeUnavailableStatus(runtime.status) ||
-      !getPersistedDurableBrokerEndpoint(runtime)
+      isRuntimeUnavailableStatus(runtime.status)
     ) {
       continue
     }
-    outcomes.push(await reconcileDurableBrokerRuntimeReattach(db, runtime, deps))
+    const hosting = parseBrokerRuntimeHostingState(runtime)
+
+    // Durable runtime: unix endpoint + leased-tmux substrate → reattach over IPC.
+    // Keyed off the parsed hosting state, NOT runtime.transport — headless and
+    // interactive durable runtimes both flow through here (G3).
+    if (
+      hosting?.endpoint.kind === 'unix-jsonrpc-ndjson' &&
+      hosting.substrate.kind === 'leased-tmux'
+    ) {
+      outcomes.push(await reconcileDurableBrokerRuntimeReattach(db, runtime, deps))
+      continue
+    }
+
+    // Pre-durable broker-tmux lease (no parseable broker hosting state, but a
+    // legacy tmuxJson lease socket): leave it to the lease id-match re-associate
+    // pass in reconcileStartupState. Do NOT classify-stale it here.
+    if (!hosting && runtime.transport === 'tmux' && getBrokerRuntimeTmuxSocketPath(runtime)) {
+      continue
+    }
+
+    // Classify-once with Q5 precedence: a v0.1 (stdio) endpoint is unsupported on
+    // startup; anything else lacking a durable endpoint is a legacy daemon-child.
+    const reason =
+      hosting?.endpoint.kind === 'stdio-jsonrpc-ndjson'
+        ? 'broker_protocol_legacy_unsupported_on_startup'
+        : 'broker_legacy_no_durable_endpoint_on_restart'
+    gcBrokerRuntimeOnRestart(db, runtime, reason)
+    outcomes.push({
+      runtimeId: runtime.runtimeId,
+      state: 'stale',
+      brokerAttached: false,
+      reason,
+    })
   }
   await deps.sweepOrphans()
   return outcomes
@@ -465,6 +548,38 @@ async function probePersistedBrokerLease(
     brokerSocketLive: endpoint ? await probeUnixSocketLive(endpoint.socketPath) : false,
     brokerWindow,
     tuiWindow,
+  }
+}
+
+/**
+ * Adapt a startup `BrokerReattachProbe` (TmuxPaneState windows) to the
+ * hosting-state `BrokerLeaseProbe` (window-identity triples) consumed by
+ * brokerLeaseIdentityMatches. The socket path + session name come from the
+ * observed broker window. Returns undefined when no broker window was observed,
+ * since identity cannot be fenced without it.
+ */
+function toBrokerLeaseProbe(probe: BrokerReattachProbe): BrokerLeaseProbe | undefined {
+  const broker = probe.brokerWindow
+  if (!broker) {
+    return undefined
+  }
+  return {
+    tmuxSocketPath: broker.socketPath,
+    sessionName: broker.sessionName,
+    brokerWindow: {
+      sessionId: broker.sessionId,
+      windowId: broker.windowId,
+      paneId: broker.paneId,
+    },
+    ...(probe.tuiWindow
+      ? {
+          tuiWindow: {
+            sessionId: probe.tuiWindow.sessionId,
+            windowId: probe.tuiWindow.windowId,
+            paneId: probe.tuiWindow.paneId,
+          },
+        }
+      : {}),
   }
 }
 
@@ -800,19 +915,27 @@ export async function sweepOrphanedBrokerTmuxLeases(
     return result
   }
 
-  // Lease sockets claimed by a still-live (non-terminal) broker-tmux runtime.
+  // Lease sockets claimed by a still-live (non-terminal) harness-broker runtime.
+  // T-01875: derive the claim from the hosting-state SUBSTRATE (leased-tmux), NOT
+  // from runtime.transport — a durable HEADLESS runtime (transport='headless')
+  // legitimately claims a leased tmux substrate and must not be swept. Fall back
+  // to the legacy tmuxJson lease socket for pre-durable broker-tmux runtimes that
+  // have no parseable broker hosting state.
   const claimedSockets = new Set<string>()
   for (const runtime of db.runtimes.listAll()) {
     if (
       runtime.controllerKind !== 'harness-broker' ||
-      runtime.transport !== 'tmux' ||
       runtime.status === 'terminated' ||
       runtime.status === 'dead' ||
       isRuntimeUnavailableStatus(runtime.status)
     ) {
       continue
     }
-    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    const hosting = parseBrokerRuntimeHostingState(runtime)
+    const socketPath =
+      hosting?.substrate.kind === 'leased-tmux'
+        ? hosting.substrate.tmuxSocketPath
+        : getBrokerRuntimeTmuxSocketPath(runtime)
     if (socketPath) {
       claimedSockets.add(socketPath)
     }
