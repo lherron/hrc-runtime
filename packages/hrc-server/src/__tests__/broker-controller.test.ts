@@ -931,6 +931,20 @@ describe('HarnessBrokerController', () => {
   describe('inspection read model — listInvocations', () => {
     it('returns InvocationInspectionSummary[] from the broker client', async () => {
       const fake = new FakeBrokerClient()
+      // Broker advertises listInvocations so the controller serves it over the wire.
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'none',
+            eventTypeFilter: false,
+          },
+        },
+      }
       const controller = new HarnessBrokerController({
         db: fixture.db,
         brokerClientFactory: async () => fake,
@@ -956,6 +970,21 @@ describe('HarnessBrokerController', () => {
 
     it('does NOT mutate runtime or session DB state', async () => {
       const fake = new FakeBrokerClient()
+      // Advertise listInvocations so the no-mutation guard exercises a real
+      // broker round-trip rather than the older-broker degrade path.
+      fake.helloResponse = {
+        ...fake.helloResponse,
+        capabilities: {
+          ...fake.helloResponse.capabilities,
+          inspection: {
+            listInvocations: true,
+            timestamps: true,
+            lifecycleView: true,
+            liveness: 'none',
+            eventTypeFilter: false,
+          },
+        },
+      }
       const controller = new HarnessBrokerController({
         db: fixture.db,
         brokerClientFactory: async () => fake,

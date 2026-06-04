@@ -28,9 +28,12 @@ import { BrokerErrorCode, canonicalLifecyclePolicyJson } from 'spaces-harness-br
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
+  BrokerCapabilities,
   BrokerHealthResponse,
   BrokerHelloResponse,
   BrokerLifecyclePolicyOverlay,
+  BrokerListInvocationsRequest,
+  BrokerListInvocationsResponse,
   InputPolicy,
   InvocationAckEventsRequest,
   InvocationAckEventsResponse,
@@ -41,6 +44,7 @@ import type {
   InvocationId,
   InvocationInput,
   InvocationInputResponse,
+  InvocationInspectionSummary,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
   InvocationPermissionRespondRequest,
@@ -129,6 +133,15 @@ export type BrokerClientLike = {
   interrupt(req: InvocationInterruptRequest): Promise<InvocationInterruptResponse>
   stop(req: Parameters<BrokerClient['stop']>[0]): Promise<InvocationStopResponse>
   status(req: Parameters<BrokerClient['status']>[0]): Promise<InvocationStatusResponse>
+  /**
+   * T-01855 inspection read model. OPTIONAL on the base stdio shape so older
+   * scripted mocks (and pre-inspection broker builds) need not implement them;
+   * the controller guards on method presence and on the negotiated
+   * `capabilities.inspection` block before calling. The durable Unix client and
+   * the real BrokerClient always provide both.
+   */
+  listInvocations?(req?: BrokerListInvocationsRequest): Promise<BrokerListInvocationsResponse>
+  snapshot?(req: InvocationSnapshotRequest): Promise<InvocationSnapshot>
   dispose(req: InvocationDisposeRequest): Promise<void>
   onPermissionRequest(
     handler: (request: PermissionRequestParams) => Promise<PermissionDecision>
@@ -438,12 +451,25 @@ export class BrokerControllerError extends Error {
   }
 }
 
+/**
+ * T-01855 — the negotiated broker inspection capability block, cached per active
+ * runtime so inspection RPCs gate on what the broker actually advertises. Absent
+ * (`undefined`) means an older broker with no inspection block at all.
+ */
+type BrokerInspectionCapabilities = NonNullable<BrokerCapabilities['inspection']>
+
 type ActiveBrokerRuntime = {
   runtimeId: string
   invocationId: string
   client: BrokerClientLike
   closing: boolean
   closeReason?: string | undefined
+  /**
+   * T-01855 — broker inspection capabilities from the most recent hello (or
+   * rehydrated from persisted broker state on durable reattach). Lifetime is the
+   * active record: cleared automatically when the runtime leaves `active`.
+   */
+  inspection?: BrokerInspectionCapabilities | undefined
 }
 
 export class HarnessBrokerController {
@@ -696,6 +722,9 @@ export class HarnessBrokerController {
         invocationId: startResult.invocationId,
         client,
         closing: false,
+        // T-01855: cache the freshly negotiated inspection capabilities so
+        // inspection RPCs can gate on what THIS broker advertises.
+        inspection: hello.capabilities.inspection,
       })
 
       this.consumeEvents(String(identity.runtimeId), startResult.events)
@@ -924,6 +953,10 @@ export class HarnessBrokerController {
         invocationId: invocation.invocationId,
         client: input.client,
         closing: false,
+        // T-01855: durable reattach rebuilds `active` WITHOUT a fresh hello, so
+        // rehydrate inspection capabilities from persisted broker state. A later
+        // fresh hello (generation/reattach) replaces this best-effort fallback.
+        inspection: rehydrateInspectionCapabilities(runtime.runtimeStateJson),
       })
 
       // T-01801: subscribe to the broker's LIVE event stream after the one-shot
@@ -1011,7 +1044,10 @@ export class HarnessBrokerController {
     }
   }
 
-  async status(runtimeId: string): Promise<
+  async status(
+    runtimeId: string,
+    opts?: { probeLiveness?: boolean | undefined }
+  ): Promise<
     BrokerControllerRpcResult<{
       health: BrokerHealthResponse
       invocation?: InvocationStatusResponse | undefined
@@ -1023,12 +1059,87 @@ export class HarnessBrokerController {
     }
     try {
       const health = await active.client.health({ probeDrivers: true })
+      // T-01855 tri-state gating: pass probeLiveness ONLY when the caller asked
+      // AND the broker does not explicitly forbid a live probe (liveness
+      // 'cached'/'none'). The returned status carries the extended
+      // InvocationInspectionSummary fields (lifecycle/liveness) for free.
+      const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
       const invocation = await active.client.status({
         invocationId: active.invocationId as InvocationId,
+        ...(probeLiveness ? { probeLiveness: true } : {}),
       })
       return { ok: true, response: { health, invocation } }
     } catch (error) {
       return { ok: false, error: toControllerError('broker_status_failed', error) }
+    }
+  }
+
+  /**
+   * T-01855 — read-only inspection of every invocation the broker tracks for this
+   * runtime. Returns the shared `InvocationInspectionSummary[]` read model and
+   * mutates NO HRC state (no DB writes, no event projection, no replay/ack).
+   *
+   * Capability-gated: when the broker advertises no `inspection.listInvocations`
+   * (older broker), this degrades cleanly to `[]` WITHOUT touching the wire.
+   * `probeLiveness` is forwarded only when `inspection.liveness === 'probe'`.
+   */
+  async listInvocations(
+    runtimeId: string,
+    opts?: { includeDisposed?: boolean | undefined; probeLiveness?: boolean | undefined }
+  ): Promise<InvocationInspectionSummary[] | { ok: false; error: BrokerControllerError }> {
+    const active = this.active.get(runtimeId)
+    if (!active) {
+      return { ok: false, error: this.notActive(runtimeId) }
+    }
+    // Degrade cleanly when listInvocations is not advertised (older broker) or
+    // the client cannot serve it.
+    if (
+      active.inspection?.listInvocations !== true ||
+      typeof active.client.listInvocations !== 'function'
+    ) {
+      return []
+    }
+    const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
+    const request: BrokerListInvocationsRequest = {
+      ...(opts?.includeDisposed !== undefined ? { includeDisposed: opts.includeDisposed } : {}),
+      ...(probeLiveness ? { probeLiveness: true } : {}),
+    }
+    const response = await active.client.listInvocations(request)
+    return response.invocations
+  }
+
+  /**
+   * T-01855 — read-only single-invocation snapshot for inspection. This is a
+   * DIRECT `client.snapshot()` call gated only on the runtime being active; it
+   * deliberately does NOT reuse attach/eventsSince/ackEvents (those are the
+   * HRC-side mutation hazard — the broker snapshot itself is read-only).
+   */
+  async snapshot(
+    runtimeId: string,
+    opts?: { probeLiveness?: boolean | undefined }
+  ): Promise<BrokerControllerRpcResult<InvocationSnapshot>> {
+    const active = this.active.get(runtimeId)
+    if (!active) {
+      return { ok: false, error: this.notActive(runtimeId) }
+    }
+    if (typeof active.client.snapshot !== 'function') {
+      return {
+        ok: false,
+        error: new BrokerControllerError(
+          'broker_snapshot_unsupported',
+          `broker runtime ${runtimeId} does not support snapshot inspection`
+        ),
+      }
+    }
+    try {
+      const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
+      const response = await active.client.snapshot({
+        invocationId: active.invocationId as InvocationId,
+        ...(probeLiveness ? { probeLiveness: true } : {}),
+      })
+      return { ok: true, response }
+    } catch (error) {
+      return { ok: false, error: toControllerError('broker_snapshot_failed', error) }
     }
   }
 
@@ -1354,6 +1465,12 @@ export class HarnessBrokerController {
         multiInvocation: hello.capabilities.multiInvocation,
         startedAt: now,
         ownerServerInstanceId: this.serverInstanceId,
+        // T-01855: persist the negotiated inspection capabilities so a durable
+        // reattach (which rebuilds `active` without a fresh hello) can rehydrate
+        // them as a fallback until the next hello replaces them.
+        ...(hello.capabilities.inspection
+          ? { inspection: hello.capabilities.inspection }
+          : {}),
         ...durable,
       },
       ...(tmuxAllocation?.brokerIpcSocketPath
@@ -2050,4 +2167,48 @@ function toControllerError(code: string, error: unknown): BrokerControllerError 
     return new BrokerControllerError(code, error.message, { name: error.name })
   }
   return new BrokerControllerError(code, String(error))
+}
+
+/**
+ * T-01855 tri-state liveness gate. A live probe is permitted only when the broker
+ * advertises `liveness: 'probe'`, OR advertises no inspection block at all (older
+ * broker — pass the caller's flag through and let the broker ignore what it does
+ * not support). An explicit `'cached'`/`'none'` forbids the probe.
+ */
+function livenessProbeAllowed(
+  inspection: BrokerInspectionCapabilities | undefined
+): boolean {
+  return inspection === undefined || inspection.liveness === 'probe'
+}
+
+/**
+ * T-01855 — best-effort rehydration of the broker inspection capabilities from
+ * persisted runtime state, used on durable reattach (which rebuilds the active
+ * record without a fresh hello). Returns `undefined` when nothing valid is
+ * persisted, which the inspection RPCs treat as an older/uninspectable broker.
+ */
+function rehydrateInspectionCapabilities(
+  runtimeStateJson: Record<string, unknown> | null | undefined
+): BrokerInspectionCapabilities | undefined {
+  const broker = runtimeStateJson?.['broker']
+  if (typeof broker !== 'object' || broker === null) {
+    return undefined
+  }
+  const inspection = (broker as Record<string, unknown>)['inspection']
+  if (typeof inspection !== 'object' || inspection === null) {
+    return undefined
+  }
+  const candidate = inspection as Record<string, unknown>
+  if (
+    typeof candidate['listInvocations'] !== 'boolean' ||
+    typeof candidate['timestamps'] !== 'boolean' ||
+    typeof candidate['lifecycleView'] !== 'boolean' ||
+    typeof candidate['eventTypeFilter'] !== 'boolean' ||
+    (candidate['liveness'] !== 'none' &&
+      candidate['liveness'] !== 'cached' &&
+      candidate['liveness'] !== 'probe')
+  ) {
+    return undefined
+  }
+  return inspection as BrokerInspectionCapabilities
 }
