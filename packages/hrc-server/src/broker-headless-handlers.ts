@@ -16,11 +16,14 @@ import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 
+import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   filterBrokerDispatchEnvForLockedEnv,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
+import type { BrokerUnixClientFactory } from './broker/controller.js'
+import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
   isBrokerRuntimeQueueCapable,
@@ -250,17 +253,47 @@ export async function executeHeadlessBrokerInputTurn(
     metadata: { runId },
   }
 
-  const result = await this.getHarnessBrokerController().dispatchInput({
-    runtimeId: runtime.runtimeId,
-    input,
-    // Always send whenBusy:'queue' when the active invocation supports
-    // FIFO queueing: the broker applies it only when its invocation state
-    // is turn_active; if the invocation became 'ready' in between, the
-    // broker applies the input immediately and ignores policy (per
-    // harness-broker invocation-manager). The event-mapper flip on
-    // input.accepted is the unconditional safety net in either case.
-    ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
-  })
+  const dispatchToBroker = () =>
+    this.getHarnessBrokerController().dispatchInput({
+      runtimeId: runtime.runtimeId,
+      input,
+      // Always send whenBusy:'queue' when the active invocation supports
+      // FIFO queueing: the broker applies it only when its invocation state
+      // is turn_active; if the invocation became 'ready' in between, the
+      // broker applies the input immediately and ignores policy (per
+      // harness-broker invocation-manager). The event-mapper flip on
+      // input.accepted is the unconditional safety net in either case.
+      ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
+    })
+
+  let result = await dispatchToBroker()
+
+  // T-01884: a durable HEADLESS broker that survived a daemon restart has live
+  // broker state, but this daemon's request-serving controller is COLD —
+  // startup reconcile attaches on a throwaway controller (ownership gap), so the
+  // first input fails `broker_runtime_not_active` even when the runtime row is
+  // 'ready'. Lazily reattach the persisted durable endpoint onto the
+  // request-serving controller and retry on the SAME broker (continuity, no
+  // re-alloc). No-ops to false for non-durable runtimes. Mirrors the interactive
+  // path's reattach-on-dispatch (broker-interactive-handlers), minus the
+  // transport==='tmux' gate so durable HEADLESS benefits.
+  if (
+    !result.ok &&
+    result.error.code === 'broker_runtime_not_active' &&
+    (await reattachDurableBrokerForDispatch(this.db, runtime, {
+      controller: this.getHarnessBrokerController(),
+      brokerUnixClientFactory:
+        this.brokerUnixClientFactory ??
+        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+    }))
+  ) {
+    writeServerLog('INFO', 'headless.durable_reattach.dispatch_recovered', {
+      runtimeId: runtime.runtimeId,
+      runId,
+    })
+    result = await dispatchToBroker()
+  }
+
   if (!result.ok || !result.response.accepted) {
     const completedAt = timestamp()
     const errorMessage = result.ok

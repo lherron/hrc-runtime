@@ -535,8 +535,18 @@ async function probePersistedBrokerLease(
   runtime: HrcRuntimeSnapshot
 ): Promise<BrokerReattachProbe> {
   const endpoint = getPersistedDurableBrokerEndpoint(runtime)
-  const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
-  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+  // T-01884: derive the lease tmux socket/session from the hosting-state substrate
+  // (durable headless AND interactive store it in runtime_state_json.broker, NOT the
+  // legacy tmuxJson). A durable HEADLESS runtime has NO tmuxJson, so the legacy
+  // getBrokerRuntimeTmuxSocketPath returned undefined → the broker window was never
+  // inspected → brokerWindow=null → broker_lease_identity_mismatch, failing reattach
+  // even though the leased broker is alive and accepting. Fall back to the legacy
+  // tmuxJson helpers only for pre-durable rows. (Mirrors the sweeper claim source.)
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  const leasedSubstrate =
+    hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
+  const socketPath = leasedSubstrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)
+  const sessionName = leasedSubstrate?.sessionName ?? getBrokerRuntimeTmuxSessionName(runtime)
   let brokerWindow: TmuxPaneState | null = null
   let tuiWindow: TmuxPaneState | null = null
   if (socketPath) {
