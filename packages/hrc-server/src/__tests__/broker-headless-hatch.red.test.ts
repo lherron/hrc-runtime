@@ -297,13 +297,14 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
   beforeEach(async () => { fixture = await makeFixture() })
   afterEach(async () => { await fixture.cleanup() })
 
-  // ── RED 1: DEFAULT (hatch unset) → durable leased-tmux + unix + presentation:none ──
-  // RED 2: HATCH SET → legacy stdio daemon-child (guard: passes today accidentally;
-  //   fails after correct impl if hatch is broken).
-  // Combined: Red 1 fails today → whole test is red.
+  // ── T-01866: the escape hatch is GONE. The headless route is durable
+  // UNCONDITIONALLY. A stale HRC_HEADLESS_BROKER_LEGACY_STDIO=1 env var has ZERO
+  // route authority: it must NOT resurrect legacy stdio and must NOT create a
+  // v0.2-over-stdio path. Both default (unset) and hatch-set starts produce the
+  // SAME durable {unix + leased-tmux + presentation:none} hosting shape.
 
-  it('RED 1 (default) → durable; RED 2 (hatch) → legacy stdio; both routes reachable', async () => {
-    // ── RED 1: hatch unset ────────────────────────────────────────────────────
+  it('default AND stale-hatch both → durable {unix + leased-tmux}; the legacy-stdio env var has no authority', async () => {
+    // ── default (hatch unset) → durable ───────────────────────────────────────
     const unixFactoryCalls: Array<{ socketPath: string }> = []
     const stdioFactoryCalls: unknown[] = []
     const unixClient = new FakeUnixClient()
@@ -313,7 +314,7 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       stdioFactoryCalls,
       unixFactoryCalls,
       unixClient,
-      useDurableAllocator: false, // Ph3 impl wires this; today absent → falls to stdio
+      useDurableAllocator: false,
     })
     const { result: defaultResult, identity } = await startWithIdentity(fixture.db, defaultController)
     expect(defaultResult.ok).toBe(true)
@@ -322,22 +323,26 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
     expect(defaultRuntime).toBeDefined()
     const defaultHosting = parseBrokerRuntimeHostingState(defaultRuntime!)
 
-    // RED 1 — FAILS TODAY: endpoint is stdio, substrate is daemon-child.
-    expect(defaultHosting?.endpoint.kind).toBe('unix-jsonrpc-ndjson')   // ← RED (stdio today)
-    expect(defaultHosting?.substrate.kind).toBe('leased-tmux')           // ← RED (daemon-child today)
+    expect(defaultHosting?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
+    expect(defaultHosting?.substrate.kind).toBe('leased-tmux')
     expect(defaultHosting?.presentation.kind).toBe('none')
-    expect(hasDurableBrokerEndpoint(defaultRuntime!)).toBe(true)         // ← RED (false today)
-    expect(hasLeasedBrokerSubstrate(defaultRuntime!)).toBe(true)         // ← RED (false today)
+    expect(hasDurableBrokerEndpoint(defaultRuntime!)).toBe(true)
+    expect(hasLeasedBrokerSubstrate(defaultRuntime!)).toBe(true)
     expect(canOperatorAttach(defaultRuntime!)).toBe(false)
+    // The durable route never spawned a stdio broker child.
+    expect(stdioFactoryCalls.length).toBe(0)
+    expect(unixFactoryCalls.length).toBeGreaterThan(0)
 
-    // ── RED 2: hatch set ──────────────────────────────────────────────────────
-    // Open a fresh fixture for the second route so runtimeIds don't collide.
+    // ── hatch set (HRC_HEADLESS_BROKER_LEGACY_STDIO=1) → STILL durable ─────────
+    // Fresh fixture so runtimeIds don't collide.
     const fixture2 = await makeFixture()
     try {
       const hatchStdioFactoryCalls: unknown[] = []
+      const hatchUnixFactoryCalls: Array<{ socketPath: string }> = []
       const hatchController = makeHatchController(fixture2.db, {
         hatchActive: true,
         stdioFactoryCalls: hatchStdioFactoryCalls,
+        unixFactoryCalls: hatchUnixFactoryCalls,
         useDurableAllocator: false,
       })
       const { result: hatchResult, identity: hatchId } = await startWithIdentity(fixture2.db, hatchController)
@@ -347,16 +352,17 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       expect(hatchRuntime).toBeDefined()
       const hatchHosting = parseBrokerRuntimeHostingState(hatchRuntime!)
 
-      // Hatch = legacy: endpoint stdio, substrate daemon-child, NOT durable.
-      // TODAY PASSES accidentally (legacy is the only path); guard: fails if
-      // Ph3 impl makes durable the default but hatch is broken.
-      expect(hatchHosting?.endpoint.kind).toBe('stdio-jsonrpc-ndjson')
-      expect(hatchHosting?.substrate.kind).toBe('daemon-child')
-      expect(hasDurableBrokerEndpoint(hatchRuntime!)).toBe(false)   // NOT durable (C-03291 #3)
-      expect(hasLeasedBrokerSubstrate(hatchRuntime!)).toBe(false)
+      // The stale hatch env var has NO authority: the runtime is durable, NOT
+      // legacy stdio/daemon-child. Identical shape to the default route.
+      expect(hatchHosting?.endpoint.kind).toBe('unix-jsonrpc-ndjson')
+      expect(hatchHosting?.substrate.kind).toBe('leased-tmux')
+      expect(hatchHosting?.presentation.kind).toBe('none')
+      expect(hasDurableBrokerEndpoint(hatchRuntime!)).toBe(true)
+      expect(hasLeasedBrokerSubstrate(hatchRuntime!)).toBe(true)
       expect(canUseDirectPaneFallback(hatchRuntime!)).toBe(false)
-      // Hatch used stdio factory, not unix.
-      expect(hatchStdioFactoryCalls.length).toBeGreaterThan(0)
+      // No stdio resurrection: the unix factory was dialed, the stdio factory was not.
+      expect(hatchStdioFactoryCalls.length).toBe(0)
+      expect(hatchUnixFactoryCalls.length).toBeGreaterThan(0)
     } finally {
       await fixture2.cleanup()
     }
@@ -417,7 +423,7 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
   // field (the field doesn't exist in HrcTargetRuntimeView yet).
   // Fix: add brokerSubstrate (or headlessRoute) populated from parseBrokerRuntimeHostingState.
 
-  it('RED 4 (observability): hatch runtime projection surfaces legacy route marker (brokerSubstrate)', async () => {
+  it('observability: a stale-hatch runtime projects the DURABLE route marker (brokerSubstrate=leased-tmux / headlessRoute=durable-leased)', async () => {
     const fixture4 = await makeFixture()
     try {
       const hatchController = makeHatchController(fixture4.db, {
@@ -429,22 +435,15 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       const runtime = fixture4.db.runtimes.getByRuntimeId(String(identity.runtimeId))
       expect(runtime).toBeDefined()
 
-      // toTargetRuntimeView is the per-runtime status projection.
-      // It must surface the active broker substrate so callers can tell this is
-      // the legacy route (C-03291 #1). Curly adds brokerSubstrate (or headlessRoute)
-      // to HrcTargetRuntimeView and populates it from parseBrokerRuntimeHostingState.
+      // toTargetRuntimeView is the per-runtime status projection. Post-cutover the
+      // hatch has no authority, so the runtime is DURABLE and the projection must
+      // surface the durable substrate/route — never a legacy-stdio marker.
       const view = toTargetRuntimeView(runtime!)
       expect(view).toBeDefined()
 
-      // RED 4 FAILS TODAY: `view.brokerSubstrate` is undefined (field doesn't exist).
-      // After curly's impl: hatch runtime → brokerSubstrate='daemon-child' or
-      // headlessRoute='legacy-stdio'. Either is acceptable; the field must exist.
       const rawView = view as Record<string, unknown>
-      const hasBrokerSubstrate = rawView['brokerSubstrate'] !== undefined
-      const hasHeadlessRoute = rawView['headlessRoute'] !== undefined
-      const hasLegacyMarker = hasBrokerSubstrate || hasHeadlessRoute
-      // ← RED today (both fields absent → hasLegacyMarker=false)
-      expect(hasLegacyMarker).toBe(true)
+      expect(rawView['brokerSubstrate']).toBe('leased-tmux')
+      expect(rawView['headlessRoute']).toBe('durable-leased')
     } finally {
       await fixture4.cleanup()
     }

@@ -147,7 +147,7 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(result.profile.kind).toBe('harness-broker')
     expect(result.profile.interactionMode).toBe('headless')
     expect(result.profile.brokerDriver).toBe('codex-app-server')
-    expect(result.profile.brokerProtocol).toBe('harness-broker/0.1')
+    expect(result.profile.brokerProtocol).toBe('harness-broker/0.2')
   })
 
   it('allocates identities BEFORE compile and uses the SAME ids in identity + correlation', async () => {

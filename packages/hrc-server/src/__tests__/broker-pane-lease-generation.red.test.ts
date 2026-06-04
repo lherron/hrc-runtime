@@ -80,8 +80,8 @@ class EmptyEvents implements AsyncIterable<InvocationEventEnvelope> {
 class FakeBrokerClient implements BrokerClientLike {
   startCalls = 0
   helloResponse: BrokerHelloResponse = {
-    brokerInfo: { name: 'harness-broker', version: '0.1.1-test' },
-    protocolVersion: 'harness-broker/0.1',
+    brokerInfo: { name: 'harness-broker', version: '0.2.0-test' },
+    protocolVersion: 'harness-broker/0.2',
     capabilities: {
       multiInvocation: false,
       transports: ['stdio-jsonrpc-ndjson'],

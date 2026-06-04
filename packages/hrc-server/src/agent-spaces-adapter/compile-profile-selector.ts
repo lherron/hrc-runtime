@@ -49,18 +49,16 @@ export type BrokerProfileSelection =
   | { admitted: false; code: BrokerProfileRejectionCode }
 
 /**
- * Admissible broker-protocol versions for the static selector (T-01878 Ph4b).
+ * Admissible broker-protocol version for the static selector (T-01866).
  *
- * The selector ADMITS both the v0.1 legacy default and the v0.2 durable headless
- * profile (emitted by ASP under the operator dev flag). It must NOT branch on any
- * flag/env (daedalus C-03314 #2): the selector only SELECTS the profile; the
- * controller/runtime-hosting derive durability from the (echoed-through, unchanged)
- * profile.brokerProtocol + persisted endpoint/substrate — never from the activation
- * flag. The Ph3 route selector (broker-headless-handlers.ts) reads brokerProtocol to
- * distinguish v0.2 → durable vs v0.1 → legacy, so the value is never coerced here.
+ * harness-broker/0.1 is DECOMMISSIONED: the selector ADMITS ONLY v0.2 profiles.
+ * It must NOT branch on any flag/env (daedalus C-03314 #2): the selector only
+ * SELECTS the profile; the controller/runtime-hosting derive durability from the
+ * (echoed-through, unchanged) profile.brokerProtocol + persisted endpoint/substrate.
+ * A v0.1 profile is rejected here (→ 'no-matching-profile'), never coerced.
  */
 function isAdmissibleBrokerProtocol(brokerProtocol: unknown): boolean {
-  return brokerProtocol === 'harness-broker/0.1' || brokerProtocol === 'harness-broker/0.2'
+  return brokerProtocol === 'harness-broker/0.2'
 }
 
 /**

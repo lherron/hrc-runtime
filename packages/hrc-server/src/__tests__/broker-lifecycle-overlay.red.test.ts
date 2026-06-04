@@ -136,8 +136,8 @@ class FakeBrokerClient implements BrokerClientLike {
   private closeHandler?: (error: Error) => void
 
   helloResponse: BrokerHelloResponse = {
-    brokerInfo: { name: 'harness-broker', version: '0.1.1-test' },
-    protocolVersion: 'harness-broker/0.1',
+    brokerInfo: { name: 'harness-broker', version: '0.2.0-test' },
+    protocolVersion: 'harness-broker/0.2',
     capabilities: {
       multiInvocation: false,
       transports: ['stdio-jsonrpc-ndjson'],
@@ -264,7 +264,10 @@ describe('T-01787 lifecycle overlay — hash-invariance boundary', () => {
     const overlay = conservativeDefaultLifecyclePolicyOverlay('policy_route_codex')
 
     const fakeWithout = new FakeBrokerClient()
-    const without = await makeController(fakeWithout).start(makeStartInput())
+    const without = await makeController(fakeWithout).start({
+      ...makeStartInput(),
+      brokerClient: fakeWithout,
+    })
     expect(without.ok).toBe(true)
 
     // Fresh fixture so the second dispatch reuses the same identity cleanly.
@@ -275,6 +278,7 @@ describe('T-01787 lifecycle overlay — hash-invariance boundary', () => {
     const withResult = await makeController(fakeWith).start({
       ...makeStartInput(),
       lifecyclePolicy: overlay,
+      brokerClient: fakeWith,
     })
     expect(withResult.ok).toBe(true)
 
@@ -315,7 +319,7 @@ describe('T-01787 lifecycle overlay — compiler-closure boundary guard', () => 
     const input = { ...makeStartInput(), lifecyclePolicy: overlay }
 
     const fake = new FakeBrokerClient()
-    const result = await makeController(fake).start(input)
+    const result = await makeController(fake).start({ ...input, brokerClient: fake })
     expect(result.ok).toBe(true)
 
     const dispatched = fake.startCalls[0]?.request as InvocationStartRequest
@@ -419,6 +423,7 @@ describe('T-01787 lifecycle overlay persistence (audit material)', () => {
     const result = await makeController(fake).start({
       ...makeStartInput(),
       lifecyclePolicy: overlay,
+      brokerClient: fake,
     })
     expect(result.ok).toBe(true)
 

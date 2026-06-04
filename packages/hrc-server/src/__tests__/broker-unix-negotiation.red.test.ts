@@ -145,10 +145,15 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('with NO expected arg, preserves legacy stdio/v1 admission (headless unchanged)', () => {
-    const hello = makeHello({ protocolVersion: V1, transports: [STDIO], driverKind: 'codex-app-server' })
-    const result = admitBrokerHello(stdioProfile, hello)
-    expect(result.ok).toBe(true)
+  it('with NO expected arg, defaults to harness-broker/0.2 negotiation (legacy v1 rejected — T-01866)', () => {
+    // T-01866: the module default expectedProtocol is now harness-broker/0.2
+    // (v0.1 decommissioned). A legacy v1 hello with no per-route expectation is
+    // REJECTED; a v0.2 hello (over the default stdio transport kind) is admitted.
+    const v1Hello = makeHello({ protocolVersion: V1, transports: [STDIO], driverKind: 'codex-app-server' })
+    expect(admitBrokerHello(stdioProfile, v1Hello).ok).toBe(false)
+
+    const v2Hello = makeHello({ protocolVersion: V2, transports: [STDIO], driverKind: 'codex-app-server' })
+    expect(admitBrokerHello(stdioProfile, v2Hello).ok).toBe(true)
   })
 })
 

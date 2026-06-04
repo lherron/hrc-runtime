@@ -124,13 +124,17 @@ class FakeBrokerClient implements BrokerClientLike {
   private closeHandler?: (error: Error) => void
 
   helloResponse: BrokerHelloResponse = {
-    brokerInfo: { name: 'harness-broker', version: '0.1.1-test' },
-    protocolVersion: 'harness-broker/0.1',
+    brokerInfo: { name: 'harness-broker', version: '0.2.0-test' },
+    // T-01866 — HRC negotiates harness-broker/0.2 only. This fake serves both the
+    // stdio (pre-created/interactive) and unix (durable headless) routes, so it
+    // advertises both transports + attachReplay.
+    protocolVersion: 'harness-broker/0.2',
     capabilities: {
       multiInvocation: false,
-      transports: ['stdio-jsonrpc-ndjson'],
+      transports: ['stdio-jsonrpc-ndjson', 'unix-jsonrpc-ndjson'],
       eventNotifications: true,
       brokerToClientRequests: true,
+      attachReplay: true,
     },
     drivers: [
       {
@@ -285,7 +289,7 @@ describe('HarnessBrokerController', () => {
       serverInstanceId: 'server-test',
     })
 
-    const result = await controller.start(input)
+    const result = await controller.start({ ...input, brokerClient: fake })
 
     expect(result.ok).toBe(true)
     expect(fake.callOrder.slice(0, 3)).toEqual(['permission', 'hello', 'start'])
@@ -474,7 +478,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const started = await controller.start(makeStartInput())
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
     expect(started.ok).toBe(true)
     const event = envelope(
       'diagnostic',
@@ -515,7 +519,7 @@ describe('HarnessBrokerController', () => {
       },
     })
 
-    const started = await controller.start(makeStartInput())
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
     expect(started.ok).toBe(true)
     fixture.db.brokerInvocations.insert({
       invocationId: 'invocation_foreign',
@@ -575,7 +579,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const started = await controller.start(makeStartInput())
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
     expect(started.ok).toBe(true)
 
     fake.events.push(
@@ -625,7 +629,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const started = await controller.start(makeStartInput())
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
     expect(started.ok).toBe(true)
 
     fake.events.push(
@@ -674,7 +678,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const started = await controller.start(makeStartInput())
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
     expect(started.ok).toBe(true)
 
     const decision = await fake.permissionHandler?.({
@@ -718,7 +722,7 @@ describe('HarnessBrokerController', () => {
       brokerClientFactory: async () => fake,
       now: () => NOW,
     })
-    await controller.start(makeStartInput())
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
 
     const status = await controller.status('runtime_w2')
     const reconcile = await controller.reconcile('runtime_w2')
@@ -742,7 +746,7 @@ describe('HarnessBrokerController', () => {
       },
     })
 
-    await controller.start(makeStartInput())
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
     fake.emitClose(
       new Error('Broker process exited with exit code 1\nBroker stderr:\nstderr marker W3B')
     )
@@ -777,7 +781,7 @@ describe('HarnessBrokerController', () => {
       },
     })
 
-    await controller.start(makeStartInput())
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
 
     // The operator typed /quit: the broker emits a user-initiated continuation
     // clear, then (the real interactive path) its IPC socket drops — surfacing as
@@ -819,7 +823,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    await controller.start(makeStartInput())
+    await controller.start({ ...makeStartInput(), brokerClient: fake })
 
     // `/clear` wipes context but keeps the harness running — it must NOT tear the
     // lease down, even though `clear` is a user-initiated continuation-clear reason.
@@ -864,7 +868,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const result = await controller.start(input)
+    const result = await controller.start({ ...input, brokerClient: fake })
 
     expect(result.ok).toBe(true)
     expect(fake.callOrder).toContain('start')
@@ -899,7 +903,7 @@ describe('HarnessBrokerController', () => {
       now: () => NOW,
     })
 
-    const result = await controller.start(input)
+    const result = await controller.start({ ...input, brokerClient: fake })
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -950,7 +954,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       const summary: InvocationInspectionSummary = {
         invocationId: 'invocation_w2' as InvocationInspectionSummary['invocationId'],
@@ -990,7 +994,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       const runtimeBefore = fixture.db.runtimes.getByRuntimeId('runtime_w2')
       const sessionBefore = fixture.db.sessions.getByHostSessionId('hostSession_w2')
@@ -1034,7 +1038,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.listInvocations does not exist yet;
       // when implemented: must return [] without calling fake.listInvocations
@@ -1069,7 +1073,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.status currently ignores extra args;
       // when implemented: must forward probeLiveness to client.status()
@@ -1092,7 +1096,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       await controller.status('runtime_w2')
 
@@ -1118,7 +1122,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.snapshot does not exist yet
       const result = await (controller as any).snapshot('runtime_w2')
@@ -1137,7 +1141,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.snapshot does not exist yet;
       // when implemented: must be a direct snapshot() only — no replay machinery
@@ -1155,7 +1159,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       const runtimeBefore = fixture.db.runtimes.getByRuntimeId('runtime_w2')
       const sessionBefore = fixture.db.sessions.getByHostSessionId('hostSession_w2')
@@ -1210,7 +1214,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.listInvocations does not exist yet
       await (controller as any).listInvocations('runtime_w2', { probeLiveness: true })
@@ -1241,7 +1245,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.listInvocations does not exist yet;
       // when implemented: cached → must NOT forward probeLiveness: true
@@ -1272,7 +1276,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.listInvocations does not exist yet;
       // when implemented: none → must NOT forward probeLiveness
@@ -1308,7 +1312,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: controller.status currently ignores extra opts;
       // when implemented: must forward probeLiveness to client.status()
@@ -1338,7 +1342,7 @@ describe('HarnessBrokerController', () => {
         brokerClientFactory: async () => fake,
         now: () => NOW,
       })
-      await controller.start(makeStartInput())
+      await controller.start({ ...makeStartInput(), brokerClient: fake })
 
       // RED: when implemented: cached → status must NOT request a live probe
       await (controller as any).status('runtime_w2', { probeLiveness: true })
@@ -1375,14 +1379,14 @@ describe('HarnessBrokerController', () => {
       },
     })
 
-    const result = await controller.start(makeStartInput())
+    const result = await controller.start({ ...makeStartInput(), brokerClient: fake })
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(BrokerControllerError)
       expect(result.error.code).toBe('broker_admission_rejected')
       expect(result.error.detail['missing']).toEqual(['driver.codex-app-server.available'])
-      expect(result.error.detail['protocolVersion']).toBe('harness-broker/0.1')
+      expect(result.error.detail['protocolVersion']).toBe('harness-broker/0.2')
       expect(result.error.detail['driver']).toEqual(
         expect.objectContaining({ kind: 'codex-app-server', available: false })
       )

@@ -514,57 +514,69 @@ describe('T-01815 Phase 6 — getHarnessBrokerController() ACTIVATES the durable
     expect(result.ok).toBe(true)
   })
 
-  it('flag OFF ⇒ LEGACY single-window stdio path (createLeaseSession; stdio factory; endpoint kind NOT unix) (RED)', async () => {
+  it('flag OFF + legacy stdio interactive broker ⇒ HRC offers ONLY v0.2 and REJECTS the v0.1 broker (broker_protocol_unsupported) — T-01866', async () => {
     const h = makeServerInstance(db, dir, false)
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
     const result = await controller.start(interactiveStartInput() as never)
 
-    // DIAGNOSTIC RED LEAD: even flag-OFF must route through the injected seams
-    // (legacy allocator on the injected tmux manager + injected stdio factory).
-    // At HEAD the seams are ignored, so the fake stdio factory is never called
-    // (length 0) and the fake tmux manager is never constructed.
+    // Flag OFF still routes through the legacy single-window stdio seam: the legacy
+    // allocator runs on the injected tmux manager and the stdio factory is dialed
+    // (never the unix factory).
     expect(h.stdioCalls).toHaveLength(1)
     expect(h.unixCalls).toHaveLength(0)
     const manager = h.managers[0]
     expect(manager).toBeDefined()
-    // Legacy single-window lease — NOT the durable named windows.
     expect(manager?.leaseSessionCalls.length).toBeGreaterThanOrEqual(1)
     expect(manager?.windowWithCommandCalls).toEqual([])
-    // hello on the legacy route stays v1.
+
+    // T-01866: HRC negotiates ONLY harness-broker/0.2 — never the decommissioned
+    // v0.1 — even on the legacy stdio seam. The stdioFake advertises v0.1, so the
+    // start is fail-closed with a clear unsupported-protocol error (no v0.1
+    // fallback, no v0.2-over-stdio masquerade).
     expect(h.stdioFake.helloCalls).toHaveLength(1)
     const offered = h.stdioFake.helloCalls[0]?.protocolVersions ?? []
-    expect(offered).toContain('harness-broker/0.1')
-    expect(offered).not.toContain('harness-broker/0.2')
+    expect(offered).toContain('harness-broker/0.2')
+    expect(offered).not.toContain('harness-broker/0.1')
 
-    const runtime = db.runtimes.getByRuntimeId('runtime_tmux')
-    const broker = runtime?.runtimeStateJson?.['broker'] as Record<string, unknown> | undefined
-    const endpoint = broker?.['endpoint'] as Record<string, unknown> | undefined
-    expect(endpoint?.['kind']).toBe('stdio-jsonrpc-ndjson')
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('broker_protocol_unsupported')
+    }
+    // Nothing durable was persisted for the rejected v0.1 broker.
+    expect(db.runtimes.getByRuntimeId('runtime_tmux')).toBeNull()
   })
 
-  it('flag ON but HEADLESS broker START ⇒ stays stdio (no durable allocation; stdio factory; endpoint NOT unix) (RED)', async () => {
+  it('HEADLESS broker START ⇒ DURABLE leased-tmux + Unix v0.2 (presentation=none), never stdio — T-01866', async () => {
     const h = makeServerInstance(db, dir, true)
     const controller: HarnessBrokerController = getHarnessBrokerController.call(h.this)
     const result = await controller.start(headlessStartInput() as never)
 
-    // DIAGNOSTIC RED LEAD: a headless profile must use the injected stdio factory
-    // even with the durable flag ON. At HEAD the seam is ignored (real stdio
-    // factory used → fake spy length 0).
-    expect(h.stdioCalls).toHaveLength(1)
-    expect(h.unixCalls).toHaveLength(0)
-    // A headless profile is not a broker-tmux profile: no tmux allocation at all.
-    expect(h.managers).toHaveLength(0)
-    // Headless hello stays v1/stdio even with the durable flag ON.
-    expect(h.stdioFake.helloCalls).toHaveLength(1)
-    const offered = h.stdioFake.helloCalls[0]?.protocolVersions ?? []
-    expect(offered).toContain('harness-broker/0.1')
-    expect(offered).not.toContain('harness-broker/0.2')
+    // T-01866: the headless cutover is UNCONDITIONAL. A leased-tmux broker window
+    // is allocated (exec-form over --transport unix) and dialed over the Unix v0.2
+    // client; the stdio daemon-child path is gone.
+    expect(h.managers.length).toBeGreaterThanOrEqual(1)
+    const manager = h.managers[0]
+    const brokerCall = manager?.windowWithCommandCalls[0]
+    expect(brokerCall?.windowName).toBe('broker')
+    expect(brokerCall?.command).toContain('harness-broker')
+    expect(brokerCall?.command).toContain('--transport')
+    expect(brokerCall?.command).toContain('unix')
+    // presentation='none': a headless runtime creates NO operator tui window.
+    expect(manager?.orInspectCalls).toEqual([])
+
+    expect(h.unixCalls).toHaveLength(1)
+    expect(h.stdioCalls).toHaveLength(0)
+    expect(h.unixFake.helloCalls).toHaveLength(1)
+    const offered = h.unixFake.helloCalls[0]?.protocolVersions ?? []
+    expect(offered).toContain('harness-broker/0.2')
+    expect(h.stdioFake.helloCalls).toHaveLength(0)
 
     const runtime = db.runtimes.getByRuntimeId('runtime_headless')
     const broker = runtime?.runtimeStateJson?.['broker'] as Record<string, unknown> | undefined
     const endpoint = broker?.['endpoint'] as Record<string, unknown> | undefined
-    expect(endpoint?.['kind']).toBe('stdio-jsonrpc-ndjson')
+    expect(endpoint?.['kind']).toBe('unix-jsonrpc-ndjson')
+    // presentation='none' → no tui window persisted.
+    expect(broker?.['tuiWindow']).toBeUndefined()
     expect(result.ok).toBe(true)
   })
 })

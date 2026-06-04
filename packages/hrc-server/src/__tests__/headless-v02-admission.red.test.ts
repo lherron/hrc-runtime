@@ -43,7 +43,7 @@ import { project } from 'spaces-runtime-contracts'
 import type { BrokerExecutionProfile, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { selectBrokerExecutionProfile } from '../agent-spaces-adapter/compile-profile-selector'
-import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
 // ── v0.2 headless profile fixture ──────────────────────────────────────────────
 // Mirrors makeBrokerProfile from broker-compile-fixtures but with
@@ -121,21 +121,19 @@ function makeV02BrokerProfile(
   return { profile, startRequest }
 }
 
-// ── Ph3 route selector predicate ───────────────────────────────────────────────
-// Mirrors the inline expression from broker-headless-handlers.ts lines 93–98
-// (T-01874 Ph3). Extracted here as a pure function so GREEN GUARD 2 can assert
-// the invariant without requiring a full controller start.
+// ── Post-cutover route selector predicate ──────────────────────────────────────
+// Mirrors the post-T-01866 controller predicate: a headless broker runtime is
+// durable UNCONDITIONALLY (admission already guarantees v0.2). The
+// HRC_HEADLESS_BROKER_LEGACY_STDIO env var is accepted as a parameter purely to
+// PROVE it has no authority — it is never consulted.
 
 function evalDurableHeadlessRoute(
   profile: { interactionMode: string; brokerProtocol: string },
-  hatchEnv: string | undefined
+  _hatchEnv: string | undefined
 ): boolean {
-  const headlessLegacyStdioHatch = hatchEnv === '1'
-  return (
-    profile.interactionMode === 'headless' &&
-    String(profile.brokerProtocol) === 'harness-broker/0.2' &&
-    !headlessLegacyStdioHatch
-  )
+  // The legacy-stdio env var (_hatchEnv) is intentionally ignored: it has zero
+  // route authority post-cutover.
+  return profile.interactionMode === 'headless'
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -176,61 +174,54 @@ describe('T-01878 Ph4b — HRC-side v0.2 headless admission selector', () => {
     expect(String(result.profile.brokerProtocol)).toBe('harness-broker/0.2')
   })
 
-  // ── GREEN GUARD 1 ──────────────────────────────────────────────────────────
-  // v0.1 headless profile continues to be admitted after the fix.
-  // Passes today; guard that the v0.1 admission path is NOT regressed by the
-  // Ph4b widening change.
+  // ── CUTOVER GUARD 1 (was GREEN GUARD 1) ─────────────────────────────────────
+  // T-01866: harness-broker/0.1 is DECOMMISSIONED. A v0.1 headless profile is now
+  // REJECTED by the static selector (it is no longer an admissible protocol), so
+  // selectBrokerExecutionProfile returns {admitted:false, code:'no-matching-profile'}.
+  // (Previously v0.1 was admitted; this guard asserts the narrowing.)
 
-  it('GREEN GUARD 1: v0.1 headless profile still admitted:true (no regression)', () => {
+  it('CUTOVER GUARD 1: v0.1 headless profile is REJECTED (no-matching-profile)', () => {
     const identity = makeIdentity({
       runtimeId: 'runtime_v01_guard' as RuntimeIdentityAllocation['runtimeId'],
     })
-    // makeBrokerProfile produces a v0.1 profile (brokerProtocol:'harness-broker/0.1').
-    const { profile } = makeBrokerProfile(identity)
+    // Build a v0.2 fixture, then downgrade the profile-level brokerProtocol to v0.1.
+    // brokerProtocol is NOT part of the spec/start-request hashing, so the honestly
+    // computed hashes stay valid — only the (now-unsupported) protocol marker changes.
+    const { profile } = makeV02BrokerProfile(identity)
+    ;(profile as unknown as { brokerProtocol: string }).brokerProtocol = 'harness-broker/0.1'
     const response = makeCompileResponse(identity, [profile])
 
     const result = selectBrokerExecutionProfile(response, identity)
 
-    // Must still be admitted with v0.1 protocol unchanged.
-    expect(result.admitted).toBe(true)
-    if (result.admitted) {
-      expect(String(result.profile.brokerProtocol)).toBe('harness-broker/0.1')
+    // v0.1 is no longer admissible → no candidate matches → rejected.
+    expect(result.admitted).toBe(false)
+    if (!result.admitted) {
+      expect(result.code).toBe('no-matching-profile')
     }
   })
 
-  // ── GREEN GUARD 2 ──────────────────────────────────────────────────────────
-  // The Ph3 route selector predicate (broker-headless-handlers.ts lines 93–98)
-  // already correctly distinguishes the three cases that Ph4b activation enables.
-  // This guard uses an extracted pure-function mirror of that predicate to assert
-  // the invariant is structurally correct and will not need to change for Ph4b.
-  //
-  // Daedalus constraint (C-03314 #2): durability is derived from
-  // profile.brokerProtocol only, NOT from any activation flag.
-  // The three cases:
-  //   A. v0.2 + hatch unset  → durable leased-tmux route  (durableHeadlessRoute=true)
-  //   B. v0.2 + hatch active → legacy stdio route (hatch wins over activation)
-  //   C. v0.1 + hatch unset  → legacy stdio route (default until Ph6 cutover)
-  //
-  // Passes today; this guard would FAIL if Ph4b impl accidentally merges
-  // flag/env reading into the predicate itself (violating C-03314 #2).
+  // ── CUTOVER GUARD 2 (was GREEN GUARD 2) ─────────────────────────────────────
+  // T-01866: the headless durable route is UNCONDITIONAL and there is NO escape
+  // hatch. The route-selection predicate is now purely interactionMode==='headless'
+  // (admission already guarantees v0.2). The HRC_HEADLESS_BROKER_LEGACY_STDIO env
+  // var has ZERO route authority — set or unset, a headless runtime is durable and
+  // never resurrects stdio. This guard mirrors the post-cutover predicate.
 
-  it('GREEN GUARD 2: Ph3 route selector predicate correctly routes v0.2/v0.1 and respects hatch override', () => {
+  it('CUTOVER GUARD 2: headless route is durable unconditionally; the legacy-stdio env var has no authority', () => {
     const v02Profile = { interactionMode: 'headless', brokerProtocol: 'harness-broker/0.2' }
-    const v01Profile = { interactionMode: 'headless', brokerProtocol: 'harness-broker/0.1' }
 
-    // A: v0.2 + hatch unset → durable (activation + no escape hatch)
+    // Durable regardless of the (now-ignored) HRC_HEADLESS_BROKER_LEGACY_STDIO value.
     expect(evalDurableHeadlessRoute(v02Profile, undefined)).toBe(true)
     expect(evalDurableHeadlessRoute(v02Profile, '0')).toBe(true)
+    // The stale env var must NOT flip the route back to legacy stdio.
+    expect(evalDurableHeadlessRoute(v02Profile, '1')).toBe(true)
 
-    // B: v0.2 + hatch active → legacy (hatch wins; C-03290 hatch precedence)
-    expect(evalDurableHeadlessRoute(v02Profile, '1')).toBe(false)
-
-    // C: v0.1 + hatch unset → legacy (v0.1 default; no activation)
-    expect(evalDurableHeadlessRoute(v01Profile, undefined)).toBe(false)
-    expect(evalDurableHeadlessRoute(v01Profile, '0')).toBe(false)
-
-    // Edge: interactive profile does NOT match the headless durable route
-    // regardless of brokerProtocol (the predicate checks interactionMode first).
-    expect(evalDurableHeadlessRoute({ interactionMode: 'interactive', brokerProtocol: 'harness-broker/0.2' }, undefined)).toBe(false)
+    // Edge: an interactive profile does NOT match the headless durable predicate.
+    expect(
+      evalDurableHeadlessRoute(
+        { interactionMode: 'interactive', brokerProtocol: 'harness-broker/0.2' },
+        undefined
+      )
+    ).toBe(false)
   })
 })

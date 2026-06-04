@@ -38,7 +38,7 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
 
     expect(selection.profile.kind).toBe('harness-broker')
     expect(selection.profile.interactionMode).toBe('headless')
-    expect(selection.profile.brokerProtocol).toBe('harness-broker/0.1')
+    expect(selection.profile.brokerProtocol).toBe('harness-broker/0.2')
     expect(selection.profile.brokerDriver).toBe('codex-app-server')
     // verified hashes echoed through
     expect(selection.specHash).toBe(profile.harnessInvocation.specHash)

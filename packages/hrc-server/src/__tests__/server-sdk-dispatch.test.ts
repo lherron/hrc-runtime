@@ -49,6 +49,7 @@ let originalPath: string | undefined
 let originalAspClaudePath: string | undefined
 let originalAspCodexPath: string | undefined
 let originalAspCodexSkipCommonPaths: string | undefined
+let originalAspHeadlessDurableBroker: string | undefined
 
 async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`http://localhost${path}`, {
@@ -139,6 +140,14 @@ beforeEach(async () => {
   originalAspClaudePath = process.env['ASP_CLAUDE_PATH']
   originalAspCodexPath = process.env['ASP_CODEX_PATH']
   originalAspCodexSkipCommonPaths = process.env['ASP_CODEX_SKIP_COMMON_PATHS']
+  originalAspHeadlessDurableBroker = process.env['ASP_HEADLESS_DURABLE_BROKER']
+
+  // T-01866 — HRC now admits ONLY harness-broker/0.2 broker profiles. The
+  // currently-installed ASP emits the v0.2 headless codex profile only when this
+  // operator flag is set (Ph4b); clod's co-transactional agent-spaces half makes
+  // v0.2 UNCONDITIONAL, after which this flag is a harmless no-op. Set it so the
+  // real compile in these integration tests yields the v0.2 profile HRC requires.
+  process.env['ASP_HEADLESS_DURABLE_BROKER'] = '1'
 
   tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-test-'))
   runtimeRoot = join(tmpDir, 'runtime')
@@ -193,6 +202,12 @@ afterEach(async () => {
     delete process.env['ASP_CODEX_SKIP_COMMON_PATHS']
   } else {
     process.env['ASP_CODEX_SKIP_COMMON_PATHS'] = originalAspCodexSkipCommonPaths
+  }
+  if (originalAspHeadlessDurableBroker === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env['ASP_HEADLESS_DURABLE_BROKER']
+  } else {
+    process.env['ASP_HEADLESS_DURABLE_BROKER'] = originalAspHeadlessDurableBroker
   }
 
   if (server) {
@@ -511,7 +526,7 @@ if (cmd === 'app-server') {
             invocationId,
             operationId,
             runtimeId,
-            brokerProtocol: 'harness-broker/0.1',
+            brokerProtocol: 'harness-broker/0.2',
             brokerDriver: 'codex-cli-tmux',
             invocationState: 'ready',
             capabilitiesJson: JSON.stringify({}),

@@ -119,7 +119,8 @@ export function makeBrokerProfile(
     compatibilityHash: 'compat_codex_headless',
     kind: 'harness-broker',
     interactionMode: opts.interactionMode ?? 'headless',
-    brokerProtocol: 'harness-broker/0.1',
+    // T-01866 — v0.2 is the only active broker protocol (v0.1 decommissioned).
+    brokerProtocol: 'harness-broker/0.2',
     brokerDriver: opts.brokerDriver ?? 'codex-app-server',
     brokerOwnership: 'hrc-owned-process',
     ...(opts.brokerTerminal ? { brokerTerminal: opts.brokerTerminal } : {}),
@@ -211,7 +212,8 @@ export function makeInteractiveTmuxProfile(
       compatibilityHash: 'compat_claude_tmux',
       kind: 'harness-broker',
       interactionMode: 'interactive',
-      brokerProtocol: 'harness-broker/0.1',
+      // T-01866 — v0.2 is the only active broker protocol (v0.1 decommissioned).
+      brokerProtocol: 'harness-broker/0.2',
       brokerDriver: 'claude-code-tmux',
       brokerOwnership: 'hrc-owned-process',
       brokerTerminal: { host: 'tmux' },

@@ -1221,10 +1221,9 @@ export function getHarnessBrokerController(
             }
           },
         }
-  // T-01874 Ph3 — the durable HEADLESS substrate allocator (presentation='none').
-  // Selected by the controller only for the default durable headless route; the
-  // escape hatch (HRC_HEADLESS_BROKER_LEGACY_STDIO) reverts to the legacy stdio
-  // path and never reaches this allocator.
+  // T-01866 — the durable HEADLESS substrate allocator (presentation='none').
+  // Selected by the controller for EVERY headless broker runtime (the cutover is
+  // unconditional; there is no legacy-stdio escape hatch).
   const headlessSubstrateAllocator: BrokerTmuxAllocator = createBrokerDurableHeadlessAllocator(
     this.options,
     {

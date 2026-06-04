@@ -73,12 +73,7 @@ import {
   admitStartedInvocation,
   preflightBrokerLifecyclePolicy,
 } from './capabilities'
-import {
-  BROKER_PROTOCOL_VERSION,
-  BROKER_PROTOCOL_VERSION_V2,
-  BROKER_TRANSPORT,
-  BROKER_TRANSPORT_UNIX,
-} from './constants'
+import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT, BROKER_TRANSPORT_UNIX } from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 import {
   type BrokerAttachTokenRef,
@@ -579,26 +574,19 @@ export class HarnessBrokerController {
       // DIAL (instead of spawning a stdio child); a legacy allocator yields no
       // IPC socket and we keep the stdio launch. Preflight already ran inside the
       // durable allocator BEFORE any tmux spawn.
-      // T-01874 Ph3 — headless escape hatch. Read the env flag HERE (route
-      // selection ONLY) and NOWHERE in runtime-hosting/reconcile predicates
-      // (C-03291 #2). HRC_HEADLESS_BROKER_LEGACY_STDIO=1 reverts a headless start
-      // to the legacy non-durable route (stdio/daemon-child); unset / '0' /
-      // anything-else = the default durable leased-tmux + Unix v0.2 route. The
-      // hatch selects ONLY legacy v0.1/stdio — never a v0.2-over-stdio path.
-      const headlessLegacyStdioHatch =
-        this.env?.['HRC_HEADLESS_BROKER_LEGACY_STDIO'] === '1'
+      // T-01866 — headless durable cutover is now UNCONDITIONAL. There is no
+      // escape hatch: HRC_HEADLESS_BROKER_LEGACY_STDIO has NO route authority, so
+      // a stale env var can neither resurrect legacy v0.1/stdio nor create a
+      // v0.2-over-stdio path. Every headless broker runtime allocates a leased-tmux
+      // substrate (presentation='none') + Unix v0.2 IPC, exactly like the durable
+      // interactive route. Durability truth still comes from the negotiated hello +
+      // persisted substrate/endpoint, never from a compile-time marker or flag.
       if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
         tmuxAllocation = await this.allocateTmuxIfRequired(input)
         markPhase('broker-tmux-alloc')
       } else if (
         input.brokerClient === undefined &&
-        input.profile.interactionMode === 'headless' &&
-        // The compiled-profile type narrows brokerProtocol to the v0.1 admission
-        // marker; durable cutover profiles carry v0.2 at runtime, so compare as a
-        // widened string. (Durability truth still comes from the negotiated hello
-        // + substrate/endpoint, never from this compile-time marker.)
-        String(input.profile.brokerProtocol) === BROKER_PROTOCOL_VERSION_V2 &&
-        !headlessLegacyStdioHatch
+        input.profile.interactionMode === 'headless'
       ) {
         // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
         // with presentation='none' (broker window + Unix IPC + token + ledger, NO
@@ -623,9 +611,13 @@ export class HarnessBrokerController {
         this.handleBrokerClose(String(identity.runtimeId), error)
       })
 
+      // T-01866 — HRC negotiates ONLY harness-broker/0.2. The durable route rides
+      // the Unix socket (attach/replay required); the rare non-durable row keeps the
+      // stdio transport kind but still expects v0.2, so any legacy v0.1 broker hello
+      // is rejected (no v0.1 fallback, no v0.2-over-stdio masquerade).
       const expectedNegotiation: ExpectedBrokerNegotiation = durableSocketPath
         ? {
-            protocolVersion: BROKER_PROTOCOL_VERSION_V2,
+            protocolVersion: BROKER_PROTOCOL_VERSION,
             transport: BROKER_TRANSPORT_UNIX,
             control: { attachReplay: 'required' },
           }
@@ -636,6 +628,31 @@ export class HarnessBrokerController {
         capabilities: { permissionRequests: true },
       })
       markPhase('broker-hello')
+
+      // T-01866 — reject any broker that selects a protocol other than
+      // harness-broker/0.2 with a CLEAR unsupported-protocol failure, before the
+      // general capability admission runs. A stale v0.1 broker (or any future
+      // version HRC has not adopted) is fail-closed here, never silently accepted.
+      if (hello.protocolVersion !== BROKER_PROTOCOL_VERSION) {
+        const detail = {
+          runtimeId: String(input.identity.runtimeId),
+          brokerDriver: input.profile.brokerDriver,
+          selectedProtocol: hello.protocolVersion,
+          requiredProtocol: BROKER_PROTOCOL_VERSION,
+          endpointKind: durableSocketPath ? BROKER_TRANSPORT_UNIX : BROKER_TRANSPORT,
+        }
+        this.logger.warn?.('harness broker selected unsupported protocol', detail)
+        this.markBrokerClosing(String(input.identity.runtimeId), 'broker-protocol-unsupported')
+        await client.close().catch(() => undefined)
+        return {
+          ok: false,
+          error: new BrokerControllerError(
+            'broker_protocol_unsupported',
+            `harness broker selected unsupported protocol ${hello.protocolVersion}; HRC requires ${BROKER_PROTOCOL_VERSION}`,
+            detail
+          ),
+        }
+      }
 
       const admission = admitBrokerHello(input.profile, hello, expectedNegotiation)
       if (!admission.ok) {

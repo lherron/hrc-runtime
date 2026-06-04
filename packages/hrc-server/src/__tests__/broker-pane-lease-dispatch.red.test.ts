@@ -154,7 +154,7 @@ function interactiveTmuxProfile(
     compatibilityHash: `compat_${driver}`,
     kind: 'harness-broker',
     interactionMode: 'interactive',
-    brokerProtocol: 'harness-broker/0.1',
+    brokerProtocol: 'harness-broker/0.2',
     brokerDriver: driver,
     brokerOwnership: 'hrc-owned-process',
     brokerTerminal: { host: 'tmux' },
@@ -198,8 +198,8 @@ class FakeBrokerClient implements BrokerClientLike {
 
   async hello(_req: BrokerHelloRequest): Promise<BrokerHelloResponse> {
     return {
-      brokerInfo: { name: 'harness-broker', version: '0.1.1-test' },
-      protocolVersion: 'harness-broker/0.1',
+      brokerInfo: { name: 'harness-broker', version: '0.2.0-test' },
+      protocolVersion: 'harness-broker/0.2',
       capabilities: {
         multiInvocation: false,
         transports: ['stdio-jsonrpc-ndjson'],

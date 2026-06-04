@@ -10,7 +10,6 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 
-import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
@@ -83,26 +82,15 @@ export async function startHeadlessBrokerRuntime(
       })
     }
 
-    // T-01874 Ph3 — headless durable cutover route selection. A durable headless
-    // profile (v0.2) with the escape hatch unset goes through the controller's
-    // leased-tmux + Unix-IPC allocation: it must NOT receive a pre-created stdio
-    // broker client (that bypasses substrate allocation and reintroduces the
-    // daemon-child lifecycle — spec §10.4). The ASPC facade is still used for
-    // compile; on the durable route it is closed and dropped here. The legacy
-    // route (v0.1, or the HRC_HEADLESS_BROKER_LEGACY_STDIO escape hatch) keeps the
-    // facade as the broker client exactly as before.
-    const headlessLegacyStdioHatch =
-      process.env['HRC_HEADLESS_BROKER_LEGACY_STDIO'] === '1'
-    const durableHeadlessRoute =
-      compiled.profile.interactionMode === 'headless' &&
-      // brokerProtocol is typed as the v0.1 admission marker; durable cutover
-      // profiles carry v0.2 at runtime, so compare as a widened string.
-      String(compiled.profile.brokerProtocol) === 'harness-broker/0.2' &&
-      !headlessLegacyStdioHatch
-    const brokerClient = durableHeadlessRoute ? undefined : asBrokerClient(client)
-    if (durableHeadlessRoute) {
-      await client.close().catch(() => undefined)
-    }
+    // T-01866 — headless durable cutover is UNCONDITIONAL. Every headless broker
+    // runtime goes through the controller's leased-tmux + Unix-IPC allocation, so
+    // HRC must NOT hand the controller a pre-created stdio broker client (that
+    // bypasses substrate allocation and reintroduces the daemon-child lifecycle —
+    // spec §10.4). The ASPC facade is used ONLY for compile; it is closed and
+    // dropped here before handing off. There is no legacy-stdio route and no
+    // HRC_HEADLESS_BROKER_LEGACY_STDIO escape hatch: the controller always
+    // allocates a leased substrate + Unix v0.2 endpoint.
+    await client.close().catch(() => undefined)
 
     const controller = this.getHarnessBrokerController()
     handedOffToController = true
@@ -114,15 +102,12 @@ export async function startHeadlessBrokerRuntime(
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
-      ...(brokerClient ? { brokerClient } : {}),
       routeDecision: {
         route: 'broker',
         flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
         selectedBy: 'decideHeadlessExecutionRoute',
-        headlessRoute: durableHeadlessRoute ? 'durable-leased' : 'legacy-stdio',
-        brokerTransport: durableHeadlessRoute
-          ? 'unix-jsonrpc-ndjson'
-          : 'stdio-jsonrpc-ndjson',
+        headlessRoute: 'durable-leased',
+        brokerTransport: 'unix-jsonrpc-ndjson',
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,
