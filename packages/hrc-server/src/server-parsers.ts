@@ -12,6 +12,7 @@ export type {
 } from './parsers/runtime.js'
 export {
   parseAttachRuntimeRequest,
+  parseBrokerInspectRequest,
   parseClearContextRequest,
   parseDispatchTurnRequest,
   parseDropContinuationRequest,

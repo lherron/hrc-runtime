@@ -101,6 +101,7 @@ export type HrcServerInstanceForHandlers = {
   handleAttach: HandlerMethod
   handleAttachRuntime: HandlerMethod
   handleBindSurface: HandlerMethod
+  handleBrokerInspect: HandlerMethod
   handleBrokerLiteralInputBySelector: HandlerMethod
   handleCapture: HandlerMethod
   handleCaptureBySelector: HandlerMethod

@@ -1,6 +1,7 @@
 import { HrcBadRequestError, HrcErrorCode, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   AttachRuntimeRequest,
+  BrokerInspectRequest,
   ClearContextRequest,
   DispatchTurnRequest,
   DropContinuationRequest,
@@ -482,6 +483,35 @@ export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRe
 
 export function parseInspectRuntimeRequest(input: unknown): InspectRuntimeRequest {
   return parseRuntimeActionBody(input)
+}
+
+export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest {
+  const body = parseRuntimeActionBody(input)
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const probeLiveness = input['probeLiveness']
+  if (probeLiveness !== undefined && typeof probeLiveness !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'probeLiveness must be a boolean', {
+      field: 'probeLiveness',
+    })
+  }
+
+  const includeDisposed = input['includeDisposed']
+  if (includeDisposed !== undefined && typeof includeDisposed !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'includeDisposed must be a boolean',
+      { field: 'includeDisposed' }
+    )
+  }
+
+  return {
+    runtimeId: body.runtimeId,
+    ...(typeof probeLiveness === 'boolean' ? { probeLiveness } : {}),
+    ...(typeof includeDisposed === 'boolean' ? { includeDisposed } : {}),
+  }
 }
 
 export function parseDropContinuationRequest(input: unknown): DropContinuationRequest {

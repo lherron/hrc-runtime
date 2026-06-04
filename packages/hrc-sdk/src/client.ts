@@ -18,6 +18,8 @@ import type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BridgeListFilter,
+  BrokerInspectRequest,
+  BrokerInspectResponse,
   CaptureBySelectorRequest,
   CaptureBySelectorResponse,
   CaptureResponse,
@@ -287,6 +289,15 @@ export class HrcClient {
 
   async inspectRuntime(request: InspectRuntimeRequest): Promise<InspectRuntimeResponse> {
     return this.postJson<InspectRuntimeResponse>('/v1/runtimes/inspect', request)
+  }
+
+  /**
+   * Operator broker-inspect (T-01856 P3). Read-only — returns the broker read
+   * model for broker-backed runtimes or an HRC-derived fallback view (labeled
+   * `source:'hrc-derived'`) for non-broker runtimes.
+   */
+  async brokerInspect(request: BrokerInspectRequest): Promise<BrokerInspectResponse> {
+    return this.postJson<BrokerInspectResponse>('/v1/runtimes/broker/inspect', request)
   }
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {

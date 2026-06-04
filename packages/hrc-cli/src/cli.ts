@@ -10,6 +10,7 @@ import { Command, CommanderError } from 'commander'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
+  BrokerInspectResponse,
   HrcHarness,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
@@ -1196,10 +1197,40 @@ async function cmdSessionList(args: string[]): Promise<void> {
 
 async function cmdSessionGet(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const live = hasFlag(args, '--live')
+  const probe = hasFlag(args, '--probe')
 
   const client = createClient()
   const session = await client.getSession(hostSessionId)
-  printJson(session)
+
+  if (!live) {
+    printJson(session)
+    return
+  }
+
+  // --live: join the backing runtime generation(s). Broker-backed runtimes get
+  // the broker read model (InvocationInspectionSummary); non-broker runtimes get
+  // the HRC-derived fallback view (labeled source:'hrc-derived').
+  const runtimes = await client.listRuntimes({ hostSessionId })
+  const inspections = await Promise.all(
+    runtimes.map(async (rt) => {
+      try {
+        const inspection = await client.brokerInspect({
+          runtimeId: rt.runtimeId,
+          ...(probe ? { probeLiveness: true } : {}),
+        })
+        return { runtimeId: rt.runtimeId, generation: rt.generation, inspection }
+      } catch (error) {
+        return {
+          runtimeId: rt.runtimeId,
+          generation: rt.generation,
+          inspectionError: error instanceof Error ? error.message : String(error),
+        }
+      }
+    })
+  )
+
+  printJson({ session, runtimes: inspections })
 }
 
 async function cmdSessionDropContinuation(args: string[]): Promise<void> {
@@ -1348,6 +1379,128 @@ function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
     if (t.sessionName) lines.push(`  tmux session  ${t.sessionName}`)
     if (t.paneId) lines.push(`  tmux pane     ${t.paneId}`)
   }
+  process.stdout.write(`${lines.join('\n')}\n`)
+}
+
+// ── broker inspect (T-01856 P3) ──────────────────────────────────────────────
+
+/**
+ * Minimal structural view of a broker InvocationInspectionSummary for rendering.
+ * The server passes the broker read model through verbatim under `invocations`;
+ * the CLI never recomputes retention/liveness (cody C-03259 render guards).
+ */
+type RenderedBrokerInvocation = {
+  invocationId: string
+  state: string
+  driver?: string
+  startedAt?: string
+  lastActivityAt?: string
+  currentTurn?: { turnId?: string } | undefined
+  lifecycle?:
+    | {
+        retention?: {
+          mode?: string
+          idleTtlMs?: number
+          idleSince?: string
+          computedRetireAt?: string
+          blockedBy?: string[]
+        }
+      }
+    | undefined
+  liveness?: { mode?: string; driver?: { state?: string } } | undefined
+  terminalSurface?: { kind?: string; sessionName?: string } | undefined
+}
+
+async function cmdBrokerInspect(args: string[]): Promise<void> {
+  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const jsonOutput = hasFlag(args, '--json')
+  const probe = hasFlag(args, '--probe')
+  const client = createClient()
+  const result = await client.brokerInspect({
+    runtimeId,
+    ...(probe ? { probeLiveness: true } : {}),
+  })
+
+  if (jsonOutput) {
+    printJson(result)
+    return
+  }
+
+  printBrokerInspect(result)
+}
+
+function printBrokerInspect(result: BrokerInspectResponse): void {
+  const lines: string[] = [
+    `broker inspect ${result.runtimeId}`,
+    `  source        ${result.source}`,
+    `  transport     ${result.transport}`,
+    `  harness       ${result.harness}`,
+    `  status        ${result.status}`,
+    `  lastActivity  ${result.lastActivityAt ?? '(none)'}`,
+  ]
+
+  if (result.source === 'broker') {
+    const invocations = (result.invocations ?? []) as RenderedBrokerInvocation[]
+    if (invocations.length === 0) {
+      lines.push('  invocations   (none active)')
+    }
+    for (const inv of invocations) {
+      lines.push(`  invocation ${inv.invocationId}`)
+      lines.push(`    state         ${inv.state}`)
+      if (inv.driver) lines.push(`    driver        ${inv.driver}`)
+      if (inv.startedAt) lines.push(`    startedAt     ${inv.startedAt}`)
+      if (inv.lastActivityAt) lines.push(`    lastActivity  ${inv.lastActivityAt}`)
+      // Missing/undefined currentTurn both mean "no active turn" (cody C-03259).
+      lines.push(`    currentTurn   ${inv.currentTurn?.turnId ?? '(no active turn)'}`)
+      const retention = inv.lifecycle?.retention
+      if (retention) {
+        const ttl = retention.idleTtlMs !== undefined ? ` idleTtlMs=${retention.idleTtlMs}` : ''
+        // Render retention STRAIGHT from the broker — no recompute (cody C-03259).
+        lines.push(`    retention     mode=${retention.mode ?? '(none)'}${ttl}`)
+        if (retention.idleSince) lines.push(`      idleSince       ${retention.idleSince}`)
+        const blockers = retention.blockedBy ?? []
+        if (blockers.length > 0) {
+          // blockedBy present → computedRetireAt is NOT an unconditional deadline.
+          lines.push(`      retire          BLOCKED by: ${blockers.join(', ')}`)
+          if (retention.computedRetireAt) {
+            lines.push(`      computedRetireAt ${retention.computedRetireAt} (not firm — blocked)`)
+          }
+        } else if (retention.computedRetireAt) {
+          lines.push(`      computedRetireAt ${retention.computedRetireAt}`)
+        }
+      }
+      // liveness: render only when present; never synthesize. 'cached' shows cached.
+      if (inv.liveness) {
+        const driverState = inv.liveness.driver?.state
+        lines.push(
+          `    liveness      ${inv.liveness.mode ?? '(unknown)'}${
+            driverState ? ` (driver: ${driverState})` : ''
+          }`
+        )
+      }
+      if (inv.terminalSurface) {
+        lines.push(
+          `    terminal      ${inv.terminalSurface.kind ?? ''} ${
+            inv.terminalSurface.sessionName ?? ''
+          }`.trimEnd()
+        )
+      }
+    }
+  } else {
+    // HRC-derived fallback — labeled so a synthesized TTL is never read as
+    // broker-enforced (T-01844 #5 must-not-mislead).
+    const retention = result.lifecycle?.retention
+    if (retention) {
+      const ttl = retention.idleTtlMs !== undefined ? ` idleTtlMs=${retention.idleTtlMs}` : ''
+      lines.push(`  retention     mode=${retention.mode}${ttl}`)
+      if (retention.idleSince) lines.push(`    idleSince       ${retention.idleSince}`)
+      if (retention.computedRetireAt) {
+        lines.push(`    computedRetireAt ${retention.computedRetireAt}`)
+      }
+    }
+    if (result.note) lines.push(`  note          ${result.note}`)
+  }
+
   process.stdout.write(`${lines.join('\n')}\n`)
 }
 
@@ -2823,10 +2976,12 @@ Exit codes:
     .command('get')
     .description('get a session by ID')
     .argument('<hostSessionId>', 'host session ID')
+    .option('--live', 'join backing runtime(s) and attach broker/HRC-derived inspection')
+    .option('--probe', 'with --live, request a live liveness probe (capability-gated)')
     .action(async (hostSessionId, _opts, cmd: Command) => {
       const args = toLegacyArgv([hostSessionId], cmd.opts(), {
         strings: [],
-        booleans: [],
+        booleans: ['live', 'probe'],
       })
       await cmdSessionGet(args)
     })
@@ -2895,6 +3050,24 @@ Exit codes:
     })
 
   // -- runtime group (commander, Phase 6 T2) ----------------------------------
+
+  const broker = program
+    .command('broker')
+    .description('inspect broker-backed runtime invocations')
+
+  broker
+    .command('inspect')
+    .description('inspect the broker read model (or HRC-derived fallback) for a runtime')
+    .argument('<runtimeId>', 'runtime ID')
+    .option('--probe', 'request a live liveness probe (capability-gated)')
+    .option('--json', 'output as JSON')
+    .action(async (runtimeId, _opts, cmd: Command) => {
+      const args = toLegacyArgv([runtimeId], cmd.opts(), {
+        strings: [],
+        booleans: ['probe', 'json'],
+      })
+      await cmdBrokerInspect(args)
+    })
 
   const runtime = program.command('runtime').description('ensure, inspect, and control runtimes')
 

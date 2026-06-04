@@ -397,6 +397,62 @@ export type InspectRuntimeResponse = {
   tmux?: HrcStatusTmuxView | undefined
 }
 
+/**
+ * Operator broker-inspect request (T-01844 #4 / T-01856 P3). Read-only — the
+ * server endpoint MUST NOT mutate DB state.
+ */
+export type BrokerInspectRequest = {
+  runtimeId: string
+  /** Forward a live liveness probe to the broker (capability-gated controller-side). */
+  probeLiveness?: boolean | undefined
+  /** Include disposed invocations in the broker read model. */
+  includeDisposed?: boolean | undefined
+}
+
+/**
+ * Where the rendered lifecycle/liveness facts came from:
+ *  - `broker`: live broker read model (InvocationInspectionSummary, authoritative)
+ *  - `hrc-derived`: SYNTHESIZED by HRC from runtime-DB facts + HRC-side idle
+ *    policy. NOT broker-reported — operators must not read a synthesized TTL as
+ *    broker-enforced (T-01844 #5 must-not-mislead).
+ */
+export type OperatorInspectSource = 'broker' | 'hrc-derived'
+
+/**
+ * Operator broker-inspect response (T-01844 #4/#5 / T-01856 P3).
+ *
+ * Broker-backed runtimes return `source:'broker'` + the broker's
+ * InvocationInspectionSummary[] passed straight through (no recompute). Non-broker
+ * runtimes return `source:'hrc-derived'` + a labeled, HRC-synthesized lifecycle.
+ */
+export type BrokerInspectResponse = {
+  runtimeId: string
+  source: OperatorInspectSource
+  transport: string
+  harness: HrcHarness
+  status: string
+  lastActivityAt: string | null
+  /** Broker read model (broker-backed runtimes only). Passed through verbatim. */
+  invocations?: unknown[] | undefined
+  /**
+   * HRC-derived lifecycle view (non-broker fallback only). For ghostty/claude-code
+   * runtimes `retention.mode:'hrc-idle-cleanup'` with the HRC-side idle TTL; for
+   * pre-broker/adopted runtimes `retention.mode:'db-only'` (no synthesized TTL).
+   */
+  lifecycle?:
+    | {
+        retention: {
+          mode: string
+          idleTtlMs?: number | undefined
+          idleSince?: string | undefined
+          computedRetireAt?: string | undefined
+        }
+      }
+    | undefined
+  /** Human-facing label present on every hrc-derived response. */
+  note?: string | undefined
+}
+
 export type DropContinuationRequest = {
   hostSessionId: string
   reason?: string | undefined

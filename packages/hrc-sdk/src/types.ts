@@ -5,6 +5,8 @@ export type {
   AttachRuntimeRequest,
   AttachRuntimeResponse,
   BindSurfaceRequest,
+  BrokerInspectRequest,
+  BrokerInspectResponse,
   CaptureResponse,
   ClearContextRequest,
   ClearContextResponse,
