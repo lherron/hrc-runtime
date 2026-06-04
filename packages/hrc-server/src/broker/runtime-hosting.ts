@@ -254,14 +254,25 @@ function parseFlatSubstrate(
 
 /**
  * Infer the presentation from the flat broker block:
- *  - a tuiWindow present ⇒ tmux-tui presentation (operator attachable), with the
- *    attachCommand synthesized from the broker window's tmux socket + session.
- *  - no/malformed tuiWindow ⇒ none.
+ *  - tuiWindow ABSENT (broker['tuiWindow'] === undefined) ⇒ none (valid).
+ *  - tuiWindow PRESENT but malformed (key set, but extractTmuxWindowIdentity
+ *    fails — wrong type, empty object, missing sessionId/windowId/paneId) ⇒
+ *    undefined (REJECT parse). A corrupted interactive lease must NOT silently
+ *    downgrade to presentation:none, or Ph4 would skip TUI window verification
+ *    on restart and let a stale lease survive the gate (C-03285).
+ *  - tuiWindow PRESENT and well-formed ⇒ tmux-tui presentation (operator
+ *    attachable), with the attachCommand synthesized from the broker window's
+ *    tmux socket + session.
  */
-function parseFlatPresentation(broker: Record<string, unknown>): BrokerRuntimePresentation {
+function parseFlatPresentation(
+  broker: Record<string, unknown>
+): BrokerRuntimePresentation | undefined {
+  if (broker['tuiWindow'] === undefined) {
+    return { kind: 'none' }
+  }
   const tuiWindow = extractTmuxWindowIdentity(broker['tuiWindow'])
   if (!tuiWindow) {
-    return { kind: 'none' }
+    return undefined
   }
   const brokerWindowRaw = broker['brokerWindow']
   let attachCommand: string | undefined
@@ -328,6 +339,9 @@ export function parseBrokerRuntimeHostingState(
     return undefined
   }
   const presentation = parseFlatPresentation(broker)
+  if (!presentation) {
+    return undefined
+  }
   return { endpoint, substrate, presentation }
 }
 

@@ -16,7 +16,8 @@ import type {
   WaitMessageResponse,
 } from 'hrc-core'
 import { enrichTurnPromptForBrain } from './brain-enricher.js'
-import { getBrokerRuntimeTmuxSocketPath, shouldUseSdkTransport } from './broker-decisions.js'
+import { shouldUseSdkTransport } from './broker-decisions.js'
+import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -185,10 +186,14 @@ export async function handleSemanticTurnHandoff(
     )
 
     let liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
+    // T-01873: route the durable-tmux liveness gate through the runtime-hosting
+    // choke point (hasLeasedBrokerSubstrate) instead of the `transport==='tmux'
+    // && getBrokerRuntimeTmuxSocketPath` durability proxy. True iff the broker
+    // lives in a leased tmux session; false for a ghostty broker — preserving
+    // today's tmux-only reconcile.
     if (
       liveTmuxRuntime?.controllerKind === 'harness-broker' &&
-      liveTmuxRuntime.transport === 'tmux' &&
-      getBrokerRuntimeTmuxSocketPath(liveTmuxRuntime) !== undefined
+      hasLeasedBrokerSubstrate(liveTmuxRuntime)
     ) {
       liveTmuxRuntime = await this.reconcileTmuxRuntimeLiveness(liveTmuxRuntime)
     }

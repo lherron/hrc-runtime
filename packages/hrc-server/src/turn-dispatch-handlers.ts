@@ -14,7 +14,6 @@ import { enrichTurnPromptForBrain } from './brain-enricher.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
-  getBrokerRuntimeTmuxSocketPath,
   normalizeClaudeInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
   runInteractiveTmuxRoute,
@@ -25,6 +24,7 @@ import {
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
 } from './broker-decisions.js'
+import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -308,10 +308,15 @@ export async function dispatchTurnForSession(
   }
 
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
+  // T-01873: route the durable-tmux liveness gate through the runtime-hosting
+  // choke point. hasLeasedBrokerSubstrate replaces the `transport==='tmux' &&
+  // getBrokerRuntimeTmuxSocketPath !== undefined` durability proxy — it is true
+  // exactly when the broker process lives in a leased tmux session (the
+  // precondition reconcileTmuxRuntimeLiveness needs), and false for a ghostty
+  // broker (no tmux substrate), preserving today's tmux-only reconcile.
   if (
     latestRuntime?.controllerKind === 'harness-broker' &&
-    latestRuntime.transport === 'tmux' &&
-    getBrokerRuntimeTmuxSocketPath(latestRuntime) !== undefined
+    hasLeasedBrokerSubstrate(latestRuntime)
   ) {
     latestRuntime = await this.reconcileTmuxRuntimeLiveness(latestRuntime)
   }

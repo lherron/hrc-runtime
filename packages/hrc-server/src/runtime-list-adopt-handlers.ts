@@ -12,7 +12,7 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { getBrokerRuntimeTmuxSocketPath } from './broker-decisions.js'
+import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   isRecord,
@@ -108,7 +108,11 @@ async function handleAdoptRuntime(
   // match the persisted pane) would mark it `adopted` while pointing a later
   // turn at a pane that does not exist. Verify lease liveness first.
   if (runtime.controllerKind === 'harness-broker') {
-    const leaseSocketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    // T-01873: read the leased-tmux substrate socket from the runtime-hosting
+    // choke point (decorative — surfaced only in the not-adoptable error).
+    const hosting = parseBrokerRuntimeHostingState(runtime)
+    const leaseSocketPath =
+      hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate.tmuxSocketPath : undefined
     const leaseLive = await reassociateBrokerTmuxLease(runtime)
     if (!leaseLive) {
       throw new HrcConflictError(
