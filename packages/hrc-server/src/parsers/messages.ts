@@ -2,7 +2,7 @@ import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 
 import { isRecord } from './common.js'
 
-export function parseResolveSessionRequest(input: unknown): { sessionRef: string } {
+export function parseResolveSessionRequest(input: unknown): { sessionRef: string; create?: boolean } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
@@ -14,8 +14,18 @@ export function parseResolveSessionRequest(input: unknown): { sessionRef: string
     })
   }
 
+  const create = input['create']
+  if (create !== undefined && typeof create !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'create must be a boolean', {
+      field: 'create',
+    })
+  }
+
   parseSessionRef(sessionRef)
-  return { sessionRef: sessionRef.trim() }
+  return {
+    sessionRef: sessionRef.trim(),
+    ...(create !== undefined ? { create } : {}),
+  }
 }
 
 export function parseSessionRef(sessionRef: string): { scopeRef: string; laneRef: string } {

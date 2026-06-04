@@ -50,6 +50,7 @@ async function resolveSession(scopeRef: string): Promise<{
 }> {
   const resolveRes = await postJson('/v1/sessions/resolve', {
     sessionRef: `${scopeRef}/lane:default`,
+    create: true,
   })
 
   expect(resolveRes.status).toBe(200)

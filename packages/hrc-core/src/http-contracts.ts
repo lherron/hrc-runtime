@@ -31,14 +31,26 @@ export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 export type ResolveSessionRequest = {
   sessionRef: string
   runtimeIntent?: HrcRuntimeIntent | undefined
+  create?: boolean | undefined
 }
 
-export type ResolveSessionResponse = {
+export type ResolveSessionFoundResponse = {
+  found: true
   hostSessionId: string
   generation: number
   created: boolean
   session: HrcSessionRecord
 }
+
+export type ResolveSessionMissResponse = {
+  found: false
+  hostSessionId: null
+  generation: null
+  created: false
+  session: null
+}
+
+export type ResolveSessionResponse = ResolveSessionFoundResponse | ResolveSessionMissResponse
 
 export type ApplyAppSessionInput = {
   appSessionKey: string

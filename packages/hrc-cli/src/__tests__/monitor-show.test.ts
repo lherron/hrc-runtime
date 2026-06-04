@@ -133,7 +133,10 @@ async function resolveSession(scopeHandle: string): Promise<{
   laneRef: string
 }> {
   const scope = resolveScopeInput(scopeHandle)
-  const result = await runCli(['session', 'resolve', '--scope', scope.scopeRef], cliEnv())
+  const result = await runCli(
+    ['session', 'resolve', '--scope', scope.scopeRef, '--lane', scope.laneId, '--create'],
+    cliEnv()
+  )
   expect(result.exitCode).toBe(0)
   const body = JSON.parse(result.stdout.trim()) as {
     hostSessionId: string

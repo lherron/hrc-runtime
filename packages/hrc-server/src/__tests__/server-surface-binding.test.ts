@@ -94,6 +94,7 @@ async function ensureRuntime(scopeRef: string): Promise<{
 }> {
   const resolveRes = await postJson('/v1/sessions/resolve', {
     sessionRef: `agent:${scopeRef}/lane:default`,
+    create: true,
   })
   const resolved = (await resolveRes.json()) as {
     hostSessionId: string
@@ -136,6 +137,7 @@ async function ensureInteractiveRuntime(
 }> {
   const resolveRes = await postJson('/v1/sessions/resolve', {
     sessionRef: `agent:${scopeRef}/lane:default`,
+    create: true,
   })
   const resolved = (await resolveRes.json()) as {
     hostSessionId: string

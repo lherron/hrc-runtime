@@ -193,6 +193,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
     const canonical = toCanonicalScopeRef(scopeRef)
     const res = await postJson('/v1/sessions/resolve', {
       sessionRef: `${canonical}/lane:default`,
+      create: true,
     })
     return (await res.json()) as ResolveSessionResult
   }

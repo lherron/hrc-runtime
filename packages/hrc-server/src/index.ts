@@ -688,12 +688,15 @@ class HrcServerInstance implements HrcServer {
     const parsed = parseResolveSessionRequest(body)
     const existing = findContinuitySession(this.db, parsed.sessionRef)
     if (existing) {
-      const event = this.appendEvent(existing, 'session.resolved', {
-        created: false,
-      })
-      this.notifyEvent(event)
+      if (parsed.create === true) {
+        const event = this.appendEvent(existing, 'session.resolved', {
+          created: false,
+        })
+        this.notifyEvent(event)
+      }
 
       return json({
+        found: true,
         hostSessionId: existing.hostSessionId,
         generation: existing.generation,
         created: false,
@@ -701,8 +704,18 @@ class HrcServerInstance implements HrcServer {
       } satisfies ResolveSessionResponse)
     }
 
-    const now = timestamp()
     const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
+    if (parsed.create !== true) {
+      return json({
+        found: false,
+        hostSessionId: null,
+        generation: null,
+        created: false,
+        session: null,
+      } satisfies ResolveSessionResponse)
+    }
+
+    const now = timestamp()
     const hostSessionId = createHostSessionId()
     const session: HrcSessionRecord = {
       hostSessionId,
@@ -729,6 +742,7 @@ class HrcServerInstance implements HrcServer {
     this.notifyEvent(event)
 
     return json({
+      found: true,
       hostSessionId,
       generation: createdSession.generation,
       created: true,

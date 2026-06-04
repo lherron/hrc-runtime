@@ -121,7 +121,11 @@ describe('[RED 1] plain resolve — no continuity exists — must create nothing
     const scopeRef = 'agent:test-resolve-ro-new:project:t01854'
     const { body } = await postResolve(`${scopeRef}/lane:main`)
     // RED: current code returns created:true (inserts unconditionally)
+    expect(body.found).toBe(false)
     expect(body.created).toBe(false)
+    expect(body.hostSessionId).toBeNull()
+    expect(body.generation).toBeNull()
+    expect(body.session).toBeNull()
   })
 
   it('inserts no session row when no create flag', async () => {
@@ -218,6 +222,7 @@ describe('[GREEN 4] resolve with create:true still creates as before', () => {
   it('inserts a session row when create:true is passed', async () => {
     const scopeRef = 'agent:test-resolve-create-session:project:t01854'
     const { body } = await postResolve(`${scopeRef}/lane:main`, { create: true })
+    expect(body.found).toBe(true)
     expect(body.created).toBe(true)
     expect(body.hostSessionId).toBeString()
     expect(body.generation).toBe(1)
@@ -245,6 +250,7 @@ describe('[GREEN 4] resolve with create:true still creates as before', () => {
 
     // After the fix: plain resolve finds existing → created:false
     const second = await postResolve(sessionRef)
+    expect(second.body.found).toBe(true)
     expect(second.body.created).toBe(false)
     expect(second.body.hostSessionId).toBe(first.body.hostSessionId)
   })

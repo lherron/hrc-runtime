@@ -44,6 +44,7 @@ import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spa
 import {
   collectServerRuntimeStatus,
   collectTmuxStatus,
+  consumeShutdownIntent,
   daemonizeAndWait,
   detectLaunchdOwner,
   execProcess,
@@ -57,6 +58,7 @@ import {
   stopServerProcess,
   waitForInFlightDrain,
   writeServerProcessLog,
+  writeShutdownIntent,
 } from './cli-runtime.js'
 import { cmdMonitorShow } from './monitor-show.js'
 import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
@@ -302,6 +304,7 @@ function createDefaultRuntimeIntent(
     },
     harness: {
       provider,
+      id: provider === 'anthropic' ? 'claude-code' : 'codex-cli',
       interactive: true,
     },
     execution: {
@@ -628,7 +631,8 @@ function buildManagedRuntimeIntent(
     scope.agentId,
     projectRoot
   )
-  const harnessId = harnessStringToHarnessId(harnessString)
+  const harnessId =
+    harnessStringToHarnessId(harnessString) ?? (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
 
   return {
     placement: {
@@ -1065,6 +1069,7 @@ async function cmdServerStop(args: string[]): Promise<void> {
     )
   }
 
+  writeShutdownIntent('stop')
   await stopServerProcess({ timeoutMs, force, allowNotRunning: true })
   process.stderr.write('hrc: daemon stopped\n')
 }
@@ -1075,6 +1080,8 @@ async function cmdServerRestart(args: string[]): Promise<void> {
   const force = hasFlag(args, '--force')
 
   await gateOnInFlightWork(args, 'restart')
+
+  writeShutdownIntent('restart')
 
   const owner = await detectLaunchdOwner()
   if (owner) {
@@ -1134,7 +1141,19 @@ async function serverForeground(): Promise<void> {
   })
 
   const shutdown = async (reason: string) => {
-    writeServerProcessLog('server.shutting_down', { pid: process.pid, reason })
+    const intent = consumeShutdownIntent()
+    writeServerProcessLog('server.shutting_down', {
+      pid: process.pid,
+      reason,
+      requestedBy: intent?.requestedBy ?? null,
+      ...(intent
+        ? {
+            requestedAction: intent.action,
+            requestedRunId: intent.requestedRunId,
+            requestedByPid: intent.byPid,
+          }
+        : {}),
+    })
     await server.stop()
     // Clean up PID file
     try {
@@ -1154,11 +1173,12 @@ async function cmdSessionResolve(args: string[]): Promise<void> {
   const scope = parseFlag(args, '--scope')
   if (!scope) fatal('--scope is required for session resolve')
 
-  const lane = parseFlag(args, '--lane') ?? 'default'
+  const lane = parseFlag(args, '--lane') ?? 'main'
   const sessionRef = `${scope}/lane:${lane}`
+  const create = hasFlag(args, '--create')
 
   const client = createClient()
-  const result = await client.resolveSession({ sessionRef })
+  const result = await client.resolveSession({ sessionRef, ...(create ? { create: true } : {}) })
   printJson(result)
 }
 
@@ -1697,8 +1717,11 @@ async function cmdRun(args: string[]): Promise<void> {
     }
 
     const tResolve = performance.now()
-    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent, create: true })
     markLaunch('resolveSession', tResolve)
+    if (!resolved.found) {
+      throw new Error(`failed to create session for "${scopeInput}"`)
+    }
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
     if (noAttach) {
@@ -1801,7 +1824,10 @@ async function cmdStart(args: string[]): Promise<void> {
     }
 
     const client = createClient()
-    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent })
+    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent, create: true })
+    if (!resolved.found) {
+      throw new Error(`failed to create session for "${scopeInput}"`)
+    }
     const targetSession =
       newSession && !resolved.created
         ? await client.clearContext({
@@ -2171,7 +2197,7 @@ async function cmdAttach(args: string[]): Promise<void> {
 
     const client = createClient()
     const resolved = await client.resolveSession({ sessionRef })
-    if (resolved.created) {
+    if (!resolved.found) {
       throw new Error(`no active runtime found for "${target}"`)
     }
 
@@ -2499,7 +2525,7 @@ ADDRESSING TARGETS
   Notes:
     Managed handle commands such as run/start/attach normally use main when
     lane is omitted.
-    Low-level session resolve defaults to default unless --lane is passed.
+    Low-level session resolve defaults to main unless --lane is passed.
     If project is omitted, HRC may infer it from the current directory.
 
 COMMON CONTROL FLOWS
@@ -2584,7 +2610,7 @@ Commands:
   server status [--json]                     Show daemon/socket/API health state
   server tmux status [--json]         Show HRC tmux socket/session state
   server tmux kill --yes              Kill the HRC tmux server and unclaimed broker-tmux leases
-  session resolve --scope <ref> [--lane <ref>]  Resolve or create a session
+  session resolve --scope <ref> [--lane <ref>] [--create]  Resolve a session; create only with --create
   session list [--scope <ref>] [--lane <ref>]   List sessions
   session get <hostSessionId>         Get a session by host session ID
   session clear-context <hostSessionId> [--relaunch]
@@ -2771,10 +2797,11 @@ Exit codes:
     .description('resolve a session')
     .option('--scope <scope>', 'scope reference')
     .option('--lane <lane>', 'lane reference')
+    .option('--create', 'create a session if none exists')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
         strings: ['scope', 'lane'],
-        booleans: [],
+        booleans: ['create'],
       })
       await cmdSessionResolve(args)
     })
