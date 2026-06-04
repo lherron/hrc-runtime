@@ -41,6 +41,7 @@ import {
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
+import { projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -876,6 +877,10 @@ class HrcServerInstance implements HrcServer {
       ? this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ?? null
       : null
     const control = extractFullRuntimeControlState(runtime.runtimeStateJson, eventHighWaterSeq)
+    // T-01876 Ph5 — separate endpoint/substrate/presentation projection (spec
+    // §10.9). Undefined for non-broker / unparseable runtimes so those rows do
+    // not grow the new fields.
+    const brokerHosting = projectBrokerHostingState(runtime)
     const sessionCreatedAtMs = Date.parse(session.createdAt)
     const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
       ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
@@ -914,6 +919,7 @@ class HrcServerInstance implements HrcServer {
         continuationAgeSec > this.staleGenerationThresholdSec,
       ...(control ? { control } : {}),
       ...(runtime.transport === 'tmux' ? { tmux: toStatusTmuxView(runtime.tmuxJson) } : {}),
+      ...(brokerHosting ? brokerHosting : {}),
     } satisfies InspectRuntimeResponse)
   }
 

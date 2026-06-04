@@ -369,6 +369,91 @@ export function isHarnessBroker(runtime: HrcRuntimeSnapshot): boolean {
   return runtime.controllerKind === 'harness-broker'
 }
 
+/**
+ * T-01876 Ph5 — project the broker hosting state into the SEPARATE
+ * endpoint/substrate/presentation axes surfaced by the full inspect response
+ * (spec §10.9). Returns undefined for non-broker runtimes or any runtime whose
+ * broker hosting state is not parseable, so non-broker inspect rows do NOT grow
+ * the new fields. Derived exclusively from parseBrokerRuntimeHostingState — never
+ * from runtime.transport. The attach token is never leaked (only the redacted
+ * ref lives on the endpoint, and it is intentionally omitted from this view).
+ */
+export type BrokerHostingProjection = {
+  broker: {
+    protocolVersion?: string
+    endpoint: { kind: BrokerRuntimeEndpoint['kind']; socketPath?: string }
+  }
+  substrate:
+    | { kind: 'daemon-child' }
+    | {
+        kind: 'leased-tmux'
+        tmuxSocketPath: string
+        sessionName: string
+        brokerWindow: TmuxWindowIdentity
+        generation: number
+      }
+  presentation:
+    | { kind: 'none' }
+    | {
+        kind: 'tmux-tui'
+        tuiWindow: TmuxWindowIdentity
+        operatorAttachTarget: true
+        attachCommand?: string
+      }
+}
+
+export function projectBrokerHostingState(
+  runtime: HrcRuntimeSnapshot
+): BrokerHostingProjection | undefined {
+  if (!isHarnessBroker(runtime)) {
+    return undefined
+  }
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (!hosting) {
+    return undefined
+  }
+
+  const endpoint = hosting.endpoint
+  const brokerEndpoint =
+    endpoint.kind === 'unix-jsonrpc-ndjson'
+      ? { kind: endpoint.kind, socketPath: endpoint.socketPath }
+      : { kind: endpoint.kind }
+  const protocolVersion =
+    endpoint.kind === 'unix-jsonrpc-ndjson' ? endpoint.protocolVersion : undefined
+
+  const substrate =
+    hosting.substrate.kind === 'leased-tmux'
+      ? {
+          kind: 'leased-tmux' as const,
+          tmuxSocketPath: hosting.substrate.tmuxSocketPath,
+          sessionName: hosting.substrate.sessionName,
+          brokerWindow: hosting.substrate.brokerWindow,
+          generation: hosting.substrate.generation,
+        }
+      : { kind: 'daemon-child' as const }
+
+  const presentation =
+    hosting.presentation.kind === 'tmux-tui'
+      ? {
+          kind: 'tmux-tui' as const,
+          tuiWindow: hosting.presentation.tuiWindow,
+          operatorAttachTarget: true as const,
+          ...(hosting.presentation.attachCommand !== undefined
+            ? { attachCommand: hosting.presentation.attachCommand }
+            : {}),
+        }
+      : { kind: 'none' as const }
+
+  return {
+    broker: {
+      ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+      endpoint: brokerEndpoint,
+    },
+    substrate,
+    presentation,
+  }
+}
+
 /** True iff the broker is reachable over a durable unix socket. IGNORES transport. */
 export function hasDurableBrokerEndpoint(runtime: HrcRuntimeSnapshot): boolean {
   return parseBrokerRuntimeHostingState(runtime)?.endpoint.kind === 'unix-jsonrpc-ndjson'

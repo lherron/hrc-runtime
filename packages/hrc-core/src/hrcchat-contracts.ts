@@ -47,6 +47,16 @@ export type HrcTargetRuntimeView = {
    */
   brokerSubstrate?: 'leased-tmux' | 'daemon-child' | undefined
   headlessRoute?: 'durable-leased' | 'legacy-stdio' | undefined
+  /**
+   * T-01876 Ph5 — additive coarse projection of the broker hosting axes, derived
+   * from parseBrokerRuntimeHostingState (NOT runtime.transport). `brokerEndpoint`
+   * exposes HOW HRC reaches the broker ('unix-jsonrpc-ndjson' durable vs
+   * 'stdio-jsonrpc-ndjson' ephemeral); `presentation` exposes WHETHER a human can
+   * attach a TUI ('tmux-tui') or not ('none'). Present only for harness-broker
+   * runtimes with a parseable hosting state.
+   */
+  brokerEndpoint?: 'unix-jsonrpc-ndjson' | 'stdio-jsonrpc-ndjson' | undefined
+  presentation?: 'none' | 'tmux-tui' | undefined
 }
 
 export type HrcTargetView = {

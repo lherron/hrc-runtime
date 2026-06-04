@@ -395,6 +395,42 @@ export type InspectRuntimeResponse = {
    * can locate the lease (T-01738 F-V1). Undefined for non-tmux runtimes.
    */
   tmux?: HrcStatusTmuxView | undefined
+  /**
+   * T-01876 Ph5 — broker hosting-state projection exposing the three INDEPENDENT
+   * axes as SEPARATE top-level fields, derived from parseBrokerRuntimeHostingState
+   * (NOT runtime.transport). Present only for harness-broker runtimes with a
+   * parseable hosting state. `control.brokerIpc` is a separate concern (live
+   * control channel) and is unaffected.
+   *
+   * - `broker`:       HOW HRC reaches the broker (endpoint kind + durable socket).
+   * - `substrate`:    WHERE the broker process lives.
+   * - `presentation`: WHETHER a human can attach a TUI (and how).
+   */
+  broker?:
+    | {
+        protocolVersion?: string | undefined
+        endpoint: { kind: string; socketPath?: string | undefined }
+      }
+    | undefined
+  substrate?:
+    | { kind: 'daemon-child' }
+    | {
+        kind: 'leased-tmux'
+        tmuxSocketPath: string
+        sessionName: string
+        brokerWindow: { sessionId: string; windowId: string; paneId: string }
+        generation: number
+      }
+    | undefined
+  presentation?:
+    | { kind: 'none' }
+    | {
+        kind: 'tmux-tui'
+        tuiWindow: { sessionId: string; windowId: string; paneId: string }
+        operatorAttachTarget: true
+        attachCommand?: string | undefined
+      }
+    | undefined
 }
 
 /**

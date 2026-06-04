@@ -177,6 +177,12 @@ export function toTargetRuntimeView(
         : ('legacy-stdio' as const)
       : undefined
 
+  // T-01876 Ph5 — additive coarse axes derived from the SAME hosting state
+  // (never runtime.transport): brokerEndpoint (HOW HRC reaches the broker) and
+  // presentation (WHETHER a human can attach a TUI).
+  const brokerEndpoint = hosting?.endpoint.kind
+  const presentation = hosting?.presentation.kind
+
   return {
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
@@ -187,6 +193,8 @@ export function toTargetRuntimeView(
     lastActivityAt: runtime.lastActivityAt,
     ...(brokerSubstrate !== undefined ? { brokerSubstrate } : {}),
     ...(headlessRoute !== undefined ? { headlessRoute } : {}),
+    ...(brokerEndpoint !== undefined ? { brokerEndpoint } : {}),
+    ...(presentation !== undefined ? { presentation } : {}),
   }
 }
 
