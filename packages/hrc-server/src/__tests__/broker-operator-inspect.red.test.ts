@@ -715,3 +715,52 @@ describe('[RED P3-4] Capability-gated liveness rendering (cody C-03259)', () => 
     expect((inv?.lifecycle?.retention?.blockedBy ?? []).length).toBeGreaterThan(0)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Graceful-exit summary passthrough (T-01893) — broker-pushed invocation.summary
+// recorded on runtimeStateJson.finalSummary is returned by broker-inspect so the
+// `hrc run` shutdown report reads a recorded snapshot, not the (gone) live model.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('broker-inspect finalSummary passthrough (T-01893)', () => {
+  it('returns runtimeStateJson.finalSummary on the inspect response', async () => {
+    const runtimeId = 'rt-final-summary'
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-final-summary',
+      scopeRef: 'agent:larry:project:agent-spaces:task:final-summary',
+    })
+
+    const finalSummary = {
+      reason: 'prompt_input_exit',
+      summary: {
+        invocationId: 'inv-final-summary',
+        state: 'ready',
+        driver: 'codex-cli-tmux',
+        startedAt: fixture.now(),
+        lastActivityAt: fixture.now(),
+        turnsCompleted: 3,
+      },
+    }
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(runtimeId)
+      db.runtimes.update(runtimeId, {
+        runtimeStateJson: { ...(runtime?.runtimeStateJson ?? {}), finalSummary },
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    // No live broker controller injected — mirrors the post-reap state where the
+    // live read model is gone but the recorded summary persists.
+    const res = await postBrokerInspect(runtimeId)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { finalSummary?: typeof finalSummary }
+    expect(body.finalSummary).toMatchObject({
+      reason: 'prompt_input_exit',
+      summary: { driver: 'codex-cli-tmux', turnsCompleted: 3 },
+    })
+  })
+})

@@ -945,12 +945,15 @@ class HrcServerInstance implements HrcServer {
       )
     }
 
+    const finalSummary = (runtime.runtimeStateJson as { finalSummary?: unknown } | undefined)
+      ?.finalSummary
     const baseFacts = {
       runtimeId: runtime.runtimeId,
       transport: runtime.transport,
       harness: runtime.harness,
       status: runtime.status,
       lastActivityAt: runtime.lastActivityAt ?? null,
+      ...(finalSummary !== undefined ? { finalSummary } : {}),
     }
 
     // Broker-backed: delegate to the P2 controller read model. The summaries pass

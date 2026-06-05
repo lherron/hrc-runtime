@@ -972,6 +972,93 @@ async function waitForAttachProcess(
   fatal(`attach command exited with code ${exitCode}`)
 }
 
+/** Format a millisecond span as `1h02m`, `4m12s`, or `9s`. */
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '—'
+  }
+  const totalSec = Math.round(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) {
+    return `${h}h${String(m).padStart(2, '0')}m`
+  }
+  if (m > 0) {
+    return `${m}m${String(s).padStart(2, '0')}s`
+  }
+  return `${s}s`
+}
+
+/** Local wall-clock `HH:MM:SS` for an ISO timestamp, or `—` when unparseable. */
+function formatClock(iso: string | undefined): string {
+  if (!iso) {
+    return '—'
+  }
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) {
+    return '—'
+  }
+  return new Date(ms).toLocaleTimeString('en-GB', { hour12: false })
+}
+
+/**
+ * After a clean `/quit` detach, render the broker-pushed session summary HRC
+ * recorded at graceful exit (BrokerInspectResponse.finalSummary). Best-effort:
+ * never throws and never blocks the operator's return to their shell — if no
+ * summary was recorded (non-broker run, hard kill, older broker) it prints
+ * nothing.
+ */
+async function renderSessionSummary(
+  client: HrcClient,
+  runtimeId: string,
+  scopeLabel: string
+): Promise<void> {
+  const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`
+  try {
+    const inspect = await client.brokerInspect({ runtimeId })
+    const payload = inspect.finalSummary as
+      | { summary?: Record<string, unknown>; reason?: string }
+      | undefined
+    const summary = payload?.summary
+    if (!summary) {
+      return
+    }
+    const driver = typeof summary['driver'] === 'string' ? (summary['driver'] as string) : '—'
+    const startedAt =
+      typeof summary['startedAt'] === 'string' ? (summary['startedAt'] as string) : undefined
+    const endedAt =
+      typeof summary['lastActivityAt'] === 'string'
+        ? (summary['lastActivityAt'] as string)
+        : undefined
+    const turns =
+      typeof summary['turnsCompleted'] === 'number' ? (summary['turnsCompleted'] as number) : 0
+    const reason = payload?.reason
+    const exit = reason !== undefined ? `/quit (${reason})` : '/quit'
+    const durationMs =
+      startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : Number.NaN
+
+    const title = `─ session summary ─ ${scopeLabel} `
+    const width = 64
+    const topRule = '─'.repeat(Math.max(0, width - title.length))
+    const lines = [
+      '',
+      dim(title) + dim(topRule),
+      dim('  driver    ') + driver.padEnd(20) + dim('exit   ') + exit,
+      dim('  duration  ') + formatDuration(durationMs).padEnd(20) + dim('turns  ') + String(turns),
+      dim('  started   ') +
+        formatClock(startedAt).padEnd(20) +
+        dim('ended  ') +
+        formatClock(endedAt),
+      dim('─'.repeat(width)),
+      '',
+    ]
+    process.stdout.write(`${lines.join('\n')}\n`)
+  } catch {
+    // Best-effort: a probe failure must never disrupt the clean exit.
+  }
+}
+
 function execAttachCommand(argv: string[], env?: Record<string, string> | undefined): void {
   const attached = Bun.spawnSync(argv, {
     stdin: 'inherit',
@@ -1959,6 +2046,10 @@ async function cmdRun(args: string[]): Promise<void> {
     }
     markLaunch('total(pre-attach)', launchT0)
     await waitForAttachProcess(attached, client, resolved.hostSessionId)
+    // The tmux client has restored the operator's terminal (primary screen) by
+    // now, so anything we print lands cleanly in their shell scrollback. Render
+    // the broker-pushed session summary recorded at graceful /quit, if any.
+    await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
   } catch (err) {
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)
   }

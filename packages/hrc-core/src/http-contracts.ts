@@ -471,6 +471,14 @@ export type BrokerInspectResponse = {
   /** Broker read model (broker-backed runtimes only). Passed through verbatim. */
   invocations?: unknown[] | undefined
   /**
+   * Final broker-pushed session summary recorded at graceful exit (the operator
+   * `/quit` → broker `invocation.summary`, stashed on `runtimeStateJson.finalSummary`).
+   * Present after the lease is reaped, when the live `invocations` read model is
+   * gone — this is what `hrc run` renders as the shutdown report. Payload is the
+   * broker's InvocationSummaryPayload (`{ summary, reason }`).
+   */
+  finalSummary?: unknown | undefined
+  /**
    * HRC-derived lifecycle view (non-broker fallback only). For ghostty/claude-code
    * runtimes `retention.mode:'hrc-idle-cleanup'` with the HRC-side idle TTL; for
    * pre-broker/adopted runtimes `retention.mode:'db-only'` (no synthesized TTL).

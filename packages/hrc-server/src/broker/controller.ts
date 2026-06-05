@@ -1832,6 +1832,24 @@ export class HarnessBrokerController {
       })
     }
 
+    // Record the broker-pushed graceful-exit summary durably on the runtime so the
+    // operator shutdown report (hrc run, after the /quit detach) reads a recorded
+    // snapshot rather than pulling the live broker read model — which is gone once
+    // the lease is reaped. The broker pushes this on the SAME ordered stream just
+    // after the user-exit continuation.cleared, so it lands before teardown.
+    if (envelope.type === 'invocation.summary') {
+      const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+      if (runtime) {
+        this.db.runtimes.update(runtimeId, {
+          runtimeStateJson: {
+            ...(runtime.runtimeStateJson ?? {}),
+            finalSummary: envelope.payload,
+          },
+          updatedAt: this.now(),
+        })
+      }
+    }
+
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
       this.markBrokerInvocationTerminal(runtimeId, envelope, result)
     }
