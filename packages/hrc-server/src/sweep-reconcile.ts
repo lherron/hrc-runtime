@@ -10,6 +10,11 @@ import type {
 } from 'hrc-core'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import {
+  getBrokerRuntimeTmuxSessionName,
+  getBrokerRuntimeTmuxSocketPath,
+} from './broker-decisions.js'
+import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireGhosttySurface, requireSession } from './require-helpers.js'
@@ -27,6 +32,7 @@ import type {
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import { getObservedTmuxSessionName } from './startup-reconcile.js'
+import { createTmuxManager } from './tmux.js'
 import { mapServerRunRow, reconcileResultTransport } from './sweep-helpers.js'
 
 const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
@@ -509,6 +515,70 @@ async function planActiveRunReconcile(
       reason: 'runtime_unavailable_with_active_run',
       errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
       nextRuntimeStatus: 'stale',
+    }
+  }
+
+  // T-01941: a durable harness-broker runtime is hosted in its OWN per-runtime
+  // leased tmux server (btmux/…sock), NOT the default hrc socket. The generic
+  // tmux branch below probes `ctx.tmux.inspectSession` on the default socket
+  // (and `<session>:main`), so for a durable broker it always reports "missing"
+  // and condemns a LIVE broker to `dead` while its pid + tmux + attached viewer
+  // keep running — an orphan dispatch can never recover (reconcileTmuxRuntimeLiveness
+  // skips unavailable-status rows, and selectDispatchInteractiveRuntime then forks
+  // a parallel headless broker). Probe the runtime's own socket + recorded leased
+  // pane instead, mirroring reconcileTmuxRuntimeLiveness (runtime-io-handlers.ts).
+  // Scoped via controllerKind + hasLeasedBrokerSubstrate (the hosting predicate),
+  // which is false for a ghostty broker, so this preserves the tmux-only reconcile.
+  if (runtime.controllerKind === 'harness-broker' && hasLeasedBrokerSubstrate(runtime)) {
+    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    const leasedPaneId = runtime.tmuxJson?.['paneId']
+    if (socketPath && typeof leasedPaneId === 'string' && leasedPaneId.length > 0) {
+      const brokerTmux = createTmuxManager({ socketPath })
+      const liveness = await brokerTmux.inspectPaneLiveness(leasedPaneId)
+      if (liveness?.alive) {
+        // Substrate liveness and run ownership are SEPARATE authorities (daedalus,
+        // T-01941): a live leased pane proves the broker surface is up, NOT that the
+        // active turn is complete. 30m of HRC-event silence + a live pane is missing
+        // observability, not proof the run is detachable — clearing active_run_id or
+        // marking the runtime ready here would detach a real long-running turn and
+        // break queued-run ownership. Leave the run visibly `suspect` and mutate
+        // nothing; an authoritative broker-side terminal/heartbeat signal (separate
+        // follow-ups: lost turn.completed projection + long-tool heartbeat) is
+        // required before this run can be safely reaped.
+        return {
+          action: 'suspect',
+          reason: 'runtime_may_still_be_live',
+        }
+      }
+
+      // Pane is dead/missing on the runtime's OWN socket: the broker is genuinely
+      // gone. Reap the run and mark the runtime dead per current policy, and tear
+      // down the now-defunct leased tmux server so we don't trade one orphan class
+      // (false-dead-but-alive) for another (dead-row-but-live-server).
+      await brokerTmux.killServer().catch((error) => {
+        writeServerLog('WARN', 'failed to remove dead broker tmux lease server', {
+          runtimeId: runtime.runtimeId,
+          sessionName: getBrokerRuntimeTmuxSessionName(runtime),
+          socketPath,
+          reason: 'active_run_reconcile_broker_pane_not_live',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+      return {
+        action: 'reap',
+        reason: 'runtime_unavailable_with_active_run',
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+        nextRuntimeStatus: 'dead',
+      }
+    }
+
+    // No per-runtime socket / leased pane recorded — we cannot prove liveness on
+    // the correct surface, so fall back to today's unavailable-with-active-run reap.
+    return {
+      action: 'reap',
+      reason: 'runtime_unavailable_with_active_run',
+      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE_WITH_ACTIVE_RUN,
+      nextRuntimeStatus: 'dead',
     }
   }
 
