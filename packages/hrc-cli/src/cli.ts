@@ -934,11 +934,42 @@ async function spawnAttachDescriptor(
   })
 }
 
-async function waitForAttachProcess(attached: ReturnType<typeof Bun.spawn>): Promise<void> {
+async function waitForAttachProcess(
+  attached: ReturnType<typeof Bun.spawn>,
+  client?: HrcClient,
+  hostSessionId?: string
+): Promise<void> {
   const exitCode = await attached.exited
-  if (exitCode !== 0) {
-    fatal(`attach command exited with code ${exitCode}`)
+  if (exitCode === 0) {
+    return
   }
+  // A broker-tmux `/quit` reaps the lease by killing the lease tmux server out
+  // from under the operator's `tmux attach-session`, which then exits non-zero
+  // ("[server exited]"). That is the NORMAL end of an interactive run, not an
+  // attach failure — so suppress the fatal when the run actually ended: if no
+  // live runtime remains for this host session, the lease was reaped and the
+  // operator was cleanly detached. Only a non-zero exit with a still-live
+  // runtime (e.g. a genuinely broken attach descriptor) is a real failure.
+  if (client !== undefined && hostSessionId !== undefined) {
+    // The lease reap (killServer) and the reconcile that marks the runtime
+    // terminated race against the operator's attach exiting; poll briefly so a
+    // clean /quit is not misreported as a failure on the first probe.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const runtimes = await client.listRuntimes({ hostSessionId })
+        const stillLive = runtimes.some((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+        if (!stillLive) {
+          return
+        }
+      } catch {
+        // Fall through to fatal on a status-probe failure — better a spurious
+        // error than silently swallowing a real broken attach.
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+  }
+  fatal(`attach command exited with code ${exitCode}`)
 }
 
 function execAttachCommand(argv: string[], env?: Record<string, string> | undefined): void {
@@ -1927,7 +1958,7 @@ async function cmdRun(args: string[]): Promise<void> {
       markLaunch('resumeAttachedRun', tResume)
     }
     markLaunch('total(pre-attach)', launchT0)
-    await waitForAttachProcess(attached)
+    await waitForAttachProcess(attached, client, resolved.hostSessionId)
   } catch (err) {
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)
   }
