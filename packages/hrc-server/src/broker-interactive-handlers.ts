@@ -1337,10 +1337,24 @@ export async function spawnHeadlessClaudeViewer(
       return
     }
     const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
+    // The viewer window's whole lifetime is this one shell command line. HRC
+    // never kills the viewer surface itself, so on `/quit` the `tmux attach`
+    // exits and whatever follows runs before the window closes. We chain a
+    // `hrc session-report --wait-key` (T-01894) so the operator sees the same
+    // shutdown report `hrc run` prints — driver/exit/duration/turns + the
+    // broker-recorded finalSummary — and the window holds for a keypress instead
+    // of vanishing. `hrc` is resolved off the viewer shell's PATH; if absent the
+    // shell errors and the window closes (today's behaviour) — graceful fallback.
+    // `session-report` is best-effort and always reaches the keypress gate, so a
+    // missing/slow summary never closes the window early or hangs it silently.
+    const attachCommand =
+      `tmux -S ${socketPath} attach-session -t ${attachTarget}; ` +
+      `hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; ` +
+      `exit`
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       runtimeId: runtime.runtimeId,
-      attachCommand: `tmux -S ${socketPath} attach-session -t ${attachTarget}`,
+      attachCommand,
       title: `hrc headless ${runtime.scopeRef}`,
     })
     writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {

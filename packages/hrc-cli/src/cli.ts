@@ -1003,59 +1003,147 @@ function formatClock(iso: string | undefined): string {
 }
 
 /**
+ * Pure formatter for the broker-pushed session summary. Returns the rendered
+ * report block (with surrounding blank lines, trailing newline) or null when no
+ * summary payload is present. Shared by `hrc run`'s post-detach report and
+ * `hrc session-report` (the headless-claude Ghostty viewer shutdown report,
+ * T-01894) so the two surfaces never diverge.
+ */
+function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string | null {
+  const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`
+  const payload = finalSummary as
+    | { summary?: Record<string, unknown>; reason?: string }
+    | undefined
+  const summary = payload?.summary
+  if (!summary) {
+    return null
+  }
+  const driver = typeof summary['driver'] === 'string' ? (summary['driver'] as string) : '—'
+  const startedAt =
+    typeof summary['startedAt'] === 'string' ? (summary['startedAt'] as string) : undefined
+  const endedAt =
+    typeof summary['lastActivityAt'] === 'string'
+      ? (summary['lastActivityAt'] as string)
+      : undefined
+  const turns =
+    typeof summary['turnsCompleted'] === 'number' ? (summary['turnsCompleted'] as number) : 0
+  const reason = payload?.reason
+  const exit = reason !== undefined ? `/quit (${reason})` : '/quit'
+  const durationMs =
+    startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : Number.NaN
+
+  const title = `─ session summary ─ ${scopeLabel} `
+  const width = 64
+  const topRule = '─'.repeat(Math.max(0, width - title.length))
+  const lines = [
+    '',
+    dim(title) + dim(topRule),
+    dim('  driver    ') + driver.padEnd(20) + dim('exit   ') + exit,
+    dim('  duration  ') + formatDuration(durationMs).padEnd(20) + dim('turns  ') + String(turns),
+    dim('  started   ') +
+      formatClock(startedAt).padEnd(20) +
+      dim('ended  ') +
+      formatClock(endedAt),
+    dim('─'.repeat(width)),
+    '',
+  ]
+  return `${lines.join('\n')}\n`
+}
+
+/**
  * After a clean `/quit` detach, render the broker-pushed session summary HRC
- * recorded at graceful exit (BrokerInspectResponse.finalSummary). Best-effort:
- * never throws and never blocks the operator's return to their shell — if no
- * summary was recorded (non-broker run, hard kill, older broker) it prints
- * nothing.
+ * recorded at graceful exit. Best-effort: never throws and never blocks the
+ * operator's return to their shell — if no summary was recorded (non-broker run,
+ * hard kill, older broker) it prints nothing.
  */
 async function renderSessionSummary(
   client: HrcClient,
   runtimeId: string,
   scopeLabel: string
 ): Promise<void> {
-  const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`
   try {
     const inspect = await client.brokerInspect({ runtimeId })
-    const payload = inspect.finalSummary as
-      | { summary?: Record<string, unknown>; reason?: string }
-      | undefined
-    const summary = payload?.summary
-    if (!summary) {
-      return
+    const block = formatSessionSummary(inspect.finalSummary, scopeLabel)
+    if (block) {
+      process.stdout.write(block)
     }
-    const driver = typeof summary['driver'] === 'string' ? (summary['driver'] as string) : '—'
-    const startedAt =
-      typeof summary['startedAt'] === 'string' ? (summary['startedAt'] as string) : undefined
-    const endedAt =
-      typeof summary['lastActivityAt'] === 'string'
-        ? (summary['lastActivityAt'] as string)
-        : undefined
-    const turns =
-      typeof summary['turnsCompleted'] === 'number' ? (summary['turnsCompleted'] as number) : 0
-    const reason = payload?.reason
-    const exit = reason !== undefined ? `/quit (${reason})` : '/quit'
-    const durationMs =
-      startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : Number.NaN
-
-    const title = `─ session summary ─ ${scopeLabel} `
-    const width = 64
-    const topRule = '─'.repeat(Math.max(0, width - title.length))
-    const lines = [
-      '',
-      dim(title) + dim(topRule),
-      dim('  driver    ') + driver.padEnd(20) + dim('exit   ') + exit,
-      dim('  duration  ') + formatDuration(durationMs).padEnd(20) + dim('turns  ') + String(turns),
-      dim('  started   ') +
-        formatClock(startedAt).padEnd(20) +
-        dim('ended  ') +
-        formatClock(endedAt),
-      dim('─'.repeat(width)),
-      '',
-    ]
-    process.stdout.write(`${lines.join('\n')}\n`)
   } catch {
     // Best-effort: a probe failure must never disrupt the clean exit.
+  }
+}
+
+/**
+ * Block until a single keypress (best-effort). Sets raw mode for a true any-key
+ * read when stdin is a TTY, then restores it. Never throws — a failure here must
+ * not stop the surface from closing, nor hang it silently.
+ */
+function waitForKeypress(): void {
+  const stdin = process.stdin
+  let rawSet = false
+  try {
+    if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
+      stdin.setRawMode(true)
+      rawSet = true
+    }
+    const buf = Buffer.alloc(1)
+    readSync(0, buf, 0, 1, null)
+  } catch {
+    // ignore — best-effort
+  } finally {
+    if (rawSet) {
+      try {
+        stdin.setRawMode(false)
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/**
+ * Render the broker-pushed session summary for a runtime, then (with --wait-key)
+ * hold the surface open until the user presses a key. The headless-claude
+ * Ghostty viewer window wraps its `tmux attach` with this so the operator sees
+ * the same shutdown report `hrc run` prints (T-01894) before the window closes.
+ *
+ * Best-effort throughout: a fetch failure (or a missing summary) must STILL
+ * reach the keypress gate, so the window never closes before the user reads it
+ * and never hangs without explanation.
+ */
+async function cmdSessionReport(args: string[]): Promise<void> {
+  const runtimeId = parseFlag(args, '--runtime') ?? requireArg(args, 0, '<runtimeId>')
+  const scopeLabel = parseFlag(args, '--scope') ?? runtimeId
+  const waitKey = hasFlag(args, '--wait-key')
+
+  let block: string | null = null
+  try {
+    const client = createClient()
+    // The broker pushes invocation.summary BEFORE the lease reap, but the
+    // viewer's `tmux attach` can exit a beat ahead of HRC recording
+    // finalSummary — poll briefly so we don't miss it on the race.
+    const attempts = 6
+    for (let i = 0; i < attempts; i += 1) {
+      const inspect = await client.brokerInspect({ runtimeId })
+      block = formatSessionSummary(inspect.finalSummary, scopeLabel)
+      if (block) break
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+    }
+  } catch {
+    // swallow — fall through to the keypress gate regardless
+  }
+
+  if (block) {
+    process.stdout.write(block)
+  } else {
+    process.stdout.write(`\n\x1b[2m─ session ended ─ ${scopeLabel} (no summary recorded)\x1b[0m\n\n`)
+  }
+
+  if (waitKey) {
+    process.stdout.write('\x1b[2mPress any key to close…\x1b[0m')
+    waitForKeypress()
+    process.stdout.write('\n')
   }
 }
 
@@ -3132,6 +3220,22 @@ Exit codes:
         booleans: [],
       })
       await cmdSessionDropContinuation(args)
+    })
+
+  program
+    .command('session-report')
+    .description(
+      "render a runtime's broker session summary, optionally holding for a keypress (viewer windows)"
+    )
+    .option('--runtime <runtimeId>', 'runtime ID')
+    .option('--scope <scope>', 'scope label for the report header')
+    .option('--wait-key', 'wait for a keypress before returning (viewer windows)')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['runtime', 'scope'],
+        booleans: ['wait-key'],
+      })
+      await cmdSessionReport(args)
     })
 
   // -- monitor group (MONITOR_PROPOSAL F2a) ----------------------------------
