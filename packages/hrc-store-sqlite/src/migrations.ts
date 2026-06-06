@@ -930,6 +930,13 @@ const brokerPersistenceMigration: HrcMigration = {
         type TEXT NOT NULL,
         run_id TEXT,
         runtime_id TEXT NOT NULL,
+        -- Envelope-level identity (T-01946): persisted so the durable ledger can
+        -- reconstruct the approved ask-bracket identity
+        -- (invocationId, runId, harnessGeneration, turnAttempt, toolCallId) on
+        -- restart. broker_event_json carries only envelope.payload, so these
+        -- envelope fields would otherwise be lost.
+        harness_generation INTEGER,
+        turn_attempt INTEGER,
         broker_event_json TEXT NOT NULL,
         hrc_event_seq INTEGER,
         projection_status TEXT NOT NULL DEFAULT 'pending',
@@ -1304,6 +1311,29 @@ const permissionIdentityMigration: HrcMigration = {
   },
 }
 
+// T-01946: persist the envelope-level identity (harnessGeneration / turnAttempt)
+// on broker_invocation_events so the durable ledger can reconstruct the approved
+// ask-bracket identity (invocationId, runId, harnessGeneration, turnAttempt,
+// toolCallId). broker_event_json carries only envelope.payload; these envelope
+// fields would otherwise be unrecoverable on restart, leaving the bracket close
+// match unable to enforce same run/generation/attempt.
+const brokerEventIdentityMigration: HrcMigration = {
+  id: '0022_broker_event_identity',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(broker_invocation_events)')
+        .all()
+        .map((row) => row.name)
+    )
+    for (const column of ['harness_generation', 'turn_attempt']) {
+      if (!columns.has(column)) {
+        db.exec(`ALTER TABLE broker_invocation_events ADD COLUMN ${column} INTEGER`)
+      }
+    }
+  },
+}
+
 export const phase1Migrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1326,6 +1356,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   lifecyclePolicyAuditMigration,
   runtimeLifecycleStateMigration,
   permissionIdentityMigration,
+  brokerEventIdentityMigration,
 ]
 
 function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {

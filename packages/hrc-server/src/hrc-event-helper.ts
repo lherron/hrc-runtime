@@ -50,6 +50,10 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'turn.user_prompt': 'turn',
   'turn.tool_call': 'turn',
   'turn.tool_result': 'turn',
+  // HRC-derived (T-01946): the turn parked on / resumed from a user prompt. Not
+  // a broker event type; the event mapper emits these from the ask bracket.
+  'turn.awaiting_input': 'turn',
+  'turn.input_resumed': 'turn',
   'turn.message': 'turn',
   'turn.message_segment': 'turn',
   'input.rejected': 'input',

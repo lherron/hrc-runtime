@@ -19,15 +19,15 @@ import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
+  InputId,
   InvocationEventEnvelope,
   InvocationEventType,
   InvocationId,
-  InputId,
-  TurnId,
-  MessageId,
-  ToolCallId,
-  PermissionRequestId,
   IsoTimestamp,
+  MessageId,
+  PermissionRequestId,
+  ToolCallId,
+  TurnId,
 } from 'spaces-harness-broker-protocol'
 
 export type FixtureDb = ReturnType<typeof openHrcDatabase>
@@ -142,6 +142,8 @@ export type EnvelopeOverrides = {
   inputId?: InputId
   itemId?: string
   time?: IsoTimestamp
+  harnessGeneration?: number
+  turnAttempt?: number
 }
 
 export function envelope(
@@ -159,6 +161,10 @@ export function envelope(
     ...(overrides.turnId !== undefined ? { turnId: overrides.turnId } : {}),
     ...(overrides.inputId !== undefined ? { inputId: overrides.inputId } : {}),
     ...(overrides.itemId !== undefined ? { itemId: overrides.itemId } : {}),
+    ...(overrides.harnessGeneration !== undefined
+      ? { harnessGeneration: overrides.harnessGeneration }
+      : {}),
+    ...(overrides.turnAttempt !== undefined ? { turnAttempt: overrides.turnAttempt } : {}),
   }
 }
 

@@ -17,6 +17,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
+import { isAskUserTool, isCorruptAwaitingRuntime } from './ask-bracket.js'
 import type { GhostmuxSurfaceState } from './ghostmux.js'
 import { isRecord } from './server-parsers.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
@@ -267,6 +268,17 @@ export function requireGhosttySurface(runtime: HrcRuntimeSnapshot): GhostmuxSurf
 }
 
 export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapshot): void {
+  // T-01946 gate 6: a corrupt `awaiting_input` runtime (status set with no active
+  // run) must never be treated as reusable readiness — reject rather than admit a
+  // turn onto an inconsistent runtime. (Surfaced for repair by the reconcile scan.)
+  if (isCorruptAwaitingRuntime(runtime)) {
+    throw new HrcConflictError(
+      HrcErrorCode.RUNTIME_BUSY,
+      'runtime is awaiting_input with no active run (corrupt); not reusable',
+      { runtimeId: runtime.runtimeId }
+    )
+  }
+
   if (!runtime.activeRunId) {
     return
   }
@@ -286,10 +298,7 @@ export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapsho
 // spec.interaction.inputQueue === 'fifo'. Returns false defensively on any
 // error (missing invocation, malformed capabilities_json) so callers fall
 // back to the existing reject-if-busy behavior.
-export function isBrokerRuntimeQueueCapable(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot
-): boolean {
+export function isBrokerRuntimeQueueCapable(db: HrcDatabase, runtime: HrcRuntimeSnapshot): boolean {
   if (runtime.controllerKind !== 'harness-broker') return false
   if (runtime.activeInvocationId === undefined) return false
   const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
@@ -326,7 +335,8 @@ export function isPendingAskUserQuestionRun(events: HrcLifecycleEvent[]): boolea
     const payload = isRecord(event.payload) ? event.payload : {}
     const toolUseId = typeof payload['toolUseId'] === 'string' ? payload['toolUseId'] : undefined
     if (event.eventKind === 'turn.tool_call') {
-      if (payload['toolName'] === 'AskUserQuestion' && toolUseId !== undefined) {
+      const toolName = typeof payload['toolName'] === 'string' ? payload['toolName'] : undefined
+      if (isAskUserTool(toolName) && toolUseId !== undefined) {
         pendingToolUseIds.add(toolUseId)
       }
       continue

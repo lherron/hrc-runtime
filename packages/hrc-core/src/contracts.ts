@@ -453,6 +453,11 @@ export type HrcBrokerInvocationState =
   | 'starting'
   | 'ready'
   | 'turn_active'
+  // A turn that is mid-flight but parked on a user prompt (AskUserQuestion /
+  // request_user_input). HRC-internal: the broker never emits this — the event
+  // mapper layers it on top of `turn_active` from the durable ask bracket
+  // (T-01946). Projects to the `awaiting_input` runtime status.
+  | 'awaiting_input'
   | 'stopping'
   | 'exited'
   | 'failed'
@@ -541,6 +546,12 @@ export type HrcBrokerInvocationEventRecord = {
   type: string
   runId?: string | undefined
   runtimeId: string
+  /**
+   * Envelope-level identity persisted alongside the payload (T-01946) so the
+   * durable ledger can reconstruct the full ask-bracket identity on restart.
+   */
+  harnessGeneration?: number | undefined
+  turnAttempt?: number | undefined
   /** Canonical serialized broker event used for idempotent re-append comparison. */
   brokerEventJson: string
   hrcEventSeq?: number | undefined

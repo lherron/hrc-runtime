@@ -293,6 +293,90 @@ describe('BrokerInvocationEventRepository.appendEvent idempotency', () => {
     }
   })
 
+  it('idempotency includes harnessGeneration + turnAttempt in the identity check', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const base = {
+        invocationId: 'inv-identity',
+        seq: 1,
+        time: ts(),
+        type: 'tool.call.started',
+        runtimeId: 'rt-identity',
+        runId: 'run-identity',
+        harnessGeneration: 1,
+        turnAttempt: 1,
+      }
+
+      // First append: fresh row, idempotent:false.
+      const first = db.brokerInvocationEvents.appendEvent({
+        ...base,
+        payload: { turnId: 't-1' },
+      })
+      expect(first.idempotent).toBe(false)
+      expect(first.record.seq).toBe(1)
+
+      // Same payload + same gen/attempt → idempotent:true, no throw.
+      const second = db.brokerInvocationEvents.appendEvent({
+        ...base,
+        payload: { turnId: 't-1' },
+      })
+      expect(second.idempotent).toBe(true)
+
+      // Same payload but DIFFERENT harnessGeneration → conflict.
+      expect(() =>
+        db.brokerInvocationEvents.appendEvent({
+          ...base,
+          harnessGeneration: 2,
+          payload: { turnId: 't-1' },
+        })
+      ).toThrow(BrokerInvocationEventConflictError)
+
+      // Same payload but DIFFERENT turnAttempt → conflict.
+      expect(() =>
+        db.brokerInvocationEvents.appendEvent({
+          ...base,
+          turnAttempt: 2,
+          payload: { turnId: 't-1' },
+        })
+      ).toThrow(BrokerInvocationEventConflictError)
+
+      // Same payload + gen/attempt but DIFFERENT runId → conflict (runId is a
+      // durable bracket-identity field keyed by the authority SQL).
+      expect(() =>
+        db.brokerInvocationEvents.appendEvent({
+          ...base,
+          runId: 'run-other',
+          payload: { turnId: 't-1' },
+        })
+      ).toThrow(BrokerInvocationEventConflictError)
+
+      // Regression: seq=2 with NO gen/attempt; re-append also no gen/attempt → idempotent.
+      const noGenBase = {
+        invocationId: 'inv-identity',
+        seq: 2,
+        time: ts(),
+        type: 'tool.call.started',
+        runtimeId: 'rt-identity',
+        runId: 'run-identity',
+      }
+      const third = db.brokerInvocationEvents.appendEvent({
+        ...noGenBase,
+        payload: { turnId: 't-2' },
+      })
+      expect(third.idempotent).toBe(false)
+      const fourth = db.brokerInvocationEvents.appendEvent({
+        ...noGenBase,
+        payload: { turnId: 't-2' },
+      })
+      expect(fourth.idempotent).toBe(true)
+
+      // Only two rows for this invocation.
+      expect(db.brokerInvocationEvents.listByInvocationId('inv-identity')).toHaveLength(2)
+    } finally {
+      db.close()
+    }
+  })
+
   it('records projection outcome via updateProjection', () => {
     const db = openHrcDatabase(dbPath)
     try {

@@ -3185,6 +3185,8 @@ type BrokerInvocationEventRow = {
   type: string
   run_id: string | null
   runtime_id: string
+  harness_generation: number | null
+  turn_attempt: number | null
   broker_event_json: string
   hrc_event_seq: number | null
   projection_status: string
@@ -3298,6 +3300,8 @@ const BROKER_INVOCATION_EVENT_COLUMNS = `
   type,
   run_id,
   runtime_id,
+  harness_generation,
+  turn_attempt,
   broker_event_json,
   hrc_event_seq,
   projection_status,
@@ -3441,6 +3445,8 @@ function mapBrokerInvocationEventRow(
     type: row.type,
     ...(row.run_id !== null ? { runId: row.run_id } : {}),
     runtimeId: row.runtime_id,
+    ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
+    ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
     brokerEventJson: row.broker_event_json,
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,
@@ -3887,6 +3893,12 @@ export type BrokerInvocationEventAppendInput = {
   runtimeId: string
   runId?: string | undefined
   /**
+   * Envelope-level identity persisted alongside the payload (T-01946) so the
+   * durable ledger can reconstruct the full ask-bracket identity on restart.
+   */
+  harnessGeneration?: number | undefined
+  turnAttempt?: number | undefined
+  /**
    * Broker event content to persist. Serialized verbatim and compared on
    * re-append: the same `(invocationId, seq)` with the same payload is a no-op;
    * a different payload throws.
@@ -3934,7 +3946,19 @@ export class BrokerInvocationEventRepository {
           .get(input.invocationId, input.seq)
 
         if (existing) {
-          if (existing.broker_event_json !== brokerEventJson) {
+          // T-01946: run_id / harness_generation / turn_attempt are all part of
+          // the durable broker event identity (the authority SQL keys ask brackets
+          // on (invocationId, runId, harnessGeneration, turnAttempt, toolCallId)),
+          // so a re-append at the same (invocationId, seq) is idempotent ONLY when
+          // the payload AND every identity field matches. A same-seq event carrying
+          // a different run / generation / attempt is divergent and must conflict
+          // (no silent idempotent return). Null-safe compare throughout.
+          const sameIdentity =
+            existing.broker_event_json === brokerEventJson &&
+            (existing.run_id ?? null) === (input.runId ?? null) &&
+            (existing.harness_generation ?? null) === (input.harnessGeneration ?? null) &&
+            (existing.turn_attempt ?? null) === (input.turnAttempt ?? null)
+          if (!sameIdentity) {
             throw new BrokerInvocationEventConflictError(input.invocationId, input.seq)
           }
           return { record: mapBrokerInvocationEventRow(existing), idempotent: true }
@@ -3950,12 +3974,14 @@ export class BrokerInvocationEventRepository {
               type,
               run_id,
               runtime_id,
+              harness_generation,
+              turn_attempt,
               broker_event_json,
               hrc_event_seq,
               projection_status,
               projection_error,
               created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           input.invocationId,
           input.seq,
@@ -3963,6 +3989,8 @@ export class BrokerInvocationEventRepository {
           input.type,
           input.runId ?? null,
           input.runtimeId,
+          input.harnessGeneration ?? null,
+          input.turnAttempt ?? null,
           brokerEventJson,
           input.hrcEventSeq ?? null,
           input.projectionStatus ?? 'pending',

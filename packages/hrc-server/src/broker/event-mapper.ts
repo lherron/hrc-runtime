@@ -64,6 +64,7 @@ import type {
   TurnRetryPayload,
 } from 'spaces-harness-broker-protocol'
 
+import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
 import { appendHrcEvent } from '../hrc-event-helper'
 
 /**
@@ -174,6 +175,17 @@ export type BrokerProjectionResult = {
   lifecycleEvents: HrcLifecycleEvent[]
 }
 
+/**
+ * A pending HRC-derived turn lifecycle event (T-01946). projectState records the
+ * descriptor while it mutates state; project() emits it AFTER the canonical event
+ * so the hrcSeq order matches the returned lifecycleEvents order.
+ */
+type DerivedTurnDescriptor = {
+  eventKind: 'turn.awaiting_input' | 'turn.input_resumed'
+  toolUseId: string
+  toolName: string
+}
+
 /** Resolved projection context for a single invocation. */
 type ProjectionContext = {
   runtimeId: string
@@ -254,6 +266,14 @@ export class BrokerEventMapper {
       type: envelope.type,
       runtimeId: ctx.runtimeId,
       ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      // Persist the envelope-level identity (T-01946): the durable ask-bracket
+      // identity is (invocationId, runId, harnessGeneration, turnAttempt,
+      // toolCallId), but broker_event_json holds only envelope.payload, so these
+      // two envelope fields must be persisted explicitly to survive restart.
+      ...(envelope.harnessGeneration !== undefined
+        ? { harnessGeneration: envelope.harnessGeneration }
+        : {}),
+      ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
       payload: envelope.payload,
     })
 
@@ -263,10 +283,22 @@ export class BrokerEventMapper {
 
     // (b) Project state into HRC, then emit the raw provenance mirror plus the
     // canonical lifecycle event (the latter is what clients/notifyEvent see).
+    // `derivedDescriptors` records HRC-side lifecycle events the mapper synthesizes
+    // beyond the 1:1 broker mapping (T-01946 turn.awaiting_input / turn.input_resumed).
+    // They are EMITTED after the canonical event so their hrcSeq is strictly greater
+    // — keeping the returned `lifecycleEvents` order identical to replay-by-hrcSeq
+    // (and semantically the tool_call precedes the awaiting_input it triggers).
+    const derivedDescriptors: DerivedTurnDescriptor[] = []
     const stale = this.isStaleLifecycleEnvelope(envelope, invocation, runtime)
-    this.projectState(envelope, ctx, now, stale)
+    this.projectState(envelope, ctx, now, stale, derivedDescriptors)
     const emitted = this.emit(envelope, ctx, now)
     const lifecycleEvent = stale ? undefined : this.emitLifecycle(envelope, ctx, now)
+    const derived = derivedDescriptors.map((descriptor) =>
+      this.emitDerivedTurnEvent(descriptor.eventKind, envelope, ctx, now, {
+        toolUseId: descriptor.toolUseId,
+        toolName: descriptor.toolName,
+      })
+    )
 
     // (c) Record projection outcome on the broker event row.
     db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
@@ -277,7 +309,7 @@ export class BrokerEventMapper {
     return {
       idempotent: false,
       events: [emitted],
-      lifecycleEvents: lifecycleEvent ? [lifecycleEvent] : [],
+      lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
     }
   }
 
@@ -386,7 +418,8 @@ export class BrokerEventMapper {
     envelope: InvocationEventEnvelope,
     ctx: ProjectionContext,
     now: string,
-    stale: boolean
+    stale: boolean,
+    derived: DerivedTurnDescriptor[]
   ): void {
     const db = this.db
     const invocationId = envelope.invocationId
@@ -618,10 +651,46 @@ export class BrokerEventMapper {
       }
 
       // ── Tool activity -> emitted HRC event only (eventJson carries id+name) ──
-      case 'tool.call.started':
-      case 'tool.call.delta':
+      // Ask-user tools (AskUserQuestion / request_user_input) additionally drive
+      // the first-class awaiting-input state (T-01946): the open bracket parks the
+      // runtime, the matching close resumes it. The durable bracket in
+      // broker_invocation_events (appended above) is the authority; the runtime
+      // status + derived events here are the fast path / observability.
+      case 'tool.call.started': {
+        const payload = envelope.payload as ToolCallStartedPayload
+        if (runId !== undefined && isAskUserTool(payload.name)) {
+          this.markRuntimeAwaitingInput(ctx, invocationId, now)
+          derived.push({
+            eventKind: 'turn.awaiting_input',
+            toolUseId: payload.toolCallId,
+            toolName: payload.name,
+          })
+        }
+        break
+      }
       case 'tool.call.completed':
       case 'tool.call.failed': {
+        const payload = envelope.payload as ToolCallCompletedPayload | ToolCallFailedPayload
+        // Only an ask-tool close that resolves the LAST open ask bracket for this
+        // run resumes the turn. The current envelope is already appended, so
+        // hasOpenAskBracket reflects this close. Guarded on the runtime actually
+        // being parked to avoid a spurious resume for a non-awaiting close.
+        if (
+          runId !== undefined &&
+          isAskUserTool(payload.name) &&
+          this.isRuntimeAwaitingInput(ctx.runtimeId) &&
+          !hasOpenAskBracket(db, invocationId, runId)
+        ) {
+          this.markRuntimeInputResumed(ctx, invocationId, now)
+          derived.push({
+            eventKind: 'turn.input_resumed',
+            toolUseId: payload.toolCallId,
+            toolName: payload.name,
+          })
+        }
+        break
+      }
+      case 'tool.call.delta': {
         break
       }
 
@@ -839,10 +908,102 @@ export class BrokerEventMapper {
     })
   }
 
+  /** True iff the runtime is currently projected as parked on a user prompt. */
+  private isRuntimeAwaitingInput(runtimeId: string): boolean {
+    return this.db.runtimes.getByRuntimeId(runtimeId)?.status === 'awaiting_input'
+  }
+
+  /** Park the runtime on an open ask bracket (T-01946): turn is active but blocked. */
+  private markRuntimeAwaitingInput(
+    ctx: ProjectionContext,
+    invocationId: string,
+    now: string
+  ): void {
+    this.db.brokerInvocations.update(invocationId, {
+      invocationState: 'awaiting_input',
+      updatedAt: now,
+    })
+    this.setRuntimeStatus(ctx.runtimeId, 'awaiting_input', now)
+  }
+
+  /**
+   * Resume after the operator answers: the SAME turn continues (busy), it does
+   * NOT complete — `turn.completed` later flips ready via markRuntimeTurnTerminal.
+   */
+  private markRuntimeInputResumed(ctx: ProjectionContext, invocationId: string, now: string): void {
+    this.db.brokerInvocations.update(invocationId, {
+      invocationState: 'turn_active',
+      updatedAt: now,
+    })
+    this.setRuntimeStatus(ctx.runtimeId, 'busy', now)
+  }
+
+  /** Update runtime.status (and the mirrored runtimeStateJson.status) in lockstep. */
+  private setRuntimeStatus(runtimeId: string, status: string, now: string): void {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    if (!runtime) return
+    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
+      ? runtime.runtimeStateJson
+      : undefined
+    this.db.runtimes.update(runtimeId, {
+      status,
+      lastActivityAt: now,
+      updatedAt: now,
+      ...(runtimeStateJson !== undefined
+        ? { runtimeStateJson: { ...runtimeStateJson, status, updatedAt: now } }
+        : {}),
+    })
+  }
+
+  /**
+   * Emit an HRC-derived turn lifecycle event (turn.awaiting_input /
+   * turn.input_resumed). These have no broker event type — the mapper synthesizes
+   * them from the ask bracket as the observability / fast-path surface. The
+   * authority remains the durable bracket in broker_invocation_events.
+   */
+  private emitDerivedTurnEvent(
+    eventKind: 'turn.awaiting_input' | 'turn.input_resumed',
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    extra: { toolUseId: string; toolName: string }
+  ): HrcLifecycleEvent {
+    return appendHrcEvent(this.db, eventKind, {
+      ts: now,
+      hostSessionId: ctx.hostSessionId,
+      scopeRef: ctx.scopeRef,
+      laneRef: ctx.laneRef,
+      generation: ctx.generation,
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      transport: ctx.transport,
+      payload: {
+        toolUseId: extra.toolUseId,
+        toolName: extra.toolName,
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        ...(envelope.harnessGeneration !== undefined
+          ? { harnessGeneration: envelope.harnessGeneration }
+          : {}),
+        ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
+      },
+    })
+  }
+
   private markRuntimeTurnTerminal(ctx: ProjectionContext, runId: string, now: string): void {
     const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
     if (!runtime) return
     if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
+      return
+    }
+
+    // Gate 3 / invariant (T-01946): never project `ready` while an ask bracket is
+    // still open on this runtime. A genuine same-run terminal closes this run's
+    // brackets (the authority requires no later same-run terminal), so this is
+    // normally false — it only holds if another run on the runtime is still
+    // parked, in which case the still-open bracket governs the runtime and we
+    // leave ownership/awaiting untouched rather than projecting a false `ready`.
+    if (runtimeHasAnyOpenAskBracket(this.db, runtime)) {
       return
     }
 

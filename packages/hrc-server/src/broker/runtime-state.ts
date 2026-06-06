@@ -29,9 +29,7 @@ export type BrokerRuntimeEndpoint =
       attachTokenRef: BrokerAttachTokenRef
     }
 
-export function toBrokerEndpointJson(
-  endpoint: BrokerRuntimeEndpoint
-): Record<string, unknown> {
+export function toBrokerEndpointJson(endpoint: BrokerRuntimeEndpoint): Record<string, unknown> {
   if (endpoint.kind === 'unix-jsonrpc-ndjson') {
     return {
       kind: 'unix-jsonrpc-ndjson',
@@ -177,9 +175,7 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function extractAttachError(
-  value: unknown
-): { code: string; message: string } | null {
+function extractAttachError(value: unknown): { code: string; message: string } | null {
   if (!isRecord(value)) {
     return null
   }
@@ -244,6 +240,7 @@ export function extractFullRuntimeControlState(
 export function runtimeStatusFromInvocationState(state: string): string {
   if (state === 'ready') return 'ready'
   if (state === 'turn_active') return 'busy'
+  if (state === 'awaiting_input') return 'awaiting_input'
   if (state === 'stopping') return 'stopping'
   if (state === 'exited') return 'stopped'
   if (state === 'failed') return 'failed'

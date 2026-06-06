@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRunRecord,
@@ -8,8 +9,13 @@ import type {
   SweepZombieRunsResponse,
   SweepZombieRunsSummary,
 } from 'hrc-core'
-import { setTimeout as delay } from 'node:timers/promises'
 
+import {
+  isCorruptAwaitingRuntime,
+  latestBrokerSeq,
+  listOpenAskBrackets,
+  runtimeHasOpenAskBracket,
+} from './ask-bracket.js'
 import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
@@ -18,8 +24,8 @@ import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireGhosttySurface, requireSession } from './require-helpers.js'
-import type { ServerContext } from './server-context.js'
 import { HRC_SERVER_RUN_COLUMNS } from './server-constants.js'
+import type { ServerContext } from './server-context.js'
 import { writeServerLog } from './server-log.js'
 import { finalizeRuntimeTermination } from './server-misc.js'
 import type {
@@ -32,8 +38,8 @@ import type {
 } from './server-types.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import { getObservedTmuxSessionName } from './startup-reconcile.js'
-import { createTmuxManager } from './tmux.js'
 import { mapServerRunRow, reconcileResultTransport } from './sweep-helpers.js'
+import { createTmuxManager } from './tmux.js'
 
 const HRC_ZOMBIE_ACTIVE_RUN_STATUSES = ['accepted', 'started', 'running'] as const
 const HRC_ZOMBIE_ERROR_MESSAGE = 'run had no events for more than 30 minutes'
@@ -116,6 +122,15 @@ function listZombieRunCandidates(ctx: ServerContext, cutoffMs: number): ZombieRu
   const candidates: ZombieRunCandidate[] = []
   for (const row of rows) {
     const run = mapServerRunRow(row)
+    // T-01946: a run parked on a user prompt has no events while it waits, so the
+    // event-silence clock would mark it zombie. The durable ask bracket overrides
+    // event-silence — skip it entirely (non-reapable) across the headless sweep.
+    if (run.runtimeId) {
+      const runtime = ctx.db.runtimes.getByRuntimeId(run.runtimeId)
+      if (runtime && runtimeHasOpenAskBracket(ctx.db, runtime, run.runId)) {
+        continue
+      }
+    }
     const observed = latestObservedRunActivity(ctx, run)
     const observedMs = Date.parse(observed.observedAt)
     if (!Number.isFinite(observedMs) || observedMs > cutoffMs) {
@@ -281,6 +296,9 @@ export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Prom
       runtime.harness !== 'claude-code' ||
       runtime.activeRunId !== undefined ||
       runtime.status === 'busy' ||
+      // T-01946: never idle-/quit a runtime parked on (or corruptly flagged for)
+      // a user prompt — a parked ask has no activity but is not idle.
+      runtime.status === 'awaiting_input' ||
       runtime.status === 'starting' ||
       isRuntimeUnavailableStatus(runtime.status)
     ) {
@@ -295,6 +313,7 @@ export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Prom
       !latest ||
       latest.activeRunId !== undefined ||
       latest.status === 'busy' ||
+      latest.status === 'awaiting_input' ||
       latest.status === 'starting' ||
       latest.generation !== runtime.generation
     ) {
@@ -396,6 +415,12 @@ export async function reconcileActiveRunsOnce(
     }
   }
 
+  // T-01946 gate 6: surface (never normalize) corrupt `awaiting_input` runtimes —
+  // the status set with no active run. These are not reconcile candidates (the
+  // candidate query requires an active run), so they are scanned separately and
+  // reported `suspect` with enough identity to act on them.
+  results.push(...reconcileCorruptAwaitingRuntimes(ctx))
+
   const summary: ReconcileActiveRunsSummary = {
     type: 'summary',
     matched: results.filter((result) => result.status === 'matched').length,
@@ -410,6 +435,67 @@ export async function reconcileActiveRunsOnce(
     results,
     summary,
   } satisfies ReconcileActiveRunsResponse
+}
+
+/**
+ * Scan for corrupt `awaiting_input` runtimes (status set with no `activeRunId`).
+ * This combination is impossible by construction; per T-01946 gate 6 it is
+ * surfaced as `suspect` with actionable identity (runtimeId, invocationId, any
+ * open bracket ids, latest broker seq), never silently healed to ready/busy.
+ */
+function reconcileCorruptAwaitingRuntimes(ctx: ServerContext): ReconcileActiveRunResult[] {
+  const results: ReconcileActiveRunResult[] = []
+  const now = timestamp()
+  for (const runtime of ctx.db.runtimes.listAll()) {
+    if (!isCorruptAwaitingRuntime(runtime)) continue
+    const invocationId = runtime.activeInvocationId
+    const brackets = listOpenAskBrackets(ctx.db, runtime)
+    // Surface each open bracket with its FULL authority identity
+    // (invocationId, runId, harnessGeneration, turnAttempt, toolCallId) so the
+    // operator-facing undo path matches the bracket the reaper/predicate uses
+    // (T-01946 gate 6, daedalus). bare toolCallId/runId lists are not enough.
+    const identity = {
+      invocationId: invocationId ?? null,
+      openBrackets: brackets.map((bracket) => ({
+        runId: bracket.runId,
+        toolCallId: bracket.toolCallId,
+        harnessGeneration: bracket.harnessGeneration,
+        turnAttempt: bracket.turnAttempt,
+        seq: bracket.seq,
+      })),
+      latestBrokerSeq:
+        invocationId !== undefined ? (latestBrokerSeq(ctx.db, invocationId) ?? null) : null,
+    }
+    const firstBracketRunId = brackets.find((bracket) => !!bracket.runId)?.runId ?? ''
+    results.push({
+      type: 'run',
+      // No active run to key on; prefer an open bracket's run, else the empty id.
+      runId: firstBracketRunId,
+      hostSessionId: runtime.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      transport: reconcileRuntimeTransport(runtime.transport),
+      status: 'suspect',
+      reason: 'runtime_awaiting_without_active_run',
+      observedAt: now,
+      observedSource: 'updated_at',
+      runtimeStatus: runtime.status,
+      runtimeOwnershipCleared: false,
+      errorMessage: JSON.stringify(identity),
+    })
+  }
+  return results
+}
+
+function reconcileRuntimeTransport(transport: string): ReconcileActiveRunResult['transport'] {
+  if (
+    transport === 'sdk' ||
+    transport === 'tmux' ||
+    transport === 'headless' ||
+    transport === 'ghostty'
+  ) {
+    return transport
+  }
+  return 'headless'
 }
 
 function listActiveRunReconcileCandidates(
@@ -459,6 +545,19 @@ async function planActiveRunReconcile(
   candidate: ActiveRunReconcileCandidate
 ): Promise<ActiveRunReconcilePlan> {
   const { runtime, launch } = candidate
+
+  // T-01946: a turn parked on a user prompt (open ask bracket) is NEVER reapable,
+  // across every runtime status. The bracket — judged from the durable broker
+  // event ledger in broker seq order — is the authority; it MUST be consulted
+  // before the status-based reap branches (ready/dead/stale/busy) below, which
+  // would otherwise short-circuit and kill a perfectly live, parked TUI. Suspend
+  // the activity clock by returning `suspect`, mutating nothing.
+  if (runtimeHasOpenAskBracket(ctx.db, runtime, candidate.run.runId)) {
+    return {
+      action: 'suspect',
+      reason: 'runtime_awaiting_user_input',
+    }
+  }
 
   if (runtime.transport === 'headless' && launch?.status === 'orphaned') {
     return {

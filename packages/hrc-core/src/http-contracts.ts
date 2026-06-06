@@ -606,6 +606,10 @@ export type ReconcileActiveRunReason =
   | 'runtime_unavailable_with_active_run'
   | 'runtime_busy_timeout_with_active_run'
   | 'runtime_may_still_be_live'
+  // T-01946: a turn parked on a user prompt (open ask bracket) is never reapable.
+  | 'runtime_awaiting_user_input'
+  // T-01946 gate 6: `awaiting_input` status with no active run — corrupt, surfaced.
+  | 'runtime_awaiting_without_active_run'
 
 export type ReconcileActiveRunResult = {
   type: 'run'

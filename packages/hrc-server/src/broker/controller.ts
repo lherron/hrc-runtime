@@ -75,6 +75,7 @@ import {
 } from './capabilities'
 import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT, BROKER_TRANSPORT_UNIX } from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
+import { deriveRuntimeStatusWithAwaiting } from '../ask-bracket'
 import {
   type BrokerAttachTokenRef,
   extractRuntimeStateTmux,
@@ -974,7 +975,15 @@ export class HarnessBrokerController {
         ackedThroughSeq = ack.ackedThroughSeq
       }
 
-      const status = runtimeStatusFromInvocationState(snapshot.state)
+      // T-01946 gate 2 (restart re-derivation): the broker reports `turn_active`
+      // for a parked turn (it has no awaiting-input member), which would clobber
+      // the awaiting_input status that replay just projected. Re-derive from the
+      // durable ask bracket so a reattach during a park keeps the runtime honest.
+      const baseStatus = runtimeStatusFromInvocationState(snapshot.state)
+      const refreshedRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+      const status = refreshedRuntime
+        ? deriveRuntimeStatusWithAwaiting(this.db, refreshedRuntime, baseStatus)
+        : baseStatus
       const now = this.now()
       this.db.brokerInvocations.update(invocation.invocationId, {
         invocationState: snapshot.state,
