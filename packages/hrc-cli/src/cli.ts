@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
-import { basename, join, resolve as resolvePath } from 'node:path'
+import { basename, dirname, join, resolve as resolvePath } from 'node:path'
 
 import { resolveQualifiedScopeInput } from 'agent-scope'
 import { CliUsageError, exitWithError, parseIntegerValue } from 'cli-kit'
@@ -69,16 +69,15 @@ import { printJson } from './print.js'
 // -- .env.local loading -------------------------------------------------------
 
 /**
- * Load .env.local from cwd into process.env.
+ * Apply a single .env.local file into process.env.
  * Existing env vars are NOT overwritten (env takes precedence).
  */
-function loadDotEnvLocal(): void {
-  const envPath = join(process.cwd(), '.env.local')
+function applyDotEnvFile(envPath: string): void {
   let content: string
   try {
     content = readFileSync(envPath, 'utf8')
   } catch {
-    return // no .env.local — nothing to do
+    return // no file here — nothing to do
   }
   for (const line of content.split('\n')) {
     const trimmed = line.trim()
@@ -90,6 +89,26 @@ function loadDotEnvLocal(): void {
     if (key && process.env[key] === undefined) {
       process.env[key] = value
     }
+  }
+}
+
+/**
+ * Walk up from cwd applying each .env.local found, stopping at — and
+ * including — the nearest git root. Nearer files win (visited first; a key is
+ * only set while still unset) and real environment variables win over all
+ * files. This lets the CLI invoked from a subdir (e.g. var/agents/cody)
+ * inherit ASP_PROJECT from a parent .env.local at the git root
+ * (var/agents/.env.local). The `.git` probe uses existsSync so worktree agent
+ * dirs (where .git is a file, not a directory) are recognized too.
+ */
+function loadDotEnvLocal(): void {
+  let dir = process.cwd()
+  while (true) {
+    applyDotEnvFile(join(dir, '.env.local'))
+    if (existsSync(join(dir, '.git'))) break // nearest git root — boundary
+    const parent = dirname(dir)
+    if (parent === dir) break // filesystem root — no git root found
+    dir = parent
   }
 }
 

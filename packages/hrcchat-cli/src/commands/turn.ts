@@ -154,6 +154,28 @@ export async function cmdTurn(
     return
   }
 
+  // ── Require a resolvable project before dispatching ──
+  // A turn places an agent within a project. When the target carries no
+  // @<project> qualifier, ASP_PROJECT is unset, and the cwd maps to no known
+  // project, resolution yields a degenerate project-less scope (agent:<name>).
+  // Dispatching there produces no runnable turn and no rendered frames, so the
+  // operator is left with no reply, no confirmation, and — worst of all — no
+  // error. Fail loud with actionable guidance instead. (--dry-run is exempt
+  // above: it intentionally prints the degenerate plan so the gap is visible.)
+  if (!resolved.parsed.projectId) {
+    throw new CliUsageError(
+      [
+        `cannot resolve a project for target "${targetInput}".`,
+        `A turn must target an agent within a project, but none was found: the`,
+        `target has no @<project> qualifier, ASP_PROJECT is unset, and the current`,
+        `directory maps to no known project. Fix one of:`,
+        `  • qualify the target:  hrcchat turn ${targetInput}@<project> "…"`,
+        `  • set the env:         ASP_PROJECT=<project> hrcchat turn ${targetInput} "…"`,
+        `  • run from a project:  cd ~/praesidium/<project> && hrcchat turn ${targetInput} "…"`,
+      ].join('\n')
+    )
+  }
+
   // ── --new: clearContext if host exists ──
   if (opts.new) {
     try {
