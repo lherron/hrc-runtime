@@ -1,9 +1,12 @@
-# T-01862 Implementation Spec: Leased tmux as the Default `harness-broker/0.2` Substrate
+# Harness Broker Substrate Spec: Leased tmux as the Default `harness-broker/0.2` Substrate
 
-Status: ready for implementation design review  
-Date: 2026-06-04  
+Status: CANONICAL — reflects the shipped implementation as of 2026-06-07.  
+Supersedes: `HEADLESS_TMUX.md`, `broker-gaps.md`, `docs/harness-broker-hrc-run-requirements.md`, `docs/T-01862-IMPL-PLAN.md`, `docs/T-01862-PH2-DELETION-MAP.md` (all collapsed into this doc and removed).  
+Date: 2026-06-07 (originated 2026-06-04 as the T-01862 implementation spec)  
 Primary systems: HRC runtime control plane, agent-spaces compiler/contracts, Harness Broker protocol/runtime  
-Hard protocol constraint: `harness-broker/0.1` is legacy and must be deleted. New and migrated code must carry forward only `harness-broker/0.2`.
+Protocol constraint (shipped): `harness-broker/0.1` is decommissioned. Active source/test code carries only `harness-broker/0.2`.
+
+> This document originated as the T-01862 implementation spec and is retained as the canonical broker-substrate spec. Sections framed as "Implementation Plan" / "Migration Strategy" describe the now-shipped design. Where the original spec's intent differs from the shipped code, the shipped behavior is annotated inline (see §8, §11.1, §12.2, §15). Consolidated durable facts from the superseded docs are in Appendix A.
 
 ## 1. Summary
 
@@ -784,6 +787,8 @@ If the deployment process can gate on active runs before upgrade, prefer drainin
 
 ### 11.1 Remove v0.1 From `spaces-harness-broker-protocol`
 
+> Note (shipped state): the `packages/harness-broker-protocol/*`, `packages/harness-broker-client/*`, `packages/aspc*`, `packages/agent-spaces/*`, and `packages/spaces-runtime-contracts/*` paths below live in the **agent-spaces** repository, not in this hrc-runtime workspace. hrc-runtime consumes them as the published, dist-only dependency `spaces-harness-broker-protocol` (and siblings). These paths are listed for cross-repo audit; there is no local workspace package by these names.
+
 Update protocol types:
 
 ```text
@@ -803,7 +808,7 @@ export const SUPPORTED_BROKER_PROTOCOL_VERSIONS = [
 ] as const satisfies readonly BrokerProtocolVersion[]
 ```
 
-Remove `BrokerMethodV1` as an active concept. The protocol method set is v0.2. If a method grouping type remains for readability, name it without implying v1/v2 coexistence:
+The protocol method set is v0.2. The original spec proposed removing `BrokerMethodV1` outright; the shipped state keeps `BrokerMethodV1` as a readability grouping alias in the consumed protocol dep — `spaces-harness-broker-protocol` `commands.d.ts:7` defines `BrokerMethodV1 = …` and `BrokerMethodV2 = BrokerMethodV1 | …`. It is a naming grouping, not a live v1/v2 coexistence: only `harness-broker/0.2` is negotiated. A method grouping type for readability looks like:
 
 ```ts
 export type BrokerMethod =
@@ -1163,7 +1168,7 @@ Implementation is complete when all of the following are true:
 17. Harness Broker accepts only `harness-broker/0.2`.
 18. ASP emits only `BrokerExecutionProfile.brokerProtocol='harness-broker/0.2'`.
 19. Validators reject `harness-broker/0.1`.
-20. Active source/test paths contain no `harness-broker/0.1` references except intentionally archived historical documentation excluded from builds/tests.
+20. Active source/test paths contain no *live* `harness-broker/0.1` references. The literal string still appears (~21 files as of 2026-06-07) in decommission comments, red-test fixtures asserting rejection, and historical docs — these are intentional. The gate is "no active code path negotiates/accepts v0.1," not "zero literal matches." Scope the grep to exclude comments, `*.red.test.*` fixtures, and docs.
 21. Run completion after server restart is observable through persisted run status/events even if the original HTTP request disconnected.
 22. Zombie timeout does not fire for a recovered in-flight run whose broker is live and replaying events.
 23. Validation uses a real installed HRC binary and a real restart, not only unit tests.
@@ -1213,3 +1218,33 @@ A nonterminal harness-broker runtime is recoverable iff HRC has a verified durab
 ```
 
 Everything else follows from that invariant.
+
+## Appendix A: Consolidated durable facts from superseded docs
+
+The following operational facts were collapsed from `HEADLESS_TMUX.md`, `broker-gaps.md`, `docs/harness-broker-hrc-run-requirements.md`, `docs/T-01862-IMPL-PLAN.md`, and `docs/T-01862-PH2-DELETION-MAP.md`. They supplement the body above; where they restate a body section, that section governs.
+
+### A.1 Three-plane ownership boundary (from harness-broker-hrc-run-requirements.md)
+
+- **ASP** compiles immutable runtime plans (what to run). **HRC** owns sessions, routing, tmux/lease allocation, persistence, reconcile, sweep, reuse, and reaping (where/how to host). **Broker** owns harness execution and normalized event emission over `harness-broker/0.2`.
+- HRC **must not**: import harness packages, parse Codex JSONL directly, or synthesize an `InvocationStartRequest`. HRC consumes only the compiled profile and the broker's normalized events.
+- Broker process is resolved as `deps.brokerCommand ?? env HRC_HARNESS_BROKER_CMD ?? 'harness-broker'` (`broker/controller.ts`). *Known limitation:* the originally-speced four-source resolution (bun bin / node_modules binary / spaces snapshot / env) is not implemented; only env+default exist.
+- Compiled-profile selector **rejects** unsupported protocol versions rather than falling back. Default-deny permission posture.
+
+### A.2 Runtime-hosting choke point & predicate selection (from T-01862-PH2-DELETION-MAP.md)
+
+- All hosting decisions route through `broker/runtime-hosting.ts`: `parseBrokerRuntimeHostingState` / `requireBrokerRuntimeHostingState` plus the predicates `hasDurableBrokerEndpoint`, `hasLeasedBrokerSubstrate`, `hasBrokerPresentation`, `canOperatorAttach`, `canUseDirectPaneFallback`, `brokerLeaseIdentityMatches`.
+- **Predicate-selection rule:** interactive durability gates key off `hasLeasedBrokerSubstrate`, **not** `hasDurableBrokerEndpoint`. Interrupt/terminate/liveness routing remains a `transport` route-label by surface kind (not a durability predicate).
+- Allocator splits into three concern groups: **substrate** (socketPath, session/window/pane, brokerWindow, generation, eventLedgerPath), **presentation** (tuiWindow + attachCommand; `tmux-tui` only), **endpoint/auth** (brokerIpcSocketPath, attachToken). The serialize-side persistence path remains unmigrated by design.
+
+### A.3 Identity, dispatch, and inspect (from broker-gaps.md, T-01862-IMPL-PLAN.md)
+
+- A prompt run and a no-prompt run on the same runtime share the **same broker-owned runtime identity**; identity is broker-state, not a function of the legacy launch row.
+- Dry-run/preview exposes dispatch overlay fields without starting the harness.
+- `runtimeStateJson.broker` persists the hosting shape (substrate/presentation/endpoint); `brokerInvocations.brokerProtocol` persists the negotiated `harness-broker/0.2`.
+- Lease identity requires `brokerWindow` always; `tuiWindow` is required only for `tmux-tui` presentation.
+- Per-runtime lease-socket inspect surface is used for liveness/reattach; the broker runs in leased tmux strictly as a process container, never as a send-keys surface (direct send-keys fallback only when `presentation.kind === 'tmux-tui'`).
+- Inter-agent DM is via **hrcchat** (not "agentchat"); Codex OTEL injection is retired.
+
+### A.4 Reconcile failure mode eliminated (from HEADLESS_TMUX.md)
+
+- The blanket `broker_orphaned_on_restart` GC loop (and its headless fallthrough) is **gone** (`startup-reconcile.ts`). A daemon restart no longer kills an in-flight headless broker child; durable runtimes with a verified durable endpoint + leased substrate are skipped by reconcile and reattached. Stale/identity-mismatched leases are GC'd with `broker_tmux_lease_stale_on_restart`; legacy rows migrate via `broker_protocol_legacy_unsupported_on_startup` / `broker_legacy_no_durable_endpoint_on_restart`.

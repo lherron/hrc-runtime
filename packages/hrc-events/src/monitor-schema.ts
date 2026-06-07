@@ -2,7 +2,7 @@
  * Monitor-domain event schema.
  *
  * Defines the shape of stdout lines emitted by `hrc monitor` (§10 of
- * MONITOR_PROPOSAL.md) and the result / failure-kind discriminators
+ * docs/monitor-spec.md) and the result / failure-kind discriminators
  * mandated by FROZEN answers Q2 and Q5.
  *
  * These are the *monitor output* types, distinct from the hook-derived

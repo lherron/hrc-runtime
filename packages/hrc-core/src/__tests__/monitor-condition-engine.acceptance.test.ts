@@ -221,7 +221,7 @@ async function waitForCondition(
   })
 }
 
-describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL section 6)', () => {
+describe('monitor condition engine acceptance (T-01288 / docs/monitor-spec.md section 6)', () => {
   test.each([
     ['turn-finished', 'turn.finished', 'turn_succeeded'],
     ['idle', 'runtime.idle', 'idle'],
@@ -547,7 +547,7 @@ describe('monitor condition engine acceptance (T-01288 / MONITOR_PROPOSAL sectio
       'context_changed',
     ],
   ] as const)(
-    'covers MONITOR_PROPOSAL §7.3 wait exit mapping for %s',
+    'covers docs/monitor-spec.md §7.3 wait exit mapping for %s',
     async (_label, state, condition, exitCode, result) => {
       const [{ createMonitorReader }, { createMonitorConditionEngine }] = await Promise.all([
         loadMonitorReaderModule(),

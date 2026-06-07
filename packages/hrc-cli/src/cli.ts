@@ -1966,7 +1966,7 @@ function emitScopeCommandErrorJson(
  * the wrapped message so the top-level `fatal()` handler prints it with the
  * `hrc:` prefix.
  */
-function explainScopeCommandError(
+export function explainScopeCommandError(
   command: 'attach' | 'run' | 'start',
   err: unknown,
   scopeInput: string,
@@ -2027,6 +2027,7 @@ function explainScopeCommandError(
     if (err.code === HrcErrorCode.RUNTIME_UNAVAILABLE) {
       const detail = (err.detail ?? {}) as {
         code?: string
+        message?: string
         route?: string
         flag?: string
         runId?: string
@@ -2040,6 +2041,14 @@ function explainScopeCommandError(
       const lines = [`cannot ${command} "${scopeInput}": ${err.message}`]
       if (detail.code) {
         lines.push(`  reason: ${detail.code}`)
+      }
+      // The broker-start path (e.g. `broker_start_failed`) carries its actual
+      // root cause in `detail.message` (e.g. "Failed to connect to broker unix
+      // socket") rather than the admission-shape `detail.diagnostics[]`. Surface
+      // it when present and distinct from the top-line message — otherwise the
+      // operator only sees the generic reason code and has to grep daemon logs.
+      if (detail.message && detail.message !== err.message) {
+        lines.push(`  cause: ${detail.message}`)
       }
       if (detail.route) {
         lines.push(`  route: ${detail.route}${detail.flag ? ` (flag ${detail.flag})` : ''}`)
@@ -3340,7 +3349,7 @@ Exit codes:
       await cmdSessionReport(args)
     })
 
-  // -- monitor group (MONITOR_PROPOSAL F2a) ----------------------------------
+  // -- monitor group (docs/monitor-spec.md F2a) ----------------------------------
 
   const monitor = program
     .command('monitor')

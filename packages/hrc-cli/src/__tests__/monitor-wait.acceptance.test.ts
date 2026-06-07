@@ -302,7 +302,7 @@ describe('monitor wait CLI acceptance (T-01291 / F2c)', () => {
       'context_changed',
     ],
   ] as const)(
-    'matches MONITOR_PROPOSAL §7.3 exit semantics for --until %s',
+    'matches docs/monitor-spec.md §7.3 exit semantics for --until %s',
     async (condition, state, exitCode, result) => {
       const args = [
         'monitor',

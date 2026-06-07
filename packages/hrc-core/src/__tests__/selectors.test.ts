@@ -180,7 +180,7 @@ describe('Selector kind guards (T-00949)', () => {
 })
 
 // ===================================================================
-// Monitor selector grammar (T-01285 / MONITOR_PROPOSAL.md §5)
+// Monitor selector grammar (T-01285 / docs/monitor-spec.md §5)
 // ===================================================================
 
 const monitorSelectorCases = [

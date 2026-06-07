@@ -89,6 +89,30 @@ import {
 
 const DEFAULT_BROKER_COMMAND = 'harness-broker'
 const DEFAULT_BROKER_ARGS = ['run', '--transport', 'stdio']
+
+// Durable-broker connect race (T-02009). The leased-tmux allocator launches the
+// broker window (`exec harness-broker run --transport unix --socket …`) and
+// returns the socket path WITHOUT waiting for the broker to bind its listener.
+// The very next thing we do is dial that path via `connectUnix`, which is a
+// single `net.connect()` with no retry — so if the freshly-spawned broker has
+// not bound yet, the dial fails ENOENT/ECONNREFUSED and the whole start aborts
+// as `broker_start_failed` (an operator just retries `hrc run` and it works).
+// Bridge that gap with a bounded connect-retry: only socket-not-ready failures
+// are retried; any other dial error (path budget, etc.) throws immediately.
+const BROKER_UNIX_CONNECT_MAX_ATTEMPTS = 24
+const BROKER_UNIX_CONNECT_BASE_DELAY_MS = 25
+const BROKER_UNIX_CONNECT_MAX_DELAY_MS = 200
+const BROKER_UNIX_CONNECT_ATTEMPT_TIMEOUT_MS = 1_000
+// node socket-connect error codes that mean "the listener isn't up YET" — the
+// broker is still booting inside its tmux window. EPIPE/ECONNRESET cover a
+// listener that accepted then dropped mid-handshake during its own startup.
+const BROKER_UNIX_CONNECT_RETRYABLE_CODES = new Set([
+  'ENOENT',
+  'ECONNREFUSED',
+  'EAGAIN',
+  'EPIPE',
+  'ECONNRESET',
+])
 const USER_INITIATED_CONTINUATION_CLEAR_REASONS = new Set(['prompt_input_exit', 'logout', 'clear'])
 // Lever 2 graceful exit: the SUBSET of user-initiated continuation-clear reasons
 // that mean the operator is LEAVING the session (so the broker-tmux lease should
@@ -599,7 +623,10 @@ export class HarnessBrokerController {
 
       const durableSocketPath = tmuxAllocation?.brokerIpcSocketPath
       if (durableSocketPath) {
-        client = await this.brokerUnixClientFactory({ socketPath: durableSocketPath })
+        client = await this.connectDurableBrokerWithRetry(
+          durableSocketPath,
+          String(input.identity.runtimeId)
+        )
         markPhase('broker-connect-unix')
       } else {
         client = input.brokerClient ?? (await this.brokerClientFactory(startOptions))
@@ -815,6 +842,53 @@ export class HarnessBrokerController {
       })
       return { ok: false, error: controllerError }
     }
+  }
+
+  /**
+   * Dial a freshly-allocated durable broker's Unix socket, tolerating the boot
+   * race where the leased-tmux allocator has launched the broker window but the
+   * broker has not yet bound its listener (T-02009). Retries ONLY socket-not-ready
+   * connect failures; a non-retryable dial error (e.g. socket-path budget) or a
+   * fully exhausted budget rethrows the last error so `start()` still surfaces it
+   * as `broker_start_failed`.
+   */
+  private async connectDurableBrokerWithRetry(
+    socketPath: string,
+    runtimeId: string
+  ): Promise<DurableBrokerClientLike> {
+    let lastError: unknown
+    for (let attempt = 1; attempt <= BROKER_UNIX_CONNECT_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.brokerUnixClientFactory({
+          socketPath,
+          timeoutMs: BROKER_UNIX_CONNECT_ATTEMPT_TIMEOUT_MS,
+        })
+      } catch (error) {
+        lastError = error
+        if (
+          attempt >= BROKER_UNIX_CONNECT_MAX_ATTEMPTS ||
+          !isBrokerSocketNotReadyError(error)
+        ) {
+          throw error
+        }
+        const delayMs = Math.min(
+          BROKER_UNIX_CONNECT_MAX_DELAY_MS,
+          BROKER_UNIX_CONNECT_BASE_DELAY_MS * attempt
+        )
+        this.logger.info?.('broker.connect.retry', {
+          runtimeId,
+          attempt,
+          maxAttempts: BROKER_UNIX_CONNECT_MAX_ATTEMPTS,
+          delayMs,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        await delay(delayMs)
+      }
+    }
+    // Unreachable: the loop returns, or throws on the final attempt.
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('broker unix connect failed without an error')
   }
 
   async waitForAttachedStartReady(
@@ -2306,6 +2380,31 @@ function isControllerFencedError(error: unknown): boolean {
     error !== null &&
     (error as { code?: number }).code === BrokerErrorCode.ControllerFenced
   )
+}
+
+/**
+ * True when a durable-broker Unix dial failed because the broker had not bound
+ * its listener YET (T-02009 boot race) — safe to retry. The broker client wraps
+ * the node socket error in a `BrokerTransportError` carrying the original error
+ * on `.causeError`; we read that node `.code`. A connect timeout (the broker is
+ * mid-bind) is also retryable.
+ */
+function isBrokerSocketNotReadyError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  const causeCode = (error as { causeError?: { code?: unknown } }).causeError?.code
+  if (typeof causeCode === 'string' && BROKER_UNIX_CONNECT_RETRYABLE_CODES.has(causeCode)) {
+    return true
+  }
+  // Fallback to the node error's own code when it surfaces directly, and to the
+  // transport's timeout message ("Timed out connecting to broker unix socket").
+  const directCode = (error as { code?: unknown }).code
+  if (typeof directCode === 'string' && BROKER_UNIX_CONNECT_RETRYABLE_CODES.has(directCode)) {
+    return true
+  }
+  const message = error instanceof Error ? error.message : ''
+  return message.includes('Timed out connecting to broker unix socket')
 }
 
 function toControllerError(code: string, error: unknown): BrokerControllerError {

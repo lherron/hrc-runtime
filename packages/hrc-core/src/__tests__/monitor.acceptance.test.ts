@@ -174,7 +174,7 @@ async function collect(iterable: AsyncIterable<unknown>, limit = 200): Promise<u
   return events
 }
 
-describe('monitor acceptance: selector resolver (T-01286 / MONITOR_PROPOSAL section 5)', () => {
+describe('monitor acceptance: selector resolver (T-01286 / docs/monitor-spec.md section 5)', () => {
   test('resolves every F0 monitor selector kind to live state with the current event high-water mark', async () => {
     const { createMonitorReader } = await loadMonitorModule()
     const state = createFixtureState()

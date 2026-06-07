@@ -143,27 +143,27 @@ describe('monitor schema acceptance', () => {
   })
 
   it('requires structured monitor harness audit coverage', () => {
-    const auditPath = join(import.meta.dir, '../../MONITOR_HARNESS_AUDIT.md')
+    // Harness signal-coverage was collapsed from MONITOR_HARNESS_AUDIT.md into
+    // the canonical monitor spec (docs/monitor-spec.md §8) during the spec cleanup.
+    const specPath = join(import.meta.dir, '../../../../docs/monitor-spec.md')
 
-    expect(existsSync(auditPath)).toBe(true)
+    expect(existsSync(specPath)).toBe(true)
 
-    const audit = readFileSync(auditPath, 'utf8')
+    const spec = readFileSync(specPath, 'utf8')
 
     for (const harness of ['Claude', 'Codex', 'Pi', 'tmux']) {
-      const section = audit.match(
-        new RegExp(`^##\\s+${harness}\\b(?<body>[\\s\\S]*?)(?=^##\\s|(?![\\s\\S]))`, 'm')
+      // Each harness has an h3 section under "## 8. Harness signal coverage".
+      const section = spec.match(
+        new RegExp(`^###\\s+${harness}\\b(?<body>[\\s\\S]*?)(?=^###\\s|^##\\s|(?![\\s\\S]))`, 'm')
       )?.groups?.body
 
       expect(section, `${harness} section is missing`).toBeString()
 
-      const gaps = section?.match(/(^###\s+Gaps\b(?<body>[\s\S]*?)(?=^###\s+|^##\s+|(?![\s\S])))/m)
-        ?.groups?.body
+      // Gaps must be documented as a markdown list item (or a dedicated subsection).
+      const hasGaps =
+        /^\s*[-*]\s+\*\*Gaps:\*\*/m.test(section ?? '') || /^###\s+Gaps\b/m.test(section ?? '')
 
-      expect(gaps, `${harness} Gaps subsection is missing`).toBeString()
-      expect(
-        /(^\s*[-*]\s+\S)|(^\s*\|.*\|\s*$)/m.test(gaps ?? ''),
-        `${harness} Gaps subsection must use a markdown list or table`
-      ).toBe(true)
+      expect(hasGaps, `${harness} Gaps must be documented as a markdown list/subsection`).toBe(true)
     }
   })
 })

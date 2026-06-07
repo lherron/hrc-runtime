@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
+import { BrokerTransportError } from 'spaces-harness-broker-client'
 import type {
   BrokerHealthRequest,
   BrokerHealthResponse,
@@ -375,6 +376,63 @@ describe('HarnessBrokerController', () => {
       allocatedAt: NOW,
       generation: 1,
     })
+  })
+
+  // T-02009 — durable-broker Unix dial boot race. The leased-tmux/headless
+  // allocator launches the broker window and returns the IPC socket path BEFORE
+  // the broker has bound its listener, so the very next connectUnix dial can fail
+  // ENOENT/ECONNREFUSED. The controller retries socket-not-ready failures instead
+  // of aborting the whole start as broker_start_failed.
+  it('retries the durable broker unix dial when the socket is not listening yet', async () => {
+    const fake = new FakeBrokerClient()
+    let attempts = 0
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      // Headless codex profile (makeStartInput) with NO injected substrate
+      // allocator → the controller synthesizes a durable allocation carrying a
+      // brokerIpcSocketPath and dials it via brokerUnixClientFactory.
+      brokerUnixClientFactory: async () => {
+        attempts++
+        if (attempts < 3) {
+          throw new BrokerTransportError(
+            'Failed to connect to broker unix socket',
+            Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' })
+          )
+        }
+        return fake
+      },
+      now: () => NOW,
+    })
+
+    const result = await controller.start(makeStartInput())
+
+    expect(result.ok).toBe(true)
+    expect(attempts).toBe(3)
+  })
+
+  it('does NOT retry a non-socket-ready durable dial failure (fails closed once)', async () => {
+    let attempts = 0
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerUnixClientFactory: async () => {
+        attempts++
+        // EACCES is a real permission failure, not a boot race — retrying it
+        // would just burn the budget. The controller must fail closed at once.
+        throw new BrokerTransportError(
+          'Failed to connect to broker unix socket',
+          Object.assign(new Error('connect EACCES'), { code: 'EACCES' })
+        )
+      },
+      now: () => NOW,
+    })
+
+    const result = await controller.start(makeStartInput())
+
+    expect(result.ok).toBe(false)
+    expect(attempts).toBe(1)
+    if (!result.ok) {
+      expect(result.error.code).toBe('broker_start_failed')
+    }
   })
 
   it('pauses attached broker-tmux launch before invocation.start until resumed', async () => {
