@@ -1930,6 +1930,37 @@ async function cmdAdopt(args: string[]): Promise<void> {
 }
 
 /**
+ * Emit a structured JSON error envelope for the scope commands (run/start/attach)
+ * when `--json` is requested. Preserves the full HrcDomainError `detail` payload —
+ * including the broker rejection `code` and ASP `diagnostics[]` — that the human
+ * renderer summarizes. Writes the JSON to stdout and exits non-zero via
+ * CliStatusExit so the top-level handler does not re-prefix the line with `hrc:`.
+ */
+function emitScopeCommandErrorJson(
+  command: 'attach' | 'run' | 'start',
+  err: unknown,
+  scopeInput: string,
+  sessionRef?: string
+): never {
+  const base = isHrcDomainErrorLike(err)
+    ? { code: err.code, message: err.message, detail: err.detail ?? {} }
+    : {
+        code: 'internal',
+        message: err instanceof Error ? err.message : String(err),
+        detail: {} as Record<string, unknown>,
+      }
+  printJson({
+    error: {
+      ...base,
+      command,
+      scope: scopeInput,
+      ...(sessionRef ? { sessionRef } : {}),
+    },
+  })
+  throw new CliStatusExit(1)
+}
+
+/**
  * Convert common failure modes from `hrc run` into actionable error messages.
  * Preserves the original message for unrecognized cases. Returns an Error with
  * the wrapped message so the top-level `fatal()` handler prints it with the
@@ -1986,6 +2017,44 @@ function explainScopeCommandError(
 
     if (err.code === HrcErrorCode.UNSUPPORTED_CAPABILITY) {
       return new Error(`cannot ${command} "${scopeInput}": ${err.message}`)
+    }
+
+    // Broker compile/admission rejection. The HrcDomainError `detail` carries the
+    // specific rejection `code`, the ASP compiler `diagnostics[]`, and routing
+    // context (route/flag/runId) — all of which the bare one-line fallback below
+    // would discard. Expand them so operators see *why* admission failed without
+    // having to grep the daemon logs.
+    if (err.code === HrcErrorCode.RUNTIME_UNAVAILABLE) {
+      const detail = (err.detail ?? {}) as {
+        code?: string
+        route?: string
+        flag?: string
+        runId?: string
+        diagnostics?: Array<{
+          level?: string
+          code?: string
+          message?: string
+          profileId?: string
+        }>
+      }
+      const lines = [`cannot ${command} "${scopeInput}": ${err.message}`]
+      if (detail.code) {
+        lines.push(`  reason: ${detail.code}`)
+      }
+      if (detail.route) {
+        lines.push(`  route: ${detail.route}${detail.flag ? ` (flag ${detail.flag})` : ''}`)
+      }
+      for (const diag of detail.diagnostics ?? []) {
+        const where = diag.profileId ? ` [${diag.profileId}]` : ''
+        const code = diag.code ? ` ${diag.code}` : ''
+        lines.push(
+          `  • ${diag.level ?? 'error'}${where}${code}: ${diag.message ?? ''}`.replace(/\s+$/, '')
+        )
+      }
+      if (detail.runId) {
+        lines.push(`  runId: ${detail.runId}  (grep hrc-server logs for full diagnostics)`)
+      }
+      return new Error(lines.join('\n'))
     }
 
     // Other domain errors — show the code so operators can look it up
@@ -2047,6 +2116,7 @@ async function cmdRun(args: string[]): Promise<void> {
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
+  const jsonOutput = hasFlag(args, '--json')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
@@ -2057,6 +2127,7 @@ async function cmdRun(args: string[]): Promise<void> {
       '--dry-run',
       '--debug',
       '--no-register',
+      '--json',
       '--project-id',
       '--project-root',
     ],
@@ -2158,6 +2229,9 @@ async function cmdRun(args: string[]): Promise<void> {
     // the broker-pushed session summary recorded at graceful /quit, if any.
     await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
   } catch (err) {
+    if (jsonOutput) {
+      emitScopeCommandErrorJson('run', err, scopeInput, sessionRef)
+    }
     throw explainScopeCommandError('run', err, scopeInput, sessionRef)
   }
 }
@@ -2174,6 +2248,7 @@ async function cmdStart(args: string[]): Promise<void> {
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
+  const jsonOutput = hasFlag(args, '--json')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
@@ -2184,6 +2259,7 @@ async function cmdStart(args: string[]): Promise<void> {
       '--dry-run',
       '--debug',
       '--no-register',
+      '--json',
       '--project-id',
       '--project-root',
     ],
@@ -2230,6 +2306,9 @@ async function cmdStart(args: string[]): Promise<void> {
       runtime,
     })
   } catch (err) {
+    if (jsonOutput) {
+      emitScopeCommandErrorJson('start', err, scopeInput, sessionRef)
+    }
     throw explainScopeCommandError('start', err, scopeInput, sessionRef)
   }
 }
@@ -2554,6 +2633,7 @@ async function cmdAttach(args: string[]): Promise<void> {
 
   const target = requireArg(args, 0, '<scope>')
   const dryRun = hasFlag(args, '--dry-run')
+  const jsonOutput = hasFlag(args, '--json')
 
   if (target.startsWith('rt-')) {
     if (dryRun) {
@@ -2597,6 +2677,9 @@ async function cmdAttach(args: string[]): Promise<void> {
     )
     execAttachCommand(descriptor.argv, descriptor.env)
   } catch (err) {
+    if (jsonOutput) {
+      emitScopeCommandErrorJson('attach', err, target, sessionRef)
+    }
     throw explainScopeCommandError('attach', err, target, sessionRef)
   }
 }
@@ -3474,6 +3557,7 @@ Exit codes:
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
+    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
     .option('-p <text>', 'initial prompt to send to the harness')
@@ -3491,7 +3575,7 @@ Exit codes:
       const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['register'],
       })
       await cmdStart(args)
@@ -3508,6 +3592,7 @@ Exit codes:
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
+    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
     .option('-p <text>', 'initial prompt to send to the harness')
@@ -3542,7 +3627,7 @@ Exit codes:
       const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'dry-run', 'debug'],
+        booleans: ['force-restart', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['attach', 'register'],
       })
       await cmdRun(args)
@@ -3641,11 +3726,12 @@ Exit codes:
     .description('attach to a live runtime')
     .argument('[scope]', 'scope or runtime ID to attach to')
     .option('--dry-run', 'local plan preview — no server calls')
+    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .action(async (scope, _opts, cmd: Command) => {
       const positionals = scope !== undefined ? [scope] : []
       const args = toLegacyArgv(positionals, cmd.opts(), {
         strings: [],
-        booleans: ['dry-run'],
+        booleans: ['dry-run', 'json'],
       })
       await cmdAttach(args)
     })
