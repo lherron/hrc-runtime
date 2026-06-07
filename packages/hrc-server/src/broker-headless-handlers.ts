@@ -25,6 +25,7 @@ import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
+  classifyBrokerInputFailure,
   isBrokerRuntimeQueueCapable,
   isRunActive,
   isTerminalBrokerInputFailure,
@@ -251,6 +252,12 @@ export async function executeHeadlessBrokerInputTurn(
       ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
     })
 
+  // T-01996: wait for the post-restart serving-controller warmup so the first
+  // dispatch sees the broker already bound instead of racing a cold controller.
+  // The promise is `.catch`-wrapped to always resolve; if warmup failed/absent we
+  // fall through to the lazy reattach path below. Never wedges.
+  await this.brokerWarmupComplete
+
   let result = await dispatchToBroker()
 
   // T-01884: a durable HEADLESS broker that survived a daemon restart has live
@@ -285,6 +292,7 @@ export async function executeHeadlessBrokerInputTurn(
       ? (result.response.reason ?? 'broker rejected invocation input')
       : result.error.message
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+    const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
     const terminalInputFailure =
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTerminalBrokerInputFailure(errorMessage)
@@ -314,16 +322,20 @@ export async function executeHeadlessBrokerInputTurn(
           }
         : {}),
     })
-    throw new HrcRuntimeUnavailableError(`headless broker input failed: ${errorMessage}`, {
+    const { headline, recommendation } = classifyBrokerInputFailure({
+      label: 'headless',
+      errorMessage,
+      brokerBindingMissing,
+      terminalInputFailure,
+    })
+    throw new HrcRuntimeUnavailableError(headline, {
       runtimeId: runtime.runtimeId,
       runId,
       invocationId,
       route: 'broker',
       cause: errorMessage,
       error: errorMessage,
-      recommendation: terminalInputFailure
-        ? 'retry the turn; HRC marked the stale broker runtime unavailable'
-        : 'inspect hrc server logs and retry after the broker is healthy',
+      recommendation,
     })
   }
 

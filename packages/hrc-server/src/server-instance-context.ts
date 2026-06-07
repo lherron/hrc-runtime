@@ -56,6 +56,14 @@ export type HrcServerInstanceForHandlers = {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   harnessBrokerController: HarnessBrokerController | undefined
+  /**
+   * Resolves once the post-construction durable-broker warmup has finished (or
+   * failed — it is `.catch`-wrapped to ALWAYS resolve, never reject). Broker
+   * input handlers await this so the first dispatch after a restart sees the
+   * serving controller already bound, instead of racing it cold. A failed/absent
+   * warmup falls through to the existing lazy reattach path; it never wedges.
+   */
+  brokerWarmupComplete?: Promise<void> | undefined
   brokerTmuxManagerFactory?: ((opts: { socketPath: string }) => ServerTmuxManager) | undefined
   generateBrokerAttachToken?: (() => string) | undefined
   brokerClientFactory?: BrokerClientFactory | undefined

@@ -1,5 +1,4 @@
 import { readFile, readdir, rm, stat } from 'node:fs/promises'
-import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { HrcErrorCode } from 'hrc-core'
 import type {
@@ -58,11 +57,22 @@ type BrokerTmuxLeaseSweepOptions = {
 
 type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
 
+/**
+ * Application-level broker liveness, observed via a `broker.health` round-trip
+ * (NOT a raw socket connect). `ok`/`degraded` are both IPC-live and attach-
+ * eligible; `shutting_down` means the broker is draining (skip binding, but the
+ * runtime is NOT dead); `unreachable` covers connect/timeout/RPC failure and is
+ * treated as non-terminal for durable runtimes (the lease may still be valid).
+ */
+export type BrokerHealthState = 'ok' | 'degraded' | 'shutting_down' | 'unreachable'
+
 export type BrokerReattachProbe = {
   brokerSocketLive: boolean
   brokerWindow: TmuxPaneState | null
   tuiWindow: TmuxPaneState | null
   userExited?: boolean | undefined
+  /** Result of the `broker.health` round-trip; absent for legacy/raw probes. */
+  brokerHealth?: BrokerHealthState | undefined
 }
 
 export type DurableBrokerReattachDeps = {
@@ -70,11 +80,28 @@ export type DurableBrokerReattachDeps = {
   brokerUnixClientFactory: BrokerUnixClientFactory
   resolveAttachToken(runtime: HrcRuntimeSnapshot): Promise<string | undefined>
   probeBrokerLease(runtime: HrcRuntimeSnapshot): Promise<BrokerReattachProbe>
+  /**
+   * When false, do classification/orphan work ONLY — probe + lease-identity
+   * checks that may stale a genuinely-dead runtime — but do NOT attach+replay a
+   * live one onto the controller (it returns `broker-attachable` and is left
+   * intact for the serving controller's warmup). This keeps a single attach
+   * authority: the pre-instance reconcile classifies; the post-construction
+   * serving warm is the only path that binds onto the request-serving controller
+   * (the one with a live `notifyEvent` loop). Defaults to true (attach).
+   */
+  attach?: boolean | undefined
 }
 
 export type BrokerReattachOutcome = {
   runtimeId: string
-  state: 'broker-attached' | 'direct-tmux-degraded' | 'terminated' | 'stale' | 'broker-ipc-unavailable'
+  state:
+    | 'broker-attached'
+    | 'broker-attachable'
+    | 'broker-shutting-down'
+    | 'direct-tmux-degraded'
+    | 'terminated'
+    | 'stale'
+    | 'broker-ipc-unavailable'
   brokerAttached: boolean
   replayedThroughSeq?: number | undefined
   reason?: string | undefined
@@ -212,7 +239,35 @@ export async function reconcileStartupState(
   }
 
   await reconcileDurableBrokerStartup(db, {
-    controller: new HarnessBrokerController({ db }),
+    // ───────────────────────────────────────────────────────────────────────
+    // INVARIANT (T-01996) — SINGLE ATTACH AUTHORITY. DO NOT REINTRODUCE A
+    // THROWAWAY-CONTROLLER ATTACH HERE.
+    //
+    // This pre-instance pass runs BEFORE the HrcServerInstance (and its
+    // request-serving controller) exists — index.ts constructs the instance
+    // AFTER reconcileStartupState returns, and the serving controller cannot be
+    // built earlier because its event mapper closes over `this.notifyEvent`.
+    // Therefore this pass must do CLASSIFICATION/orphan work ONLY (attach:false):
+    // it stales genuinely-dead/legacy runtimes and leaves live durable ones
+    // intact (`broker-attachable`) for the serving controller's post-construction
+    // warmup (warmDurableBrokerBindings) to bind. That warmup is the ONLY
+    // attach+replay authority.
+    //
+    // History: this pass used to attach+replay onto a `new HarnessBrokerController`
+    // throwaway whose in-memory binding was discarded and whose event projection
+    // had no notifyEvent loop — producing fencing churn AND the cold-serving-
+    // controller race that surfaced as spurious `broker_runtime_not_active` (the
+    // "retry fixes it" failure). If you ever pass a real controller + attach:true
+    // here, you will resurrect both bugs. The stub controller below makes the
+    // invariant enforceable: it throws if anything attempts attach under
+    // attach:false.
+    // ───────────────────────────────────────────────────────────────────────
+    attach: false,
+    controller: {
+      attachAndReplay: () => {
+        throw new Error('attachAndReplay called during attach:false classification pass')
+      },
+    } as Pick<HarnessBrokerController, 'attachAndReplay'>,
     brokerUnixClientFactory: (options) =>
       BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>,
     resolveAttachToken: resolvePersistedBrokerAttachToken,
@@ -221,12 +276,15 @@ export async function reconcileStartupState(
   })
 
   // T-01875 G3: the durable endpoint/substrate-driven pass above
-  // (reconcileDurableBrokerStartup) is now the SINGLE authority for every
-  // harness-broker runtime that carries a parseable broker hosting state — it
-  // reattaches the durable ones (unix endpoint + leased-tmux substrate) and
-  // classify-once-stales the legacy/v0.1 ones with a precise reason. The blanket
+  // (reconcileDurableBrokerStartup) is the SINGLE CLASSIFICATION authority for
+  // every harness-broker runtime that carries a parseable broker hosting state —
+  // it classify-once-stales the legacy/v0.1 ones with a precise reason and (as of
+  // T-01996) leaves the LIVE durable ones intact (`broker-attachable`) WITHOUT
+  // attaching. Attach+replay onto the request-serving controller is now owned
+  // solely by the post-construction serving warmup (HrcServerInstance), so this
+  // pass no longer binds onto a throwaway controller. The blanket
   // `broker_orphaned_on_restart` GC loop (and its headless fallthrough) is GONE:
-  // a durable runtime that reattached above must NEVER fall through to an orphan
+  // a durable runtime classified above must NEVER fall through to an orphan
   // path, so this loop SKIPS durable runtimes outright.
   //
   // What remains here is the PRE-DURABLE broker-tmux lease path: legacy
@@ -322,6 +380,19 @@ export async function reconcileDurableBrokerRuntimeReattach(
   const probe = await deps.probeBrokerLease(runtime)
   const runtimeId = runtime.runtimeId
 
+  // A draining broker is NOT dead — observe and decline to bind (the shutdown-
+  // intent / graceful-exit path owns lease reap; the probe must never initiate
+  // cleanup). Skip before any stale classification so a normal shutdown does not
+  // look like a lease fault.
+  if (probe.brokerHealth === 'shutting_down') {
+    return {
+      runtimeId,
+      state: 'broker-shutting-down',
+      brokerAttached: false,
+      reason: 'broker_shutting_down',
+    }
+  }
+
   if (probe.brokerSocketLive) {
     const endpoint = getPersistedDurableBrokerEndpoint(runtime)
     if (!endpoint) {
@@ -334,6 +405,16 @@ export async function reconcileDurableBrokerRuntimeReattach(
     if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
       return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
     }
+
+    // Single attach authority: the pre-instance reconcile pass runs with
+    // attach:false and stops here once it has confirmed the runtime is live and
+    // its lease identity valid — it leaves the runtime intact (`broker-attachable`)
+    // for the request-serving controller's warmup to bind. Only the serving warm
+    // (attach:true) performs attach+replay.
+    if (deps.attach === false) {
+      return { runtimeId, state: 'broker-attachable', brokerAttached: false }
+    }
+
     const attachToken = await deps.resolveAttachToken(runtime)
     if (!attachToken) {
       return markBrokerReattachStale(db, runtime, 'broker_attach_token_missing')
@@ -520,6 +601,129 @@ export async function reattachDurableBrokerForDispatch(
   return outcome.state === 'broker-attached'
 }
 
+/** Operator-visible warmup category, derived from a BrokerReattachOutcome. */
+export type BrokerWarmupCategory =
+  | 'attached'
+  | 'skipped_shutting_down'
+  | 'ipc_unreachable_nonterminal'
+  | 'lease_identity_invalid_stale'
+  | 'attach_replay_failed'
+  | 'terminated'
+  | 'other'
+
+export type BrokerWarmupSummary = {
+  total: number
+  attached: number
+  byCategory: Record<BrokerWarmupCategory, number>
+}
+
+function warmupCategory(outcome: BrokerReattachOutcome): BrokerWarmupCategory {
+  switch (outcome.state) {
+    case 'broker-attached':
+      return 'attached'
+    case 'broker-shutting-down':
+      return 'skipped_shutting_down'
+    case 'broker-ipc-unavailable':
+    case 'direct-tmux-degraded':
+      return 'ipc_unreachable_nonterminal'
+    case 'terminated':
+      return 'terminated'
+    case 'stale':
+      return outcome.reason === 'broker_attach_replay_failed' ||
+        outcome.reason === 'broker_replay_retention_gap' ||
+        outcome.reason === 'broker_event_retention_gap'
+        ? 'attach_replay_failed'
+        : 'lease_identity_invalid_stale'
+    default:
+      return 'other'
+  }
+}
+
+/**
+ * T-01996: warm the REQUEST-SERVING controller after the HrcServerInstance is
+ * constructed. This is the SINGLE attach+replay authority — the pre-instance
+ * reconcile pass only classifies (attach:false). Binding here, on the controller
+ * that owns the live `notifyEvent` loop, means the first dispatch after a restart
+ * finds its broker already bound instead of racing a cold controller.
+ *
+ * Bounded and single-flight by construction (called once from the constructor).
+ * Never dispatches. Per-runtime outcomes are logged with a stable category so an
+ * operator can see the control loop if the intermittent failure reappears.
+ */
+export async function warmDurableBrokerBindings(
+  db: HrcDatabase,
+  deps: {
+    controller: Pick<HarnessBrokerController, 'attachAndReplay'>
+    brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
+  }
+): Promise<BrokerWarmupSummary> {
+  const brokerUnixClientFactory: BrokerUnixClientFactory =
+    deps.brokerUnixClientFactory ??
+    ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>)
+
+  const summary: BrokerWarmupSummary = {
+    total: 0,
+    attached: 0,
+    byCategory: {
+      attached: 0,
+      skipped_shutting_down: 0,
+      ipc_unreachable_nonterminal: 0,
+      lease_identity_invalid_stale: 0,
+      attach_replay_failed: 0,
+      terminated: 0,
+      other: 0,
+    },
+  }
+
+  for (const runtime of db.runtimes.listAll()) {
+    if (
+      runtime.controllerKind !== 'harness-broker' ||
+      isRuntimeUnavailableStatus(runtime.status) ||
+      !getPersistedDurableBrokerEndpoint(runtime)
+    ) {
+      continue
+    }
+    summary.total += 1
+    let outcome: BrokerReattachOutcome
+    try {
+      outcome = await reconcileDurableBrokerRuntimeReattach(db, runtime, {
+        controller: deps.controller,
+        brokerUnixClientFactory,
+        resolveAttachToken: resolvePersistedBrokerAttachToken,
+        probeBrokerLease: probePersistedBrokerLease,
+        attach: true,
+      })
+    } catch (error) {
+      // A warmup miss is never fatal: the lazy dispatch-path reattach remains the
+      // backstop. Log and move on rather than aborting the whole warmup.
+      summary.byCategory.other += 1
+      writeServerLog('WARN', 'broker.warmup.runtime_error', {
+        runtimeId: runtime.runtimeId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      continue
+    }
+    const category = warmupCategory(outcome)
+    summary.byCategory[category] += 1
+    if (category === 'attached') {
+      summary.attached += 1
+    }
+    writeServerLog('INFO', 'broker.warmup.runtime', {
+      runtimeId: runtime.runtimeId,
+      category,
+      state: outcome.state,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+    })
+  }
+
+  writeServerLog('INFO', 'broker.warmup.complete', {
+    total: summary.total,
+    attached: summary.attached,
+    byCategory: summary.byCategory,
+  })
+  return summary
+}
+
 async function resolvePersistedBrokerAttachToken(
   runtime: HrcRuntimeSnapshot
 ): Promise<string | undefined> {
@@ -554,8 +758,14 @@ async function probePersistedBrokerLease(
     brokerWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' })
     tuiWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' })
   }
+  const brokerHealth: BrokerHealthState = endpoint
+    ? await probeBrokerHealth(endpoint.socketPath)
+    : 'unreachable'
   return {
-    brokerSocketLive: endpoint ? await probeUnixSocketLive(endpoint.socketPath) : false,
+    // `ok`/`degraded` are both attach-eligible; `shutting_down`/`unreachable` are
+    // not "live" for binding purposes (callers special-case `shutting_down`).
+    brokerSocketLive: brokerHealth === 'ok' || brokerHealth === 'degraded',
+    brokerHealth,
     brokerWindow,
     tuiWindow,
   }
@@ -593,22 +803,61 @@ function toBrokerLeaseProbe(probe: BrokerReattachProbe): BrokerLeaseProbe | unde
   }
 }
 
-function probeUnixSocketLive(socketPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection(socketPath)
-    let settled = false
-    const finish = (live: boolean) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      socket.destroy()
-      resolve(live)
+/**
+ * Application-level broker liveness via a `broker.health` round-trip. Replaces
+ * the legacy raw `createConnection` probe (250ms), which only proved the kernel
+ * accepted a unix-socket connect — it could not tell whether the JSON-RPC loop
+ * was alive, and its tight timeout lost races under post-restart load (the
+ * source of the spurious `broker_runtime_not_active` failures). `connectUnix`
+ * performs a `broker.hello` handshake (already a real liveness signal) and the
+ * follow-up `health()` returns the broker's drain state, so a draining broker
+ * can be skipped rather than mistaken for dead. A generous budget is acceptable
+ * here: this runs at boot and on the rare cold-binding dispatch, not on the hot
+ * path. Any connect/timeout/RPC failure maps to `unreachable` (non-terminal for
+ * durable runtimes), never to a false "dead" classification.
+ */
+const BROKER_HEALTH_PROBE_BUDGET_MS = 2000
+
+async function probeBrokerHealth(socketPath: string): Promise<BrokerHealthState> {
+  let client: BrokerClient | undefined
+  try {
+    client = await BrokerClient.connectUnix({
+      socketPath,
+      timeoutMs: BROKER_HEALTH_PROBE_BUDGET_MS,
+    })
+    const response = await withTimeout(
+      client.health(),
+      BROKER_HEALTH_PROBE_BUDGET_MS,
+      'broker_health_timeout'
+    )
+    switch (response.status) {
+      case 'ok':
+      case 'degraded':
+      case 'shutting_down':
+        return response.status
+      default:
+        return 'unreachable'
     }
-    socket.setTimeout(250)
-    socket.once('connect', () => finish(true))
-    socket.once('timeout', () => finish(false))
-    socket.once('error', () => finish(false))
+  } catch {
+    return 'unreachable'
+  } finally {
+    await client?.close().catch(() => undefined)
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
   })
 }
 

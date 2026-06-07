@@ -319,6 +319,49 @@ export function isTerminalBrokerInputFailure(message: string): boolean {
   return /Cannot accept input in state: (exited|failed|disposed)/.test(message)
 }
 
+/**
+ * Build the user-facing headline + `next:` recommendation for a broker input
+ * dispatch failure. Three cases, in priority order:
+ *
+ *  - terminalInputFailure: the broker invocation is in a terminal state
+ *    (exited/failed/disposed). The runtime was marked stale; a retry provisions
+ *    a fresh runtime.
+ *  - brokerBindingMissing: the dispatch returned `broker_runtime_not_active`
+ *    ("no active broker client …") AND the lazy durable reattach could not
+ *    restore the binding within this call. This is almost always transient —
+ *    the in-memory controller binding is cold right after a daemon restart, or
+ *    the 250ms liveness probe lost a race under load. The durable broker is
+ *    typically still alive, so the runtime stays `ready` and the very next turn
+ *    reattaches to the SAME runtime (preserving continuity). Tell the operator
+ *    to simply retry rather than to go spelunking in the logs.
+ *  - otherwise: an unclassified broker rejection; logs are the right next step.
+ */
+export function classifyBrokerInputFailure(opts: {
+  label: 'headless' | 'interactive'
+  errorMessage: string
+  brokerBindingMissing: boolean
+  terminalInputFailure: boolean
+}): { headline: string; recommendation: string } {
+  const { label, errorMessage, brokerBindingMissing, terminalInputFailure } = opts
+  if (terminalInputFailure) {
+    return {
+      headline: `${label} broker input failed: ${errorMessage}`,
+      recommendation: 'retry the turn; HRC marked the stale broker runtime unavailable',
+    }
+  }
+  if (brokerBindingMissing) {
+    return {
+      headline: `${label} broker connection was not live`,
+      recommendation:
+        'usually transient (commonly right after a daemon restart) — just retry; HRC reattaches to the existing runtime on the next turn',
+    }
+  }
+  return {
+    headline: `${label} broker input failed: ${errorMessage}`,
+    recommendation: 'inspect hrc server logs and retry after the broker is healthy',
+  }
+}
+
 export function isRunActive(run: HrcRunRecord): boolean {
   return run.status === 'accepted' || run.status === 'started' || run.status === 'running'
 }

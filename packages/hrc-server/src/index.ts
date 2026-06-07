@@ -142,7 +142,11 @@ import {
   timestamp,
   unlinkIfExists,
 } from './server-util.js'
-import { appendMissingHeadlessTurnCompleted, reconcileStartupState } from './startup-reconcile.js'
+import {
+  appendMissingHeadlessTurnCompleted,
+  reconcileStartupState,
+  warmDurableBrokerBindings,
+} from './startup-reconcile.js'
 import { toStatusSessionView, toStatusTmuxView } from './status-views.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
@@ -357,6 +361,8 @@ class HrcServerInstance implements HrcServer {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   harnessBrokerController: HarnessBrokerController | undefined
+  /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
+  brokerWarmupComplete?: Promise<void> | undefined
   readonly ctx: ServerContext
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
@@ -498,6 +504,22 @@ class HrcServerInstance implements HrcServer {
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
+
+    // T-01996: eagerly warm the request-serving broker controller. The pre-instance
+    // reconcile only classified durable runtimes (attach:false); this is the sole
+    // attach+replay authority and the controller here owns the live notifyEvent
+    // loop. Single-flight (constructor-scoped) and `.catch`-wrapped so it ALWAYS
+    // resolves — broker input handlers await it and fall through to the lazy
+    // reattach path on failure, never wedging on a rejected promise.
+    this.brokerWarmupComplete = warmDurableBrokerBindings(this.db, {
+      controller: this.getHarnessBrokerController(),
+    })
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        writeServerLog('WARN', 'broker.warmup.failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
 
     if (typeof options.otelEndpoint === 'string' && options.otelEndpoint.length > 0) {
       // Test-only override: caller supplies a fixed endpoint, no listener started.

@@ -1456,3 +1456,69 @@ describe('Scenario 10 (G6): active RUN activity refreshed on broker.attach/repla
     expect(run?.status).toMatch(/^(failed|stale)$/)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T-01996: single attach authority + broker.health drain handling
+// ─────────────────────────────────────────────────────────────────────────────
+describe('T-01996: classification-only pass (attach:false)', () => {
+  it('returns broker-attachable WITHOUT attaching for a live, identity-valid durable runtime', async () => {
+    seedInteractiveNormalizedRuntime(db)
+    const client = new MockDurableBrokerClient()
+
+    const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(
+      db,
+      readRuntime(INTERACTIVE_RUNTIME_ID),
+      {
+        attach: false,
+        controller: makeController(),
+        brokerUnixClientFactory: async () => client,
+        // Must NOT be consulted on the classification-only path.
+        resolveAttachToken: async () => {
+          throw new Error('resolveAttachToken must not run under attach:false')
+        },
+        probeBrokerLease: async () => ({
+          brokerSocketLive: true,
+          brokerHealth: 'ok',
+          brokerWindow: INTERACTIVE_BROKER_WINDOW,
+          tuiWindow: TUI_WINDOW,
+        }),
+      }
+    )
+
+    expect(outcome.state).toBe('broker-attachable')
+    expect(outcome.brokerAttached).toBe(false)
+    // No attach+replay performed: the serving warm owns that.
+    expect(client.calls).not.toContain('attach')
+    // The runtime is left intact (not staled) for the serving warm to bind.
+    expect(readRuntime(INTERACTIVE_RUNTIME_ID).status).not.toBe('stale')
+  })
+})
+
+describe('T-01996: broker.health shutting_down is skipped, not staled', () => {
+  it('returns broker-shutting-down and leaves the runtime intact', async () => {
+    seedInteractiveNormalizedRuntime(db)
+    const client = new MockDurableBrokerClient()
+
+    const outcome = await reconcile.reconcileDurableBrokerRuntimeReattach(
+      db,
+      readRuntime(INTERACTIVE_RUNTIME_ID),
+      {
+        controller: makeController(),
+        brokerUnixClientFactory: async () => client,
+        resolveAttachToken: async () => ATTACH_TOKEN,
+        probeBrokerLease: async () => ({
+          brokerSocketLive: false,
+          brokerHealth: 'shutting_down',
+          brokerWindow: INTERACTIVE_BROKER_WINDOW,
+          tuiWindow: TUI_WINDOW,
+        }),
+      }
+    )
+
+    expect(outcome.state).toBe('broker-shutting-down')
+    expect(outcome.brokerAttached).toBe(false)
+    expect(client.calls).not.toContain('attach')
+    // A draining broker is not dead — the runtime must NOT be staled by the probe.
+    expect(readRuntime(INTERACTIVE_RUNTIME_ID).status).not.toBe('stale')
+  })
+})

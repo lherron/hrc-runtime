@@ -52,6 +52,7 @@ import {
   assertRuntimeNotBusy,
   isBrokerRuntimeQueueCapable,
   isRunActive,
+  classifyBrokerInputFailure,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
 } from './require-helpers.js'
@@ -447,6 +448,12 @@ export async function executeInteractiveBrokerInputTurn(
       ...(queueCapable ? { policy: { whenBusy: 'queue' as const } } : {}),
     })
 
+  // T-01996: wait for the post-restart serving-controller warmup so the first
+  // dispatch sees the broker already bound instead of racing a cold controller.
+  // The promise always resolves (.catch-wrapped); on failure/absence we fall
+  // through to the lazy reattach path below. Never wedges.
+  await this.brokerWarmupComplete
+
   let result = await dispatchToBroker()
 
   // T-01801: a durable IPC broker that survived a daemon restart has live broker
@@ -493,6 +500,7 @@ export async function executeInteractiveBrokerInputTurn(
       } satisfies DispatchTurnResponse)
     }
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+    const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
     const terminalInputFailure =
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTerminalBrokerInputFailure(errorMessage)
@@ -525,16 +533,20 @@ export async function executeInteractiveBrokerInputTurn(
           }
         : {}),
     })
-    throw new HrcRuntimeUnavailableError(`interactive broker input failed: ${errorMessage}`, {
+    const { headline, recommendation } = classifyBrokerInputFailure({
+      label: 'interactive',
+      errorMessage,
+      brokerBindingMissing,
+      terminalInputFailure,
+    })
+    throw new HrcRuntimeUnavailableError(headline, {
       runtimeId: runtime.runtimeId,
       runId,
       invocationId,
       route: 'interactive-broker',
       cause: errorMessage,
       error: errorMessage,
-      recommendation: terminalInputFailure
-        ? 'retry the turn; HRC marked the stale broker runtime unavailable'
-        : 'inspect hrc server logs and retry after the broker is healthy',
+      recommendation,
     })
   }
 
