@@ -150,8 +150,9 @@ function semanticEvent(envelope: PiHookEnvelopeInput, eventKind: string, payload
 }
 
 function normalizePiPayload(eventName: string, payload: Record<string, unknown>): PiDerivedEvent[] {
+  const toolUseId = getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
+
   if (eventName === 'tool_execution_start') {
-    const toolUseId = getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
     const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
     if (!toolUseId) return []
     return [
@@ -165,7 +166,6 @@ function normalizePiPayload(eventName: string, payload: Record<string, unknown>)
   }
 
   if (eventName === 'tool_execution_update') {
-    const toolUseId = getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
     if (!toolUseId) return []
     return [
       {
@@ -178,7 +178,6 @@ function normalizePiPayload(eventName: string, payload: Record<string, unknown>)
   }
 
   if (eventName === 'tool_execution_end') {
-    const toolUseId = getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
     const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
     if (!toolUseId) return []
     const result = toToolResult(payload['result'] ?? payload['output'])

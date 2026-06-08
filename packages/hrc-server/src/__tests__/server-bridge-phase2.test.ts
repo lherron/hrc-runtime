@@ -260,14 +260,19 @@ describe('POST /v1/bridges/deliver-text', () => {
 
     await Bun.sleep(300)
     const captured = await tmux.capture(pane.paneId)
-    // Text should appear on the prompt line but NOT be executed
-    // The text should be visible but since no Enter was sent, there should
-    // be no command output (only the typed text in the prompt line)
+    // Text should appear on the prompt line but NOT be executed.
     expect(captured).toContain('NO_ENTER_COMMAND')
-    // Split lines — the text should only appear once (on the prompt line),
-    // not twice (which would mean the command was executed and echoed output)
-    const lines = captured.split('\n').filter((l: string) => l.includes('NO_ENTER_COMMAND'))
-    expect(lines.length).toBe(1)
+    // Since no Enter was sent, the shell must not have *executed* the buffer.
+    // `NO_ENTER_COMMAND` is not a real command, so an execution would leave a
+    // shell error ("command not found"). The robust enter=false signal is the
+    // absence of that execution evidence — NOT a raw count of how many lines
+    // the interactive shell happened to render the typed buffer on. zsh (the
+    // host login shell here) draws a trailing partial-line marker (`NO_..%`)
+    // plus the live prompt line, which is a benign redraw artifact and must not
+    // be mistaken for command output. (T-... env-sensitive: shell-render shape
+    // depends on the host's interactive shell config.)
+    expect(captured.toLowerCase()).not.toContain('command not found')
+    expect(captured.toLowerCase()).not.toContain('not found')
   })
 
   // -------------------------------------------------------------------------

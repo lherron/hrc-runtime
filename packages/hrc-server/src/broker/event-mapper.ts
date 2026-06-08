@@ -427,10 +427,6 @@ export class BrokerEventMapper {
     stale: boolean,
     derived: DerivedTurnDescriptor[]
   ): void {
-    const db = this.db
-    const invocationId = envelope.invocationId
-    const { runId } = ctx
-
     if (stale) {
       if (envelope.type === 'permission.resolved') {
         this.auditPermissionResolved(envelope, ctx, now, true)
@@ -440,8 +436,86 @@ export class BrokerEventMapper {
       return
     }
 
+    // Per-family projectors keep behavior byte-identical to the prior single
+    // switch; each handles its slice of `envelope.type` and is a no-op for
+    // unrelated/unknown types (which are still persisted + emitted upstream).
     switch (envelope.type) {
-      // ── Invocation lifecycle -> runtime linkage + invocation state ──────────
+      case 'invocation.started':
+      case 'invocation.ready':
+      case 'invocation.stopping':
+      case 'invocation.exited':
+      case 'invocation.failed':
+      case 'invocation.disposed':
+        this.projectInvocationLifecycle(envelope, ctx, now)
+        return
+
+      case 'lifecycle.policy.accepted':
+      case 'lifecycle.escalation':
+      case 'harness.started':
+      case 'harness.exited':
+      case 'harness.recovery.started':
+      case 'harness.recovery.completed':
+      case 'harness.recovery.failed':
+        this.projectLifecyclePolicy(envelope, ctx, now)
+        return
+
+      case 'input.accepted':
+      case 'input.rejected':
+      case 'input.queued':
+      case 'turn.started':
+      case 'turn.completed':
+      case 'turn.failed':
+      case 'turn.interrupted':
+      case 'turn.stalled':
+      case 'turn.retry':
+        this.projectTurn(envelope, ctx, now)
+        return
+
+      case 'assistant.message.completed':
+      case 'assistant.message.delta':
+      case 'assistant.message.started':
+        this.projectMessage(envelope, ctx, now)
+        return
+
+      case 'tool.call.started':
+      case 'tool.call.completed':
+      case 'tool.call.failed':
+      case 'tool.call.delta':
+        this.projectToolCall(envelope, ctx, now, derived)
+        return
+
+      case 'continuation.updated':
+      case 'continuation.cleared':
+        this.projectContinuation(envelope, ctx, now)
+        return
+
+      case 'terminal.surface.reported':
+        this.projectTerminalSurface(envelope, ctx, now)
+        return
+
+      case 'permission.requested':
+      case 'permission.resolved':
+      case 'permission.cancelled':
+        this.projectPermission(envelope, ctx, now)
+        return
+
+      default: {
+        // Diagnostics / notices / usage and unknown event types still get
+        // persisted + emitted upstream; no state mutation here.
+        return
+      }
+    }
+  }
+
+  // ── Invocation lifecycle -> runtime linkage + invocation state ──────────
+  private projectInvocationLifecycle(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    switch (envelope.type) {
       case 'invocation.started': {
         db.runtimes.update(ctx.runtimeId, {
           activeInvocationId: invocationId,
@@ -489,8 +563,18 @@ export class BrokerEventMapper {
         })
         break
       }
+    }
+  }
 
-      // ── Lifecycle policy / recovery vocabulary ────────────────────────────
+  // ── Lifecycle policy / recovery vocabulary ────────────────────────────
+  private projectLifecyclePolicy(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    switch (envelope.type) {
       case 'lifecycle.policy.accepted': {
         const payload = envelope.payload as LifecyclePolicyAcceptedPayload
         const invocation = db.brokerInvocations.getByInvocationId(invocationId)
@@ -571,7 +655,19 @@ export class BrokerEventMapper {
         })
         break
       }
+    }
+  }
 
+  // ── Input disposition + turn lifecycle -> run state + invocation turn state ─
+  private projectTurn(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    const { runId } = ctx
+    switch (envelope.type) {
       // ── Input disposition -> run touch ──────────────────────────────────────
       case 'input.accepted':
       case 'input.rejected':
@@ -581,8 +677,6 @@ export class BrokerEventMapper {
         }
         break
       }
-
-      // ── Turn lifecycle -> run state + invocation turn state ─────────────────
       case 'turn.started': {
         if (runId !== undefined) {
           db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
@@ -635,8 +729,16 @@ export class BrokerEventMapper {
         })
         break
       }
+    }
+  }
 
-      // ── Assistant output -> runtime buffer (text projection) ────────────────
+  // ── Assistant output -> runtime buffer (text projection) ────────────────
+  private projectMessage(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    switch (envelope.type) {
       case 'assistant.message.completed': {
         const payload = envelope.payload as AssistantMessageCompletedPayload
         const text = payload.content
@@ -655,13 +757,25 @@ export class BrokerEventMapper {
         // No text yet; the emitted HRC event records the message start.
         break
       }
+    }
+  }
 
-      // ── Tool activity -> emitted HRC event only (eventJson carries id+name) ──
-      // Ask-user tools (AskUserQuestion / request_user_input) additionally drive
-      // the first-class awaiting-input state (T-01946): the open bracket parks the
-      // runtime, the matching close resumes it. The durable bracket in
-      // broker_invocation_events (appended above) is the authority; the runtime
-      // status + derived events here are the fast path / observability.
+  // ── Tool activity -> emitted HRC event only (eventJson carries id+name) ──
+  // Ask-user tools (AskUserQuestion / request_user_input) additionally drive
+  // the first-class awaiting-input state (T-01946): the open bracket parks the
+  // runtime, the matching close resumes it. The durable bracket in
+  // broker_invocation_events (appended above) is the authority; the runtime
+  // status + derived events here are the fast path / observability.
+  private projectToolCall(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    derived: DerivedTurnDescriptor[]
+  ): void {
+    const db = this.db
+    const invocationId = envelope.invocationId
+    const { runId } = ctx
+    switch (envelope.type) {
       case 'tool.call.started': {
         const payload = envelope.payload as ToolCallStartedPayload
         if (runId !== undefined && isAskUserTool(payload.name)) {
@@ -699,8 +813,24 @@ export class BrokerEventMapper {
       case 'tool.call.delta': {
         break
       }
+    }
+  }
 
-      // ── Continuation -> DUAL write: runtime AND session (must-not-miss) ─────
+  // ── Continuation -> DUAL write/clear: runtime AND session (must-not-miss) ─
+  // A user-initiated end (Claude `/quit`) drops the captured continuation so
+  // the next `hrc run` starts fresh instead of `--resume`-ing the quit
+  // session. Must clear BOTH sides: the next-launch resolution reads
+  // `runtime.continuation ?? session.continuation` (index.ts ~2728/3120), so
+  // clearing only one leaves the other as a fallback that re-resumes.
+  // External pane-kill / crash reports reason `other` and never reaches here,
+  // so resume durability survives pane recreation (T-01761 ariadne case).
+  private projectContinuation(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const db = this.db
+    switch (envelope.type) {
       case 'continuation.updated': {
         const payload = envelope.payload as ContinuationUpdate
         const continuation: HrcContinuationRef = {
@@ -715,46 +845,48 @@ export class BrokerEventMapper {
         db.sessions.updateContinuation(ctx.hostSessionId, continuation, now)
         break
       }
-
-      // ── Continuation cleared -> DUAL clear: runtime AND session ──────────────
-      // A user-initiated end (Claude `/quit`) drops the captured continuation so
-      // the next `hrc run` starts fresh instead of `--resume`-ing the quit
-      // session. Must clear BOTH sides: the next-launch resolution reads
-      // `runtime.continuation ?? session.continuation` (index.ts ~2728/3120), so
-      // clearing only one leaves the other as a fallback that re-resumes.
-      // External pane-kill / crash reports reason `other` and never reaches here,
-      // so resume durability survives pane recreation (T-01761 ariadne case).
       case 'continuation.cleared': {
         db.runtimes.clearContinuation(ctx.runtimeId, now)
         db.sessions.updateContinuation(ctx.hostSessionId, undefined, now)
         break
       }
+    }
+  }
 
-      // ── Terminal surface binding ────────────────────────────────────────────
-      case 'terminal.surface.reported': {
-        const payload = envelope.payload as TerminalSurfaceReportedPayload
-        // A `tmux-pane` lease is keyed by its pane id — the stable, unique lease
-        // identifier (paneId is non-optional for tmux-pane). The legacy
-        // `tmux-session` surface keeps the socket#session composite key, which a
-        // pane lease must never use (it would emit `#undefined` when sessionName
-        // is absent and would not be the pane id).
-        const surfaceId =
-          payload.kind === 'tmux-pane'
-            ? payload.paneId
-            : `${payload.socketPath}#${payload.sessionName}`
-        db.surfaceBindings.bind({
-          surfaceKind: payload.kind,
-          surfaceId,
-          hostSessionId: ctx.hostSessionId,
-          runtimeId: ctx.runtimeId,
-          generation: ctx.generation,
-          ...(payload.paneId !== undefined ? { paneId: payload.paneId } : {}),
-          boundAt: now,
-        })
-        break
-      }
+  // ── Terminal surface binding ────────────────────────────────────────────
+  private projectTerminalSurface(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const payload = envelope.payload as TerminalSurfaceReportedPayload
+    // A `tmux-pane` lease is keyed by its pane id — the stable, unique lease
+    // identifier (paneId is non-optional for tmux-pane). The legacy
+    // `tmux-session` surface keeps the socket#session composite key, which a
+    // pane lease must never use (it would emit `#undefined` when sessionName
+    // is absent and would not be the pane id).
+    const surfaceId =
+      payload.kind === 'tmux-pane'
+        ? payload.paneId
+        : `${payload.socketPath}#${payload.sessionName}`
+    this.db.surfaceBindings.bind({
+      surfaceKind: payload.kind,
+      surfaceId,
+      hostSessionId: ctx.hostSessionId,
+      runtimeId: ctx.runtimeId,
+      generation: ctx.generation,
+      ...(payload.paneId !== undefined ? { paneId: payload.paneId } : {}),
+      boundAt: now,
+    })
+  }
 
-      // ── Permission audit ────────────────────────────────────────────────────
+  // ── Permission audit ────────────────────────────────────────────────────
+  private projectPermission(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    switch (envelope.type) {
       case 'permission.requested': {
         // Audit/projection only: the request is recorded as a broker HRC event.
         // permission_decisions PK is permission_request_id and has no update API,
@@ -767,18 +899,6 @@ export class BrokerEventMapper {
       }
       case 'permission.cancelled': {
         this.auditPermissionCancelled(envelope, ctx, now, false)
-        break
-      }
-
-      // ── Diagnostics / notices / usage -> emitted HRC event only ─────────────
-      case 'diagnostic':
-      case 'driver.notice':
-      case 'usage.updated': {
-        break
-      }
-
-      default: {
-        // Unknown event types still get persisted + emitted; no state mutation.
         break
       }
     }

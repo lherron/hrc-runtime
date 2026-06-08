@@ -94,6 +94,43 @@ const CONTEXT_CHANGED_REASONS = new Set(['session_rebound', 'generation_changed'
 const FAILURE_KINDS = new Set(['model', 'tool', 'process', 'runtime', 'cancelled', 'unknown'])
 const IDLE_RUNTIME_STATUSES = new Set(['idle', 'ready'])
 
+// Canonical enumeration of HrcMonitorConditionResult, used to derive the
+// runtime guard from a single source (mirrors the DEAD_RUNTIME_STATUSES pattern).
+const CONDITION_RESULTS = [
+  'turn_succeeded',
+  'turn_failed',
+  'runtime_dead',
+  'runtime_crashed',
+  'response',
+  'idle',
+  'busy',
+  'idle_no_response',
+  'turn_finished_without_response',
+  'already_idle',
+  'already_busy',
+  'already_dead',
+  'no_active_turn',
+  'context_changed',
+  'timeout',
+  'stalled',
+  'monitor_error',
+] as const satisfies readonly HrcMonitorConditionResult[]
+const CONDITION_RESULT_SET = new Set<string>(CONDITION_RESULTS)
+
+// Named monitor outcome exit codes (previously scattered as 0/1/2/3/4 literals).
+const EXIT_CODE = {
+  /** Condition satisfied / clean completion. */
+  ok: 0,
+  /** Timed out or stalled before the condition was met. */
+  timeout: 1,
+  /** Runtime/turn failure terminal outcome. */
+  failure: 2,
+  /** Internal monitor error (no timer to wait on). */
+  monitorError: 3,
+  /** Context changed out from under the wait, or turn finished without response. */
+  contextChanged: 4,
+} as const
+
 export function createMonitorConditionEngine(
   reader: HrcMonitorConditionEngineReader
 ): HrcMonitorConditionEngine {
@@ -134,10 +171,10 @@ export function createMonitorConditionEngine(
         const next = await nextStreamResult(iterator, timeoutDeadline, stallDeadline)
 
         if (next.kind === 'timeout') {
-          return withCompletedEvent(context, { result: 'timeout', exitCode: 1 }, eventStream)
+          return withCompletedEvent(context, { result: 'timeout', exitCode: EXIT_CODE.timeout }, eventStream)
         }
         if (next.kind === 'stalled') {
-          return withCompletedEvent(context, { result: 'stalled', exitCode: 1 }, eventStream)
+          return withCompletedEvent(context, { result: 'stalled', exitCode: EXIT_CODE.timeout }, eventStream)
         }
         if (next.kind === 'done') {
           return await waitForEndTimer(context, eventStream, timeoutDeadline, stallDeadline)
@@ -181,14 +218,14 @@ function evaluateStartSnapshot(
   switch (context.condition) {
     case 'turn-finished':
       return context.capture.activeTurnId === null
-        ? { result: 'no_active_turn', exitCode: 0 }
+        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
         : null
     case 'idle':
-      return isIdleRuntimeStatus(runtimeStatus) ? { result: 'already_idle', exitCode: 0 } : null
+      return isIdleRuntimeStatus(runtimeStatus) ? { result: 'already_idle', exitCode: EXIT_CODE.ok } : null
     case 'busy':
-      return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: 0 } : null
+      return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: EXIT_CODE.ok } : null
     case 'runtime-dead':
-      return isDeadRuntimeStatus(runtimeStatus) ? { result: 'already_dead', exitCode: 0 } : null
+      return isDeadRuntimeStatus(runtimeStatus) ? { result: 'already_dead', exitCode: EXIT_CODE.ok } : null
     case 'response':
     case 'response-or-idle':
       return null
@@ -212,11 +249,11 @@ function evaluateEvent(
       return evaluateTurnFinished(context, event)
     case 'idle':
       return eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'idle'), exitCode: 0 }
+        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
         : null
     case 'busy':
       return eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'busy'), exitCode: 0 }
+        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
         : null
     case 'response':
       return evaluateResponse(context, event)
@@ -237,12 +274,12 @@ function evaluateTurnFinished(
 
   const result = resultValue(event, 'turn_succeeded')
   if (result === 'turn_failed') {
-    return { result, exitCode: 2, failureKind: failureKindValue(event) }
+    return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
   }
   if (result === 'runtime_dead' || result === 'runtime_crashed') {
-    return { result, exitCode: 2, failureKind: failureKindValue(event) }
+    return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
   }
-  return { result: result === 'turn_succeeded' ? result : 'turn_succeeded', exitCode: 0 }
+  return { result: result === 'turn_succeeded' ? result : 'turn_succeeded', exitCode: EXIT_CODE.ok }
 }
 
 function evaluateResponse(
@@ -250,10 +287,10 @@ function evaluateResponse(
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
   if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
-    return { result: 'response', exitCode: 0 }
+    return { result: 'response', exitCode: EXIT_CODE.ok }
   }
   if (isCapturedTurnIdleOrFinished(context, event)) {
-    return { result: 'turn_finished_without_response', exitCode: 4 }
+    return { result: 'turn_finished_without_response', exitCode: EXIT_CODE.contextChanged }
   }
   return null
 }
@@ -263,10 +300,23 @@ function evaluateResponseOrIdle(
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
   if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
-    return { result: 'response', exitCode: 0 }
+    return { result: 'response', exitCode: EXIT_CODE.ok }
   }
   if (isCapturedTurnIdleOrFinished(context, event)) {
-    return { result: 'idle_no_response', exitCode: 0 }
+    return { result: 'idle_no_response', exitCode: EXIT_CODE.ok }
+  }
+  return null
+}
+
+function runtimeDeathOutcome(
+  context: EvaluationContext,
+  event: MonitorOutputEvent
+): HrcMonitorConditionOutcome | null {
+  if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
+    return { result: 'runtime_dead', exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
+  }
+  if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
+    return { result: 'runtime_crashed', exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
   }
   return null
 }
@@ -275,13 +325,7 @@ function evaluateRuntimeDead(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
-  if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
-    return { result: 'runtime_dead', exitCode: 2, failureKind: failureKindValue(event) }
-  }
-  if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
-    return { result: 'runtime_crashed', exitCode: 2, failureKind: failureKindValue(event) }
-  }
-  return null
+  return runtimeDeathOutcome(context, event)
 }
 
 function evaluateRuntimeFailure(
@@ -289,14 +333,7 @@ function evaluateRuntimeFailure(
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
   if (context.condition === 'runtime-dead') return null
-
-  if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
-    return { result: 'runtime_dead', exitCode: 2, failureKind: failureKindValue(event) }
-  }
-  if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
-    return { result: 'runtime_crashed', exitCode: 2, failureKind: failureKindValue(event) }
-  }
-  return null
+  return runtimeDeathOutcome(context, event)
 }
 
 function evaluateContextChanged(
@@ -306,13 +343,13 @@ function evaluateContextChanged(
   const explicitResult = unknownString(event, 'result')
   const explicitReason = unknownString(event, 'reason')
   if (explicitResult === 'context_changed' && isContextChangedReason(explicitReason)) {
-    return { result: 'context_changed', reason: explicitReason, exitCode: 4 }
+    return { result: 'context_changed', reason: explicitReason, exitCode: EXIT_CODE.contextChanged }
   }
 
   if (unknownString(event, 'sessionRef') === context.capture.sessionRef) {
     const eventGeneration = unknownNumber(event, 'generation')
     if (eventGeneration !== undefined && eventGeneration !== context.capture.generation) {
-      return { result: 'context_changed', reason: 'generation_changed', exitCode: 4 }
+      return { result: 'context_changed', reason: 'generation_changed', exitCode: EXIT_CODE.contextChanged }
     }
   }
 
@@ -321,14 +358,14 @@ function evaluateContextChanged(
     unknownString(event, 'hostSessionId') !== undefined &&
     unknownString(event, 'hostSessionId') !== context.capture.hostSessionId
   ) {
-    return { result: 'context_changed', reason: 'session_rebound', exitCode: 4 }
+    return { result: 'context_changed', reason: 'session_rebound', exitCode: EXIT_CODE.contextChanged }
   }
 
   if (
     (eventKind(event) === 'context.cleared' || eventKind(event) === 'session.cleared') &&
     unknownString(event, 'sessionRef') === context.capture.sessionRef
   ) {
-    return { result: 'context_changed', reason: 'cleared', exitCode: 4 }
+    return { result: 'context_changed', reason: 'cleared', exitCode: EXIT_CODE.contextChanged }
   }
 
   return null
@@ -422,7 +459,7 @@ async function waitForEndTimer(
 ): Promise<HrcMonitorConditionOutcome> {
   const nextTimer = earliestDeadline(timeoutDeadline, stallDeadline)
   if (nextTimer === null) {
-    return withCompletedEvent(context, { result: 'monitor_error', exitCode: 3 }, eventStream)
+    return withCompletedEvent(context, { result: 'monitor_error', exitCode: EXIT_CODE.monitorError }, eventStream)
   }
 
   const waitMs = Math.max(0, nextTimer - Date.now())
@@ -431,9 +468,9 @@ async function waitForEndTimer(
   }
 
   if (timeoutDeadline !== null && timeoutDeadline <= (stallDeadline ?? Number.POSITIVE_INFINITY)) {
-    return withCompletedEvent(context, { result: 'timeout', exitCode: 1 }, eventStream)
+    return withCompletedEvent(context, { result: 'timeout', exitCode: EXIT_CODE.timeout }, eventStream)
   }
-  return withCompletedEvent(context, { result: 'stalled', exitCode: 1 }, eventStream)
+  return withCompletedEvent(context, { result: 'stalled', exitCode: EXIT_CODE.timeout }, eventStream)
 }
 
 async function nextStreamResult(
@@ -520,25 +557,7 @@ function resolutionError(result: HrcMonitorResolutionResult): Error {
 }
 
 function isConditionResult(value: string | undefined): value is HrcMonitorConditionResult {
-  return (
-    value === 'turn_succeeded' ||
-    value === 'turn_failed' ||
-    value === 'runtime_dead' ||
-    value === 'runtime_crashed' ||
-    value === 'response' ||
-    value === 'idle' ||
-    value === 'busy' ||
-    value === 'idle_no_response' ||
-    value === 'turn_finished_without_response' ||
-    value === 'already_idle' ||
-    value === 'already_busy' ||
-    value === 'already_dead' ||
-    value === 'no_active_turn' ||
-    value === 'context_changed' ||
-    value === 'timeout' ||
-    value === 'stalled' ||
-    value === 'monitor_error'
-  )
+  return value !== undefined && CONDITION_RESULT_SET.has(value)
 }
 
 function isContextChangedReason(

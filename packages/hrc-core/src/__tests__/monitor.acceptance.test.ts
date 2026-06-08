@@ -211,7 +211,7 @@ describe('monitor acceptance: selector resolver (T-01286 / docs/monitor-spec.md 
 
   test('resolves target and message selectors to the latest generation when a target was re-summoned', async () => {
     const { createMonitorReader } = await loadMonitorModule()
-    const scopeRef = 'agent:clod:project:agent-spaces'
+    const scopeRef = 'agent:clod:project:agent-spaces:task:primary'
     const sessionRef = `${scopeRef}/lane:main`
     const state = createFixtureState()
     state.sessions = [

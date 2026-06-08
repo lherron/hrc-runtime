@@ -14,6 +14,7 @@ import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
   EnsureTargetResponse,
+  HrcProvider,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -160,18 +161,24 @@ export async function ensureRuntimeForSession(
   )
 }
 
-export async function handleSdkDispatchTurn(
+/**
+ * Provisions the SDK runtime/run rows and emits the runtime.created/turn.accepted/
+ * turn.user_prompt/turn.started lifecycle events for an SDK dispatch turn.
+ * Extracted from {@link handleSdkDispatchTurn} (behavior-preserving) to keep the
+ * handler a linear orchestrator.
+ */
+function resolveSdkDispatchTarget(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   prompt: string,
-  runId: string,
-  options: {
-    waitForCompletion?: boolean | undefined
-  } = {}
-): Promise<Response> {
-  this.failSdkHarnessPath('handleSdkDispatchTurn', session, intent, runId)
-
+  runId: string
+): {
+  runtime: ReturnType<HrcDatabase['runtimes']['insert']>
+  run: ReturnType<HrcDatabase['runs']['insert']>
+  existingProvider: HrcProvider | undefined
+  startedAt: string
+} {
   const existingProvider =
     findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
     session.continuation?.provider
@@ -276,6 +283,29 @@ export async function handleSdkDispatchTurn(
     transport: 'sdk',
   })
   this.notifyEvent(startedEvent)
+
+  return { runtime, run, existingProvider, startedAt }
+}
+
+export async function handleSdkDispatchTurn(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent,
+  prompt: string,
+  runId: string,
+  options: {
+    waitForCompletion?: boolean | undefined
+  } = {}
+): Promise<Response> {
+  this.failSdkHarnessPath('handleSdkDispatchTurn', session, intent, runId)
+
+  const { runtime, run, existingProvider } = resolveSdkDispatchTarget.call(
+    this,
+    session,
+    intent,
+    prompt,
+    runId
+  )
 
   const execute = async (): Promise<Response> => {
     let chunkSeq = 1

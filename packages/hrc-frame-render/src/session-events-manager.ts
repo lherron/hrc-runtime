@@ -1,4 +1,5 @@
 import { createLogger } from './logger.js'
+import { SESSION_METADATA_EVENT_TYPES } from './types.js'
 import type {
   GatewaySessionEvent,
   PermissionAction,
@@ -74,23 +75,10 @@ interface ProjectState {
   focusedRunId?: string | undefined
 }
 
+const SESSION_METADATA_EVENT_TYPE_SET: ReadonlySet<string> = new Set(SESSION_METADATA_EVENT_TYPES)
+
 function isSessionMetadataEvent(event: GatewaySessionEvent): boolean {
-  return [
-    'continuation_key_observed',
-    'user_input_received',
-    'user_input_queued_in_flight',
-    'user_input_applied_in_flight',
-    'user_input_interrupt_requested',
-    'user_input_interrupt_applied',
-    'user_input_rejected',
-    'harness_process_started',
-    'harness_process_exited',
-    'tmux_pane_bound',
-    'tmux_pane_unbound',
-    'ghostty_surface_bound',
-    'ghostty_surface_unbound',
-    'sdk_session_id',
-  ].includes(event.type)
+  return SESSION_METADATA_EVENT_TYPE_SET.has(event.type)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,6 +101,15 @@ function extractTextContent(content: unknown): string {
     )
     .map((block) => block.text)
     .join('')
+}
+
+function flattenMessageContent(
+  content: string | Array<{ type: string; text?: string }>
+): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  return content.map((block) => (block.type === 'text' ? (block.text ?? '') : '')).join('')
 }
 
 function extractTurnEndAssistantMessage(payload: unknown): string | undefined {
@@ -294,10 +291,7 @@ function processEvent(
       const message = event.message
       const messageId = event.messageId
       if (message) {
-        const content =
-          typeof message.content === 'string'
-            ? message.content
-            : message.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+        const content = flattenMessageContent(message.content)
 
         if (message.role === 'user') {
           run.userMessage = content
@@ -338,10 +332,7 @@ function processEvent(
       const messageId = event.messageId
       const targetRef = messageId ?? run.currentAssistantMessageRef
       if (message) {
-        const content =
-          typeof message.content === 'string'
-            ? message.content
-            : message.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+        const content = flattenMessageContent(message.content)
 
         if (message.role === 'user') {
           run.userMessage = content
@@ -628,9 +619,25 @@ function processEvent(
   return newState
 }
 
+const STATUS_TO_PHASE: Record<RunState['status'], RenderFrame['phase']> = {
+  queued: 'queued',
+  awaiting_permission: 'permission',
+  running: 'progress',
+  completed: 'final',
+  failed: 'error',
+  cancelled: 'error',
+}
+
+const PHASE_EMOJI: Record<RenderFrame['phase'], string> = {
+  queued: '⚙️',
+  progress: '⚙️',
+  permission: '🔐',
+  final: '✅',
+  error: '❌',
+}
+
 function titleFor(phase: RenderFrame['phase'], inputContent: string): string {
-  const emoji =
-    phase === 'permission' ? '🔐' : phase === 'final' ? '✅' : phase === 'error' ? '❌' : '⚙️'
+  const emoji = PHASE_EMOJI[phase]
   const trimmed = inputContent.trim()
   if (trimmed.length === 0) {
     return emoji
@@ -654,104 +661,131 @@ function formatToolSummary(_toolName: string, toolInput: Record<string, unknown>
   return json.length > 2 ? truncate(json, 80) : ''
 }
 
-export function runStateToFrame(run: RunState): RenderFrame {
-  const phase =
-    run.status === 'queued'
-      ? 'queued'
-      : run.status === 'awaiting_permission'
-        ? 'permission'
-        : run.status === 'running'
-          ? 'progress'
-          : run.status === 'completed'
-            ? 'final'
-            : 'error'
+type TimelineEntry = { seq: number; block: RenderFrame['blocks'][number] }
 
-  const timelineBlocks: Array<{ seq: number; block: RenderFrame['blocks'][number] }> = []
+function toolBlocks(run: RunState): TimelineEntry[] {
+  return run.toolExecutions.map((tool) => ({
+    seq: tool.seq,
+    block: {
+      t: 'tool',
+      toolName: tool.toolName,
+      summary: formatToolSummary(tool.toolName, tool.input),
+      input: tool.input,
+      output: tool.output,
+      images: tool.images,
+      approved: tool.status === 'completed' ? true : tool.status === 'failed' ? false : undefined,
+    },
+  }))
+}
+
+function collectMediaRefs(run: RunState): Array<{
+  url: string
+  mimeType?: string | undefined
+  filename?: string | undefined
+  alt?: string | undefined
+}> {
   const allMediaRefs: Array<{
     url: string
     mimeType?: string | undefined
     filename?: string | undefined
     alt?: string | undefined
   }> = []
-
   for (const tool of run.toolExecutions) {
-    timelineBlocks.push({
-      seq: tool.seq,
-      block: {
-        t: 'tool',
-        toolName: tool.toolName,
-        summary: formatToolSummary(tool.toolName, tool.input),
-        input: tool.input,
-        output: tool.output,
-        images: tool.images,
-        approved: tool.status === 'completed' ? true : tool.status === 'failed' ? false : undefined,
-      },
-    })
-
     if (tool.mediaRefs && tool.mediaRefs.length > 0) {
       allMediaRefs.push(...tool.mediaRefs)
     }
   }
+  return allMediaRefs
+}
 
-  for (const notice of run.noticeEntries) {
-    timelineBlocks.push({
-      seq: notice.seq,
-      block: {
-        t: 'notice',
-        level: notice.level,
-        message: notice.message,
-      },
-    })
-  }
+function noticeBlocks(run: RunState): TimelineEntry[] {
+  return run.noticeEntries.map((notice) => ({
+    seq: notice.seq,
+    block: {
+      t: 'notice',
+      level: notice.level,
+      message: notice.message,
+    },
+  }))
+}
 
-  const segmentBlocks: Array<{ seq: number; block: RenderFrame['blocks'][number] }> = []
+function segmentBlocks(run: RunState): TimelineEntry[] {
+  const entries: TimelineEntry[] = []
   for (const seg of run.assistantSegments) {
     if (seg.text.length === 0) continue
-    segmentBlocks.push({
+    entries.push({
       seq: seg.seq,
       block: { t: 'markdown', md: seg.text },
     })
   }
+  return entries
+}
 
-  const blocks: RenderFrame['blocks'] = [...timelineBlocks, ...segmentBlocks]
+function permissionBlock(run: RunState): RenderFrame['blocks'][number] | undefined {
+  if (!run.permissionRequest) {
+    return undefined
+  }
+  const { toolName, toolInput } = run.permissionRequest
+  const command = toolInput['command']
+  if (toolName === 'Bash' && typeof command === 'string') {
+    return { t: 'code', lang: 'bash', code: command }
+  }
+  return {
+    t: 'code',
+    lang: 'json',
+    code: JSON.stringify(toolInput, null, 2),
+  }
+}
+
+function progressPlaceholder(
+  run: RunState,
+  phase: RenderFrame['phase'],
+  hasSegments: boolean
+): RenderFrame['blocks'][number] | undefined {
+  if (hasSegments || phase !== 'progress') {
+    return undefined
+  }
+  const runningTool = run.toolExecutions.find((tool) => tool.status === 'running')
+  if (runningTool) {
+    return {
+      t: 'markdown',
+      md: formatToolSummary(runningTool.toolName, runningTool.input),
+    }
+  }
+  return { t: 'markdown', md: '...' }
+}
+
+function mediaRefBlocks(run: RunState): RenderFrame['blocks'] {
+  return collectMediaRefs(run).map((media) => ({
+    t: 'media_ref',
+    url: media.url,
+    mimeType: media.mimeType,
+    filename: media.filename,
+    alt: media.alt,
+  }))
+}
+
+export function runStateToFrame(run: RunState): RenderFrame {
+  const phase = STATUS_TO_PHASE[run.status]
+
+  const timelineBlocks = [...toolBlocks(run), ...noticeBlocks(run)]
+  const segments = segmentBlocks(run)
+
+  const blocks: RenderFrame['blocks'] = [...timelineBlocks, ...segments]
     .sort((left, right) => left.seq - right.seq)
     .map((entry) => entry.block)
 
-  if (run.permissionRequest) {
-    const { toolName, toolInput } = run.permissionRequest
-    const command = toolInput['command']
-    if (toolName === 'Bash' && typeof command === 'string') {
-      blocks.push({ t: 'code', lang: 'bash', code: command })
-    } else {
-      blocks.push({
-        t: 'code',
-        lang: 'json',
-        code: JSON.stringify(toolInput, null, 2),
-      })
-    }
+  const permission = permissionBlock(run)
+  if (permission) {
+    blocks.push(permission)
   }
 
-  if (segmentBlocks.length === 0 && phase === 'progress') {
-    const runningTool = run.toolExecutions.find((tool) => tool.status === 'running')
-    if (runningTool) {
-      blocks.push({
-        t: 'markdown',
-        md: formatToolSummary(runningTool.toolName, runningTool.input),
-      })
-    } else {
-      blocks.push({ t: 'markdown', md: '...' })
-    }
+  const placeholder = progressPlaceholder(run, phase, segments.length > 0)
+  if (placeholder) {
+    blocks.push(placeholder)
   }
 
-  for (const media of allMediaRefs) {
-    blocks.push({
-      t: 'media_ref',
-      url: media.url,
-      mimeType: media.mimeType,
-      filename: media.filename,
-      alt: media.alt,
-    })
-  }
+  blocks.push(...mediaRefBlocks(run))
 
   const actions = run.permissionRequest?.actions.map((action) => ({
     id: action.id,

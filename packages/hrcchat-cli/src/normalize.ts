@@ -2,6 +2,7 @@
  * Address normalization and resolution for hrcchat CLI.
  */
 import { formatSessionHandle, resolveQualifiedScopeInput } from 'agent-scope'
+import type { ResolvedScopeInput } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'spaces-config'
@@ -25,6 +26,29 @@ function inferTaskIdFromCallerSession(): string | undefined {
 }
 
 /**
+ * Resolve a CLI target string to a fully-qualified scope bundle.
+ *
+ * Centralizes the `ASP_PROJECT ?? inferProjectIdFromCwd()` project-fallback plus
+ * `resolveQualifiedScopeInput` idiom that was previously repeated across the CLI.
+ * When `withCallerTaskId` is set the caller's task qualifier (from
+ * HRC_SESSION_REF) is applied as the task fallback so a bare agent input resolves
+ * into the caller's task scope.
+ */
+export function resolveScope(
+  input: string,
+  options?: { withCallerTaskId?: boolean }
+): ResolvedScopeInput {
+  const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
+  const fallbackTaskId = options?.withCallerTaskId ? inferTaskIdFromCallerSession() : undefined
+
+  return resolveQualifiedScopeInput(input, {
+    defaultLaneId: 'main',
+    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+    ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
+  })
+}
+
+/**
  * Resolve a CLI target string to a canonical sessionRef.
  * Accepts: SessionHandle (e.g. cody@demo~lane), ScopeHandle, or raw scopeRef.
  *
@@ -34,15 +58,7 @@ function inferTaskIdFromCallerSession(): string | undefined {
  * agent+project+task qualified.
  */
 export function resolveTargetToSessionRef(input: string): string {
-  const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
-  const fallbackTaskId = inferTaskIdFromCallerSession()
-
-  const resolved = resolveQualifiedScopeInput(input, {
-    defaultLaneId: 'main',
-    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
-    ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
-  })
-
+  const resolved = resolveScope(input, { withCallerTaskId: true })
   return `${resolved.scopeRef}/lane:${resolved.laneId}`
 }
 

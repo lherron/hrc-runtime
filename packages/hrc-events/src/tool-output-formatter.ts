@@ -18,6 +18,23 @@ export type ToolOutputFormatResult = {
   responseObject?: Record<string, unknown> | undefined
 }
 
+/** Number of leading lines shown in a Write tool preview before truncation. */
+const WRITE_PREVIEW_LINES = 10
+
+/** Build the Modified/Added/Removed summary line for an Edit diff. */
+function summarizeEdit(added: number, removed: number): string {
+  if (added > 0 && removed > 0) {
+    return `Added ${added} lines, removed ${removed} lines`
+  }
+  if (added > 0) {
+    return `Added ${added} lines`
+  }
+  if (removed > 0) {
+    return `Removed ${removed} lines`
+  }
+  return 'Modified'
+}
+
 function stringifyToolValue(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value === 'string') return value
@@ -108,14 +125,7 @@ function buildEditOutputFromStructuredPatches(patches: StructuredPatch[]): {
     }
   }
 
-  let summary = 'Modified'
-  if (added > 0 && removed > 0) {
-    summary = `Added ${added} lines, removed ${removed} lines`
-  } else if (added > 0) {
-    summary = `Added ${added} lines`
-  } else if (removed > 0) {
-    summary = `Removed ${removed} lines`
-  }
+  const summary = summarizeEdit(added, removed)
 
   return { output: [summary, ...outputLines].join('\n'), added, removed }
 }
@@ -161,16 +171,115 @@ function buildEditOutputFromLineDiff(
     }
   }
 
-  let summary = 'Modified'
-  if (added > 0 && removed > 0) {
-    summary = `Added ${added} lines, removed ${removed} lines`
-  } else if (added > 0) {
-    summary = `Added ${added} lines`
-  } else if (removed > 0) {
-    summary = `Removed ${removed} lines`
-  }
+  const summary = summarizeEdit(added, removed)
 
   return { output: [summary, ...outputLines].join('\n'), added, removed }
+}
+
+/**
+ * Coerce an arbitrary tool response into a base output string and (when the
+ * response is object-shaped) the structured response object. This is the
+ * tool-agnostic first pass; per-tool renderers may override the output below.
+ */
+function coerceResponseToOutput(toolResponse: unknown): {
+  output: string | undefined
+  responseObject: Record<string, unknown> | undefined
+} {
+  if (typeof toolResponse === 'string') {
+    return { output: toolResponse, responseObject: undefined }
+  }
+  if (Array.isArray(toolResponse)) {
+    return {
+      output: extractTextFromContent(toolResponse as MessageContent),
+      responseObject: { content: toolResponse },
+    }
+  }
+  if (toolResponse && typeof toolResponse === 'object') {
+    const resp = toolResponse as Record<string, unknown>
+    const stdout = resp['stdout']
+    const stderr = resp['stderr']
+    let output: string | undefined
+    if (typeof stdout === 'string') {
+      output = stdout
+    } else if (typeof stderr === 'string') {
+      output = stderr
+    }
+    const respContent = resp['content']
+    if (output === undefined && Array.isArray(respContent)) {
+      output = extractTextFromContent(respContent as MessageContent)
+    }
+    return { output, responseObject: resp }
+  }
+  return { output: undefined, responseObject: undefined }
+}
+
+/**
+ * Per-tool rich renderers. Each receives the coerced tool-input record and the
+ * coerced response object, and returns an override output string, or undefined
+ * to fall through to the coerced/base output.
+ */
+type ToolRenderer = (ctx: {
+  toolInputRecord: Record<string, unknown>
+  responseObject: Record<string, unknown> | undefined
+}) => string | undefined
+
+const toolRenderers: Record<string, ToolRenderer> = {
+  Write: ({ toolInputRecord }) => {
+    const filePath =
+      typeof toolInputRecord['file_path'] === 'string' ? toolInputRecord['file_path'] : ''
+    const content =
+      typeof toolInputRecord['content'] === 'string' ? toolInputRecord['content'] : ''
+    if (!filePath || !content) return undefined
+
+    const fileName = filePath.split('/').pop() || filePath
+    const lines = content.split('\n')
+    const lineCount = lines.length
+    const ext = fileName.split('.').pop()?.toLowerCase() || ''
+    const langMap: Record<string, string> = {
+      ts: 'typescript',
+      tsx: 'typescript',
+      js: 'javascript',
+      jsx: 'javascript',
+      py: 'python',
+      rb: 'ruby',
+      go: 'go',
+      rs: 'rust',
+      java: 'java',
+      md: 'markdown',
+      json: 'json',
+      yaml: 'yaml',
+      yml: 'yaml',
+      sh: 'bash',
+      bash: 'bash',
+      zsh: 'bash',
+      css: 'css',
+      html: 'html',
+    }
+    const lang = langMap[ext] || ext
+    const previewLines = lines.slice(0, WRITE_PREVIEW_LINES)
+    const preview = previewLines.join('\n')
+    const truncated =
+      lines.length > WRITE_PREVIEW_LINES
+        ? `\n... +${lines.length - WRITE_PREVIEW_LINES} more lines`
+        : ''
+    return `Created ${fileName} with ${lineCount} lines:\n\n${lang}\n${preview}${truncated}`
+  },
+
+  Edit: ({ toolInputRecord, responseObject }) => {
+    const structuredPatches = extractStructuredPatches(responseObject)
+    if (structuredPatches && structuredPatches.length > 0) {
+      return buildEditOutputFromStructuredPatches(structuredPatches).output
+    }
+    const oldString =
+      typeof toolInputRecord['old_string'] === 'string' ? toolInputRecord['old_string'] : ''
+    const newString =
+      typeof toolInputRecord['new_string'] === 'string' ? toolInputRecord['new_string'] : ''
+    if (oldString || newString) {
+      const changes = diffLines(oldString, newString)
+      return buildEditOutputFromLineDiff(changes).output
+    }
+    return undefined
+  },
 }
 
 export function formatToolOutput(options: {
@@ -181,82 +290,17 @@ export function formatToolOutput(options: {
 }): ToolOutputFormatResult {
   const { toolName, toolInput, toolResponse, isError } = options
   const toolInputRecord = asToolInputRecord(toolInput)
-  let toolOutput: string | undefined
-  let toolResponseObject: Record<string, unknown> | undefined
 
-  if (typeof toolResponse === 'string') {
-    toolOutput = toolResponse
-  } else if (Array.isArray(toolResponse)) {
-    toolResponseObject = { content: toolResponse }
-    toolOutput = extractTextFromContent(toolResponse as MessageContent)
-  } else if (toolResponse && typeof toolResponse === 'object') {
-    const resp = toolResponse as Record<string, unknown>
-    toolResponseObject = resp
-    const stdout = resp['stdout']
-    const stderr = resp['stderr']
-    if (typeof stdout === 'string') {
-      toolOutput = stdout
-    } else if (typeof stderr === 'string') {
-      toolOutput = stderr
-    }
-    const respContent = resp['content']
-    if (toolOutput === undefined && Array.isArray(respContent)) {
-      toolOutput = extractTextFromContent(respContent as MessageContent)
-    }
-  }
+  const coerced = coerceResponseToOutput(toolResponse)
+  let toolOutput = coerced.output
+  const toolResponseObject = coerced.responseObject
 
-  if (!isError) {
-    if (toolName === 'Write' && toolInputRecord) {
-      const filePath =
-        typeof toolInputRecord['file_path'] === 'string' ? toolInputRecord['file_path'] : ''
-      const content =
-        typeof toolInputRecord['content'] === 'string' ? toolInputRecord['content'] : ''
-      if (filePath && content) {
-        const fileName = filePath.split('/').pop() || filePath
-        const lines = content.split('\n')
-        const lineCount = lines.length
-        const ext = fileName.split('.').pop()?.toLowerCase() || ''
-        const langMap: Record<string, string> = {
-          ts: 'typescript',
-          tsx: 'typescript',
-          js: 'javascript',
-          jsx: 'javascript',
-          py: 'python',
-          rb: 'ruby',
-          go: 'go',
-          rs: 'rust',
-          java: 'java',
-          md: 'markdown',
-          json: 'json',
-          yaml: 'yaml',
-          yml: 'yaml',
-          sh: 'bash',
-          bash: 'bash',
-          zsh: 'bash',
-          css: 'css',
-          html: 'html',
-        }
-        const lang = langMap[ext] || ext
-        const previewLines = lines.slice(0, 10)
-        const preview = previewLines.join('\n')
-        const truncated = lines.length > 10 ? `\n... +${lines.length - 10} more lines` : ''
-        toolOutput = `Created ${fileName} with ${lineCount} lines:\n\n${lang}\n${preview}${truncated}`
-      }
-    }
-
-    if (toolName === 'Edit' && toolInputRecord) {
-      const structuredPatches = extractStructuredPatches(toolResponseObject)
-      if (structuredPatches && structuredPatches.length > 0) {
-        toolOutput = buildEditOutputFromStructuredPatches(structuredPatches).output
-      } else {
-        const oldString =
-          typeof toolInputRecord['old_string'] === 'string' ? toolInputRecord['old_string'] : ''
-        const newString =
-          typeof toolInputRecord['new_string'] === 'string' ? toolInputRecord['new_string'] : ''
-        if (oldString || newString) {
-          const changes = diffLines(oldString, newString)
-          toolOutput = buildEditOutputFromLineDiff(changes).output
-        }
+  if (!isError && toolInputRecord) {
+    const renderer = toolRenderers[toolName]
+    if (renderer) {
+      const rendered = renderer({ toolInputRecord, responseObject: toolResponseObject })
+      if (rendered !== undefined) {
+        toolOutput = rendered
       }
     }
   }

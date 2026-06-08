@@ -18,6 +18,7 @@ import type {
   EnsureAppSessionResponse,
   HrcAppSessionSpec,
   HrcSessionRecord,
+  RemoveAppSessionRequest,
   RemoveAppSessionResponse,
   SendAppHarnessInFlightInputResponse,
   SendLiteralInputResponse,
@@ -101,6 +102,19 @@ export async function handleEnsureAppSession(
   request: Request
 ): Promise<Response> {
   const body = parseEnsureAppSessionRequest(await parseJsonBody(request))
+  return await this.ensureAppSessionFromBody(body)
+}
+
+/**
+ * Core ensure-app-session logic operating on an already-parsed request body.
+ * Extracted from {@link handleEnsureAppSession} so in-process callers (e.g.
+ * apply-managed-sessions) can invoke it directly instead of constructing a
+ * synthetic HTTP {@link Request} to re-enter the route. Behavior-preserving.
+ */
+export async function ensureAppSessionFromBody(
+  this: HrcServerInstanceForHandlers,
+  body: EnsureAppSessionRequest
+): Promise<Response> {
   const { appId, appSessionKey } = body.selector
   const spec = body.spec
 
@@ -483,6 +497,19 @@ export async function handleRemoveAppSession(
   request: Request
 ): Promise<Response> {
   const body = parseRemoveAppSessionRequest(await parseJsonBody(request))
+  return await this.removeAppSessionFromBody(body)
+}
+
+/**
+ * Core remove-app-session logic operating on an already-parsed request body.
+ * Extracted from {@link handleRemoveAppSession} so in-process callers (e.g.
+ * apply-managed-sessions prune) can invoke it directly instead of constructing a
+ * synthetic HTTP {@link Request}. Behavior-preserving.
+ */
+export async function removeAppSessionFromBody(
+  this: HrcServerInstanceForHandlers,
+  body: RemoveAppSessionRequest
+): Promise<Response> {
   const { appId, appSessionKey } = body.selector
   const now = timestamp()
 
@@ -620,13 +647,8 @@ export async function handleApplyManagedAppSessions(
       })
     }
 
-    // Use internal ensure logic
-    const ensureRequest = new Request('http://localhost/v1/app-sessions/ensure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ensureBody),
-    })
-    const ensureResponse = await this.handleEnsureAppSession(ensureRequest)
+    // Use internal ensure logic directly (no synthetic HTTP self-call)
+    const ensureResponse = await this.ensureAppSessionFromBody(ensureBody)
     const result = (await ensureResponse.json()) as EnsureAppSessionResponse
     results.push(result)
     ensured += 1
@@ -638,14 +660,9 @@ export async function handleApplyManagedAppSessions(
     const allActive = this.db.appManagedSessions.findByApp(body.appId, { includeRemoved: false })
     for (const session of allActive) {
       if (!incomingKeys.has(session.appSessionKey)) {
-        const removeRequest = new Request('http://localhost/v1/app-sessions/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            selector: { appId: body.appId, appSessionKey: session.appSessionKey },
-          }),
+        await this.removeAppSessionFromBody({
+          selector: { appId: body.appId, appSessionKey: session.appSessionKey },
         })
-        await this.handleRemoveAppSession(removeRequest)
         removed += 1
       }
     }
@@ -849,10 +866,12 @@ export const appSessionHandlersMethods = {
   handleApplyAppSessions,
   handleListAppSessions,
   handleEnsureAppSession,
+  ensureAppSessionFromBody,
   handleEnsureAppSessionDryRun,
   handleListManagedAppSessions,
   handleGetManagedAppSessionByKey,
   handleRemoveAppSession,
+  removeAppSessionFromBody,
   handleApplyManagedAppSessions,
   handleAppSessionDispatchTurn,
   handleAppSessionInFlightInput,

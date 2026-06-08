@@ -94,41 +94,66 @@ import type {
 
 const BASE_URL = 'http://hrc'
 
-function appendOptionalEventQueryParam(
-  params: URLSearchParams,
-  name: string,
-  value: string | number | undefined
-): void {
-  if (value !== undefined) {
-    params.set(name, String(value))
+/**
+ * Single source of truth for the event-filter projection shared by
+ * `watch`, `listLatestEventBySession`, and `matchesWatchOptions`. Adding a new
+ * filter field requires editing only this array (provided it exists on both
+ * `WatchOptions`/`LatestEventBySessionFilter` and `HrcLifecycleEvent`).
+ */
+const EVENT_FILTER_FIELDS = [
+  'hostSessionId',
+  'generation',
+  'scopeRef',
+  'laneRef',
+  'runtimeId',
+  'runId',
+  'category',
+  'eventKind',
+] as const satisfies ReadonlyArray<keyof HrcLifecycleEvent & keyof WatchOptions>
+
+type QueryValue = string | number | boolean | readonly string[] | undefined
+
+/**
+ * Build a path with an optional query string. Skips `undefined` values, joins
+ * array values with commas, and only appends `?` when at least one param is set.
+ */
+function buildPath(base: string, params: Record<string, QueryValue>): string {
+  const search = new URLSearchParams()
+  for (const [name, value] of Object.entries(params)) {
+    if (value === undefined) continue
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue
+      search.set(name, value.join(','))
+    } else {
+      search.set(name, String(value))
+    }
   }
+  const qs = search.toString()
+  return qs ? `${base}?${qs}` : base
+}
+
+/**
+ * Project the shared event-filter fields off a filter/options object into a
+ * `buildPath`-compatible record. Undefined fields are carried through and
+ * dropped by `buildPath`.
+ */
+function eventFilterParams(
+  source: Partial<Pick<WatchOptions, (typeof EVENT_FILTER_FIELDS)[number]>> | undefined
+): Record<string, QueryValue> {
+  const out: Record<string, QueryValue> = {}
+  for (const field of EVENT_FILTER_FIELDS) {
+    out[field] = source?.[field]
+  }
+  return out
 }
 
 function matchesWatchOptions(event: HrcLifecycleEvent, options: WatchOptions | undefined): boolean {
   if (!options) return true
-  if (options.hostSessionId !== undefined && event.hostSessionId !== options.hostSessionId) {
-    return false
-  }
-  if (options.generation !== undefined && event.generation !== options.generation) {
-    return false
-  }
-  if (options.scopeRef !== undefined && event.scopeRef !== options.scopeRef) {
-    return false
-  }
-  if (options.laneRef !== undefined && event.laneRef !== options.laneRef) {
-    return false
-  }
-  if (options.runtimeId !== undefined && event.runtimeId !== options.runtimeId) {
-    return false
-  }
-  if (options.runId !== undefined && event.runId !== options.runId) {
-    return false
-  }
-  if (options.category !== undefined && event.category !== options.category) {
-    return false
-  }
-  if (options.eventKind !== undefined && event.eventKind !== options.eventKind) {
-    return false
+  for (const field of EVENT_FILTER_FIELDS) {
+    const expected = options[field]
+    if (expected !== undefined && event[field] !== expected) {
+      return false
+    }
   }
   return true
 }
@@ -198,11 +223,10 @@ export class HrcClient {
   }
 
   async listSessions(filter?: SessionFilter): Promise<HrcSessionRecord[]> {
-    const params = new URLSearchParams()
-    if (filter?.scopeRef) params.set('scopeRef', filter.scopeRef)
-    if (filter?.laneRef) params.set('laneRef', filter.laneRef)
-    const qs = params.toString()
-    const path = qs ? `/v1/sessions?${qs}` : '/v1/sessions'
+    const path = buildPath('/v1/sessions', {
+      scopeRef: filter?.scopeRef || undefined,
+      laneRef: filter?.laneRef || undefined,
+    })
     return this.getJson<HrcSessionRecord[]>(path)
   }
 
@@ -377,35 +401,32 @@ export class HrcClient {
   }
 
   async getStatus(options?: { includeArchived?: boolean }): Promise<StatusResponse> {
-    const params = new URLSearchParams()
-    if (options?.includeArchived) params.set('includeArchived', 'true')
-    const qs = params.toString()
-    const path = qs ? `/v1/status?${qs}` : '/v1/status'
+    const path = buildPath('/v1/status', {
+      includeArchived: options?.includeArchived ? 'true' : undefined,
+    })
     return this.getJson<StatusResponse>(path)
   }
 
   async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
-    const params = new URLSearchParams()
-    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
-    if (filter?.transport) params.set('transport', filter.transport)
-    if (filter?.status && filter.status.length > 0) params.set('status', filter.status.join(','))
-    if (filter?.stale !== undefined) params.set('stale', String(filter.stale))
-    if (filter?.olderThan) params.set('olderThan', filter.olderThan)
-    if (filter?.scope) params.set('scope', filter.scope)
-    if (filter?.json !== undefined) params.set('json', String(filter.json))
-    const qs = params.toString()
-    const path = qs ? `/v1/runtimes?${qs}` : '/v1/runtimes'
+    const path = buildPath('/v1/runtimes', {
+      hostSessionId: filter?.hostSessionId || undefined,
+      transport: filter?.transport || undefined,
+      status: filter?.status,
+      stale: filter?.stale,
+      olderThan: filter?.olderThan || undefined,
+      scope: filter?.scope || undefined,
+      json: filter?.json,
+    })
     return this.getJson<RuntimeRecord[]>(path)
   }
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {
-    const params = new URLSearchParams()
-    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
-    if (filter?.generation !== undefined) params.set('generation', String(filter.generation))
-    if (filter?.runtimeId) params.set('runtimeId', filter.runtimeId)
-    if (filter?.limit !== undefined) params.set('limit', String(filter.limit))
-    const qs = params.toString()
-    const path = qs ? `/v1/runs?${qs}` : '/v1/runs'
+    const path = buildPath('/v1/runs', {
+      hostSessionId: filter?.hostSessionId || undefined,
+      generation: filter?.generation,
+      runtimeId: filter?.runtimeId || undefined,
+      limit: filter?.limit,
+    })
     return this.getJson<RunRecord[]>(path)
   }
 
@@ -422,11 +443,10 @@ export class HrcClient {
   }
 
   async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {
-    const params = new URLSearchParams()
-    if (filter?.hostSessionId) params.set('hostSessionId', filter.hostSessionId)
-    if (filter?.runtimeId) params.set('runtimeId', filter.runtimeId)
-    const qs = params.toString()
-    const path = qs ? `/v1/launches?${qs}` : '/v1/launches'
+    const path = buildPath('/v1/launches', {
+      hostSessionId: filter?.hostSessionId || undefined,
+      runtimeId: filter?.runtimeId || undefined,
+    })
     return this.getJson<LaunchRecord[]>(path)
   }
 
@@ -437,12 +457,11 @@ export class HrcClient {
   // -- hrcchat: targets --------------------------------------------------------
 
   async listTargets(filter?: TargetListFilter): Promise<HrcTargetView[]> {
-    const params = new URLSearchParams()
-    if (filter?.projectId) params.set('projectId', filter.projectId)
-    if (filter?.lane) params.set('lane', filter.lane)
-    if (filter?.discover) params.set('discover', 'true')
-    const qs = params.toString()
-    const path = qs ? `/v1/targets?${qs}` : '/v1/targets'
+    const path = buildPath('/v1/targets', {
+      projectId: filter?.projectId || undefined,
+      lane: filter?.lane || undefined,
+      discover: filter?.discover ? 'true' : undefined,
+    })
     return this.getJson<HrcTargetView[]>(path)
   }
 
@@ -505,49 +524,17 @@ export class HrcClient {
       timeoutMs: options?.timeoutMs,
     }
 
-    const res = await fetch(`${BASE_URL}/v1/messages/watch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      unix: this.socketPath,
-      ...(options?.signal ? { signal: options.signal } : {}),
-    } as RequestInit)
-
-    if (!res.ok) {
-      await this.throwTypedError(res)
-    }
-
-    const respBody = res.body
-    if (!respBody) return
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    for await (const chunk of respBody) {
-      if (options?.signal?.aborted) return
-      buffer += decoder.decode(chunk, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (trimmed.length === 0) continue
-        try {
-          yield JSON.parse(trimmed) as HrcMessageRecord
-        } catch {
-          continue
-        }
-        if (options?.signal?.aborted) return
-      }
-    }
-
-    const remaining = buffer.trim()
-    if (remaining.length > 0) {
-      try {
-        yield JSON.parse(remaining) as HrcMessageRecord
-      } catch {
-        // skip malformed trailing content
-      }
-    }
+    yield* this.streamNdjson<HrcMessageRecord>(
+      '/v1/messages/watch',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        unix: this.socketPath,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      } as RequestInit,
+      options?.signal
+    )
   }
 
   // -- Event stream -----------------------------------------------------------
@@ -563,40 +550,42 @@ export class HrcClient {
   async listLatestEventBySession(
     filter?: LatestEventBySessionFilter
   ): Promise<HrcLifecycleEvent[]> {
-    const params = new URLSearchParams()
-    appendOptionalEventQueryParam(params, 'hostSessionId', filter?.hostSessionId)
-    appendOptionalEventQueryParam(params, 'generation', filter?.generation)
-    appendOptionalEventQueryParam(params, 'scopeRef', filter?.scopeRef)
-    appendOptionalEventQueryParam(params, 'laneRef', filter?.laneRef)
-    appendOptionalEventQueryParam(params, 'runtimeId', filter?.runtimeId)
-    appendOptionalEventQueryParam(params, 'runId', filter?.runId)
-    appendOptionalEventQueryParam(params, 'category', filter?.category)
-    appendOptionalEventQueryParam(params, 'eventKind', filter?.eventKind)
-    const qs = params.toString()
-    const path = qs ? `/v1/events/latest-by-session?${qs}` : '/v1/events/latest-by-session'
+    const path = buildPath('/v1/events/latest-by-session', eventFilterParams(filter))
     return this.getJson<HrcLifecycleEvent[]>(path)
   }
 
   async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
-    const params = new URLSearchParams()
-    if (options?.fromSeq !== undefined) params.set('fromSeq', String(options.fromSeq))
-    if (options?.follow) params.set('follow', 'true')
-    appendOptionalEventQueryParam(params, 'hostSessionId', options?.hostSessionId)
-    appendOptionalEventQueryParam(params, 'generation', options?.generation)
-    appendOptionalEventQueryParam(params, 'scopeRef', options?.scopeRef)
-    appendOptionalEventQueryParam(params, 'laneRef', options?.laneRef)
-    appendOptionalEventQueryParam(params, 'runtimeId', options?.runtimeId)
-    appendOptionalEventQueryParam(params, 'runId', options?.runId)
-    appendOptionalEventQueryParam(params, 'category', options?.category)
-    appendOptionalEventQueryParam(params, 'eventKind', options?.eventKind)
-    const qs = params.toString()
-    const path = qs ? `/v1/events?${qs}` : '/v1/events'
+    const path = buildPath('/v1/events', {
+      fromSeq: options?.fromSeq,
+      follow: options?.follow ? 'true' : undefined,
+      ...eventFilterParams(options),
+    })
 
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: 'GET',
-      unix: this.socketPath,
-      ...(options?.signal ? { signal: options.signal } : {}),
-    } as RequestInit)
+    yield* this.streamNdjson<HrcLifecycleEvent>(
+      path,
+      {
+        method: 'GET',
+        unix: this.socketPath,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      } as RequestInit,
+      options?.signal,
+      (event) => matchesWatchOptions(event, options)
+    )
+  }
+
+  /**
+   * Shared NDJSON streaming loop: opens a streaming fetch, decodes/buffers/splits
+   * on `\n`, JSON-parses each complete line (swallowing malformed lines), honors
+   * the optional AbortSignal, and flushes any trailing partial line at the end.
+   * An optional `predicate` filters which parsed values are yielded.
+   */
+  private async *streamNdjson<T>(
+    path: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+    predicate?: (value: T) => boolean
+  ): AsyncIterable<T> {
+    const res = await fetch(`${BASE_URL}${path}`, init)
 
     if (!res.ok) {
       await this.throwTypedError(res)
@@ -609,7 +598,7 @@ export class HrcClient {
     let buffer = ''
 
     for await (const chunk of body) {
-      if (options?.signal?.aborted) return
+      if (signal?.aborted) return
       buffer += decoder.decode(chunk, { stream: true })
       const lines = buffer.split('\n')
       // Keep the last (possibly incomplete) line in the buffer
@@ -617,29 +606,32 @@ export class HrcClient {
       for (const line of lines) {
         const trimmed = line.trim()
         if (trimmed.length === 0) continue
+        let value: T
         try {
-          const event = JSON.parse(trimmed) as HrcLifecycleEvent
-          if (matchesWatchOptions(event, options)) {
-            yield event
-          }
+          value = JSON.parse(trimmed) as T
         } catch {
           // M-10: skip malformed NDJSON lines instead of crashing the generator
           continue
         }
-        if (options?.signal?.aborted) return
+        if (!predicate || predicate(value)) {
+          yield value
+        }
+        if (signal?.aborted) return
       }
     }
 
     // Flush any remaining content
     const remaining = buffer.trim()
     if (remaining.length > 0) {
+      let value: T
       try {
-        const event = JSON.parse(remaining) as HrcLifecycleEvent
-        if (matchesWatchOptions(event, options)) {
-          yield event
-        }
+        value = JSON.parse(remaining) as T
       } catch {
         // M-10: skip malformed trailing content
+        return
+      }
+      if (!predicate || predicate(value)) {
+        yield value
       }
     }
   }

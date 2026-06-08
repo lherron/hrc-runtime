@@ -1,6 +1,12 @@
 import { HrcErrorCode, createHrcError } from '../errors.js'
 import { type HrcSelector, formatSelector } from '../selectors.js'
 
+/**
+ * Maximum number of trailing matching events replayed to a non-follow snapshot
+ * read when no explicit `fromSeq` cursor is supplied.
+ */
+const DEFAULT_REPLAY_TAIL = 100
+
 export type HrcMonitorSessionState = {
   sessionRef: string
   scopeRef: string
@@ -356,7 +362,7 @@ async function* watchEvents(
         )
       : follow
         ? []
-        : matching.slice(-100)
+        : matching.slice(-DEFAULT_REPLAY_TAIL)
 
   for (const event of replay) {
     yield {

@@ -177,6 +177,52 @@ function parseIntegerFlag(
   return parseIntegerValue(flag, raw, { min: options.min ?? 0 })
 }
 
+/**
+ * Parse the optional `--expected-generation` flag shared by the bridge
+ * handlers. Returns `undefined` when the flag is absent and fatals with the
+ * canonical message when present but not a non-negative integer.
+ */
+function parseExpectedGeneration(args: string[]): number | undefined {
+  const raw = parseFlag(args, '--expected-generation')
+  if (raw === undefined) {
+    return undefined
+  }
+  const value = Number.parseInt(raw, 10)
+  if (!Number.isFinite(value) || value < 0) {
+    fatal('--expected-generation must be a non-negative integer')
+  }
+  return value
+}
+
+/**
+ * Recover the raw argv slice for a commander action's verb.
+ *
+ * Commander does not expose the unparsed argv on a subcommand, so we walk up to
+ * the root command, read its `rawArgs` (falling back to `process.argv`), and
+ * slice from the verb onward. Scoping the scan to the active command path's raw
+ * argv avoids surprise matches from global flags.
+ *
+ * @param cmd      The commander command passed to the action handler.
+ * @param verb     The verb token to locate in the raw argv.
+ * @param options  `offset` is added to the verb index before slicing (e.g. `1`
+ *                 to drop the verb itself). `fallback` is returned when the verb
+ *                 is not found; defaults to the full raw argv.
+ */
+function rawArgvForVerb(
+  cmd: Command,
+  verb: string,
+  options: { offset?: number; fallback?: string[] } = {}
+): string[] {
+  let root: Command = cmd
+  while (root.parent) root = root.parent
+  const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
+  const idx = fullRaw.indexOf(verb)
+  if (idx < 0) {
+    return options.fallback ?? fullRaw
+  }
+  return fullRaw.slice(idx + (options.offset ?? 0))
+}
+
 // -- toLegacyArgv (transitional glue for commander → legacy handler bridge) ---
 
 type LegacyArgvSchema = {
@@ -1783,14 +1829,20 @@ async function cmdRuntimeSweep(args: string[]): Promise<void> {
   const client = createClient()
   const result = await client.sweepRuntimes(request)
   if (jsonOutput) {
-    printSweepNdjson(result)
+    printResultsNdjson(result)
     return
   }
 
   printSweepHuman(result, request.dryRun === true)
 }
 
-function printSweepNdjson(result: SweepRuntimesResponse): void {
+/**
+ * Emit a `{ results, summary }` mutation result as NDJSON: one line per result
+ * row followed by a final summary line. Shared by the runtime-sweep,
+ * zombie-sweep, and active-reconcile commands (the per-command Human formatters
+ * remain distinct).
+ */
+function printResultsNdjson(result: { results: readonly unknown[]; summary: unknown }): void {
   for (const row of result.results) {
     process.stdout.write(`${JSON.stringify(row)}\n`)
   }
@@ -1829,18 +1881,11 @@ async function cmdRunSweepZombies(args: string[]): Promise<void> {
   const client = createClient()
   const result = await client.sweepZombieRuns(request)
   if (jsonOutput) {
-    printZombieSweepNdjson(result)
+    printResultsNdjson(result)
     return
   }
 
   printZombieSweepHuman(result, request.dryRun === true)
-}
-
-function printZombieSweepNdjson(result: SweepZombieRunsResponse): void {
-  for (const row of result.results) {
-    process.stdout.write(`${JSON.stringify(row)}\n`)
-  }
-  process.stdout.write(`${JSON.stringify(result.summary)}\n`)
 }
 
 function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean): void {
@@ -1875,18 +1920,11 @@ async function cmdRunReconcileActive(args: string[]): Promise<void> {
   const client = createClient()
   const result = await client.reconcileActiveRuns(request)
   if (jsonOutput) {
-    printReconcileActiveNdjson(result)
+    printResultsNdjson(result)
     return
   }
 
   printReconcileActiveHuman(result, request.dryRun === true)
-}
-
-function printReconcileActiveNdjson(result: ReconcileActiveRunsResponse): void {
-  for (const row of result.results) {
-    process.stdout.write(`${JSON.stringify(row)}\n`)
-  }
-  process.stdout.write(`${JSON.stringify(result.summary)}\n`)
 }
 
 function printReconcileActiveHuman(result: ReconcileActiveRunsResponse, dryRun: boolean): void {
@@ -2779,7 +2817,6 @@ async function cmdBridgeRegister(args: string[]): Promise<void> {
   const target = parseFlag(args, '--target')
   const runtimeId = parseFlag(args, '--runtime-id')
   const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
 
   if (!transport) {
     fatal('--transport is required for bridge register')
@@ -2788,14 +2825,7 @@ async function cmdBridgeRegister(args: string[]): Promise<void> {
     fatal('--target is required for bridge register')
   }
 
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
+  const expectedGeneration = parseExpectedGeneration(args)
 
   const client = createClient()
   const result = await client.registerBridgeTarget({
@@ -2813,20 +2843,12 @@ async function cmdBridgeDeliver(args: string[]): Promise<void> {
   const bridgeId = requireArg(args, 0, '<bridgeId>')
   const text = parseFlag(args, '--text')
   const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
 
   if (!text) {
     fatal('--text is required for bridge deliver')
   }
 
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
+  const expectedGeneration = parseExpectedGeneration(args)
 
   const client = createClient()
   const result = await client.deliverBridge({
@@ -2860,7 +2882,6 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
   const target = parseFlag(args, '--target')
   const runtimeId = parseFlag(args, '--runtime-id')
   const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
 
   // --bridge is a convenience alias for --transport tmux --target <value>
   const effectiveTransport = transport ?? (bridge ? 'tmux' : undefined)
@@ -2881,14 +2902,7 @@ async function cmdBridgeTarget(args: string[]): Promise<void> {
     fatal('bridge target accepts --host-session or --session-ref, not both')
   }
 
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
+  const expectedGeneration = parseExpectedGeneration(args)
 
   const selector: import('hrc-core').HrcBridgeTargetSelector = sessionRef
     ? { sessionRef }
@@ -2912,7 +2926,6 @@ async function cmdBridgeDeliverText(args: string[]): Promise<void> {
   const enter = hasFlag(args, '--enter')
   const oobSuffix = parseFlag(args, '--oob-suffix')
   const expectedHostSessionId = parseFlag(args, '--expected-host-session-id')
-  const expectedGenerationRaw = parseFlag(args, '--expected-generation')
 
   if (!bridge) {
     fatal('--bridge is required for bridge deliver-text')
@@ -2921,14 +2934,7 @@ async function cmdBridgeDeliverText(args: string[]): Promise<void> {
     fatal('--text is required for bridge deliver-text')
   }
 
-  const expectedGeneration =
-    expectedGenerationRaw !== undefined ? Number.parseInt(expectedGenerationRaw, 10) : undefined
-  if (
-    expectedGenerationRaw !== undefined &&
-    (!Number.isFinite(expectedGeneration) || (expectedGeneration ?? 0) < 0)
-  ) {
-    fatal('--expected-generation must be a non-negative integer')
-  }
+  const expectedGeneration = parseExpectedGeneration(args)
 
   const client = createClient()
   const result = await client.deliverBridgeText({
@@ -3505,12 +3511,7 @@ Exit codes:
     .action(async (runtimeId, _opts, cmd: Command) => {
       // Scope the negated-flag scan to the active command path's raw argv,
       // not the full process.argv, to avoid surprise matches from globals.
-      // Walk up to the root command and slice from 'terminate' onward.
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const terminateIdx = fullRaw.indexOf('terminate')
-      const rawArgv = terminateIdx >= 0 ? fullRaw.slice(terminateIdx) : fullRaw
+      const rawArgv = rawArgvForVerb(cmd, 'terminate')
       const args = toLegacyArgv(
         [runtimeId],
         cmd.opts(),
@@ -3577,11 +3578,7 @@ Exit codes:
       // argv from commander's parsed positionals + options.
       const positionals: string[] = cmd.args
       const opts = cmd.opts()
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const verbIdx = fullRaw.indexOf('start')
-      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
+      const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
         booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
@@ -3609,31 +3606,19 @@ Exit codes:
     .action(async (_scope, _opts, cmd: Command) => {
       const positionals: string[] = cmd.args
       if (positionals[0] === 'sweep-zombies') {
-        let root: Command = cmd
-        while (root.parent) root = root.parent
-        const fullRaw: string[] =
-          (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-        const verbIdx = fullRaw.indexOf('run')
-        const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 2) : fullRaw.slice(2)
-        await cmdRunSweepZombies(rawArgv)
+        await cmdRunSweepZombies(
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+        )
         return
       }
       if (positionals[0] === 'reconcile-active') {
-        let root: Command = cmd
-        while (root.parent) root = root.parent
-        const fullRaw: string[] =
-          (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-        const verbIdx = fullRaw.indexOf('run')
-        const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 2) : fullRaw.slice(2)
-        await cmdRunReconcileActive(rawArgv)
+        await cmdRunReconcileActive(
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+        )
         return
       }
       const opts = cmd.opts()
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const verbIdx = fullRaw.indexOf('run')
-      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : fullRaw
+      const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
         booleans: ['force-restart', 'dry-run', 'debug', 'json'],
@@ -3651,11 +3636,7 @@ Exit codes:
     .option('--json', 'output as JSON')
     .action(async (...actionArgs: unknown[]) => {
       const cmd = actionArgs[actionArgs.length - 1] as Command
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const verbIdx = fullRaw.indexOf('sweep-zombies')
-      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : []
+      const rawArgv = rawArgvForVerb(cmd, 'sweep-zombies', { offset: 1, fallback: [] })
       await cmdRunSweepZombies(rawArgv)
     })
 
@@ -3668,11 +3649,7 @@ Exit codes:
     .option('--json', 'output as JSON')
     .action(async (...actionArgs: unknown[]) => {
       const cmd = actionArgs[actionArgs.length - 1] as Command
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const verbIdx = fullRaw.indexOf('reconcile-active')
-      const rawArgv = verbIdx >= 0 ? fullRaw.slice(verbIdx + 1) : []
+      const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
       await cmdRunReconcileActive(rawArgv)
     })
 
@@ -3688,11 +3665,7 @@ Exit codes:
     .allowExcessArguments(true)
     .argument('[args...]', 'forwarded verbatim to `hrcchat turn`')
     .action(async (_args, _opts, cmd: Command) => {
-      let root: Command = cmd
-      while (root.parent) root = root.parent
-      const fullRaw: string[] = (root as unknown as { rawArgs?: string[] }).rawArgs ?? process.argv
-      const turnIdx = fullRaw.indexOf('turn')
-      const forwarded = turnIdx >= 0 ? fullRaw.slice(turnIdx + 1) : []
+      const forwarded = rawArgvForVerb(cmd, 'turn', { offset: 1, fallback: [] })
       await execHrcchatTurn(forwarded)
     })
 

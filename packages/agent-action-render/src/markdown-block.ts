@@ -2,6 +2,9 @@ import { truncateText } from './budgets.js'
 
 export type MarkdownBlockStyle = 'tty' | 'plain' | 'markdown'
 
+/** Minimum render width; narrower requests are clamped up to this floor. */
+const MIN_BLOCK_WIDTH = 20
+
 export type MarkdownBlockOptions = {
   width: number
   maxLines: number
@@ -33,24 +36,21 @@ function wrapLine(line: string, width: number): string[] {
   return lines.length > 0 ? lines : ['']
 }
 
-function renderLine(line: string, style: MarkdownBlockStyle, inFence: boolean): string {
+function renderLine(line: string, style: MarkdownBlockStyle): string {
   if (style === 'markdown') return line
   if (line.startsWith('- ')) return `• ${line.slice(2)}`
-  if (inFence) return line
   return line
 }
 
 export function renderMarkdownBlock(body: string, opts: MarkdownBlockOptions): string[] {
-  const width = Math.max(20, opts.width)
+  const width = Math.max(MIN_BLOCK_WIDTH, opts.width)
   const out: string[] = []
-  let inFence = false
   for (const rawLine of body.replace(/\r\n/g, '\n').split('\n')) {
     if (rawLine.trimStart().startsWith('```')) {
-      inFence = !inFence
       out.push(rawLine)
       continue
     }
-    const rendered = renderLine(rawLine, opts.style, inFence)
+    const rendered = renderLine(rawLine, opts.style)
     out.push(...wrapLine(rendered, width))
   }
 

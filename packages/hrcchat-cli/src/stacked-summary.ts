@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { consulKvGet as defaultConsulKvGet } from './consul-secrets.js'
+import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
 import { FlushReason, Phase, type Summarizer, type SummarizerInput } from './stacked-types.js'
 
 const MODEL = 'claude-haiku-4-5'
@@ -229,30 +230,11 @@ function boundString(value: string, maxBytes: number): string {
   return `${bounded}${marker}`
 }
 
-function redactSecrets(value: string): string {
-  return value
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]')
-    .replace(/sk-ant-[^\s"'`\\]+/g, '[REDACTED]')
-    .replace(/Bearer\s+eyJ[^\s"'`\\]+/g, 'Bearer [REDACTED]')
-    .replace(/\b(password|api_key|apikey|token|secret)=([^\s"'`\\&]+)/gi, '$1=[REDACTED]')
-}
-
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) {
     return value
   }
   return `${value.slice(0, Math.max(0, maxChars - 14))}...[truncated]`
-}
-
-function mechanicalSummary(events: HrcLifecycleEvent[], phase: string): string {
-  let lastTool: string | undefined
-  for (const event of events) {
-    const toolName = isRecord(event.payload) ? event.payload['toolName'] : undefined
-    if (typeof toolName === 'string') {
-      lastTool = toolName
-    }
-  }
-  return `${events.length} events; last tool: ${lastTool ?? 'none'}; phase: ${phase}`
 }
 
 function formatWindow(ms: number): string {
@@ -265,10 +247,3 @@ function formatWindow(ms: number): string {
   return `${ms}ms`
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}

@@ -124,6 +124,7 @@ export type HrcServerInstanceForHandlers = {
   handleDispatchTurnBySelector: HandlerMethod
   handleDropContinuation: HandlerMethod
   handleEnsureAppSession: HandlerMethod
+  ensureAppSessionFromBody: HandlerMethod
   handleEnsureAppSessionDryRun: HandlerMethod
   handleEnsureRuntime: HandlerMethod
   handleEnsureTarget: HandlerMethod
@@ -157,6 +158,7 @@ export type HrcServerInstanceForHandlers = {
   handleReconcileActiveRuns: HandlerMethod
   handleRegisterBridgeTarget: HandlerMethod
   handleRemoveAppSession: HandlerMethod
+  removeAppSessionFromBody: HandlerMethod
   handleRequest: HandlerMethod
   handleResolveSession: HandlerMethod
   handleResumeAttachedRun: HandlerMethod

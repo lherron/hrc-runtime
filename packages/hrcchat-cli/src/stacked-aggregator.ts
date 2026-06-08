@@ -1,5 +1,6 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
+import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
 import {
   FlushReason,
   Phase,
@@ -509,29 +510,3 @@ function redactAndTruncate(value: unknown): unknown {
   return redactSecrets(truncateFinalBody(text, 1_000))
 }
 
-function redactSecrets(value: string): string {
-  return value
-    .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]')
-    .replace(/sk-ant-[^\s"'`\\]+/g, '[REDACTED]')
-    .replace(/Bearer\s+eyJ[^\s"'`\\]+/g, 'Bearer [REDACTED]')
-    .replace(/\b(password|api_key|apikey|token|secret)=([^\s"'`\\&]+)/gi, '$1=[REDACTED]')
-}
-
-function mechanicalSummary(events: HrcLifecycleEvent[], phase: string): string {
-  let lastTool: string | undefined
-  for (const event of events) {
-    const toolName = isRecord(event.payload) ? event.payload['toolName'] : undefined
-    if (typeof toolName === 'string') {
-      lastTool = toolName
-    }
-  }
-  return `${events.length} events; last tool: ${lastTool ?? 'none'}; phase: ${phase}`
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}

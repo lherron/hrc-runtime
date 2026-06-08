@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  admissionLabel,
+  admissionLabelFromResponse,
   extractToolPreview,
   formatEventPreviewLine,
   formatNoticeLine,
@@ -127,5 +129,94 @@ describe('agent action render helpers', () => {
       style: 'plain',
     })
     expect(lines).toEqual(['• one', '… 2 more lines'])
+  })
+
+  test('passes fenced code block delimiters through unchanged', () => {
+    const lines = renderMarkdownBlock('```\n- not a bullet\n```', {
+      width: 80,
+      maxLines: 10,
+      style: 'plain',
+    })
+    expect(lines[0]).toBe('```')
+    expect(lines[lines.length - 1]).toBe('```')
+  })
+
+  test('maps additional HRC event icons and fallbacks', () => {
+    expect(getHrcEventIcon('codex.tool_decision')).toBe('⚖️')
+    expect(getHrcEventIcon('sdk.message')).toBe('🤖')
+    expect(getHrcEventIcon('message_chunk')).toBe('🤖')
+    expect(getHrcEventIcon('hook.ingested')).toBe('🪝')
+    expect(getHrcEventIcon('anything', { failed: true })).toBe('❌')
+    expect(getHrcEventIcon('notice', { level: 'warn' })).toBe('⚠️')
+    expect(getHrcEventIcon('notice', { level: 'error' })).toBe('❌')
+    expect(getHrcEventIcon('notice')).toBe('ℹ️')
+    expect(getHrcEventIcon('tool_execution_start')).toBe('⚙️')
+    expect(getHrcEventIcon('unknown.kind')).toBe('⚙️')
+  })
+})
+
+describe('admission labels', () => {
+  test('maps each admission eventKind to its mandated label', () => {
+    expect(admissionLabel({ eventKind: 'input.application.accepted' })).toBe('Contribution accepted')
+    expect(admissionLabel({ eventKind: 'input.application.pending' })).toBe('Contribution pending')
+    expect(admissionLabel({ eventKind: 'input.application.ambiguous' })).toBe(
+      'Contribution ambiguous'
+    )
+    expect(admissionLabel({ eventKind: 'input.application.failed' })).toBe('Contribution failed')
+    expect(admissionLabel({ eventKind: 'input.rejected' })).toBe('Input rejected')
+    expect(admissionLabel({ eventKind: 'input.queued' })).toBe('Queued')
+    expect(
+      admissionLabel({
+        eventKind: 'input.queued',
+        reason: 'contribution_unsupported_fallback_queued',
+      })
+    ).toBe('Unsupported contribution fallback queued')
+    expect(admissionLabel({ eventKind: 'input.admitted' })).toBe('Input admitted')
+    expect(admissionLabel({ eventKind: 'input.dispatching' })).toBe('Dispatching queued work')
+    expect(admissionLabel({ eventKind: 'input.started' })).toBe('Input started')
+    expect(admissionLabel({ eventKind: 'input.queue.expired' })).toBe('Queued input expired')
+  })
+
+  test('never uses the forbidden steered/applied wording', () => {
+    expect(admissionLabel({ eventKind: 'input.application.accepted' })).not.toContain('applied')
+    expect(admissionLabel({ eventKind: 'input.application.accepted' })).not.toContain('steered')
+  })
+
+  test('falls back to the raw eventKind for unknown kinds', () => {
+    expect(admissionLabel({ eventKind: 'totally.unknown' })).toBe('totally.unknown')
+  })
+
+  test('derives labels from send response payloads per branch', () => {
+    expect(
+      admissionLabelFromResponse({
+        admission: { kind: 'accepted_in_flight' },
+        inputApplication: { status: 'accepted' },
+      })
+    ).toBe('Contribution accepted')
+    expect(
+      admissionLabelFromResponse({
+        admission: { kind: 'admission_pending' },
+        inputApplication: { status: 'pending' },
+      })
+    ).toBe('Contribution pending')
+    expect(
+      admissionLabelFromResponse({
+        currentState: { applicationStatus: 'ambiguous' },
+      })
+    ).toBe('Contribution ambiguous')
+    expect(
+      admissionLabelFromResponse({
+        currentState: { reason: 'contribution_unsupported_fallback_queued' },
+      })
+    ).toBe('Unsupported contribution fallback queued')
+    expect(admissionLabelFromResponse({ admission: { kind: 'queued_run' } })).toBe('Queued')
+  })
+
+  test('falls back to applicationStatus, then admissionKind, then empty string', () => {
+    expect(
+      admissionLabelFromResponse({ inputApplication: { status: 'some_status' } })
+    ).toBe('some_status')
+    expect(admissionLabelFromResponse({ admission: { kind: 'some_kind' } })).toBe('some_kind')
+    expect(admissionLabelFromResponse({})).toBe('')
   })
 })

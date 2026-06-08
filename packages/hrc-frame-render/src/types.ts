@@ -135,22 +135,30 @@ export type GatewayPermissionDecisionEvent = {
   decidedAt: number
 }
 
+/**
+ * Single source of truth for session-metadata event type names. Both the
+ * runtime classification list and the {@link GatewaySessionMetadataEvent}
+ * union are derived from this tuple, so they cannot silently drift.
+ */
+export const SESSION_METADATA_EVENT_TYPES = [
+  'continuation_key_observed',
+  'user_input_received',
+  'user_input_queued_in_flight',
+  'user_input_applied_in_flight',
+  'user_input_interrupt_requested',
+  'user_input_interrupt_applied',
+  'user_input_rejected',
+  'harness_process_started',
+  'harness_process_exited',
+  'tmux_pane_bound',
+  'tmux_pane_unbound',
+  'ghostty_surface_bound',
+  'ghostty_surface_unbound',
+  'sdk_session_id',
+] as const
+
 export type GatewaySessionMetadataEvent = {
-  type:
-    | 'continuation_key_observed'
-    | 'user_input_received'
-    | 'user_input_queued_in_flight'
-    | 'user_input_applied_in_flight'
-    | 'user_input_interrupt_requested'
-    | 'user_input_interrupt_applied'
-    | 'user_input_rejected'
-    | 'harness_process_started'
-    | 'harness_process_exited'
-    | 'tmux_pane_bound'
-    | 'tmux_pane_unbound'
-    | 'ghostty_surface_bound'
-    | 'ghostty_surface_unbound'
-    | 'sdk_session_id'
+  type: (typeof SESSION_METADATA_EVENT_TYPES)[number]
 }
 
 export type GatewayNoticeEvent = {

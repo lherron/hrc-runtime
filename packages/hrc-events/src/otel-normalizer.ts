@@ -46,6 +46,9 @@ export type NormalizeOtelResult = {
 // Helpers
 // ============================================================================
 
+/** Max characters of a user prompt echoed into a notice before truncation. */
+const PROMPT_TRUNCATE = 200
+
 function getAttrString(
   attrs: Record<string, unknown> | undefined,
   key: string
@@ -185,7 +188,8 @@ export function normalizeCodexOtelEvent(record: OtelLogRecordInput): NormalizeOt
 
   if (eventName === 'codex.user_prompt') {
     const prompt = getAttrString(attrs, 'prompt') ?? ''
-    const truncated = prompt.length > 200 ? `${prompt.slice(0, 200)}\u2026` : prompt
+    const truncated =
+      prompt.length > PROMPT_TRUNCATE ? `${prompt.slice(0, PROMPT_TRUNCATE)}\u2026` : prompt
 
     return {
       events: [

@@ -17,22 +17,45 @@ export type AdmissionLabelInput = {
  * All consumers (CLI, projection, ops-server, ops-web, Discord gateway) must
  * call this single function so wording stays consistent.
  */
+/** Event-kind string constants shared by admissionLabel and the response mapping. */
+const EVENT_KIND = {
+  applicationAccepted: 'input.application.accepted',
+  applicationPending: 'input.application.pending',
+  applicationAmbiguous: 'input.application.ambiguous',
+  queued: 'input.queued',
+} as const
+
+/** Admission/application status string constants used to derive an eventKind. */
+const ADMISSION_KIND = {
+  acceptedInFlight: 'accepted_in_flight',
+  admissionPending: 'admission_pending',
+  queuedRun: 'queued_run',
+} as const
+
+const APPLICATION_STATUS = {
+  accepted: 'accepted',
+  pending: 'pending',
+  ambiguous: 'ambiguous',
+} as const
+
+const REASON_FALLBACK_QUEUED = 'contribution_unsupported_fallback_queued'
+
 export function admissionLabel(input: AdmissionLabelInput): string {
   const { eventKind, reason } = input
 
   switch (eventKind) {
-    case 'input.application.accepted':
+    case EVENT_KIND.applicationAccepted:
       return 'Contribution accepted'
-    case 'input.application.pending':
+    case EVENT_KIND.applicationPending:
       return 'Contribution pending'
-    case 'input.application.ambiguous':
+    case EVENT_KIND.applicationAmbiguous:
       return 'Contribution ambiguous'
     case 'input.application.failed':
       return 'Contribution failed'
     case 'input.rejected':
       return 'Input rejected'
-    case 'input.queued':
-      if (reason === 'contribution_unsupported_fallback_queued') {
+    case EVENT_KIND.queued:
+      if (reason === REASON_FALLBACK_QUEUED) {
         return 'Unsupported contribution fallback queued'
       }
       return 'Queued'
@@ -69,23 +92,29 @@ export function admissionLabelFromResponse(payload: {
   const reason = payload.currentState?.reason
 
   // Map admission kind + application status to an eventKind for label lookup
-  if (admissionKind === 'accepted_in_flight' && applicationStatus === 'accepted') {
-    return admissionLabel({ eventKind: 'input.application.accepted' })
+  if (
+    admissionKind === ADMISSION_KIND.acceptedInFlight &&
+    applicationStatus === APPLICATION_STATUS.accepted
+  ) {
+    return admissionLabel({ eventKind: EVENT_KIND.applicationAccepted })
   }
-  if (admissionKind === 'admission_pending' && applicationStatus === 'pending') {
-    return admissionLabel({ eventKind: 'input.application.pending' })
+  if (
+    admissionKind === ADMISSION_KIND.admissionPending &&
+    applicationStatus === APPLICATION_STATUS.pending
+  ) {
+    return admissionLabel({ eventKind: EVENT_KIND.applicationPending })
   }
-  if (applicationStatus === 'ambiguous') {
-    return admissionLabel({ eventKind: 'input.application.ambiguous' })
+  if (applicationStatus === APPLICATION_STATUS.ambiguous) {
+    return admissionLabel({ eventKind: EVENT_KIND.applicationAmbiguous })
   }
-  if (reason === 'contribution_unsupported_fallback_queued') {
+  if (reason === REASON_FALLBACK_QUEUED) {
     return admissionLabel({
-      eventKind: 'input.queued',
-      reason: 'contribution_unsupported_fallback_queued',
+      eventKind: EVENT_KIND.queued,
+      reason: REASON_FALLBACK_QUEUED,
     })
   }
-  if (admissionKind === 'queued_run') {
-    return admissionLabel({ eventKind: 'input.queued' })
+  if (admissionKind === ADMISSION_KIND.queuedRun) {
+    return admissionLabel({ eventKind: EVENT_KIND.queued })
   }
 
   // Fallback: use applicationStatus or admissionKind as-is

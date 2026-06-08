@@ -615,6 +615,102 @@ function buildSetClause(entries: Array<[column: string, value: string | number |
   }
 }
 
+/**
+ * Append the shared `events` filter predicates (host_session_id, generation,
+ * runtime_id, run_id) to the provided `where`/`values` accumulators in the
+ * canonical order. The seq predicate (`seq >= ?`) is owned by each caller
+ * because it differs (a default-1 range scan vs an optional count filter).
+ */
+function buildEventWhere(
+  filters: Pick<EventQueryFilters, 'hostSessionId' | 'generation' | 'runtimeId' | 'runId'>,
+  where: string[],
+  values: Array<string | number>
+): void {
+  if (filters.hostSessionId !== undefined) {
+    where.push('host_session_id = ?')
+    values.push(filters.hostSessionId)
+  }
+  if (filters.generation !== undefined) {
+    where.push('generation = ?')
+    values.push(filters.generation)
+  }
+  if (filters.runtimeId !== undefined) {
+    where.push('runtime_id = ?')
+    values.push(filters.runtimeId)
+  }
+  if (filters.runId !== undefined) {
+    where.push('run_id = ?')
+    values.push(filters.runId)
+  }
+}
+
+/**
+ * Assemble the WHERE predicates + ordered bound values for `hrc_events` queries.
+ *
+ * When `includeSeqPredicates` is true the seq-range predicates
+ * (`hrc_seq >= ?`, `stream_seq >= ?`) are emitted first (matching `runQuery`'s
+ * original ordering); when false they are skipped entirely (matching
+ * `listLatestPerSession`, which ignores seq/limit). The 9 shared field
+ * predicates follow in their canonical order so the bound-value list stays
+ * positionally identical to the previous inlined blocks.
+ */
+function buildLifecycleWhere(
+  filters: HrcLifecycleQueryFilters,
+  options: { includeSeqPredicates: boolean }
+): { where: string[]; values: Array<string | number> } {
+  const where: string[] = []
+  const values: Array<string | number> = []
+
+  if (options.includeSeqPredicates) {
+    if (filters.fromHrcSeq !== undefined) {
+      where.push('hrc_seq >= ?')
+      values.push(filters.fromHrcSeq)
+    }
+    if (filters.fromStreamSeq !== undefined) {
+      where.push('stream_seq >= ?')
+      values.push(filters.fromStreamSeq)
+    }
+  }
+  if (filters.hostSessionId !== undefined) {
+    where.push('host_session_id = ?')
+    values.push(filters.hostSessionId)
+  }
+  if (filters.generation !== undefined) {
+    where.push('generation = ?')
+    values.push(filters.generation)
+  }
+  if (filters.scopeRef !== undefined) {
+    where.push('scope_ref = ?')
+    values.push(filters.scopeRef)
+  }
+  if (filters.laneRef !== undefined) {
+    where.push('lane_ref = ?')
+    values.push(filters.laneRef)
+  }
+  if (filters.runtimeId !== undefined) {
+    where.push('runtime_id = ?')
+    values.push(filters.runtimeId)
+  }
+  if (filters.runId !== undefined) {
+    where.push('run_id = ?')
+    values.push(filters.runId)
+  }
+  if (filters.launchId !== undefined) {
+    where.push('launch_id = ?')
+    values.push(filters.launchId)
+  }
+  if (filters.eventKind !== undefined) {
+    where.push('event_kind = ?')
+    values.push(filters.eventKind)
+  }
+  if (filters.category !== undefined) {
+    where.push('category = ?')
+    values.push(filters.category)
+  }
+
+  return { where, values }
+}
+
 function mapSessionRow(row: SessionRow): HrcSessionRecord {
   return {
     hostSessionId: row.host_session_id,
@@ -2302,22 +2398,7 @@ export class EventRepository {
     const where: string[] = ['seq >= ?']
     const values: Array<string | number> = [fromSeq]
 
-    if (filters.hostSessionId !== undefined) {
-      where.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      where.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.runtimeId !== undefined) {
-      where.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
-    if (filters.runId !== undefined) {
-      where.push('run_id = ?')
-      values.push(filters.runId)
-    }
+    buildEventWhere(filters, where, values)
 
     const limitClause = filters.limit !== undefined ? ' LIMIT ?' : ''
     if (filters.limit !== undefined) {
@@ -2343,22 +2424,7 @@ export class EventRepository {
       where.push('seq >= ?')
       values.push(filters.fromSeq)
     }
-    if (filters.hostSessionId !== undefined) {
-      where.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      where.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.runtimeId !== undefined) {
-      where.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
-    if (filters.runId !== undefined) {
-      where.push('run_id = ?')
-      values.push(filters.runId)
-    }
+    buildEventWhere(filters, where, values)
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
     const row = this.db
@@ -2530,45 +2596,7 @@ export class HrcLifecycleEventRepository {
   listLatestPerSession(
     filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq' | 'limit'> = {}
   ): HrcLifecycleEvent[] {
-    const where: string[] = []
-    const values: Array<string | number> = []
-
-    if (filters.hostSessionId !== undefined) {
-      where.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      where.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.scopeRef !== undefined) {
-      where.push('scope_ref = ?')
-      values.push(filters.scopeRef)
-    }
-    if (filters.laneRef !== undefined) {
-      where.push('lane_ref = ?')
-      values.push(filters.laneRef)
-    }
-    if (filters.runtimeId !== undefined) {
-      where.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
-    if (filters.runId !== undefined) {
-      where.push('run_id = ?')
-      values.push(filters.runId)
-    }
-    if (filters.launchId !== undefined) {
-      where.push('launch_id = ?')
-      values.push(filters.launchId)
-    }
-    if (filters.eventKind !== undefined) {
-      where.push('event_kind = ?')
-      values.push(filters.eventKind)
-    }
-    if (filters.category !== undefined) {
-      where.push('category = ?')
-      values.push(filters.category)
-    }
+    const { where, values } = buildLifecycleWhere(filters, { includeSeqPredicates: false })
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -2603,53 +2631,7 @@ export class HrcLifecycleEventRepository {
     filters: HrcLifecycleQueryFilters,
     orderColumn: 'hrc_seq' | 'stream_seq'
   ): HrcLifecycleEvent[] {
-    const where: string[] = []
-    const values: Array<string | number> = []
-
-    if (filters.fromHrcSeq !== undefined) {
-      where.push('hrc_seq >= ?')
-      values.push(filters.fromHrcSeq)
-    }
-    if (filters.fromStreamSeq !== undefined) {
-      where.push('stream_seq >= ?')
-      values.push(filters.fromStreamSeq)
-    }
-    if (filters.hostSessionId !== undefined) {
-      where.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      where.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.scopeRef !== undefined) {
-      where.push('scope_ref = ?')
-      values.push(filters.scopeRef)
-    }
-    if (filters.laneRef !== undefined) {
-      where.push('lane_ref = ?')
-      values.push(filters.laneRef)
-    }
-    if (filters.runtimeId !== undefined) {
-      where.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
-    if (filters.runId !== undefined) {
-      where.push('run_id = ?')
-      values.push(filters.runId)
-    }
-    if (filters.launchId !== undefined) {
-      where.push('launch_id = ?')
-      values.push(filters.launchId)
-    }
-    if (filters.eventKind !== undefined) {
-      where.push('event_kind = ?')
-      values.push(filters.eventKind)
-    }
-    if (filters.category !== undefined) {
-      where.push('category = ?')
-      values.push(filters.category)
-    }
+    const { where, values } = buildLifecycleWhere(filters, { includeSeqPredicates: true })
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
     const limitClause = filters.limit !== undefined ? ' LIMIT ?' : ''

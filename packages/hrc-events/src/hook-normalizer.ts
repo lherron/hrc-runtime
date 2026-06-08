@@ -44,6 +44,11 @@ function getString(obj: Record<string, unknown>, key: string): string | undefine
   return typeof v === 'string' ? v : undefined
 }
 
+/** Max characters of a shell command echoed into a tool summary before truncation. */
+const CMD_TRUNCATE = 80
+/** Max characters of a path/pattern/query echoed into a tool summary before truncation. */
+const PATH_TRUNCATE = 60
+
 /** Generate a human-readable one-liner for a tool invocation */
 export function formatToolSummary(
   toolName: string,
@@ -56,50 +61,50 @@ export function formatToolSummary(
   switch (toolName) {
     case 'Bash': {
       const command = getString(toolInput, 'command')
-      if (command) return `\`${truncate(command, 80)}\``
+      if (command) return `\`${truncate(command, CMD_TRUNCATE)}\``
       break
     }
     case 'Read': {
       const filePath = getString(toolInput, 'file_path')
-      if (filePath) return `Read \`${truncate(filePath, 60)}\``
+      if (filePath) return `Read \`${truncate(filePath, PATH_TRUNCATE)}\``
       break
     }
     case 'Write': {
       const filePath = getString(toolInput, 'file_path')
-      if (filePath) return `Write \`${truncate(filePath, 60)}\``
+      if (filePath) return `Write \`${truncate(filePath, PATH_TRUNCATE)}\``
       break
     }
     case 'Edit': {
       const filePath = getString(toolInput, 'file_path')
       if (filePath) {
         const fileName = filePath.split('/').pop() ?? filePath
-        return `${truncate(fileName, 60)}`
+        return `${truncate(fileName, PATH_TRUNCATE)}`
       }
       break
     }
     case 'Glob': {
       const pattern = getString(toolInput, 'pattern')
-      if (pattern) return `Glob \`${truncate(pattern, 60)}\``
+      if (pattern) return `Glob \`${truncate(pattern, PATH_TRUNCATE)}\``
       break
     }
     case 'Grep': {
       const pattern = getString(toolInput, 'pattern')
-      if (pattern) return `Grep \`${truncate(pattern, 60)}\``
+      if (pattern) return `Grep \`${truncate(pattern, PATH_TRUNCATE)}\``
       break
     }
     case 'Task': {
       const description = getString(toolInput, 'description')
-      if (description) return `Task: ${truncate(description, 60)}`
+      if (description) return `Task: ${truncate(description, PATH_TRUNCATE)}`
       break
     }
     case 'WebFetch': {
       const url = getString(toolInput, 'url')
-      if (url) return `Fetch \`${truncate(url, 60)}\``
+      if (url) return `Fetch \`${truncate(url, PATH_TRUNCATE)}\``
       break
     }
     case 'WebSearch': {
       const query = getString(toolInput, 'query')
-      if (query) return `Search: ${truncate(query, 60)}`
+      if (query) return `Search: ${truncate(query, PATH_TRUNCATE)}`
       break
     }
   }

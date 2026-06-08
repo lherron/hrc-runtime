@@ -88,13 +88,17 @@ describe('runSdkTurn agent tool env', () => {
     }
 
     const toolsBinDir = join(agentRoot, 'tools', 'bin')
-    const projectId = getProjectStorageId(projectRoot)
+    const agentName = agentRoot.split('/').at(-1)
+    // ASP composes the project storage id from both the project root AND the
+    // agent (target) name, so the per-agent project namespace must be passed.
+    const projectId = getProjectStorageId(projectRoot, agentName)
 
     expect(captured.env).toMatchObject({
       ASP_AGENT_ROOT: agentRoot,
-      ASP_AGENT_NAME: agentRoot.split('/').at(-1),
+      ASP_AGENT_NAME: agentName,
       ASP_AGENT_TOOLS_DIR: join(agentRoot, 'tools'),
       ASP_AGENT_TOOLS_BIN: toolsBinDir,
+      ASP_AGENT_VAR_DIR: join(agentRoot, 'var'),
       ASP_AGENT_STATE_DIR: join(agentRoot, 'var', 'state'),
       ASP_AGENT_CACHE_DIR: join(agentRoot, 'var', 'cache'),
       ASP_AGENT_LOG_DIR: join(agentRoot, 'var', 'logs'),

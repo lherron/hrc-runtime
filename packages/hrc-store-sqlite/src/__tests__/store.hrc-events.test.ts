@@ -540,7 +540,12 @@ describe('0009_backfill_legacy_hrc_events', () => {
   })
 
   it('repairs already-upgraded databases that still have legacy hrc rows in events', () => {
-    const sqlite = createLegacyDatabase(8)
+    // Apply through 0008 (index 8: hrcEventsMigration), which adds the
+    // `events.stream_seq` column + `hrc_events`/`event_stream_cursor` tables but
+    // leaves 0009 (the legacy-row backfill) pending. Note the interleaved 0015
+    // migration sits at array index 6, so the array slice count is one ahead of
+    // the migration's numeric id.
+    const sqlite = createLegacyDatabase(9)
     try {
       seedLegacySession(sqlite, 'partial-hsid', 'partial')
       sqlite
