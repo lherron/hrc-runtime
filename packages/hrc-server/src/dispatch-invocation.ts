@@ -15,10 +15,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { buildCliInvocation } from './agent-spaces-adapter/index.js'
-import {
-  deriveInteractiveHarness,
-  shouldUseGhosttyTransport,
-} from './broker-decisions.js'
+import { deriveInteractiveHarness, shouldUseGhosttyTransport } from './broker-decisions.js'
 import { writeServerLog } from './server-log.js'
 
 const WORKSPACE_ROOT = resolve(import.meta.dir, '..', '..', '..')

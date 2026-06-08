@@ -39,15 +39,15 @@ import { describe, expect, it } from 'bun:test'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
 import {
-  parseBrokerRuntimeHostingState,
-  requireBrokerRuntimeHostingState,
-  isHarnessBroker,
-  hasDurableBrokerEndpoint,
-  hasLeasedBrokerSubstrate,
-  hasBrokerPresentation,
+  brokerLeaseIdentityMatches,
   canOperatorAttach,
   canUseDirectPaneFallback,
-  brokerLeaseIdentityMatches,
+  hasBrokerPresentation,
+  hasDurableBrokerEndpoint,
+  hasLeasedBrokerSubstrate,
+  isHarnessBroker,
+  parseBrokerRuntimeHostingState,
+  requireBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting'
 import type { BrokerLeaseProbe } from '../broker/runtime-hosting'
 
@@ -589,7 +589,9 @@ describe('parseBrokerRuntimeHostingState', () => {
   // ── malformed-combo rejection ─────────────────────────────────────────────
   describe('malformed-combo rejection', () => {
     it('returns undefined when runtimeStateJson is absent', () => {
-      expect(parseBrokerRuntimeHostingState(makeRuntime({ runtimeStateJson: undefined }))).toBeUndefined()
+      expect(
+        parseBrokerRuntimeHostingState(makeRuntime({ runtimeStateJson: undefined }))
+      ).toBeUndefined()
     })
 
     it('returns undefined when broker key is missing', () => {
@@ -620,7 +622,10 @@ describe('parseBrokerRuntimeHostingState', () => {
       const runtime = makeRuntime({
         runtimeStateJson: {
           broker: {
-            endpoint: { kind: 'unix-jsonrpc-ndjson', attachTokenRef: { kind: 'file', path: '/t', redacted: true } },
+            endpoint: {
+              kind: 'unix-jsonrpc-ndjson',
+              attachTokenRef: { kind: 'file', path: '/t', redacted: true },
+            },
             substrate: {
               kind: 'leased-tmux',
               tmuxSocketPath: '/s',
@@ -1210,7 +1215,9 @@ describe('brokerLeaseIdentityMatches (G4)', () => {
       tmuxSocketPath: NORM_TMUX_SOCKET,
       sessionName: NORM_SESSION,
     } as BrokerLeaseProbe
-    expect(brokerLeaseIdentityMatches(normalizedInteractiveRuntime, probeNoBrokerWindow)).toBe(false)
+    expect(brokerLeaseIdentityMatches(normalizedInteractiveRuntime, probeNoBrokerWindow)).toBe(
+      false
+    )
   })
 })
 

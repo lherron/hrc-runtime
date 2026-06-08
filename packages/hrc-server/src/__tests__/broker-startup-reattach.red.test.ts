@@ -64,9 +64,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -89,13 +89,10 @@ import type {
   InvocationStopResponse,
 } from 'spaces-harness-broker-protocol'
 
-import {
-  type DurableBrokerClientLike,
-  HarnessBrokerController,
-} from '../broker/controller'
+import { type DurableBrokerClientLike, HarnessBrokerController } from '../broker/controller'
 import { extractRuntimeControlState } from '../broker/runtime-state'
-import type { TmuxPaneState } from '../tmux'
 import * as reconcile from '../startup-reconcile'
+import type { TmuxPaneState } from '../tmux'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Fixture constants — a tmux-transport harness-broker runtime with a durable
@@ -142,10 +139,12 @@ function nowTs(): string {
   return '2026-06-01T00:00:00.000Z'
 }
 
-function seedDurableBrokerRuntime(overrides: {
-  status?: string
-  invocationState?: string
-} = {}): void {
+function seedDurableBrokerRuntime(
+  overrides: {
+    status?: string
+    invocationState?: string
+  } = {}
+): void {
   const now = nowTs()
   db.sessions.insert({
     hostSessionId: HOST_SESSION_ID,
@@ -279,7 +278,7 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     this.eventsSinceQueue.push(response)
   }
 
-  async attach(req: BrokerAttachRequest): Promise<BrokerAttachResponse> {
+  async attach(_req: BrokerAttachRequest): Promise<BrokerAttachResponse> {
     this.calls.push('attach')
     if (this.attachThrows) throw this.attachThrows
     return this.attachResponse
@@ -288,7 +287,7 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     this.calls.push('snapshot')
     return this.snapshotResponse
   }
-  async eventsSince(req: InvocationEventsSinceRequest): Promise<InvocationEventsSinceResponse> {
+  async eventsSince(_req: InvocationEventsSinceRequest): Promise<InvocationEventsSinceResponse> {
     this.calls.push('eventsSince')
     if (this.eventsSinceThrows) throw this.eventsSinceThrows
     const next = this.eventsSinceQueue.shift()
@@ -303,7 +302,11 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse> {
     this.calls.push('permissionRespond')
-    return { status: 'accepted', permissionRequestId: req.permissionRequestId, decision: req.decision }
+    return {
+      status: 'accepted',
+      permissionRequestId: req.permissionRequestId,
+      decision: req.decision,
+    }
   }
   async hello(): Promise<BrokerHelloResponse> {
     this.calls.push('hello')
@@ -319,7 +322,11 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   }
   async input(): Promise<InvocationInputResponse> {
     this.calls.push('input')
-    return { inputId: 'input_x' as InvocationInputResponse['inputId'], accepted: true, disposition: 'started' }
+    return {
+      inputId: 'input_x' as InvocationInputResponse['inputId'],
+      accepted: true,
+      disposition: 'started',
+    }
   }
   async interrupt(): Promise<InvocationInterruptResponse> {
     this.calls.push('interrupt')
@@ -353,10 +360,24 @@ function emptySnapshot(overrides: Partial<InvocationSnapshot> = {}): InvocationS
     invocationId: INVOCATION_ID,
     state: 'ready',
     capabilities: {
-      input: { user: true, steer: true, appendContext: true, localImages: true, fileRefs: true, queue: false },
+      input: {
+        user: true,
+        steer: true,
+        appendContext: true,
+        localImages: true,
+        fileRefs: true,
+        queue: false,
+      },
       turns: { concurrency: 'single', interrupt: 'protocol' },
       continuation: { supported: true, provider: 'anthropic', keyKind: 'thread' },
-      events: { assistantDeltas: true, toolCalls: true, usage: true, diagnostics: true, replay: true, ack: true },
+      events: {
+        assistantDeltas: true,
+        toolCalls: true,
+        usage: true,
+        diagnostics: true,
+        replay: true,
+        ack: true,
+      },
       control: { stop: true, dispose: true, status: true, attach: true },
       permissions: { brokerToClientRequests: true, eventAudit: true },
     },
@@ -418,8 +439,18 @@ describe('Phase 4 reattach: live broker socket reattaches BEFORE the sweep', () 
       events: [
         envelopeFor('invocation.started', 1, { pid: 1, command: 'claude', args: [], cwd: '/tmp' }),
         envelopeFor('invocation.ready', 2, { state: 'ready' }),
-        envelopeFor('input.accepted', 3, { inputId: 'i1' }, { inputId: 'i1' as InvocationEventEnvelope['inputId'] }),
-        envelopeFor('turn.started', 4, { turnId: 't1' }, { turnId: 't1' as InvocationEventEnvelope['turnId'] }),
+        envelopeFor(
+          'input.accepted',
+          3,
+          { inputId: 'i1' },
+          { inputId: 'i1' as InvocationEventEnvelope['inputId'] }
+        ),
+        envelopeFor(
+          'turn.started',
+          4,
+          { turnId: 't1' },
+          { turnId: 't1' as InvocationEventEnvelope['turnId'] }
+        ),
       ],
       currentSeq: 4,
       retentionFloorSeq: 1,

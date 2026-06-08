@@ -122,9 +122,7 @@ const decideLegacyRuntimeStartupDisposition = (
   }
 ).decideLegacyRuntimeStartupDisposition
 
-function view(
-  overrides: Partial<LegacyStartupRuntimeView> = {}
-): LegacyStartupRuntimeView {
+function view(overrides: Partial<LegacyStartupRuntimeView> = {}): LegacyStartupRuntimeView {
   return {
     controllerKind: 'harness-broker',
     transport: 'tmux',
@@ -252,7 +250,11 @@ describe('decideLegacyRuntimeStartupDisposition — LANDMINE (C-03008): broker t
 
   it('a NON-broker runtime sitting on a btmux-looking socket is STILL staled (a socket does not rescue a missing controllerKind)', () => {
     const decision = decideLegacyRuntimeStartupDisposition!(
-      view({ controllerKind: undefined, transport: 'tmux', brokerTmuxSocketPath: BROKER_LEASE_SOCKET })
+      view({
+        controllerKind: undefined,
+        transport: 'tmux',
+        brokerTmuxSocketPath: BROKER_LEASE_SOCKET,
+      })
     )
     expect(decision.disposition).toBe('stale')
   })
@@ -281,7 +283,11 @@ describe('decideLegacyRuntimeStartupDisposition — structural: a broker runtime
   for (const status of liveStatuses) {
     it(`live (status=${status}) harness-broker tmux lease is never staled`, () => {
       const decision = decideLegacyRuntimeStartupDisposition!(
-        view({ controllerKind: 'harness-broker', status, brokerTmuxSocketPath: BROKER_LEASE_SOCKET })
+        view({
+          controllerKind: 'harness-broker',
+          status,
+          brokerTmuxSocketPath: BROKER_LEASE_SOCKET,
+        })
       )
       expect(decision.disposition).not.toBe('stale')
     })

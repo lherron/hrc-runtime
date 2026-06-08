@@ -55,16 +55,20 @@ import type {
   BrokerTransportKind,
 } from 'spaces-harness-broker-protocol'
 
+import * as brokerDecisions from '../broker-decisions'
 import { admitBrokerHello } from '../broker/capabilities'
+import * as brokerController from '../broker/controller'
 // Namespace imports: these modules exist today, but the Phase-1 exports
 // referenced below do NOT — so accessing them yields `undefined` (a clean
 // per-test assertion failure) rather than a module-load crash.
 import * as brokerRuntimeState from '../broker/runtime-state'
-import * as brokerController from '../broker/controller'
 import * as optionResolvers from '../option-resolvers'
-import * as brokerDecisions from '../broker-decisions'
 
-import { makeBrokerProfile, makeIdentity, makeInteractiveTmuxProfile } from './broker-compile-fixtures'
+import {
+  makeBrokerProfile,
+  makeIdentity,
+  makeInteractiveTmuxProfile,
+} from './broker-compile-fixtures'
 
 const STDIO: BrokerTransportKind = 'stdio-jsonrpc-ndjson'
 const UNIX: BrokerTransportKind = 'unix-jsonrpc-ndjson'
@@ -99,7 +103,10 @@ function makeHello(opts: {
 // The PER-ROUTE expectation the Phase-1 admitBrokerHello() must consume as its
 // third argument. Encodes "this route expects unix/v2" vs "this route expects
 // stdio/v1" instead of reading the global module const.
-type ExpectedNegotiation = { protocolVersion: BrokerProtocolVersion; transport: BrokerTransportKind }
+type ExpectedNegotiation = {
+  protocolVersion: BrokerProtocolVersion
+  transport: BrokerTransportKind
+}
 const DURABLE_ROUTE: ExpectedNegotiation = { protocolVersion: V2, transport: UNIX }
 const STDIO_ROUTE: ExpectedNegotiation = { protocolVersion: V1, transport: STDIO }
 
@@ -117,7 +124,11 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
   const { profile: stdioProfile } = makeBrokerProfile(makeIdentity()) // brokerDriver: codex-app-server
 
   it('ADMITS a unix/v2 hello on a route expecting unix/v2 (RED today)', () => {
-    const hello = makeHello({ protocolVersion: V2, transports: [UNIX], driverKind: 'claude-code-tmux' })
+    const hello = makeHello({
+      protocolVersion: V2,
+      transports: [UNIX],
+      driverKind: 'claude-code-tmux',
+    })
     const result = admit(durableProfile, hello, DURABLE_ROUTE)
     // Today admitBrokerHello compares against the GLOBAL stdio/v1 const, so a
     // unix/v2 hello is rejected (protocolVersion + transport "missing"). RED.
@@ -126,21 +137,33 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
   })
 
   it('REJECTS a stdio/v1 hello on a route expecting unix/v2 (RED today)', () => {
-    const hello = makeHello({ protocolVersion: V1, transports: [STDIO], driverKind: 'claude-code-tmux' })
+    const hello = makeHello({
+      protocolVersion: V1,
+      transports: [STDIO],
+      driverKind: 'claude-code-tmux',
+    })
     const result = admit(durableProfile, hello, DURABLE_ROUTE)
     // Today the global const IS stdio/v1, so this hello is wrongly ADMITTED. RED.
     expect(result.ok).toBe(false)
   })
 
   it('ADMITS a stdio/v1 hello on a route expecting stdio/v1 (headless route stays green)', () => {
-    const hello = makeHello({ protocolVersion: V1, transports: [STDIO], driverKind: 'codex-app-server' })
+    const hello = makeHello({
+      protocolVersion: V1,
+      transports: [STDIO],
+      driverKind: 'codex-app-server',
+    })
     const result = admit(stdioProfile, hello, STDIO_ROUTE)
     expect(result.missing).toEqual([])
     expect(result.ok).toBe(true)
   })
 
   it('REJECTS a unix/v2 hello on a route expecting stdio/v1 (cross-route)', () => {
-    const hello = makeHello({ protocolVersion: V2, transports: [UNIX], driverKind: 'codex-app-server' })
+    const hello = makeHello({
+      protocolVersion: V2,
+      transports: [UNIX],
+      driverKind: 'codex-app-server',
+    })
     const result = admit(stdioProfile, hello, STDIO_ROUTE)
     expect(result.ok).toBe(false)
   })
@@ -149,10 +172,18 @@ describe('T-01810 Phase 1 — per-route admitBrokerHello negotiation', () => {
     // T-01866: the module default expectedProtocol is now harness-broker/0.2
     // (v0.1 decommissioned). A legacy v1 hello with no per-route expectation is
     // REJECTED; a v0.2 hello (over the default stdio transport kind) is admitted.
-    const v1Hello = makeHello({ protocolVersion: V1, transports: [STDIO], driverKind: 'codex-app-server' })
+    const v1Hello = makeHello({
+      protocolVersion: V1,
+      transports: [STDIO],
+      driverKind: 'codex-app-server',
+    })
     expect(admitBrokerHello(stdioProfile, v1Hello).ok).toBe(false)
 
-    const v2Hello = makeHello({ protocolVersion: V2, transports: [STDIO], driverKind: 'codex-app-server' })
+    const v2Hello = makeHello({
+      protocolVersion: V2,
+      transports: [STDIO],
+      driverKind: 'codex-app-server',
+    })
     expect(admitBrokerHello(stdioProfile, v2Hello).ok).toBe(true)
   })
 })
@@ -161,7 +192,11 @@ describe('T-01810 Phase 1 — broker endpoint-kind union round-trip', () => {
   const unixEndpoint = {
     kind: 'unix-jsonrpc-ndjson' as const,
     socketPath: '/tmp/runtime/bipc/abc/b.sock',
-    attachTokenRef: { kind: 'file' as const, path: '/tmp/runtime/bipc/abc/token', redacted: true as const },
+    attachTokenRef: {
+      kind: 'file' as const,
+      path: '/tmp/runtime/bipc/abc/token',
+      redacted: true as const,
+    },
   }
   const stdioEndpoint = { kind: 'stdio-jsonrpc-ndjson' as const }
 
@@ -311,7 +346,11 @@ describe('T-01810 Phase 1 — durable-interactive route guard', () => {
     const decide = guard()
     expect(typeof decide).toBe('function')
     expect(
-      decide!({ durableIpcEnabled: true, endpointKind: 'unix-jsonrpc-ndjson', interactionMode: 'interactive' })
+      decide!({
+        durableIpcEnabled: true,
+        endpointKind: 'unix-jsonrpc-ndjson',
+        interactionMode: 'interactive',
+      })
     ).toBe('durable-ipc')
   })
 
@@ -319,7 +358,11 @@ describe('T-01810 Phase 1 — durable-interactive route guard', () => {
     const decide = guard()
     expect(typeof decide).toBe('function')
     expect(
-      decide!({ durableIpcEnabled: false, endpointKind: 'unix-jsonrpc-ndjson', interactionMode: 'interactive' })
+      decide!({
+        durableIpcEnabled: false,
+        endpointKind: 'unix-jsonrpc-ndjson',
+        interactionMode: 'interactive',
+      })
     ).not.toBe('durable-ipc')
   })
 
@@ -327,7 +370,11 @@ describe('T-01810 Phase 1 — durable-interactive route guard', () => {
     const decide = guard()
     expect(typeof decide).toBe('function')
     expect(
-      decide!({ durableIpcEnabled: true, endpointKind: 'stdio-jsonrpc-ndjson', interactionMode: 'interactive' })
+      decide!({
+        durableIpcEnabled: true,
+        endpointKind: 'stdio-jsonrpc-ndjson',
+        interactionMode: 'interactive',
+      })
     ).not.toBe('durable-ipc')
   })
 })

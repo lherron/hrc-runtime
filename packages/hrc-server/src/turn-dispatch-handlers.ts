@@ -37,7 +37,6 @@ import {
 import { findDispatchInteractiveRuntime } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import {
   parseDispatchTurnRequest,
   parseEnsureRuntimeRequest,
@@ -46,6 +45,7 @@ import {
   parseResumeAttachedRunRequest,
   parseStartRuntimeRequest,
 } from './server-parsers.js'
+import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
 

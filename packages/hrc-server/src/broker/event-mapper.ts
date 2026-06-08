@@ -866,9 +866,7 @@ export class BrokerEventMapper {
     // pane lease must never use (it would emit `#undefined` when sessionName
     // is absent and would not be the pane id).
     const surfaceId =
-      payload.kind === 'tmux-pane'
-        ? payload.paneId
-        : `${payload.socketPath}#${payload.sessionName}`
+      payload.kind === 'tmux-pane' ? payload.paneId : `${payload.socketPath}#${payload.sessionName}`
     this.db.surfaceBindings.bind({
       surfaceKind: payload.kind,
       surfaceId,

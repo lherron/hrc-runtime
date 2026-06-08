@@ -51,10 +51,7 @@ import type {
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
 import { project } from 'spaces-runtime-contracts'
-import type {
-  BrokerExecutionProfile,
-  RuntimeIdentityAllocation,
-} from 'spaces-runtime-contracts'
+import type { BrokerExecutionProfile, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import {
   type BrokerClientLike,
@@ -82,7 +79,8 @@ type TestFixture = {
 // sessionId ^\$\d+$, windowId ^@\d+$, paneId ^%\d+$).
 // ---------------------------------------------------------------------------
 function leaseFor(driver: TmuxDriver, runtimeId: string): TerminalSurfaceLease {
-  const idx = driver === 'claude-code-tmux' ? { s: '$3', w: '@7', p: '%12' } : { s: '$5', w: '@9', p: '%21' }
+  const idx =
+    driver === 'claude-code-tmux' ? { s: '$3', w: '@7', p: '%12' } : { s: '$5', w: '@9', p: '%21' }
   return {
     kind: 'tmux-pane',
     ownership: 'hrc',
@@ -338,9 +336,11 @@ async function makeFixture(): Promise<TestFixture> {
 }
 
 /** Drive controller.start() through a tmux pane allocation for a given driver. */
-async function startWithLease(
-  driver: TmuxDriver
-): Promise<{ fake: FakeBrokerClient; lease: TerminalSurfaceLease; identity: RuntimeIdentityAllocation }> {
+async function startWithLease(driver: TmuxDriver): Promise<{
+  fake: FakeBrokerClient
+  lease: TerminalSurfaceLease
+  identity: RuntimeIdentityAllocation
+}> {
   const runtimeId = `runtime_${driver.replace(/-/g, '_')}`
   const invocationId = `invocation_${driver.replace(/-/g, '_')}`
   const identity = makeIdentity({

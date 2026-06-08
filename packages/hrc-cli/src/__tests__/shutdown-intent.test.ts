@@ -6,7 +6,7 @@
  * is never touched.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,8 +63,8 @@ describe('shutdown intent', () => {
   })
 
   it('records null identity when env is unset (external/manual stop)', () => {
-    delete process.env['HRC_SESSION_REF']
-    delete process.env['HRC_RUN_ID']
+    process.env['HRC_SESSION_REF'] = undefined
+    process.env['HRC_RUN_ID'] = undefined
     writeShutdownIntent('stop')
     const intent = consumeShutdownIntent()
     expect(intent?.requestedBy).toBeNull()

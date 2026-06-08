@@ -842,9 +842,7 @@ export function formatTmuxStatus(status: TmuxStatus): string {
       )
     }
     if (lease.tuiPane) {
-      lines.push(
-        `        tui:     window=${lease.tuiPane.windowName} pane=${lease.tuiPane.paneId}`
-      )
+      lines.push(`        tui:     window=${lease.tuiPane.windowName} pane=${lease.tuiPane.paneId}`)
     }
   }
 

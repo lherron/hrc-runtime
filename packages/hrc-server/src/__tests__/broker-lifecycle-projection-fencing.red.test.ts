@@ -70,13 +70,10 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import {
-  CONTINUATION_KEY,
-  HOST_SESSION_ID,
   INVOCATION_ID,
   RUNTIME_ID,
   RUN_ID,
   type SeededFixture,
-  ASSISTANT_TEXT,
   bufferTextForRun,
   makeSeededFixture,
   permissionRequestId,

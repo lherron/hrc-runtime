@@ -389,17 +389,12 @@ export async function startRuntimeForSession(
       // closure was dead. Dropped — only the broker executor is reachable.
       return await runInteractiveTmuxRoute('broker', {
         broker: async () =>
-          this.startInteractiveTmuxBrokerRuntime(
-            session,
-            normalizedIntent,
-            `run-${randomUUID()}`,
-            {
-              ...interactiveBrokerOptions,
-              ...(options.attachBeforeInvocationStart
-                ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
-                : {}),
-            }
-          ),
+          this.startInteractiveTmuxBrokerRuntime(session, normalizedIntent, `run-${randomUUID()}`, {
+            ...interactiveBrokerOptions,
+            ...(options.attachBeforeInvocationStart
+              ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+              : {}),
+          }),
       })
     }
 
@@ -486,9 +481,7 @@ export function attachRuntime(
       )
     }
     const brokerTmuxWindowId =
-      typeof runtime.tmuxJson?.['windowId'] === 'string'
-        ? runtime.tmuxJson['windowId']
-        : undefined
+      typeof runtime.tmuxJson?.['windowId'] === 'string' ? runtime.tmuxJson['windowId'] : undefined
     const brokerTmuxPaneId =
       typeof runtime.tmuxJson?.['paneId'] === 'string' ? runtime.tmuxJson['paneId'] : undefined
 

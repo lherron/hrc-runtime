@@ -1,20 +1,8 @@
 import { readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  HrcBadRequestError,
-  HrcErrorCode,
-} from 'hrc-core'
-import type {
-  HrcLaunchRecord,
-  HrcLifecycleEvent,
-  HrcRuntimeSnapshot,
-  HrcSessionRecord,
-} from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
+import type { HrcLaunchRecord, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import {
-  appendHrcEvent,
-  deriveSemanticTurnEventFromLaunchEvent,
-} from './hrc-event-helper.js'
 import {
   applyHookLifecycleEnvelope,
   buildStaleLaunchCallbackRejection,
@@ -23,16 +11,14 @@ import {
   parseLaunchEventPayload,
   parseLaunchLifecyclePayload,
 } from './hook-lifecycle.js'
+import { appendHrcEvent, deriveSemanticTurnEventFromLaunchEvent } from './hrc-event-helper.js'
 import { readSpoolEntries } from './launch/index.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRunForRuntime } from './runtime-select.js'
 import { isRecord } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'
 import { timestamp, unlinkIfExists } from './server-util.js'
-import {
-  appendMissingHeadlessTurnCompleted,
-  logStartupIssue,
-} from './startup-reconcile.js'
+import { appendMissingHeadlessTurnCompleted, logStartupIssue } from './startup-reconcile.js'
 
 export async function replaySpool(options: HrcServerOptions, db: HrcDatabase): Promise<void> {
   let launchIds: string[]

@@ -239,7 +239,9 @@ class FakeBrokerClient implements BrokerClientLike {
     return this.statusResponse
   }
 
-  async listInvocations(req: BrokerListInvocationsRequest = {}): Promise<BrokerListInvocationsResponse> {
+  async listInvocations(
+    req: BrokerListInvocationsRequest = {}
+  ): Promise<BrokerListInvocationsResponse> {
     this.callOrder.push('listInvocations')
     this.listInvocationsCalls.push(req)
     return this.listInvocationsResponse

@@ -67,18 +67,7 @@ afterEach(async () => {
  */
 async function createLiveSession(socketPath: string, sessionName: string): Promise<void> {
   const { exited } = Bun.spawn(
-    [
-      'tmux',
-      '-S',
-      socketPath,
-      'new-session',
-      '-d',
-      '-s',
-      sessionName,
-      '-n',
-      'main',
-      'sleep 600',
-    ],
+    ['tmux', '-S', socketPath, 'new-session', '-d', '-s', sessionName, '-n', 'main', 'sleep 600'],
     { stdout: 'ignore', stderr: 'ignore' }
   )
   expect(await exited).toBe(0)

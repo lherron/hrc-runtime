@@ -1,8 +1,4 @@
-import {
-  HrcBadRequestError,
-  HrcErrorCode,
-  HrcNotFoundError,
-} from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -12,19 +8,11 @@ import type {
   TargetCapabilityView,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import {
-  normalizeTargetLane,
-  normalizeTargetSessionRef,
-  targetLaneCandidates,
-} from './messages.js'
-import {
-  isRuntimeUnavailableStatus,
-  requireContinuity,
-  requireSession,
-} from './require-helpers.js'
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
+import { normalizeTargetLane, normalizeTargetSessionRef, targetLaneCandidates } from './messages.js'
+import { isRuntimeUnavailableStatus, requireContinuity, requireSession } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
-import { parseSessionRef, type BridgeTargetRequest } from './server-parsers.js'
+import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
 
 export function findContinuitySession(
   db: HrcDatabase,
@@ -171,8 +159,7 @@ export function toTargetRuntimeView(
   const brokerSubstrate = hosting?.substrate.kind
   const headlessRoute =
     runtime.transport === 'headless' && hosting !== undefined
-      ? hosting.substrate.kind === 'leased-tmux' &&
-        hosting.endpoint.kind === 'unix-jsonrpc-ndjson'
+      ? hosting.substrate.kind === 'leased-tmux' && hosting.endpoint.kind === 'unix-jsonrpc-ndjson'
         ? ('durable-leased' as const)
         : ('legacy-stdio' as const)
       : undefined

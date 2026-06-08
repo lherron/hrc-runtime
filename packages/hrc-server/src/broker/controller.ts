@@ -9,6 +9,7 @@
  * W4 is responsible for calling it behind HRC_HEADLESS_CODEX_BROKER_ENABLED.
  */
 
+import { setTimeout as delay } from 'node:timers/promises'
 import { HrcErrorCode } from 'hrc-core'
 import type {
   HrcBrokerInvocationEventRecord,
@@ -21,7 +22,6 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
-import { setTimeout as delay } from 'node:timers/promises'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import { BrokerErrorCode, canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
@@ -66,6 +66,7 @@ import type {
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 
+import { deriveRuntimeStatusWithAwaiting } from '../ask-bracket'
 import { appendHrcEvent } from '../hrc-event-helper'
 import {
   type ExpectedBrokerNegotiation,
@@ -75,7 +76,6 @@ import {
 } from './capabilities'
 import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT, BROKER_TRANSPORT_UNIX } from './constants'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
-import { deriveRuntimeStatusWithAwaiting } from '../ask-bracket'
 import {
   type BrokerAttachTokenRef,
   extractRuntimeStateTmux,
@@ -357,10 +357,12 @@ export type HarnessBrokerControllerDeps = {
    * production wires `createBrokerDurableHeadlessAllocator`.
    */
   headlessSubstrateAllocator?: BrokerTmuxAllocator | undefined
-  waitForAttachedTerminal?: ((input: {
-    runtime: HrcRuntimeSnapshot
-    allocation: BrokerTmuxAllocation
-  }) => Promise<void>) | undefined
+  waitForAttachedTerminal?:
+    | ((input: {
+        runtime: HrcRuntimeSnapshot
+        allocation: BrokerTmuxAllocation
+      }) => Promise<void>)
+    | undefined
   /**
    * Lever 2 graceful exit (T-01751 sibling): on a USER-INITIATED interactive
    * terminal (`invocation.exited` whose preceding `continuation.cleared` reason
@@ -609,10 +611,7 @@ export class HarnessBrokerController {
       if (input.brokerClient === undefined && isBrokerTmuxProfile(input.profile)) {
         tmuxAllocation = await this.allocateTmuxIfRequired(input)
         markPhase('broker-tmux-alloc')
-      } else if (
-        input.brokerClient === undefined &&
-        input.profile.interactionMode === 'headless'
-      ) {
+      } else if (input.brokerClient === undefined && input.profile.interactionMode === 'headless') {
         // Headless durable cutover (spec §10.4): allocate a leased-tmux substrate
         // with presentation='none' (broker window + Unix IPC + token + ledger, NO
         // TUI, NO operator attach) and DIAL it over Unix v0.2 instead of spawning
@@ -865,10 +864,7 @@ export class HarnessBrokerController {
         })
       } catch (error) {
         lastError = error
-        if (
-          attempt >= BROKER_UNIX_CONNECT_MAX_ATTEMPTS ||
-          !isBrokerSocketNotReadyError(error)
-        ) {
+        if (attempt >= BROKER_UNIX_CONNECT_MAX_ATTEMPTS || !isBrokerSocketNotReadyError(error)) {
           throw error
         }
         const delayMs = Math.min(
@@ -1622,9 +1618,7 @@ export class HarnessBrokerController {
         // T-01855: persist the negotiated inspection capabilities so a durable
         // reattach (which rebuilds `active` without a fresh hello) can rehydrate
         // them as a fallback until the next hello replaces them.
-        ...(hello.capabilities.inspection
-          ? { inspection: hello.capabilities.inspection }
-          : {}),
+        ...(hello.capabilities.inspection ? { inspection: hello.capabilities.inspection } : {}),
         ...durable,
       },
       ...(tmuxAllocation?.brokerIpcSocketPath
@@ -2423,9 +2417,7 @@ function toControllerError(code: string, error: unknown): BrokerControllerError 
  * broker — pass the caller's flag through and let the broker ignore what it does
  * not support). An explicit `'cached'`/`'none'` forbids the probe.
  */
-function livenessProbeAllowed(
-  inspection: BrokerInspectionCapabilities | undefined
-): boolean {
+function livenessProbeAllowed(inspection: BrokerInspectionCapabilities | undefined): boolean {
   return inspection === undefined || inspection.liveness === 'probe'
 }
 

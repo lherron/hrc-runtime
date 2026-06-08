@@ -12,17 +12,17 @@ import { timingSafeEqual } from 'node:crypto'
 import type { HrcLaunchArtifact, HrcLaunchRecord } from 'hrc-core'
 import { normalizeCodexOtelEvent } from 'hrc-events'
 
+import { applyHookLifecycleEnvelope, parseHookEnvelope } from './hook-lifecycle.js'
 import {
   appendHrcEvent,
   deriveSemanticTurnEventFromHookDerivedEvent,
   deriveSemanticTurnUserPromptFromCodexOtelRecord,
   shouldSuppressDuplicateCodexInitialUserPrompt,
 } from './hrc-event-helper.js'
-import { applyHookLifecycleEnvelope, parseHookEnvelope } from './hook-lifecycle.js'
 import { readLaunchArtifact } from './launch/index.js'
-import { parseJsonBody } from './server-parsers.js'
 import type { ServerContext } from './server-context.js'
 import { writeServerLog } from './server-log.js'
+import { parseJsonBody } from './server-parsers.js'
 import { json, timestamp } from './server-util.js'
 
 export const OTLP_DEFAULT_PREFERRED_PORT = 4318
@@ -34,10 +34,7 @@ export const OTEL_POST_EXIT_GRACE_MS = 30_000
 const OTEL_AUTH_HEADER_NAME = 'x-hrc-launch-auth'
 const OTLP_CONTENT_TYPE_JSON = 'application/json'
 
-export async function handleHookIngest(
-  ctx: ServerContext,
-  request: Request
-): Promise<Response> {
+export async function handleHookIngest(ctx: ServerContext, request: Request): Promise<Response> {
   const envelope = parseHookEnvelope(await parseJsonBody(request))
   const events = applyHookLifecycleEnvelope(ctx.db, envelope, { replayed: false })
   for (const event of events) {
@@ -50,10 +47,7 @@ export async function handleHookIngest(
  * Dispatches requests on the OTLP TCP listener (separate from the Unix
  * socket server). Only POST /v1/logs is accepted.
  */
-export async function handleOtlpRequest(
-  ctx: ServerContext,
-  request: Request
-): Promise<Response> {
+export async function handleOtlpRequest(ctx: ServerContext, request: Request): Promise<Response> {
   try {
     const url = new URL(request.url)
     if (request.method !== 'POST' || url.pathname !== OTLP_LOGS_PATH) {

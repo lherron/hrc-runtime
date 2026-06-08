@@ -314,9 +314,7 @@ async function runReplayOrFollow(
   const explicitWindow = args.fromSeq !== undefined
   const replayLimit = args.last ?? (explicitWindow ? undefined : DEFAULT_REPLAY_LIMIT)
   const output =
-    replayLimit !== undefined && events.length > replayLimit
-      ? events.slice(-replayLimit)
-      : events
+    replayLimit !== undefined && events.length > replayLimit ? events.slice(-replayLimit) : events
 
   for (const event of output) {
     // Mark all non-follow events as replayed

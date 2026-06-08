@@ -1,9 +1,5 @@
 import { formatSessionHandle } from 'agent-scope'
-import {
-  HrcBadRequestError,
-  HrcErrorCode,
-  normalizeSessionRef,
-} from 'hrc-core'
+import { HrcBadRequestError, HrcErrorCode, normalizeSessionRef } from 'hrc-core'
 import type {
   HrcMessageAddress,
   HrcMessageFilter,

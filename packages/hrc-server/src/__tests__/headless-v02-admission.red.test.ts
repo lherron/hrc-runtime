@@ -51,9 +51,10 @@ import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 // to the v0.1 fixture; only the profile-level brokerProtocol field changes.
 // Hash values are computed identically from the same spec content.
 
-function makeV02BrokerProfile(
-  identity: RuntimeIdentityAllocation
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+function makeV02BrokerProfile(identity: RuntimeIdentityAllocation): {
+  profile: BrokerExecutionProfile
+  startRequest: InvocationStartRequest
+} {
   const invocationId = identity.invocationId
 
   const spec: HarnessInvocationSpec = {
@@ -91,9 +92,8 @@ function makeV02BrokerProfile(
   } as unknown as InvocationStartRequest
 
   const specHash = (project(spec, 'spec') as { specHash: string }).specHash
-  const startRequestHash = (
-    project(startRequest, 'start-request') as { startRequestHash: string }
-  ).startRequestHash
+  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
+    .startRequestHash
 
   // brokerProtocol is 'harness-broker/0.2' — the sole structural difference from
   // the v0.1 fixture. Cast via unknown because BrokerExecutionProfile.brokerProtocol

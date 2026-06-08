@@ -389,12 +389,7 @@ export class TmuxManager {
     } else {
       args.push('-s', sessionName)
     }
-    args.push(
-      '-n',
-      windowName,
-      '-F',
-      '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}'
-    )
+    args.push('-n', windowName, '-F', '#{session_id}\t#{window_id}\t#{pane_id}\t#{session_name}')
     if (command !== undefined) {
       args.push(command)
     }

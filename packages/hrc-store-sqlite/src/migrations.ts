@@ -1,11 +1,11 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
 
 import {
+  type LegacyHrcEventRow,
   categoryForLegacyHrcEventKind,
   computeMigrationPermissionIdentityKey,
   normalizeLegacyHrcPayload,
   parseLegacyEventJson,
-  type LegacyHrcEventRow,
 } from './migrations/legacy-hrc-event-backfill.js'
 
 export type HrcMigration = {

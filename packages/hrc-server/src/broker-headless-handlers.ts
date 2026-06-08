@@ -22,7 +22,6 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
-import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
   classifyBrokerInputFailure,
@@ -35,6 +34,7 @@ import { HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { json, timestamp } from './server-util.js'
+import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 
 export async function startHeadlessBrokerRuntime(
   this: HrcServerInstanceForHandlers,

@@ -185,7 +185,9 @@ describe('T-01738 F-V5: adopt verifies broker-tmux lease liveness', () => {
     const driver = 'cx'
     const runtimeId = 'adoptLive'
     const { socketPath, sessionName } = await createLeaseSession(driver, runtimeId)
-    expect((await createTmuxManager({ socketPath }).inspectSession(sessionName)) !== null).toBe(true)
+    expect((await createTmuxManager({ socketPath }).inspectSession(sessionName)) !== null).toBe(
+      true
+    )
     seedBrokerTmuxRuntime({ driver, runtimeId, socketPath, status: 'dead' })
 
     const server = await createHrcServer(fixture.serverOpts())

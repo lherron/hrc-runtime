@@ -305,11 +305,9 @@ export function parseResumeAttachedRunRequest(input: unknown): ResumeAttachedRun
   }
   const pendingStartId = input['pendingStartId']
   if (typeof pendingStartId !== 'string' || pendingStartId.trim().length === 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'pendingStartId is required',
-      { field: 'pendingStartId' }
-    )
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'pendingStartId is required', {
+      field: 'pendingStartId',
+    })
   }
   return { pendingStartId: pendingStartId.trim() }
 }
@@ -493,9 +491,13 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
 
   const probeLiveness = input['probeLiveness']
   if (probeLiveness !== undefined && typeof probeLiveness !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'probeLiveness must be a boolean', {
-      field: 'probeLiveness',
-    })
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'probeLiveness must be a boolean',
+      {
+        field: 'probeLiveness',
+      }
+    )
   }
 
   const includeDisposed = input['includeDisposed']

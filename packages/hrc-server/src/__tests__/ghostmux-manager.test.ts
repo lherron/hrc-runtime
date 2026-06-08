@@ -196,7 +196,8 @@ describe('GhostmuxManager.ensureHeadlessViewer', () => {
     const manager = new GhostmuxManager('ghostmux', async (args) => {
       calls.push(args)
       const key = args.join(' ')
-      if (key === 'list-surfaces --json') return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
+      if (key === 'list-surfaces --json')
+        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
       if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-1' }), stderr: '' }
       return { stdout: '{}', stderr: '' }
     })
@@ -210,7 +211,13 @@ describe('GhostmuxManager.ensureHeadlessViewer', () => {
 
     expect(result).toEqual({ status: 'created', surfaceId: 'viewer-1' })
     // new window must NOT request focus
-    expect(calls).toContainEqual(['new', '--window', '--title', `hrc headless ${scopeRef}`, '--json'])
+    expect(calls).toContainEqual([
+      'new',
+      '--window',
+      '--title',
+      `hrc headless ${scopeRef}`,
+      '--json',
+    ])
     expect(calls.flat()).not.toContain('--focus')
     expect(calls).toContainEqual([
       'metadata',

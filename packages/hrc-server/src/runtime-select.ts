@@ -1,19 +1,10 @@
-import {
-  HrcConflictError,
-  HrcErrorCode,
-  HrcRuntimeUnavailableError,
-} from 'hrc-core'
-import type {
-  HrcHarness,
-  HrcProvider,
-  HrcRunRecord,
-  HrcRuntimeSnapshot,
-} from 'hrc-core'
+import { HrcConflictError, HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
+import type { HrcHarness, HrcProvider, HrcRunRecord, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { isRuntimeUnavailableStatus } from './server-util.js'
-import { isRunActive, isTerminalBrokerInvocationState } from './require-helpers.js'
 import { hasDurableBrokerEndpoint, hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
+import { isRunActive, isTerminalBrokerInvocationState } from './require-helpers.js'
+import { isRuntimeUnavailableStatus } from './server-util.js'
 
 export type InteractiveRuntimeSelectionView = {
   transport: string
@@ -40,7 +31,10 @@ export function selectDispatchInteractiveRuntime<T extends InteractiveRuntimeSel
   return available.at(-1) ?? interactive.at(-1) ?? null
 }
 
-export function findLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot | null {
+export function findLatestRuntime(
+  db: HrcDatabase,
+  hostSessionId: string
+): HrcRuntimeSnapshot | null {
   return selectLatestInteractiveRuntime(db.runtimes.listByHostSessionId(hostSessionId))
 }
 
@@ -212,7 +206,6 @@ export function resolveActiveRunId(db: HrcDatabase, runtime: HrcRuntimeSnapshot)
   return runId
 }
 
-
 export function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
   const runtime = findLatestRuntime(db, hostSessionId)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
@@ -223,7 +216,10 @@ export function requireLatestRuntime(db: HrcDatabase, hostSessionId: string): Hr
   return runtime
 }
 
-export function requireLatestSessionRuntime(db: HrcDatabase, hostSessionId: string): HrcRuntimeSnapshot {
+export function requireLatestSessionRuntime(
+  db: HrcDatabase,
+  hostSessionId: string
+): HrcRuntimeSnapshot {
   const runtime = findLatestSessionRuntime(db, hostSessionId)
   if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
     throw new HrcRuntimeUnavailableError(`no ready runtime for host session "${hostSessionId}"`, {

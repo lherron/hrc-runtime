@@ -40,8 +40,8 @@ import {
   brokerInteractiveHandlersMethods,
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
-import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { projectBrokerHostingState } from './broker/runtime-hosting.js'
+import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -896,7 +896,8 @@ class HrcServerInstance implements HrcServer {
     const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
     const continuation = runtime.continuation ?? session.continuation ?? null
     const eventHighWaterSeq = runtime.activeInvocationId
-      ? this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ?? null
+      ? (this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ??
+        null)
       : null
     const control = extractFullRuntimeControlState(runtime.runtimeStateJson, eventHighWaterSeq)
     // T-01876 Ph5 — separate endpoint/substrate/presentation projection (spec

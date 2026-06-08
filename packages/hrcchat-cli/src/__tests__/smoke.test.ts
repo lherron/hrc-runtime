@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
   type DispatchTurnBySelectorResponse,
+  HrcDomainError,
   type HrcMessageRecord,
   type SemanticDmRequest,
   type SemanticDmResponse,
-  HrcDomainError,
   parseSelector,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -331,9 +331,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     } as HrcClient
 
-    const result = await runCommand(() =>
-      cmdDm(client, { replyTo: 'msg-gone' }, ['human', 'hi'])
-    )
+    const result = await runCommand(() => cmdDm(client, { replyTo: 'msg-gone' }, ['human', 'hi']))
 
     expect(result.exitCode).toBe(0)
     // First attempt with the anchor, second (retry) without it.

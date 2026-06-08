@@ -171,10 +171,18 @@ export function createMonitorConditionEngine(
         const next = await nextStreamResult(iterator, timeoutDeadline, stallDeadline)
 
         if (next.kind === 'timeout') {
-          return withCompletedEvent(context, { result: 'timeout', exitCode: EXIT_CODE.timeout }, eventStream)
+          return withCompletedEvent(
+            context,
+            { result: 'timeout', exitCode: EXIT_CODE.timeout },
+            eventStream
+          )
         }
         if (next.kind === 'stalled') {
-          return withCompletedEvent(context, { result: 'stalled', exitCode: EXIT_CODE.timeout }, eventStream)
+          return withCompletedEvent(
+            context,
+            { result: 'stalled', exitCode: EXIT_CODE.timeout },
+            eventStream
+          )
         }
         if (next.kind === 'done') {
           return await waitForEndTimer(context, eventStream, timeoutDeadline, stallDeadline)
@@ -221,11 +229,15 @@ function evaluateStartSnapshot(
         ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
         : null
     case 'idle':
-      return isIdleRuntimeStatus(runtimeStatus) ? { result: 'already_idle', exitCode: EXIT_CODE.ok } : null
+      return isIdleRuntimeStatus(runtimeStatus)
+        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
+        : null
     case 'busy':
       return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: EXIT_CODE.ok } : null
     case 'runtime-dead':
-      return isDeadRuntimeStatus(runtimeStatus) ? { result: 'already_dead', exitCode: EXIT_CODE.ok } : null
+      return isDeadRuntimeStatus(runtimeStatus)
+        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
+        : null
     case 'response':
     case 'response-or-idle':
       return null
@@ -313,10 +325,18 @@ function runtimeDeathOutcome(
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
   if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
-    return { result: 'runtime_dead', exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
+    return {
+      result: 'runtime_dead',
+      exitCode: EXIT_CODE.failure,
+      failureKind: failureKindValue(event),
+    }
   }
   if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
-    return { result: 'runtime_crashed', exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
+    return {
+      result: 'runtime_crashed',
+      exitCode: EXIT_CODE.failure,
+      failureKind: failureKindValue(event),
+    }
   }
   return null
 }
@@ -349,7 +369,11 @@ function evaluateContextChanged(
   if (unknownString(event, 'sessionRef') === context.capture.sessionRef) {
     const eventGeneration = unknownNumber(event, 'generation')
     if (eventGeneration !== undefined && eventGeneration !== context.capture.generation) {
-      return { result: 'context_changed', reason: 'generation_changed', exitCode: EXIT_CODE.contextChanged }
+      return {
+        result: 'context_changed',
+        reason: 'generation_changed',
+        exitCode: EXIT_CODE.contextChanged,
+      }
     }
   }
 
@@ -358,7 +382,11 @@ function evaluateContextChanged(
     unknownString(event, 'hostSessionId') !== undefined &&
     unknownString(event, 'hostSessionId') !== context.capture.hostSessionId
   ) {
-    return { result: 'context_changed', reason: 'session_rebound', exitCode: EXIT_CODE.contextChanged }
+    return {
+      result: 'context_changed',
+      reason: 'session_rebound',
+      exitCode: EXIT_CODE.contextChanged,
+    }
   }
 
   if (
@@ -459,7 +487,11 @@ async function waitForEndTimer(
 ): Promise<HrcMonitorConditionOutcome> {
   const nextTimer = earliestDeadline(timeoutDeadline, stallDeadline)
   if (nextTimer === null) {
-    return withCompletedEvent(context, { result: 'monitor_error', exitCode: EXIT_CODE.monitorError }, eventStream)
+    return withCompletedEvent(
+      context,
+      { result: 'monitor_error', exitCode: EXIT_CODE.monitorError },
+      eventStream
+    )
   }
 
   const waitMs = Math.max(0, nextTimer - Date.now())
@@ -468,9 +500,17 @@ async function waitForEndTimer(
   }
 
   if (timeoutDeadline !== null && timeoutDeadline <= (stallDeadline ?? Number.POSITIVE_INFINITY)) {
-    return withCompletedEvent(context, { result: 'timeout', exitCode: EXIT_CODE.timeout }, eventStream)
+    return withCompletedEvent(
+      context,
+      { result: 'timeout', exitCode: EXIT_CODE.timeout },
+      eventStream
+    )
   }
-  return withCompletedEvent(context, { result: 'stalled', exitCode: EXIT_CODE.timeout }, eventStream)
+  return withCompletedEvent(
+    context,
+    { result: 'stalled', exitCode: EXIT_CODE.timeout },
+    eventStream
+  )
 }
 
 async function nextStreamResult(

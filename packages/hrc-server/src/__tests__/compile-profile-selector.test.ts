@@ -203,7 +203,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
       launchInitialPrompt: 'PRIMING: hello clod',
       withInitialInput: false,
     })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
 
     expect(selection.admitted).toBe(true)
     if (!selection.admitted) return
@@ -224,7 +227,10 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
       withInitialInput: true,
       initialInputId: 'input_other',
     })
-    const selection = selectBrokerExecutionProfile(makeCompileResponse(identity, [profile]), identity)
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
 
     expect(selection.admitted).toBe(false)
     if (selection.admitted) return

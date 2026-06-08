@@ -49,20 +49,14 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
-import {
-  type BrokerClientLike,
-  HarnessBrokerController,
-} from '../broker/controller'
+import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 import {
   canOperatorAttach,
   canUseDirectPaneFallback,
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting'
 
-import {
-  makeCompileResponse,
-  makeIdentity,
-} from './broker-compile-fixtures'
+import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
 const NOW = '2026-06-04T00:00:00.000Z'
 
@@ -71,9 +65,10 @@ const NOW = '2026-06-04T00:00:00.000Z'
 // NO brokerTerminal.host='tmux' — headless has no operator TUI.
 // After Ph3 curly wires this profile to allocateBrokerSubstrate(presentation:'none').
 
-function makeHeadlessDurableProfile(
-  identity: ReturnType<typeof makeIdentity>
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+function makeHeadlessDurableProfile(identity: ReturnType<typeof makeIdentity>): {
+  profile: BrokerExecutionProfile
+  startRequest: InvocationStartRequest
+} {
   // Build a minimal valid spec/request; hashes not exercised here so use stubs.
   const spec = {
     specVersion: 'harness-broker.invocation/v1',
@@ -178,28 +173,54 @@ class FakeUnixBrokerClient {
 
   onPermissionRequest(): void {}
   onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> { return this.helloResponse }
-  async health() { return { status: 'ok' as const, activeInvocations: 0, drivers: [] } }
+  async hello(): Promise<BrokerHelloResponse> {
+    return this.helloResponse
+  }
+  async health() {
+    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
+  }
   async startInvocationFromRequest(
     request: InvocationStartRequest,
     dispatchEnv?: unknown,
     runtime?: InvocationRuntimeContext
   ) {
     this.startCalls.push({ request, dispatchEnv, runtime })
-    return { invocationId: this.startResponse.invocationId, response: this.startResponse, events: this.events }
+    return {
+      invocationId: this.startResponse.invocationId,
+      response: this.startResponse,
+      events: this.events,
+    }
   }
-  async input() { return { inputId: 'i', accepted: true, disposition: 'started' as const } }
-  async interrupt() { return { accepted: true, effect: 'turn_interrupted' as const } }
-  async stop() { return { accepted: true, state: 'stopping' as const } }
-  async status() { return this.startResponse }
+  async input() {
+    return { inputId: 'i', accepted: true, disposition: 'started' as const }
+  }
+  async interrupt() {
+    return { accepted: true, effect: 'turn_interrupted' as const }
+  }
+  async stop() {
+    return { accepted: true, state: 'stopping' as const }
+  }
+  async status() {
+    return this.startResponse
+  }
   async dispose() {}
   async close() {}
   // Durable-surface methods (DurableBrokerClientLike)
-  async attach() { return {} }
-  async snapshot() { return {} }
-  async eventsSince() { return { events: [] } }
-  async ackEvents() { return {} }
-  async permissionRespond() { return {} }
+  async attach() {
+    return {}
+  }
+  async snapshot() {
+    return {}
+  }
+  async eventsSince() {
+    return { events: [] }
+  }
+  async ackEvents() {
+    return {}
+  }
+  async permissionRespond() {
+    return {}
+  }
 }
 
 // ── Fake stdio client — v0.1 hello (legacy fallback, should NOT be used) ──────
@@ -231,15 +252,31 @@ class FakeStdioBrokerClient {
   }
   onPermissionRequest(): void {}
   onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> { return this.helloResponse }
-  async health() { return { status: 'ok' as const, activeInvocations: 0, drivers: [] } }
-  async startInvocationFromRequest() {
-    return { invocationId: this.startResponse.invocationId, response: this.startResponse, events: this.events }
+  async hello(): Promise<BrokerHelloResponse> {
+    return this.helloResponse
   }
-  async input() { return { inputId: 'i', accepted: true, disposition: 'started' as const } }
-  async interrupt() { return { accepted: true, effect: 'turn_interrupted' as const } }
-  async stop() { return { accepted: true, state: 'stopping' as const } }
-  async status() { return this.startResponse }
+  async health() {
+    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
+  }
+  async startInvocationFromRequest() {
+    return {
+      invocationId: this.startResponse.invocationId,
+      response: this.startResponse,
+      events: this.events,
+    }
+  }
+  async input() {
+    return { inputId: 'i', accepted: true, disposition: 'started' as const }
+  }
+  async interrupt() {
+    return { accepted: true, effect: 'turn_interrupted' as const }
+  }
+  async stop() {
+    return { accepted: true, state: 'stopping' as const }
+  }
+  async status() {
+    return this.startResponse
+  }
   async dispose() {}
   async close() {}
 }
@@ -252,10 +289,24 @@ class FakeEvents implements AsyncIterable<InvocationEventEnvelope> {
 
 function minimalInvocationCapabilities(): InvocationStartResponse['capabilities'] {
   return {
-    input: { user: true, steer: false, appendContext: false, localImages: false, fileRefs: false, queue: false },
+    input: {
+      user: true,
+      steer: false,
+      appendContext: false,
+      localImages: false,
+      fileRefs: false,
+      queue: false,
+    },
     turns: { concurrency: 'single', interrupt: 'protocol' },
     continuation: { supported: false, provider: 'openai', keyKind: 'session' },
-    events: { assistantDeltas: true, toolCalls: true, usage: false, diagnostics: false, replay: false, ack: false },
+    events: {
+      assistantDeltas: true,
+      toolCalls: true,
+      usage: false,
+      diagnostics: false,
+      replay: false,
+      ack: false,
+    },
     control: { stop: true, dispose: true, status: true, attach: false },
     permissions: { brokerToClientRequests: true, eventAudit: false },
   } as unknown as InvocationStartResponse['capabilities']
@@ -312,7 +363,14 @@ async function makeFixture(): Promise<Fixture> {
     updatedAt: NOW,
     ancestorScopeRefs: [],
   })
-  return { db, dir, cleanup: async () => { db.close(); await rm(dir, { recursive: true, force: true }) } }
+  return {
+    db,
+    dir,
+    cleanup: async () => {
+      db.close()
+      await rm(dir, { recursive: true, force: true })
+    },
+  }
 }
 
 // ── Shared controller builder ─────────────────────────────────────────────────
@@ -350,8 +408,12 @@ function makeController(
 describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
   let fixture: Fixture
 
-  beforeEach(async () => { fixture = await makeFixture() })
-  afterEach(async () => { await fixture.cleanup() })
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
 
   // ── RED 1+2+3: leased substrate + unix endpoint + presentation=none + no terminalSurface ──
 
@@ -395,8 +457,8 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
     // RED 1: hosting state must show unix endpoint + leased-tmux substrate.
     // TODAY FAILS: endpoint is 'stdio-jsonrpc-ndjson', substrate is 'daemon-child'.
     const hosting = parseBrokerRuntimeHostingState(runtime!)
-    expect(hosting?.endpoint.kind).toBe('unix-jsonrpc-ndjson')   // ← RED today (stdio)
-    expect(hosting?.substrate.kind).toBe('leased-tmux')           // ← RED today (daemon-child)
+    expect(hosting?.endpoint.kind).toBe('unix-jsonrpc-ndjson') // ← RED today (stdio)
+    expect(hosting?.substrate.kind).toBe('leased-tmux') // ← RED today (daemon-child)
 
     // RED 2: presentation must be 'none'; no operator attach.
     // (presentation.kind='none' accidentally passes today; substrate=leased-tmux is the gate)
@@ -404,7 +466,9 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
     expect(canOperatorAttach(runtime!)).toBe(false)
     expect(canUseDirectPaneFallback(runtime!)).toBe(false)
     // No tuiWindow in the persisted substrate or presentation.
-    const broker = (runtime!.runtimeStateJson as Record<string, unknown>)?.['broker'] as Record<string, unknown> | undefined
+    const broker = (runtime!.runtimeStateJson as Record<string, unknown>)?.['broker'] as
+      | Record<string, unknown>
+      | undefined
     expect(broker?.['tuiWindow']).toBeUndefined()
 
     // RED 1: transport must stay 'headless' (not 'tmux') even with leased-tmux substrate.
@@ -440,7 +504,8 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
       invocationId: 'invocation_tmux' as ReturnType<typeof makeIdentity>['invocationId'],
       runId: 'run_tmux' as ReturnType<typeof makeIdentity>['runId'],
     })
-    const { profile: tmuxProfile, startRequest: tmuxStartRequest } = makeInteractiveTmuxProfile(identityTmux)
+    const { profile: tmuxProfile, startRequest: tmuxStartRequest } =
+      makeInteractiveTmuxProfile(identityTmux)
     const tmuxResponse = makeCompileResponse(identityTmux, [tmuxProfile])
     if (!tmuxResponse.ok) throw new Error('tmux fixture failed')
 
@@ -458,13 +523,52 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
           generation: 1,
           brokerIpcSocketPath: '/tmp/bipc/claude-code-tmux-rt/b.sock',
           attachToken: 'tok',
-          attachTokenRef: { kind: 'file', path: '/tmp/bipc/claude-code-tmux-rt/attach.token', redacted: true },
-          brokerCommand: 'exec harness-broker run --transport unix --socket /tmp/bipc/claude-code-tmux-rt/b.sock',
+          attachTokenRef: {
+            kind: 'file',
+            path: '/tmp/bipc/claude-code-tmux-rt/attach.token',
+            redacted: true,
+          },
+          brokerCommand:
+            'exec harness-broker run --transport unix --socket /tmp/bipc/claude-code-tmux-rt/b.sock',
           brokerPid: 9999,
-          brokerWindow: { socketPath: '/tmp/btmux/claude-code-tmux-rt.sock', sessionId: '$1', windowId: '@1', paneId: '%1', sessionName: 'hrc-rt', windowName: 'broker' },
-          tuiWindow: { socketPath: '/tmp/btmux/claude-code-tmux-rt.sock', sessionId: '$1', windowId: '@2', paneId: '%2', sessionName: 'hrc-rt', windowName: 'tui' },
-          lease: { kind: 'tmux-pane', ownership: 'hrc', socketPath: '/tmp/btmux/claude-code-tmux-rt.sock', sessionId: '$1', windowId: '@2', paneId: '%2', sessionName: 'hrc-rt', windowName: 'tui', allowedOps: { inspect: true, sendInput: true, sendInterrupt: true, capture: true, resize: false } },
-          sessionId: '$1', windowId: '@2', paneId: '%2', sessionName: 'hrc-rt', windowName: 'tui',
+          brokerWindow: {
+            socketPath: '/tmp/btmux/claude-code-tmux-rt.sock',
+            sessionId: '$1',
+            windowId: '@1',
+            paneId: '%1',
+            sessionName: 'hrc-rt',
+            windowName: 'broker',
+          },
+          tuiWindow: {
+            socketPath: '/tmp/btmux/claude-code-tmux-rt.sock',
+            sessionId: '$1',
+            windowId: '@2',
+            paneId: '%2',
+            sessionName: 'hrc-rt',
+            windowName: 'tui',
+          },
+          lease: {
+            kind: 'tmux-pane',
+            ownership: 'hrc',
+            socketPath: '/tmp/btmux/claude-code-tmux-rt.sock',
+            sessionId: '$1',
+            windowId: '@2',
+            paneId: '%2',
+            sessionName: 'hrc-rt',
+            windowName: 'tui',
+            allowedOps: {
+              inspect: true,
+              sendInput: true,
+              sendInterrupt: true,
+              capture: true,
+              resize: false,
+            },
+          },
+          sessionId: '$1',
+          windowId: '@2',
+          paneId: '%2',
+          sessionName: 'hrc-rt',
+          windowName: 'tui',
         }),
       },
       now: () => NOW,
@@ -534,8 +638,8 @@ describe('T-01874 Ph3 — headless broker durable cutover (RED)', () => {
 
     // Durable headless must dial unix, NOT spawn stdio.
     // TODAY FAILS: stdioFactoryCalls.length === 1 (stdio spawned), unixFactoryCalls.length === 0.
-    expect(stdioFactoryCalls).toHaveLength(0)  // ← RED today (stdio IS called)
-    expect(unixFactoryCalls).toHaveLength(1)   // ← RED today (unix NOT called)
+    expect(stdioFactoryCalls).toHaveLength(0) // ← RED today (stdio IS called)
+    expect(unixFactoryCalls).toHaveLength(1) // ← RED today (unix NOT called)
     expect(unixFactoryCalls[0]?.socketPath).toContain('b.sock')
   })
 })

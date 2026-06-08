@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { assertSocketPathWithinBudget } from 'spaces-harness-broker-client'
 
-import type { HrcServerOptions } from './server-types.js'
 import { requireTmuxPane } from './require-helpers.js'
+import type { HrcServerOptions } from './server-types.js'
 
 const MIN_SUPPORTED_TMUX_VERSION = {
   major: 3,
@@ -59,7 +59,10 @@ export function preflightBrokerIpcSocketPath(socketPath: string): void {
   assertSocketPathWithinBudget(socketPath)
 }
 
-export async function detectTmuxBackend(): Promise<{ available: boolean; version?: string | undefined }> {
+export async function detectTmuxBackend(): Promise<{
+  available: boolean
+  version?: string | undefined
+}> {
   try {
     const proc = Bun.spawn(['tmux', '-V'], {
       stdout: 'pipe',

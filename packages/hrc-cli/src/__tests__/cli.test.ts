@@ -1965,7 +1965,15 @@ describe('hrc session resolve', () => {
 
   it('outputs JSON with hostSessionId, generation, created to stdout', async () => {
     const result = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('clitest'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('clitest'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
 
@@ -2017,7 +2025,15 @@ describe('hrc session list', () => {
   it('outputs sessions after resolve', async () => {
     // First create a session via CLI
     await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('listcli'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('listcli'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
 
@@ -2030,11 +2046,27 @@ describe('hrc session list', () => {
 
   it('supports --scope filter', async () => {
     await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('filterA'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('filterA'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
     await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('filterB'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('filterB'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
 
@@ -2059,7 +2091,15 @@ describe('hrc session get', () => {
 
   it('outputs session JSON for a known hostSessionId', async () => {
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('getcli'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('getcli'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
     const resolved = JSON.parse(resolveResult.stdout.trim())
@@ -2233,7 +2273,15 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc runtime list with --host-session-id filter', async () => {
     // Seed a session + runtime
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('diag-rt-list'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('diag-rt-list'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
@@ -2259,7 +2307,15 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc launch list with --runtime-id filter', async () => {
     // Seed a runtime to get launches
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('diag-launch-list'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('diag-launch-list'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
     const hostSessionId = JSON.parse(resolveResult.stdout.trim()).hostSessionId as string
@@ -2279,7 +2335,15 @@ describe('Phase 6 diagnostics CLI', () => {
   it('hrc runtime adopt on dead runtime prints adopted JSON and exits 0', async () => {
     // Seed a dead runtime
     const resolveResult = await runCli(
-      ['session', 'resolve', '--scope', testProjectScope('diag-adopt-cli'), '--lane', 'default', '--create'],
+      [
+        'session',
+        'resolve',
+        '--scope',
+        testProjectScope('diag-adopt-cli'),
+        '--lane',
+        'default',
+        '--create',
+      ],
       cliEnv()
     )
     const resolved = JSON.parse(resolveResult.stdout.trim())

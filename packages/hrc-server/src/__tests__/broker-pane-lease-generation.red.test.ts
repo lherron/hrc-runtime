@@ -29,7 +29,6 @@ import type {
   InvocationInputResponse,
   InvocationInterruptRequest,
   InvocationInterruptResponse,
-  InvocationStartRequest,
   InvocationStartResponse,
   InvocationStatusResponse,
   InvocationStopResponse,
@@ -39,7 +38,11 @@ import type {
 
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 
-import { makeCompileResponse, makeIdentity, makeInteractiveTmuxProfile } from './broker-compile-fixtures'
+import {
+  makeCompileResponse,
+  makeIdentity,
+  makeInteractiveTmuxProfile,
+} from './broker-compile-fixtures'
 
 const NOW = '2026-05-28T12:00:00.000Z'
 

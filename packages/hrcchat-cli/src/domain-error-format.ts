@@ -1,4 +1,4 @@
-import { HrcDomainError } from 'hrc-core'
+import type { HrcDomainError } from 'hrc-core'
 
 const DETAIL_KEYS = ['runtimeId', 'runId', 'invocationId', 'activeRunId', 'route', 'status']
 

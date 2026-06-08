@@ -24,9 +24,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { BrokerErrorCode } from 'spaces-harness-broker-protocol'
 import type {
   BrokerAttachRequest,
@@ -211,7 +211,11 @@ class MockClient implements DurableBrokerClientLike {
   async permissionRespond(
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse> {
-    return { status: 'accepted', permissionRequestId: req.permissionRequestId, decision: req.decision }
+    return {
+      status: 'accepted',
+      permissionRequestId: req.permissionRequestId,
+      decision: req.decision,
+    }
   }
   streamInvocationEvents(_invocationId: string): AsyncIterable<InvocationEventEnvelope> {
     return this.liveStream
@@ -226,7 +230,11 @@ class MockClient implements DurableBrokerClientLike {
     throw new Error('start not expected')
   }
   async input(): Promise<InvocationInputResponse> {
-    return { inputId: 'i' as InvocationInputResponse['inputId'], accepted: true, disposition: 'started' }
+    return {
+      inputId: 'i' as InvocationInputResponse['inputId'],
+      accepted: true,
+      disposition: 'started',
+    }
   }
   async interrupt(): Promise<InvocationInterruptResponse> {
     return { accepted: true, effect: 'turn_interrupted' }
@@ -250,10 +258,24 @@ function emptySnapshot(over: Partial<InvocationSnapshot> = {}): InvocationSnapsh
     invocationId: INVOCATION_ID,
     state: 'ready',
     capabilities: {
-      input: { user: true, steer: true, appendContext: true, localImages: true, fileRefs: true, queue: false },
+      input: {
+        user: true,
+        steer: true,
+        appendContext: true,
+        localImages: true,
+        fileRefs: true,
+        queue: false,
+      },
       turns: { concurrency: 'single', interrupt: 'protocol' },
       continuation: { supported: true, provider: 'anthropic', keyKind: 'thread' },
-      events: { assistantDeltas: true, toolCalls: true, usage: true, diagnostics: true, replay: true, ack: true },
+      events: {
+        assistantDeltas: true,
+        toolCalls: true,
+        usage: true,
+        diagnostics: true,
+        replay: true,
+        ack: true,
+      },
       control: { stop: true, dispose: true, status: true, attach: true },
       permissions: { brokerToClientRequests: true, eventAudit: true },
     },
@@ -281,7 +303,11 @@ function attachResponseFor(s: InvocationSnapshot): BrokerAttachResponse {
 }
 
 function makeController(): HarnessBrokerController {
-  return new HarnessBrokerController({ db, now: () => nowTs(), serverInstanceId: SERVER_INSTANCE_ID })
+  return new HarnessBrokerController({
+    db,
+    now: () => nowTs(),
+    serverInstanceId: SERVER_INSTANCE_ID,
+  })
 }
 
 async function attach(controller: HarnessBrokerController, client: MockClient): Promise<void> {

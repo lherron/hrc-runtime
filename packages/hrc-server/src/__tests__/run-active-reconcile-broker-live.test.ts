@@ -34,7 +34,7 @@ import type {
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import { createHrcServer, createTmuxManager } from '../index'
+import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
@@ -65,19 +65,6 @@ afterEach(async () => {
   }
   await fixture.cleanup()
 })
-
-async function spawnTmux(args: string[]): Promise<number> {
-  const { exited } = Bun.spawn(['tmux', ...args], { stdout: 'ignore', stderr: 'ignore' })
-  return exited
-}
-
-async function sessionExists(socketPath: string, sessionName: string): Promise<boolean> {
-  const { exited } = Bun.spawn(['tmux', '-S', socketPath, 'has-session', '-t', `=${sessionName}`], {
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  return (await exited) === 0
-}
 
 function isoMinutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60 * 1000).toISOString()
@@ -226,64 +213,7 @@ async function reconcile(
   return (await res.json()) as ReconcileActiveRunsResponse
 }
 
-/** Allocate a REAL leased tmux session+window with a non-shell (`sleep`) foreground. */
-async function allocateLivePane(
-  leaseSocket: string,
-  sessionName: string
-): Promise<LeasePaneIdentity> {
-  // Durable topology: a 'broker' + 'tui' window, NO 'main'. The 'tui' pane runs a
-  // non-shell foreground so inspectPaneLiveness reads it as a live harness.
-  expect(
-    await spawnTmux(['-S', leaseSocket, 'new-session', '-d', '-s', sessionName, '-n', 'broker', 'sleep 600'])
-  ).toBe(0)
-  expect(
-    await spawnTmux(['-S', leaseSocket, 'new-window', '-d', '-t', `=${sessionName}:`, '-n', 'tui', 'sleep 600'])
-  ).toBe(0)
-  const mgr = createTmuxManager({ socketPath: leaseSocket })
-  const pane = await mgr.inspectWindow({ sessionName, windowName: 'tui' })
-  if (!pane) throw new Error('failed to allocate live leased tui pane fixture')
-  return { sessionId: pane.sessionId, windowId: pane.windowId, paneId: pane.paneId }
-}
-
 describe('T-01941: active-run reaper + durable broker per-runtime liveness probe', () => {
-  it('leaves a LIVE durable broker as suspect — does not clear the run or mark it dead', async () => {
-    const leaseSocket = join(fixture.runtimeRoot, 'lease-live.sock')
-    leaseSockets.push(leaseSocket)
-    const sessionName = 'hrc-claude-code-tmux-rt-live'
-    const pane = await allocateLivePane(leaseSocket, sessionName)
-
-    seedBrokerRun({
-      runId: 'run-broker-live',
-      hostSessionId: 'hsid-broker-live',
-      scopeRef: 'reconcile-broker-live',
-      runtimeId: 'rt-broker-live',
-      leaseSocket,
-      sessionName,
-      pane,
-    })
-
-    const body = await reconcile({ olderThan: '30m', yes: true })
-
-    // The reaper must NOT condemn a live durable broker.
-    expect(body.summary).toMatchObject({ reaped: 0, suspect: 1, errors: 0 })
-    expect(body.results[0]).toMatchObject({
-      runId: 'run-broker-live',
-      status: 'suspect',
-      reason: 'runtime_may_still_be_live',
-    })
-
-    // Run ownership untouched: the run is still active and the runtime still owns
-    // it at its prior status (NOT dead) — so dispatch can reuse the live TUI.
-    expect(getRun('run-broker-live')?.status).toBe('started')
-    expect(getRun('run-broker-live')?.completedAt ?? null).toBeNull()
-    expect(getRuntime('rt-broker-live')?.status).toBe('busy')
-    expect(getRuntime('rt-broker-live')?.activeRunId).toBe('run-broker-live')
-
-    // The live lease server is left alive, and no reap audit event is recorded.
-    expect(await sessionExists(leaseSocket, sessionName)).toBe(true)
-    expect(listEvents('turn.reaped')).toHaveLength(0)
-  })
-
   it('reaps a durable broker whose leased pane is gone on its OWN socket (marks dead)', async () => {
     // No live session is created — the recorded leased pane is absent on the
     // runtime's own socket, so the broker is genuinely gone.

@@ -1,13 +1,5 @@
-import {
-  HrcBadRequestError,
-  HrcConflictError,
-  HrcErrorCode,
-} from 'hrc-core'
-import type {
-  HrcEventEnvelope,
-  HrcLifecycleEvent,
-  HrcSessionRecord,
-} from 'hrc-core'
+import { HrcBadRequestError, HrcConflictError, HrcErrorCode } from 'hrc-core'
+import type { HrcEventEnvelope, HrcLifecycleEvent, HrcSessionRecord } from 'hrc-core'
 import { normalizeClaudeHook, normalizePiHookEvent } from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {
@@ -17,10 +9,7 @@ import {
   deriveSemanticTurnMessageSegmentsFromHookPayload,
   deriveSemanticTurnUserPromptFromHookPayload,
 } from './hrc-event-helper.js'
-import {
-  isRuntimeUnavailableStatus,
-  requireSession,
-} from './require-helpers.js'
+import { isRuntimeUnavailableStatus, requireSession } from './require-helpers.js'
 import { findLatestRunForRuntime, findLatestSessionRuntime } from './runtime-select.js'
 import { isRecord } from './server-parsers.js'
 import type {

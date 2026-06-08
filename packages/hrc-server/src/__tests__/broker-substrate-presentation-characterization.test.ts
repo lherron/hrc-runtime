@@ -129,11 +129,7 @@ const flatInteractiveBrokerBlock: Record<string, unknown> = {
     attachTokenRef: { kind: 'file', path: ATTACH_TOKEN_PATH, redacted: true },
   },
   generation: 3,
-  brokerCommand:
-    `exec harness-broker run --transport unix --socket ${BROKER_IPC_SOCKET}` +
-    ` --event-ledger /tmp/hrc-ph2/bipc/a4f1b3c2/events.ndjson` +
-    ` --runtime-id rt-0192aa3c --host-session-id hsid-ph2 --generation 3` +
-    ` --attach-token-file ${ATTACH_TOKEN_PATH}`,
+  brokerCommand: `exec harness-broker run --transport unix --socket ${BROKER_IPC_SOCKET} --event-ledger /tmp/hrc-ph2/bipc/a4f1b3c2/events.ndjson --runtime-id rt-0192aa3c --host-session-id hsid-ph2 --generation 3 --attach-token-file ${ATTACH_TOKEN_PATH}`,
   brokerPid: 5432,
   // brokerWindow: the BROKER PROCESS pane — substrate identity, NOT the operator pane
   brokerWindow: {
@@ -458,9 +454,9 @@ describe('[CHARACTERIZATION A3] substrate/presentation round-trips for both pres
 
   // Normalized shape: tmux-tui
   it('normalized shape with presentation.tmux-tui → presentation.kind = tmux-tui (round-trip)', () => {
-    expect(
-      parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.presentation.kind
-    ).toBe('tmux-tui')
+    expect(parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.presentation.kind).toBe(
+      'tmux-tui'
+    )
   })
 
   it('normalized shape with presentation.tmux-tui → operatorAttachTarget = true (round-trip)', () => {
@@ -470,9 +466,9 @@ describe('[CHARACTERIZATION A3] substrate/presentation round-trips for both pres
   })
 
   it('normalized shape with presentation.tmux-tui → substrate.kind = leased-tmux (round-trip)', () => {
-    expect(
-      parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.substrate.kind
-    ).toBe('leased-tmux')
+    expect(parseBrokerRuntimeHostingState(normalizedInteractiveRuntime)?.substrate.kind).toBe(
+      'leased-tmux'
+    )
   })
 
   it('normalized shape with presentation.tmux-tui → tuiWindow identity preserved (round-trip)', () => {
@@ -485,7 +481,9 @@ describe('[CHARACTERIZATION A3] substrate/presentation round-trips for both pres
 
   // Normalized shape: none
   it('normalized headless shape with presentation.none → presentation.kind = none (round-trip)', () => {
-    expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.presentation.kind).toBe('none')
+    expect(parseBrokerRuntimeHostingState(normalizedHeadlessRuntime)?.presentation.kind).toBe(
+      'none'
+    )
   })
 
   it('normalized headless shape with presentation.none → substrate.kind = leased-tmux (round-trip)', () => {

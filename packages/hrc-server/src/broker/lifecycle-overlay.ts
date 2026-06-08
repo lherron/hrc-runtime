@@ -14,9 +14,7 @@
  * (no overlay).
  */
 
-import {
-  conservativeDefaultLifecyclePolicyOverlay,
-} from 'spaces-harness-broker-protocol'
+import { conservativeDefaultLifecyclePolicyOverlay } from 'spaces-harness-broker-protocol'
 import type {
   BrokerLifecyclePolicyOverlay,
   InvocationLifecycleCapabilities,

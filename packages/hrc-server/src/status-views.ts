@@ -10,10 +10,7 @@ import type {
 } from 'hrc-core'
 import type { AppManagedSessionRecord, HrcDatabase } from 'hrc-store-sqlite'
 import type { GhostmuxSurfaceState } from './ghostmux.js'
-import {
-  requireGhosttySurface,
-  requireTmuxPane,
-} from './require-helpers.js'
+import { requireGhosttySurface, requireTmuxPane } from './require-helpers.js'
 import { findLatestSessionRuntime } from './runtime-select.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import type { TmuxPaneState } from './tmux.js'

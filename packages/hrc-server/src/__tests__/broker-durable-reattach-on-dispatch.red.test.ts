@@ -22,9 +22,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -48,8 +48,8 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { type DurableBrokerClientLike, HarnessBrokerController } from '../broker/controller'
-import type { TmuxPaneState } from '../tmux'
 import { reattachDurableBrokerForDispatch } from '../startup-reconcile'
+import type { TmuxPaneState } from '../tmux'
 
 const SERVER_INSTANCE_ID = 'hrc-server-reattach-dispatch-test'
 const ATTACH_TOKEN = 'attach-token-secret'
@@ -244,7 +244,11 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse> {
     this.calls.push('permissionRespond')
-    return { status: 'accepted', permissionRequestId: req.permissionRequestId, decision: req.decision }
+    return {
+      status: 'accepted',
+      permissionRequestId: req.permissionRequestId,
+      decision: req.decision,
+    }
   }
   async hello(): Promise<BrokerHelloResponse> {
     throw new Error('hello must not be called during reattach')
@@ -287,10 +291,24 @@ function emptySnapshot(overrides: Partial<InvocationSnapshot> = {}): InvocationS
     invocationId: INVOCATION_ID,
     state: 'ready',
     capabilities: {
-      input: { user: true, steer: true, appendContext: true, localImages: true, fileRefs: true, queue: false },
+      input: {
+        user: true,
+        steer: true,
+        appendContext: true,
+        localImages: true,
+        fileRefs: true,
+        queue: false,
+      },
       turns: { concurrency: 'single', interrupt: 'protocol' },
       continuation: { supported: true, provider: 'anthropic', keyKind: 'thread' },
-      events: { assistantDeltas: true, toolCalls: true, usage: true, diagnostics: true, replay: true, ack: true },
+      events: {
+        assistantDeltas: true,
+        toolCalls: true,
+        usage: true,
+        diagnostics: true,
+        replay: true,
+        ack: true,
+      },
       control: { stop: true, dispose: true, status: true, attach: true },
       permissions: { brokerToClientRequests: true, eventAudit: true },
     },

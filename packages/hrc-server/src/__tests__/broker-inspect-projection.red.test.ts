@@ -32,14 +32,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
+import { toTargetRuntimeView } from '../target-view'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
-import { toTargetRuntimeView } from '../target-view'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -159,7 +159,10 @@ function seedDurableBrokerRuntime(opts: SeedOptions): void {
 }
 
 // Helper to build a minimal HrcRuntimeSnapshot directly for unit-level projection tests.
-function makeRawRuntime(opts: { transport: 'headless' | 'tmux'; interactive: boolean }): HrcRuntimeSnapshot {
+function makeRawRuntime(opts: {
+  transport: 'headless' | 'tmux'
+  interactive: boolean
+}): HrcRuntimeSnapshot {
   const brokerBlock: Record<string, unknown> = {
     protocolVersion: 'harness-broker/0.2',
     ownerServerInstanceId: 'srv-unit',
@@ -196,7 +199,6 @@ function makeRawRuntime(opts: { transport: 'headless' | 'tmux'; interactive: boo
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('RED: Ph5 — inspect projection exposes endpoint/substrate/presentation as SEPARATE fields (T-01876)', () => {
-
   it('RED 1 — full inspect for durable HEADLESS row surfaces broker/substrate/presentation as distinct top-level fields', async () => {
     seedDurableBrokerRuntime({
       runtimeId: 'rt_ph5_headless',
@@ -347,7 +349,6 @@ describe('RED: Ph5 — inspect projection exposes endpoint/substrate/presentatio
 })
 
 describe('RED: Ph5 — public status (HrcTargetRuntimeView) adds brokerEndpoint + presentation (T-01876)', () => {
-
   it('RED 4 — toTargetRuntimeView for headless durable runtime adds brokerEndpoint + presentation coarse fields', () => {
     // Unit-level test of the projection function directly (no HTTP round-trip needed).
     const runtime = makeRawRuntime({ transport: 'headless', interactive: false })

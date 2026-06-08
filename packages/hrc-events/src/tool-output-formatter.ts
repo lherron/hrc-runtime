@@ -227,8 +227,7 @@ const toolRenderers: Record<string, ToolRenderer> = {
   Write: ({ toolInputRecord }) => {
     const filePath =
       typeof toolInputRecord['file_path'] === 'string' ? toolInputRecord['file_path'] : ''
-    const content =
-      typeof toolInputRecord['content'] === 'string' ? toolInputRecord['content'] : ''
+    const content = typeof toolInputRecord['content'] === 'string' ? toolInputRecord['content'] : ''
     if (!filePath || !content) return undefined
 
     const fileName = filePath.split('/').pop() || filePath

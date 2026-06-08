@@ -40,8 +40,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-
-import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -53,7 +51,6 @@ import type {
   InvocationEventEnvelope,
   InvocationEventsSinceRequest,
   InvocationEventsSinceResponse,
-  InvocationId,
   InvocationInputResponse,
   InvocationInterruptResponse,
   InvocationPermissionRespondRequest,
@@ -65,21 +62,21 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import {
-  type DurableBrokerClientLike,
   BrokerControllerError,
+  type DurableBrokerClientLike,
   HarnessBrokerController,
 } from '../broker/controller'
 import { BrokerEventMapper } from '../broker/event-mapper'
 
 import {
+  INVOCATION_ID,
+  RUNTIME_ID,
+  RUN_ID,
+  type SeededFixture,
   envelope,
   headlessSequence,
-  INVOCATION_ID,
   inputId,
   makeSeededFixture,
-  RUN_ID,
-  RUNTIME_ID,
-  type SeededFixture,
   ts,
   turnId,
 } from './broker-event-mapper-fixtures'
@@ -152,7 +149,11 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
     req: InvocationPermissionRespondRequest
   ): Promise<InvocationPermissionRespondResponse> {
     this.calls.push('permissionRespond')
-    return { status: 'accepted', permissionRequestId: req.permissionRequestId, decision: req.decision }
+    return {
+      status: 'accepted',
+      permissionRequestId: req.permissionRequestId,
+      decision: req.decision,
+    }
   }
 
   // ── base BrokerClientLike surface (should NOT be exercised by replay) ──────
@@ -168,7 +169,9 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
 
   async startInvocationFromRequest(): Promise<never> {
     this.calls.push('start')
-    throw new Error('MockDurableBrokerClient: startInvocationFromRequest must not be called during replay')
+    throw new Error(
+      'MockDurableBrokerClient: startInvocationFromRequest must not be called during replay'
+    )
   }
 
   async input(req: unknown): Promise<InvocationInputResponse> {
@@ -329,9 +332,9 @@ describe('T-01811 replay reuses the live event-mapper apply() path', () => {
 
     expect(second.ok).toBe(true)
     // No duplicate ledger rows, no duplicate lifecycle events.
-    expect(fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).map((e) => e.seq)).toEqual(
-      [1, 2, 3, 4, 5, 6, 7, 8]
-    )
+    expect(
+      fixture.db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).map((e) => e.seq)
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(lifecycleEventKinds(fixture).length).toBe(lifecycleCountBefore)
 
     // Replay never re-launched or re-sent a prompt.
@@ -463,7 +466,12 @@ describe('T-01811 honors snapshot.inputDispositions (no duplicate user prompt)',
       disposition: 'started',
     }
     const tid = turnId('turn_retry_1')
-    const acceptedEvent = envelope('input.accepted', 10, { inputId: RETRY_INPUT }, { inputId: RETRY_INPUT })
+    const acceptedEvent = envelope(
+      'input.accepted',
+      10,
+      { inputId: RETRY_INPUT },
+      { inputId: RETRY_INPUT }
+    )
     const turnStarted = envelope('turn.started', 11, { turnId: tid }, { turnId: tid })
 
     const client = new MockDurableBrokerClient()
@@ -474,7 +482,11 @@ describe('T-01811 honors snapshot.inputDispositions (no duplicate user prompt)',
       pendingInputIds: [],
     })
     client.attachResponse = attachResponseFor(client.snapshotResponse)
-    client.queueEventsSince({ events: [acceptedEvent, turnStarted], currentSeq: 11, retentionFloorSeq: 1 })
+    client.queueEventsSince({
+      events: [acceptedEvent, turnStarted],
+      currentSeq: 11,
+      retentionFloorSeq: 1,
+    })
 
     const result = await (controller as any).attachAndReplay({
       runtimeId: RUNTIME_ID,
@@ -494,13 +506,19 @@ describe('T-01811 honors snapshot.inputDispositions (no duplicate user prompt)',
     expect(acceptedCount).toBe(1)
 
     // A second replay of the SAME accepted event is idempotent — still one prompt.
-    client.queueEventsSince({ events: [acceptedEvent, turnStarted], currentSeq: 11, retentionFloorSeq: 1 })
+    client.queueEventsSince({
+      events: [acceptedEvent, turnStarted],
+      currentSeq: 11,
+      retentionFloorSeq: 1,
+    })
     await (controller as any).attachAndReplay({
       runtimeId: RUNTIME_ID,
       client,
       attachToken: ATTACH_TOKEN,
     })
-    const acceptedCountAfter = lifecycleEventKinds(fixture).filter((k) => k === 'turn.accepted').length
+    const acceptedCountAfter = lifecycleEventKinds(fixture).filter(
+      (k) => k === 'turn.accepted'
+    ).length
     expect(acceptedCountAfter).toBe(1)
   })
 })

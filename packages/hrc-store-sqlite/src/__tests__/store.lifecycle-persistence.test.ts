@@ -192,8 +192,7 @@ describe('lifecycle persistence migrations (0019/0020/0021)', () => {
 
       // A NON-unique index on bare permission_request_id is retained for compat/diagnostics.
       const hasBareNonUnique = idx.some(
-        (i) =>
-          i.unique === 0 && i.columns.length === 1 && i.columns[0] === 'permission_request_id'
+        (i) => i.unique === 0 && i.columns.length === 1 && i.columns[0] === 'permission_request_id'
       )
       expect(hasBareNonUnique).toBe(true)
     } finally {
@@ -582,9 +581,7 @@ describe('permission_decisions generation-aware identity', () => {
   it('rejects a duplicate identity (same invocation/gen/attempt/request id)', () => {
     const db = openHrcDatabase(dbPath)
     try {
-      db.permissionDecisions.insert(
-        baseDecision({ harnessGeneration: 1, turnAttempt: 0 }) as never
-      )
+      db.permissionDecisions.insert(baseDecision({ harnessGeneration: 1, turnAttempt: 0 }) as never)
       expect(() =>
         db.permissionDecisions.insert(
           baseDecision({ harnessGeneration: 1, turnAttempt: 0, decision: 'deny' }) as never

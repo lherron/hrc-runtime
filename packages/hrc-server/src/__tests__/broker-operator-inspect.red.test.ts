@@ -45,7 +45,6 @@ import type {
   InvocationInspectionSummary,
   InvocationLivenessView,
   InvocationSnapshot,
-  InvocationStatusResponse,
 } from 'spaces-harness-broker-protocol'
 
 import { createHrcServer } from '../index'
@@ -108,8 +107,7 @@ class FakeBrokerController {
 
 /** Inject a fake broker controller into the running server. */
 function injectFakeController(fake: FakeBrokerController): void {
-  ;(server as unknown as Record<string, unknown>)['harnessBrokerController'] =
-    fake as unknown
+  ;(server as unknown as Record<string, unknown>)['harnessBrokerController'] = fake as unknown
 }
 
 // ── DB mutation helpers ───────────────────────────────────────────────────────
@@ -119,7 +117,7 @@ function totalWriteableRows(): number {
   const db = new Database(fixture.dbPath)
   try {
     const n = (table: string): number =>
-      (db.query<{ n: number }, []>(`SELECT COUNT(*) as n FROM ${table}`).get()?.n ?? 0)
+      db.query<{ n: number }, []>(`SELECT COUNT(*) as n FROM ${table}`).get()?.n ?? 0
     return n('sessions') + n('runtimes') + n('runs') + n('broker_invocations') + n('hrc_events')
   } finally {
     db.close()
@@ -133,10 +131,12 @@ type SeedBrokerRuntimeOpts = {
   hostSessionId: string
   scopeRef: string
   activeInvocationId?: string | undefined
-  inspectionCapabilities?: {
-    listInvocations?: boolean | undefined
-    liveness?: 'none' | 'cached' | 'probe' | undefined
-  } | undefined
+  inspectionCapabilities?:
+    | {
+        listInvocations?: boolean | undefined
+        liveness?: 'none' | 'cached' | 'probe' | undefined
+      }
+    | undefined
 }
 
 function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
@@ -181,9 +181,7 @@ function seedBrokerTmuxRuntime(opts: SeedBrokerRuntimeOpts): void {
         broker: {
           protocolVersion: 'harness-broker/0.2',
           ownerServerInstanceId: 'srv-test',
-          ...(opts.inspectionCapabilities
-            ? { inspection: opts.inspectionCapabilities }
-            : {}),
+          ...(opts.inspectionCapabilities ? { inspection: opts.inspectionCapabilities } : {}),
         },
       },
       createdAt: now,
@@ -515,7 +513,7 @@ describe('[RED P3-2] Non-broker ghostty fallback: source labeled hrc-derived', (
       expect(body.lifecycle?.retention?.idleTtlMs).toBe(expectedIdleTtlMs)
     } finally {
       if (origEnv === undefined) {
-        delete process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES']
+        process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = undefined
       } else {
         process.env['HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES'] = origEnv
       }

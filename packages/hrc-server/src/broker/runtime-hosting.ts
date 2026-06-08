@@ -103,11 +103,7 @@ function extractTmuxWindowIdentity(value: unknown): TmuxWindowIdentity | undefin
   const sessionId = value['sessionId']
   const windowId = value['windowId']
   const paneId = value['paneId']
-  if (
-    typeof sessionId !== 'string' ||
-    typeof windowId !== 'string' ||
-    typeof paneId !== 'string'
-  ) {
+  if (typeof sessionId !== 'string' || typeof windowId !== 'string' || typeof paneId !== 'string') {
     return undefined
   }
   return { sessionId, windowId, paneId }

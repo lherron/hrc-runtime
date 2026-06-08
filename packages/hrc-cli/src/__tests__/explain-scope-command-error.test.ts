@@ -9,7 +9,10 @@ import { explainScopeCommandError } from '../cli'
 // socket"), not just the generic `reason` code. Before the fix the operator saw
 // only `reason: broker_start_failed` + route + runId and had to grep daemon logs.
 
-function domainError(message: string, detail: Record<string, unknown>): {
+function domainError(
+  message: string,
+  detail: Record<string, unknown>
+): {
   code: string
   message: string
   detail: Record<string, unknown>

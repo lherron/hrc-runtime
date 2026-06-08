@@ -1,8 +1,4 @@
-import {
-  HrcConflictError,
-  HrcErrorCode,
-  validateFence,
-} from 'hrc-core'
+import { HrcConflictError, HrcErrorCode, validateFence } from 'hrc-core'
 import type {
   HrcFence,
   HrcLocalBridgeRecord,

@@ -509,4 +509,3 @@ function redactAndTruncate(value: unknown): unknown {
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   return redactSecrets(truncateFinalBody(text, 1_000))
 }
-

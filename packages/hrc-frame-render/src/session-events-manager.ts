@@ -103,9 +103,7 @@ function extractTextContent(content: unknown): string {
     .join('')
 }
 
-function flattenMessageContent(
-  content: string | Array<{ type: string; text?: string }>
-): string {
+function flattenMessageContent(content: string | Array<{ type: string; text?: string }>): string {
   if (typeof content === 'string') {
     return content
   }

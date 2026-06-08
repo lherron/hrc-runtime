@@ -16,16 +16,11 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
-import {
-  type BrokerControllerAttachResult,
-  type BrokerUnixClientFactory,
+import type {
+  BrokerControllerAttachResult,
+  BrokerUnixClientFactory,
   HarnessBrokerController,
 } from './broker/controller.js'
-import {
-  extractBrokerEndpoint,
-  extractRuntimeControlState,
-  withDirectTmuxDegradedControlState,
-} from './broker/runtime-state.js'
 import {
   type BrokerLeaseProbe,
   brokerLeaseIdentityMatches,
@@ -33,6 +28,11 @@ import {
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
 } from './broker/runtime-hosting.js'
+import {
+  extractBrokerEndpoint,
+  extractRuntimeControlState,
+  withDirectTmuxDegradedControlState,
+} from './broker/runtime-state.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, isTerminalBrokerInvocationState, requireSession } from './require-helpers.js'
@@ -520,10 +520,7 @@ export async function reconcileDurableBrokerStartup(
 ): Promise<BrokerReattachOutcome[]> {
   const outcomes: BrokerReattachOutcome[] = []
   for (const runtime of db.runtimes.listAll()) {
-    if (
-      runtime.controllerKind !== 'harness-broker' ||
-      isRuntimeUnavailableStatus(runtime.status)
-    ) {
+    if (runtime.controllerKind !== 'harness-broker' || isRuntimeUnavailableStatus(runtime.status)) {
       continue
     }
     const hosting = parseBrokerRuntimeHostingState(runtime)
@@ -747,8 +744,7 @@ async function probePersistedBrokerLease(
   // even though the leased broker is alive and accepting. Fall back to the legacy
   // tmuxJson helpers only for pre-durable rows. (Mirrors the sweeper claim source.)
   const hosting = parseBrokerRuntimeHostingState(runtime)
-  const leasedSubstrate =
-    hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
+  const leasedSubstrate = hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
   const socketPath = leasedSubstrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)
   const sessionName = leasedSubstrate?.sessionName ?? getBrokerRuntimeTmuxSessionName(runtime)
   let brokerWindow: TmuxPaneState | null = null

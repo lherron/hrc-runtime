@@ -33,10 +33,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
-import {
-  type BrokerClientLike,
-  HarnessBrokerController,
-} from '../broker/controller'
+import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 import {
   canOperatorAttach,
   canUseDirectPaneFallback,
@@ -45,18 +42,16 @@ import {
   parseBrokerRuntimeHostingState,
 } from '../broker/runtime-hosting'
 import { toTargetRuntimeView } from '../target-view'
-import {
-  makeCompileResponse,
-  makeIdentity,
-} from './broker-compile-fixtures'
+import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
 const NOW = '2026-06-04T12:00:00.000Z'
 
 // ── Headless durable v0.2 profile (same fixture as core reds) ─────────────────
 
-function makeHeadlessDurableProfile(
-  identity: ReturnType<typeof makeIdentity>
-): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
+function makeHeadlessDurableProfile(identity: ReturnType<typeof makeIdentity>): {
+  profile: BrokerExecutionProfile
+  startRequest: InvocationStartRequest
+} {
   const spec = {
     specVersion: 'harness-broker.invocation/v1',
     invocationId: identity.invocationId,
@@ -121,10 +116,24 @@ class FakeEvents implements AsyncIterable<InvocationEventEnvelope> {
 
 function minCaps(): InvocationStartResponse['capabilities'] {
   return {
-    input: { user: true, steer: false, appendContext: false, localImages: false, fileRefs: false, queue: false },
+    input: {
+      user: true,
+      steer: false,
+      appendContext: false,
+      localImages: false,
+      fileRefs: false,
+      queue: false,
+    },
     turns: { concurrency: 'single', interrupt: 'protocol' },
     continuation: { supported: false, provider: 'openai', keyKind: 'session' },
-    events: { assistantDeltas: true, toolCalls: true, usage: false, diagnostics: false, replay: false, ack: false },
+    events: {
+      assistantDeltas: true,
+      toolCalls: true,
+      usage: false,
+      diagnostics: false,
+      replay: false,
+      ack: false,
+    },
     control: { stop: true, dispose: true, status: true, attach: false },
     permissions: { brokerToClientRequests: true, eventAudit: false },
   } as unknown as InvocationStartResponse['capabilities']
@@ -143,28 +152,64 @@ class FakeUnixClient {
       brokerToClientRequests: true,
       attachReplay: true,
     },
-    drivers: [{ kind: 'codex-app-server', version: '0.2.0-test', available: true, capabilities: minCaps() }],
+    drivers: [
+      { kind: 'codex-app-server', version: '0.2.0-test', available: true, capabilities: minCaps() },
+    ],
   }
-  startResponse: InvocationStartResponse = { invocationId: 'invocation_w2', state: 'ready', capabilities: minCaps() }
+  startResponse: InvocationStartResponse = {
+    invocationId: 'invocation_w2',
+    state: 'ready',
+    capabilities: minCaps(),
+  }
   onPermissionRequest(): void {}
   onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> { return this.helloResponse }
-  async health() { return { status: 'ok' as const, activeInvocations: 0, drivers: [] } }
-  async startInvocationFromRequest(_req: InvocationStartRequest, _env?: unknown, runtime?: InvocationRuntimeContext) {
-    this.startCalls.push({ runtime })
-    return { invocationId: this.startResponse.invocationId, response: this.startResponse, events: this.events }
+  async hello(): Promise<BrokerHelloResponse> {
+    return this.helloResponse
   }
-  async input() { return { inputId: 'i', accepted: true, disposition: 'started' as const } }
-  async interrupt() { return { accepted: true, effect: 'turn_interrupted' as const } }
-  async stop() { return { accepted: true, state: 'stopping' as const } }
-  async status() { return this.startResponse }
+  async health() {
+    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
+  }
+  async startInvocationFromRequest(
+    _req: InvocationStartRequest,
+    _env?: unknown,
+    runtime?: InvocationRuntimeContext
+  ) {
+    this.startCalls.push({ runtime })
+    return {
+      invocationId: this.startResponse.invocationId,
+      response: this.startResponse,
+      events: this.events,
+    }
+  }
+  async input() {
+    return { inputId: 'i', accepted: true, disposition: 'started' as const }
+  }
+  async interrupt() {
+    return { accepted: true, effect: 'turn_interrupted' as const }
+  }
+  async stop() {
+    return { accepted: true, state: 'stopping' as const }
+  }
+  async status() {
+    return this.startResponse
+  }
   async dispose() {}
   async close() {}
-  async attach() { return {} }
-  async snapshot() { return {} }
-  async eventsSince() { return { events: [] } }
-  async ackEvents() { return {} }
-  async permissionRespond() { return {} }
+  async attach() {
+    return {}
+  }
+  async snapshot() {
+    return {}
+  }
+  async eventsSince() {
+    return { events: [] }
+  }
+  async ackEvents() {
+    return {}
+  }
+  async permissionRespond() {
+    return {}
+  }
 }
 
 class FakeStdioClient {
@@ -178,20 +223,42 @@ class FakeStdioClient {
       eventNotifications: true,
       brokerToClientRequests: true,
     },
-    drivers: [{ kind: 'codex-app-server', version: '0.1.0-test', available: true, capabilities: minCaps() }],
+    drivers: [
+      { kind: 'codex-app-server', version: '0.1.0-test', available: true, capabilities: minCaps() },
+    ],
   }
-  startResponse: InvocationStartResponse = { invocationId: 'invocation_w2', state: 'ready', capabilities: minCaps() }
+  startResponse: InvocationStartResponse = {
+    invocationId: 'invocation_w2',
+    state: 'ready',
+    capabilities: minCaps(),
+  }
   onPermissionRequest(): void {}
   onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> { return this.helloResponse }
-  async health() { return { status: 'ok' as const, activeInvocations: 0, drivers: [] } }
-  async startInvocationFromRequest() {
-    return { invocationId: this.startResponse.invocationId, response: this.startResponse, events: this.events }
+  async hello(): Promise<BrokerHelloResponse> {
+    return this.helloResponse
   }
-  async input() { return { inputId: 'i', accepted: true, disposition: 'started' as const } }
-  async interrupt() { return { accepted: true, effect: 'turn_interrupted' as const } }
-  async stop() { return { accepted: true, state: 'stopping' as const } }
-  async status() { return this.startResponse }
+  async health() {
+    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
+  }
+  async startInvocationFromRequest() {
+    return {
+      invocationId: this.startResponse.invocationId,
+      response: this.startResponse,
+      events: this.events,
+    }
+  }
+  async input() {
+    return { inputId: 'i', accepted: true, disposition: 'started' as const }
+  }
+  async interrupt() {
+    return { accepted: true, effect: 'turn_interrupted' as const }
+  }
+  async stop() {
+    return { accepted: true, state: 'stopping' as const }
+  }
+  async status() {
+    return this.startResponse
+  }
   async dispose() {}
   async close() {}
 }
@@ -207,8 +274,19 @@ function headlessDurableAlloc() {
     attachTokenRef: { kind: 'file', path: '/tmp/bipc/hatch-rt-w2/attach.token', redacted: true },
     brokerCommand: `exec harness-broker run --transport unix --socket ${ipc}`,
     brokerPid: 6000,
-    brokerWindow: { socketPath: '/tmp/btmux/codex-app-server-hatch-rt.sock', sessionId: '$7', windowId: '@14', paneId: '%28', sessionName: 'hrc-codex-hatch', windowName: 'broker' },
-    sessionId: '$7', windowId: '@14', paneId: '%28', sessionName: 'hrc-codex-hatch', windowName: 'broker',
+    brokerWindow: {
+      socketPath: '/tmp/btmux/codex-app-server-hatch-rt.sock',
+      sessionId: '$7',
+      windowId: '@14',
+      paneId: '%28',
+      sessionName: 'hrc-codex-hatch',
+      windowName: 'broker',
+    },
+    sessionId: '$7',
+    windowId: '@14',
+    paneId: '%28',
+    sessionName: 'hrc-codex-hatch',
+    windowName: 'broker',
   }
 }
 
@@ -230,7 +308,14 @@ async function makeFixture(runtimeId = 'runtime_w2'): Promise<Fixture> {
     ancestorScopeRefs: [],
   })
   void runtimeId
-  return { db, dir, cleanup: async () => { db.close(); await rm(dir, { recursive: true, force: true }) } }
+  return {
+    db,
+    dir,
+    cleanup: async () => {
+      db.close()
+      await rm(dir, { recursive: true, force: true })
+    },
+  }
 }
 
 // ── Controller builder that passes hatch env ──────────────────────────────────
@@ -269,11 +354,14 @@ function makeHatchController(
 }
 
 async function startWithIdentity(
-  db: HrcDatabase,
+  _db: HrcDatabase,
   controller: HarnessBrokerController,
   identityOverride?: Partial<ReturnType<typeof makeIdentity>>
 ) {
-  const identity = makeIdentity({ hostSessionId: 'hostSession_hatch' as ReturnType<typeof makeIdentity>['hostSessionId'], ...identityOverride })
+  const identity = makeIdentity({
+    hostSessionId: 'hostSession_hatch' as ReturnType<typeof makeIdentity>['hostSessionId'],
+    ...identityOverride,
+  })
   const { profile, startRequest } = makeHeadlessDurableProfile(identity)
   const response = makeCompileResponse(identity, [profile])
   if (!response.ok) throw new Error('fixture compile failed')
@@ -294,8 +382,12 @@ async function startWithIdentity(
 describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
   let fixture: Fixture
 
-  beforeEach(async () => { fixture = await makeFixture() })
-  afterEach(async () => { await fixture.cleanup() })
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
 
   // ── T-01866: the escape hatch is GONE. The headless route is durable
   // UNCONDITIONALLY. A stale HRC_HEADLESS_BROKER_LEGACY_STDIO=1 env var has ZERO
@@ -316,7 +408,10 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       unixClient,
       useDurableAllocator: false,
     })
-    const { result: defaultResult, identity } = await startWithIdentity(fixture.db, defaultController)
+    const { result: defaultResult, identity } = await startWithIdentity(
+      fixture.db,
+      defaultController
+    )
     expect(defaultResult.ok).toBe(true)
 
     const defaultRuntime = fixture.db.runtimes.getByRuntimeId(String(identity.runtimeId))
@@ -345,7 +440,10 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
         unixFactoryCalls: hatchUnixFactoryCalls,
         useDurableAllocator: false,
       })
-      const { result: hatchResult, identity: hatchId } = await startWithIdentity(fixture2.db, hatchController)
+      const { result: hatchResult, identity: hatchId } = await startWithIdentity(
+        fixture2.db,
+        hatchController
+      )
       expect(hatchResult.ok).toBe(true)
 
       const hatchRuntime = fixture2.db.runtimes.getByRuntimeId(String(hatchId.runtimeId))
@@ -401,7 +499,12 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
       controllerKind: 'harness-broker' as const,
       createdAt: NOW,
       updatedAt: NOW,
-      runtimeStateJson: { schemaVersion: 'runtime-state/v1', kind: 'harness-broker', runtimeId: 'rt-hatch-on', broker: baseHostingBlock },
+      runtimeStateJson: {
+        schemaVersion: 'runtime-state/v1',
+        kind: 'harness-broker',
+        runtimeId: 'rt-hatch-on',
+        broker: baseHostingBlock,
+      },
     }
     const runtimeB = { ...runtimeA, runtimeId: 'rt-hatch-off' }
 
@@ -465,8 +568,20 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
     // Simulate both valid hosting shapes from parseBrokerRuntimeHostingState and
     // assert neither is {unix + daemon-child} or {stdio + v0.2}.
     const durableShape = {
-      endpoint: { kind: 'unix-jsonrpc-ndjson' as const, socketPath: '/tmp/b.sock', attachTokenRef: { kind: 'file' as const, path: '/tmp/tok', redacted: true as const }, protocolVersion: 'harness-broker/0.2' as const },
-      substrate: { kind: 'leased-tmux' as const, tmuxSocketPath: '/tmp/btmux.sock', sessionName: 's', brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' }, generation: 1, eventLedgerPath: '/tmp/ev.ndjson' },
+      endpoint: {
+        kind: 'unix-jsonrpc-ndjson' as const,
+        socketPath: '/tmp/b.sock',
+        attachTokenRef: { kind: 'file' as const, path: '/tmp/tok', redacted: true as const },
+        protocolVersion: 'harness-broker/0.2' as const,
+      },
+      substrate: {
+        kind: 'leased-tmux' as const,
+        tmuxSocketPath: '/tmp/btmux.sock',
+        sessionName: 's',
+        brokerWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+        generation: 1,
+        eventLedgerPath: '/tmp/ev.ndjson',
+      },
       presentation: { kind: 'none' as const },
     }
     const legacyShape = {
@@ -500,7 +615,10 @@ describe('T-01874 Ph3 — escape-hatch reds (RED)', () => {
     //   stdio → daemon-child (legacy)
     const shapeA = `${durableShape.endpoint.kind}:${durableShape.substrate.kind}`
     const shapeB = `${legacyShape.endpoint.kind}:${legacyShape.substrate.kind}`
-    const allowedShapes = new Set(['unix-jsonrpc-ndjson:leased-tmux', 'stdio-jsonrpc-ndjson:daemon-child'])
+    const allowedShapes = new Set([
+      'unix-jsonrpc-ndjson:leased-tmux',
+      'stdio-jsonrpc-ndjson:daemon-child',
+    ])
     expect(allowedShapes.has(shapeA)).toBe(true)
     expect(allowedShapes.has(shapeB)).toBe(true)
   })

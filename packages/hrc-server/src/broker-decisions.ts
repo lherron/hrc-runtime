@@ -1,8 +1,4 @@
-import {
-  HrcErrorCode,
-  HrcRuntimeUnavailableError,
-  HrcUnprocessableEntityError,
-} from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   HrcContinuationRef,
   HrcProvider,
@@ -19,8 +15,8 @@ import {
   HRC_CLAUDE_GHOSTTY_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
-import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import { isRecord } from './server-parsers.js'
+import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 
 export function validateEnsureRuntimeIntent(
   intent: HrcRuntimeIntent,
@@ -70,7 +66,9 @@ export function toRuntimeContinuationRef(
   }
 }
 
-export function deriveSdkHarness(harness: HrcRuntimeIntent['harness']): HrcRuntimeSnapshot['harness'] {
+export function deriveSdkHarness(
+  harness: HrcRuntimeIntent['harness']
+): HrcRuntimeSnapshot['harness'] {
   if (harness.id === 'agent-sdk' || harness.id === 'pi-sdk') {
     return harness.id
   }

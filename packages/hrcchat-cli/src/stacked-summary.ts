@@ -246,4 +246,3 @@ function formatWindow(ms: number): string {
   }
   return `${ms}ms`
 }
-

@@ -65,9 +65,9 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type {
   BrokerAttachRequest,
   BrokerAttachResponse,
@@ -98,8 +98,8 @@ import {
 } from '../broker/runtime-hosting'
 import { createHrcServer, createTmuxManager } from '../index'
 import type { HrcServer } from '../index'
-import type { TmuxPaneState } from '../tmux'
 import * as reconcile from '../startup-reconcile'
+import type { TmuxPaneState } from '../tmux'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -184,11 +184,7 @@ function oldTs(): string {
 // DB seeding helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function seedSession(
-  db: HrcDatabase,
-  hostSessionId: string,
-  scopeRef: string = SCOPE_REF
-): void {
+function seedSession(db: HrcDatabase, hostSessionId: string, scopeRef: string = SCOPE_REF): void {
   const now = nowTs()
   db.sessions.insert({
     hostSessionId,
@@ -583,7 +579,14 @@ function emptySnapshot(
     invocationId,
     state: 'ready',
     capabilities: {
-      input: { user: true, steer: true, appendContext: true, localImages: true, fileRefs: true, queue: false },
+      input: {
+        user: true,
+        steer: true,
+        appendContext: true,
+        localImages: true,
+        fileRefs: true,
+        queue: false,
+      },
       turns: { concurrency: 'single', interrupt: 'protocol' },
       continuation: { supported: true, provider: 'anthropic', keyKind: 'thread' },
       events: {
@@ -690,9 +693,7 @@ describe('Scenario 1: reconcileDurableBrokerStartup reattaches headless durable 
     client.snapshotResponse = snap
     client.attachResponse = attachResponseFor(HEADLESS_RUNTIME_ID, HEADLESS_INVOCATION_ID, snap)
     client.queueEventsSince({
-      events: [
-        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' }),
-      ],
+      events: [makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' })],
       currentSeq: 1,
       retentionFloorSeq: 1,
     })
@@ -763,9 +764,7 @@ describe('Scenario 2: interactive runtime with normalized shape reattaches', () 
       snap
     )
     client.queueEventsSince({
-      events: [
-        makeEnvelope(INTERACTIVE_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' }),
-      ],
+      events: [makeEnvelope(INTERACTIVE_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' })],
       currentSeq: 1,
       retentionFloorSeq: 1,
     })
@@ -882,9 +881,13 @@ describe('Scenario 4: v0.1 row → broker_protocol_legacy_unsupported_on_startup
 
     const outcomes = await reconcile.reconcileDurableBrokerStartup(db, {
       controller: makeController(),
-      brokerUnixClientFactory: async () => { throw new Error('unused') },
+      brokerUnixClientFactory: async () => {
+        throw new Error('unused')
+      },
       resolveAttachToken: async () => undefined,
-      probeBrokerLease: async () => { throw new Error('unused') },
+      probeBrokerLease: async () => {
+        throw new Error('unused')
+      },
       sweepOrphans: async () => {},
     })
 
@@ -917,7 +920,12 @@ describe('Scenario 5 (G4): headless reattach requires only brokerWindow, not tui
     client.attachResponse = attachResponseFor(HEADLESS_RUNTIME_ID, HEADLESS_INVOCATION_ID, snap)
     client.queueEventsSince({
       events: [
-        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.started', 1, { pid: 1, command: 'claude', args: [], cwd: '/tmp' }),
+        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.started', 1, {
+          pid: 1,
+          command: 'claude',
+          args: [],
+          cwd: '/tmp',
+        }),
         makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 2, { state: 'ready' }),
       ],
       currentSeq: 2,
@@ -934,7 +942,7 @@ describe('Scenario 5 (G4): headless reattach requires only brokerWindow, not tui
         probeBrokerLease: async () => ({
           brokerSocketLive: true,
           brokerWindow: BROKER_WINDOW, // matching brokerWindow
-          tuiWindow: null,             // no TUI window — presentation.none
+          tuiWindow: null, // no TUI window — presentation.none
         }),
       }
     )
@@ -1109,8 +1117,8 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
             // FLAT shape: brokerWindow.socketPath is the lease socket the sweeper must preserve.
             // The sweeper in Ph4 reads this via parseBrokerRuntimeHostingState → substrate.tmuxSocketPath.
             brokerWindow: {
-              socketPath,   // ← the lease socket this runtime claims
-              sessionName,  // `hrc-cc-${runtimeId}`
+              socketPath, // ← the lease socket this runtime claims
+              sessionName, // `hrc-cc-${runtimeId}`
               windowName: 'main',
               sessionId: '$99',
               windowId: '@99',
@@ -1134,7 +1142,7 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
     expect(await sessionAlive(socketPath, sessionName)).toBe(true)
 
     // Seed the headless claiming runtime BEFORE server start.
-    seedHeadlessClaimingRuntime(runtimeId, socketPath)  // transport='headless', claimed
+    seedHeadlessClaimingRuntime(runtimeId, socketPath) // transport='headless', claimed
 
     // Grace=0 so any unclaimed lease WOULD be killed.
     process.env[GRACE_ENV] = '0'
@@ -1251,9 +1259,7 @@ describe('Scenario 8 (G5): reattachDurableBrokerForDispatch reattaches headless 
     client.snapshotResponse = snap
     client.attachResponse = attachResponseFor(HEADLESS_RUNTIME_ID, HEADLESS_INVOCATION_ID, snap)
     client.queueEventsSince({
-      events: [
-        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' }),
-      ],
+      events: [makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 1, { state: 'ready' })],
       currentSeq: 1,
       retentionFloorSeq: 1,
     })
@@ -1353,7 +1359,12 @@ describe('Scenario 10 (G6): active RUN activity refreshed on broker.attach/repla
     client.attachResponse = attachResponseFor(HEADLESS_RUNTIME_ID, HEADLESS_INVOCATION_ID, snap)
     client.queueEventsSince({
       events: [
-        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.started', 1, { pid: 1, command: 'claude', args: [], cwd: '/tmp' }),
+        makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.started', 1, {
+          pid: 1,
+          command: 'claude',
+          args: [],
+          cwd: '/tmp',
+        }),
         makeEnvelope(HEADLESS_INVOCATION_ID, 'invocation.ready', 2, { state: 'ready' }),
       ],
       currentSeq: 2,
@@ -1402,7 +1413,7 @@ describe('Scenario 10 (G6): active RUN activity refreshed on broker.attach/repla
       }
     ).catch(() => null)
 
-    if (sweepResult && sweepResult.ok) {
+    if (sweepResult?.ok) {
       // If we managed to reach the server, check the run isn't zombied.
       const runAfterSweep = db.runs.getByRunId(HEADLESS_RUN_ID)
       expect(runAfterSweep?.status).not.toBe('zombie')

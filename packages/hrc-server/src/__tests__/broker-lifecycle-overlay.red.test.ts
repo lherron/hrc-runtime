@@ -57,8 +57,6 @@ import type {
   InvocationStatusResponse,
   InvocationStopRequest,
   InvocationStopResponse,
-  PermissionDecision,
-  PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
 import { project } from 'spaces-runtime-contracts'
 import type { BrokerExecutionProfile, CompiledRuntimePlan } from 'spaces-runtime-contracts'
@@ -72,11 +70,7 @@ import {
   resolveLifecyclePolicyOverlay,
 } from '../broker/lifecycle-overlay'
 
-import {
-  makeBrokerProfile,
-  makeCompileResponse,
-  makeIdentity,
-} from './broker-compile-fixtures'
+import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
 const NOW = '2026-06-01T12:34:56.000Z'
 
@@ -229,7 +223,11 @@ class FakeBrokerClient implements BrokerClientLike {
 function normalizeDispatchArgs(
   dispatchEnvOrOptions: Record<string, string> | DispatchOptions | undefined,
   runtime: InvocationRuntimeContext | undefined
-): { dispatchEnv?: Record<string, string>; runtime?: InvocationRuntimeContext; lifecyclePolicy?: BrokerLifecyclePolicyOverlay } {
+): {
+  dispatchEnv?: Record<string, string>
+  runtime?: InvocationRuntimeContext
+  lifecyclePolicy?: BrokerLifecyclePolicyOverlay
+} {
   if (
     dispatchEnvOrOptions &&
     ('lifecyclePolicy' in dispatchEnvOrOptions ||
@@ -350,7 +348,10 @@ describe('T-01787 lifecycle overlay — compiler-closure boundary guard', () => 
 // ──────────────────────────────────────────────────────────────────────────
 describe('T-01787 resolveLifecyclePolicyOverlay', () => {
   it('materializes the conservative default (keep-alive/none/none) for a broker route', () => {
-    const overlay = resolveLifecyclePolicyOverlay({ routeId: 'route-codex-headless', brokerRoute: true })
+    const overlay = resolveLifecyclePolicyOverlay({
+      routeId: 'route-codex-headless',
+      brokerRoute: true,
+    })
     expect(overlay).toBeDefined()
     expect(overlay?.retention.mode).toBe('keep-alive')
     expect(overlay?.harnessRecovery.mode).toBe('none')
@@ -432,9 +433,9 @@ describe('T-01787 lifecycle overlay persistence (audit material)', () => {
     expect(persistedPolicy?.policyId).toBe(overlay.policyId)
     expect(persistedPolicy?.canonicalPolicyJson).toBe(canonicalLifecyclePolicyJson(overlay))
 
-    expect(fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.lifecyclePolicyHash).toBe(
-      overlay.policyHash
-    )
+    expect(
+      fixture.db.brokerInvocations.getByInvocationId('invocation_w2')?.lifecyclePolicyHash
+    ).toBe(overlay.policyHash)
   })
 })
 

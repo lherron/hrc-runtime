@@ -178,6 +178,7 @@ function fullInvocationCapabilities(): InvocationStartResponse['capabilities'] {
 
 class EmptyEvents implements AsyncIterable<InvocationEventEnvelope> {
   close(): void {}
+  // biome-ignore lint/correctness/useYield: intentionally-empty async iterator for tests; emits no events.
   async *[Symbol.asyncIterator](): AsyncIterator<InvocationEventEnvelope> {
     return
   }
@@ -380,7 +381,7 @@ afterEach(async () => {
   await killBtmuxServers(dir)
   await rm(dir, { recursive: true, force: true })
   if (savedBrokerCmd === undefined) {
-    delete process.env['HRC_HARNESS_BROKER_CMD']
+    process.env['HRC_HARNESS_BROKER_CMD'] = undefined
   } else {
     process.env['HRC_HARNESS_BROKER_CMD'] = savedBrokerCmd
   }

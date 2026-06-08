@@ -160,9 +160,9 @@ export async function cmdTurn(
     throw new CliUsageError(
       [
         `cannot resolve a project for target "${targetInput}".`,
-        `A turn must target an agent within a project, but none was found: the`,
-        `target has no @<project> qualifier, ASP_PROJECT is unset, and the current`,
-        `directory maps to no known project. Fix one of:`,
+        'A turn must target an agent within a project, but none was found: the',
+        'target has no @<project> qualifier, ASP_PROJECT is unset, and the current',
+        'directory maps to no known project. Fix one of:',
         `  • qualify the target:  hrcchat turn ${targetInput}@<project> "…"`,
         `  • set the env:         ASP_PROJECT=<project> hrcchat turn ${targetInput} "…"`,
         `  • run from a project:  cd ~/praesidium/<project> && hrcchat turn ${targetInput} "…"`,

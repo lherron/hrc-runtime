@@ -112,7 +112,11 @@ type LatestRuntimeAdmissionView = {
 
 type InteractiveBrokerAdmissionDecision =
   | { decision: 'broker-reuse'; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
-  | { decision: 'broker-start'; flagEnvName: string; allowedBrokerDriver: InteractiveTmuxBrokerDriver }
+  | {
+      decision: 'broker-start'
+      flagEnvName: string
+      allowedBrokerDriver: InteractiveTmuxBrokerDriver
+    }
   | {
       decision: 'stale-and-reprovision'
       flagEnvName: string
@@ -212,7 +216,10 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
 
 describe('decideInteractiveBrokerAdmission — unsupported ids → runtime-unavailable (NEVER normalize, NEVER legacy)', () => {
   const unsupported: { name: string; harness: Harness }[] = [
-    { name: 'openai pi (interactive)', harness: { provider: 'openai', interactive: true, id: 'pi' } },
+    {
+      name: 'openai pi (interactive)',
+      harness: { provider: 'openai', interactive: true, id: 'pi' },
+    },
     {
       name: 'anthropic pi (interactive)',
       harness: { provider: 'anthropic', interactive: true, id: 'pi' },
@@ -367,25 +374,26 @@ describe('decideInteractiveBrokerAdmission — shape 3: SDK/noninteractive fallt
 
 describe('decideInteractiveBrokerAdmission — NEVER a legacy outcome for any input', () => {
   const legacyDiscriminants = new Set(['legacy', 'legacy-tmux', 'legacy-exec'])
-  const matrix: { name: string; intent: HrcRuntimeIntent; runtime: LatestRuntimeAdmissionView }[] = [
-    { name: 'claude start', intent: claudeInteractive, runtime: null },
-    { name: 'codex start', intent: codexInteractive, runtime: null },
-    {
-      name: 'claude reuse',
-      intent: claudeInteractive,
-      runtime: runtimeView({ brokerDriver: 'claude-code-tmux' }),
-    },
-    {
-      name: 'claude vs legacy runtime',
-      intent: claudeInteractive,
-      runtime: runtimeView({ controllerKind: undefined, brokerDriver: undefined }),
-    },
-    {
-      name: 'pi unsupported',
-      intent: intent({ provider: 'openai', interactive: true, id: 'pi' }),
-      runtime: null,
-    },
-  ]
+  const matrix: { name: string; intent: HrcRuntimeIntent; runtime: LatestRuntimeAdmissionView }[] =
+    [
+      { name: 'claude start', intent: claudeInteractive, runtime: null },
+      { name: 'codex start', intent: codexInteractive, runtime: null },
+      {
+        name: 'claude reuse',
+        intent: claudeInteractive,
+        runtime: runtimeView({ brokerDriver: 'claude-code-tmux' }),
+      },
+      {
+        name: 'claude vs legacy runtime',
+        intent: claudeInteractive,
+        runtime: runtimeView({ controllerKind: undefined, brokerDriver: undefined }),
+      },
+      {
+        name: 'pi unsupported',
+        intent: intent({ provider: 'openai', interactive: true, id: 'pi' }),
+        runtime: null,
+      },
+    ]
   for (const { name, intent: i, runtime } of matrix) {
     it(`${name} → decision discriminant is never legacy`, () => {
       const decision = decideInteractiveBrokerAdmission!(i, runtime, BOTH_FLAGS_ON)

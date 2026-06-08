@@ -698,7 +698,8 @@ function buildManagedRuntimeIntent(
     projectRoot
   )
   const harnessId =
-    harnessStringToHarnessId(harnessString) ?? (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
+    harnessStringToHarnessId(harnessString) ??
+    (provider === 'anthropic' ? 'claude-code' : 'codex-cli')
 
   return {
     placement: {
@@ -973,20 +974,6 @@ async function bindGhosttySurfaceIfPresent(
   })
 }
 
-async function attachDescriptor(client: HrcClient, descriptor: AttachDescriptor): Promise<void> {
-  await bindGhosttySurfaceIfPresent(client, descriptor)
-
-  const attached = Bun.spawnSync(descriptor.argv, {
-    stdin: 'inherit',
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
-
-  if (attached.exitCode !== 0) {
-    fatal(`attach command exited with code ${attached.exitCode}`)
-  }
-}
-
 async function spawnAttachDescriptor(
   client: HrcClient,
   descriptor: AttachDescriptor
@@ -1076,9 +1063,7 @@ function formatClock(iso: string | undefined): string {
  */
 function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string | null {
   const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`
-  const payload = finalSummary as
-    | { summary?: Record<string, unknown>; reason?: string }
-    | undefined
+  const payload = finalSummary as { summary?: Record<string, unknown>; reason?: string } | undefined
   const summary = payload?.summary
   if (!summary) {
     return null
@@ -1094,8 +1079,7 @@ function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string
     typeof summary['turnsCompleted'] === 'number' ? (summary['turnsCompleted'] as number) : 0
   const reason = payload?.reason
   const exit = reason !== undefined ? `/quit (${reason})` : '/quit'
-  const durationMs =
-    startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : Number.NaN
+  const durationMs = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : Number.NaN
 
   const title = `─ session summary ─ ${scopeLabel} `
   const width = 64
@@ -1105,10 +1089,7 @@ function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string
     dim(title) + dim(topRule),
     dim('  driver    ') + driver.padEnd(20) + dim('exit   ') + exit,
     dim('  duration  ') + formatDuration(durationMs).padEnd(20) + dim('turns  ') + String(turns),
-    dim('  started   ') +
-      formatClock(startedAt).padEnd(20) +
-      dim('ended  ') +
-      formatClock(endedAt),
+    dim('  started   ') + formatClock(startedAt).padEnd(20) + dim('ended  ') + formatClock(endedAt),
     dim('─'.repeat(width)),
     '',
   ]
@@ -1202,7 +1183,9 @@ async function cmdSessionReport(args: string[]): Promise<void> {
   if (block) {
     process.stdout.write(block)
   } else {
-    process.stdout.write(`\n\x1b[2m─ session ended ─ ${scopeLabel} (no summary recorded)\x1b[0m\n\n`)
+    process.stdout.write(
+      `\n\x1b[2m─ session ended ─ ${scopeLabel} (no summary recorded)\x1b[0m\n\n`
+    )
   }
 
   if (waitKey) {
@@ -2213,7 +2196,11 @@ async function cmdRun(args: string[]): Promise<void> {
     }
 
     const tResolve = performance.now()
-    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent, create: true })
+    const resolved = await client.resolveSession({
+      sessionRef,
+      runtimeIntent: intent,
+      create: true,
+    })
     markLaunch('resolveSession', tResolve)
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)
@@ -2329,7 +2316,11 @@ async function cmdStart(args: string[]): Promise<void> {
     }
 
     const client = createClient()
-    const resolved = await client.resolveSession({ sessionRef, runtimeIntent: intent, create: true })
+    const resolved = await client.resolveSession({
+      sessionRef,
+      runtimeIntent: intent,
+      create: true,
+    })
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)
     }
@@ -3394,9 +3385,7 @@ Exit codes:
 
   // -- runtime group (commander, Phase 6 T2) ----------------------------------
 
-  const broker = program
-    .command('broker')
-    .description('inspect broker-backed runtime invocations')
+  const broker = program.command('broker').description('inspect broker-backed runtime invocations')
 
   broker
     .command('inspect')

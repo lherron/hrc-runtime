@@ -22,13 +22,13 @@ import {
   type BrokerWindowIdentity,
   HarnessBrokerController,
 } from './broker/controller.js'
+import { BrokerEventMapper } from './broker/event-mapper.js'
+import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import type {
   BrokerRuntimeEndpoint,
   BrokerRuntimePresentation,
   BrokerRuntimeSubstrate,
 } from './broker/runtime-hosting.js'
-import { BrokerEventMapper } from './broker/event-mapper.js'
-import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 
@@ -50,9 +50,9 @@ import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
   assertRuntimeNotBusy,
+  classifyBrokerInputFailure,
   isBrokerRuntimeQueueCapable,
   isRunActive,
-  classifyBrokerInputFailure,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
 } from './require-helpers.js'
@@ -283,9 +283,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         this.brokerUnixClientFactory ??
         ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
     })
-    const recovered = reattached
-      ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId)
-      : null
+    const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
       writeServerLog('INFO', 'headless.durable_reattach.reused', {
         hostSessionId: session.hostSessionId,
@@ -294,13 +292,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       if (!isBrokerRuntimeQueueCapable(this.db, recovered)) {
         assertRuntimeNotBusy(this.db, recovered)
       }
-      return await this.executeHeadlessBrokerInputTurn(
-        session,
-        recovered,
-        prompt,
-        runId,
-        options
-      )
+      return await this.executeHeadlessBrokerInputTurn(session, recovered, prompt, runId, options)
     }
     // Reattach failed or the persisted invocation is gone: terminate the cold
     // durable runtime (reaps its broker dispose path; the orphan sweeper reaps the
@@ -353,7 +345,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   // tmux session nobody is watching. Pop a best-effort ghostmux viewer window
   // attached to its TUI so the run is observable. Claude-only, deduped per scope,
   // and fully non-blocking — a ghostmux failure must not break the turn.
-  if (flagOptions.spawnHeadlessViewer === true && flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
+  if (
+    flagOptions.spawnHeadlessViewer === true &&
+    flagOptions.allowedBrokerDriver === 'claude-code-tmux'
+  ) {
     await this.spawnHeadlessClaudeViewer(runtime)
   }
 
@@ -934,7 +929,11 @@ export async function allocateBrokerSubstrate(
   // bind/connect errno.
   preflightBrokerIpcSocketPath(brokerIpcSocketPath)
 
-  const btmuxSocketPath = getBrokerTmuxSocketPath(options as HrcServerOptions, driverKind, runtimeId)
+  const btmuxSocketPath = getBrokerTmuxSocketPath(
+    options as HrcServerOptions,
+    driverKind,
+    runtimeId
+  )
   const ipcDir = dirname(brokerIpcSocketPath)
   await mkdir(dirname(btmuxSocketPath), { recursive: true })
   // Owner-only broker IPC dir (0700). mkdir mode is umask-masked, so chmod the
@@ -1289,11 +1288,7 @@ export function getHarnessBrokerController(
       // path), in which case reconcile is a no-op. Mirrors terminateTmuxRuntime's
       // broker teardown minus the controller dispose the terminal paths own.
       const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-      if (
-        !runtime ||
-        runtime.controllerKind !== 'harness-broker' ||
-        runtime.transport !== 'tmux'
-      ) {
+      if (!runtime || runtime.controllerKind !== 'harness-broker' || runtime.transport !== 'tmux') {
         return
       }
       const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime)
@@ -1359,10 +1354,7 @@ export async function spawnHeadlessClaudeViewer(
     // shell errors and the window closes (today's behaviour) — graceful fallback.
     // `session-report` is best-effort and always reaches the keypress gate, so a
     // missing/slow summary never closes the window early or hangs it silently.
-    const attachCommand =
-      `tmux -S ${socketPath} attach-session -t ${attachTarget}; ` +
-      `hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; ` +
-      `exit`
+    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; exit`
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       runtimeId: runtime.runtimeId,
@@ -1372,9 +1364,7 @@ export async function spawnHeadlessClaudeViewer(
     writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
-      ...(result.status === 'failed'
-        ? { error: result.error }
-        : { surfaceId: result.surfaceId }),
+      ...(result.status === 'failed' ? { error: result.error } : { surfaceId: result.surfaceId }),
     })
   } catch (error) {
     writeServerLog('WARN', 'headless_claude_viewer.unexpected_error', {

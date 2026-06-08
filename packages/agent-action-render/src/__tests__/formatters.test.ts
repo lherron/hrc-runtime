@@ -157,7 +157,9 @@ describe('agent action render helpers', () => {
 
 describe('admission labels', () => {
   test('maps each admission eventKind to its mandated label', () => {
-    expect(admissionLabel({ eventKind: 'input.application.accepted' })).toBe('Contribution accepted')
+    expect(admissionLabel({ eventKind: 'input.application.accepted' })).toBe(
+      'Contribution accepted'
+    )
     expect(admissionLabel({ eventKind: 'input.application.pending' })).toBe('Contribution pending')
     expect(admissionLabel({ eventKind: 'input.application.ambiguous' })).toBe(
       'Contribution ambiguous'
@@ -213,9 +215,9 @@ describe('admission labels', () => {
   })
 
   test('falls back to applicationStatus, then admissionKind, then empty string', () => {
-    expect(
-      admissionLabelFromResponse({ inputApplication: { status: 'some_status' } })
-    ).toBe('some_status')
+    expect(admissionLabelFromResponse({ inputApplication: { status: 'some_status' } })).toBe(
+      'some_status'
+    )
     expect(admissionLabelFromResponse({ admission: { kind: 'some_kind' } })).toBe('some_kind')
     expect(admissionLabelFromResponse({})).toBe('')
   })

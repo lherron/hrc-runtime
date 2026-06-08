@@ -45,13 +45,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
 
-import type { TmuxPaneState } from '../tmux'
-import * as reconcile from '../startup-reconcile'
 import { invalidateHostContext } from '../runtime-control-handlers'
+import * as reconcile from '../startup-reconcile'
+import type { TmuxPaneState } from '../tmux'
 
 const HOST_SESSION_ID = 'hsid_teardown'
 const SCOPE_REF = 'agent:smokey:project:hrc-runtime:task:T-01813'

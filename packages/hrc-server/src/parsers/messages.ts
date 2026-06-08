@@ -2,7 +2,10 @@ import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 
 import { isRecord } from './common.js'
 
-export function parseResolveSessionRequest(input: unknown): { sessionRef: string; create?: boolean } {
+export function parseResolveSessionRequest(input: unknown): {
+  sessionRef: string
+  create?: boolean
+} {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }

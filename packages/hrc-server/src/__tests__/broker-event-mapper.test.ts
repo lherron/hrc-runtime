@@ -243,12 +243,7 @@ describe('emitted HRC events', () => {
     const db = fixture.db
 
     const result = mapper.apply(
-      envelope(
-        'user.message',
-        9,
-        { content: 'ship the fix' },
-        { turnId: 'turn_x' as never }
-      )
+      envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })
     )
 
     expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
