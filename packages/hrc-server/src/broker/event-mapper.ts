@@ -62,10 +62,11 @@ import type {
   ToolCallStartedPayload,
   TurnFailedPayload,
   TurnRetryPayload,
+  UserMessagePayload,
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
-import { appendHrcEvent } from '../hrc-event-helper'
+import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper'
 
 /**
  * Broker event type -> canonical HRC lifecycle `event_kind`. The `events` table
@@ -145,6 +146,11 @@ function safeStringify(value: unknown): string {
 const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
   'input.accepted': 'turn.accepted',
   'turn.started': 'turn.started',
+  // Interactive TUI prompts (claude-code-tmux / codex-cli-tmux) surface the
+  // operator's typed text as a broker user.message, emitted right after
+  // turn.started. Map it to the canonical turn.user_prompt so the prompt rides
+  // the same lifecycle stream as agent messages and tool calls (T-02026).
+  'user.message': 'turn.user_prompt',
   'assistant.message.completed': 'turn.message',
   'tool.call.started': 'turn.tool_call',
   'tool.call.completed': 'turn.tool_result',
@@ -1092,6 +1098,12 @@ export class BrokerEventMapper {
     transport: HrcLifecycleTransport
   ): Record<string, unknown> {
     switch (envelope.type) {
+      case 'user.message': {
+        const payload = envelope.payload as UserMessagePayload
+        // createUserPromptPayload builds the {type:'message_end', role:'user'}
+        // shape (with turn-text truncation) consumers already render.
+        return createUserPromptPayload(payload.content) as unknown as Record<string, unknown>
+      }
       case 'assistant.message.completed': {
         const payload = envelope.payload as AssistantMessageCompletedPayload
         const content = payload.content

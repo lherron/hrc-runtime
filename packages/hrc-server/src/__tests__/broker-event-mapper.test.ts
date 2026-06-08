@@ -232,6 +232,38 @@ describe('emitted HRC events', () => {
     expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.tool_result' }).length).toBe(1)
   })
 
+  // T-02026: interactive TUI prompts (claude-code-tmux / codex-cli-tmux) surface
+  // the operator's typed text as a broker user.message emitted right after
+  // turn.started. The mapper MUST project it into turn.user_prompt with the
+  // canonical {type:'message_end', role:'user'} payload so the prompt rides the
+  // same lifecycle stream consumers (viewer / hrcchat) already render — otherwise
+  // interactive turns show no user message at all.
+  it('projects user.message into turn.user_prompt with role:user payload', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    const result = mapper.apply(
+      envelope(
+        'user.message',
+        9,
+        { content: 'ship the fix' },
+        { turnId: 'turn_x' as never }
+      )
+    )
+
+    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+    expect(result.lifecycleEvents.map((e) => e.eventKind)).toEqual(['turn.user_prompt'])
+    const lifecycle = result.lifecycleEvents[0]!
+    expect(lifecycle.runId).toBe(RUN_ID)
+    expect(lifecycle.payload).toEqual({
+      type: 'message_end',
+      message: { role: 'user', content: 'ship the fix' },
+    })
+
+    const rows = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.user_prompt' })
+    expect(rows.length).toBe(1)
+  })
+
   it('passes through a result already in ToolResult shape', () => {
     const mapper = makeMapper()
     const result = mapper.apply(
