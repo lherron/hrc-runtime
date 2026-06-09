@@ -1,4 +1,5 @@
 import { diffLines } from 'diff'
+import { asToolInputRecord } from './internal/record.js'
 
 /** Inline content type — matches CP's Message['content'] without importing @lherron/shared */
 type MessageContent =
@@ -20,6 +21,28 @@ export type ToolOutputFormatResult = {
 
 /** Number of leading lines shown in a Write tool preview before truncation. */
 const WRITE_PREVIEW_LINES = 10
+
+/** File-extension → syntax-highlight language for Write tool previews. */
+const LANG_BY_EXT: Record<string, string> = {
+  ts: 'typescript',
+  tsx: 'typescript',
+  js: 'javascript',
+  jsx: 'javascript',
+  py: 'python',
+  rb: 'ruby',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  md: 'markdown',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'bash',
+  css: 'css',
+  html: 'html',
+}
 
 /** Build the Modified/Added/Removed summary line for an Edit diff. */
 function summarizeEdit(added: number, removed: number): string {
@@ -46,11 +69,6 @@ function stringifyToolValue(value: unknown): string | undefined {
   } catch {
     return String(value)
   }
-}
-
-function asToolInputRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  return value as Record<string, unknown>
 }
 
 function extractTextFromContent(content: MessageContent): string {
@@ -84,6 +102,16 @@ function extractStructuredPatches(
   if (!Array.isArray(candidate)) return undefined
   const patches = candidate.filter(isStructuredPatch)
   return patches.length > 0 ? patches : undefined
+}
+
+/** Assemble the final Edit-diff envelope: summary line followed by the diff lines. */
+function renderEditLines(
+  outputLines: string[],
+  added: number,
+  removed: number
+): { output: string; added: number; removed: number } {
+  const summary = summarizeEdit(added, removed)
+  return { output: [summary, ...outputLines].join('\n'), added, removed }
 }
 
 function buildEditOutputFromStructuredPatches(patches: StructuredPatch[]): {
@@ -125,9 +153,7 @@ function buildEditOutputFromStructuredPatches(patches: StructuredPatch[]): {
     }
   }
 
-  const summary = summarizeEdit(added, removed)
-
-  return { output: [summary, ...outputLines].join('\n'), added, removed }
+  return renderEditLines(outputLines, added, removed)
 }
 
 function splitDiffValue(value: string): string[] {
@@ -171,9 +197,7 @@ function buildEditOutputFromLineDiff(
     }
   }
 
-  const summary = summarizeEdit(added, removed)
-
-  return { output: [summary, ...outputLines].join('\n'), added, removed }
+  return renderEditLines(outputLines, added, removed)
 }
 
 /**
@@ -234,27 +258,7 @@ const toolRenderers: Record<string, ToolRenderer> = {
     const lines = content.split('\n')
     const lineCount = lines.length
     const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    const langMap: Record<string, string> = {
-      ts: 'typescript',
-      tsx: 'typescript',
-      js: 'javascript',
-      jsx: 'javascript',
-      py: 'python',
-      rb: 'ruby',
-      go: 'go',
-      rs: 'rust',
-      java: 'java',
-      md: 'markdown',
-      json: 'json',
-      yaml: 'yaml',
-      yml: 'yaml',
-      sh: 'bash',
-      bash: 'bash',
-      zsh: 'bash',
-      css: 'css',
-      html: 'html',
-    }
-    const lang = langMap[ext] || ext
+    const lang = LANG_BY_EXT[ext] || ext
     const previewLines = lines.slice(0, WRITE_PREVIEW_LINES)
     const preview = previewLines.join('\n')
     const truncated =

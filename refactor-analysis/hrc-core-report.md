@@ -1,140 +1,134 @@
-# Refactor Analysis — `packages/hrc-core/src`
+# Refactor Analysis — `packages/hrc-core/`
 
-_Analysis only. No source files were modified. Date: 2026-06-07._
+Behavior-preserving SOLID + code-smell audit. **Report only — no source edited in this phase.** Date: 2026-06-08.
 
-## Scope
+## Package shape
 
-| Metric | Value |
-| --- | --- |
-| Production `.ts` files (excl. `__tests__`) | 10 |
-| Production lines | 4,114 |
-| Test files / lines | 8 / 2,235 |
-| Largest files | `http-contracts.ts` (902), `contracts.ts` (656), `monitor/index.ts` (560), `monitor/condition-engine.ts` (552), `selectors.ts` (466) |
+`hrc-core` is the HRC domain layer: error taxonomy, selectors, fences, path resolution, the monitor reader + condition engine, and a large body of pure TypeScript **type contracts** (`contracts.ts`, `http-contracts.ts`, `hrcchat-contracts.ts`). The three contract files together (~1856 lines) contain **zero runtime functions** — they are pure `export type`/`interface` declarations and constitute the package's public type surface. They are out of scope for behavior-preserving extraction and any change there is public-surface by definition.
 
-### Nature of the package
+Logic-bearing files (all with test coverage):
 
-`hrc-core` is the **shared contract / pure-logic** layer consumed by `hrc-server`, `hrc-sdk`, `hrc-cli`, and `hrcchat`. Three of the four largest files are **declaration-only** DTO modules with zero runtime logic:
+| File | Lines | Tests |
+|---|---|---|
+| `src/monitor/condition-engine.ts` | 611 | `monitor-condition-engine.acceptance.test.ts` |
+| `src/monitor/index.ts` | 566 | `monitor.acceptance.test.ts` |
+| `src/selectors.ts` | 466 | `selectors.test.ts` |
+| `src/errors.ts` | 188 | `errors.test.ts` |
+| `src/fences.ts` | 143 | `fences.test.ts` |
+| `src/paths.ts` | 86 | `paths.test.ts` |
+| `src/index.ts` | 271 | (barrel — re-exports only) |
 
-- `http-contracts.ts` (902) — wire request/response DTOs
-- `contracts.ts` (656) — domain records / enums
-- `hrcchat-contracts.ts` (290) — semantic-messaging DTOs
+## SOLID scorecard
 
-The genuine *logic* lives in four small, well-factored modules: `monitor/condition-engine.ts`, `monitor/index.ts`, `selectors.ts`, `errors.ts`, `fences.ts`, `paths.ts`. **There is no IO in this package** (no DB, no network, no fs except `paths.ts` reading env). Pure functions + Proxy. This is a healthy boundary package; findings are mostly polish, not structural rot.
+| Principle | Grade | Notes |
+|---|---|---|
+| **S** — Single Responsibility | B | `condition-engine.ts` (611) and `monitor/index.ts` (566) exceed the 300-line guide, but each is one cohesive module of small pure functions. The contract files are large but are pure type aggregates, not mixed-concern units. No single function > 50 lines. |
+| **O** — Open/Closed | B+ | Selector/condition logic is `switch`-on-discriminated-union. These are exhaustive switches over closed unions (TS enforces exhaustiveness), not growth-prone `if-else` ladders. Standard discriminated-union tradeoff, well-contained. |
+| **L** — Liskov | A | No overrides that throw/no-op. The `HrcDomainError` subclass hierarchy only narrows the constructor `code` type via `Extract<>` and sets `name`; base behavior preserved. |
+| **I** — Interface Segregation | A- | `HrcMonitorConditionEngineReader` (3 members) and `HrcMonitorConditionEngine` (1 member) are tight. No fat interfaces, no stubbed-unused implementors. `HrcMonitorEvent` has many optional fields but it is an event envelope (data), not a service interface. |
+| **D** — Dependency Inversion | A | The condition engine takes its reader via `createMonitorConditionEngine(reader)` injection. `createMonitorReader(state)` is a closure factory. No hardcoded singletons in business logic. |
 
-## SOLID Scorecard
+Overall: a clean, well-factored domain package. Findings are localized dedup / dead-code / micro-clarity items, all internal-only and low risk.
 
-| Principle | Status | Notes |
-| --- | --- | --- |
-| **S** (SRP) | yellow | Logic modules are clean. But `contracts.ts` and `http-contracts.ts` are 600–900-line "everything" type buckets mixing semantic-core, broker, sweep/reconcile, bridge, and app-session concerns in one file. |
-| **O** (OCP) | yellow | Several parallel `switch (selector.kind)` / `switch (condition)` chains duplicated across `monitor/index.ts`, `condition-engine.ts`, and `selectors.ts`. Adding a selector kind touches 4+ switches with no compiler exhaustiveness guard in some. |
-| **L** (LSP) | green | No throwing overrides, no no-op overrides, no downcast-before-call. Error class hierarchy (`HrcDomainError` subclasses) is clean and substitutable. |
-| **I** (ISP) | yellow | `InspectRuntimeResponse` (~100-line single type) and `HrcLaunchArtifact` are fat aggregates; `HrcCapabilityStatus.capabilities` is a deeply nested 4-group interface. Consumers depend on the whole blob. |
-| **D** (DIP) | green | `createMonitorReader` / `createMonitorConditionEngine` are factory functions taking injected readers — exemplary seam. `paths.ts` reads `process.env` directly but that is the intended config edge. |
+---
 
 ## Priority Refactorings
 
-### 1. Split `http-contracts.ts` (902 lines) by concern
+### P1 — Dead/redundant branch in `evaluateTurnFinished`
+- **Location:** `src/monitor/condition-engine.ts:287-294`
+- **Current:** The two failure `if` bodies (`turn_failed`; `runtime_dead || runtime_crashed`) are byte-identical. The final ternary `result === 'turn_succeeded' ? result : 'turn_succeeded'` is a no-op — both arms yield `'turn_succeeded'`.
+- **Suggested:** Collapse the two failure guards into one `if (result === 'turn_failed' || result === 'runtime_dead' || result === 'runtime_crashed')`, and simplify the tail to `return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }`.
+- **Risk:** Low
+- **API-impact:** internal-only (private function; return values unchanged)
+- **Effort:** S (~5 min)
+- **Tests:** `monitor-condition-engine.acceptance.test.ts` covers turn.finished success/failure/runtime-dead; behavior identical, existing reds stay green.
 
-- **Location**: `packages/hrc-core/src/http-contracts.ts:1-903`
-- **Principle / smell**: SRP — one file holds session, runtime-lifecycle, dispatch, active-run-contribution, attach, inspect, sweep/reconcile, surface-binding, bridge, and app-session DTO families.
-- **Current**: A single module re-exported wholesale through `index.ts`.
-- **Suggested**: Split into `http-contracts/{session,runtime,dispatch,attach,sweep,bridge,app-session}.ts` with a barrel `http-contracts/index.ts` re-exporting all. `index.ts` import path (`./http-contracts.js`) stays valid if the barrel keeps the filename, or update the one import site. No type *signatures* change.
-- **Risk**: low (type-only move; `tsc` proves completeness).
-- **Effort**: M (mechanical but ~50 type moves).
-- **API-preserving**: yes (no exported symbol signature changes; same names re-exported).
-- **Tests**: `tsc --noEmit` across the workspace + existing `windows-contracts.test.ts`, `bridge-contracts.test.ts` compile checks.
+### P2 — Repeated `unknownString(event, 'sessionRef')` reads in `evaluateContextChanged`
+- **Location:** `src/monitor/condition-engine.ts:369,380-383,392-395`
+- **Current:** `unknownString(event, 'sessionRef')` is recomputed up to 4× in one function; the `sessionRef === capture.sessionRef` guard is duplicated.
+- **Suggested:** Hoist `const eventSessionRef = unknownString(event, 'sessionRef')` once at the top and reuse; collapse the duplicated guards.
+- **Risk:** Low
+- **API-impact:** internal-only
+- **Effort:** S
+- **Tests:** condition-engine acceptance covers context-changed (generation / session_rebound / cleared); no behavior change.
 
-### 2. Split `contracts.ts` (656 lines) — separate broker-persistence records
+### P3 — Pointless indirection `evaluateRuntimeDead` → `runtimeDeathOutcome`
+- **Location:** `src/monitor/condition-engine.ts:344-357`
+- **Current:** `evaluateRuntimeDead` is a one-line passthrough to `runtimeDeathOutcome`; `evaluateRuntimeFailure` is the same call guarded by `condition !== 'runtime-dead'`.
+- **Suggested:** Inline `evaluateRuntimeDead` at its single call site (the `runtime-dead` switch arm), keeping `evaluateRuntimeFailure` as the guarded variant.
+- **Risk:** Low
+- **API-impact:** internal-only
+- **Effort:** S
+- **Tests:** covered by runtime-dead/crashed acceptance cases.
 
-- **Location**: `packages/hrc-core/src/contracts.ts:413-591` (the `Hrc*Broker*Record` / `HrcRuntimeOperation*` block) and `:593-657` (status views).
-- **Principle / smell**: SRP / cohesion — broker-persistence DTOs are explicitly marked "additive and inert, written only by the harness-broker controller" yet sit in the core domain file mixed with `HrcSessionRecord` etc.
-- **Current**: Single 656-line bucket.
-- **Suggested**: Extract `contracts/broker-records.ts` (lines ~413–591) and `contracts/status.ts` (lines ~593–657); keep a barrel. Improves change isolation for the actively-churning broker work (per memory notes, broker DTOs change frequently).
-- **Risk**: low.
-- **Effort**: M.
-- **API-preserving**: yes (type-only re-export; names unchanged).
-- **Tests**: `tsc --noEmit` workspace-wide.
+### P4 — Duplicate `concrete`/`host` selector arms (multiple sites)
+- **Location:** `src/monitor/index.ts:198-207` (`resolveParts`), `:387-390` (`eventMatchesSelector`), mirrored in `notFoundDetail:527-534`.
+- **Current:** `case 'concrete'` and `case 'host'` bodies are identical (both match on `hostSessionId`), written out twice in each switch.
+- **Suggested:** Use switch fall-through (`case 'concrete': case 'host': return …`) so the identical arms share one body — the pattern already used for `stable`/`target`/`session`.
+- **Risk:** Low
+- **API-impact:** internal-only
+- **Effort:** S
+- **Tests:** `monitor.acceptance.test.ts` exercises host/concrete resolution.
 
-### 3. Centralize selector-kind dispatch (OCP)
+### P5 — Double `resolveParts` traversal in `snapshotState`
+- **Location:** `src/monitor/index.ts:313-315`
+- **Current:** `resolveSelector(...)` internally calls `resolveParts(...)` (line 171), then `snapshotState` calls `resolveParts(state, selector)` *again* (line 315) for the same `{session, runtime}`. The selector is also re-cast with `as HrcSelector`.
+- **Suggested:** Add a private variant of `resolveSelector` that returns the already-computed `parts` alongside the resolution (or compute `parts` once and derive the resolution), removing the second traversal and the cast. Keep the public `resolveSelector` method signature unchanged.
+- **Risk:** Med (touches resolve/snapshot data flow; must preserve exact `resolution`/`session`/`runtime` shape and the "resolution present but parts null" edge)
+- **API-impact:** internal-only (private helpers; `createMonitorReader`'s returned method signatures unchanged)
+- **Effort:** M
+- **Tests:** `monitor.acceptance.test.ts` covers snapshot with/without resolution and the not-found branch. Verify the case where `resolution` succeeds but `resolveParts` returns null still omits `session`/`runtime`.
 
-- **Location**: `monitor/index.ts:184-219` (`resolveParts`), `:369-398` (`eventMatchesSelector`), `:507-560` (`notFoundDetail`); `selectors.ts:401-421` (`formatSelector`); `condition-engine.ts:361-379` (`messageResponseMatchesSelector`).
-- **Principle / smell**: OCP / shotgun surgery — adding a selector kind requires editing ≥5 separate switches across 3 files. Note `host` and `concrete` cases are identical in `resolveParts` (lines 197–201) — duplicated arms.
-- **Current**: Parallel hand-maintained switches; only some have exhaustive `never` coverage.
-- **Suggested**: Introduce a per-kind descriptor table (e.g. `SELECTOR_KIND_META: Record<HrcSelector['kind'], {...}>`) that the switches consult, OR collapse the identical `host`/`concrete` arms. At minimum add an exhaustiveness `assertNever` default to each switch so a new kind fails to compile rather than silently falling through.
-- **Risk**: medium (behavior-sensitive; selector resolution is hot-path and well tested, but the table refactor changes control flow).
-- **Effort**: M.
-- **API-preserving**: yes (internal restructuring; exported function signatures unchanged).
-- **Tests**: `monitor.acceptance.test.ts`, `selectors.test.ts`, `monitor-condition-engine.acceptance.test.ts` — strong existing coverage.
+### P6 — Runtime-resolution fallback duplicated across `partsFromSession`/`partsFromMessage`
+- **Location:** `src/monitor/index.ts:235-239` and `:268-272`
+- **Current:** Both repeat the same "prefer explicit `runtimeId`, else last runtime by `hostSessionId`" block.
+- **Suggested:** Extract a private `resolveRuntimeFor(state, hostSessionId, preferredRuntimeId?)` helper used by both.
+- **Risk:** Low
+- **API-impact:** internal-only
+- **Effort:** S
+- **Tests:** covered by session/message resolution acceptance cases.
 
-### 4. Collapse duplicated `runtime.dead` / `runtime.crashed` evaluation
+### P7 — Duplicated catch-fallback in `parseTargetMonitorSelector`
+- **Location:** `src/selectors.ts:303-307,316-319`
+- **Current:** Two `catch` blocks each compute `error instanceof Error ? error.message : 'invalid target selector'` before calling `invalidMonitorSelector('target', 0, reason)`.
+- **Suggested:** Extract a private `selectorReason(error, fallback)` helper (also reusable by `parseSessionMonitorSelector:280-283`). De-dupes 3 catch fallbacks.
+- **Risk:** Low
+- **API-impact:** internal-only
+- **Effort:** S
+- **Tests:** `selectors.test.ts` covers invalid target/session inputs.
 
-- **Location**: `condition-engine.ts:274-300` — `evaluateRuntimeDead` and `evaluateRuntimeFailure` contain near-identical `runtime.dead`/`runtime.crashed` blocks (lines 278–284 vs 293–299).
-- **Principle / smell**: DRY / duplicated block. The only difference is `evaluateRuntimeFailure` early-returns for `condition === 'runtime-dead'`.
-- **Current**: Two functions with copy-pasted body.
-- **Suggested**: Extract a private `runtimeDeathOutcome(context, event)` helper returning the dead/crashed outcome; have both call sites delegate.
-- **Risk**: low.
-- **Effort**: S.
-- **API-preserving**: yes (internal helpers; no export changes).
-- **Tests**: `monitor-condition-engine.acceptance.test.ts`.
+---
 
-### 5. Replace hand-written `isConditionResult` type guard
+## Code Smells table
 
-- **Location**: `condition-engine.ts:522-542` — a 19-arm `||` chain enumerating every `HrcMonitorConditionResult`.
-- **Principle / smell**: DRY / OCP — the literal union is declared once at `:19-37` and re-enumerated by hand in the guard; the two drift independently when a result is added.
-- **Current**: Manual `value === 'x' || value === 'y' || ...`.
-- **Suggested**: Derive from a single `const CONDITION_RESULTS = [...] as const` `Set` (the file already uses this pattern for `DEAD_RUNTIME_STATUSES`, `FAILURE_KINDS` at :92-95). Type the union from the array (`type X = typeof CONDITION_RESULTS[number]`) so the guard and the union cannot diverge.
-- **Risk**: low.
-- **Effort**: S.
-- **API-preserving**: yes (the exported `HrcMonitorConditionResult` type stays structurally identical; guard is internal).
-- **Tests**: `monitor-condition-engine.acceptance.test.ts`.
+| # | Location | Smell | Note | Risk | API-impact |
+|---|---|---|---|---|---|
+| 1 | `monitor/condition-engine.ts:287-294` | Dead code / duplicate branch | identical failure guards + no-op ternary (P1) | Low | internal-only |
+| 2 | `monitor/condition-engine.ts:369-395` | Duplicated guard / repeated computation | `sessionRef` read 4× (P2) | Low | internal-only |
+| 3 | `monitor/condition-engine.ts:344-349` | Speculative indirection | one-line passthrough wrapper (P3) | Low | internal-only |
+| 4 | `monitor/index.ts:198-207,387-390,527-534` | Duplicated switch arms | `concrete`/`host` written twice (P4) | Low | internal-only |
+| 5 | `monitor/index.ts:313-315` | Redundant work | `resolveParts` run twice per snapshot (P5) | Med | internal-only |
+| 6 | `monitor/index.ts:235-272` | Duplicated block | runtime-fallback logic repeated (P6) | Low | internal-only |
+| 7 | `selectors.ts:280-283,303-319` | Duplicated catch fallback | `selectorReason` helper (P7) | Low | internal-only |
+| 8 | `selectors.ts:274-283` | Definite-assignment `let` | `let sessionRef; let parts;` assigned inside try, used after — relies on `invalidMonitorSelector` being `never`. Correct but fragile; a value-returning helper would remove the `let`. | Low | internal-only |
+| 9 | `contracts.ts` / `http-contracts.ts` / `hrcchat-contracts.ts` | Large files (>300, up to 910) | Pure type aggregates; size inherent to a contracts module. Splitting risks changing import paths — **defer**, public surface, no logic to extract. | High | public-surface |
+| 10 | `errors.ts:11` | Deprecated alias retained | `CONFLICT: 'stale_context'` marked `@deprecated`. Removal is a breaking export change — leave as-is. | High | public-surface |
 
-### 6. Slim `InspectRuntimeResponse` (ISP)
+## Quick Wins (safe to auto-apply)
 
-- **Location**: `http-contracts.ts:331-434` (~100 lines, single type with nested `control.{brokerIpc,operatorAttach,brokerProcess}` + `broker`/`substrate`/`presentation`).
-- **Principle / smell**: ISP / primitive-and-blob obsession — every consumer of inspect depends on the entire control/broker/substrate/presentation surface even when they read one field.
-- **Current**: One mega-type.
-- **Suggested**: Extract the three control sub-objects and the substrate/presentation discriminated unions to named types (`RuntimeControlChannels`, `RuntimeSubstrate`, `RuntimePresentation`) and compose. Purely improves readability and lets consumers reference sub-types; does not change the wire shape.
-- **Risk**: low (composition only; structural type identity preserved).
-- **Effort**: M.
-- **API-preserving**: yes (composed type is structurally identical to the inlined one; new named sub-types are additive exports).
-- **Tests**: `tsc --noEmit` + any inspect consumers in `hrc-server`.
+- **P1** — collapse dead/duplicate branch in `evaluateTurnFinished`.
+- **P2** — hoist repeated `sessionRef` read in `evaluateContextChanged`.
+- **P3** — inline the `evaluateRuntimeDead` passthrough.
+- **P4** — fall-through the identical `concrete`/`host` switch arms (3 sites).
+- **P6** — extract `resolveRuntimeFor` helper.
+- **P7** — extract `selectorReason(error, fallback)` helper.
 
-## Code Smells
+All private-symbol-only, behavior-preserving, guarded by existing acceptance tests.
 
-| Smell | Location | Detail | Severity |
-| --- | --- | --- | --- |
-| Long file (type bucket) | `http-contracts.ts` (902), `contracts.ts` (656) | Mixed-concern DTO buckets | med |
-| Duplicated switch arms | `monitor/index.ts:197-201`, `:381-384` | `host` and `concrete` arms identical | low |
-| Duplicated block | `condition-engine.ts:274-300` | dead/crashed eval copy-paste | low |
-| Manual union re-enumeration | `condition-engine.ts:522-542` | `isConditionResult` 19-arm chain | low |
-| Magic number | `monitor/index.ts:359` (`matching.slice(-100)`) | un-named replay cap "100" | low |
-| Magic numbers (exit codes) | `condition-engine.ts` throughout (`exitCode: 0/1/2/3/4`) | exit-code semantics scattered as literals; no named map | med |
-| Reflection / Proxy complexity | `monitor/index.ts:470-494` (`protectStreamCursor`) | a Proxy purely to make one field read-only; `Object.freeze` of just that descriptor or `Object.defineProperty(..., {writable:false})` would be simpler | low |
-| Stale-generation magic default | `contracts.ts:80-88` doc references `HRC_STALE_GENERATION_HOURS` default 24 | the env name/default is documented but enforced elsewhere (server) — fine, noted | info |
-| Hardcoded fallback root | `paths.ts:23` (`praesidium/var`) | hard-coded `praesidium/var` path segment; acceptable as a deployment convention but couples the lib to a directory layout | low |
-| Deprecated alias retained | `errors.ts:10-12` (`CONFLICT`) , `http-contracts.ts:722` (`hostSessionId @deprecated`) | dead-aliases kept for compat; track for removal | info |
+## Technical Debt notes
 
-## Quick Wins
-
-- Collapse the identical `host`/`concrete` switch arms in `monitor/index.ts` (`resolveParts` and `parsePrefixedMonitorSelector` analog) — pure dedup, low risk.
-- Extract `runtimeDeathOutcome` helper in `condition-engine.ts` (refactoring #4).
-- Replace `isConditionResult` `||` chain with a `Set`-backed guard derived from one source array (refactoring #5).
-- Name the `100` replay cap in `monitor/index.ts:359` as `const DEFAULT_REPLAY_TAIL = 100`.
-- Introduce a `const EXIT_CODE = { success: 0, timeout: 1, failure: 2, monitorError: 3, contextChanged: 4 } as const` and replace literal exit codes in `condition-engine.ts`.
-
-## Technical Debt Notes
-
-- **Type buckets vs. churn**: per the agent's memory, broker DTOs change frequently (T-01690/T-01876/T-01946 series). Keeping `Hrc*Broker*Record` inside the 656-line `contracts.ts` maximizes merge-conflict blast radius in a *shared worktree* (a known pain point in this repo). Splitting them (refactoring #2) is the highest-leverage SRP move for this team's workflow.
-- **Exhaustiveness gaps**: most `switch (selector.kind)` blocks rely on the union being closed but a few lack a `default: assertNever` guard (e.g. `eventMatchesSelector`, `formatSelector` return-covers via TS but `resolveParts` returns `undefined` implicitly for unhandled — currently safe because all kinds are handled). Adding `assertNever` is cheap insurance against the OCP problem in #3.
-- **Proxy for immutability** (`protectStreamCursor`) is heavier machinery than the requirement (one read-only field). Low priority but worth simplifying when touched.
-- **No detected DIP/LSP violations** — the factory + injected-reader pattern is a model to preserve; do not regress it during the type-file splits.
-
-## Safety Checklist
-
-- [ ] Run `tsc --noEmit` for the entire workspace after any type-file split (downstream `hrc-server`/`hrc-sdk`/`hrc-cli` import these contracts).
-- [ ] Keep `index.ts` the single public barrel; verify every moved type is still re-exported (the `export type { ... }` lists in `index.ts:64-272` are the contract surface — diff them before/after).
-- [ ] Run `hrc-core` test suite: `monitor.acceptance`, `monitor-condition-engine.acceptance`, `selectors`, `fences`, `errors`, `paths`, `bridge-contracts`, `windows-contracts`.
-- [ ] For logic refactors (#3, #4, #5) confirm no behavior change via the acceptance suites before/after.
-- [ ] Do NOT alter wire-shape of any DTO (server/SDK serialize these); structural identity must be preserved on every "split" item.
-- [ ] Remember this is a shared worktree — a broken build here breaks all agents (per MEMORY). Verify build green before committing.
-- [ ] No test coverage gap of note: logic modules are well covered. `http-contracts.ts`/`contracts.ts`/`hrcchat-contracts.ts` are type-only (covered by `tsc`, not unit tests) — acceptable.
+- **Magic numbers already addressed.** `condition-engine.ts` already names its exit codes (`EXIT_CODE`) and runtime-status sets. `DEFAULT_REPLAY_TAIL = 100` is named. No raw magic-number debt remains in logic files.
+- **`protectStreamCursor` Proxy** (`monitor/index.ts:476-500`) is a deliberate immutability guard on `streamCursorSeq` that intentionally allows mutation of other fields. Not a refactor target without a behavior-equivalence argument; **leave**.
+- **`paths.ts`** mixes `process.env` reads with path building (an SRP nit), but this is the canonical config-resolution seam and is small/tested. Injecting an env reader would be a public-surface change for negligible benefit; **leave / defer**.
+- **Contract files (#9):** the package's exported type surface. Any reorganization is public-surface and must be human-reviewed, not auto-applied.
+- **`errors.ts` deprecated `CONFLICT` alias (#10):** safe to remove *eventually* but breaks downstream imports; defer to an intentional API-version bump.

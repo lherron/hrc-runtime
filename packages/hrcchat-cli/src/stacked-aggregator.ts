@@ -14,6 +14,9 @@ import {
 
 type TimerHandle = unknown
 
+const FINAL_BODY_CAP = 4_096
+const TOOL_INPUT_CAP = 1_000
+
 type FlushExtras = {
   permission?: StackedPermission | undefined
   exitCode?: number | undefined
@@ -364,6 +367,7 @@ export class StackedAggregator {
   }): TurnStackedEvent {
     const at = new Date(input.atMs).toISOString()
     const hrcSeqRange = seqRange(input.events)
+    const taskId = extractTaskId(this.options.targetScope)
     // Key order is load-bearing: downstream consumers see this JSON line via
     // hosts that truncate around 500 chars. High-signal fields come first so the
     // actionable bits survive truncation; stable identifiers come last.
@@ -389,9 +393,7 @@ export class StackedAggregator {
         endedAt: at,
         ms: Math.max(0, input.atMs - input.windowStartedMs),
       },
-      ...(extractTaskId(this.options.targetScope) !== undefined
-        ? { taskId: extractTaskId(this.options.targetScope) }
-        : {}),
+      ...(taskId !== undefined ? { taskId } : {}),
       scope: this.options.targetScope,
       messageId: this.options.handoff.messageId,
       sessionRef: this.options.handoff.sessionRef,
@@ -494,7 +496,7 @@ function extractTaskId(scope: string): string | undefined {
   return scope.match(/(?:^|:)T-\d+\b/)?.[0].replace(/^:/, '')
 }
 
-function truncateFinalBody(body: string, cap = 4_096): string {
+function truncateFinalBody(body: string, cap = FINAL_BODY_CAP): string {
   const marker = '...[truncated]'
   if (body.length <= cap) {
     return body
@@ -507,5 +509,5 @@ function redactAndTruncate(value: unknown): unknown {
     return undefined
   }
   const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return redactSecrets(truncateFinalBody(text, 1_000))
+  return redactSecrets(truncateFinalBody(text, TOOL_INPUT_CAP))
 }

@@ -168,22 +168,32 @@ function resolveSelector(
   state: HrcMonitorState,
   selector: HrcSelector
 ): HrcMonitorResolutionResult {
+  return resolveSelectorWithParts(state, selector).resolution
+}
+
+function resolveSelectorWithParts(
+  state: HrcMonitorState,
+  selector: HrcSelector
+): { resolution: HrcMonitorResolutionResult; parts: ResolvedParts | null } {
   const parts = resolveParts(state, selector)
   if (!parts) {
-    return notFound(selector)
+    return { resolution: notFound(selector), parts: null }
   }
 
   const { session, runtime } = parts
   return {
-    selector: selectorView(selector),
-    sessionRef: session.sessionRef,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
-    eventHighWaterSeq: highWaterSeq(state.events),
+    resolution: {
+      selector: selectorView(selector),
+      sessionRef: session.sessionRef,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      hostSessionId: session.hostSessionId,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
+      eventHighWaterSeq: highWaterSeq(state.events),
+    },
+    parts,
   }
 }
 
@@ -196,10 +206,6 @@ function resolveParts(state: HrcMonitorState, selector: HrcSelector): ResolvedPa
     case 'scope':
       return partsFromSession(state, latestSessionByScopeRef(state, selector.scopeRef))
     case 'concrete':
-      return partsFromSession(
-        state,
-        state.sessions.find((session) => session.hostSessionId === selector.hostSessionId)
-      )
     case 'host':
       return partsFromSession(
         state,
@@ -232,13 +238,22 @@ function partsFromSession(
     return null
   }
 
-  const runtime =
-    (session.runtimeId
-      ? state.runtimes.find((candidate) => candidate.runtimeId === session.runtimeId)
-      : undefined) ??
-    state.runtimes.filter((candidate) => candidate.hostSessionId === session.hostSessionId).at(-1)
+  const runtime = resolveRuntimeFor(state, session.hostSessionId, session.runtimeId)
 
   return runtime ? { session, runtime } : null
+}
+
+function resolveRuntimeFor(
+  state: HrcMonitorState,
+  hostSessionId: string,
+  preferredRuntimeId?: string | undefined
+): HrcMonitorRuntimeState | undefined {
+  return (
+    (preferredRuntimeId
+      ? state.runtimes.find((candidate) => candidate.runtimeId === preferredRuntimeId)
+      : undefined) ??
+    state.runtimes.filter((candidate) => candidate.hostSessionId === hostSessionId).at(-1)
+  )
 }
 
 function partsFromRuntime(
@@ -265,11 +280,7 @@ function partsFromMessage(
     return null
   }
 
-  const runtime =
-    (message.runtimeId
-      ? state.runtimes.find((candidate) => candidate.runtimeId === message.runtimeId)
-      : undefined) ??
-    state.runtimes.filter((candidate) => candidate.hostSessionId === session.hostSessionId).at(-1)
+  const runtime = resolveRuntimeFor(state, session.hostSessionId, message.runtimeId)
 
   return runtime ? { session, runtime } : null
 }
@@ -310,9 +321,9 @@ function snapshotState(
   state: HrcMonitorState,
   selector?: HrcSelector | undefined
 ): HrcMonitorSnapshot {
-  const resolution = selector ? resolveSelector(state, selector) : undefined
-  const parts =
-    resolution && isResolution(resolution) ? resolveParts(state, selector as HrcSelector) : null
+  const resolved = selector ? resolveSelectorWithParts(state, selector) : undefined
+  const resolution = resolved?.resolution
+  const parts = resolved && isResolution(resolved.resolution) ? resolved.parts : null
 
   return {
     kind: 'monitor.snapshot',
@@ -385,7 +396,6 @@ function eventMatchesSelector(
     case 'scope':
       return event.scopeRef === selector.scopeRef
     case 'concrete':
-      return event.hostSessionId === selector.hostSessionId
     case 'host':
       return event.hostSessionId === selector.hostSessionId
     case 'runtime':

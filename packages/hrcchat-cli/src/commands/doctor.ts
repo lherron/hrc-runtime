@@ -13,6 +13,10 @@ type Check = {
   detail?: string | undefined
 }
 
+function errDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export async function cmdDoctor(
   client: HrcClient,
   opts: DoctorOptions,
@@ -30,7 +34,7 @@ export async function cmdDoctor(
     checks.push({
       name: 'hrc-daemon',
       status: 'fail',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errDetail(err),
     })
   }
 
@@ -56,7 +60,7 @@ export async function cmdDoctor(
     checks.push({
       name: 'api-version',
       status: 'fail',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errDetail(err),
     })
   }
 
@@ -113,7 +117,7 @@ export async function cmdDoctor(
         checks.push({
           name: 'target-lookup',
           status: 'fail',
-          detail: err instanceof Error ? err.message : String(err),
+          detail: errDetail(err),
         })
       }
     }

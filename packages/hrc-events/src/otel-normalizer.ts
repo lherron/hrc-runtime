@@ -123,103 +123,102 @@ function tryParseJson(value: unknown): Record<string, unknown> | undefined {
  * Transport/infra events (api_request, sse_event, websocket_*) return
  * empty events — they remain as raw OTEL events in the store.
  */
+type OtelAttrs = Record<string, unknown> | undefined
+
+function handleToolDecision(attrs: OtelAttrs): HookDerivedEvent[] {
+  const toolName = getAttrString(attrs, 'tool_name') ?? 'tool'
+  const callId = getAttrString(attrs, 'call_id')
+  if (!callId) return []
+
+  // Try to parse arguments JSON string into an input record
+  const argumentsRaw = getAttrString(attrs, 'arguments')
+  const input = tryParseJson(argumentsRaw)
+  if (!input) return []
+
+  return [
+    {
+      type: 'tool_execution_start',
+      toolUseId: callId,
+      toolName,
+      input,
+    },
+  ]
+}
+
+function handleToolResult(attrs: OtelAttrs): HookDerivedEvent[] {
+  const toolName = getAttrString(attrs, 'tool_name') ?? 'tool'
+  const callId = getAttrString(attrs, 'call_id')
+  if (!callId) return []
+
+  const input = tryParseJson(getAttrString(attrs, 'arguments'))
+  const output = getAttrString(attrs, 'output') ?? ''
+  const successRaw = getAttrBool(attrs, 'success')
+  const isError = successRaw === false
+
+  const events: HookDerivedEvent[] = []
+  if (input) {
+    events.push({
+      type: 'tool_execution_start',
+      toolUseId: callId,
+      toolName,
+      input,
+    })
+  }
+
+  events.push({
+    type: 'tool_execution_end',
+    toolUseId: callId,
+    toolName,
+    result: {
+      content: [{ type: 'text' as const, text: output }],
+    },
+    isError,
+  })
+
+  return events
+}
+
+function handleUserPrompt(attrs: OtelAttrs): HookDerivedEvent[] {
+  const prompt = getAttrString(attrs, 'prompt') ?? ''
+  const truncated =
+    prompt.length > PROMPT_TRUNCATE ? `${prompt.slice(0, PROMPT_TRUNCATE)}\u2026` : prompt
+
+  return [
+    {
+      type: 'notice',
+      level: 'info' as const,
+      message: `User prompt: ${truncated}`,
+    },
+  ]
+}
+
+function handleConversationStart(attrs: OtelAttrs): HookDerivedEvent[] {
+  const model = getAttrString(attrs, 'model') ?? 'unknown'
+  const provider = getAttrString(attrs, 'provider_name') ?? ''
+  const label = provider ? `${provider}/${model}` : model
+
+  return [
+    {
+      type: 'notice',
+      level: 'info' as const,
+      message: `Codex conversation started (model: ${label})`,
+    },
+  ]
+}
+
+const otelEventHandlers: Record<string, (attrs: OtelAttrs) => HookDerivedEvent[]> = {
+  'codex.tool_decision': handleToolDecision,
+  'codex.tool_result': handleToolResult,
+  'codex.user_prompt': handleUserPrompt,
+  'codex.conversation_starts': handleConversationStart,
+}
+
 export function normalizeCodexOtelEvent(record: OtelLogRecordInput): NormalizeOtelResult {
   const eventName = extractEventName(record)
   const attrs = record.logRecord.attributes
 
-  if (eventName === 'codex.tool_decision') {
-    const toolName = getAttrString(attrs, 'tool_name') ?? 'tool'
-    const callId = getAttrString(attrs, 'call_id')
-    if (!callId) return { events: [], eventName }
-
-    // Try to parse arguments JSON string into an input record
-    const argumentsRaw = getAttrString(attrs, 'arguments')
-    const input = tryParseJson(argumentsRaw)
-    if (!input) return { events: [], eventName }
-
-    return {
-      events: [
-        {
-          type: 'tool_execution_start',
-          toolUseId: callId,
-          toolName,
-          input,
-        },
-      ],
-      eventName,
-    }
-  }
-
-  if (eventName === 'codex.tool_result') {
-    const toolName = getAttrString(attrs, 'tool_name') ?? 'tool'
-    const callId = getAttrString(attrs, 'call_id')
-    if (!callId) return { events: [], eventName }
-
-    const input = tryParseJson(getAttrString(attrs, 'arguments'))
-    const output = getAttrString(attrs, 'output') ?? ''
-    const successRaw = getAttrBool(attrs, 'success')
-    const isError = successRaw === false
-
-    const events: HookDerivedEvent[] = []
-    if (input) {
-      events.push({
-        type: 'tool_execution_start',
-        toolUseId: callId,
-        toolName,
-        input,
-      })
-    }
-
-    events.push({
-      type: 'tool_execution_end',
-      toolUseId: callId,
-      toolName,
-      result: {
-        content: [{ type: 'text' as const, text: output }],
-      },
-      isError,
-    })
-
-    return {
-      events,
-      eventName,
-    }
-  }
-
-  if (eventName === 'codex.user_prompt') {
-    const prompt = getAttrString(attrs, 'prompt') ?? ''
-    const truncated =
-      prompt.length > PROMPT_TRUNCATE ? `${prompt.slice(0, PROMPT_TRUNCATE)}\u2026` : prompt
-
-    return {
-      events: [
-        {
-          type: 'notice',
-          level: 'info' as const,
-          message: `User prompt: ${truncated}`,
-        },
-      ],
-      eventName,
-    }
-  }
-
-  if (eventName === 'codex.conversation_starts') {
-    const model = getAttrString(attrs, 'model') ?? 'unknown'
-    const provider = getAttrString(attrs, 'provider_name') ?? ''
-    const label = provider ? `${provider}/${model}` : model
-
-    return {
-      events: [
-        {
-          type: 'notice',
-          level: 'info' as const,
-          message: `Codex conversation started (model: ${label})`,
-        },
-      ],
-      eventName,
-    }
-  }
-
-  // Transport/infra events — no typed mapping
-  return { events: [], eventName }
+  const handler = otelEventHandlers[eventName]
+  // Transport/infra events have no typed mapping — empty events.
+  const events = handler ? handler(attrs) : []
+  return { events, eventName }
 }

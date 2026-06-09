@@ -111,6 +111,11 @@ const EVENT_FILTER_FIELDS = [
   'eventKind',
 ] as const satisfies ReadonlyArray<keyof HrcLifecycleEvent & keyof WatchOptions>
 
+/** Maximum number of characters of a non-JSON error body to include in the thrown error. */
+const ERROR_BODY_EXCERPT_MAX = 200
+/** Suffix appended when an error-body excerpt is truncated. */
+const ELLIPSIS = '…'
+
 type QueryValue = string | number | boolean | readonly string[] | undefined
 
 /**
@@ -202,7 +207,10 @@ export class HrcClient {
       let excerpt = ''
       try {
         const text = await cloned.text()
-        excerpt = text.length > 200 ? `${text.slice(0, 200)}…` : text
+        excerpt =
+          text.length > ERROR_BODY_EXCERPT_MAX
+            ? `${text.slice(0, ERROR_BODY_EXCERPT_MAX)}${ELLIPSIS}`
+            : text
       } catch {
         // ignore text extraction failure
       }

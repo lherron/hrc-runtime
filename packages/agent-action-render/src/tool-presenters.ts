@@ -6,6 +6,9 @@ export interface ToolPresenter {
   primaryArgKey?: string | undefined
 }
 
+/** Fallback emoji for tools with no dedicated presenter (e.g. mcp:* and the default). */
+const FALLBACK_TOOL_EMOJI = '⚙️'
+
 function commandInput(input: Record<string, unknown>): string | undefined {
   const command = input['command']
   if (typeof command === 'string') return command
@@ -171,14 +174,14 @@ export const PRESENTERS: ToolPresenter[] = [
   {
     match: /^mcp:/,
     displayName: (toolName) => toolName,
-    emoji: '⚙️',
+    emoji: FALLBACK_TOOL_EMOJI,
   },
 ]
 
 export const DEFAULT_PRESENTER: ToolPresenter = {
   match: () => true,
   displayName: (toolName) => toolName,
-  emoji: '⚙️',
+  emoji: FALLBACK_TOOL_EMOJI,
 }
 
 function matchesPresenter(

@@ -39,6 +39,12 @@ import { MonitorResult } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import {
+  MSG_REQUIRED_CONDITIONS,
+  POLL_MS,
+  assertValidUntilCondition,
+} from './monitor-conditions.js'
+import { numberField, stringField } from './monitor-fields.js'
+import {
   type MonitorOutputFormat,
   createMonitorRenderer,
   parseMonitorOutputFormat,
@@ -81,19 +87,8 @@ export class MonitorWatchExit extends Error {
   }
 }
 
-const VALID_CONDITIONS = new Set<string>([
-  'turn-finished',
-  'idle',
-  'busy',
-  'response',
-  'response-or-idle',
-  'runtime-dead',
-])
-
-const MSG_REQUIRED_CONDITIONS = new Set<string>(['response', 'response-or-idle'])
 const VALID_RESULTS = new Set<string>(MonitorResult)
 const DEFAULT_REPLAY_LIMIT = 100
-const POLL_MS = 100
 
 // -- Public entry point -------------------------------------------------------
 
@@ -144,11 +139,7 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   })
 
   // Validate condition
-  if (until !== undefined && !VALID_CONDITIONS.has(until)) {
-    throw new CliUsageError(
-      `invalid condition: ${until} (valid: ${[...VALID_CONDITIONS].join(', ')})`
-    )
-  }
+  assertValidUntilCondition(until)
 
   if (args.last !== undefined) {
     if (!Number.isInteger(args.last) || args.last < 1) {
@@ -803,13 +794,3 @@ function parseNonNegativeInteger(flagName: string, raw: string): number {
 }
 
 // -- Helpers ------------------------------------------------------------------
-
-function stringField(event: MonitorOutputEvent, key: string): string | undefined {
-  const value = event[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function numberField(event: MonitorOutputEvent, key: string): number | undefined {
-  const value = event[key]
-  return typeof value === 'number' ? value : undefined
-}

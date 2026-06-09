@@ -101,6 +101,10 @@ type CanonicalSessionRefInput = {
   laneRef?: string | undefined
 }
 
+function selectorReason(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
 function invalidMonitorSelector(kind: string, position: number, reason: string): never {
   throw new HrcBadRequestError(HrcErrorCode.INVALID_SELECTOR, reason, {
     kind,
@@ -278,8 +282,11 @@ function parseSessionMonitorSelector(
     sessionRef = normalizeSessionRef(sessionRefInput)
     parts = splitSessionRef(sessionRef)
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'invalid session selector'
-    invalidMonitorSelector('session', valuePosition, reason)
+    invalidMonitorSelector(
+      'session',
+      valuePosition,
+      selectorReason(error, 'invalid session selector')
+    )
   }
 
   return {
@@ -302,8 +309,7 @@ function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
   try {
     parsed = parseSessionHandle(raw)
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'invalid target selector'
-    invalidMonitorSelector('target', 0, reason)
+    invalidMonitorSelector('target', 0, selectorReason(error, 'invalid target selector'))
   }
 
   let sessionRef: HrcSessionRef
@@ -314,8 +320,7 @@ function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
       laneRef: parsed.laneRef,
     })
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'invalid target selector'
-    invalidMonitorSelector('target', 0, reason)
+    invalidMonitorSelector('target', 0, selectorReason(error, 'invalid target selector'))
   }
 
   const { scopeRef, laneRef } = splitSessionRef(sessionRef)

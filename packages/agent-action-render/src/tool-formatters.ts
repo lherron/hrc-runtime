@@ -27,6 +27,15 @@ function summaryPreview(summary: string): string {
   return summary.replace(/^`|`$/g, '')
 }
 
+function firstStringValue(input: Record<string, unknown>): string | undefined {
+  for (const value of Object.values(input)) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value
+    }
+  }
+  return undefined
+}
+
 export function extractToolPreview(
   toolName: string,
   input: Record<string, unknown> | undefined,
@@ -42,13 +51,7 @@ export function extractToolPreview(
     return preview
   }
 
-  for (const value of Object.values(input)) {
-    if (typeof value === 'string' && value.length > 0) {
-      return value
-    }
-  }
-
-  return summaryPreview(summary)
+  return firstStringValue(input) ?? summaryPreview(summary)
 }
 
 export function getToolEmoji(toolName: string): string {
@@ -65,10 +68,9 @@ export function formatToolLine(
   const displayName = getToolDisplayName(presenter, toolName, input ?? {})
   const emoji = failed ? '❌' : presenter.emoji
   const prefix = `${emoji} ${displayName}: `
-  const suffix = ''
-  const previewBudget = Math.min(MAX_PREVIEW_CHARS, MAX_LINE_CHARS - prefix.length - suffix.length)
+  const previewBudget = Math.min(MAX_PREVIEW_CHARS, MAX_LINE_CHARS - prefix.length)
 
   const preview = truncateText(extractToolPreview(toolName, input, summary), previewBudget)
-  const line = `${prefix}${preview}${suffix}`
+  const line = `${prefix}${preview}`
   return line.length > MAX_LINE_CHARS ? truncateText(line, MAX_LINE_CHARS) : line
 }

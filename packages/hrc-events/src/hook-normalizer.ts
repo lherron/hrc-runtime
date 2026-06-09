@@ -6,6 +6,7 @@
  */
 
 import type { HookDerivedEvent } from './events.js'
+import { asToolInputRecord } from './internal/record.js'
 import { formatToolOutput } from './tool-output-formatter.js'
 
 // ============================================================================
@@ -33,11 +34,6 @@ export type NormalizeHookResult = {
 // ============================================================================
 // Helpers (from CP's hook-event-handler.ts)
 // ============================================================================
-
-function asToolInputRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  return value as Record<string, unknown>
-}
 
 function getString(obj: Record<string, unknown>, key: string): string | undefined {
   const v = obj[key]
@@ -168,129 +164,172 @@ function unwrapHookPayload(hook: Record<string, unknown>): Record<string, unknow
  * @param hook - Raw hook payload as parsed JSON
  * @returns Normalized result with typed events, progress hint, and completion flag
  */
+/** Per-hook dispatch context: the hook name and shared tool identifiers. */
+type HookContext = {
+  hookName: string
+  toolUseId: string | undefined
+  toolName: string | undefined
+}
+
+type HookHandler = (unwrapped: Record<string, unknown>, ctx: HookContext) => NormalizeHookResult
+
+function handlePreToolUse(
+  unwrapped: Record<string, unknown>,
+  { hookName, toolUseId, toolName }: HookContext
+): NormalizeHookResult {
+  const name = toolName ?? 'tool'
+  const rawToolInput = unwrapped['tool_input']
+  const toolInput = asToolInputRecord(rawToolInput)
+  const summary = formatToolSummary(name, toolInput)
+
+  const events: HookDerivedEvent[] = toolUseId
+    ? [{ type: 'tool_execution_start', toolUseId, toolName: name, input: toolInput ?? {} }]
+    : []
+
+  return {
+    events,
+    progress: { toolUseId, message: summary },
+    isCompletion: false,
+    hookName,
+  }
+}
+
+function handlePostToolUse(
+  unwrapped: Record<string, unknown>,
+  { hookName, toolUseId, toolName }: HookContext
+): NormalizeHookResult {
+  const name = toolName ?? 'tool'
+  const rawToolInput = unwrapped['tool_input']
+  const toolInput = asToolInputRecord(rawToolInput)
+  const isError = unwrapped['is_error'] === true
+  const { output, responseObject } = formatToolOutput({
+    toolName: name,
+    toolInput: rawToolInput,
+    toolResponse: unwrapped['tool_response'],
+    isError,
+  })
+  const summary = formatToolSummary(name, toolInput)
+
+  const events: HookDerivedEvent[] = toolUseId
+    ? [
+        {
+          type: 'tool_execution_end',
+          toolUseId,
+          toolName: name,
+          result: {
+            content: [{ type: 'text' as const, text: output ?? '' }],
+            details: responseObject,
+          },
+          isError,
+        },
+      ]
+    : []
+
+  return {
+    events,
+    progress: { toolUseId, message: `\u2713 ${summary}` },
+    isCompletion: false,
+    hookName,
+  }
+}
+
+function handleNotification(
+  unwrapped: Record<string, unknown>,
+  { hookName, toolUseId }: HookContext
+): NormalizeHookResult {
+  const message = getString(unwrapped, 'message') ?? 'notification'
+
+  const events: HookDerivedEvent[] = toolUseId
+    ? [{ type: 'tool_execution_update', toolUseId, message }]
+    : [{ type: 'notice', level: 'info' as const, message }]
+
+  return {
+    events,
+    progress: { toolUseId, message },
+    isCompletion: false,
+    hookName,
+  }
+}
+
+function handlePreCompact(
+  unwrapped: Record<string, unknown>,
+  { hookName }: HookContext
+): NormalizeHookResult {
+  const trigger = getString(unwrapped, 'trigger')
+  const customInstructions = getString(unwrapped, 'custom_instructions')
+  const triggerLabel = trigger ? ` (${trigger})` : ''
+
+  return {
+    events: [
+      {
+        type: 'context_compaction',
+        ...(trigger !== undefined ? { trigger } : {}),
+        ...(customInstructions !== undefined ? { customInstructions } : {}),
+        details: compactHookDetails(unwrapped),
+      },
+    ],
+    progress: { message: `Context compaction${triggerLabel}` },
+    isCompletion: false,
+    hookName,
+  }
+}
+
+function handleSubagentStart(
+  unwrapped: Record<string, unknown>,
+  { hookName }: HookContext
+): NormalizeHookResult {
+  const agentId = getString(unwrapped, 'agent_id')
+  const agentType = getString(unwrapped, 'agent_type')
+  const hasIdentity = Boolean(agentType ?? agentId)
+  const label = hasIdentity
+    ? `${agentType ?? 'subagent'}${agentId ? ` (${agentId})` : ''}`
+    : 'subagent'
+
+  return {
+    events: [
+      {
+        type: 'subagent_start',
+        ...(agentId !== undefined ? { agentId } : {}),
+        ...(agentType !== undefined ? { agentType } : {}),
+      },
+    ],
+    progress: { message: `Subagent start: ${label}` },
+    isCompletion: false,
+    hookName,
+  }
+}
+
+function handleCompletion(
+  _unwrapped: Record<string, unknown>,
+  { hookName }: HookContext
+): NormalizeHookResult {
+  return {
+    events: [],
+    isCompletion: true,
+    hookName,
+  }
+}
+
+const hookHandlers: Record<string, HookHandler> = {
+  PreToolUse: handlePreToolUse,
+  PostToolUse: handlePostToolUse,
+  Notification: handleNotification,
+  PreCompact: handlePreCompact,
+  SubagentStart: handleSubagentStart,
+  Stop: handleCompletion,
+  SessionEnd: handleCompletion,
+  SubagentStop: handleCompletion,
+}
+
 export function normalizeClaudeHook(hook: Record<string, unknown>): NormalizeHookResult {
   const unwrapped = unwrapHookPayload(hook)
   const hookName = getString(unwrapped, 'hook_event_name') ?? 'unknown'
   const toolUseId = getString(unwrapped, 'tool_use_id')
   const toolName = getString(unwrapped, 'tool_name')
 
-  if (hookName === 'PreToolUse') {
-    const name = toolName ?? 'tool'
-    const rawToolInput = unwrapped['tool_input']
-    const toolInput = asToolInputRecord(rawToolInput)
-    const summary = formatToolSummary(name, toolInput)
-
-    const events: HookDerivedEvent[] = toolUseId
-      ? [{ type: 'tool_execution_start', toolUseId, toolName: name, input: toolInput ?? {} }]
-      : []
-
-    return {
-      events,
-      progress: { toolUseId, message: summary },
-      isCompletion: false,
-      hookName,
-    }
-  }
-
-  if (hookName === 'PostToolUse') {
-    const name = toolName ?? 'tool'
-    const rawToolInput = unwrapped['tool_input']
-    const toolInput = asToolInputRecord(rawToolInput)
-    const isError = unwrapped['is_error'] === true
-    const { output, responseObject } = formatToolOutput({
-      toolName: name,
-      toolInput: rawToolInput,
-      toolResponse: unwrapped['tool_response'],
-      isError,
-    })
-    const summary = formatToolSummary(name, toolInput)
-
-    const events: HookDerivedEvent[] = toolUseId
-      ? [
-          {
-            type: 'tool_execution_end',
-            toolUseId,
-            toolName: name,
-            result: {
-              content: [{ type: 'text' as const, text: output ?? '' }],
-              details: responseObject,
-            },
-            isError,
-          },
-        ]
-      : []
-
-    return {
-      events,
-      progress: { toolUseId, message: `\u2713 ${summary}` },
-      isCompletion: false,
-      hookName,
-    }
-  }
-
-  if (hookName === 'Notification') {
-    const message = getString(unwrapped, 'message') ?? 'notification'
-
-    const events: HookDerivedEvent[] = toolUseId
-      ? [{ type: 'tool_execution_update', toolUseId, message }]
-      : [{ type: 'notice', level: 'info' as const, message }]
-
-    return {
-      events,
-      progress: { toolUseId, message },
-      isCompletion: false,
-      hookName,
-    }
-  }
-
-  if (hookName === 'PreCompact') {
-    const trigger = getString(unwrapped, 'trigger')
-    const customInstructions = getString(unwrapped, 'custom_instructions')
-    const triggerLabel = trigger ? ` (${trigger})` : ''
-
-    return {
-      events: [
-        {
-          type: 'context_compaction',
-          ...(trigger !== undefined ? { trigger } : {}),
-          ...(customInstructions !== undefined ? { customInstructions } : {}),
-          details: compactHookDetails(unwrapped),
-        },
-      ],
-      progress: { message: `Context compaction${triggerLabel}` },
-      isCompletion: false,
-      hookName,
-    }
-  }
-
-  if (hookName === 'SubagentStart') {
-    const agentId = getString(unwrapped, 'agent_id')
-    const agentType = getString(unwrapped, 'agent_type')
-    const label =
-      (agentType ?? agentId)
-        ? `${agentType ?? 'subagent'}${agentId ? ` (${agentId})` : ''}`
-        : 'subagent'
-
-    return {
-      events: [
-        {
-          type: 'subagent_start',
-          ...(agentId !== undefined ? { agentId } : {}),
-          ...(agentType !== undefined ? { agentType } : {}),
-        },
-      ],
-      progress: { message: `Subagent start: ${label}` },
-      isCompletion: false,
-      hookName,
-    }
-  }
-
-  if (hookName === 'Stop' || hookName === 'SessionEnd' || hookName === 'SubagentStop') {
-    return {
-      events: [],
-      isCompletion: true,
-      hookName,
-    }
+  const handler = hookHandlers[hookName]
+  if (handler) {
+    return handler(unwrapped, { hookName, toolUseId, toolName })
   }
 
   // Unrecognized hook — no events, no progress

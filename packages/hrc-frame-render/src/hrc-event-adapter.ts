@@ -225,13 +225,64 @@ function adaptTurnCompleted(payload: unknown): GatewaySessionEvent {
   }
 }
 
+function adaptEventByKind(
+  eventKind: string,
+  payload: unknown,
+  hrcSeq: number
+): GatewaySessionEvent | undefined {
+  if (isNoticePayload(payload)) {
+    return {
+      type: 'notice',
+      level: payload.level,
+      message: payload.message,
+    }
+  }
+
+  switch (eventKind) {
+    case 'message_start':
+      return adaptAssistantMessageStart(payload)
+    case 'message_update':
+      return adaptAssistantMessageUpdate(payload)
+    case 'turn.tool_call':
+    case 'sdk.tool_call':
+    case 'tool_execution_start':
+      return adaptToolCall(payload)
+    case 'turn.tool_result':
+    case 'sdk.tool_result':
+    case 'tool_execution_end':
+      return adaptToolResult(payload)
+    case 'turn.message':
+      return adaptAssistantMessage(payload, `hrc:${hrcSeq}`)
+    case 'sdk.message':
+    case 'message_end':
+      return adaptAssistantMessage(payload)
+    case 'turn.completed':
+    case 'turn_end':
+      return adaptTurnCompleted(payload)
+    default:
+      if (eventKind.startsWith('input.')) {
+        const pr = isRecord(payload) ? payload : {}
+        return {
+          type: 'notice',
+          level: 'info',
+          message: admissionLabel({
+            eventKind,
+            admissionKind: getString(pr, 'admissionKind'),
+            applicationStatus: getString(pr, 'applicationStatus'),
+            reason: getString(pr, 'reason'),
+          }),
+        }
+      }
+      return undefined
+  }
+}
+
 export function adaptHrcLifecycleEvent(
   event: HrcLifecycleEventPayload
 ): SessionEventEnvelope | undefined {
   const projectId = deriveProjectId(event.scopeRef)
   const sessionRef = canonicalSessionRefFromEvent(event)
   const runId = event.runId?.trim()
-  let sessionEvent: GatewaySessionEvent | undefined
 
   if (!runId) {
     log.debug('adapter.event.dropped', { data: { eventKind: event.eventKind } })
@@ -251,58 +302,7 @@ export function adaptHrcLifecycleEvent(
     return undefined
   }
 
-  if (isNoticePayload(event.payload)) {
-    sessionEvent = {
-      type: 'notice',
-      level: event.payload.level,
-      message: event.payload.message,
-    }
-  } else {
-    switch (event.eventKind) {
-      case 'message_start':
-        sessionEvent = adaptAssistantMessageStart(event.payload)
-        break
-      case 'message_update':
-        sessionEvent = adaptAssistantMessageUpdate(event.payload)
-        break
-      case 'turn.tool_call':
-      case 'sdk.tool_call':
-      case 'tool_execution_start':
-        sessionEvent = adaptToolCall(event.payload)
-        break
-      case 'turn.tool_result':
-      case 'sdk.tool_result':
-      case 'tool_execution_end':
-        sessionEvent = adaptToolResult(event.payload)
-        break
-      case 'turn.message':
-        sessionEvent = adaptAssistantMessage(event.payload, `hrc:${event.hrcSeq}`)
-        break
-      case 'sdk.message':
-      case 'message_end':
-        sessionEvent = adaptAssistantMessage(event.payload)
-        break
-      case 'turn.completed':
-      case 'turn_end':
-        sessionEvent = adaptTurnCompleted(event.payload)
-        break
-      default:
-        if (event.eventKind.startsWith('input.')) {
-          const pr = isRecord(event.payload) ? event.payload : {}
-          sessionEvent = {
-            type: 'notice',
-            level: 'info',
-            message: admissionLabel({
-              eventKind: event.eventKind,
-              admissionKind: getString(pr, 'admissionKind'),
-              applicationStatus: getString(pr, 'applicationStatus'),
-              reason: getString(pr, 'reason'),
-            }),
-          }
-        }
-        break
-    }
-  }
+  const sessionEvent = adaptEventByKind(event.eventKind, event.payload, event.hrcSeq)
 
   if (!sessionEvent) {
     log.debug('adapter.event.dropped', { data: { eventKind: event.eventKind, runId } })

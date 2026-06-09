@@ -1,124 +1,83 @@
-# Refactor Analysis — `packages/hrc-sdk/src`
+# Refactor Analysis — `packages/hrc-sdk/`
 
-**Methodology:** refactor-analysis (SOLID violations, code smells, complexity). Analysis only — no source edited.
-**Date:** 2026-06-07
-**Scope:** production source only (`__tests__` excluded from the "production" view; coverage gaps noted).
+Scope: `packages/hrc-sdk/src` (excluding `__tests__`). Behavior-preserving audit only; no source edited.
 
-## Scope
+## Package shape
 
 | File | Lines | Role |
-|------|------:|------|
-| `client.ts` | 646 | `HrcClient` — single class, 57 methods, all HTTP endpoints over a unix socket |
-| `types.ts` | 201 | SDK-only DTOs + re-exports of `hrc-core` wire DTOs |
-| `index.ts` | 67 | barrel: re-exports `HrcClient`, `discoverSocket`, types |
-| `discover.ts` | 15 | socket-path discovery |
-| **Total (prod)** | **929** | |
+|------|-------|------|
+| `src/client.ts` | 638 | `HrcClient` — typed RPC façade over the HRC Unix-socket HTTP API |
+| `src/types.ts` | 201 | SDK type re-exports from `hrc-core` + SDK-only filter/option types |
+| `src/index.ts` | 67 | Public barrel (re-exports `HrcClient`, `discoverSocket`, types) |
+| `src/discover.ts` | 15 | Socket discovery helper |
 
-Tests: 3 files, 1411 lines (`sdk.test.ts` 976, `sdk-phase6-bridge.test.ts` 228, `sdk-watch-generation-filter.test.ts` 207).
+Tests: `src/__tests__/{sdk,sdk-phase6-bridge,sdk-watch-generation-filter}.test.ts` (~1.4k lines). Coverage includes `throwTypedError` non-JSON excerpt path (m-22), watch generation filtering, and bridge methods.
 
-Consumers: `hrc-cli` (cli.ts, cli-runtime.ts, monitor-wait/show/watch), `hrcchat-cli` (all commands). The exported surface (`HrcClient`, `discoverSocket`, types) is broadly depended on — **public-API changes have a wide blast radius**, internal restructuring does not.
+This package is already in good shape: a prior pass extracted the shared helpers `buildPath`, `eventFilterParams`, `matchesWatchOptions`, `streamNdjson`, and the `EVENT_FILTER_FIELDS` single-source-of-truth array. There are no long methods, no deep nesting, no obvious dead code, and no concrete-collaborator instantiation. Findings below are minor and mostly DEFERRED because the package's entire purpose is its public surface.
 
-This is a thin transport/adapter library. There is essentially no business logic — it marshals requests, posts JSON over a Bun unix-socket `fetch`, and parses responses. The findings are therefore about structural duplication and testability, not algorithmic complexity.
+## SOLID scorecard
 
-## SOLID Scorecard
+| Principle | Grade | Notes |
+|-----------|-------|-------|
+| S — Single Responsibility | B | `HrcClient` has ~45 public methods (well over the 10-method guideline) but each is a thin, single-statement RPC delegate. The class genuinely owns one responsibility (talk to the daemon); the count is a façade artifact, not mixed concerns. IO + transport + error mapping are cleanly separated into private primitives (`postJson`/`getJson`/`throwTypedError`/`streamNdjson`). |
+| O — Open/Closed | A | No type-keyed switch/if-else chains. New endpoints = new methods; the `EVENT_FILTER_FIELDS` array is an explicit OCP seam for filter fields. |
+| L — Liskov | A | No inheritance; no overrides; no throwing stubs. |
+| I — Interface Segregation | C | `HrcClient` is a single fat class (~45 methods) with no role interfaces; consumers depend on the whole class even if they only call `dispatchTurn`. This is the only real, but low-value, structural issue — splitting it is a public-surface change and is DEFERRED. |
+| D — Dependency Inversion | B | `fetch` and `BASE_URL` are module-level constants; `socketPath` is injected via constructor. No `new Concrete()` of collaborators. The hard dependency on global `fetch` (Bun unix-socket fetch) is the only un-injected seam; acceptable for an SDK. |
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| **S** (SRP) | 🟡 yellow | `HrcClient` is a 57-method fat class spanning 8 resource domains (sessions, runtimes, runs, bridges, surfaces, targets, messages, events). Defensible for a transport SDK, but it is the only unit that grows on every endpoint addition. |
-| **O** (OCP) | 🟢 green | No type/enum switch chains. New endpoints are added by appending a method (additive), not editing a dispatcher. |
-| **L** (LSP) | 🟢 green | No inheritance, no overrides, no `not implemented` stubs. |
-| **I** (ISP) | 🟡 yellow | No interface is published, so consumers must depend on the whole 57-method concrete class. There is no narrow port (e.g. `MessageClient`, `EventWatcher`) a consumer can depend on. |
-| **D** (DIP) | 🔴 red | `fetch` (a global) is called directly in 5 places with no injection seam. No transport abstraction. Result: only ~16 of 57 methods are unit-tested because exercising any method requires a live unix socket. |
+## Priority refactorings
 
-## Priority Refactorings
+### P1 — Named constants for magic numbers in `throwTypedError`
+- **Location**: `src/client.ts:205-206` — `text.length > 200`, `text.slice(0, 200)`, `'…'`.
+- **Principle/smell**: Magic number; duplicated literal `200`.
+- **Current**: `excerpt = text.length > 200 ? \`${text.slice(0, 200)}…\` : text`.
+- **Suggested**: Introduce a module-level `const ERROR_BODY_EXCERPT_MAX = 200` (and optionally `ELLIPSIS = '…'`) and use it in both spots. Pure internal rename of a literal; output is byte-identical, and the m-22 test (`sdk.test.ts:860`) keeps passing.
+- **Risk**: Low
+- **API-impact**: internal-only
+- **Effort**: ~5 min
+- **Tests**: Covered by `sdk.test.ts` m-22 case; no test change needed.
 
-Ranked by impact × confidence.
+### P2 — Route single-param GET query strings through `buildPath`
+- **Location**: `src/client.ts:292, 296, 359, 393, 470` — methods that hand-build a query string with `encodeURIComponent` (`capture`, `getAttachDescriptor`, `listSurfaces`, `listBridges`, `getTarget`).
+- **Principle/smell**: Mild duplication; two idioms for the same job (`buildPath` vs inline `?x=${encodeURIComponent(...)}`).
+- **Current**: e.g. `\`/v1/capture?runtimeId=${encodeURIComponent(runtimeId)}\``.
+- **Suggested**: Reuse `buildPath('/v1/capture', { runtimeId })`. NOTE: `buildPath` uses `URLSearchParams.set` (percent-encodes), so encoding is equivalent but **not guaranteed byte-identical** to `encodeURIComponent` for some characters (e.g. spaces → `+` vs `%20`). Path-segment cases (`getSession:235`, `getActiveRunContribution:283` — value is in the path, not the query) must NOT be converted. Because the daemon decodes both forms in practice but the wire bytes can differ, this is a behavioral-equivalence judgment call.
+- **Risk**: Med (encoding-equivalence risk on the wire)
+- **API-impact**: internal-only (paths the SDK emits)
+- **Effort**: ~20 min + verify against `sdk.test.ts` path assertions
+- **Tests**: `sdk.test.ts` asserts exact request paths in several places — converting could require updating those expected-path strings, which the safety policy discourages. **DEFERRED** (ambiguous-to-do-safely + risk of touching tests).
 
-### 1. Extract a transport seam for `fetch` (DIP)
-- **Location:** `client.ts:145-192` (`postJson`/`getJson`/`throwTypedError`), plus raw `fetch` in `watchMessages` (`:508`) and `watch` (`:595`).
-- **Principle:** DIP (and testability).
-- **Current:** Every request calls the global `fetch` directly with `unix: this.socketPath` smuggled via `as RequestInit`. There is no way to substitute a fake transport, so the bulk of methods are untested.
-- **Suggested:** Introduce an internal `Transport` type — `{ request(path, init): Promise<Response> }` — created once in the constructor (defaulting to a Bun-fetch implementation that injects `unix`). Optionally accept it as a second constructor arg defaulting to the real one. All five `fetch` sites go through it. This isolates the `as RequestInit` cast to one place and lets the 41 untested methods be covered with a fake.
-- **Risk:** medium (touches the request hot path; the optional ctor arg is additive so the public ctor signature is preserved if defaulted).
-- **Effort:** M (~half day incl. test migration).
-- **apiPreserving:** true (default-param ctor; no exported signature changes).
-- **Tests:** existing `sdk.test.ts` must still pass against the default transport; add fake-transport tests for previously-uncovered methods.
+### P3 — `HrcClient` method count / fat façade (ISG/SRP)
+- **Location**: `src/client.ts:161-638` — `HrcClient` class, ~45 public methods spanning sessions, runtimes, runs, bridges, surfaces, targets, messages, events, diagnostics.
+- **Principle/smell**: Interface Segregation / Single Responsibility (class > 10 methods, multiple domain groupings already flagged with `// --` banners).
+- **Current**: One monolithic client class.
+- **Suggested (human review only)**: Either (a) accept as an intentional SDK façade — recommended — or (b) split into role-grouped sub-clients (`client.sessions`, `client.runtimes`, `client.bridges`, …) via lazy getters that share the transport primitives. Option (b) changes the public call shape (`client.dispatchTurn` → `client.runtimes.dispatchTurn`) and breaks every consumer.
+- **Risk**: High
+- **API-impact**: public-surface
+- **Effort**: Large (multi-package, all callers)
+- **Tests**: Would rewrite the entire SDK test suite and every downstream caller. **DEFERRED — do not touch.**
 
-### 2. Deduplicate the two NDJSON streaming generators (`watch` / `watchMessages`)
-- **Location:** `client.ts:501-551` (`watchMessages`) and `client.ts:580-645` (`watch`).
-- **Principle:** SRP / DRY (code smell: duplicated block, ~45 near-identical lines each).
-- **Current:** Both methods independently: open a streaming `fetch`, check `res.ok`, grab `res.body`, create a `TextDecoder`, accumulate a `buffer`, split on `\n`, `pop()` the trailing partial line, `JSON.parse` each line with a swallow-and-continue catch, honor an `AbortSignal`, then flush the remainder. The only differences are the typed yield and `watch`'s `matchesWatchOptions` filter.
-- **Suggested:** Extract a private `async *streamNdjson<T>(path, init, opts, onItem?)` that owns the decode/buffer/split/flush/abort loop. `watch` passes a `matchesWatchOptions` predicate; `watchMessages` passes none. Removes ~40 duplicated lines and makes the malformed-line / abort / flush semantics single-sourced.
-- **Risk:** medium (streaming + abort + partial-line edge cases are subtle; well covered by `sdk-watch-generation-filter.test.ts` for `watch`, less so for `watchMessages`).
-- **Effort:** M.
-- **apiPreserving:** true (private helper; `watch`/`watchMessages` signatures unchanged).
-- **Tests:** `sdk-watch-generation-filter.test.ts` covers `watch` filtering; add a `watchMessages` streaming/abort test before extracting.
+## Code smells
 
-### 3. Extract a query-string builder for the six `list*`/`get*` methods
-- **Location:** `client.ts:200-207` (`listSessions`), `:379-385` (`getStatus`), `:387-399` (`listRuntimes`), `:401-410` (`listRuns`), `:424-431` (`listLaunches`), `:439-447` (`listTargets`).
-- **Principle:** DRY (duplicated `new URLSearchParams()` … `const qs = params.toString(); const path = qs ? \`${base}?${qs}\` : base` boilerplate, repeated 6×).
-- **Current:** Each method hand-rolls the same param-set-then-conditionally-append-`?qs` dance with per-field `if (filter?.x) params.set(...)`.
-- **Suggested:** A `buildPath(base, params: Record<string, string|number|boolean|undefined|string[]>)` helper that skips `undefined`, joins arrays, and appends `?` only when non-empty. Each method shrinks to one `getJson(buildPath('/v1/runs', {...filter}))` call.
-- **Risk:** low (pure string assembly; behavior is mechanical and individually testable).
-- **Effort:** S.
-- **apiPreserving:** true (internal helper; method signatures unchanged).
-- **Tests:** unit-test `buildPath` directly (ordering, omission, array join, empty → no `?`).
+| # | Location | Smell | Severity | Disposition |
+|---|----------|-------|----------|-------------|
+| 1 | `client.ts:205-206` | Magic number `200` duplicated; bare `'…'` literal | Low | APPLY (P1) |
+| 2 | `client.ts:292,296,359,393,470` | Two idioms for query strings (`buildPath` vs inline `encodeURIComponent`) | Low | DEFER (P2 — encoding/test risk) |
+| 3 | `client.ts:161-638` | Fat façade class (~45 methods) | Low (structural) | DEFER (P3 — public surface) |
+| 4 | `client.ts:264-270` | `sendInFlightInput` spreads conditional `input`/`prompt`/`inputType` into body — minor object assembly, but correct and readable | Info | No action |
+| 5 | `types.ts:99` | `input?` field marked `@deprecated` but still forwarded by `sendInFlightInput` | Info | No action (public type contract; DEFER any removal) |
 
-### 4. Single-source the 8-field event-filter projection
-- **Location:** `client.ts:107-134` (`matchesWatchOptions`), `:563-578` (`listLatestEventBySession`), `:580-593` (`watch` query build). The field list `hostSessionId, generation, scopeRef, laneRef, runtimeId, runId, category, eventKind` is written out three times.
-- **Principle:** DRY / shotgun surgery (adding one event filter field requires editing three places + two `types.ts` types).
-- **Current:** Triplicated field enumeration: once as 8 `appendOptionalEventQueryParam` calls in `listLatestEventBySession`, again as 8 calls in `watch`, again as 8 `if` comparisons in `matchesWatchOptions`.
-- **Suggested:** Define one `EVENT_FILTER_FIELDS` array of keys and drive both the query-param append loop and the `matchesWatchOptions` equality loop from it (typed via `keyof`). One edit point per new field.
-- **Risk:** low.
-- **Effort:** S.
-- **apiPreserving:** true (internal; the `WatchOptions`/`LatestEventBySessionFilter` types are the public contract and stay as-is).
-- **Tests:** `sdk-watch-generation-filter.test.ts` already asserts filter behavior; extend to cover each field.
+No dead code, no truly long methods (largest is `streamNdjson` ~55 lines at 582-637, cohesive and single-purpose), no deep nesting beyond the intrinsic stream loop, no long parameter lists (>4), no feature envy.
 
-### 5. (Optional, larger) Split `HrcClient` into resource-scoped mixins/sub-clients (SRP/ISP)
-- **Location:** `client.ts:136-646` (whole class).
-- **Principle:** SRP + ISP — the class owns 8 unrelated resource domains and there is no narrow port to depend on.
-- **Current:** One concrete 57-method class; consumers import the whole thing.
-- **Suggested:** Keep `HrcClient` as the facade but compose it from focused units sharing the transport — e.g. `sessions`, `runtimes`, `runs`, `bridges`, `messages`, `events` namespaces, or keep flat methods but back them with per-domain modules. Publish narrow interfaces (`MessageApi`, `EventWatchApi`) so consumers can depend on a port.
-- **Risk:** high (re-shapes the public surface unless done as pure internal composition behind identical flat methods; high churn; wide consumer blast radius).
-- **Effort:** L.
-- **apiPreserving:** false if the call shape changes (`client.messages.create` vs `client.createMessage`); only apiPreserving if implemented as internal composition leaving all 57 flat methods intact — not recommended as a quick apply.
-- **Tests:** full SDK suite + consumer smoke (hrc-cli, hrcchat-cli).
+## Quick wins (safe to auto-apply)
 
-## Code Smells
+1. **P1** — Extract `ERROR_BODY_EXCERPT_MAX = 200` (and `ELLIPSIS = '…'`) named constants in `client.ts`. Low risk, internal-only, behavior-identical, covered by existing m-22 test.
 
-| Smell | Location | Detail |
-|-------|----------|--------|
-| Duplicated block | `client.ts:501-551` vs `:580-645` | two NDJSON stream loops (see #2) |
-| Duplicated block | six `list*` methods | query-string boilerplate (see #3) |
-| Shotgun surgery | `:107-134`, `:563-578`, `:580-593` | 8-field event filter triplicated (see #4) |
-| Magic constant | `client.ts:95` | `BASE_URL = 'http://hrc'` — fine, but undocumented why a dummy host (unix socket carries routing) |
-| Magic number | `client.ts:180` | `200` / `text.slice(0, 200)` excerpt cap — unnamed |
-| Type smuggling | `:151, :163, :510, :598` | `as RequestInit` to attach the non-standard Bun `unix` field; repeated cast hides a real type gap (see #1 to localize) |
-| Fat class | `client.ts:136` | 57 methods, ~510-line body, 8 domains (see #5) |
-| Long import block | `client.ts:15-93` | ~78 lines of type imports — symptom of the fat class, not itself a defect |
-| Missing test coverage | client.ts | only ~16 of 57 methods exercised; root cause is the missing transport seam (#1), not absent intent |
-| Primitive obsession (mild) | `types.ts:96-103` | `SendInFlightInputRequest` carries both deprecated `input` and `prompt` as loose strings; ok but the deprecation is only a comment |
+That is the only auto-applicable finding. Everything else is either already clean or touches the public surface / wire bytes / tests and is deferred.
 
-No findings for: long parameter lists (all methods take a single request object — good), deep nesting (max depth ~3 in the stream loops), feature envy, OCP switch chains, LSP override hazards.
+## Technical debt notes
 
-## Quick Wins
-
-- Extract `buildPath` query helper (#3) — low risk, removes ~30 lines, immediately reusable.
-- Single-source the event-filter field list (#4) — low risk, kills triplication.
-- Name the `200` excerpt cap as a `const ERROR_EXCERPT_MAX = 200` and add a one-line comment on `BASE_URL` explaining the unix-socket dummy host.
-
-## Technical Debt Notes
-
-- **Testability is gated on DIP (#1).** The single biggest leverage point: with a transport seam, the 41 currently-untested methods become trivially coverable. Everything else is cosmetic by comparison.
-- The `as RequestInit` casts indicate the SDK is hard-bound to Bun's fetch (`unix` option). If portability to Node `undici`/`http.request` is ever wanted, the transport seam (#1) is the prerequisite. Flag, don't fix now.
-- The fat-class split (#5) is real SRP/ISP debt but the cost/benefit is poor for a stable transport SDK with a wide consumer base; defer unless the file keeps growing past ~700 lines.
-- `types.ts` re-exports many `hrc-core` DTOs and `index.ts` re-exports a subset again — there is drift risk (a type added to `types.ts` but forgotten in `index.ts`). Not a defect today; a barrel-consistency lint would prevent regressions.
-
-## Safety Checklist (for any apply step)
-
-- [ ] Run the full SDK test suite (`sdk.test.ts`, `sdk-phase6-bridge.test.ts`, `sdk-watch-generation-filter.test.ts`) before and after — set `TMPDIR=/tmp`.
-- [ ] For #1/#2 add streaming + abort + malformed-line tests for `watchMessages` (currently thin) BEFORE refactoring.
-- [ ] Verify no exported symbol signature changes for any item marked apiPreserving (diff `index.ts` and the `HrcClient` public method list).
-- [ ] Smoke `hrc-cli` and `hrcchat-cli` against a live daemon — they consume the public surface directly; type-check both packages.
-- [ ] Confirm `BASE_URL` / unix-socket behavior is unchanged after centralizing the transport (live `getHealth()` against a running socket).
-- [ ] Do NOT apply #5 as an apply-step item — it is high-risk / not safely apiPreserving.
+- **`streamNdjson` is the one non-trivial method (~55 lines)** and is correctly factored (decode → buffer → split-on-`\n` → parse-or-skip → predicate → flush trailing). At the edge of the 50-line guideline but splitting it would fragment a single coherent algorithm and is **not** recommended.
+- **Global `fetch` dependency** (Bun unix-socket `fetch`) is an un-injected seam. Tests stub it via global override. Introducing a constructor-injected fetcher would improve DI but is a public-constructor signature change → **public-surface, DEFER**.
+- **`sendInFlightInput` deprecated `input` field** (`types.ts:99`): SDK still forwards `input` when present. Removing it is a public type-contract change → DEFER; track for a future major.
+- The package mirrors `hrc-core` wire DTOs via re-export rather than redefining them (good — avoids duplication). No action.

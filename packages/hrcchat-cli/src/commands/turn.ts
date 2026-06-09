@@ -16,6 +16,7 @@ import {
 } from '../render-frame.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 import { type StackedAggregator, createStackedAggregator } from '../stacked-aggregator.js'
+import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result } from '../stacked-types.js'
 
@@ -334,17 +335,17 @@ export async function cmdTurn(
     if (err instanceof TurnExitError) {
       throw err
     }
-    // Turn completed — abort was intentional to close the follow stream
-    if (turnCompleted) {
-      // fall through to exit code determination below
-    } else if (abortController.signal.aborted) {
-      // AbortError from stall timer or SIGINT
-      if (stallFired) {
-        throw new TurnExitError(TURN_EXIT_STALL, 'stall-after timeout reached')
+    // Turn completed — abort was intentional to close the follow stream, so
+    // fall through to exit-code determination below.
+    if (!turnCompleted) {
+      if (abortController.signal.aborted) {
+        // AbortError from stall timer or SIGINT
+        if (stallFired) {
+          throw new TurnExitError(TURN_EXIT_STALL, 'stall-after timeout reached')
+        }
+        // SIGINT
+        throw new TurnExitError(TURN_EXIT_SIGINT, 'interrupted')
       }
-      // SIGINT
-      throw new TurnExitError(TURN_EXIT_SIGINT, 'interrupted')
-    } else {
       throw err
     }
   } finally {
@@ -472,8 +473,4 @@ async function findDurableReply(
   } catch {
     return undefined
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

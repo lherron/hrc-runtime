@@ -12,6 +12,8 @@ const DEFAULT_MAX_DIGEST_BYTES = 24_000
 const DEFAULT_MAX_EVENTS = 120
 const TEXT_PREVIEW_CHARS = 500
 
+const textEncoder = new TextEncoder()
+
 type AnthropicLike = {
   messages: {
     create(request: unknown): Promise<{ content: Array<{ type: 'text'; text: string }> }>
@@ -217,14 +219,14 @@ function stringifyValue(value: unknown): string {
 }
 
 function boundString(value: string, maxBytes: number): string {
-  const encoded = new TextEncoder().encode(value)
+  const encoded = textEncoder.encode(value)
   if (encoded.byteLength <= maxBytes) {
     return value
   }
   const marker = '\n[truncated]'
   const room = Math.max(0, maxBytes - marker.length)
   let bounded = value.slice(0, room)
-  while (new TextEncoder().encode(bounded).byteLength > room) {
+  while (textEncoder.encode(bounded).byteLength > room) {
     bounded = bounded.slice(0, -1)
   }
   return `${bounded}${marker}`

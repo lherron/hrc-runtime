@@ -272,7 +272,7 @@ function evaluateEvent(
     case 'response-or-idle':
       return evaluateResponseOrIdle(context, event)
     case 'runtime-dead':
-      return evaluateRuntimeDead(context, event)
+      return runtimeDeathOutcome(context, event)
   }
 }
 
@@ -285,13 +285,10 @@ function evaluateTurnFinished(
   }
 
   const result = resultValue(event, 'turn_succeeded')
-  if (result === 'turn_failed') {
+  if (result === 'turn_failed' || result === 'runtime_dead' || result === 'runtime_crashed') {
     return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
   }
-  if (result === 'runtime_dead' || result === 'runtime_crashed') {
-    return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
-  }
-  return { result: result === 'turn_succeeded' ? result : 'turn_succeeded', exitCode: EXIT_CODE.ok }
+  return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
 }
 
 function evaluateResponse(
@@ -341,13 +338,6 @@ function runtimeDeathOutcome(
   return null
 }
 
-function evaluateRuntimeDead(
-  context: EvaluationContext,
-  event: MonitorOutputEvent
-): HrcMonitorConditionOutcome | null {
-  return runtimeDeathOutcome(context, event)
-}
-
 function evaluateRuntimeFailure(
   context: EvaluationContext,
   event: MonitorOutputEvent
@@ -366,7 +356,9 @@ function evaluateContextChanged(
     return { result: 'context_changed', reason: explicitReason, exitCode: EXIT_CODE.contextChanged }
   }
 
-  if (unknownString(event, 'sessionRef') === context.capture.sessionRef) {
+  const sameSession = unknownString(event, 'sessionRef') === context.capture.sessionRef
+
+  if (sameSession) {
     const eventGeneration = unknownNumber(event, 'generation')
     if (eventGeneration !== undefined && eventGeneration !== context.capture.generation) {
       return {
@@ -378,7 +370,7 @@ function evaluateContextChanged(
   }
 
   if (
-    unknownString(event, 'sessionRef') === context.capture.sessionRef &&
+    sameSession &&
     unknownString(event, 'hostSessionId') !== undefined &&
     unknownString(event, 'hostSessionId') !== context.capture.hostSessionId
   ) {
@@ -391,7 +383,7 @@ function evaluateContextChanged(
 
   if (
     (eventKind(event) === 'context.cleared' || eventKind(event) === 'session.cleared') &&
-    unknownString(event, 'sessionRef') === context.capture.sessionRef
+    sameSession
   ) {
     return { result: 'context_changed', reason: 'cleared', exitCode: EXIT_CODE.contextChanged }
   }

@@ -149,80 +149,85 @@ function semanticEvent(envelope: PiHookEnvelopeInput, eventKind: string, payload
   }
 }
 
+function piToolUseId(payload: Record<string, unknown>): string {
+  return getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
+}
+
+function handlePiToolStart(payload: Record<string, unknown>): PiDerivedEvent[] {
+  const toolUseId = piToolUseId(payload)
+  const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
+  if (!toolUseId) return []
+  return [
+    {
+      type: 'tool_execution_start',
+      toolUseId,
+      toolName,
+      input: getRecord(payload, 'input', 'args', 'arguments'),
+    },
+  ]
+}
+
+function handlePiToolUpdate(payload: Record<string, unknown>): PiDerivedEvent[] {
+  const toolUseId = piToolUseId(payload)
+  if (!toolUseId) return []
+  return [
+    {
+      type: 'tool_execution_update',
+      toolUseId,
+      message: getString(payload, 'message'),
+      partialOutput: getString(payload, 'partialOutput', 'partial_output', 'output'),
+    },
+  ]
+}
+
+function handlePiToolEnd(payload: Record<string, unknown>): PiDerivedEvent[] {
+  const toolUseId = piToolUseId(payload)
+  const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
+  if (!toolUseId) return []
+  const result = toToolResult(payload['result'] ?? payload['output'])
+  return [
+    {
+      type: 'tool_execution_end',
+      toolUseId,
+      toolName,
+      result,
+      isError: getBoolean(payload, 'isError', 'is_error'),
+    },
+  ]
+}
+
+function handlePiMessage(payload: Record<string, unknown>): PiDerivedEvent[] {
+  const role = getString(payload, 'role') === 'user' ? 'user' : 'assistant'
+  const content = textFrom(payload['content'] ?? payload['text'] ?? payload['message'])
+  return role === 'user'
+    ? [
+        {
+          type: 'message_end',
+          message: { role: 'user', content },
+        },
+      ]
+    : [
+        {
+          type: 'message_end',
+          message: { role: 'assistant', content },
+        },
+      ]
+}
+
+const piEventHandlers: Record<string, (payload: Record<string, unknown>) => PiDerivedEvent[]> = {
+  tool_execution_start: handlePiToolStart,
+  tool_execution_update: handlePiToolUpdate,
+  tool_execution_end: handlePiToolEnd,
+  message_start: handlePiMessage,
+  message_update: handlePiMessage,
+  message_end: handlePiMessage,
+  turn_start: () => [{ type: 'notice', level: 'info', message: 'Pi turn started' }],
+  turn_end: () => [{ type: 'notice', level: 'info', message: 'Pi turn completed' }],
+}
+
 function normalizePiPayload(eventName: string, payload: Record<string, unknown>): PiDerivedEvent[] {
-  const toolUseId = getString(payload, 'toolUseId', 'tool_use_id', 'id', 'callId') ?? ''
-
-  if (eventName === 'tool_execution_start') {
-    const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
-    if (!toolUseId) return []
-    return [
-      {
-        type: 'tool_execution_start',
-        toolUseId,
-        toolName,
-        input: getRecord(payload, 'input', 'args', 'arguments'),
-      },
-    ]
-  }
-
-  if (eventName === 'tool_execution_update') {
-    if (!toolUseId) return []
-    return [
-      {
-        type: 'tool_execution_update',
-        toolUseId,
-        message: getString(payload, 'message'),
-        partialOutput: getString(payload, 'partialOutput', 'partial_output', 'output'),
-      },
-    ]
-  }
-
-  if (eventName === 'tool_execution_end') {
-    const toolName = getString(payload, 'toolName', 'tool_name', 'name') ?? 'tool'
-    if (!toolUseId) return []
-    const result = toToolResult(payload['result'] ?? payload['output'])
-    return [
-      {
-        type: 'tool_execution_end',
-        toolUseId,
-        toolName,
-        result,
-        isError: getBoolean(payload, 'isError', 'is_error'),
-      },
-    ]
-  }
-
-  if (
-    eventName === 'message_start' ||
-    eventName === 'message_update' ||
-    eventName === 'message_end'
-  ) {
-    const role = getString(payload, 'role') === 'user' ? 'user' : 'assistant'
-    const content = textFrom(payload['content'] ?? payload['text'] ?? payload['message'])
-    return role === 'user'
-      ? [
-          {
-            type: 'message_end',
-            message: { role: 'user', content },
-          },
-        ]
-      : [
-          {
-            type: 'message_end',
-            message: { role: 'assistant', content },
-          },
-        ]
-  }
-
-  if (eventName === 'turn_start') {
-    return [{ type: 'notice', level: 'info', message: 'Pi turn started' }]
-  }
-
-  if (eventName === 'turn_end') {
-    return [{ type: 'notice', level: 'info', message: 'Pi turn completed' }]
-  }
-
-  return []
+  const handler = piEventHandlers[eventName]
+  return handler ? handler(payload) : []
 }
 
 export function normalizePiHookEvent(envelope: PiHookEnvelopeInput): NormalizePiHookResult {

@@ -616,6 +616,47 @@ function buildSetClause(entries: Array<[column: string, value: string | number |
 }
 
 /**
+ * Spec entry for {@link collectPatchEntries}: maps a defined patch field to its
+ * SQL column, with an optional `transform` for null-coercion / serialization /
+ * boolean encoding. Behavior mirrors the hand-rolled
+ * `if (patch.x !== undefined) entries.push([...])` ladders. The transform
+ * receives the (already non-undefined) patch value as `unknown`; each spec
+ * knows the field's concrete type.
+ */
+type PatchEntrySpec<P> = {
+  readonly key: keyof P & string
+  readonly column: string
+  readonly transform?: (value: unknown) => string | number | null
+}
+
+/** Transform that coerces a possibly-null patch value to `value ?? null`. */
+const nullableTransform = (value: unknown): string | number | null =>
+  (value as string | number | null) ?? null
+
+/**
+ * Collect `[column, value]` entries for every patch field that is not
+ * `undefined`, in spec order, applying each spec's optional transform. This is
+ * the shared, behavior-preserving replacement for the per-repository
+ * `update(patch)` column ladders.
+ */
+function collectPatchEntries<P>(
+  patch: P,
+  specs: ReadonlyArray<PatchEntrySpec<P>>
+): Array<[column: string, value: string | number | null]> {
+  const entries: Array<[column: string, value: string | number | null]> = []
+  for (const { key, column, transform } of specs) {
+    const value = patch[key]
+    if (value !== undefined) {
+      entries.push([
+        column,
+        transform ? transform(value) : (value as unknown as string | number | null),
+      ])
+    }
+  }
+  return entries
+}
+
+/**
  * Append the shared `events` filter predicates (host_session_id, generation,
  * runtime_id, run_id) to the provided `where`/`values` accumulators in the
  * canonical order. The seq predicate (`seq >= ?`) is owned by each caller
@@ -1553,6 +1594,64 @@ export class AppManagedSessionRepository {
   }
 }
 
+const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
+  { key: 'hostSessionId', column: 'host_session_id' },
+  { key: 'runtimeKind', column: 'runtime_kind' },
+  { key: 'scopeRef', column: 'scope_ref' },
+  { key: 'laneRef', column: 'lane_ref' },
+  { key: 'generation', column: 'generation' },
+  { key: 'launchId', column: 'launch_id' },
+  { key: 'transport', column: 'transport' },
+  { key: 'harness', column: 'harness' },
+  { key: 'provider', column: 'provider' },
+  { key: 'status', column: 'status' },
+  { key: 'tmuxJson', column: 'tmux_json', transform: (v) => serializeJson(v) },
+  { key: 'surfaceJson', column: 'surface_json', transform: (v) => serializeJson(v) },
+  { key: 'wrapperPid', column: 'wrapper_pid' },
+  { key: 'childPid', column: 'child_pid' },
+  {
+    key: 'harnessSessionJson',
+    column: 'harness_session_json',
+    transform: (v) => serializeJson(v),
+  },
+  { key: 'commandSpec', column: 'command_spec_json', transform: (v) => serializeJson(v) },
+  { key: 'continuation', column: 'continuation_json', transform: (v) => serializeJson(v) },
+  {
+    key: 'supportsInflightInput',
+    column: 'supports_inflight_input',
+    transform: (v) => toSqliteBoolean(v as boolean),
+  },
+  { key: 'adopted', column: 'adopted', transform: (v) => toSqliteBoolean(v as boolean) },
+  { key: 'activeRunId', column: 'active_run_id' },
+  { key: 'lastActivityAt', column: 'last_activity_at' },
+  { key: 'controllerKind', column: 'controller_kind' },
+  { key: 'activeOperationId', column: 'active_operation_id' },
+  { key: 'activeInvocationId', column: 'active_invocation_id' },
+  { key: 'compileId', column: 'compile_id' },
+  { key: 'planHash', column: 'plan_hash' },
+  { key: 'selectedProfileHash', column: 'selected_profile_hash' },
+  { key: 'runtimeStateJson', column: 'runtime_state_json', transform: (v) => serializeJson(v) },
+  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash', transform: nullableTransform },
+  {
+    key: 'currentHarnessGeneration',
+    column: 'current_harness_generation',
+    transform: nullableTransform,
+  },
+  { key: 'currentTurnAttempt', column: 'current_turn_attempt', transform: nullableTransform },
+  {
+    key: 'lifecycleTerminalReason',
+    column: 'lifecycle_terminal_reason',
+    transform: nullableTransform,
+  },
+  {
+    key: 'lastLifecycleEscalationJson',
+    column: 'last_lifecycle_escalation_json',
+    transform: nullableTransform,
+  },
+  { key: 'createdAt', column: 'created_at' },
+  { key: 'updatedAt', column: 'updated_at' },
+]
+
 export class RuntimeRepository {
   constructor(private readonly db: Database) {}
 
@@ -1675,113 +1774,7 @@ export class RuntimeRepository {
   }
 
   update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-
-    if (patch.hostSessionId !== undefined) {
-      entries.push(['host_session_id', patch.hostSessionId])
-    }
-    if (patch.runtimeKind !== undefined) {
-      entries.push(['runtime_kind', patch.runtimeKind])
-    }
-    if (patch.scopeRef !== undefined) {
-      entries.push(['scope_ref', patch.scopeRef])
-    }
-    if (patch.laneRef !== undefined) {
-      entries.push(['lane_ref', patch.laneRef])
-    }
-    if (patch.generation !== undefined) {
-      entries.push(['generation', patch.generation])
-    }
-    if (patch.launchId !== undefined) {
-      entries.push(['launch_id', patch.launchId])
-    }
-    if (patch.transport !== undefined) {
-      entries.push(['transport', patch.transport])
-    }
-    if (patch.harness !== undefined) {
-      entries.push(['harness', patch.harness])
-    }
-    if (patch.provider !== undefined) {
-      entries.push(['provider', patch.provider])
-    }
-    if (patch.status !== undefined) {
-      entries.push(['status', patch.status])
-    }
-    if (patch.tmuxJson !== undefined) {
-      entries.push(['tmux_json', serializeJson(patch.tmuxJson)])
-    }
-    if (patch.surfaceJson !== undefined) {
-      entries.push(['surface_json', serializeJson(patch.surfaceJson)])
-    }
-    if (patch.wrapperPid !== undefined) {
-      entries.push(['wrapper_pid', patch.wrapperPid])
-    }
-    if (patch.childPid !== undefined) {
-      entries.push(['child_pid', patch.childPid])
-    }
-    if (patch.harnessSessionJson !== undefined) {
-      entries.push(['harness_session_json', serializeJson(patch.harnessSessionJson)])
-    }
-    if (patch.commandSpec !== undefined) {
-      entries.push(['command_spec_json', serializeJson(patch.commandSpec)])
-    }
-    if (patch.continuation !== undefined) {
-      entries.push(['continuation_json', serializeJson(patch.continuation)])
-    }
-    if (patch.supportsInflightInput !== undefined) {
-      entries.push(['supports_inflight_input', toSqliteBoolean(patch.supportsInflightInput)])
-    }
-    if (patch.adopted !== undefined) {
-      entries.push(['adopted', toSqliteBoolean(patch.adopted)])
-    }
-    if (patch.activeRunId !== undefined) {
-      entries.push(['active_run_id', patch.activeRunId])
-    }
-    if (patch.lastActivityAt !== undefined) {
-      entries.push(['last_activity_at', patch.lastActivityAt])
-    }
-    if (patch.controllerKind !== undefined) {
-      entries.push(['controller_kind', patch.controllerKind])
-    }
-    if (patch.activeOperationId !== undefined) {
-      entries.push(['active_operation_id', patch.activeOperationId])
-    }
-    if (patch.activeInvocationId !== undefined) {
-      entries.push(['active_invocation_id', patch.activeInvocationId])
-    }
-    if (patch.compileId !== undefined) {
-      entries.push(['compile_id', patch.compileId])
-    }
-    if (patch.planHash !== undefined) {
-      entries.push(['plan_hash', patch.planHash])
-    }
-    if (patch.selectedProfileHash !== undefined) {
-      entries.push(['selected_profile_hash', patch.selectedProfileHash])
-    }
-    if (patch.runtimeStateJson !== undefined) {
-      entries.push(['runtime_state_json', serializeJson(patch.runtimeStateJson)])
-    }
-    if (patch.lifecyclePolicyHash !== undefined) {
-      entries.push(['lifecycle_policy_hash', patch.lifecyclePolicyHash ?? null])
-    }
-    if (patch.currentHarnessGeneration !== undefined) {
-      entries.push(['current_harness_generation', patch.currentHarnessGeneration ?? null])
-    }
-    if (patch.currentTurnAttempt !== undefined) {
-      entries.push(['current_turn_attempt', patch.currentTurnAttempt ?? null])
-    }
-    if (patch.lifecycleTerminalReason !== undefined) {
-      entries.push(['lifecycle_terminal_reason', patch.lifecycleTerminalReason ?? null])
-    }
-    if (patch.lastLifecycleEscalationJson !== undefined) {
-      entries.push(['last_lifecycle_escalation_json', patch.lastLifecycleEscalationJson ?? null])
-    }
-    if (patch.createdAt !== undefined) {
-      entries.push(['created_at', patch.createdAt])
-    }
-    if (patch.updatedAt !== undefined) {
-      entries.push(['updated_at', patch.updatedAt])
-    }
+    const entries = collectPatchEntries(patch, RUNTIME_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByRuntimeId(runtimeId)
@@ -1865,6 +1858,25 @@ export class RuntimeRepository {
     return this.getByRuntimeId(runtimeId)
   }
 }
+
+const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
+  { key: 'hostSessionId', column: 'host_session_id' },
+  { key: 'runtimeId', column: 'runtime_id' },
+  { key: 'scopeRef', column: 'scope_ref' },
+  { key: 'laneRef', column: 'lane_ref' },
+  { key: 'generation', column: 'generation' },
+  { key: 'transport', column: 'transport' },
+  { key: 'status', column: 'status' },
+  { key: 'acceptedAt', column: 'accepted_at' },
+  { key: 'startedAt', column: 'started_at' },
+  { key: 'completedAt', column: 'completed_at' },
+  { key: 'updatedAt', column: 'updated_at' },
+  { key: 'errorCode', column: 'error_code' },
+  { key: 'errorMessage', column: 'error_message' },
+  { key: 'operationId', column: 'operation_id' },
+  { key: 'invocationId', column: 'invocation_id' },
+  { key: 'dispatchedInputId', column: 'dispatched_input_id' },
+]
 
 export class RunRepository {
   constructor(private readonly db: Database) {}
@@ -1996,56 +2008,7 @@ export class RunRepository {
   }
 
   update(runId: string, patch: RunUpdatePatch): HrcRunRecord | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-
-    if (patch.hostSessionId !== undefined) {
-      entries.push(['host_session_id', patch.hostSessionId])
-    }
-    if (patch.runtimeId !== undefined) {
-      entries.push(['runtime_id', patch.runtimeId])
-    }
-    if (patch.scopeRef !== undefined) {
-      entries.push(['scope_ref', patch.scopeRef])
-    }
-    if (patch.laneRef !== undefined) {
-      entries.push(['lane_ref', patch.laneRef])
-    }
-    if (patch.generation !== undefined) {
-      entries.push(['generation', patch.generation])
-    }
-    if (patch.transport !== undefined) {
-      entries.push(['transport', patch.transport])
-    }
-    if (patch.status !== undefined) {
-      entries.push(['status', patch.status])
-    }
-    if (patch.acceptedAt !== undefined) {
-      entries.push(['accepted_at', patch.acceptedAt])
-    }
-    if (patch.startedAt !== undefined) {
-      entries.push(['started_at', patch.startedAt])
-    }
-    if (patch.completedAt !== undefined) {
-      entries.push(['completed_at', patch.completedAt])
-    }
-    if (patch.updatedAt !== undefined) {
-      entries.push(['updated_at', patch.updatedAt])
-    }
-    if (patch.errorCode !== undefined) {
-      entries.push(['error_code', patch.errorCode])
-    }
-    if (patch.errorMessage !== undefined) {
-      entries.push(['error_message', patch.errorMessage])
-    }
-    if (patch.operationId !== undefined) {
-      entries.push(['operation_id', patch.operationId])
-    }
-    if (patch.invocationId !== undefined) {
-      entries.push(['invocation_id', patch.invocationId])
-    }
-    if (patch.dispatchedInputId !== undefined) {
-      entries.push(['dispatched_input_id', patch.dispatchedInputId])
-    }
+    const entries = collectPatchEntries(patch, RUN_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByRunId(runId)
@@ -2093,6 +2056,33 @@ export class RunRepository {
     return this.getByRunId(runId)
   }
 }
+
+const LAUNCH_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<LaunchUpdatePatch>> = [
+  { key: 'hostSessionId', column: 'host_session_id' },
+  { key: 'generation', column: 'generation' },
+  { key: 'runtimeId', column: 'runtime_id' },
+  { key: 'harness', column: 'harness' },
+  { key: 'provider', column: 'provider' },
+  { key: 'launchArtifactPath', column: 'launch_artifact_path' },
+  { key: 'tmuxJson', column: 'tmux_json', transform: (v) => serializeJson(v) },
+  { key: 'surfaceJson', column: 'surface_json', transform: (v) => serializeJson(v) },
+  { key: 'wrapperPid', column: 'wrapper_pid' },
+  { key: 'childPid', column: 'child_pid' },
+  {
+    key: 'harnessSessionJson',
+    column: 'harness_session_json',
+    transform: (v) => serializeJson(v),
+  },
+  { key: 'continuation', column: 'continuation_json', transform: (v) => serializeJson(v) },
+  { key: 'wrapperStartedAt', column: 'wrapper_started_at' },
+  { key: 'childStartedAt', column: 'child_started_at' },
+  { key: 'exitedAt', column: 'exited_at' },
+  { key: 'exitCode', column: 'exit_code' },
+  { key: 'signal', column: 'signal' },
+  { key: 'status', column: 'status' },
+  { key: 'createdAt', column: 'created_at' },
+  { key: 'updatedAt', column: 'updated_at' },
+]
 
 export class LaunchRepository {
   constructor(private readonly db: Database) {}
@@ -2163,68 +2153,7 @@ export class LaunchRepository {
   }
 
   update(launchId: string, patch: LaunchUpdatePatch): HrcLaunchRecord | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-
-    if (patch.hostSessionId !== undefined) {
-      entries.push(['host_session_id', patch.hostSessionId])
-    }
-    if (patch.generation !== undefined) {
-      entries.push(['generation', patch.generation])
-    }
-    if (patch.runtimeId !== undefined) {
-      entries.push(['runtime_id', patch.runtimeId])
-    }
-    if (patch.harness !== undefined) {
-      entries.push(['harness', patch.harness])
-    }
-    if (patch.provider !== undefined) {
-      entries.push(['provider', patch.provider])
-    }
-    if (patch.launchArtifactPath !== undefined) {
-      entries.push(['launch_artifact_path', patch.launchArtifactPath])
-    }
-    if (patch.tmuxJson !== undefined) {
-      entries.push(['tmux_json', serializeJson(patch.tmuxJson)])
-    }
-    if (patch.surfaceJson !== undefined) {
-      entries.push(['surface_json', serializeJson(patch.surfaceJson)])
-    }
-    if (patch.wrapperPid !== undefined) {
-      entries.push(['wrapper_pid', patch.wrapperPid])
-    }
-    if (patch.childPid !== undefined) {
-      entries.push(['child_pid', patch.childPid])
-    }
-    if (patch.harnessSessionJson !== undefined) {
-      entries.push(['harness_session_json', serializeJson(patch.harnessSessionJson)])
-    }
-    if (patch.continuation !== undefined) {
-      entries.push(['continuation_json', serializeJson(patch.continuation)])
-    }
-    if (patch.wrapperStartedAt !== undefined) {
-      entries.push(['wrapper_started_at', patch.wrapperStartedAt])
-    }
-    if (patch.childStartedAt !== undefined) {
-      entries.push(['child_started_at', patch.childStartedAt])
-    }
-    if (patch.exitedAt !== undefined) {
-      entries.push(['exited_at', patch.exitedAt])
-    }
-    if (patch.exitCode !== undefined) {
-      entries.push(['exit_code', patch.exitCode])
-    }
-    if (patch.signal !== undefined) {
-      entries.push(['signal', patch.signal])
-    }
-    if (patch.status !== undefined) {
-      entries.push(['status', patch.status])
-    }
-    if (patch.createdAt !== undefined) {
-      entries.push(['created_at', patch.createdAt])
-    }
-    if (patch.updatedAt !== undefined) {
-      entries.push(['updated_at', patch.updatedAt])
-    }
+    const entries = collectPatchEntries(patch, LAUNCH_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByLaunchId(launchId)
@@ -3578,6 +3507,33 @@ export type RuntimeOperationUpdatePatch = Partial<
   Omit<HrcRuntimeOperationRecord, 'operationId' | 'createdAt'>
 >
 
+const RUNTIME_OPERATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeOperationUpdatePatch>> = [
+  { key: 'runtimeId', column: 'runtime_id' },
+  { key: 'runId', column: 'run_id', transform: nullableTransform },
+  { key: 'hostSessionId', column: 'host_session_id' },
+  { key: 'generation', column: 'generation' },
+  { key: 'operationKind', column: 'operation_kind' },
+  { key: 'controller', column: 'controller' },
+  { key: 'compileId', column: 'compile_id', transform: nullableTransform },
+  { key: 'planHash', column: 'plan_hash', transform: nullableTransform },
+  { key: 'selectedProfileId', column: 'selected_profile_id', transform: nullableTransform },
+  { key: 'selectedProfileHash', column: 'selected_profile_hash', transform: nullableTransform },
+  { key: 'startupMethod', column: 'startup_method' },
+  { key: 'turnDelivery', column: 'turn_delivery', transform: nullableTransform },
+  { key: 'status', column: 'status' },
+  { key: 'routeDecisionJson', column: 'route_decision_json' },
+  {
+    key: 'capabilityResolutionJson',
+    column: 'capability_resolution_json',
+    transform: nullableTransform,
+  },
+  { key: 'startedAt', column: 'started_at', transform: nullableTransform },
+  { key: 'completedAt', column: 'completed_at', transform: nullableTransform },
+  { key: 'updatedAt', column: 'updated_at' },
+  { key: 'errorCode', column: 'error_code', transform: nullableTransform },
+  { key: 'errorMessage', column: 'error_message', transform: nullableTransform },
+]
+
 export class RuntimeOperationRepository {
   constructor(private readonly db: Database) {}
 
@@ -3666,34 +3622,7 @@ export class RuntimeOperationRepository {
     operationId: string,
     patch: RuntimeOperationUpdatePatch
   ): HrcRuntimeOperationRecord | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-
-    if (patch.runtimeId !== undefined) entries.push(['runtime_id', patch.runtimeId])
-    if (patch.runId !== undefined) entries.push(['run_id', patch.runId ?? null])
-    if (patch.hostSessionId !== undefined) entries.push(['host_session_id', patch.hostSessionId])
-    if (patch.generation !== undefined) entries.push(['generation', patch.generation])
-    if (patch.operationKind !== undefined) entries.push(['operation_kind', patch.operationKind])
-    if (patch.controller !== undefined) entries.push(['controller', patch.controller])
-    if (patch.compileId !== undefined) entries.push(['compile_id', patch.compileId ?? null])
-    if (patch.planHash !== undefined) entries.push(['plan_hash', patch.planHash ?? null])
-    if (patch.selectedProfileId !== undefined)
-      entries.push(['selected_profile_id', patch.selectedProfileId ?? null])
-    if (patch.selectedProfileHash !== undefined)
-      entries.push(['selected_profile_hash', patch.selectedProfileHash ?? null])
-    if (patch.startupMethod !== undefined) entries.push(['startup_method', patch.startupMethod])
-    if (patch.turnDelivery !== undefined)
-      entries.push(['turn_delivery', patch.turnDelivery ?? null])
-    if (patch.status !== undefined) entries.push(['status', patch.status])
-    if (patch.routeDecisionJson !== undefined)
-      entries.push(['route_decision_json', patch.routeDecisionJson])
-    if (patch.capabilityResolutionJson !== undefined)
-      entries.push(['capability_resolution_json', patch.capabilityResolutionJson ?? null])
-    if (patch.startedAt !== undefined) entries.push(['started_at', patch.startedAt ?? null])
-    if (patch.completedAt !== undefined) entries.push(['completed_at', patch.completedAt ?? null])
-    if (patch.updatedAt !== undefined) entries.push(['updated_at', patch.updatedAt])
-    if (patch.errorCode !== undefined) entries.push(['error_code', patch.errorCode ?? null])
-    if (patch.errorMessage !== undefined)
-      entries.push(['error_message', patch.errorMessage ?? null])
+    const entries = collectPatchEntries(patch, RUNTIME_OPERATION_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByOperationId(operationId)
@@ -3713,6 +3642,57 @@ export class RuntimeOperationRepository {
 export type BrokerInvocationUpdatePatch = Partial<
   Omit<HrcBrokerInvocationRecord, 'invocationId' | 'createdAt'>
 >
+
+const BROKER_INVOCATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<BrokerInvocationUpdatePatch>> = [
+  { key: 'operationId', column: 'operation_id' },
+  { key: 'runtimeId', column: 'runtime_id' },
+  { key: 'runId', column: 'run_id', transform: nullableTransform },
+  { key: 'brokerProtocol', column: 'broker_protocol' },
+  { key: 'brokerDriver', column: 'broker_driver' },
+  { key: 'brokerPid', column: 'broker_pid', transform: nullableTransform },
+  { key: 'childPid', column: 'child_pid', transform: nullableTransform },
+  { key: 'invocationState', column: 'invocation_state' },
+  { key: 'capabilitiesJson', column: 'capabilities_json' },
+  { key: 'continuationJson', column: 'continuation_json', transform: nullableTransform },
+  {
+    key: 'brokerContinuationJson',
+    column: 'broker_continuation_json',
+    transform: nullableTransform,
+  },
+  { key: 'specHash', column: 'spec_hash' },
+  { key: 'startRequestHash', column: 'start_request_hash' },
+  { key: 'selectedProfileHash', column: 'selected_profile_hash' },
+  { key: 'specProjectionJson', column: 'spec_projection_json', transform: nullableTransform },
+  {
+    key: 'startRequestProjectionJson',
+    column: 'start_request_projection_json',
+    transform: nullableTransform,
+  },
+  { key: 'lastEventSeq', column: 'last_event_seq', transform: nullableTransform },
+  {
+    key: 'ownerServerInstanceId',
+    column: 'owner_server_instance_id',
+    transform: nullableTransform,
+  },
+  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash', transform: nullableTransform },
+  {
+    key: 'currentHarnessGeneration',
+    column: 'current_harness_generation',
+    transform: nullableTransform,
+  },
+  { key: 'currentTurnAttempt', column: 'current_turn_attempt', transform: nullableTransform },
+  {
+    key: 'lifecycleTerminalReason',
+    column: 'lifecycle_terminal_reason',
+    transform: nullableTransform,
+  },
+  {
+    key: 'lastLifecycleEscalationJson',
+    column: 'last_lifecycle_escalation_json',
+    transform: nullableTransform,
+  },
+  { key: 'updatedAt', column: 'updated_at' },
+]
 
 export class BrokerInvocationRepository {
   constructor(private readonly db: Database) {}
@@ -3810,47 +3790,7 @@ export class BrokerInvocationRepository {
     invocationId: string,
     patch: BrokerInvocationUpdatePatch
   ): HrcBrokerInvocationRecord | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-
-    if (patch.operationId !== undefined) entries.push(['operation_id', patch.operationId])
-    if (patch.runtimeId !== undefined) entries.push(['runtime_id', patch.runtimeId])
-    if (patch.runId !== undefined) entries.push(['run_id', patch.runId ?? null])
-    if (patch.brokerProtocol !== undefined) entries.push(['broker_protocol', patch.brokerProtocol])
-    if (patch.brokerDriver !== undefined) entries.push(['broker_driver', patch.brokerDriver])
-    if (patch.brokerPid !== undefined) entries.push(['broker_pid', patch.brokerPid ?? null])
-    if (patch.childPid !== undefined) entries.push(['child_pid', patch.childPid ?? null])
-    if (patch.invocationState !== undefined)
-      entries.push(['invocation_state', patch.invocationState])
-    if (patch.capabilitiesJson !== undefined)
-      entries.push(['capabilities_json', patch.capabilitiesJson])
-    if (patch.continuationJson !== undefined)
-      entries.push(['continuation_json', patch.continuationJson ?? null])
-    if (patch.brokerContinuationJson !== undefined)
-      entries.push(['broker_continuation_json', patch.brokerContinuationJson ?? null])
-    if (patch.specHash !== undefined) entries.push(['spec_hash', patch.specHash])
-    if (patch.startRequestHash !== undefined)
-      entries.push(['start_request_hash', patch.startRequestHash])
-    if (patch.selectedProfileHash !== undefined)
-      entries.push(['selected_profile_hash', patch.selectedProfileHash])
-    if (patch.specProjectionJson !== undefined)
-      entries.push(['spec_projection_json', patch.specProjectionJson ?? null])
-    if (patch.startRequestProjectionJson !== undefined)
-      entries.push(['start_request_projection_json', patch.startRequestProjectionJson ?? null])
-    if (patch.lastEventSeq !== undefined)
-      entries.push(['last_event_seq', patch.lastEventSeq ?? null])
-    if (patch.ownerServerInstanceId !== undefined)
-      entries.push(['owner_server_instance_id', patch.ownerServerInstanceId ?? null])
-    if (patch.lifecyclePolicyHash !== undefined)
-      entries.push(['lifecycle_policy_hash', patch.lifecyclePolicyHash ?? null])
-    if (patch.currentHarnessGeneration !== undefined)
-      entries.push(['current_harness_generation', patch.currentHarnessGeneration ?? null])
-    if (patch.currentTurnAttempt !== undefined)
-      entries.push(['current_turn_attempt', patch.currentTurnAttempt ?? null])
-    if (patch.lifecycleTerminalReason !== undefined)
-      entries.push(['lifecycle_terminal_reason', patch.lifecycleTerminalReason ?? null])
-    if (patch.lastLifecycleEscalationJson !== undefined)
-      entries.push(['last_lifecycle_escalation_json', patch.lastLifecycleEscalationJson ?? null])
-    if (patch.updatedAt !== undefined) entries.push(['updated_at', patch.updatedAt])
+    const entries = collectPatchEntries(patch, BROKER_INVOCATION_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByInvocationId(invocationId)
@@ -3909,6 +3849,20 @@ export class BrokerInvocationEventConflictError extends Error {
     this.name = 'BrokerInvocationEventConflictError'
   }
 }
+
+type BrokerInvocationEventProjectionUpdate = {
+  hrcEventSeq?: number | undefined
+  projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
+  projectionError?: string | undefined
+}
+
+const BROKER_INVOCATION_EVENT_PROJECTION_SPEC: ReadonlyArray<
+  PatchEntrySpec<BrokerInvocationEventProjectionUpdate>
+> = [
+  { key: 'hrcEventSeq', column: 'hrc_event_seq', transform: nullableTransform },
+  { key: 'projectionStatus', column: 'projection_status' },
+  { key: 'projectionError', column: 'projection_error', transform: nullableTransform },
+]
 
 export class BrokerInvocationEventRepository {
   private readonly appendInTransaction: (
@@ -4028,19 +3982,9 @@ export class BrokerInvocationEventRepository {
   updateProjection(
     invocationId: string,
     seq: number,
-    update: {
-      hrcEventSeq?: number | undefined
-      projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
-      projectionError?: string | undefined
-    }
+    update: BrokerInvocationEventProjectionUpdate
   ): HrcBrokerInvocationEventRecord | null {
-    const entries: Array<[column: string, value: string | number | null]> = []
-    if (update.hrcEventSeq !== undefined)
-      entries.push(['hrc_event_seq', update.hrcEventSeq ?? null])
-    if (update.projectionStatus !== undefined)
-      entries.push(['projection_status', update.projectionStatus])
-    if (update.projectionError !== undefined)
-      entries.push(['projection_error', update.projectionError ?? null])
+    const entries = collectPatchEntries(update, BROKER_INVOCATION_EVENT_PROJECTION_SPEC)
 
     if (entries.length === 0) {
       return this.getByInvocationAndSeq(invocationId, seq)

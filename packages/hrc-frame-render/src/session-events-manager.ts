@@ -1,5 +1,4 @@
 import { createLogger } from './logger.js'
-import { SESSION_METADATA_EVENT_TYPES } from './types.js'
 import type {
   GatewaySessionEvent,
   PermissionAction,
@@ -9,6 +8,27 @@ import type {
 
 const log = createLogger({ component: 'hrc-frame-render' })
 
+const TITLE_MAX_LEN = 100
+const TOOL_SUMMARY_MAX_LEN = 80
+const EMPTY_JSON_LEN = 2
+
+type MediaRef = {
+  url: string
+  mimeType?: string | undefined
+  filename?: string | undefined
+  alt?: string | undefined
+}
+
+type ToolResultContentBlock = {
+  type: string
+  text?: string | undefined
+  data?: string | undefined
+  mimeType?: string | undefined
+  url?: string | undefined
+  filename?: string | undefined
+  alt?: string | undefined
+}
+
 interface ToolExecution {
   toolUseId: string
   toolName: string
@@ -17,14 +37,7 @@ interface ToolExecution {
   seq: number
   output?: string | undefined
   images?: Array<{ data: string; mimeType: string }> | undefined
-  mediaRefs?:
-    | Array<{
-        url: string
-        mimeType?: string | undefined
-        filename?: string | undefined
-        alt?: string | undefined
-      }>
-    | undefined
+  mediaRefs?: MediaRef[] | undefined
 }
 
 export interface AssistantSegment {
@@ -73,12 +86,6 @@ interface ProjectState {
   projectId: string
   runs: Map<string, RunState>
   focusedRunId?: string | undefined
-}
-
-const SESSION_METADATA_EVENT_TYPE_SET: ReadonlySet<string> = new Set(SESSION_METADATA_EVENT_TYPES)
-
-function isSessionMetadataEvent(event: GatewaySessionEvent): boolean {
-  return SESSION_METADATA_EVENT_TYPE_SET.has(event.type)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -477,34 +484,13 @@ function processEvent(
       const toolIndex = run.toolExecutions.findIndex((tool) => tool.toolUseId === event.toolUseId)
       let output = ''
       const images: Array<{ data: string; mimeType: string }> = []
-      const mediaRefs: Array<{
-        url: string
-        mimeType?: string | undefined
-        filename?: string | undefined
-        alt?: string | undefined
-      }> = []
+      const mediaRefs: MediaRef[] = []
 
       const result = event.result as {
-        content?: Array<{
-          type: string
-          text?: string | undefined
-          data?: string | undefined
-          mimeType?: string | undefined
-          url?: string | undefined
-          filename?: string | undefined
-          alt?: string | undefined
-        }>
+        content?: ToolResultContentBlock[]
         details?:
           | {
-              content?: Array<{
-                type: string
-                text?: string | undefined
-                data?: string | undefined
-                mimeType?: string | undefined
-                url?: string | undefined
-                filename?: string | undefined
-                alt?: string | undefined
-              }>
+              content?: ToolResultContentBlock[]
             }
           | undefined
       }
@@ -608,9 +594,7 @@ function processEvent(
     }
 
     default:
-      if (isSessionMetadataEvent(event)) {
-        break
-      }
+      // Session-metadata events (and any other unhandled types) are known-but-ignored.
       break
   }
 
@@ -641,22 +625,23 @@ function titleFor(phase: RenderFrame['phase'], inputContent: string): string {
     return emoji
   }
   const oneLine = trimmed.replace(/\s+/g, ' ')
-  const truncated = oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine
+  const truncated =
+    oneLine.length > TITLE_MAX_LEN ? `${oneLine.slice(0, TITLE_MAX_LEN)}...` : oneLine
   return `${emoji} ${truncated}`
 }
 
-function formatToolSummary(_toolName: string, toolInput: Record<string, unknown>): string {
+function formatToolSummary(toolInput: Record<string, unknown>): string {
   const truncate = (value: string, max: number) =>
     value.length > max ? `${value.slice(0, max)}...` : value
 
   for (const value of Object.values(toolInput)) {
     if (typeof value === 'string' && value.length > 0) {
-      return `\`${truncate(value, 80)}\``
+      return `\`${truncate(value, TOOL_SUMMARY_MAX_LEN)}\``
     }
   }
 
   const json = JSON.stringify(toolInput)
-  return json.length > 2 ? truncate(json, 80) : ''
+  return json.length > EMPTY_JSON_LEN ? truncate(json, TOOL_SUMMARY_MAX_LEN) : ''
 }
 
 type TimelineEntry = { seq: number; block: RenderFrame['blocks'][number] }
@@ -667,7 +652,7 @@ function toolBlocks(run: RunState): TimelineEntry[] {
     block: {
       t: 'tool',
       toolName: tool.toolName,
-      summary: formatToolSummary(tool.toolName, tool.input),
+      summary: formatToolSummary(tool.input),
       input: tool.input,
       output: tool.output,
       images: tool.images,
@@ -676,18 +661,8 @@ function toolBlocks(run: RunState): TimelineEntry[] {
   }))
 }
 
-function collectMediaRefs(run: RunState): Array<{
-  url: string
-  mimeType?: string | undefined
-  filename?: string | undefined
-  alt?: string | undefined
-}> {
-  const allMediaRefs: Array<{
-    url: string
-    mimeType?: string | undefined
-    filename?: string | undefined
-    alt?: string | undefined
-  }> = []
+function collectMediaRefs(run: RunState): MediaRef[] {
+  const allMediaRefs: MediaRef[] = []
   for (const tool of run.toolExecutions) {
     if (tool.mediaRefs && tool.mediaRefs.length > 0) {
       allMediaRefs.push(...tool.mediaRefs)
@@ -747,7 +722,7 @@ function progressPlaceholder(
   if (runningTool) {
     return {
       t: 'markdown',
-      md: formatToolSummary(runningTool.toolName, runningTool.input),
+      md: formatToolSummary(runningTool.input),
     }
   }
   return { t: 'markdown', md: '...' }
@@ -763,9 +738,7 @@ function mediaRefBlocks(run: RunState): RenderFrame['blocks'] {
   }))
 }
 
-export function runStateToFrame(run: RunState): RenderFrame {
-  const phase = STATUS_TO_PHASE[run.status]
-
+function buildOrderedBlocks(run: RunState, phase: RenderFrame['phase']): RenderFrame['blocks'] {
   const timelineBlocks = [...toolBlocks(run), ...noticeBlocks(run)]
   const segments = segmentBlocks(run)
 
@@ -785,12 +758,23 @@ export function runStateToFrame(run: RunState): RenderFrame {
 
   blocks.push(...mediaRefBlocks(run))
 
-  const actions = run.permissionRequest?.actions.map((action) => ({
+  return blocks
+}
+
+function buildActions(run: RunState): RenderFrame['actions'] {
+  return run.permissionRequest?.actions.map((action) => ({
     id: action.id,
     kind: action.kind,
     label: action.label,
     style: action.style,
   }))
+}
+
+export function runStateToFrame(run: RunState): RenderFrame {
+  const phase = STATUS_TO_PHASE[run.status]
+
+  const blocks = buildOrderedBlocks(run, phase)
+  const actions = buildActions(run)
 
   return {
     runId: run.runId,

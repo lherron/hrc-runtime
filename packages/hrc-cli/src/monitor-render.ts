@@ -1,6 +1,7 @@
 import { parseScopeRef } from 'agent-scope'
 import chalk from 'chalk'
 import type { HrcEventCategory, HrcLifecycleEvent } from 'hrc-core'
+import { booleanField, numberField, stringField } from './monitor-fields.js'
 
 export type MonitorOutputFormat = 'tree' | 'compact' | 'verbose' | 'json' | 'ndjson'
 
@@ -1019,21 +1020,6 @@ function countLines(value: string): number {
 
 function millisToSeconds(value: number | undefined): number | undefined {
   return value === undefined ? undefined : value / 1000
-}
-
-function stringField(event: Record<string, unknown>, key: string): string | undefined {
-  const value = event[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function numberField(event: Record<string, unknown>, key: string): number | undefined {
-  const value = event[key]
-  return typeof value === 'number' ? value : undefined
-}
-
-function booleanField(event: Record<string, unknown>, key: string): boolean | undefined {
-  const value = event[key]
-  return typeof value === 'boolean' ? value : undefined
 }
 
 function stripAnsi(value: string): string {

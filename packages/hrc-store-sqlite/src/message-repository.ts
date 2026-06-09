@@ -115,6 +115,45 @@ function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void
   db.prepare<never, SQLQueryBindings[]>(sql).run(...params)
 }
 
+/** Maps a defined patch field to its SQL column for {@link collectSetClause}. */
+type PatchColumnSpec<P> = { readonly key: keyof P & string; readonly column: string }
+
+/**
+ * Build the `SET col = ?, …` clause + bound values for every patch field that
+ * is not `undefined`, in spec order. Behavior-preserving replacement for the
+ * hand-rolled `if (patch.x !== undefined) { sets.push(...); values.push(...) }`
+ * ladder.
+ */
+function collectSetClause<P>(
+  patch: P,
+  specs: ReadonlyArray<PatchColumnSpec<P>>
+): { sets: string[]; values: SQLQueryBindings[] } {
+  const sets: string[] = []
+  const values: SQLQueryBindings[] = []
+  for (const { key, column } of specs) {
+    const value = patch[key]
+    if (value !== undefined) {
+      sets.push(`${column} = ?`)
+      values.push(value as SQLQueryBindings)
+    }
+  }
+  return { sets, values }
+}
+
+const MESSAGE_EXECUTION_UPDATE_SPEC: ReadonlyArray<PatchColumnSpec<Partial<HrcMessageExecution>>> =
+  [
+    { key: 'state', column: 'execution_state' },
+    { key: 'mode', column: 'execution_mode' },
+    { key: 'sessionRef', column: 'session_ref' },
+    { key: 'hostSessionId', column: 'host_session_id' },
+    { key: 'generation', column: 'generation' },
+    { key: 'runtimeId', column: 'runtime_id' },
+    { key: 'runId', column: 'run_id' },
+    { key: 'transport', column: 'transport' },
+    { key: 'errorCode', column: 'error_code' },
+    { key: 'errorMessage', column: 'error_message' },
+  ]
+
 export class MessageRepository {
   private readonly insertInTransaction: (input: MessageInsertInput) => HrcMessageRecord
 
@@ -281,49 +320,7 @@ export class MessageRepository {
   }
 
   updateExecution(messageId: string, patch: Partial<HrcMessageExecution>): void {
-    const sets: string[] = []
-    const values: SQLQueryBindings[] = []
-
-    if (patch.state !== undefined) {
-      sets.push('execution_state = ?')
-      values.push(patch.state)
-    }
-    if (patch.mode !== undefined) {
-      sets.push('execution_mode = ?')
-      values.push(patch.mode)
-    }
-    if (patch.sessionRef !== undefined) {
-      sets.push('session_ref = ?')
-      values.push(patch.sessionRef)
-    }
-    if (patch.hostSessionId !== undefined) {
-      sets.push('host_session_id = ?')
-      values.push(patch.hostSessionId)
-    }
-    if (patch.generation !== undefined) {
-      sets.push('generation = ?')
-      values.push(patch.generation)
-    }
-    if (patch.runtimeId !== undefined) {
-      sets.push('runtime_id = ?')
-      values.push(patch.runtimeId)
-    }
-    if (patch.runId !== undefined) {
-      sets.push('run_id = ?')
-      values.push(patch.runId)
-    }
-    if (patch.transport !== undefined) {
-      sets.push('transport = ?')
-      values.push(patch.transport)
-    }
-    if (patch.errorCode !== undefined) {
-      sets.push('error_code = ?')
-      values.push(patch.errorCode)
-    }
-    if (patch.errorMessage !== undefined) {
-      sets.push('error_message = ?')
-      values.push(patch.errorMessage)
-    }
+    const { sets, values } = collectSetClause(patch, MESSAGE_EXECUTION_UPDATE_SPEC)
 
     if (sets.length === 0) return
 

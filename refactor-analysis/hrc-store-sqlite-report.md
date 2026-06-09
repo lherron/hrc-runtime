@@ -1,126 +1,116 @@
-# Refactor Analysis — `packages/hrc-store-sqlite/src`
+# Refactor Analysis — `packages/hrc-store-sqlite`
 
-Date: 2026-06-07
-Methodology: SOLID violations, code smells, complexity (analysis only, no edits)
+Behavior-preserving refactor audit. Report only; no source edited.
 
-## Scope
+Scope inspected (non-test):
+- `src/repositories.ts` — 4228 lines, 21 exported repository classes + shared helpers/mappers
+- `src/migrations.ts` — 1277 lines, migration registry + runner
+- `src/message-repository.ts` — 333 lines
+- `src/migrations/legacy-hrc-event-backfill.ts` — 146 lines
+- `src/database.ts` — 109 lines, factory + `HrcDatabase` facade type
+- `src/index.ts` — 26 lines, public re-exports
 
-Production source (excluding `__tests__/`): **6,119 lines** across 5 files.
+Test coverage: 15 test files in `src/__tests__/` exercise the repositories broadly
+(store.test, broker-persistence, hrc-events, messages, surface-bindings, app-sessions,
+continuity-chain, fk-rejection, json-corruption/crash, generation-isolation,
+lifecycle-persistence, local-bridges, etc.). Tests import only the public surface
+(`from '../repositories'`, `from '../database'`), so private intra-file helpers are
+safe to extract/rename without touching tests.
 
-| File | Lines | Role |
-| --- | --- | --- |
-| `repositories.ts` | 4,246 | **All 20 repository classes** + row types + column-list constants + row-mapper functions |
-| `migrations.ts` | 1,405 | 22 migration definitions + legacy HRC-event backfill normalization logic |
-| `message-repository.ts` | 333 | `MessageRepository` (cleanly separated, the model for the rest) |
-| `database.ts` | 109 | `openHrcDatabase` factory + `HrcDatabase` facade type |
-| `index.ts` | 26 | Public barrel re-exports |
-
-Test view: 15 test files, **6,982 lines** of tests — coverage is broad but tied to the monolithic file (no per-repository test module boundary).
-
-The package is a textbook SQLite repository layer. The code is *consistent and disciplined* within each unit (column-list constants centralize SELECTs; mappers are pure; `buildSetClause` factors PATCH assembly). The dominant problem is not local quality — it is **file-level SRP**: one 4,246-line module holds 20 unrelated aggregate repositories.
+---
 
 ## SOLID Scorecard
 
-| Principle | Status | Notes |
-| --- | --- | --- |
-| **S — SRP** | 🔴 red | `repositories.ts` (4,246 LOC) bundles 20 repository classes for 20 distinct aggregates; `migrations.ts` (1,405 LOC) mixes migration registry with ~700 LOC of legacy-event backfill normalization. |
-| **O — OCP** | 🟢 green | No type-keyed switch chains in business logic. The repeated `if (patch.x !== undefined)` update builders are mechanical column mapping, not behavioral branching. Migration list is append-only (open for extension). |
-| **L — LSP** | 🟢 green | No inheritance hierarchies, no overrides, no `throw "not implemented"`, no type-checks-before-call. Repositories are flat siblings. |
-| **I — ISP** | 🟡 yellow | The `HrcDatabase` facade type exposes 22 repository members; consumers depend on the whole surface. Individual repository classes are appropriately small and focused. The DI seam is the whole DB object, not interfaces. |
-| **D — DIP** | 🟡 yellow | `openHrcDatabase` hard-`new`s all 20 concrete repositories (acceptable for a composition root). But the repositories are concrete classes with no extracted interface, so downstream code (hrc-server) couples to concrete types; testing requires a real `bun:sqlite` Database, not a seam. |
+| Principle | Grade | Notes |
+|-----------|-------|-------|
+| **S** — Single Responsibility | **C** | `repositories.ts` is one 4228-line file holding 21 distinct table repositories + all row types + all mappers + all SQL helpers. Per-method SRP is good (most methods are small, one SQL op). The file itself is the violation: effectively 21 modules glued together. `migrations.ts` (1277 lines) similarly concatenates 22 migration definitions + the runner. |
+| **O** — Open/Closed | **B** | Largely additive: new table = new repo class; new migration = new const + array entry. No growing type-keyed switch chains in business logic. The `update(patch)` methods are long `if (patch.x !== undefined)` ladders that grow per column — a data-mapping ladder, not an OCP polymorphism gap. |
+| **L** — Liskov | **A** | No inheritance among repositories (all flat, constructor-injected `db`). `BrokerInvocationEventConflictError extends Error` is faithful. No "not implemented"/no-op overrides. |
+| **I** — Interface Segregation | **A−** | No fat interfaces. `HrcDatabase` is a record-of-repositories facade (24 members) but a composition root, not an interface implementors must stub. Each repo exposes a small, cohesive method set (mostly 3–8 methods). |
+| **D** — Dependency Inversion | **B** | Repositories take `Database` via constructor (good seam). `openHrcDatabase` `new`s every concrete repo — acceptable composition root. `new Date().toISOString()` inline in `MessageRepository.insert` and `runMigrations` (un-injected clock); minor testability gap, behavior-correct. |
+
+---
 
 ## Priority Refactorings
 
-Ranked by impact × confidence.
+### P1 — Split `repositories.ts` (4228 lines) into per-domain modules
+- **Location:** `src/repositories.ts:1-4228` (21 classes: `ContinuityRepository`@982, `SessionRepository`@1080, `AppSessionRepository`@1237, `AppManagedSessionRepository`@1416, `RuntimeRepository`@1556, `RunRepository`@1869, `LaunchRepository`@2097, `EventRepository`@2339, `HrcLifecycleEventRepository`@2462, `LocalBridgeRepository`@2654, `SurfaceBindingRepository`@2743, `ActiveInputDeliveryRepository`@2849, `RuntimeBufferRepository`@3021, broker cluster `LifecyclePolicyRepository`@3474 … `PermissionDecisionRepository`@4134).
+- **Principle/smell:** SRP / long file / low cohesion in one compilation unit.
+- **Current:** All row types, `*_COLUMNS` constants, mappers, shared SQL helpers, and 21 repository classes live in a single file.
+- **Suggested:** Carve into cohesive modules — e.g. `repositories/sql-helpers.ts` (execute, buildSetClause, buildEventWhere, buildLifecycleWhere, parseJson, serializeJson, requireRecord, boolean/sessionRef helpers), `repositories/session.ts`, `repositories/runtime.ts`, `repositories/run.ts`, `repositories/launch.ts`, `repositories/events.ts`, `repositories/broker.ts`, etc. Keep `repositories.ts` (or `repositories/index.ts`) as a barrel re-exporting the exact symbols `index.ts`/`database.ts` already consume, so the package's exported surface stays byte-identical.
+- **Risk:** **Med** — large multi-file move; high chance of an import/cycle slip mid-flight while N packages refactor in parallel.
+- **API-impact:** **public-surface** — these classes/types are re-exported by `index.ts`. A barrel keeps it behavior-preserving, but the operation is large and ambiguous enough to need human sign-off.
+- **Effort:** Large (mechanical but wide).
+- **Tests:** Existing 15 suites import only public names; with the barrel they stay green. Run full `hrc-store-sqlite` suite + global typecheck (`hrc-server` consumes the barrel).
+- **Disposition:** **DEFER.**
 
-### 1. Split `repositories.ts` into per-aggregate modules (SRP)
-- **Location:** `repositories.ts:886-4244` (all 20 exported repository classes)
-- **Principle:** S (SRP) — one module, 20 reasons to change
-- **Current:** A single 4,246-line file holds `ContinuityRepository`, `SessionRepository`, `AppSessionRepository`, `AppManagedSessionRepository`, `RuntimeRepository`, `RunRepository`, `LaunchRepository`, `EventRepository`, `HrcLifecycleEventRepository`, `LocalBridgeRepository`, `SurfaceBindingRepository`, `ActiveInputDeliveryRepository`, `RuntimeBufferRepository`, plus the 6 broker-persistence repositories. Every column-list constant, row type, and mapper is co-located.
-- **Suggested:** One file per aggregate (`session-repository.ts`, `runtime-repository.ts`, `run-repository.ts`, `launch-repository.ts`, `event-repository.ts`, `hrc-lifecycle-event-repository.ts`, `app-session-repository.ts`, `local-bridge-repository.ts`, `surface-binding-repository.ts`, `active-input-delivery-repository.ts`, `runtime-buffer-repository.ts`, and a `broker/` subfolder for the 6 broker repos). Keep `repositories.ts` (or `index`) as a barrel re-export so the public API is byte-identical. Move shared helpers (`serializeJson`, `parseJson`, `parseRequiredJson`, `buildSetClause`, `requireRecord`, `execute`, `to/fromSqliteBoolean`, `toSessionRef`, `allocateStreamSeq`) into a `shared.ts`/`sql-helpers.ts`.
-- **Risk:** medium (large mechanical move; risk is import-path churn and accidental symbol drops, mitigated by the barrel + the existing 6,982-line test suite)
-- **Effort:** L (1–2 days, mostly mechanical)
-- **API-preserving:** yes (barrel keeps every exported symbol's name and signature)
-- **Tests:** existing suite is the regression net; run full `hrc-store-sqlite` suite + a `tsc` check across dependents (`hrc-server`).
+### P2 — Collapse repeated `update(patch)` column-ladders into a shared patch applier
+- **Location:** `RuntimeRepository.update` `src/repositories.ts:1677-1793` (~115 lines, 37 `if` blocks); `RunRepository.update` `:1998-2057`; `LaunchRepository.update` `:2165`+; `RuntimeOperationRepository.update` `:3665`+; `BrokerInvocationRepository.update` `:3809-3867`; `BrokerInvocationEventRepository.updateProjection` `:4028-4058`; `MessageRepository.updateExecution` `src/message-repository.ts:283-332`.
+- **Principle/smell:** Duplicated structural block / long method.
+- **Current:** Each method hand-rolls an `entries: Array<[column, value]>` accumulator with one `if (patch.x !== undefined) entries.push([...])` per column, then funnels through the shared `buildSetClause` + `execute` + reload.
+- **Suggested:** Add a private helper, e.g. `collectPatchEntries(patch, spec)` where `spec` is a per-repo array of `{ key, column, transform? }` (transform handles `serializeJson` / `toSqliteBoolean` / `?? null`). Each `update` shrinks to a `spec` table + the existing empty-guard + `buildSetClause`/`execute` tail. Behavior identical (same columns, same order, same null coercion).
+- **Risk:** **Low** per method; the transform-bearing fields (runtime `tmuxJson`/`adopted`, etc.) need careful spec entries, so do them one at a time and diff bound values.
+- **API-impact:** **internal-only** — method signatures unchanged; helper private.
+- **Effort:** Medium (simple-value `update`s trivial; `RuntimeRepository.update` with JSON/boolean transforms is the careful one).
+- **Tests:** `store.lifecycle-persistence`, `store.broker-persistence`, `store.test`, `store.messages`. Re-run after each method.
+- **Disposition:** **APPLY** (low/internal). Apply pure simple-value methods first (`RunRepository.update`, `RuntimeOperationRepository.update`); transform-bearing ones only if the spec faithfully reproduces the transforms.
 
-### 2. Extract the legacy-event backfill logic out of `migrations.ts` (SRP)
-- **Location:** `migrations.ts:432-1140` (`parseLegacyEventJson`, `isRecord`, `readLifecycleTransport`, `categoryForLegacyHrcEventKind`, `normalizeLegacyHrcPayload`, `computeMigrationPermissionIdentityKey`, and the backfill migration body)
-- **Principle:** S (SRP) — schema registry vs. data-transformation logic in one file
-- **Current:** ~700 LOC of legacy HRC-event payload parsing/normalization (a one-time data migration concern) is interleaved with the 22 schema-DDL migration definitions and the migration runner.
-- **Suggested:** Move the legacy backfill normalization helpers into `migrations/legacy-hrc-event-backfill.ts`; keep `migrations.ts` as the registry (`phase1Migrations`) + runner (`runMigrations`, `listAppliedMigrations`, `ensureMigrationTable`). Optionally split each large DDL migration into its own file under `migrations/`.
-- **Risk:** low (pure function moves; the backfill helpers are internal, not exported from the package barrel)
-- **Effort:** M
-- **API-preserving:** yes (none of these helpers are re-exported via `index.ts`)
-- **Tests:** `store.json-corruption`, `store.json-parse-crash`, and lifecycle-persistence tests cover the normalization paths.
+### P3 — Extract shared "insert-then-reload" tail for verbatim column INSERTs
+- **Location:** `RuntimeRepository.insert` `:1559-1646`, `LaunchRepository.insert` `:2100-2157`, `BrokerInvocationRepository.insert` `:3720-3787`, `RuntimeOperationRepository.insert` `:3584-3643`, `RuntimeArtifactRepository.insert` `:4064`, `PermissionDecisionRepository.insert` `:4137`.
+- **Principle/smell:** Repeated boilerplate (`execute(INSERT …)` → `requireRecord(this.getByX(id), 'failed to reload …')`).
+- **Current:** Each insert writes the literal column list + `VALUES(?,…)` then reloads via its own `getByX` + `requireRecord`.
+- **Suggested:** Keep the explicit INSERT column lists (the write contract — order must stay pinned). The `execute(...) ; return requireRecord(this.getBy…(id), msg)` tail is mechanically identical and could be a tiny private `insertAndReload` helper, or left as-is.
+- **Risk:** **Low.**
+- **API-impact:** **internal-only.**
+- **Effort:** Small.
+- **Tests:** insert paths covered by nearly every suite.
+- **Disposition:** **APPLY** only if it de-duplicates without obscuring the column contract; otherwise leave. Marginal/optional.
 
-### 3. Extract a `RepositoryUpdateBuilder` / patch-mapping table to collapse the `if (patch.x !== undefined)` runs (DRY / readability)
-- **Location:** `repositories.ts:1581-1697` (`RuntimeRepository.update`, ~116 LOC), `repositories.ts:1902-1961` (`RunRepository.update`), `repositories.ts:2069-2140` (`LaunchRepository.update`), `repositories.ts:3683-3728` (`RuntimeOperationRepository.update`), `repositories.ts:3827-3885` (`BrokerInvocationRepository.update`)
-- **Principle:** S (SRP at the method level — `RuntimeRepository.update` is >50 LOC) + DRY
-- **Current:** Five near-identical update methods, each a long flat sequence of `if (patch.field !== undefined) entries.push(['col', value])`. `RuntimeRepository.update` alone is ~116 lines and maps 35 columns.
-- **Suggested:** Declare a per-table column-mapping descriptor (array of `{ patchKey, column, transform? }`) once, and iterate it to build `entries`. This turns each 50–116-line method into a ~3-line call. `transform` handles the `serializeJson` / `toSqliteBoolean` / `?? null` cases.
-- **Risk:** medium (touches the hot write path; subtle: some columns use `serializeJson`, some use `?? null`, a few `RuntimeOperation`/`BrokerInvocation` fields coerce `undefined→null` while `Runtime` passes the value through — the descriptor must preserve each field's exact coercion)
-- **Effort:** M
-- **API-preserving:** yes (method signatures unchanged; pure internal restructuring)
-- **Tests:** lifecycle-persistence, broker-persistence, generation-isolation suites exercise updates; add explicit per-field round-trip assertions before refactoring.
+### P4 — Migration ID ordering / duplicate-id hazard
+- **Location:** `src/migrations.ts:1209-1232` (`phase1Migrations` array) + `id:` fields: `interactiveSurfaceJsonMigration id:'0015'`@325 declared before `hrcEventsMigration id:'0008'`@353; `runtimeBuffersScopedByRunMigration id:'0010'`@560 and `activeInputDeliveriesMigration id:'0010'`@641 **share id `0010`**; `hrcchatMessagesMigration id:'0007'`@583 ordered after the `0010`s.
+- **Principle/smell:** Hidden invariant / misleading identifiers. `runMigrations` (`:1255-1277`) applies in **array order**, NOT id-sorted, recording each id in `hrc_migrations` (PRIMARY KEY). Duplicate `0010` is latent: a fresh DB applying both `0010`s as pending in one tx would hit a PK conflict; existing DBs survive because they were applied across releases.
+- **Current:** Array order is authoritative; ids are decorative and inconsistent.
+- **Suggested:** Do NOT renumber — renaming a migration id corrupts the applied-set check against existing production/worktree DBs (a behavior change with the shared-worktree blast radius). Best handled as a deliberate migration-aware task: add a unique-id assertion + document that array order is the source of truth. (Even the assertion changes runtime behavior, so out of scope here.)
+- **Risk:** **High** — touches the migration applied-set contract against persisted data.
+- **API-impact:** internal-only by symbol, but **behavior-load-bearing at runtime** against persisted databases.
+- **Effort:** N/A for this pass.
+- **Tests:** migration application is exercised implicitly by every `openHrcDatabase`, but there is no explicit "ids unique / order" guard.
+- **Disposition:** **DEFER** (document only; do not touch).
 
-### 4. Extract repository interfaces to create a DIP/testing seam (DIP / ISP)
-- **Location:** `database.ts:30-57` (`HrcDatabase` facade) + each concrete repository class
-- **Principle:** D (DIP) + I (ISP)
-- **Current:** Repositories are concrete classes; the only injection seam is a live `bun:sqlite` `Database`. Downstream `hrc-server` depends on concrete repository types. There is no way to substitute a fake for unit tests of consumers.
-- **Suggested:** Extract a read-only interface per repository (or at minimum group facade interfaces by domain) and have `HrcDatabase` expose interfaces. Low value if the team is content testing against in-memory `:memory:` SQLite (which is fast and already used). Treat as **optional / debt note**, not urgent.
-- **Risk:** medium (changes the public facade type's member types; could ripple into `hrc-server` type imports)
-- **Effort:** L
-- **API-preserving:** no (changes the exported `HrcDatabase` member types and adds new exported interface symbols)
-- **Tests:** type-level; rely on `tsc` across the workspace.
-
-### 5. De-duplicate the WHERE-builder duplicated between `runQuery` and `listLatestPerSession` (DRY)
-- **Location:** `repositories.ts:2530-2600` (`listLatestPerSession`) and `repositories.ts:2602-2669` (`runQuery`), both in `HrcLifecycleEventRepository`
-- **Principle:** DRY / SRP
-- **Current:** The two methods each contain a ~30-line, near-identical block of `if (filters.x !== undefined) { where.push(...); values.push(...) }` for 9 filter fields. `listLatestPerSession` omits the seq/limit predicates; otherwise the filter assembly is copy-pasted.
-- **Suggested:** Extract a private `buildLifecycleWhere(filters, { includeSeqPredicates })` returning `{ where, values }`. Same pattern recurs in `EventRepository.listFromSeq` vs `EventRepository.count` (`repositories.ts:2301-2371`).
-- **Risk:** low (internal helper; filter semantics are identical between the two callers)
-- **Effort:** S
-- **API-preserving:** yes
-- **Tests:** `store.hrc-events`, `store.hrc-events-latest-per-session` cover both query shapes.
+---
 
 ## Code Smells
 
-| Smell | Location | Detail | Severity |
-| --- | --- | --- | --- |
-| God file | `repositories.ts` (whole) | 4,246 LOC, 20 classes | high |
-| God file | `migrations.ts` (whole) | 1,405 LOC, registry + transform logic | high |
-| Long method | `RuntimeRepository.update` `repositories.ts:1581` | ~116 LOC, 35 columns | high |
-| Long method | `normalizeLegacyHrcPayload` `migrations.ts:479` + backfill body | large destructure + branch logic | medium |
-| Long method | `LaunchRepository.update` `repositories.ts:2069`, `RunRepository.update` `repositories.ts:1902` | >50 LOC each | medium |
-| Duplicated block | `repositories.ts:2530` vs `2602`; `2301` vs `2338` | filter-WHERE assembly copy-pasted | medium |
-| Duplicated structure | 5 `update()` methods + ~13 `insert()` methods | same INSERT/SELECT-back/`requireRecord` shape repeated per table | medium |
-| Long param list | `RunRepository.markCompleted` `repositories.ts:1967` (single options obj — acceptable); `SurfaceBindingRepository.unbind` `repositories.ts:2809` (4 positional) | borderline; options-object style preferred | low |
-| Magic number | `RunRepository.listRuns` default `limit ?? 100` `repositories.ts:1873`; `parseJson` snippet cap `80` `repositories.ts:363`; `busy_timeout = 5000` `database.ts:71` | un-named constants | low |
-| Primitive obsession | `status` columns typed as bare `string` across Runtime/Run/Launch/Session rows | loses the enum the domain types carry | low |
-| Inconsistent return contract | `MessageRepository`/`RuntimeBufferRepository` throw on missing reload; most repos return `null` from getters but throw via `requireRecord` on insert reload | intentional but worth documenting | low |
-| Unchecked cast | `parseJson<T>` returns `JSON.parse(value) as T` `repositories.ts:355` | documented trust-boundary; acceptable, flagged for awareness | low |
+| # | Location | Smell | Note | Risk | API |
+|---|----------|-------|------|------|-----|
+| 1 | `repositories.ts` whole file | Large module (4228 LOC, 21 classes) | See P1 | Med | public-surface |
+| 2 | `RuntimeRepository.update` `:1677-1793` | Long method (~115 lines, 37 ifs) | See P2 | Low | internal |
+| 3 | `RunRepository.update` `:1998-2057` | Duplicated patch-ladder | See P2 | Low | internal |
+| 4 | `BrokerInvocationRepository.update` `:3809-3867` | Duplicated patch-ladder | See P2 | Low | internal |
+| 5 | `MessageRepository.updateExecution` `message-repository.ts:283-332` | Duplicated patch-ladder | Same shape as P2 (separate file) | Low | internal |
+| 6 | `migrations.ts:1209` + ids | Duplicate id `0010`, non-monotonic ids | See P4 | High | runtime data |
+| 7 | `MessageRepository.insert` `message-repository.ts:122` & `runMigrations` `migrations.ts:1271` | Un-injected clock (`new Date().toISOString()`) | Minor DI/testability gap; behavior-correct | Low | internal (defer — injecting a clock alters a signature ⇒ public) |
+| 8 | `repositories.ts` `*_COLUMNS` vs inline INSERT column lists | Mild duplication | Column order pinned twice (SELECT const + INSERT literal). Intentional write contract. | Low | internal |
+| 9 | `parseJson` `:355-369` | `console.error` side-effect in a mapper | Logs corrupt JSON inline; pinned by `store.json-corruption`/`json-parse-crash` — do not change behavior | Low | internal |
+| 10 | `mapAddress` `message-repository.ts:52` | Primitive `as 'human' \| 'system'` cast | Documented pre-validated trust boundary; leave | Low | internal |
 
-## Quick Wins
+No dead code found. No long parameter lists (>4) — wide inputs passed as single options objects. No deep nesting (>=4) — methods early-return. No feature envy across repos.
 
-- Extract `buildLifecycleWhere` helper to kill the duplicated filter blocks in `HrcLifecycleEventRepository` (Refactoring #5) — small, low-risk, API-preserving.
-- Name the magic numbers: `DEFAULT_RUN_LIST_LIMIT = 100`, `JSON_ERROR_SNIPPET_LEN = 80`, `SQLITE_BUSY_TIMEOUT_MS = 5000`.
-- Move the legacy-backfill helpers out of `migrations.ts` (Refactoring #2) — pure internal moves, no public-API impact.
-- Add a top-of-file index comment in `repositories.ts` listing the class order (line-jump aid) until the file is split.
+---
 
-## Technical Debt Notes
+## Quick Wins (safe, internal-only — APPLICABLE)
 
-- The package is internally clean — the debt is *structural granularity*, not local sloppiness. `message-repository.ts` is the proof: it is the same pattern as the others, lives in its own file, and reads fine. The refactor goal is to make every repository look like `message-repository.ts`.
-- The 6 broker-persistence repositories (lines 3102-4244) were added additively (T-01690 W1B) and form a natural sub-package (`broker/`); they are the cleanest candidate to extract first as a self-contained slice.
-- Test files are split by concern (15 files) but all import from the single barrel; after the file split, consider co-locating each test next to its repository module.
-- `runMigrations` wraps all pending migrations in a single transaction (`migrations.ts:1392`) — good. The legacy backfill is the only migration doing heavy row-by-row transformation; isolating it (Refactoring #2) makes its risk surface explicit.
-- No interface seam means consumer unit tests must spin up `:memory:` SQLite. This is fast and arguably fine; only pursue Refactoring #4 if consumer tests start feeling the weight.
+1. **P2 simple-value `update`s** — refactor `RunRepository.update` (`:1998`) and `RuntimeOperationRepository.update` (`:3665`) to a spec-driven `collectPatchEntries` helper. No transforms ⇒ lowest risk, clear readability gain.
+2. **P2 transform-bearing `update`s** — `RuntimeRepository.update` (`:1677`), `LaunchRepository.update` (`:2165`), `BrokerInvocationRepository.update` (`:3809`), `BrokerInvocationEventRepository.updateProjection` (`:4028`), `MessageRepository.updateExecution` (`message-repository.ts:283`): same helper with per-field transform fns. Apply one at a time, diffing bound-value order.
+3. **P3 insert-reload tail** — optional micro-helper for `execute(INSERT) → requireRecord(getBy…)` (keep explicit column lists).
 
-## Safety Checklist
+All Quick Wins are intra-file private helpers; the 15 test suites import only public names and stay untouched.
 
-- [ ] Run the full `hrc-store-sqlite` test suite (15 files) before and after any change; diff results.
-- [ ] After file splits, run `tsc --noEmit` across the workspace (esp. `hrc-server`, `hrc-cli`) to catch broken imports.
-- [ ] Keep `index.ts` / a barrel re-exporting every currently-exported symbol — verify the export list is byte-identical (compare `git diff` of `index.ts` exports).
-- [ ] For Refactoring #3 (update-builder), assert per-field write round-trips first: each table's `update()` must preserve the exact `undefined→null` vs pass-through and `serializeJson`/`toSqliteBoolean` coercion currently applied.
-- [ ] Do not alter SQL column lists or DDL during the move — column constants must travel verbatim.
-- [ ] Verify migration IDs and ordering in `phase1Migrations` are untouched (any reordering corrupts applied-migration tracking).
-- [ ] Restart `hrc-server` after store changes for any live e2e (per repo memory: daemon holds source resident).
+---
+
+## Technical Debt Notes (DEFER — human decision)
+
+- **P1 file split (Med / public-surface):** Biggest structural debt. Safe in principle via an export-preserving barrel, but too large/ambiguous to auto-apply in a parallel multi-package pass. Recommend a dedicated follow-up.
+- **P4 migration id integrity (High / runtime-data):** Duplicate id `0010` and non-monotonic ids are a real latent hazard, but any id rename or added assertion changes behavior against persisted databases. Handle with a deliberate migration-aware plan, not a refactor pass.
+- **Clock injection (smell #7):** `new Date()` inline in `MessageRepository.insert` and `runMigrations`. Injecting a clock changes a constructor/function signature (public). Defer.
+- **Trust-boundary casts** (`parseJson<T>` unchecked cast, `mapAddress` entity cast): intentional and documented; no action.

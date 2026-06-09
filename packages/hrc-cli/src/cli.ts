@@ -195,6 +195,37 @@ function parseExpectedGeneration(args: string[]): number | undefined {
 }
 
 /**
+ * Parse and validate the optional `--transport` flag shared by the runtime
+ * list/sweep handlers. Returns `undefined` when absent and fatals with the
+ * canonical message when present but not an allowed transport.
+ */
+function parseTransportFlag(args: string[]): 'tmux' | 'headless' | 'sdk' | undefined {
+  const transport = parseFlag(args, '--transport')
+  if (
+    transport !== undefined &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'sdk'
+  ) {
+    fatal('--transport must be one of: tmux, headless, sdk')
+  }
+  return transport
+}
+
+/**
+ * Parse and validate the optional `--provider` flag (defaulting to
+ * `anthropic`). Fatals with the canonical message when present but not an
+ * allowed provider.
+ */
+function parseProviderFlag(args: string[]): 'anthropic' | 'openai' {
+  const provider = parseFlag(args, '--provider') ?? 'anthropic'
+  if (provider !== 'anthropic' && provider !== 'openai') {
+    fatal('--provider must be one of: anthropic, openai')
+  }
+  return provider
+}
+
+/**
  * Recover the raw argv slice for a commander action's verb.
  *
  * Commander does not expose the unparsed argv on a subcommand, so we walk up to
@@ -315,36 +346,11 @@ function toLegacyArgvForScopeCommand(
   rawArgv: string[],
   schema: LegacyArgvSchema
 ): string[] {
-  const out: string[] = [...positionals]
-
-  // String flags: --flag value
-  for (const flag of schema.strings) {
-    const key = camelCase(flag)
-    const value = opts[key]
-    if (value !== undefined && value !== null) {
-      out.push(`--${flag}`, String(value))
-    }
-  }
-
-  // Boolean flags: --flag (emit only when truthy)
-  for (const flag of schema.booleans) {
-    const key = camelCase(flag)
-    if (opts[key]) {
-      out.push(`--${flag}`)
-    }
-  }
-
-  // Negated booleans: detect from raw argv, not from opts.
-  if (schema.negatedBooleans && schema.negatedBooleans.length > 0) {
-    for (const flag of schema.negatedBooleans) {
-      if (rawArgv.includes(`--${flag}`)) {
-        out.push(`--${flag}`)
-      }
-      if (rawArgv.includes(`--no-${flag}`)) {
-        out.push(`--no-${flag}`)
-      }
-    }
-  }
+  // Reuse the shared string/boolean/negated-boolean encoding, then append the
+  // scope-only `-p <text>` short flag. `toLegacyArgv` falls back to
+  // `process.argv` only when rawArgv is undefined; here it is always defined,
+  // so the negated-boolean scan is identical to the previous inline copy.
+  const out = toLegacyArgv(positionals, opts, schema, rawArgv)
 
   // Short option: -p <text> (must emit as -p, NOT --p)
   if (opts['p'] !== undefined && opts['p'] !== null) {
@@ -1556,15 +1562,7 @@ async function cmdTmuxKill(args: string[]): Promise<void> {
 
 async function cmdRuntimeList(args: string[]): Promise<void> {
   const hostSessionId = parseFlag(args, '--host-session-id')
-  const transport = parseFlag(args, '--transport')
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    fatal('--transport must be one of: tmux, headless, sdk')
-  }
+  const transport = parseTransportFlag(args)
   const status = parseFlag(args, '--status')
   const olderThan = parseFlag(args, '--older-than')
   const scope = parseFlag(args, '--scope')
@@ -1769,23 +1767,35 @@ function formatAgeSec(totalSec: number): string {
   return `${seconds}s`
 }
 
-async function cmdRuntimeSweep(args: string[]): Promise<void> {
-  const transport = parseFlag(args, '--transport')
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    fatal('--transport must be one of: tmux, headless, sdk')
-  }
-
+/**
+ * Resolve the shared `--dry-run`/`--yes`/`--json` mutation gate used by the
+ * sweep/reconcile handlers. Fatals with the canonical (noun-parameterized)
+ * message when a mutation is requested without `--yes` on a non-TTY stdout, and
+ * returns the resolved flags plus the effective `dryRun` (which defaults to true
+ * on a TTY when neither `--dry-run` nor `--yes` is given).
+ */
+function resolveMutationGate(
+  args: string[],
+  noun: string
+): { dryRunFlag: boolean; yes: boolean; jsonOutput: boolean; dryRun: boolean } {
   const dryRunFlag = hasFlag(args, '--dry-run')
   const yes = hasFlag(args, '--yes')
   const jsonOutput = hasFlag(args, '--json')
   if (!dryRunFlag && !yes && !process.stdout.isTTY) {
-    fatal('runtime sweep requires --yes to mutate when stdout is not a TTY')
+    fatal(`${noun} requires --yes to mutate when stdout is not a TTY`)
   }
+  return {
+    dryRunFlag,
+    yes,
+    jsonOutput,
+    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+  }
+}
+
+async function cmdRuntimeSweep(args: string[]): Promise<void> {
+  const transport = parseTransportFlag(args)
+
+  const { dryRunFlag, yes, jsonOutput, dryRun } = resolveMutationGate(args, 'runtime sweep')
   if (transport === 'tmux' && !yes && !dryRunFlag) {
     fatal('runtime sweep --transport tmux requires --yes')
   }
@@ -1805,7 +1815,7 @@ async function cmdRuntimeSweep(args: string[]): Promise<void> {
       : {}),
     ...(scope ? { scope } : {}),
     ...(hasFlag(args, '--drop-continuation') ? { dropContinuation: true } : {}),
-    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    dryRun,
     ...(yes ? { yes } : {}),
   }
 
@@ -1848,16 +1858,11 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
 }
 
 async function cmdRunSweepZombies(args: string[]): Promise<void> {
-  const dryRunFlag = hasFlag(args, '--dry-run')
-  const yes = hasFlag(args, '--yes')
-  const jsonOutput = hasFlag(args, '--json')
-  if (!dryRunFlag && !yes && !process.stdout.isTTY) {
-    fatal('run sweep-zombies requires --yes to mutate when stdout is not a TTY')
-  }
+  const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run sweep-zombies')
 
   const request: SweepZombieRunsRequest = {
     olderThan: parseFlag(args, '--older-than') ?? '30m',
-    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    dryRun,
     ...(yes ? { yes } : {}),
   }
 
@@ -1887,16 +1892,11 @@ function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean)
 }
 
 async function cmdRunReconcileActive(args: string[]): Promise<void> {
-  const dryRunFlag = hasFlag(args, '--dry-run')
-  const yes = hasFlag(args, '--yes')
-  const jsonOutput = hasFlag(args, '--json')
-  if (!dryRunFlag && !yes && !process.stdout.isTTY) {
-    fatal('run reconcile-active requires --yes to mutate when stdout is not a TTY')
-  }
+  const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run reconcile-active')
 
   const request: ReconcileActiveRunsRequest = {
     olderThan: parseFlag(args, '--older-than') ?? '30m',
-    dryRun: dryRunFlag || (!yes && Boolean(process.stdout.isTTY)),
+    dryRun,
     ...(yes ? { yes } : {}),
   }
 
@@ -2351,67 +2351,87 @@ async function cmdStart(args: string[]): Promise<void> {
   }
 }
 
-async function printLocalRunPreview(
-  command: 'run' | 'start',
-  scope: string,
-  sessionRef: string,
+/** Max characters shown for an env value in the run/start dry-run preview. */
+const PREVIEW_ENV_VALUE_MAX_CHARS = 160
+/** Max characters shown for an `env overrides` value in the dry-run preview. */
+const PREVIEW_ENV_OVERRIDE_MAX_CHARS = 120
+
+type RunPreviewWriter = (s: string) => void
+
+/**
+ * Render the broker-plan branch of the run dry-run preview. Returns `true` when
+ * a broker plan was rendered (caller should stop), `false` to fall through to
+ * the spec-build preview. Emitted lines are byte-identical to the prior inline
+ * branch.
+ */
+async function renderBrokerPlanPreview(
+  w: RunPreviewWriter,
   intent: HrcRuntimeIntent,
+  sessionRef: string,
+  restartStyle: 'reuse_pty' | 'fresh_pty',
+  prompt: string | undefined
+): Promise<boolean> {
+  const brokerPreview = await buildBrokerRunPreview(intent, {
+    sessionRef,
+    restartStyle,
+    promptLength: prompt?.length,
+  }).catch((err: unknown) => {
+    w('')
+    w(`  (broker plan build failed: ${err instanceof Error ? err.message : String(err)})`)
+    return undefined
+  })
+  if (!brokerPreview) {
+    return false
+  }
+  w('')
+  w('  brokerPlan:   available')
+  w(`  sessionRef:   ${sessionRef}`)
+  w(`  restartStyle: ${restartStyle}`)
+  w(`  controller:   ${brokerPreview.controllerKind}`)
+  w(`  driver:       ${brokerPreview.brokerDriver}`)
+  w(`  interaction:  ${brokerPreview.interactionMode}`)
+  w(`  profileId:    ${brokerPreview.profileId}`)
+  w(`  profileHash:  ${brokerPreview.profileHash}`)
+  w(`  specHash:     ${brokerPreview.specHash}`)
+  w(`  requestHash:  ${brokerPreview.startRequestHash}`)
+  w(`  cwd:          ${brokerPreview.process.cwd}`)
+  w(
+    `  command:      ${formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args)}`
+  )
+  w(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
+  w(
+    `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : brokerPreview.launchInitialPromptLength !== undefined ? `${brokerPreview.launchInitialPromptLength} launch chars` : '(none)'}`
+  )
+  w(`  inputQueue:   ${brokerPreview.inputQueue}`)
+  w(`  interrupt:    ${brokerPreview.interrupt}`)
+  if (brokerPreview.resource) {
+    w(`  resource:     ${brokerPreview.resource}`)
+  }
+  if (brokerPreview.warnings.length > 0) {
+    w('')
+    w('  warnings:')
+    for (const warning of brokerPreview.warnings) {
+      w(`    - ${warning}`)
+    }
+  }
+  w('')
+  w('  Note: this preview compiles the broker plan locally and does not')
+  w('  inspect existing runtime, PTY, or tmux state. Run without --dry-run to execute.')
+  return true
+}
+
+/**
+ * Render the spec-build branch of the run/start dry-run preview: framed system
+ * prompt + priming, metadata, env block, command line, and the trailing note.
+ * Emitted bytes are identical to the prior inline branch.
+ */
+async function renderSpecBuildPreview(
+  w: RunPreviewWriter,
+  intent: HrcRuntimeIntent,
+  sessionRef: string,
   restartStyle: 'reuse_pty' | 'fresh_pty',
   prompt: string | undefined
 ): Promise<void> {
-  const w = (s: string) => process.stdout.write(`${s}\n`)
-
-  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
-
-  if (command === 'run') {
-    const brokerPreview = await buildBrokerRunPreview(intent, {
-      sessionRef,
-      restartStyle,
-      promptLength: prompt?.length,
-    }).catch((err: unknown) => {
-      w('')
-      w(`  (broker plan build failed: ${err instanceof Error ? err.message : String(err)})`)
-      return undefined
-    })
-    if (brokerPreview) {
-      w('')
-      w('  brokerPlan:   available')
-      w(`  sessionRef:   ${sessionRef}`)
-      w(`  restartStyle: ${restartStyle}`)
-      w(`  controller:   ${brokerPreview.controllerKind}`)
-      w(`  driver:       ${brokerPreview.brokerDriver}`)
-      w(`  interaction:  ${brokerPreview.interactionMode}`)
-      w(`  profileId:    ${brokerPreview.profileId}`)
-      w(`  profileHash:  ${brokerPreview.profileHash}`)
-      w(`  specHash:     ${brokerPreview.specHash}`)
-      w(`  requestHash:  ${brokerPreview.startRequestHash}`)
-      w(`  cwd:          ${brokerPreview.process.cwd}`)
-      w(
-        `  command:      ${formatDisplayCommand(brokerPreview.process.command, brokerPreview.process.args)}`
-      )
-      w(`  initialInput: ${brokerPreview.initialInput ? 'yes' : 'no'}`)
-      w(
-        `  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : brokerPreview.launchInitialPromptLength !== undefined ? `${brokerPreview.launchInitialPromptLength} launch chars` : '(none)'}`
-      )
-      w(`  inputQueue:   ${brokerPreview.inputQueue}`)
-      w(`  interrupt:    ${brokerPreview.interrupt}`)
-      if (brokerPreview.resource) {
-        w(`  resource:     ${brokerPreview.resource}`)
-      }
-      if (brokerPreview.warnings.length > 0) {
-        w('')
-        w('  warnings:')
-        for (const warning of brokerPreview.warnings) {
-          w(`    - ${warning}`)
-        }
-      }
-      w('')
-      w('  Note: this preview compiles the broker plan locally and does not')
-      w('  inspect existing runtime, PTY, or tmux state. Run without --dry-run to execute.')
-      return
-    }
-  }
-
   // Build the actual argv/env that the harness would launch with, then render
   // it through the shared display module so this matches `asp run --dry-run`
   // and `hrc launch exec` runtime output: framed system prompt + priming, then
@@ -2434,7 +2454,12 @@ async function printLocalRunPreview(
       .sort()
       .map((k): [string, string] => {
         const val = invocation.env[k] ?? ''
-        return [k, val.length > 160 ? `${val.slice(0, 157)}...` : val]
+        return [
+          k,
+          val.length > PREVIEW_ENV_VALUE_MAX_CHARS
+            ? `${val.slice(0, PREVIEW_ENV_VALUE_MAX_CHARS - 3)}...`
+            : val,
+        ]
       })
     const envBlock = renderKeyValueSection('env', envEntries)
     const argvHead = invocation.argv[0] ?? ''
@@ -2465,7 +2490,10 @@ async function printLocalRunPreview(
       for (const key of Object.keys(envOverrides).sort()) {
         const val = envOverrides[key]
         if (val === undefined) continue
-        const valDisplay = val.length > 120 ? `${val.slice(0, 117)}...` : val
+        const valDisplay =
+          val.length > PREVIEW_ENV_OVERRIDE_MAX_CHARS
+            ? `${val.slice(0, PREVIEW_ENV_OVERRIDE_MAX_CHARS - 3)}...`
+            : val
         betweenLines.push(`    ${key}=${valDisplay}`)
       }
     }
@@ -2500,6 +2528,30 @@ async function printLocalRunPreview(
   w('  Note: this preview shows the request the client would send. Server-side')
   w('  details (existing runtime, PTY state, tmux session) are not consulted.')
   w('  Run without --dry-run to execute.')
+}
+
+async function printLocalRunPreview(
+  command: 'run' | 'start',
+  scope: string,
+  sessionRef: string,
+  intent: HrcRuntimeIntent,
+  restartStyle: 'reuse_pty' | 'fresh_pty',
+  prompt: string | undefined
+): Promise<void> {
+  const w: RunPreviewWriter = (s: string) => {
+    process.stdout.write(`${s}\n`)
+  }
+
+  w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
+
+  if (command === 'run') {
+    const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
+    if (rendered) {
+      return
+    }
+  }
+
+  await renderSpecBuildPreview(w, intent, sessionRef, restartStyle, prompt)
 }
 
 function readOptionalUtf8(path: string | undefined): string | undefined {
@@ -2544,12 +2596,8 @@ function extractPrimingFromArgv(argv: readonly string[]): string | undefined {
 
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
   const hostSessionId = requireArg(args, 0, '<hostSessionId>')
-  const providerRaw = parseFlag(args, '--provider') ?? 'anthropic'
+  const providerRaw = parseProviderFlag(args)
   const restartStyleRaw = parseFlag(args, '--restart-style')
-
-  if (providerRaw !== 'anthropic' && providerRaw !== 'openai') {
-    fatal('--provider must be one of: anthropic, openai')
-  }
 
   if (
     restartStyleRaw !== undefined &&

@@ -1,114 +1,157 @@
-# Refactor Analysis — `packages/hrc-server/src`
+# Refactor Analysis — `packages/hrc-server`
 
-Methodology: SOLID violations, code smells, complexity. Analysis only — no source files were edited.
+Behavior-preserving refactor audit. Source-read, not grep-only. 78 non-test source
+files, 30,992 LOC. 91 test files in `src/__tests__/` provide dense coverage
+(notably `broker-controller.test.ts`, broker `*.red.test.ts` suite, parser tests).
 
-- Production files analyzed (excluding `__tests__`): 78
-- Production source lines: ~30,882
-- Largest / most-central files:
-  - `broker/controller.ts` (2,462) — broker lifecycle/RPC/supervision god-class
-  - `startup-reconcile.ts` (1,563) — restart reconcile + warmup + orphan sweep
-  - `index.ts` (1,518) — `HrcServerInstance` HTTP router + lifecycle + many handlers
-  - `broker-interactive-handlers.ts` (1,399) — interactive turns + DI wiring + allocators
-  - `broker/event-mapper.ts` (1,203) — sole broker-event → HRC-state projector
-  - `selector-message-handlers.ts` (1,091), `runtime-control-handlers.ts` (1,054), `app-session-handlers.ts` (867), `sweep-reconcile.ts` (859), `broker-decisions.ts` (768), `target-message-handlers.ts` (747)
+## SOLID scorecard
 
-The package is mid-decomposition: handler clusters are split into `*-handlers.ts` modules whose exported method-bags are `Object.assign`-ed onto `HrcServerInstance.prototype`, with a shared `ServerContext` and a `this`-typed `HrcServerInstanceForHandlers`. The seams exist but several core units are still very large.
+| Principle | Grade | Notes |
+|-----------|-------|-------|
+| **S** — Single Responsibility | C | A handful of very large, multi-concern units: `broker/controller.ts` (2490 LOC, `HarnessBrokerController` ~30 methods incl. a 273-line `start` and 180-line `attachAndReplay`), `index.ts` (1522 LOC, `HrcServerInstance` ~24 HTTP handlers + lifecycle), `startup-reconcile.ts` (1559 LOC, 30+ free functions of mixed concern). Lower-level modules (`broker-decisions.ts`, parsers) are well factored. |
+| **O** — Open/Closed | B+ | `BrokerEventMapper.projectState` is already a dispatch-to-per-family switch (good). `decideHeadlessExecutionRoute`/`decideInteractiveTmuxExecutionRoute` are small closed switches. Main wart is the HTTP route ladder in `index.ts handleRequest` (repeated prefix/suffix string-slicing per route). |
+| **L** — Liskov | A | No throwing/no-op overrides found. `isDurableBrokerClient` is a structural type-guard used at a seam, not a Liskov violation. |
+| **I** — Interface Segregation | B | Controller dep object (`HarnessBrokerControllerDeps`) is wide but every member is genuinely used; collaborators are narrow `Pick<>`/structural types (`Pick<BrokerEventMapper,'apply'>`, `BrokerPermissionChannel`). Acceptable. |
+| **D** — Dependency Inversion | A- | Strong injection seams: `brokerClientFactory`, `brokerUnixClientFactory`, `tmuxAllocator`, `now`, `logger` all injected. No `new Concrete()` of collaborators in business logic. `createHrcServer` is the composition root. |
 
-## SOLID Scorecard
+Overall: the package is architecturally healthy at the seam/abstraction level; the
+debt is concentrated in a few oversized files/methods that grew by accretion of
+flag-gated waves (broker cutover T-01690…T-01941). All high-value refactors here are
+**extract-private-method / extract-helper**, which are behavior-preserving.
 
-| Principle | Status | Notes |
-|---|---|---|
-| S — Single Responsibility | red | `controller.ts` mixes lifecycle, RPC, persistence, event consumption, tmux-lease reaping, SQL; `event-mapper.projectState` is a 363-line switch; ~25 methods >50 lines |
-| O — Open/Closed | yellow | `event-mapper` has a 30+ case type switch (projection) plus a parallel `lifecyclePayload` switch and a `BROKER_TO_HRC_KIND` map — three places to edit per new broker event type |
-| L — Liskov | green | No throwing/no-op overrides; optional-method capability guards (`listInvocations?`, `streamInvocationEvents?`) are honestly typed and runtime-checked |
-| I — Interface Segregation | red | `HrcServerInstanceForHandlers` is a ~190-member `this`-type with 147 `HandlerMethod` entries; every handler module depends on the whole surface |
-| D — Dependency Inversion | yellow | Good seams in `controller.ts` (factories injected); but `getHarnessBrokerController` reads `process.env`/`process.pid` directly and hand-builds collaborators inline; `event-mapper` news directly off SQL via `db.sqlite.query(...)` raw strings |
+---
 
 ## Priority Refactorings
 
-### 1. Split `event-mapper.projectState` (363-line switch) by event family
-- Location: `broker/event-mapper.ts:423-786`
-- Principle: SRP / OCP
-- Current: one `switch (envelope.type)` with 30+ cases mutating runtime/invocation/run/buffer/continuation/permission state inline; a second switch (`lifecyclePayload`, ~line 1096) and a third map (`BROKER_TO_HRC_KIND`, line 146) must be kept in lockstep for each event type.
-- Suggested: extract per-family private projectors (`projectInvocationLifecycle`, `projectTurn`, `projectMessage`, `projectToolCall`, `projectPermission`, `projectContinuation`) and dispatch via a `Partial<Record<eventType, projector>>` table colocated with the kind map, so adding an event type touches one record entry.
-- Risk: medium — large surface, but `broker-event-mapper.test.ts` pins atomicity/idempotency/conflict invariants. API-preserving (internal restructuring of one class; `apply()` signature unchanged).
-- Effort: M-L. Tests: existing mapper suite covers the contract; add a per-family unit test as families are extracted.
+### P1 — Decompose `HarnessBrokerController.start` (273-line method)
+- **Location:** `packages/hrc-server/src/broker/controller.ts:575`
+- **Current:** Single `async start()` spanning ~273 lines inside one `try`. Sequential
+  phases: substrate/tmux allocation → durable-vs-stdio client acquisition → permission/close
+  wiring → hello + protocol-version gate → capability admission → lifecycle preflight →
+  attached-launch gate → invocation start → admission of started invocation → persist
+  start graph → error/cleanup. Phase boundaries are already marked via `markPhase(...)`.
+- **Suggested:** Extract private helpers along the existing phase seams, e.g.
+  `private async acquireBrokerClient(input, markPhase): {client, tmuxAllocation, durableSocketPath}`,
+  `private async negotiateHello(client, durableSocketPath, input, markPhase)`,
+  `private async admitAndStartInvocation(...)`. Keep `start` as the orchestrator. No
+  signature/return-type change.
+- **Risk:** Med — internal-only (private method body; public `start` signature unchanged).
+- **API-impact:** internal-only.
+- **Effort:** M (the `try/catch` cleanup state — `client`, `tmuxAllocation` — must be
+  threaded carefully so failure cleanup still runs; this is the only subtlety).
+- **Tests:** `broker-controller.test.ts`, `broker-durable-activation.red.test.ts`,
+  `broker-durable-allocator.red.test.ts` exercise start paths; run full broker suite after.
 
-### 2. Decompose `HarnessBrokerController.start` (277 lines) into named phases
-- Location: `broker/controller.ts:569-845`
-- Principle: SRP
-- Current: one method does substrate/headless allocation, durable-vs-stdio client construction, retry dial, hello, protocol/admission gating, preflight, persistence graph, attached-launch gate, invocation start, post-start admission, DB updates, active-map registration, event-consumer launch, and error teardown.
-- Suggested: extract `acquireClient(input)`, `negotiateAndAdmit(client, input)`, `dispatchInvocation(client, input, allocation)`, `registerActiveRuntime(...)`; keep `start` as a linear orchestrator returning the result union.
-- Risk: medium — central dispatch path; covered by broker controller + route tests. API-preserving.
-- Effort: M.
+### P2 — Decompose `HarnessBrokerController.attachAndReplay` (180-line method)
+- **Location:** `packages/hrc-server/src/broker/controller.ts:968`
+- **Current:** ~180-line method covering attach-request build, dial/attach, replay-staleness
+  check (`failReplayStale`/`lastProjectedBrokerSeq`), event-stream consumption wiring, and
+  terminal/close bookkeeping.
+- **Suggested:** Extract `private buildAttachRequest(...)`, `private async resolveReplayCursor(...)`,
+  and reuse existing `consumeEvents`. Orchestrator stays.
+- **Risk:** Med — internal-only.
+- **API-impact:** internal-only.
+- **Effort:** M.
+- **Tests:** `broker-attach-descriptor.test.ts`, `broker-durable-reattach-on-dispatch.red.test.ts`.
 
-### 3. Carve a persistence layer out of `controller.ts`
-- Location: `broker/controller.ts` — `persistStartGraph` (1403-1562), `buildRuntimeStateJson` (1564-1657), `markStartedInvocationFailed`, `markBrokerInvocationTerminal`, `markBrokerCrashTerminal`, plus raw SQL in `findUserInitiatedContinuationClearReason*` (2137, 2165)
-- Principle: SRP / DIP
-- Current: the controller embeds DB-row construction, runtime-state-JSON shaping, and inline `db.sqlite.query("SELECT ... json_extract ...")` strings alongside lifecycle/RPC logic.
-- Suggested: move row construction + the two raw queries into a `BrokerControllerStore` (or extend the existing `db.brokerInvocationEvents` repo with a `latestContinuationClearReason(invocationId, beforeSeq?)` method); controller calls typed methods.
-- Risk: medium — SQL must be moved verbatim; behavior identical. The repo method is a new exported symbol on the store package (not on hrc-server's public API), so the hrc-server surface is preserved but the store package gains a method.
-- Effort: M.
+### P3 — Extract the `/v1/internal/launches/<id>/<suffix>` route-parsing duplication
+- **Location:** `packages/hrc-server/src/index.ts:660-709` (`handleRequest`)
+- **Current:** Five near-identical `if (method==='POST' && pathname.startsWith('/v1/internal/launches/') && pathname.endsWith('/<suffix>'))` blocks, each doing
+  `pathname.slice(prefix.length).replace('/<suffix>', '')` then calling a `handleX(launchId, request)`.
+  Same prefix string literal repeated; same slice/replace shape repeated.
+- **Suggested:** A small private helper `matchLaunchSubroute(method, pathname): {launchId, suffix} | undefined`
+  plus a `Record<suffix, handler>` lookup, or a single guarded block that extracts `launchId`
+  once and dispatches on the trailing segment. Behavior-identical (same routes, same 404 fallthrough).
+- **Risk:** Low — internal-only (routing internals; the HTTP contract/paths are unchanged).
+- **API-impact:** internal-only (the wire routes stay byte-identical).
+- **Effort:** S.
+- **Tests:** server request/router tests in `__tests__/` (launch lifecycle handlers).
 
-### 4. Shrink `HrcServerInstanceForHandlers` (ISP)
-- Location: `server-instance-context.ts:36-~230` (147 `HandlerMethod` members)
-- Principle: ISP
-- Current: every extracted handler module is typed `this: HrcServerInstanceForHandlers` and thus structurally depends on all ~190 members, even though each handler uses a handful.
-- Suggested: define narrow per-cluster `this`-types (e.g. `BrokerInteractiveThis`, `AppSessionThis`) composed from small mixin interfaces, and type each handler bag against only what it needs. `HrcServerInstanceForHandlers` becomes the intersection of those.
-- Risk: low — pure type-level change, no runtime behavior; compiler enforces correctness. API-preserving.
-- Effort: M (mechanical but broad).
+### P4 — Split `HrcServerInstance` HTTP handlers out of `index.ts` — DEFER
+- **Location:** `packages/hrc-server/src/index.ts:337` (`class HrcServerInstance`, ~24 methods)
+- **Current:** One class mixes server lifecycle (`stop`, `createHrcServer` orchestration),
+  routing (`handleRequest`), and ~20 endpoint handlers (resolve-session, capture, attach,
+  inspect, broker-inspect, drop-continuation, launch lifecycle, status, health). 1522 LOC file.
+- **Suggested:** Already partially done — most logic delegates to free handler modules
+  (`*-handlers.ts`). The remaining safe move is to relocate cohesive handler GROUPS (e.g. the
+  launch-lifecycle handlers) into a dedicated module taking server deps, leaving thin forwarders.
+  DEFER: moving methods off a class instance touches `this`-bound state and risks subtle behavior
+  change; treat as a larger, separately-reviewed task.
+- **Risk:** Med — broad, `this`-dependent move → DEFER (ambiguous-to-do-safely in one pass).
+- **API-impact:** internal-only.
+- **Effort:** L.
+- **Tests:** broad server-handler suite.
 
-### 5. Inject environment/clock into `getHarnessBrokerController`
-- Location: `broker-interactive-handlers.ts:1168-1327`
-- Principle: DIP / SRP
-- Current: 160-line factory reads `process.env`, `process.pid`, `randomUUID`, `writeServerLog` directly and inlines two allocator closures + a reap closure.
-- Suggested: extract `buildBrokerControllerDeps(this, opts)` returning the deps object; source env/pid/serverInstanceId from `this.options`/`ctx` (already partly available) so the factory is testable without globals. Move the inline legacy-allocator closure to a named `createLegacyBrokerTmuxAllocator`.
-- Risk: low-medium — wiring only; the controller already accepts all of these as injectable deps. API-preserving.
-- Effort: M.
+### P5 — Extract repeated phase/timing + structured-log scaffolding
+- **Location:** `packages/hrc-server/src/broker/controller.ts:587-597` (`markPhase` closure);
+  `createHrcServer` log-context at `index.ts:1471-1521`.
+- **Current:** The `createHrcServer` structured-log envelope
+  (`{runtimeRoot, stateRoot, socketPath, dbPath, tmuxSocketPath}`) is repeated verbatim in the
+  `begin`/`ready`/`failed` `writeServerLog` calls. `markPhase` timing closure is inline in `start`.
+- **Suggested:** Build the log-context object once (`const logCtx = {...}`) and spread it into
+  each `writeServerLog`. Pure dedupe; log shape preserved.
+- **Risk:** Low — internal-only.
+- **API-impact:** internal-only.
+- **Effort:** S.
+- **Tests:** covered indirectly by startup tests.
 
-### 6. Split `selector-message-handlers.handleSdkDispatchTurn` (264 lines)
-- Location: `selector-message-handlers.ts:163-426`
-- Principle: SRP
-- Current: single handler resolves session/runtime, branches transport, runs the SDK turn, records detached failures, and shapes the response.
-- Suggested: extract `resolveSdkDispatchTarget`, `runSdkTurnAndFinalize`, reuse `recordDetachedSemanticTurnFailure` (already extracted). 
-- Risk: low — local to one module; SDK turn tests cover it. API-preserving.
-- Effort: S-M.
+### P6 — Extract private parsing helpers out of `startup-reconcile.ts`
+- **Location:** `packages/hrc-server/src/startup-reconcile.ts` (1559 LOC, 30+ exports)
+- **Current:** One module mixes startup reconciliation, durable-broker reattach, warmup,
+  orphan-lease sweep, tmux reassociation, runtime dead/stale marking, AND low-level private
+  record/pane parsing helpers (`getRecord`, `toTmuxPaneState`, `tmuxPaneIdentityMatches`,
+  `brokerTuiWindowMatches`, `getPersisted*` getters).
+- **Suggested:** Move ONLY the private (non-exported) pane/record parsing helpers into a sibling
+  private module imported back here. The EXPORTED reconcile/warmup functions are consumed by other
+  modules → moving/renaming those is public-surface → out of scope for this pass.
+- **Risk:** Low for the private-helper extraction (exported symbols untouched).
+- **API-impact:** internal-only (private helpers only).
+- **Effort:** M.
+- **Tests:** `startup-reconcile*.test.ts` family.
 
-### 7. Split `app-session-handlers.handleEnsureAppSession` (232 lines) and `target-message-handlers.handleSemanticTurnHandoff` (211 lines)
-- Location: `app-session-handlers.ts:99-330`; `target-message-handlers.ts:98-308`
-- Principle: SRP; note `handleEnsureAppSession` also constructs sub-`Request` objects to re-enter its own routes (`app-session-handlers.ts:624,641`) — an internal HTTP self-call smell.
-- Suggested: extract validation/lookup/dispatch helpers; replace the in-process `new Request(...)` self-invocation with direct method calls.
-- Risk: low-medium. API-preserving.
-- Effort: M.
+---
 
-## Code Smells
+## Code smells
 
-| Smell | Location | Detail |
-|---|---|---|
-| Long method | `event-mapper.ts:423` (363), `controller.ts:569` (277), `selector-message-handlers.ts:163` (264), `app-session-handlers.ts:99` (232), `target-message-handlers.ts:98` (211), `turn-dispatch-handlers.ts:262` (198), `controller.ts:968` (181), `sweep-reconcile.ts:543` (177) | ~25 methods exceed 50 lines; 8 exceed 175 |
-| Large file | `controller.ts` (2462), `startup-reconcile.ts` (1563), `index.ts` (1518), `broker-interactive-handlers.ts` (1399), `event-mapper.ts` (1203) | 11 files >700 lines |
-| Duplicated dispatch table | `event-mapper.ts:146` (`BROKER_TO_HRC_KIND`) + `:443` (projectState switch) + `:1096` (lifecyclePayload switch) | three structures keyed on the same event-type enum |
-| Raw SQL in domain code | `controller.ts:2137,2165`; `event-mapper.ts:396,409` | inline `db.sqlite.query("SELECT ... json_extract ...")` strings outside the store package |
-| Inline magic constants | `controller.ts:102-105` connect-retry numbers (named consts — OK); `controller.ts:1696` `'/tmp/hrc-runtime'`, `:1708` `'synthesized-headless-attach-token'`; `broker-interactive-handlers.ts:1274` `timeoutMs: 5_000`, `:1391` `120_000` | scattered literals in fallback/synthesis paths |
-| In-process HTTP self-call | `app-session-handlers.ts:624,641` | handler builds `new Request(...)` to invoke its own routes instead of calling the method |
-| God interface | `server-instance-context.ts:36` | ~190-member `this`-type; ISP violation feeding every handler |
-| Repeated terminal-state bookkeeping | `controller.ts` mark* methods (1773, 2026, 2278) | near-identical runtime/invocation/run "mark failed/terminal" update blocks |
+| # | Location | Smell | Detail | Risk | API-impact |
+|---|----------|-------|--------|------|-----------|
+| 1 | `broker/controller.ts:575` | Long method | `start` 273 lines, deep single `try` | Med | internal-only |
+| 2 | `broker/controller.ts:968` | Long method | `attachAndReplay` 180 lines | Med | internal-only |
+| 3 | `index.ts:660-709` | Duplicated block | 5× launch-subroute prefix/suffix slicing | Low | internal-only |
+| 4 | `index.ts:1471-1521` | Duplicated literal | repeated `{runtimeRoot,…,tmuxSocketPath}` log ctx ×3 | Low | internal-only |
+| 5 | `broker/controller.ts:2220` `handleBrokerClose` (67 lines) / `:2298` `markBrokerCrashTerminal` (65 lines) | Long methods | terminal-marking branches inline; de-nestable | Low | internal-only |
+| 6 | `startup-reconcile.ts` | Large file / mixed concern | 1559 LOC, parsing + reconcile + sweep colocated | Med | mixed |
+| 7 | `index.ts handleRequest` | Primitive-string routing | string `startsWith/endsWith/slice` instead of a route table for prefixed routes | Low | internal-only |
 
-## Quick Wins
-- Extract the two raw continuation-clear SQL queries in `controller.ts` (2137, 2165) into one private/store helper — they differ only by an optional `beforeSeq`.
-- Promote the headless-synthesis literals (`controller.ts:1696,1708`) to named constants next to the existing `BROKER_UNIX_CONNECT_*` block.
-- Collapse the `BROKER_TO_HRC_KIND` map and `lifecyclePayload` switch into a single colocated table so new event types are added in one place.
-- Replace the `new Request(...)` self-invocation in `app-session-handlers.ts` (624,641) with direct handler-method calls.
-- Factor the three `mark*` terminal-bookkeeping blocks in `controller.ts` into a shared `applyTerminalRuntimeState(...)`.
+No dead code, no Liskov violations, no hardcoded-singleton DI violations found. Magic
+numbers in the broker connect-retry path are already extracted to named constants
+(`BROKER_UNIX_CONNECT_*`, `controller.ts:102-115`) — exemplary; cite as the pattern to follow.
 
-## Technical Debt Notes
-- The prototype-`Object.assign` handler pattern (`index.ts:1448`) plus the giant `this`-type is the dominant architectural debt: it gives modular files but global structural coupling and defeats per-handler unit isolation. The narrow-`this` refactor (#4) is the highest-leverage, lowest-risk structural improvement.
-- `controller.ts` and `event-mapper.ts` carry heavy historical comment ballast (flag-cutover narratives, T-IDs). Much describes decommissioned states (legacy v0.1 stdio, removed hatches) and can be pruned, but pruning is doc-only and out of scope for behavior-preserving refactors.
-- DIP is mostly healthy in the controller (factories injectable); the remaining global reads are concentrated in the one factory (#5).
+---
 
-## Safety Checklist (before applying any refactor)
-- Run the full hrc-server suite with `TMPDIR=/tmp`; re-run flaky tests in isolation (per MEMORY: dispatch-turn-live-harness-literal timing; server-bridge-phase2 deliver-text env-sensitivity).
-- Pin `broker-event-mapper.test.ts` green before/after any `projectState` change (atomic / idempotent / conflict / `source:'broker'`).
-- Keep `apply()`, `start()`, controller RPC signatures, and all `handle*` route handler signatures byte-identical (API-preserving items only).
-- For store-method extractions, move SQL verbatim; diff query text.
-- Do not commit on `main` without branching; diff before commit (shared-worktree co-edit hazard).
+## Quick wins (Low-risk, internal-only, safe to auto-apply)
+
+1. **P3** — dedupe the 5 launch-subroute blocks in `index.ts handleRequest`. Routes byte-identical.
+2. **P5** — build `createHrcServer`'s log-context object once and spread into begin/ready/failed.
+3. **P6 (private slice only)** — extract private pane/record parsing helpers in
+   `startup-reconcile.ts` into a sibling private module (no exported-symbol moves).
+4. De-nest `handleBrokerClose` / `markBrokerCrashTerminal` via early-returns (no behavior change).
+
+---
+
+## Technical-debt notes
+
+- **Accretion debt from flag-gated cutover waves.** `controller.ts` and
+  `broker-interactive-handlers.ts` carry extensive comments referencing T-01690/T-01812/T-01866/
+  T-01874/T-01941 — successive durable-broker cutover phases. The code is correct but `start`
+  absorbed every phase. P1/P2 extraction is the highest-leverage paydown and is purely mechanical
+  given the existing `markPhase` seams.
+- **`index.ts` is composition root + HTTP server class + route table.** Already largely decomposed
+  (handlers live in `*-handlers.ts`); finishing the job (P4) is worthwhile but is a `this`-bound
+  move that should be a reviewed standalone task, not part of a parallel auto-apply pass — DEFERRED.
+- **Healthy patterns to preserve:** `broker-decisions.ts` (small pure predicates),
+  `BrokerEventMapper` per-family projector dispatch, narrow injected collaborators, and the
+  named-constant retry tunables. These are the target shape for the rest of the package.
+- **Test safety:** 91 test files including a dense broker `*.red.test.ts` suite mean the
+  extract-method refactors are well-guarded. Run the full `hrc-server` suite with `TMPDIR=/tmp`
+  (per repo memory on env-sensitive flakes) after any change.

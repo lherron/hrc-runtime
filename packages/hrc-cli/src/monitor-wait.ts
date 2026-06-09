@@ -16,6 +16,12 @@ import {
 } from 'hrc-core'
 import { discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  MSG_REQUIRED_CONDITIONS,
+  POLL_MS,
+  assertValidUntilCondition,
+} from './monitor-conditions.js'
+import { numberField, stringField } from './monitor-fields.js'
 
 type MonitorWaitOptions = {
   selectorRaw?: string | undefined
@@ -33,18 +39,6 @@ export class MonitorWaitExit extends Error {
     this.name = 'MonitorWaitExit'
   }
 }
-
-const VALID_CONDITIONS = new Set<string>([
-  'turn-finished',
-  'idle',
-  'busy',
-  'response',
-  'response-or-idle',
-  'runtime-dead',
-])
-
-const MSG_REQUIRED_CONDITIONS = new Set<string>(['response', 'response-or-idle'])
-const POLL_MS = 100
 
 export async function cmdMonitorWait(args: string[]): Promise<void> {
   const options = parseWaitArgs(args)
@@ -175,11 +169,7 @@ function validateOptions(options: MonitorWaitOptions): void {
   if (options.until === undefined) {
     throw new CliUsageError('--until is required')
   }
-  if (!VALID_CONDITIONS.has(options.until)) {
-    throw new CliUsageError(
-      `invalid condition: ${options.until} (valid: ${[...VALID_CONDITIONS].join(', ')})`
-    )
-  }
+  assertValidUntilCondition(options.until)
 }
 
 async function createWaitReader(): Promise<HrcMonitorConditionEngineReader> {
@@ -516,16 +506,6 @@ function writeUsageError(message: string, json: boolean): void {
     return
   }
   process.stderr.write(`hrc: ${message}\n`)
-}
-
-function stringField(event: MonitorOutputEvent, key: string): string | undefined {
-  const value = event[key]
-  return typeof value === 'string' ? value : undefined
-}
-
-function numberField(event: MonitorOutputEvent, key: string): number | undefined {
-  const value = event[key]
-  return typeof value === 'number' ? value : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

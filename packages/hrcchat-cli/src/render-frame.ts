@@ -42,6 +42,8 @@ export interface RenderFrameNdjsonEvent {
 const DEFAULT_TERMINAL_WIDTH = 96
 const DEFAULT_MARKDOWN_LINES = 200
 const MIN_TERMINAL_WIDTH = 48
+const MAX_TERMINAL_WIDTH = 120
+const MAX_TITLE_CHARS = 100
 const BODY_INDENT = '  '
 const ACTIVITY_PREFIX = '┊'
 const ACTIVITY_INDENT = '   '
@@ -89,7 +91,7 @@ function terminalWidth(width: number | undefined): number {
   if (width === undefined || !Number.isFinite(width)) {
     const cols = process.stdout?.columns
     if (cols && Number.isFinite(cols)) {
-      return Math.max(MIN_TERMINAL_WIDTH, Math.min(120, Math.floor(cols)))
+      return Math.max(MIN_TERMINAL_WIDTH, Math.min(MAX_TERMINAL_WIDTH, Math.floor(cols)))
     }
     return DEFAULT_TERMINAL_WIDTH
   }
@@ -150,7 +152,7 @@ function normalizeFallbackTitle(fallback: string | undefined): string {
   if (!fallback) return ''
   const oneLine = fallback.replace(/\s+/g, ' ').trim()
   if (oneLine.length === 0) return ''
-  return oneLine.length > 100 ? `${oneLine.slice(0, 100)}…` : oneLine
+  return oneLine.length > MAX_TITLE_CHARS ? `${oneLine.slice(0, MAX_TITLE_CHARS)}…` : oneLine
 }
 
 function truncateToolOutput(output: string): string {
