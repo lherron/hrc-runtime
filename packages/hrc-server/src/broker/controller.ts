@@ -538,6 +538,10 @@ export class HarnessBrokerController {
   private readonly reapedBrokerTmuxRuntimeIds = new Set<string>()
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
+  // Set by `shutdown()` when the owning server is stopping. Once true, in-flight
+  // event consumers stop projecting before the backing DB is closed, so a
+  // late broker event cannot read a closed DB and crash teardown.
+  private shuttingDown = false
 
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
@@ -1870,6 +1874,12 @@ export class HarnessBrokerController {
     void (async () => {
       try {
         for await (const envelope of events) {
+          // Teardown guard: once the server is stopping (DB about to close, or
+          // already closed), stop projecting late broker events rather than
+          // reading a closed DB.
+          if (this.shuttingDown) {
+            break
+          }
           const invocation = this.db.brokerInvocations.getByInvocationId(
             String(envelope.invocationId)
           )
@@ -1887,6 +1897,13 @@ export class HarnessBrokerController {
           this.afterMappedEvent(runtimeId, envelope, result)
         }
       } catch (error) {
+        // Teardown race: the consumer can outlive the backing DB (server.stop
+        // closes it while a late broker event is in flight). A closed-DB read is
+        // not a broker crash — exit quietly instead of escalating, which would
+        // re-read the closed DB in markBrokerCrashTerminal and throw again.
+        if (this.shuttingDown || isClosedDbError(error)) {
+          return
+        }
         const controllerError = toControllerError('broker_event_consumer_failed', error)
         this.logger.error?.('harness broker event consumer failed', {
           runtimeId,
@@ -1895,6 +1912,15 @@ export class HarnessBrokerController {
         this.markBrokerCrashTerminal(runtimeId, controllerError)
       }
     })()
+  }
+
+  /**
+   * Mark the controller as shutting down so in-flight event consumers stop
+   * projecting before the owning server closes the backing DB. Idempotent;
+   * call from the server-stop path BEFORE `db.close()`.
+   */
+  shutdown(): void {
+    this.shuttingDown = true
   }
 
   private afterMappedEvent(
@@ -2399,6 +2425,16 @@ function isBrokerSocketNotReadyError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : ''
   return message.includes('Timed out connecting to broker unix socket')
+}
+
+/**
+ * True when `error` is bun:sqlite's "Cannot use a closed database" — the signal
+ * that a broker event consumer outlived the backing DB during server teardown.
+ * Used as a safety net for the window between the `shuttingDown` flag and
+ * `db.close()`, so a late event exits the consumer quietly instead of crashing.
+ */
+function isClosedDbError(error: unknown): boolean {
+  return error instanceof Error && /closed database/i.test(error.message)
 }
 
 function toControllerError(code: string, error: unknown): BrokerControllerError {

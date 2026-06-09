@@ -601,6 +601,9 @@ class HrcServerInstance implements HrcServer {
     this.followSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    // Stop in-flight broker event consumers from projecting before the backing
+    // DB closes underneath them (avoids closed-DB teardown crashes).
+    this.harnessBrokerController?.shutdown?.()
     this.db.close()
     let cleanupError: unknown
 
