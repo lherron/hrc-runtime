@@ -138,6 +138,12 @@ export async function handleSemanticTurnHandoff(
       state: 'not_applicable',
       ...(body.mode && body.mode !== 'auto' ? { mode: body.mode } : {}),
     },
+    // T-04025: the turn-response finalizer lives in an in-memory map that does
+    // not survive a daemon restart, while a durable-broker turn does. This
+    // marker lets finalizeSemanticTurnResponse rebuild the finalizer from the
+    // durable request row, so turn.completed always yields a persisted
+    // response. DM-path requests carry no marker and are never auto-finalized.
+    metadataJson: { semanticTurnHandoff: { respondTo } },
   })
 
   let session = findTargetSession(this.db, body.to.sessionRef)

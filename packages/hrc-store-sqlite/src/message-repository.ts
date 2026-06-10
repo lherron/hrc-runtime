@@ -311,6 +311,29 @@ export class MessageRepository {
     return rows.map(mapMessageRow)
   }
 
+  /** Latest request-phase message whose execution was dispatched with this runId. */
+  getLatestRequestByRunId(runId: string): HrcMessageRecord | undefined {
+    const row = this.db
+      .query<MessageRow, [string]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages
+         WHERE run_id = ? AND phase = 'request'
+         ORDER BY message_seq DESC LIMIT 1`
+      )
+      .get(runId)
+    return row ? mapMessageRow(row) : undefined
+  }
+
+  /** True when a response message replying to the given request already exists. */
+  hasResponseTo(requestMessageId: string): boolean {
+    const row = this.db
+      .query<{ one: number }, [string]>(
+        `SELECT 1 AS one FROM messages
+         WHERE reply_to_message_id = ? AND phase = 'response' LIMIT 1`
+      )
+      .get(requestMessageId)
+    return row !== null && row !== undefined
+  }
+
   /** Return the max message_seq, or 0 if empty. */
   maxSeq(): number {
     const row = this.db

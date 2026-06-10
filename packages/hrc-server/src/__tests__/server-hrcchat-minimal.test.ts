@@ -10,6 +10,7 @@ import type {
 } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { appendHrcEvent } from '../hrc-event-helper'
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
 import { TmuxManager } from '../tmux'
@@ -706,6 +707,206 @@ if (cmd === 'app-server') {
         runId: handoff.runId,
         transport: 'tmux',
       })
+    } finally {
+      verifyDb.close()
+    }
+  })
+
+  it('semantic turn handoff persists the response after a daemon restart (T-04025 durable finalizer recovery)', async () => {
+    const scopeRef = 'agent:handoff-durable-recovery:project:agent-spaces'
+    const sessionRef = `${scopeRef}/lane:main`
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runtimeId = `rt-handoff-durable-recovery-${Date.now()}`
+    const operationId = `op-handoff-durable-recovery-${Date.now()}`
+    const invocationId = `inv-handoff-durable-recovery-${Date.now()}`
+    const timestamp = fixture.now()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'default',
+        generation,
+        transport: 'tmux',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        activeOperationId: operationId,
+        activeInvocationId: invocationId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+      })
+      db.brokerInvocations.insert({
+        invocationId,
+        operationId,
+        runtimeId,
+        brokerProtocol: 'harness-broker/0.1',
+        brokerDriver: 'codex-cli-tmux',
+        invocationState: 'ready',
+        capabilitiesJson: JSON.stringify({}),
+        specHash: 'sha256:spec-handoff-durable-recovery',
+        startRequestHash: 'sha256:req-handoff-durable-recovery',
+        selectedProfileHash: 'sha256:prof-handoff-durable-recovery',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    } finally {
+      db.close()
+    }
+    ;(server as any).getHarnessBrokerController = () => ({
+      dispatchInput: async () => ({ ok: true, response: { accepted: true } }),
+    })
+
+    const handoffRes = await fixture.postJson('/v1/messages/turn-handoff', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef },
+      body: 'response must survive a daemon restart',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: {
+          provider: 'openai',
+          interactive: false,
+        },
+        execution: {
+          preferredMode: 'headless',
+        },
+      },
+    })
+    expect(handoffRes.status).toBe(200)
+    const handoff = (await handoffRes.json()) as SemanticTurnHandoffResponse
+
+    // The daemon that dispatched the turn restarts mid-turn: the replacement
+    // instance starts with an empty in-memory turnResponseFinalizers map.
+    await restartServer({})
+
+    // The durable broker finishes the turn after the restart: buffered output
+    // plus a projected turn.completed lifecycle event through notifyEvent.
+    const completionDb = openHrcDatabase(fixture.dbPath)
+    let completedEvent: ReturnType<typeof appendHrcEvent>
+    try {
+      // The test fixture has no live broker socket, so startup reconciliation
+      // fails the in-flight run. In production the durable broker is preserved
+      // (controllerKind + socket presence) and the run stays running — restore
+      // that state so the completion models the preserved-broker reality.
+      completionDb.runs.update(handoff.runId, {
+        status: 'running',
+        updatedAt: fixture.now(),
+      })
+      completionDb.runtimeBuffers.append({
+        runtimeId,
+        runId: handoff.runId,
+        chunkSeq: 0,
+        text: 'durable response body',
+        createdAt: fixture.now(),
+      })
+      completedEvent = appendHrcEvent(completionDb, 'turn.completed', {
+        ts: fixture.now(),
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation,
+        runId: handoff.runId,
+        runtimeId,
+        transport: 'tmux',
+        payload: { success: true, transport: 'tmux', source: 'broker' },
+      })
+    } finally {
+      completionDb.close()
+    }
+    ;(server as any).notifyEvent(completedEvent)
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const responses = verifyDb.messages.query({
+        thread: { rootMessageId: handoff.messageId },
+        phases: ['response'],
+      })
+      expect(responses).toHaveLength(1)
+      expect(responses[0]?.body).toBe('durable response body')
+      expect(responses[0]?.execution).toMatchObject({
+        state: 'completed',
+        runId: handoff.runId,
+        transport: 'tmux',
+      })
+      const request = verifyDb.messages.getById(handoff.messageId)
+      expect(request?.execution.state).toBe('completed')
+
+      // Replayed/duplicate completion events must not double-insert.
+      ;(server as any).notifyEvent(completedEvent)
+      const responsesAfterReplay = verifyDb.messages.query({
+        thread: { rootMessageId: handoff.messageId },
+        phases: ['response'],
+      })
+      expect(responsesAfterReplay).toHaveLength(1)
+    } finally {
+      verifyDb.close()
+    }
+  })
+
+  it('turn completion does not synthesize a response for non-handoff requests after restart', async () => {
+    const scopeRef = 'agent:dm-no-recover:project:agent-spaces'
+    const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
+    const runId = `run-dm-no-recover-${Date.now()}`
+
+    const db = openHrcDatabase(fixture.dbPath)
+    let requestMessageId: string
+    try {
+      // A DM-path request: same durable shape as a handoff request but without
+      // the semanticTurnHandoff metadata marker.
+      const record = db.messages.insert({
+        messageId: `msg-dm-no-recover-${Date.now()}`,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: `${scopeRef}/lane:main` },
+        body: 'dm request answered by an explicit reply DM',
+        execution: { state: 'started', mode: 'interactive', runId },
+      })
+      requestMessageId = record.messageId
+    } finally {
+      db.close()
+    }
+
+    await restartServer({})
+
+    const completionDb = openHrcDatabase(fixture.dbPath)
+    let completedEvent: ReturnType<typeof appendHrcEvent>
+    try {
+      completedEvent = appendHrcEvent(completionDb, 'turn.completed', {
+        ts: fixture.now(),
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation,
+        runId,
+        transport: 'tmux',
+        payload: { success: true, transport: 'tmux', source: 'broker' },
+      })
+    } finally {
+      completionDb.close()
+    }
+    ;(server as any).notifyEvent(completedEvent)
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const responses = verifyDb.messages.query({
+        thread: { rootMessageId: requestMessageId },
+        phases: ['response'],
+      })
+      expect(responses).toHaveLength(0)
     } finally {
       verifyDb.close()
     }

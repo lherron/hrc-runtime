@@ -4,14 +4,17 @@ import type { HrcDomainError } from 'hrc-core'
 import type {
   HrcEventEnvelope,
   HrcLifecycleEvent,
+  HrcMessageAddress,
   HrcMessageRecord,
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { extractTextFromTurnMessagePayload } from './messages.js'
+import { isRecord } from './parsers/common.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
+import type { TurnResponseFinalizer } from './server-types.js'
 import { timestamp } from './server-util.js'
 
 export function appendEvent(
@@ -202,6 +205,57 @@ export function maybeCompleteInteractiveSemanticTurn(
   })
 }
 
+function parseMessageAddress(value: unknown): HrcMessageAddress | undefined {
+  if (!isRecord(value)) return undefined
+  if (value['kind'] === 'entity' && (value['entity'] === 'human' || value['entity'] === 'system')) {
+    return { kind: 'entity', entity: value['entity'] }
+  }
+  if (value['kind'] === 'session' && typeof value['sessionRef'] === 'string') {
+    return { kind: 'session', sessionRef: value['sessionRef'] }
+  }
+  return undefined
+}
+
+/**
+ * Rebuild a turn-response finalizer from durable state (T-04025).
+ *
+ * Only semantic-turn-handoff requests carry the `semanticTurnHandoff` metadata
+ * marker; DM-path requests are answered by the recipient's explicit reply DM
+ * and must never be auto-finalized. Skips requests already finalized (terminal
+ * execution state or an existing response) so recovery cannot double-insert.
+ */
+function recoverDurableTurnResponseFinalizer(
+  db: HrcDatabase,
+  runId: string
+): { finalizer: TurnResponseFinalizer; request: HrcMessageRecord } | undefined {
+  const request = db.messages.getLatestRequestByRunId(runId)
+  if (!request) return undefined
+  const marker = isRecord(request.metadataJson)
+    ? request.metadataJson['semanticTurnHandoff']
+    : undefined
+  if (marker === undefined) return undefined
+  if (request.execution.state === 'completed' || request.execution.state === 'failed') {
+    return undefined
+  }
+  if (db.messages.hasResponseTo(request.messageId)) return undefined
+
+  const respondTo = isRecord(marker) ? parseMessageAddress(marker['respondTo']) : undefined
+  const mode = request.execution.mode
+  return {
+    request,
+    finalizer: {
+      requestMessageId: request.messageId,
+      from: request.to,
+      to: respondTo ?? request.from,
+      mode:
+        mode === 'headless' || mode === 'interactive' || mode === 'nonInteractive'
+          ? mode
+          : 'interactive',
+      sessionRef: request.execution.sessionRef ?? '',
+    },
+  }
+}
+
 export function finalizeSemanticTurnResponse(
   this: HrcServerInstanceForHandlers,
   event: HrcLifecycleEvent
@@ -209,11 +263,26 @@ export function finalizeSemanticTurnResponse(
   const runId = event.runId
   if (!runId) return
 
-  const finalizer = this.turnResponseFinalizers.get(runId)
-  if (!finalizer) return
-  this.turnResponseFinalizers.delete(runId)
-
-  const request = this.db.messages.getById(finalizer.requestMessageId)
+  let finalizer = this.turnResponseFinalizers.get(runId)
+  let request: HrcMessageRecord | undefined
+  if (finalizer) {
+    this.turnResponseFinalizers.delete(runId)
+    request = this.db.messages.getById(finalizer.requestMessageId)
+  } else {
+    // T-04025: the finalizer map is in-memory and a durable-broker turn can
+    // outlive the daemon that dispatched it. Rebuild the finalizer from the
+    // durable request row (marked at handoff time) so a completed turn always
+    // persists its response, attached client or not.
+    const recovered = recoverDurableTurnResponseFinalizer(this.db, runId)
+    if (!recovered) return
+    finalizer = recovered.finalizer
+    request = recovered.request
+    writeServerLog('INFO', 'semantic_turn_handoff.finalizer_recovered', {
+      requestMessageId: request.messageId,
+      runId,
+      eventKind: event.eventKind,
+    })
+  }
   if (!request) return
 
   const run = this.db.runs.getByRunId(runId)
