@@ -125,6 +125,20 @@ function fatal(message: string): never {
   throw new CliUsageError(message)
 }
 
+function writePlacementWarnings(warnings: string[] | undefined): void {
+  if (!warnings || warnings.length === 0) return
+  for (const warning of warnings) {
+    process.stderr.write(`[hrc] warning: ${warning}\n`)
+  }
+}
+
+function formatAgentNotFound(agentId: string, searchedAgentRoots: string[] | undefined): string {
+  if (searchedAgentRoots && searchedAgentRoots.length > 0) {
+    return `agent "${agentId}" not found; searched: ${searchedAgentRoots.join(', ')}`
+  }
+  return `agent "${agentId}" not found; no agent roots configured.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.`
+}
+
 class CliStatusExit extends Error {
   constructor(readonly code: number) {
     super(`exit ${code}`)
@@ -668,29 +682,18 @@ function buildManagedRuntimeIntent(
     debug?: boolean | undefined
   } = {}
 ): HrcRuntimeIntent {
-  const agentsRoot = getAgentsRoot()
-  if (!agentsRoot) {
-    throw new Error(
-      'run requires an agents root.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.'
-    )
-  }
-
-  const agentRoot = join(agentsRoot, scope.agentId)
-  if (!existsSync(agentRoot)) {
-    throw new Error(
-      `agent "${scope.agentId}" not found at ${agentRoot}.\n` +
-        `  Check the spelling, or confirm ASP_AGENTS_ROOT (${agentsRoot}) contains this agent.`
-    )
-  }
-
   const paths = resolveAgentPlacementPaths({
     agentId: scope.agentId,
     ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
-    agentRoot,
     ...(scope.projectRootOverride !== undefined
       ? { projectRoot: scope.projectRootOverride, cwd: scope.projectRootOverride }
       : {}),
   })
+  writePlacementWarnings(paths.warnings)
+  const agentRoot = paths.agentRoot
+  if (!agentRoot) {
+    throw new Error(formatAgentNotFound(scope.agentId, paths.searchedAgentRoots))
+  }
   const projectRoot = paths.projectRoot
   const cwd = paths.cwd ?? agentRoot
   const bundle = buildRuntimeBundleRef({

@@ -37,6 +37,19 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path, 'utf8')
+    return true
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error ? error.code : undefined
+    if (code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
@@ -79,7 +92,7 @@ async function workspacePackages(): Promise<PackageInfo[]> {
     }
   }
 
-  if (await pathExists('integration-tests')) {
+  if (await fileExists(join('integration-tests', 'package.json'))) {
     const integrationInfo = await readPackageInfo('integration-tests')
     if (integrationInfo) {
       packages.push(integrationInfo)

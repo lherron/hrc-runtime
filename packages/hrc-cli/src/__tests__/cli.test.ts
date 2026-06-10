@@ -1344,6 +1344,83 @@ describe('hrc start', () => {
     }
   })
 
+  it('resolves project-local agent roots before the canonical agents root', async () => {
+    const projectRoot = join(projectsRoot, 'agent-spaces')
+    const localAgentsRoot = join(projectRoot, 'agents')
+    const localAgentRoot = join(localAgentsRoot, 'rex')
+    await mkdir(localAgentRoot, { recursive: true })
+    await writeFile(
+      join(projectRoot, 'asp-targets.toml'),
+      'schema = 1\nagents-root = "agents"\n',
+      'utf8'
+    )
+    await writeFile(
+      join(localAgentRoot, 'agent-profile.toml'),
+      'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+      'utf8'
+    )
+
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(`agentRoot:    ${localAgentRoot}`)
+    expect(result.stdout).not.toContain(`agentRoot:    ${join(agentsRoot, 'rex')}`)
+  })
+
+  it('reports every searched project-local and canonical agent root when an agent is missing', async () => {
+    const projectRoot = join(projectsRoot, 'agent-spaces')
+    const localAgentsRoot = join(projectRoot, 'agents')
+    await mkdir(localAgentsRoot, { recursive: true })
+    await writeFile(
+      join(projectRoot, 'asp-targets.toml'),
+      'schema = 1\nagents-root = "agents"\n',
+      'utf8'
+    )
+
+    const result = await runCli(
+      ['start', 'missing@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain(
+      `agent "missing" not found; searched: ${join(localAgentsRoot, 'missing')}, ${join(agentsRoot, 'missing')}`
+    )
+  })
+
+  it('prints resolver warnings for declared project-local roots that are missing', async () => {
+    const projectRoot = join(projectsRoot, 'agent-spaces')
+    const missingLocalAgentsRoot = join(projectRoot, 'missing-agents')
+    await writeFile(
+      join(projectRoot, 'asp-targets.toml'),
+      'schema = 1\nagents-root = "missing-agents"\n',
+      'utf8'
+    )
+
+    const result = await runCli(
+      ['start', 'rex@agent-spaces', '--dry-run'],
+      cliEnv({
+        ASP_AGENTS_ROOT: agentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain(
+      `[hrc] warning: Declared project agents root does not exist: ${missingLocalAgentsRoot}`
+    )
+    expect(result.stdout).toContain(`agentRoot:    ${join(agentsRoot, 'rex')}`)
+  })
+
   // SKIP: exercises the headless CLI start path, which hrc-server deliberately
   // retired in the broker cutover. The server now hard-fails this route with
   // "headless CLI start path retired for broker cutover ... provision via the

@@ -12,7 +12,6 @@ import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
 import {
   type TargetDefinition,
   buildRuntimeBundleRef,
-  getAgentsRoot,
   mergeAgentWithProjectTarget,
   normalizeHarnessFrontend,
   parseAgentProfile,
@@ -36,6 +35,20 @@ function loadProjectTarget(
 
 function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' {
   return resolveHarnessProvider(harness) ?? 'anthropic'
+}
+
+function writePlacementWarnings(warnings: string[] | undefined): void {
+  if (!warnings || warnings.length === 0) return
+  for (const warning of warnings) {
+    process.stderr.write(`[hrcchat] warning: ${warning}\n`)
+  }
+}
+
+function formatAgentNotFound(agentId: string, searchedAgentRoots: string[] | undefined): string {
+  if (searchedAgentRoots && searchedAgentRoots.length > 0) {
+    return `agent "${agentId}" not found; searched: ${searchedAgentRoots.join(', ')}`
+  }
+  return `agent "${agentId}" not found; no agent roots configured.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.`
 }
 
 /**
@@ -99,23 +112,15 @@ export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIn
 
   const projectId = scope.projectId
 
-  const agentsRoot = getAgentsRoot()
-  if (!agentsRoot) {
-    throw new CliUsageError(
-      'cannot resolve agent placement — set ASP_AGENTS_ROOT or configure agents-root'
-    )
-  }
-
-  const agentRoot = join(agentsRoot, scope.agentId)
-  if (!existsSync(agentRoot)) {
-    throw new CliUsageError(`agent "${scope.agentId}" not found at ${agentRoot}`)
-  }
-
   const paths = resolveAgentPlacementPaths({
     agentId: scope.agentId,
     projectId,
-    agentRoot,
   })
+  writePlacementWarnings(paths.warnings)
+  const agentRoot = paths.agentRoot
+  if (!agentRoot) {
+    throw new CliUsageError(formatAgentNotFound(scope.agentId, paths.searchedAgentRoots))
+  }
   const projectRoot = paths.projectRoot
   const cwd = paths.cwd ?? agentRoot
   const bundle = buildRuntimeBundleRef({
