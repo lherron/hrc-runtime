@@ -65,6 +65,7 @@ import { cmdMonitorShow } from './monitor-show.js'
 import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
 import { cmdMonitorWatch } from './monitor-watch.js'
 import { printJson } from './print.js'
+import { resolveRuntimeArg, resolveSessionArg } from './selector-resolve.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -1176,13 +1177,14 @@ function waitForKeypress(): void {
  * and never hangs without explanation.
  */
 async function cmdSessionReport(args: string[]): Promise<void> {
-  const runtimeId = parseFlag(args, '--runtime') ?? requireArg(args, 0, '<runtimeId>')
-  const scopeLabel = parseFlag(args, '--scope') ?? runtimeId
+  const runtimeArg = parseFlag(args, '--runtime') ?? requireArg(args, 0, '<runtimeId>')
+  const scopeLabel = parseFlag(args, '--scope') ?? runtimeArg
   const waitKey = hasFlag(args, '--wait-key')
 
   let block: string | null = null
   try {
     const client = createClient()
+    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
     // The broker pushes invocation.summary BEFORE the lease reap, but the
     // viewer's `tmux attach` can exit a beat ahead of HRC recording
     // finalSummary — poll briefly so we don't miss it on the race.
@@ -1469,11 +1471,12 @@ async function cmdSessionList(args: string[]): Promise<void> {
 }
 
 async function cmdSessionGet(args: string[]): Promise<void> {
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const live = hasFlag(args, '--live')
   const probe = hasFlag(args, '--probe')
 
   const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
   const session = await client.getSession(hostSessionId)
 
   if (!live) {
@@ -1507,10 +1510,11 @@ async function cmdSessionGet(args: string[]): Promise<void> {
 }
 
 async function cmdSessionDropContinuation(args: string[]): Promise<void> {
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const reason = parseFlag(args, '--reason')
 
   const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
   const result = await client.dropContinuation({
     hostSessionId,
     ...(reason ? { reason } : {}),
@@ -1601,9 +1605,10 @@ async function cmdRuntimeList(args: string[]): Promise<void> {
 }
 
 async function cmdRuntimeInspect(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const jsonOutput = hasFlag(args, '--json')
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.inspectRuntime({ runtimeId })
 
   if (jsonOutput) {
@@ -1677,10 +1682,11 @@ type RenderedBrokerInvocation = {
 }
 
 async function cmdBrokerInspect(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const jsonOutput = hasFlag(args, '--json')
   const probe = hasFlag(args, '--probe')
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.brokerInspect({
     runtimeId,
     ...(probe ? { probeLiveness: true } : {}),
@@ -1950,9 +1956,10 @@ async function cmdLaunchList(args: string[]): Promise<void> {
 }
 
 async function cmdAdopt(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
   try {
+    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
     const result = await client.adoptRuntime(runtimeId)
     printJson(result)
   } catch (err) {
@@ -2608,7 +2615,7 @@ function extractPrimingFromArgv(argv: readonly string[]): string | undefined {
 }
 
 async function cmdRuntimeEnsure(args: string[]): Promise<void> {
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const providerRaw = parseProviderFlag(args)
   const restartStyleRaw = parseFlag(args, '--restart-style')
 
@@ -2623,6 +2630,7 @@ async function cmdRuntimeEnsure(args: string[]): Promise<void> {
     restartStyleRaw === 'reuse_pty' || restartStyleRaw === 'fresh_pty' ? restartStyleRaw : undefined
 
   const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
   const result = await client.ensureRuntime({
     hostSessionId,
     intent: createDefaultRuntimeIntent(providerRaw),
@@ -2648,7 +2656,7 @@ async function execHrcchatTurn(forwarded: string[]): Promise<never> {
 }
 
 async function cmdInflightSend(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const runId = parseFlag(args, '--run-id')
   const input = parseFlag(args, '--input')
   const inputType = parseFlag(args, '--input-type')
@@ -2662,6 +2670,7 @@ async function cmdInflightSend(args: string[]): Promise<void> {
   }
 
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.sendInFlightInput({
     runtimeId,
     runId,
@@ -2673,10 +2682,11 @@ async function cmdInflightSend(args: string[]): Promise<void> {
 }
 
 async function cmdSessionClearContext(args: string[]): Promise<void> {
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const relaunch = hasFlag(args, '--relaunch')
 
   const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
   const result = await client.clearContext({
     hostSessionId,
     ...(relaunch ? { relaunch: true } : {}),
@@ -2685,9 +2695,10 @@ async function cmdSessionClearContext(args: string[]): Promise<void> {
 }
 
 async function cmdCapture(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
   try {
+    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
     const result = await client.capture(runtimeId)
     process.stdout.write(result.text)
     if (!result.text.endsWith('\n')) {
@@ -2784,9 +2795,10 @@ async function cmdAttach(args: string[]): Promise<void> {
 }
 
 async function cmdInterrupt(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
   try {
+    const runtimeId = await resolveRuntimeArg(runtimeArg, client)
     const result = await client.interrupt(runtimeId)
     printJson(result)
   } catch (err) {
@@ -2798,7 +2810,7 @@ async function cmdInterrupt(args: string[]): Promise<void> {
 }
 
 async function cmdTerminate(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const dropContinuation = hasFlag(args, '--drop-continuation')
   const noDropContinuation = hasFlag(args, '--no-drop-continuation')
   if (dropContinuation && noDropContinuation) {
@@ -2806,6 +2818,7 @@ async function cmdTerminate(args: string[]): Promise<void> {
   }
 
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.terminate(runtimeId, {
     ...(dropContinuation ? { dropContinuation: true } : {}),
     ...(noDropContinuation ? { dropContinuation: false } : {}),
@@ -2814,7 +2827,7 @@ async function cmdTerminate(args: string[]): Promise<void> {
 }
 
 async function cmdSurfaceBind(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const surfaceKind = parseFlag(args, '--kind')
   const surfaceId = parseFlag(args, '--id')
 
@@ -2826,6 +2839,7 @@ async function cmdSurfaceBind(args: string[]): Promise<void> {
   }
 
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const descriptor = await client.getAttachDescriptor(runtimeId)
   const result = await client.bindSurface({
     surfaceKind,
@@ -2857,14 +2871,15 @@ async function cmdSurfaceUnbind(args: string[]): Promise<void> {
 }
 
 async function cmdSurfaceList(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.listSurfaces({ runtimeId })
   printJson(result)
 }
 
 async function cmdBridgeRegister(args: string[]): Promise<void> {
-  const hostSessionId = requireArg(args, 0, '<hostSessionId>')
+  const hostSessionArg = requireArg(args, 0, '<hostSessionId>')
   const transport = parseFlag(args, '--transport')
   const target = parseFlag(args, '--target')
   const runtimeId = parseFlag(args, '--runtime-id')
@@ -2880,6 +2895,7 @@ async function cmdBridgeRegister(args: string[]): Promise<void> {
   const expectedGeneration = parseExpectedGeneration(args)
 
   const client = createClient()
+  const hostSessionId = await resolveSessionArg(hostSessionArg, client)
   const result = await client.registerBridgeTarget({
     hostSessionId,
     ...(runtimeId ? { runtimeId } : {}),
@@ -2913,8 +2929,9 @@ async function cmdBridgeDeliver(args: string[]): Promise<void> {
 }
 
 async function cmdBridgeList(args: string[]): Promise<void> {
-  const runtimeId = requireArg(args, 0, '<runtimeId>')
+  const runtimeArg = requireArg(args, 0, '<runtimeId>')
   const client = createClient()
+  const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.listBridges({ runtimeId })
   printJson(result)
 }
