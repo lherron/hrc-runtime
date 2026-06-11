@@ -1,10 +1,14 @@
 /**
- * Shared fixtures for the broker EVENT MAPPER RED tests (T-01696 / T-01690 W3A).
+ * Shared fixtures for the broker EVENT MAPPER RED tests (T-01696 / T-01690 W3A)
+ * and dedup RED tests (T-04215 / T-04221).
  *
  * Provides:
  *  - a fully-migrated on-disk HrcDatabase seeded with one session + runtime +
  *    run + broker_invocation (the context the mapper resolves from a bare
  *    InvocationEventEnvelope.invocationId);
+ *  - a tmux-interactive variant (makeTmuxSeededFixture) with NO runId on the
+ *    broker invocation — mirrors real broker-tmux shape (hrc_seq 376316/376317
+ *    evidence: run_id NULL on interactive turns);
  *  - typed synthetic InvocationEventEnvelope builders (no live broker);
  *  - the canonical ordered headless codex-app-server sequence used by the
  *    projection-mapping + replay tests.
@@ -41,6 +45,15 @@ export const RUNTIME_ID = 'runtime_broker_w3a'
 export const OPERATION_ID = 'op_broker_w3a'
 export const INVOCATION_ID = 'invocation_broker_w3a' as InvocationId
 export const RUN_ID = 'run_broker_w3a'
+
+// ── Stable identifiers for the tmux-interactive dedup fixture (T-04215) ────
+// Mirrors real broker-tmux shape: invocation has NO runId (hrc_seq 376316/
+// 376317 evidence: run_id NULL, only runtimeId/generation/hostSessionId set).
+export const TMUX_HOST_SESSION_ID = 'hsid_dedup_tmux'
+export const TMUX_SCOPE_REF = 'agent:smokey:project:hrc-runtime:task:T-04215'
+export const TMUX_RUNTIME_ID = 'runtime_dedup_tmux'
+export const TMUX_OPERATION_ID = 'op_dedup_tmux'
+export const TMUX_INVOCATION_ID = 'invocation_dedup_tmux' as InvocationId
 
 export function ts(offsetSeconds = 0): IsoTimestamp {
   return new Date(Date.UTC(2026, 4, 27, 12, 0, offsetSeconds)).toISOString() as IsoTimestamp
@@ -124,6 +137,101 @@ export async function makeSeededFixture(): Promise<SeededFixture> {
     createdAt: now,
     updatedAt: now,
   })
+
+  return {
+    db,
+    dbPath,
+    cleanup: async () => {
+      db.close()
+      await rm(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+/**
+ * Tmux-interactive fixture for T-04215 dedup RED tests.
+ *
+ * Unlike `makeSeededFixture`, the broker invocation carries NO runId — this
+ * mirrors the real broker-tmux shape observed in state.sqlite (hrc_seq 376316/
+ * 376317: runtime rt-64673c6d, generation 1, run_id NULL). With no runId on
+ * the invocation and no input.accepted in broker_invocation_events,
+ * `resolveRunIdForEvent` returns undefined, so ctx.runId is undefined
+ * throughout the turn.
+ *
+ * When `priorPromptContent` is supplied, a synthetic turn.user_prompt is seeded
+ * into hrc_events (simulating what broker-interactive-handlers.ts emits at
+ * injection-time before the broker TUI echoes the prompt back as user.message).
+ */
+export async function makeTmuxSeededFixture(priorPromptContent?: string): Promise<SeededFixture> {
+  const dir = await mkdtemp(join(tmpdir(), 'hrc-broker-dedup-'))
+  const dbPath = join(dir, 'test.sqlite')
+  const db = openHrcDatabase(dbPath)
+  const now = ts()
+
+  db.sessions.insert({
+    hostSessionId: TMUX_HOST_SESSION_ID,
+    scopeRef: TMUX_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+    ancestorScopeRefs: [],
+  })
+
+  db.runtimes.insert({
+    runtimeId: TMUX_RUNTIME_ID,
+    hostSessionId: TMUX_HOST_SESSION_ID,
+    scopeRef: TMUX_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    harness: 'claude-code',
+    provider: 'anthropic',
+    status: 'busy',
+    supportsInflightInput: true,
+    adopted: false,
+    controllerKind: 'harness-broker',
+    activeOperationId: TMUX_OPERATION_ID,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // Real broker-tmux shape: invocation has NO runId.
+  // No db.runs.insert either — interactive TUI turns don't go through the
+  // dispatched-input path that binds a runId at invocation time.
+  db.brokerInvocations.insert({
+    invocationId: TMUX_INVOCATION_ID,
+    operationId: TMUX_OPERATION_ID,
+    runtimeId: TMUX_RUNTIME_ID,
+    // runId intentionally absent — mirrors hrc_seq 376316/376317 evidence
+    brokerProtocol: 'harness-broker/0.1',
+    brokerDriver: 'claude-code-tmux',
+    invocationState: 'turn_active',
+    capabilitiesJson: JSON.stringify({ turns: 'multi' }),
+    specHash: 'sha256:spec-dedup',
+    startRequestHash: 'sha256:req-dedup',
+    selectedProfileHash: 'sha256:prof-dedup',
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  if (priorPromptContent !== undefined) {
+    // Simulate the synthetic turn.user_prompt that broker-interactive-handlers.ts
+    // emits at injection time (~line 617), before the TUI echoes it back.
+    db.hrcEvents.append({
+      ts: ts(1),
+      hostSessionId: TMUX_HOST_SESSION_ID,
+      scopeRef: TMUX_SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runtimeId: TMUX_RUNTIME_ID,
+      category: 'turn',
+      eventKind: 'turn.user_prompt',
+      transport: 'tmux',
+      payload: { type: 'message_end', message: { role: 'user', content: priorPromptContent } },
+    })
+  }
 
   return {
     db,

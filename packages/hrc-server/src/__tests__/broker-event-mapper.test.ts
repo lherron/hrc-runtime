@@ -36,6 +36,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
+import type { TurnId } from 'spaces-harness-broker-protocol'
 
 // RED gate: this module does not exist yet (curly creates it under src/broker/).
 import { BrokerEventMapper } from '../broker/event-mapper'
@@ -43,11 +44,16 @@ import { BrokerEventMapper } from '../broker/event-mapper'
 import {
   ASSISTANT_TEXT,
   CONTINUATION_KEY,
+  GENERATION,
   HOST_SESSION_ID,
   INVOCATION_ID,
+  LANE_REF,
   RUNTIME_ID,
   RUN_ID,
+  SCOPE_REF,
   type SeededFixture,
+  TMUX_INVOCATION_ID,
+  TMUX_RUNTIME_ID,
   TOOL_CALL_ID,
   TOOL_NAME,
   bufferTextForRun,
@@ -55,6 +61,7 @@ import {
   envelope,
   headlessSequence,
   makeSeededFixture,
+  makeTmuxSeededFixture,
   permissionRequestId,
   ts,
 } from './broker-event-mapper-fixtures'
@@ -727,5 +734,144 @@ describe('replay (end-to-end idempotency)', () => {
     expect(db.brokerInvocations.getByInvocationId(INVOCATION_ID)!.invocationState).toBe(
       snapshot.invocationState
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. T-04215 — broker user.message echo dedup
+//
+//    A broker `user.message` that is merely the TUI echo of an HRC-authored
+//    prompt already recorded for the same dispatch must NOT project a second
+//    canonical `turn.user_prompt`. Suppression at lifecycle-projection time in
+//    BrokerEventMapper; raw `broker.user.message` provenance still appended.
+//
+//    CRITICAL: runId is EMPTY on real broker-tmux interactive runtimes.
+//    Evidence: hrc_seq 376316/376317, runtime rt-64673c6d, generation 1,
+//    run_id NULL. Dedup correlation must key on
+//    (hostSessionId, generation, runtimeId, canonical content) scoped to the
+//    current turn window — NOT runId.
+//
+//    Test 1 (T-02026 guard): preserved at ~line 241 above — bare user.message
+//    with no prior synth → one turn.user_prompt.  Must stay GREEN.
+//    Test 2 (RED): prior synth with same content → lifecycleEvents=[]  ← FAILS now
+//    Test 3 (guard): different content → still projects.  Must stay GREEN.
+// ---------------------------------------------------------------------------
+describe('broker.user.message echo dedup (T-04215)', () => {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Seed a prior synthetic turn.user_prompt into the standard fixture's hrc_events,
+   * simulating what broker-interactive-handlers.ts emits at injection time
+   * (before the TUI echoes the same prompt back via broker user.message).
+   */
+  function seedPriorSynthUserPrompt(content: string): void {
+    fixture.db.hrcEvents.append({
+      ts: ts(1),
+      hostSessionId: HOST_SESSION_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runtimeId: RUNTIME_ID,
+      category: 'turn',
+      eventKind: 'turn.user_prompt',
+      transport: 'headless',
+      payload: { type: 'message_end', message: { role: 'user', content } },
+    })
+  }
+
+  // ── Test 2a (RED) — tmux fixture, runId absent ────────────────────────────
+  //
+  // The canonical RED test: mirrors the REAL broker-tmux interactive shape
+  // where the broker invocation carries no runId.  A prior synthetic
+  // turn.user_prompt already exists in hrc_events (same runtimeId, same
+  // content, same generation).  Applying the broker user.message echo must NOT
+  // produce a second lifecycle turn.user_prompt.
+  //
+  // Current code: emitLifecycle always projects 'user.message' → 'turn.user_prompt'
+  // → this test FAILS RED until the suppression is implemented.
+  it('[RED] does NOT project a second turn.user_prompt when prior synth exists — runId-absent (real tmux shape)', async () => {
+    // makeTmuxSeededFixture pre-seeds the prior synthetic turn.user_prompt.
+    const tmuxFixture = await makeTmuxSeededFixture('ship the fix')
+    try {
+      const mapper = new BrokerEventMapper({ db: tmuxFixture.db, now: () => ts(100) })
+
+      const result = mapper.apply({
+        invocationId: TMUX_INVOCATION_ID,
+        seq: 9,
+        time: ts(9),
+        type: 'user.message',
+        payload: { content: 'ship the fix' },
+        // turnId set; no runId — mirrors real tmux lifecycle event shape
+        turnId: 'turn_dedup_1' as TurnId,
+      })
+
+      // Raw provenance event MUST still be appended to the events mirror.
+      expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+
+      // Echo is suppressed — no second canonical turn.user_prompt.
+      // FAILS RED against current code: current code always emits the lifecycle event.
+      expect(result.lifecycleEvents).toEqual([])
+
+      // Database has exactly ONE turn.user_prompt for this runtime (the synth).
+      const allPrompts = tmuxFixture.db.hrcEvents.listByKind('turn.user_prompt', {
+        runtimeId: TMUX_RUNTIME_ID,
+      })
+      expect(allPrompts).toHaveLength(1)
+    } finally {
+      await tmuxFixture.cleanup()
+    }
+  })
+
+  // ── Test 2b (RED) — standard fixture, runId present ──────────────────────
+  //
+  // Same dedup invariant, standard headless fixture (runId present).  Proves
+  // the suppression is not special-cased on tmux-only — it applies whenever
+  // a prior synth turn.user_prompt exists for the same (runtimeId, generation,
+  // hostSessionId, content) in the current turn window.
+  //
+  // FAILS RED against current code for the same reason as Test 2a.
+  it('[RED] does NOT project a second turn.user_prompt when prior synth exists — runId-present (standard fixture)', () => {
+    seedPriorSynthUserPrompt('ship the fix')
+
+    const mapper = makeMapper()
+    const result = mapper.apply(
+      envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })
+    )
+
+    // Raw provenance mirror still appended.
+    expect(result.events.map((e) => e.eventKind)).toEqual(['broker.user.message'])
+    // Echo suppressed — no second canonical turn.user_prompt.
+    // FAILS RED: current code → lifecycleEvents=['turn.user_prompt']
+    expect(result.lifecycleEvents).toEqual([])
+    // Exactly one turn.user_prompt in hrc_events for this runtime.
+    const allPrompts = fixture.db.hrcEvents.listByKind('turn.user_prompt', {
+      runtimeId: RUNTIME_ID,
+    })
+    expect(allPrompts).toHaveLength(1)
+  })
+
+  // ── Test 3 (guard — different content still projects) ─────────────────────
+  //
+  // A broker user.message whose content DIFFERS from the prior synthetic
+  // turn.user_prompt must NOT be suppressed — it is a genuinely new user
+  // message (e.g. a follow-up message in the same turn window).
+  //
+  // GREEN against current code (always projects) and must remain GREEN after fix.
+  it('[guard] still projects turn.user_prompt when user.message content differs from prior synth', () => {
+    // Seed a prior synth with DIFFERENT content.
+    seedPriorSynthUserPrompt('deploy the fix')
+
+    const mapper = makeMapper()
+    const result = mapper.apply(
+      envelope('user.message', 9, { content: 'ship the fix' }, { turnId: 'turn_x' as never })
+    )
+
+    // Content differs → NOT suppressed → lifecycle event still emitted.
+    expect(result.lifecycleEvents.map((e) => e.eventKind)).toContain('turn.user_prompt')
+    // DB now has two turn.user_prompt events: the seeded synth + the new one.
+    const allPrompts = fixture.db.hrcEvents.listByKind('turn.user_prompt', {
+      runtimeId: RUNTIME_ID,
+    })
+    expect(allPrompts).toHaveLength(2)
   })
 })
