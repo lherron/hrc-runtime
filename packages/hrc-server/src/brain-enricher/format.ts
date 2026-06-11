@@ -42,7 +42,7 @@ export function formatBrainPrompt(
 <brain_rules>
 ${rulesText}
 </brain_rules>
-<brain_context source="gbrain" mode="query" results="${sources.length}" elapsed_ms="${Math.max(
+<brain_context source="memory" mode="query" results="${sources.length}" elapsed_ms="${Math.max(
     0,
     Math.round(options.elapsedMs)
   )}">

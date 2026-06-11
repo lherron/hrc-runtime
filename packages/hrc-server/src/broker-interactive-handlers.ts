@@ -740,6 +740,32 @@ export async function startInteractiveTmuxBrokerRuntime(
     )
 
     if (!compiled.admitted) {
+      writeServerLog('WARN', 'broker.compile_admission_rejected', {
+        hostSessionId: session.hostSessionId,
+        hostId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runId: diagnosticRunId,
+        allocatedRunId: compiled.identity.runId,
+        runtimeId: compiled.identity.runtimeId,
+        invocationId: compiled.identity.invocationId,
+        requestId: compiled.identity.requestId,
+        operationId: compiled.identity.operationId,
+        traceId: compiled.identity.traceId,
+        code: compiled.code,
+        diagnostics: compiled.diagnostics,
+        route: 'interactive-broker',
+        flag: flagOptions.flagEnvName,
+        harnessProvider: turnIntent.harness.provider,
+        harnessId: turnIntent.harness.id,
+        harnessInteractive: turnIntent.harness.interactive,
+        preferredMode: turnIntent.execution?.preferredMode,
+        cwd: turnIntent.placement.cwd,
+        projectRoot: turnIntent.placement.projectRoot,
+        runMode: turnIntent.placement.runMode,
+        brokerDriver: flagOptions.allowedBrokerDriver,
+      })
       throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
         hostSessionId: session.hostSessionId,
         runId: diagnosticRunId,

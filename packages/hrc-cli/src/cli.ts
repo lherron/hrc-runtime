@@ -555,26 +555,36 @@ function resolveManagedScopeContext(
   // The shared agent-scope resolver fills the task default ("primary") once a
   // projectId is known.
   //
-  // Probe first: only synthesize a fallback project — and apply the
-  // ASP_PROJECT/cwd conflict resolution in resolveDefaultProjectId — when the
-  // input is a bare agent with no explicit project. An explicit `agent@project`
-  // always wins and must never trigger a spurious cwd-override note.
-  const probe = resolveQualifiedScopeInput(scopeInput, {})
-  const projectIdHint: string | undefined = probe.parsed.projectId
+  // Only synthesize a fallback project — and apply the ASP_PROJECT/cwd conflict
+  // resolution in resolveDefaultProjectId — when the input has no explicit
+  // project. An explicit `agent@project` always wins and must never trigger a
+  // spurious cwd-override note.
+  //
+  // Detect an explicit project structurally rather than by resolving: "@" is the
+  // only way to write a project in a handle and ":project:" the only way in a
+  // raw ScopeRef. We must NOT resolve-to-probe here, because the project-deferred
+  // shorthand (`clod:zed`) throws by design when no project is available — that
+  // throw would pre-empt the register prompt below.
+  const hasExplicitProject = scopeInput.includes('@') || /(^|:)project:/.test(scopeInput)
+  let projectIdHint: string | undefined = hasExplicitProject
     ? undefined
     : (options.projectIdOverride ?? resolveDefaultProjectId())
 
-  let resolved =
-    projectIdHint !== undefined
-      ? resolveQualifiedScopeInput(scopeInput, { projectId: projectIdHint })
-      : probe
-
-  if (!resolved.parsed.projectId && (options.registerPolicy ?? 'never') === 'prompt') {
+  if (
+    projectIdHint === undefined &&
+    !hasExplicitProject &&
+    (options.registerPolicy ?? 'never') === 'prompt'
+  ) {
     const registered = maybePromptToRegisterProject()
     if (registered) {
-      resolved = resolveQualifiedScopeInput(scopeInput, { projectId: registered })
+      projectIdHint = registered
     }
   }
+
+  const resolved = resolveQualifiedScopeInput(
+    scopeInput,
+    projectIdHint !== undefined ? { projectId: projectIdHint } : {}
+  )
 
   const { parsed, scopeRef, laneRef } = resolved
 
