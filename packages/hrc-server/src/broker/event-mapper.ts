@@ -1197,6 +1197,9 @@ export class BrokerEventMapper {
     if (eventKind === undefined) {
       return undefined
     }
+    if (eventKind === 'turn.user_prompt' && this.isEchoedUserPrompt(envelope, ctx)) {
+      return undefined
+    }
     return appendHrcEvent(this.db, eventKind, {
       ts: now,
       hostSessionId: ctx.hostSessionId,
@@ -1208,6 +1211,51 @@ export class BrokerEventMapper {
       transport: ctx.transport,
       payload: this.lifecyclePayload(envelope, ctx.transport),
     })
+  }
+
+  private isEchoedUserPrompt(envelope: InvocationEventEnvelope, ctx: ProjectionContext): boolean {
+    if (envelope.type !== 'user.message') {
+      return false
+    }
+    const payload = envelope.payload as Partial<UserMessagePayload>
+    if (typeof payload.content !== 'string') {
+      return false
+    }
+
+    const canonicalContent = createUserPromptPayload(payload.content).message.content
+    const fromHrcSeq = this.currentTurnPromptWindowStart(ctx)
+    const priorPrompts = this.db.hrcEvents.listByKind('turn.user_prompt', {
+      hostSessionId: ctx.hostSessionId,
+      generation: ctx.generation,
+      runtimeId: ctx.runtimeId,
+      fromHrcSeq,
+    })
+
+    return priorPrompts.some(
+      (event) => this.userPromptPayloadContent(event.payload) === canonicalContent
+    )
+  }
+
+  private currentTurnPromptWindowStart(ctx: ProjectionContext): number {
+    const events = this.db.hrcEvents.listFromHrcSeq(1, {
+      hostSessionId: ctx.hostSessionId,
+      generation: ctx.generation,
+      runtimeId: ctx.runtimeId,
+    })
+    const lastTerminal = events.filter((event) => event.eventKind === 'turn.completed').at(-1)
+    return lastTerminal === undefined ? 1 : lastTerminal.hrcSeq + 1
+  }
+
+  private userPromptPayloadContent(payload: unknown): string | undefined {
+    if (!isRecord(payload)) {
+      return undefined
+    }
+    const message = payload['message']
+    if (!isRecord(message) || message['role'] !== 'user') {
+      return undefined
+    }
+    const content = message['content']
+    return typeof content === 'string' ? content : undefined
   }
 
   /** Build the legacy-shaped lifecycle payload for a mapped broker event. */
