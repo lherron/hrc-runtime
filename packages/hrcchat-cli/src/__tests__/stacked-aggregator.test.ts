@@ -11,6 +11,7 @@ type StackedLine = {
   summary: string
   exitCode?: number
   result?: string
+  taskState?: string | null
   permission?: { requestId: string; toolUseId: string; toolName: string }
   hrcSeqRange?: { from: number; to: number }
 }
@@ -104,7 +105,14 @@ function event(
   }
 }
 
-function makeHarness(options: { windowMs?: number; stallAfterMs?: number } = {}) {
+function makeHarness(
+  options: {
+    windowMs?: number
+    stallAfterMs?: number
+    targetScope?: string
+    readTaskState?: (taskId: string) => Promise<string | null>
+  } = {}
+) {
   const clock = new FakeClock()
   const lines: StackedLine[] = []
   const summarized: HrcLifecycleEvent[][] = []
@@ -127,12 +135,15 @@ function makeHarness(options: { windowMs?: number; stallAfterMs?: number } = {})
       const aggregator = createStackedAggregator({
         windowMs: options.windowMs ?? 1_000,
         stallAfterMs: options.stallAfterMs ?? 3_000,
-        targetScope: 'larry@agent-spaces:T-01449',
+        targetScope: options.targetScope ?? 'larry@agent-spaces:T-01449',
         handoff: makeHandoff(),
         summarizer,
         now: clock.now,
         setTimeout: clock.setTimeout,
         clearTimeout: clock.clearTimeout,
+        // Default to a deterministic stub so terminal-frame tests never spawn a
+        // real `wrkq` subprocess; cases that assert enrichment override it.
+        readTaskState: options.readTaskState ?? (async () => null),
         writeLine(line: StackedLine) {
           lines.push(line)
         },
@@ -200,6 +211,83 @@ describe('stacked turn aggregator', () => {
     )
     expect(harness.lines.map((line) => line.flush)).toEqual(['permission', 'final'])
     expect(harness.lines[1]).toMatchObject({ phase: 'final', result: 'success', exitCode: 0 })
+  })
+
+  it('enriches the terminal final frame with the live wrkq task state', async () => {
+    const reads: string[] = []
+    const harness = makeHarness({
+      readTaskState: async (taskId) => {
+        reads.push(taskId)
+        return 'completed'
+      },
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.tool_call', { toolName: 'Read' }))
+    await aggregator.receive(event(12, 'turn.completed', { body: 'done' }))
+
+    expect(reads).toEqual(['T-01449'])
+    const final = harness.lines.at(-1)!
+    expect(final).toMatchObject({ phase: 'final', result: 'success', taskState: 'completed' })
+  })
+
+  it('reports the open state when the assignee does not close the task', async () => {
+    const harness = makeHarness({
+      readTaskState: async () => 'in_progress',
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.completed', { body: 'still working' }))
+
+    expect(harness.lines.at(-1)).toMatchObject({ phase: 'final', taskState: 'in_progress' })
+  })
+
+  it('emits taskState:null for a non-task-scoped handle without erroring', async () => {
+    let called = false
+    const harness = makeHarness({
+      targetScope: 'larry@agent-spaces:primary',
+      readTaskState: async () => {
+        called = true
+        return 'completed'
+      },
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.completed', { body: 'done' }))
+
+    expect(called).toBe(false)
+    const final = harness.lines.at(-1)!
+    expect(final.phase).toBe('final')
+    expect(final.taskState).toBeNull()
+  })
+
+  it('emits taskState:null when the wrkq read fails, never failing the frame', async () => {
+    const harness = makeHarness({
+      readTaskState: async () => {
+        throw new Error('wrkq unavailable')
+      },
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.completed', { body: 'done' }))
+
+    const final = harness.lines.at(-1)!
+    expect(final.phase).toBe('final')
+    expect(final.taskState).toBeNull()
+  })
+
+  it('omits taskState on non-terminal interval frames', async () => {
+    const harness = makeHarness({
+      readTaskState: async () => 'completed',
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.tool_call', { toolName: 'Read' }))
+    await harness.clock.advance(1_000)
+
+    const interval = harness.lines.at(-1)!
+    expect(interval.flush).toBe('interval')
+    expect('taskState' in interval).toBe(false)
   })
 
   it('suppresses duplicate permission requestIds but emits a distinct permission request', async () => {
@@ -326,6 +414,43 @@ describe('stacked turn aggregator', () => {
     await aggregator.finish({ exitCode: 1, result: 'stall' })
 
     expect(order).toEqual(['write', 'exit'])
+  })
+
+  // --- adversarial additions (smokey) ---
+
+  it('enriches an error-terminal frame (run_failed) with taskState', async () => {
+    const reads: string[] = []
+    const harness = makeHarness({
+      readTaskState: async (taskId) => {
+        reads.push(taskId)
+        return 'in_progress'
+      },
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'run_failed', { message: 'agent crashed' }))
+
+    expect(reads).toEqual(['T-01449'])
+    const terminal = harness.lines.at(-1)!
+    expect(terminal.phase).toBe('error')
+    expect(terminal.taskState).toBe('in_progress')
+  })
+
+  it('extracts taskId from a lane-suffixed scope (agent@proj:T-XXXXX~lane)', async () => {
+    const reads: string[] = []
+    const harness = makeHarness({
+      targetScope: 'clod@hrc-runtime:T-04216~main',
+      readTaskState: async (taskId) => {
+        reads.push(taskId)
+        return 'completed'
+      },
+    })
+    const aggregator = await harness.create()
+
+    await aggregator.receive(event(11, 'turn.completed', { body: 'done' }))
+
+    expect(reads).toEqual(['T-04216'])
+    expect(harness.lines.at(-1)).toMatchObject({ taskState: 'completed' })
   })
 
   it('ships final result metadata with a fallback summary when the summarizer fails', async () => {

@@ -1,6 +1,7 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
+import { readTaskState } from './task-state.js'
 import {
   FlushReason,
   Phase,
@@ -48,6 +49,11 @@ export type StackedAggregatorOptions = {
   writeLine: (line: TurnStackedEvent) => void
   onExitReady?: (() => void) | undefined
   onStall?: (() => void) | undefined
+  /**
+   * Reads the live wrkq state for a task id at terminal-frame build time.
+   * Injectable for tests; defaults to a read-only `wrkq cat` subprocess.
+   */
+  readTaskState?: ((taskId: string) => Promise<string | null>) | undefined
 }
 
 export type FinishInput = {
@@ -291,6 +297,10 @@ export class StackedAggregator {
       job.phase,
       job.flush
     )
+    // Terminal frames carry the live wrkq task state so a stacked coordinator
+    // reads per-task truth without a follow-up `wrkq cat`. Non-terminal frames
+    // omit the field entirely. Enrichment never fails the frame.
+    const taskState = job.terminal ? await this.resolveTaskState() : undefined
     const line = this.buildLine({
       events: job.events,
       phase: job.phase,
@@ -301,6 +311,7 @@ export class StackedAggregator {
       permission: job.permission,
       exitCode: job.exitCode,
       result: job.result,
+      taskState,
       finalBody: job.finalBody,
       replyMessageId: job.replyMessageId,
       error: job.error,
@@ -326,6 +337,19 @@ export class StackedAggregator {
       return Phase.Permission
     }
     return this.phase === Phase.Queued ? Phase.Progress : this.phase
+  }
+
+  private async resolveTaskState(): Promise<string | null> {
+    const taskId = extractTaskId(this.options.targetScope)
+    if (taskId === undefined) {
+      return null
+    }
+    const read = this.options.readTaskState ?? readTaskState
+    try {
+      return await read(taskId)
+    } catch {
+      return null
+    }
   }
 
   private async summarizeSafely(
@@ -361,6 +385,7 @@ export class StackedAggregator {
     permission?: StackedPermission | undefined
     exitCode?: number | undefined
     result?: Result | undefined
+    taskState?: string | null | undefined
     finalBody?: string | undefined
     replyMessageId?: string | undefined
     error?: StackedError | undefined
@@ -384,6 +409,7 @@ export class StackedAggregator {
       ...(input.error !== undefined ? { error: input.error } : {}),
       ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
       ...(input.result !== undefined ? { result: input.result } : {}),
+      ...(input.taskState !== undefined ? { taskState: input.taskState } : {}),
       ...(input.phase === Phase.Final && input.replyMessageId !== undefined
         ? { replyMessageId: input.replyMessageId }
         : {}),

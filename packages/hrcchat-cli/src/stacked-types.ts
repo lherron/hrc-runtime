@@ -71,6 +71,14 @@ export type TurnStackedEvent = {
   error?: StackedError | undefined
   exitCode?: number | undefined
   result?: Result | undefined
+  /**
+   * Live wrkq state of the scoped task at terminal-frame emission time
+   * (e.g. "completed" | "in_progress" | "open"). Present only on terminal
+   * (phase:final / phase:error) frames; `null` when the handle has no task
+   * scope, the task is not found, or wrkq is unavailable. Lets a stacked
+   * coordinator read per-task truth without a follow-up `wrkq cat`.
+   */
+  taskState?: string | null | undefined
   replyMessageId?: string | undefined
   at: string
   window: StackedWindow

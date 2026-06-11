@@ -254,7 +254,7 @@ const turnCmd = program
 
 turnCmd.addHelpText(
   'before',
-  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use\n--follow <duration> (alias --stacked); the stream is one turn_stacked ndjson line per interval\nplus force-flush lines on phase/stall/final/error/permission. Mutex against --format tree|compact\nand --pretty.\n'
+  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use\n--follow <duration> (alias --stacked); the stream is one turn_stacked ndjson line per interval\nplus force-flush lines on phase/stall/final/error/permission. Terminal frames (phase:final|error)\nalso carry "taskState": the live wrkq state of the scoped task (e.g. "completed"|"in_progress"),\nor null for a non-task-scoped handle (:primary) or when wrkq is unavailable. Mutex against\n--format tree|compact and --pretty.\n'
 )
 
 // -- doctor -------------------------------------------------------------------
