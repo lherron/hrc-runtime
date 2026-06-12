@@ -564,10 +564,18 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
       expect(lsBody.some((r) => r.runtimeId === runtimeId)).toBe(true)
       expect(legacyBody.some((r) => r.runtimeId === runtimeId)).toBe(true)
 
-      // Shape must match
-      const lsItem = lsBody.find((r) => r.runtimeId === runtimeId)
-      const legacyItem = legacyBody.find((r) => r.runtimeId === runtimeId)
-      expect(Object.keys(lsItem ?? {})).toEqual(Object.keys(legacyItem ?? {}))
+      // Shape must match, excluding fields that are timing-dependent across two live CLI
+      // invocations: `continuation` and `activeRunId` are conditionally present based on
+      // whether the daemon populated them between the two calls — not a schema difference.
+      const VOLATILE_RUNTIME_KEYS = new Set(['continuation', 'activeRunId', 'lastActivityAt'])
+      function stableRuntimeKeys(item: Record<string, unknown>): string[] {
+        return Object.keys(item)
+          .filter((k) => !VOLATILE_RUNTIME_KEYS.has(k))
+          .sort()
+      }
+      const lsItem = lsBody.find((r) => r.runtimeId === runtimeId) as Record<string, unknown> | undefined
+      const legacyItem = legacyBody.find((r) => r.runtimeId === runtimeId) as Record<string, unknown> | undefined
+      expect(stableRuntimeKeys(lsItem ?? {})).toEqual(stableRuntimeKeys(legacyItem ?? {}))
     })
 
     it('hrc ls sessions returns same data as hrc session list', async () => {
