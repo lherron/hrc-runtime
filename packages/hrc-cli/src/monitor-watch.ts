@@ -76,7 +76,7 @@ export type MonitorWatchArgs = {
 /** Injectable dependencies for testing. */
 export type MonitorWatchDeps = {
   buildMonitorState: () => Promise<HrcMonitorState>
-  stdout: { write(chunk: string): boolean }
+  stdout: { write(chunk: string): boolean; drain?: () => Promise<void> }
   stderr: { write(chunk: string): boolean }
 }
 
@@ -108,18 +108,25 @@ export async function cmdMonitorWatch(
     const exitCode = await runWatch(args, io)
     if (!deps) {
       // CLI mode: exit the process
+      await drainStdout(io.stdout)
       process.exit(exitCode)
     }
     return exitCode
   } catch (error) {
     if (error instanceof CliUsageError) {
       io.stderr.write(`error: ${error.message}\n`)
-      if (!deps) process.exit(2)
+      if (!deps) {
+        await drainStdout(io.stdout)
+        process.exit(2)
+      }
       return 2
     }
     if (error instanceof HrcDomainError) {
       io.stderr.write(`error: ${error.message}\n`)
-      if (!deps) process.exit(2)
+      if (!deps) {
+        await drainStdout(io.stdout)
+        process.exit(2)
+      }
       return 2
     }
     throw error
@@ -435,6 +442,10 @@ function createEventWriter(
   }
 }
 
+async function drainStdout(stdout: MonitorWatchDeps['stdout']): Promise<void> {
+  await stdout.drain?.()
+}
+
 // -- Polling condition reader (follow + until) --------------------------------
 
 /**
@@ -520,8 +531,36 @@ function sleep(ms: number): Promise<void> {
 function defaultDeps(): MonitorWatchDeps {
   return {
     buildMonitorState: buildLiveMonitorState,
-    stdout: process.stdout,
+    stdout: createDrainableStdout(process.stdout),
     stderr: process.stderr,
+  }
+}
+
+function createDrainableStdout(stream: {
+  write(chunk: string, callback?: () => void): boolean
+}): MonitorWatchDeps['stdout'] {
+  const pendingWrites = new Set<Promise<void>>()
+
+  return {
+    write(chunk: string): boolean {
+      let resolveWrite!: () => void
+      const writeFinished = new Promise<void>((resolve) => {
+        resolveWrite = resolve
+      })
+      pendingWrites.add(writeFinished)
+
+      const result = stream.write(chunk, () => {
+        pendingWrites.delete(writeFinished)
+        resolveWrite()
+      })
+
+      return result
+    },
+    async drain(): Promise<void> {
+      while (pendingWrites.size > 0) {
+        await Promise.all(Array.from(pendingWrites))
+      }
+    },
   }
 }
 
