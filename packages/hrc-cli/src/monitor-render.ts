@@ -2,6 +2,25 @@ import { parseScopeRef } from 'agent-scope'
 import chalk from 'chalk'
 import type { HrcEventCategory, HrcLifecycleEvent } from 'hrc-core'
 import { booleanField, numberField, stringField } from './monitor-fields.js'
+import {
+  type ParsedToolResult,
+  type PendingToolCall,
+  asRecord,
+  formatInlineValue,
+  isInlinePrimitive,
+  renderPrettyValue,
+  wrapBody,
+} from './monitor-render/shared.js'
+import {
+  formatToolCallBody,
+  formatToolDisplayName,
+  formatToolOutput,
+  formatToolResultLabel,
+  formatToolTitle,
+  isMatchingToolResult,
+  parseToolResult,
+  toolCallFromEvent,
+} from './monitor-render/tool-format.js'
 
 export type MonitorOutputFormat = 'tree' | 'compact' | 'verbose' | 'json' | 'ndjson'
 
@@ -15,23 +34,6 @@ export type MonitorRendererOptions = {
 export type MonitorRenderer = {
   push(event: MonitorRenderableEvent): string
   flush(): string
-}
-
-type PendingToolCall = {
-  event: HrcLifecycleEvent
-  toolUseId: string
-  toolName: string
-  input: Record<string, unknown>
-}
-
-type ParsedToolResult = {
-  output: string
-  stdout?: string | undefined
-  stderr?: string | undefined
-  exitCode?: number | undefined
-  durationSeconds?: number | undefined
-  interrupted?: boolean | undefined
-  isError?: boolean | undefined
 }
 
 type BandState = {
@@ -597,277 +599,6 @@ function payloadFrom(event: MonitorRenderableEvent): unknown {
   return payload
 }
 
-function toolCallFromEvent(event: HrcLifecycleEvent): PendingToolCall {
-  const payload = asRecord(event.payload)
-  return {
-    event,
-    toolUseId:
-      stringField(payload ?? {}, 'toolUseId') ?? stringField(payload ?? {}, 'tool_use_id') ?? '',
-    toolName:
-      stringField(payload ?? {}, 'toolName') ?? stringField(payload ?? {}, 'tool_name') ?? 'tool',
-    input: asRecord(payload?.['input']) ?? {},
-  }
-}
-
-function isMatchingToolResult(event: HrcLifecycleEvent, pending: PendingToolCall): boolean {
-  if (event.eventKind !== 'turn.tool_result') return false
-  const payload = asRecord(event.payload)
-  const toolUseId =
-    stringField(payload ?? {}, 'toolUseId') ?? stringField(payload ?? {}, 'tool_use_id') ?? ''
-  return toolUseId.length > 0 && toolUseId === pending.toolUseId
-}
-
-function formatToolTitle(toolName: string, input: Record<string, unknown>): string {
-  const displayName = formatToolDisplayName(toolName)
-  const summary = formatToolSummary(toolName, input)
-  return summary ? `${displayName} - ${summary}` : displayName
-}
-
-function formatToolDisplayName(toolName: string): string {
-  if (toolName === 'exec_command' || toolName === 'command_execution') return 'Bash'
-  if (toolName === 'file_change') return 'FileChange'
-  if (toolName === 'web_search') return 'WebSearch'
-  if (toolName === 'image_view') return 'ImageView'
-  return toolName
-}
-
-function formatToolSummary(toolName: string, input: Record<string, unknown>): string | undefined {
-  const description = stringField(input, 'description')
-  if (description) return truncateText(description, 80)
-
-  if (isShellTool(toolName)) {
-    const cwd = stringField(input, 'cwd') ?? stringField(input, 'workdir')
-    return cwd ? `cwd ${compactPath(cwd)}` : undefined
-  }
-
-  if (toolName === 'Read') {
-    const path = stringField(input, 'file_path') ?? stringField(input, 'path')
-    return path ? compactPath(path) : undefined
-  }
-
-  if (toolName === 'Write' || toolName === 'Edit') {
-    const path = stringField(input, 'file_path') ?? stringField(input, 'path')
-    return path ? compactPath(path) : undefined
-  }
-
-  if (toolName === 'TaskUpdate') {
-    const taskId = stringField(input, 'taskId') ?? stringField(input, 'task_id')
-    const status = stringField(input, 'status')
-    return (
-      [taskId, status].filter((part): part is string => part !== undefined).join(' ') || undefined
-    )
-  }
-
-  if (toolName === 'file_change') {
-    const changes = input['changes']
-    return Array.isArray(changes)
-      ? `${changes.length} change${changes.length === 1 ? '' : 's'}`
-      : undefined
-  }
-
-  if (toolName.startsWith('mcp:')) {
-    const tool = stringField(input, 'tool')
-    return tool ? truncateText(tool, 80) : undefined
-  }
-
-  if (toolName === 'web_search' || toolName === 'WebSearch') {
-    const query = stringField(input, 'query')
-    return query ? truncateText(query, 80) : undefined
-  }
-
-  if (toolName === 'image_view') {
-    const path = stringField(input, 'path')
-    return path ? compactPath(path) : undefined
-  }
-
-  return undefined
-}
-
-function formatToolCallBody(toolName: string, input: Record<string, unknown>): string[] {
-  if (isShellTool(toolName)) return formatShellCommand(input)
-  if (toolName === 'Read') return formatReadInput(input)
-  if (toolName === 'Write') return formatWriteInput(input)
-  if (toolName === 'Edit') return formatEditInput(input)
-  if (toolName === 'TaskUpdate') return formatTaskUpdateInput(input)
-  if (toolName === 'file_change') return formatFileChangeInput(input)
-  return formatGenericToolInput(input)
-}
-
-function isShellTool(toolName: string): boolean {
-  return toolName === 'Bash' || toolName === 'exec_command' || toolName === 'command_execution'
-}
-
-function formatShellCommand(input: Record<string, unknown>): string[] {
-  const raw = input['command'] ?? input['cmd']
-  if (Array.isArray(raw)) {
-    const command = raw.map((part) => String(part))
-    if (command[0] === 'bash' && command[1] === '-lc' && command[2]) return [`$ ${command[2]}`]
-    return [`$ ${command.join(' ')}`]
-  }
-  if (typeof raw === 'string') return [`$ ${raw}`]
-  return formatGenericToolInput(input)
-}
-
-function formatReadInput(input: Record<string, unknown>): string[] {
-  const out: string[] = []
-  const path = stringField(input, 'file_path') ?? stringField(input, 'path')
-  if (path) out.push(compactPath(path))
-  const offset = numberField(input, 'offset')
-  const limit = numberField(input, 'limit')
-  const range = [
-    offset !== undefined ? `offset ${offset}` : undefined,
-    limit !== undefined ? `limit ${limit}` : undefined,
-  ]
-    .filter((part): part is string => part !== undefined)
-    .join(', ')
-  if (range) out.push(range)
-  return out.length > 0 ? out : formatGenericToolInput(input)
-}
-
-function formatWriteInput(input: Record<string, unknown>): string[] {
-  const out: string[] = []
-  const path = stringField(input, 'file_path') ?? stringField(input, 'path')
-  if (path) out.push(compactPath(path))
-  const content = stringField(input, 'content')
-  if (content !== undefined)
-    out.push(`write ${countLines(content)} line${countLines(content) === 1 ? '' : 's'}`)
-  return out.length > 0 ? out : formatGenericToolInput(input)
-}
-
-function formatEditInput(input: Record<string, unknown>): string[] {
-  const out: string[] = []
-  const path = stringField(input, 'file_path') ?? stringField(input, 'path')
-  if (path) out.push(compactPath(path))
-  const oldString = stringField(input, 'old_string')
-  const newString = stringField(input, 'new_string')
-  if (oldString !== undefined || newString !== undefined) {
-    out.push(booleanField(input, 'replace_all') ? 'replace all matches' : 'replace one block')
-    if (oldString !== undefined)
-      out.push(`old: ${countLines(oldString)} line${countLines(oldString) === 1 ? '' : 's'}`)
-    if (newString !== undefined)
-      out.push(`new: ${countLines(newString)} line${countLines(newString) === 1 ? '' : 's'}`)
-  }
-  return out.length > 0 ? out : formatGenericToolInput(input)
-}
-
-function formatTaskUpdateInput(input: Record<string, unknown>): string[] {
-  const taskId = stringField(input, 'taskId') ?? stringField(input, 'task_id')
-  const status = stringField(input, 'status')
-  const out = [
-    taskId ? `task ${taskId}` : undefined,
-    status ? `status ${status}` : undefined,
-  ].filter((part): part is string => part !== undefined)
-  return out.length > 0 ? out : formatGenericToolInput(input)
-}
-
-function formatFileChangeInput(input: Record<string, unknown>): string[] {
-  const changes = input['changes']
-  if (!Array.isArray(changes)) return formatGenericToolInput(input)
-  return changes.map((change, index) => {
-    const record = asRecord(change)
-    const path = stringField(record ?? {}, 'path') ?? stringField(record ?? {}, 'file')
-    const type = stringField(record ?? {}, 'type') ?? stringField(record ?? {}, 'status')
-    const label = [type, path ? compactPath(path) : undefined]
-      .filter((part): part is string => part !== undefined)
-      .join(' ')
-    return label || `change ${index + 1}`
-  })
-}
-
-function formatGenericToolInput(input: Record<string, unknown>): string[] {
-  return Object.keys(input).length > 0 ? [JSON.stringify(input)] : []
-}
-
-function formatToolResultLabel(result: ParsedToolResult): string {
-  if (result.interrupted) return 'interrupted'
-  if (result.exitCode !== undefined) return result.exitCode === 0 ? 'ok' : `exit ${result.exitCode}`
-  if (result.isError === true) return 'error'
-  if (result.isError === false) return 'ok'
-  return 'result'
-}
-
-function parseToolResult(payload: unknown): ParsedToolResult {
-  const payloadRecord = asRecord(payload)
-  const resultRecord = asRecord(payloadRecord?.['result'])
-  const details = asRecord(resultRecord?.['details'])
-  const isError = booleanField(payloadRecord ?? {}, 'isError')
-  const stdout = stringField(details ?? {}, 'stdout')
-  const stderr = stringField(details ?? {}, 'stderr')
-  const interrupted = booleanField(details ?? {}, 'interrupted')
-  const detailsExitCode =
-    numberField(details ?? {}, 'exitCode') ?? numberField(details ?? {}, 'exit_code')
-  const detailsDuration =
-    numberField(details ?? {}, 'durationSeconds') ??
-    numberField(details ?? {}, 'duration_seconds') ??
-    millisToSeconds(
-      numberField(details ?? {}, 'durationMs') ?? numberField(payloadRecord ?? {}, 'durationMs')
-    )
-  if (stdout !== undefined || stderr !== undefined || interrupted !== undefined) {
-    return {
-      output: [stdout, stderr].filter((part): part is string => Boolean(part)).join('\n'),
-      ...(stdout !== undefined ? { stdout } : {}),
-      ...(stderr !== undefined ? { stderr } : {}),
-      ...(interrupted !== undefined ? { interrupted } : {}),
-      ...(detailsExitCode !== undefined ? { exitCode: detailsExitCode } : {}),
-      ...(detailsDuration !== undefined ? { durationSeconds: detailsDuration } : {}),
-      ...(isError !== undefined ? { isError } : {}),
-    }
-  }
-
-  const text = extractToolResultText(payloadRecord)
-  const json = parseJsonObject(text)
-  const metadata = asRecord(json?.['metadata'])
-  if (json && typeof json['output'] === 'string') {
-    return {
-      output: json['output'],
-      ...(typeof metadata?.['exit_code'] === 'number' ? { exitCode: metadata['exit_code'] } : {}),
-      ...(typeof metadata?.['duration_seconds'] === 'number'
-        ? { durationSeconds: metadata['duration_seconds'] }
-        : {}),
-      ...(isError !== undefined ? { isError } : {}),
-    }
-  }
-  const codex = parseCodexExecOutput(text)
-  if (codex) return { ...codex, ...(isError !== undefined ? { isError } : {}) }
-  return { output: text, ...(isError !== undefined ? { isError } : {}) }
-}
-
-function parseCodexExecOutput(text: string): ParsedToolResult | undefined {
-  const marker = '\nOutput:\n'
-  const idx = text.indexOf(marker)
-  if (idx === -1) return undefined
-  const preamble = text.slice(0, idx)
-  const exitMatch = preamble.match(/Process exited with code (\d+)/)
-  const durationMatch = preamble.match(/Wall time: ([0-9.]+) seconds/)
-  return {
-    output: text.slice(idx + marker.length),
-    ...(exitMatch?.[1] ? { exitCode: Number(exitMatch[1]) } : {}),
-    ...(durationMatch?.[1] ? { durationSeconds: Number(durationMatch[1]) } : {}),
-  }
-}
-
-function formatToolOutput(text: string, indent: string): string[] {
-  const json = parseJsonObject(text.trim())
-  if (json) return renderPrettyValue(json, indent)
-  return wrapBody(text, indent)
-}
-
-function extractToolResultText(payload: Record<string, unknown> | null | undefined): string {
-  const result = asRecord(payload?.['result'])
-  const content = result?.['content']
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => {
-        const record = asRecord(item)
-        return typeof record?.['text'] === 'string' ? record['text'] : ''
-      })
-      .join('')
-  }
-  if (typeof payload?.['message'] === 'string') return payload['message']
-  if (typeof payload?.['partialOutput'] === 'string') return payload['partialOutput']
-  return typeof payload?.['result'] === 'string' ? payload['result'] : JSON.stringify(payload ?? {})
-}
-
 function extractMessageRole(payload: unknown): string {
   const record = asRecord(payload)
   const message = asRecord(record?.['message'])
@@ -899,33 +630,6 @@ function inlinePayload(payload: Record<string, unknown> | null | undefined): str
     parts.push(`${chalk.dim(key)}=${formatInlineValue(value)}`)
   }
   return parts.length > 0 ? `  ${parts.join(chalk.dim(' * '))}` : ''
-}
-
-function renderPrettyValue(value: unknown, indent: string): string[] {
-  if (isInlinePrimitive(value)) return [`${indent}${formatInlineValue(value)}`]
-  if (Array.isArray(value)) {
-    if (value.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
-    return value.flatMap((item, index) => [
-      `${indent}${chalk.dim(`[${index}]`)}`,
-      ...renderPrettyValue(item, `${indent}  `),
-    ])
-  }
-  const record = asRecord(value)
-  if (!record) return [`${indent}${chalk.dim(String(value))}`]
-  const entries = Object.entries(record)
-  if (entries.length === 0) return [`${indent}${chalk.dim('(empty)')}`]
-  const width = Math.max(...entries.map(([key]) => key.length))
-  return entries.flatMap(([key, child]) => {
-    if (isInlinePrimitive(child)) {
-      return [`${indent}| ${chalk.cyan(key.padEnd(width))} : ${formatInlineValue(child)}`]
-    }
-    return [`${indent}| ${chalk.cyan(key)}`, ...renderPrettyValue(child, `${indent}  `)]
-  })
-}
-
-function wrapBody(text: string, indent: string): string[] {
-  if (!text) return []
-  return text.split('\n').map((line) => `${indent}${line}`)
 }
 
 function glyphFor(event: HrcLifecycleEvent): string {
@@ -970,56 +674,6 @@ function formatShortTime(ts: string): string {
 
 function formatLongTime(ts: string): string {
   return ts.replace('T', ' ').replace(/\.\d+Z$/, 'Z')
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | undefined {
-  try {
-    const parsed = JSON.parse(text)
-    return asRecord(parsed) ?? undefined
-  } catch {
-    return undefined
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
-
-function isInlinePrimitive(value: unknown): value is string | number | boolean | null {
-  return value === null || ['string', 'number', 'boolean'].includes(typeof value)
-}
-
-function formatInlineValue(value: string | number | boolean | null): string {
-  if (value === null) return chalk.dim('null')
-  if (typeof value === 'boolean') return value ? chalk.green('true') : chalk.red('false')
-  if (typeof value === 'number') return chalk.white(String(value))
-  return chalk.white(value)
-}
-
-function compactPath(path: string): string {
-  const cwd = process.cwd()
-  const home = process.env['HOME']
-  let display = path
-  if (path.startsWith(`${cwd}/`)) {
-    display = path.slice(cwd.length + 1)
-  } else if (home && path.startsWith(`${home}/`)) {
-    display = `~/${path.slice(home.length + 1)}`
-  }
-  return truncateText(display, 80)
-}
-
-function truncateText(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}.` : value
-}
-
-function countLines(value: string): number {
-  return value.length === 0 ? 0 : value.split('\n').length
-}
-
-function millisToSeconds(value: number | undefined): number | undefined {
-  return value === undefined ? undefined : value / 1000
 }
 
 function stripAnsi(value: string): string {

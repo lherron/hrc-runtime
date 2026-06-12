@@ -25,20 +25,7 @@
  * launches/execs anything. It is inert unless invoked by the W3B controller,
  * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
  */
-import type {
-  HrcContinuationRef,
-  HrcEventEnvelope,
-  HrcLifecycleEvent,
-  HrcLifecycleTransport,
-  HrcProvider,
-} from 'hrc-core'
-import type {
-  AgentMessageEvent,
-  ContentBlock,
-  ToolExecutionEndEvent,
-  ToolExecutionStartEvent,
-  ToolResult,
-} from 'hrc-events'
+import type { HrcContinuationRef, HrcProvider } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
   AssistantMessageCompletedPayload,
@@ -53,162 +40,35 @@ import type {
   InvocationFailedPayload,
   LifecycleEscalationPayload,
   LifecyclePolicyAcceptedPayload,
-  PermissionCancelledPayload,
-  PermissionRequestedPayload,
-  PermissionResolvedPayload,
   TerminalSurfaceReportedPayload,
   ToolCallCompletedPayload,
   ToolCallFailedPayload,
   ToolCallStartedPayload,
   TurnFailedPayload,
   TurnRetryPayload,
-  UserMessagePayload,
 } from 'spaces-harness-broker-protocol'
 
-import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
-import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper'
-import { writeServerLog } from '../server-log.js'
+import { hasOpenAskBracket, isAskUserTool } from '../ask-bracket'
+import {
+  type BrokerEventMapperDeps,
+  type BrokerProjectionResult,
+  type DerivedTurnDescriptor,
+  type ProjectionContext,
+  TERMINAL_TURN_EVENT_TYPE_SQL,
+  lifecycleTransportFromRuntime,
+} from './event-mapper/helpers'
+import { emitBrokerEvent, emitLifecycleEvent } from './event-mapper/lifecycle-payload'
+import { auditPermissionCancelled, auditPermissionResolved } from './event-mapper/permission-audit'
+import {
+  claimRuntimeTurnOwnership,
+  emitDerivedTurnEvent,
+  isRuntimeAwaitingInput,
+  markRuntimeAwaitingInput,
+  markRuntimeInputResumed,
+  markRuntimeTurnTerminal,
+} from './event-mapper/runtime-state'
 
-/**
- * Broker event type -> canonical HRC lifecycle `event_kind`. The `events` table
- * mirror carries every broker event under a `broker.<type>` kind for provenance,
- * but the lifecycle stream (`hrc_events`, served by `/v1/events`) is what every
- * client consumes: hrcchat `turn` / `monitor wait` follow it and gate on these
- * canonical kinds, and `notifyEvent` only finalizes the semantic turn on a
- * `turn.completed` lifecycle event. A broker event with no mapping here is
- * provenance-only (no lifecycle row) (T-01711). Mapped kinds MUST exist in
- * `hrc-event-helper`'s KIND_CATEGORIES or `appendHrcEvent` throws.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function omitRuntimeStateActiveRun(value: Record<string, unknown>): Record<string, unknown> {
-  const { activeRunId: _activeRunId, ...rest } = value
-  return rest
-}
-
-function lifecycleTransportFromRuntime(value: string): HrcLifecycleTransport {
-  if (value === 'sdk' || value === 'tmux' || value === 'headless' || value === 'ghostty') {
-    return value
-  }
-  return 'headless'
-}
-
-function permissionIdentityKey(input: {
-  invocationId: string
-  harnessGeneration?: number | null | undefined
-  turnAttempt?: number | null | undefined
-  permissionRequestId: string
-}): string {
-  return JSON.stringify([
-    input.invocationId,
-    input.harnessGeneration ?? null,
-    input.turnAttempt ?? null,
-    input.permissionRequestId,
-  ])
-}
-
-/**
- * Coerce the broker `tool.call.completed.result` field (typed `unknown`) into
- * the canonical hrc-events `ToolResult` shape. Broker drivers emit
- * driver-specific result blobs (e.g. codex's `command` tool returns
- * `{output, exitCode}`); the lifecycle stream uses the hook-derived
- * `{content: ContentBlock[]}` shape consumers already know how to render.
- */
-function toolResultFromBrokerResult(result: unknown): ToolResult {
-  if (isRecord(result) && Array.isArray(result['content'])) {
-    const content = result['content']
-    if (content.every((item) => isRecord(item) && typeof item['type'] === 'string')) {
-      return result as unknown as ToolResult
-    }
-  }
-  const text =
-    typeof result === 'string'
-      ? result
-      : isRecord(result) && typeof result['output'] === 'string'
-        ? result['output']
-        : result === undefined || result === null
-          ? ''
-          : safeStringify(result)
-  const block: ContentBlock = { type: 'text', text }
-  const details = isRecord(result) ? result : undefined
-  return details === undefined ? { content: [block] } : { content: [block], details }
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
-  'input.accepted': 'turn.accepted',
-  'turn.started': 'turn.started',
-  // Interactive TUI prompts (claude-code-tmux / codex-cli-tmux) surface the
-  // operator's typed text as a broker user.message, emitted right after
-  // turn.started. Map it to the canonical turn.user_prompt so the prompt rides
-  // the same lifecycle stream as agent messages and tool calls (T-02026).
-  'user.message': 'turn.user_prompt',
-  'assistant.message.completed': 'turn.message',
-  'tool.call.started': 'turn.tool_call',
-  'tool.call.completed': 'turn.tool_result',
-  'tool.call.failed': 'turn.tool_result',
-  'turn.completed': 'turn.completed',
-  // Failed/interrupted have no registered lifecycle kind; surface them as a
-  // terminal turn.completed (payload carries success:false) so client waiters
-  // unblock — run state already records failed/cancelled via projectState.
-  'turn.failed': 'turn.completed',
-  'turn.interrupted': 'turn.completed',
-}
-
-const TERMINAL_TURN_EVENT_TYPES = ['turn.completed', 'turn.failed', 'turn.interrupted'] as const
-const TERMINAL_TURN_EVENT_TYPE_SQL = TERMINAL_TURN_EVENT_TYPES.map((type) => `'${type}'`).join(', ')
-
-export type BrokerEventMapperDeps = {
-  db: HrcDatabase
-  now?: () => string
-}
-
-export type BrokerProjectionResult = {
-  /** True when the (invocationId, seq) was already applied with the same payload. */
-  idempotent: boolean
-  /** Raw `events`-table mirror appended this call (each `source:'broker'`); empty on idempotent re-apply. */
-  events: HrcEventEnvelope[]
-  /**
-   * Canonical `hrc_events` lifecycle events appended this call (the ones the
-   * server `notifyEvent`s to follow-stream subscribers and uses to finalize the
-   * semantic turn). Empty on idempotent re-apply or for provenance-only events.
-   */
-  lifecycleEvents: HrcLifecycleEvent[]
-}
-
-/**
- * A pending HRC-derived turn lifecycle event (T-01946). projectState records the
- * descriptor while it mutates state; project() emits it AFTER the canonical event
- * so the hrcSeq order matches the returned lifecycleEvents order.
- */
-type DerivedTurnDescriptor = {
-  eventKind: 'turn.awaiting_input' | 'turn.input_resumed'
-  toolUseId: string
-  toolName: string
-}
-
-/** Resolved projection context for a single invocation. */
-type ProjectionContext = {
-  runtimeId: string
-  hostSessionId: string
-  scopeRef: string
-  laneRef: string
-  generation: number
-  transport: HrcLifecycleTransport
-  operationId: string
-  runId: string | undefined
-}
-
-type RuntimeRecord = NonNullable<ReturnType<HrcDatabase['runtimes']['getByRuntimeId']>>
+export type { BrokerEventMapperDeps, BrokerProjectionResult } from './event-mapper/helpers'
 
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
@@ -303,10 +163,10 @@ export class BrokerEventMapper {
     const derivedDescriptors: DerivedTurnDescriptor[] = []
     const stale = this.isStaleLifecycleEnvelope(envelope, invocation, runtime)
     this.projectState(envelope, ctx, now, stale, derivedDescriptors)
-    const emitted = this.emit(envelope, ctx, now)
-    const lifecycleEvent = stale ? undefined : this.emitLifecycle(envelope, ctx, now)
+    const emitted = emitBrokerEvent(db, envelope, ctx, now)
+    const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, envelope, ctx, now)
     const derived = derivedDescriptors.map((descriptor) =>
-      this.emitDerivedTurnEvent(descriptor.eventKind, envelope, ctx, now, {
+      emitDerivedTurnEvent(db, descriptor.eventKind, envelope, ctx, now, {
         toolUseId: descriptor.toolUseId,
         toolName: descriptor.toolName,
       })
@@ -420,27 +280,6 @@ export class BrokerEventMapper {
     return row?.seq
   }
 
-  private hasOpenTurnBracketAtSeq(invocationId: string, seq: number): boolean {
-    const row = this.db.sqlite
-      .query<{ count: number }, [string, number, number]>(
-        `SELECT COUNT(*) AS count
-           FROM broker_invocation_events AS started
-          WHERE started.invocation_id = ?
-            AND started.type = 'turn.started'
-            AND started.seq <= ?
-            AND NOT EXISTS (
-              SELECT 1
-                FROM broker_invocation_events AS terminal
-               WHERE terminal.invocation_id = started.invocation_id
-                 AND terminal.type IN (${TERMINAL_TURN_EVENT_TYPE_SQL})
-                 AND terminal.seq > started.seq
-                 AND terminal.seq <= ?
-            )`
-      )
-      .get(invocationId, seq, seq)
-    return (row?.count ?? 0) > 0
-  }
-
   /** Apply the type-specific state mutation. Emission is handled separately. */
   private projectState(
     envelope: InvocationEventEnvelope,
@@ -451,9 +290,9 @@ export class BrokerEventMapper {
   ): void {
     if (stale) {
       if (envelope.type === 'permission.resolved') {
-        this.auditPermissionResolved(envelope, ctx, now, true)
+        auditPermissionResolved(this.db, envelope, ctx, now, true)
       } else if (envelope.type === 'permission.cancelled') {
-        this.auditPermissionCancelled(envelope, ctx, now, true)
+        auditPermissionCancelled(this.db, envelope, ctx, now, true)
       }
       return
     }
@@ -702,7 +541,7 @@ export class BrokerEventMapper {
       case 'turn.started': {
         if (runId !== undefined) {
           db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
-          this.claimRuntimeTurnOwnership(ctx, runId, now)
+          claimRuntimeTurnOwnership(db, ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, {
           invocationState: 'turn_active',
@@ -713,7 +552,7 @@ export class BrokerEventMapper {
       case 'turn.completed': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
-          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -727,7 +566,7 @@ export class BrokerEventMapper {
             updatedAt: now,
             errorMessage: payload.message,
           })
-          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -735,7 +574,7 @@ export class BrokerEventMapper {
       case 'turn.interrupted': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'cancelled', completedAt: now, updatedAt: now })
-          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -802,7 +641,7 @@ export class BrokerEventMapper {
       case 'tool.call.started': {
         const payload = envelope.payload as ToolCallStartedPayload
         if (runId !== undefined && isAskUserTool(payload.name)) {
-          this.markRuntimeAwaitingInput(ctx, invocationId, now)
+          markRuntimeAwaitingInput(db, ctx, invocationId, now)
           derived.push({
             eventKind: 'turn.awaiting_input',
             toolUseId: payload.toolCallId,
@@ -821,10 +660,10 @@ export class BrokerEventMapper {
         if (
           runId !== undefined &&
           isAskUserTool(payload.name) &&
-          this.isRuntimeAwaitingInput(ctx.runtimeId) &&
+          isRuntimeAwaitingInput(db, ctx.runtimeId) &&
           !hasOpenAskBracket(db, invocationId, runId)
         ) {
-          this.markRuntimeInputResumed(ctx, invocationId, now)
+          markRuntimeInputResumed(db, ctx, invocationId, now)
           derived.push({
             eventKind: 'turn.input_resumed',
             toolUseId: payload.toolCallId,
@@ -915,11 +754,11 @@ export class BrokerEventMapper {
         break
       }
       case 'permission.resolved': {
-        this.auditPermissionResolved(envelope, ctx, now, false)
+        auditPermissionResolved(this.db, envelope, ctx, now, false)
         break
       }
       case 'permission.cancelled': {
-        this.auditPermissionCancelled(envelope, ctx, now, false)
+        auditPermissionCancelled(this.db, envelope, ctx, now, false)
         break
       }
     }
@@ -971,448 +810,6 @@ export class BrokerEventMapper {
     return false
   }
 
-  private auditPermissionResolved(
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string,
-    stale: boolean
-  ): void {
-    const payload = envelope.payload as PermissionResolvedPayload
-    const identityKey = permissionIdentityKey({
-      invocationId: envelope.invocationId,
-      harnessGeneration: envelope.harnessGeneration,
-      turnAttempt: envelope.turnAttempt,
-      permissionRequestId: payload.permissionRequestId,
-    })
-    if (this.db.permissionDecisions.getByPermissionIdentityKey(identityKey)) {
-      return
-    }
-    const requested = this.findRequestedPayload(envelope.invocationId, payload.permissionRequestId)
-    this.db.permissionDecisions.insert({
-      permissionIdentityKey: identityKey,
-      permissionRequestId: payload.permissionRequestId,
-      invocationId: envelope.invocationId,
-      ...(envelope.harnessGeneration !== undefined
-        ? { harnessGeneration: envelope.harnessGeneration }
-        : {}),
-      ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
-      runtimeId: ctx.runtimeId,
-      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      kind: requested?.payload.kind ?? 'unknown',
-      subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
-      defaultDecision: requested?.payload.defaultDecision ?? 'deny',
-      decision: payload.decision,
-      decidedBy: payload.decidedBy,
-      policyJson: JSON.stringify({
-        ...(payload.message !== undefined ? { message: payload.message } : {}),
-        ...(stale ? { stale: true } : {}),
-      }),
-      requestedAt: requested?.time ?? now,
-      decidedAt: now,
-    })
-  }
-
-  private auditPermissionCancelled(
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string,
-    stale: boolean
-  ): void {
-    const payload = envelope.payload as PermissionCancelledPayload
-    const identityKey = permissionIdentityKey({
-      invocationId: envelope.invocationId,
-      harnessGeneration: envelope.harnessGeneration ?? payload.harnessGeneration,
-      turnAttempt: envelope.turnAttempt ?? payload.turnAttempt,
-      permissionRequestId: payload.permissionRequestId,
-    })
-    if (this.db.permissionDecisions.getByPermissionIdentityKey(identityKey)) {
-      return
-    }
-    const requested = this.findRequestedPayload(envelope.invocationId, payload.permissionRequestId)
-    const harnessGeneration = envelope.harnessGeneration ?? payload.harnessGeneration
-    const turnAttempt = envelope.turnAttempt ?? payload.turnAttempt
-    const defaultDecision = requested?.payload.defaultDecision ?? 'deny'
-    this.db.permissionDecisions.insert({
-      permissionIdentityKey: identityKey,
-      permissionRequestId: payload.permissionRequestId,
-      invocationId: envelope.invocationId,
-      ...(harnessGeneration !== undefined ? { harnessGeneration } : {}),
-      ...(turnAttempt !== undefined ? { turnAttempt } : {}),
-      runtimeId: ctx.runtimeId,
-      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      kind: requested?.payload.kind ?? 'unknown',
-      subjectDisplayJson: JSON.stringify(requested?.payload.subjectDisplay ?? null),
-      defaultDecision,
-      decision: defaultDecision,
-      decidedBy: 'policy',
-      policyJson: JSON.stringify({
-        cancelled: true,
-        reason: payload.reason,
-        ...(stale ? { stale: true } : {}),
-      }),
-      requestedAt: requested?.time ?? now,
-      decidedAt: now,
-    })
-  }
-
-  /** True iff the runtime is currently projected as parked on a user prompt. */
-  private isRuntimeAwaitingInput(runtimeId: string): boolean {
-    return this.db.runtimes.getByRuntimeId(runtimeId)?.status === 'awaiting_input'
-  }
-
-  private claimRuntimeTurnOwnership(ctx: ProjectionContext, runId: string, now: string): void {
-    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
-    if (!runtime) return
-    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
-      const activeRun = this.db.runs.getByRunId(runtime.activeRunId)
-      if (activeRun && activeRun.completedAt === undefined) return
-    }
-
-    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
-      ? runtime.runtimeStateJson
-      : undefined
-    this.db.runtimes.update(ctx.runtimeId, {
-      status: 'busy',
-      activeRunId: runId,
-      lastActivityAt: now,
-      updatedAt: now,
-      ...(runtimeStateJson !== undefined
-        ? {
-            runtimeStateJson: {
-              ...runtimeStateJson,
-              status: 'busy',
-              activeRunId: runId,
-              updatedAt: now,
-            },
-          }
-        : {}),
-    })
-  }
-
-  /** Park the runtime on an open ask bracket (T-01946): turn is active but blocked. */
-  private markRuntimeAwaitingInput(
-    ctx: ProjectionContext,
-    invocationId: string,
-    now: string
-  ): void {
-    this.db.brokerInvocations.update(invocationId, {
-      invocationState: 'awaiting_input',
-      updatedAt: now,
-    })
-    this.setRuntimeStatus(ctx.runtimeId, 'awaiting_input', now)
-  }
-
-  /**
-   * Resume after the operator answers: the SAME turn continues (busy), it does
-   * NOT complete — `turn.completed` later flips ready via markRuntimeTurnTerminal.
-   */
-  private markRuntimeInputResumed(ctx: ProjectionContext, invocationId: string, now: string): void {
-    this.db.brokerInvocations.update(invocationId, {
-      invocationState: 'turn_active',
-      updatedAt: now,
-    })
-    this.setRuntimeStatus(ctx.runtimeId, 'busy', now)
-  }
-
-  /** Update runtime.status (and the mirrored runtimeStateJson.status) in lockstep. */
-  private setRuntimeStatus(runtimeId: string, status: string, now: string): void {
-    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-    if (!runtime) return
-    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
-      ? runtime.runtimeStateJson
-      : undefined
-    this.db.runtimes.update(runtimeId, {
-      status,
-      lastActivityAt: now,
-      updatedAt: now,
-      ...(runtimeStateJson !== undefined
-        ? { runtimeStateJson: { ...runtimeStateJson, status, updatedAt: now } }
-        : {}),
-    })
-  }
-
-  /**
-   * Emit an HRC-derived turn lifecycle event (turn.awaiting_input /
-   * turn.input_resumed). These have no broker event type — the mapper synthesizes
-   * them from the ask bracket as the observability / fast-path surface. The
-   * authority remains the durable bracket in broker_invocation_events.
-   */
-  private emitDerivedTurnEvent(
-    eventKind: 'turn.awaiting_input' | 'turn.input_resumed',
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string,
-    extra: { toolUseId: string; toolName: string }
-  ): HrcLifecycleEvent {
-    return appendHrcEvent(this.db, eventKind, {
-      ts: now,
-      hostSessionId: ctx.hostSessionId,
-      scopeRef: ctx.scopeRef,
-      laneRef: ctx.laneRef,
-      generation: ctx.generation,
-      runtimeId: ctx.runtimeId,
-      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      transport: ctx.transport,
-      payload: {
-        toolUseId: extra.toolUseId,
-        toolName: extra.toolName,
-        invocationId: envelope.invocationId,
-        seq: envelope.seq,
-        ...(envelope.harnessGeneration !== undefined
-          ? { harnessGeneration: envelope.harnessGeneration }
-          : {}),
-        ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
-      },
-    })
-  }
-
-  private clearRuntimeTurnOwnership(runtime: RuntimeRecord, now: string): void {
-    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
-      ? omitRuntimeStateActiveRun(runtime.runtimeStateJson)
-      : runtime.runtimeStateJson
-    this.db.runtimes.update(runtime.runtimeId, {
-      status: 'ready',
-      lastActivityAt: now,
-      updatedAt: now,
-      ...(runtimeStateJson !== undefined
-        ? {
-            runtimeStateJson: {
-              ...runtimeStateJson,
-              status: 'ready',
-              updatedAt: now,
-            },
-          }
-        : {}),
-    })
-  }
-
-  private terminalBelongsToActiveInvocation(
-    runtime: RuntimeRecord,
-    ctx: ProjectionContext,
-    invocationId: string
-  ): boolean {
-    if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
-      return false
-    }
-    if (runtime.activeOperationId !== undefined && runtime.activeOperationId !== ctx.operationId) {
-      return false
-    }
-    return true
-  }
-
-  private markRuntimeTurnTerminal(
-    ctx: ProjectionContext,
-    envelope: InvocationEventEnvelope,
-    runId: string,
-    now: string
-  ): void {
-    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
-    if (!runtime) return
-    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
-      const canUnwedge =
-        this.terminalBelongsToActiveInvocation(runtime, ctx, envelope.invocationId) &&
-        !this.hasOpenTurnBracketAtSeq(envelope.invocationId, envelope.seq) &&
-        !runtimeHasAnyOpenAskBracket(this.db, runtime)
-      if (canUnwedge) {
-        writeServerLog('WARN', 'broker.event_mapper.runtime_unwedged_on_run_mismatch', {
-          runtimeId: ctx.runtimeId,
-          invocationId: envelope.invocationId,
-          seq: envelope.seq,
-          activeRunId: runtime.activeRunId,
-          terminalRunId: runId,
-        })
-        this.clearRuntimeTurnOwnership(runtime, now)
-      }
-      return
-    }
-
-    // Gate 3 / invariant (T-01946): never project `ready` while an ask bracket is
-    // still open on this runtime. A genuine same-run terminal closes this run's
-    // brackets (the authority requires no later same-run terminal), so this is
-    // normally false — it only holds if another run on the runtime is still
-    // parked, in which case the still-open bracket governs the runtime and we
-    // leave ownership/awaiting untouched rather than projecting a false `ready`.
-    if (runtimeHasAnyOpenAskBracket(this.db, runtime)) {
-      return
-    }
-
-    this.clearRuntimeTurnOwnership(runtime, now)
-  }
-
-  /** Emit a single broker-sourced HRC event mirroring the broker envelope. */
-  private emit(
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string
-  ): HrcEventEnvelope {
-    return this.db.events.append({
-      ts: now,
-      hostSessionId: ctx.hostSessionId,
-      scopeRef: ctx.scopeRef,
-      laneRef: ctx.laneRef,
-      generation: ctx.generation,
-      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      runtimeId: ctx.runtimeId,
-      source: 'broker',
-      eventKind: `broker.${envelope.type}`,
-      eventJson: {
-        invocationId: envelope.invocationId,
-        seq: envelope.seq,
-        type: envelope.type,
-        time: envelope.time,
-        ...(envelope.turnId !== undefined ? { turnId: envelope.turnId } : {}),
-        ...(envelope.inputId !== undefined ? { inputId: envelope.inputId } : {}),
-        ...(envelope.itemId !== undefined ? { itemId: envelope.itemId } : {}),
-        payload: envelope.payload,
-      },
-    })
-  }
-
-  /**
-   * Project a broker event into the canonical `hrc_events` lifecycle stream that
-   * every client follows via `/v1/events`. Returns the appended lifecycle event
-   * (so the server can `notifyEvent` it) or undefined for provenance-only types.
-   */
-  private emitLifecycle(
-    envelope: InvocationEventEnvelope,
-    ctx: ProjectionContext,
-    now: string
-  ): HrcLifecycleEvent | undefined {
-    const eventKind = BROKER_TO_HRC_KIND[envelope.type]
-    if (eventKind === undefined) {
-      return undefined
-    }
-    if (eventKind === 'turn.user_prompt' && this.isEchoedUserPrompt(envelope, ctx)) {
-      return undefined
-    }
-    return appendHrcEvent(this.db, eventKind, {
-      ts: now,
-      hostSessionId: ctx.hostSessionId,
-      scopeRef: ctx.scopeRef,
-      laneRef: ctx.laneRef,
-      generation: ctx.generation,
-      runtimeId: ctx.runtimeId,
-      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
-      transport: ctx.transport,
-      payload: this.lifecyclePayload(envelope, ctx.transport),
-    })
-  }
-
-  private isEchoedUserPrompt(envelope: InvocationEventEnvelope, ctx: ProjectionContext): boolean {
-    if (envelope.type !== 'user.message') {
-      return false
-    }
-    const payload = envelope.payload as Partial<UserMessagePayload>
-    if (typeof payload.content !== 'string') {
-      return false
-    }
-
-    const canonicalContent = createUserPromptPayload(payload.content).message.content
-    const fromHrcSeq = this.currentTurnPromptWindowStart(ctx)
-    const priorPrompts = this.db.hrcEvents.listByKind('turn.user_prompt', {
-      hostSessionId: ctx.hostSessionId,
-      generation: ctx.generation,
-      runtimeId: ctx.runtimeId,
-      fromHrcSeq,
-    })
-
-    return priorPrompts.some(
-      (event) => this.userPromptPayloadContent(event.payload) === canonicalContent
-    )
-  }
-
-  private currentTurnPromptWindowStart(ctx: ProjectionContext): number {
-    const events = this.db.hrcEvents.listFromHrcSeq(1, {
-      hostSessionId: ctx.hostSessionId,
-      generation: ctx.generation,
-      runtimeId: ctx.runtimeId,
-    })
-    const lastTerminal = events.filter((event) => event.eventKind === 'turn.completed').at(-1)
-    return lastTerminal === undefined ? 1 : lastTerminal.hrcSeq + 1
-  }
-
-  private userPromptPayloadContent(payload: unknown): string | undefined {
-    if (!isRecord(payload)) {
-      return undefined
-    }
-    const message = payload['message']
-    if (!isRecord(message) || message['role'] !== 'user') {
-      return undefined
-    }
-    const content = message['content']
-    return typeof content === 'string' ? content : undefined
-  }
-
-  /** Build the legacy-shaped lifecycle payload for a mapped broker event. */
-  private lifecyclePayload(
-    envelope: InvocationEventEnvelope,
-    transport: HrcLifecycleTransport
-  ): Record<string, unknown> {
-    switch (envelope.type) {
-      case 'user.message': {
-        const payload = envelope.payload as UserMessagePayload
-        // createUserPromptPayload builds the {type:'message_end', role:'user'}
-        // shape (with turn-text truncation) consumers already render.
-        return createUserPromptPayload(payload.content) as unknown as Record<string, unknown>
-      }
-      case 'assistant.message.completed': {
-        const payload = envelope.payload as AssistantMessageCompletedPayload
-        const content = payload.content
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join('')
-        const event: AgentMessageEvent = {
-          type: 'message_end',
-          message: { role: 'assistant', content },
-        }
-        return event as unknown as Record<string, unknown>
-      }
-      case 'tool.call.started': {
-        const payload = envelope.payload as ToolCallStartedPayload
-        const event: ToolExecutionStartEvent = {
-          type: 'tool_execution_start',
-          toolUseId: payload.toolCallId,
-          toolName: payload.name,
-          input: isRecord(payload.input) ? payload.input : {},
-        }
-        return event as unknown as Record<string, unknown>
-      }
-      case 'tool.call.completed': {
-        const payload = envelope.payload as ToolCallCompletedPayload
-        const event: ToolExecutionEndEvent = {
-          type: 'tool_execution_end',
-          toolUseId: payload.toolCallId,
-          toolName: payload.name,
-          result: toolResultFromBrokerResult(payload.result),
-          ...(payload.isError !== undefined ? { isError: payload.isError } : {}),
-        }
-        return event as unknown as Record<string, unknown>
-      }
-      case 'tool.call.failed': {
-        const payload = envelope.payload as ToolCallFailedPayload
-        const event: ToolExecutionEndEvent = {
-          type: 'tool_execution_end',
-          toolUseId: payload.toolCallId,
-          toolName: payload.name,
-          result: { content: [{ type: 'text', text: payload.message }] },
-          isError: true,
-        }
-        return event as unknown as Record<string, unknown>
-      }
-      case 'turn.completed':
-        return { success: true, transport, source: 'broker' }
-      case 'turn.failed': {
-        const payload = envelope.payload as TurnFailedPayload
-        return { success: false, transport, source: 'broker', message: payload.message }
-      }
-      case 'turn.interrupted':
-        return { success: false, interrupted: true, transport, source: 'broker' }
-      default:
-        return { transport }
-    }
-  }
-
   private appendBuffer(ctx: ProjectionContext, text: string, now: string): void {
     if (ctx.runId === undefined || text.length === 0) {
       return
@@ -1425,31 +822,5 @@ export class BrokerEventMapper {
       text,
       createdAt: now,
     })
-  }
-
-  /**
-   * Recover the originating `permission.requested` payload (kind / subjectDisplay
-   * / defaultDecision) persisted on a prior event so the authoritative decision
-   * row carries the full request context.
-   */
-  private findRequestedPayload(
-    invocationId: string,
-    permissionRequestId: string
-  ): { payload: PermissionRequestedPayload; time: string } | undefined {
-    const rows = this.db.brokerInvocationEvents.listByInvocationId(invocationId)
-    for (const row of rows) {
-      if (row.type !== 'permission.requested') {
-        continue
-      }
-      try {
-        const payload = JSON.parse(row.brokerEventJson) as PermissionRequestedPayload
-        if (payload.permissionRequestId === permissionRequestId) {
-          return { payload, time: row.time }
-        }
-      } catch {
-        // Ignore unparseable rows; fall through to the default-decision path.
-      }
-    }
-    return undefined
   }
 }

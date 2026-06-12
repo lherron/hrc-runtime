@@ -1,0 +1,357 @@
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
+
+import { dirname, join } from 'node:path'
+
+import type {
+  BrokerTmuxAllocation,
+  BrokerTmuxAllocator,
+  BrokerTmuxLease,
+  BrokerWindowIdentity,
+} from '../broker/controller.js'
+import type {
+  BrokerRuntimeEndpoint,
+  BrokerRuntimePresentation,
+  BrokerRuntimeSubstrate,
+} from '../broker/runtime-hosting.js'
+import type { HrcServerOptions } from '../server-types.js'
+import { timestamp } from '../server-util.js'
+import {
+  getBrokerIpcSocketPath,
+  getBrokerTmuxSocketPath,
+  preflightBrokerIpcSocketPath,
+} from '../tmux-socket.js'
+
+/**
+ * A named-window tmux manager sufficient for the durable broker allocator: it
+ * hosts a 'broker' window (launched exec-form with the harness-broker Unix
+ * command) and an idempotent 'tui' lease window under ONE per-runtime socket.
+ */
+export type DurableTmuxManagerLike = {
+  initialize(): Promise<void>
+  createWindowWithCommand(input: {
+    sessionName: string
+    windowName: string
+    command: string
+  }): Promise<BrokerWindowIdentity>
+  createOrInspectWindow(input: {
+    sessionName: string
+    windowName: string
+  }): Promise<BrokerWindowIdentity>
+  inspectPaneProcess?(
+    paneId: string
+  ): Promise<{ command: string; pid: number; dead: boolean } | null>
+  waitForAttachedClient?(
+    target: string,
+    options?: {
+      timeoutMs?: number | undefined
+      intervalMs?: number | undefined
+      activeWindowId?: string | undefined
+      activeWindowName?: string | undefined
+    }
+  ): Promise<void>
+}
+
+export type BrokerDurableTmuxAllocatorDeps = {
+  tmuxManagerFactory: (opts: { socketPath: string }) => DurableTmuxManagerLike
+  generateAttachToken: () => string
+  now?: () => string
+}
+
+/**
+ * T-01868 Ph2 — the SUBSTRATE+PRESENTATION-axis allocation primitive.
+ *
+ * Carves the per-runtime broker SUBSTRATE (a leased btmux server/session hosting
+ * a 'broker' window launched EXEC-FORM with `harness-broker … --transport unix
+ * <ipcSocket>`, an owner-only 0700 broker-IPC dir, an attach token referenced
+ * redacted, and an event ledger), the durable ENDPOINT (unix-jsonrpc-ndjson), and
+ * — conditioned on `presentation` — the PRESENTATION:
+ *   - presentation='tmux-tui' adds the 'tui' window + operator attach command,
+ *     reproducing TODAY's interactive allocation EXACTLY.
+ *   - presentation='none' creates NO TUI window and NO attach command (headless
+ *     substrate). This arm is wired in code but not yet selected by any route
+ *     (headless cutover is Ph3).
+ *
+ * Returns the canonical {endpoint, substrate, presentation} hosting-state axes
+ * plus the in-process extras the legacy flat BrokerTmuxAllocation needs (raw
+ * attach token, the TUI pane lease, broker pid/command). The sockaddr_un HARD
+ * preflight runs BEFORE any tmux spawn (T-01776) so an over-long path fails early
+ * with a readable error, never a later bind/connect errno.
+ */
+export type BrokerSubstratePresentationKind = BrokerRuntimePresentation['kind']
+
+export type AllocateBrokerSubstrateInput = {
+  runtimeId: string
+  hostSessionId: string
+  generation: number
+  driverKind: string
+  endpoint: 'unix-jsonrpc-ndjson'
+  presentation: BrokerSubstratePresentationKind
+}
+
+export type BrokerSubstrateAllocation = {
+  endpoint: BrokerRuntimeEndpoint
+  /** Always a leased-tmux substrate (the broker process pane). */
+  substrate: Extract<BrokerRuntimeSubstrate, { kind: 'leased-tmux' }>
+  presentation: BrokerRuntimePresentation
+  // ── in-process extras for the legacy flat BrokerTmuxAllocation mapping ──
+  allocatedAt: string
+  /** Raw attach-token secret — used in-process only, NEVER persisted. */
+  attachToken: string
+  brokerCommand: string
+  brokerPid?: number | undefined
+  /** Full broker-window identity (incl. socket/session/window names). */
+  brokerWindow: BrokerWindowIdentity
+  /** Present only for presentation='tmux-tui'. */
+  tuiWindow?: BrokerWindowIdentity | undefined
+  /** The TUI pane lease handed to runtime.terminalSurface (tmux-tui only). */
+  tuiLease?: BrokerTmuxLease | undefined
+}
+
+export async function allocateBrokerSubstrate(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps,
+  input: AllocateBrokerSubstrateInput
+): Promise<BrokerSubstrateAllocation> {
+  const now = deps.now ?? timestamp
+  const { runtimeId, hostSessionId, generation, driverKind, presentation } = input
+
+  const brokerIpcSocketPath = getBrokerIpcSocketPath(options, driverKind, runtimeId)
+  // HARD preflight BEFORE any tmux spawn / IPC dir creation: an over-long
+  // sockaddr_un path fails EARLY with a readable error, never a later
+  // bind/connect errno.
+  preflightBrokerIpcSocketPath(brokerIpcSocketPath)
+
+  const btmuxSocketPath = getBrokerTmuxSocketPath(
+    options as HrcServerOptions,
+    driverKind,
+    runtimeId
+  )
+  const ipcDir = dirname(brokerIpcSocketPath)
+  await mkdir(dirname(btmuxSocketPath), { recursive: true })
+  // Owner-only broker IPC dir (0700). mkdir mode is umask-masked, so chmod the
+  // leaf explicitly to guarantee rwx------.
+  await mkdir(ipcDir, { recursive: true, mode: 0o700 })
+  await chmod(ipcDir, 0o700)
+
+  // Allocate the attach token and persist it by REFERENCE (owner-only file). The
+  // raw secret never enters runtime_state_json — only the redacted ref.
+  const attachToken = deps.generateAttachToken()
+  const attachTokenPath = join(ipcDir, 'attach.token')
+  await writeFile(attachTokenPath, attachToken, { mode: 0o600 })
+
+  const tmux = deps.tmuxManagerFactory({ socketPath: btmuxSocketPath })
+  await tmux.initialize()
+
+  const sessionName = `hrc-${driverKind}-${runtimeId}`
+  // T-01801: wire the broker's durability surface so attach-replay across a daemon
+  // restart works. WITHOUT `--event-ledger` the broker still advertises
+  // attachReplay:true but has no on-disk ledger, so the post-restart
+  // `invocation.eventsSince` replay fails ('no durable ledger configured') and the
+  // runtime goes stale. The attach-identity flags (runtime/host-session/generation
+  // + token file) arm the broker's latest-valid-attach-wins gate so it validates
+  // the controller's attach token instead of accepting any peer.
+  const eventLedgerPath = join(ipcDir, 'events.ndjson')
+  const brokerCommand =
+    `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}` +
+    ` --event-ledger ${eventLedgerPath}` +
+    ` --runtime-id ${runtimeId}` +
+    ` --host-session-id ${hostSessionId}` +
+    ` --generation ${generation}` +
+    ` --attach-token-file ${attachTokenPath}`
+  const brokerWindow = await tmux.createWindowWithCommand({
+    sessionName,
+    windowName: 'broker',
+    command: brokerCommand,
+  })
+
+  // presentation='tmux-tui' adds the operator TUI window; presentation='none'
+  // (headless substrate) creates no TUI window. Window-creation order (broker then
+  // tui) is preserved from the pre-split allocator.
+  const tuiWindow =
+    presentation === 'tmux-tui'
+      ? await tmux.createOrInspectWindow({ sessionName, windowName: 'tui' })
+      : undefined
+
+  // Capture the broker pane's running pid for persisted identity (best effort —
+  // pane ids alone are known weak; the pid/command corroborate).
+  let brokerPid: number | undefined
+  if (typeof tmux.inspectPaneProcess === 'function') {
+    const proc = await tmux.inspectPaneProcess(brokerWindow.paneId)
+    if (proc && !proc.dead && proc.pid > 0) {
+      brokerPid = proc.pid
+    }
+  }
+
+  const endpoint: BrokerRuntimeEndpoint = {
+    kind: 'unix-jsonrpc-ndjson',
+    socketPath: brokerIpcSocketPath,
+    attachTokenRef: { kind: 'file', path: attachTokenPath, redacted: true },
+    protocolVersion: 'harness-broker/0.2',
+  }
+  const substrate: Extract<BrokerRuntimeSubstrate, { kind: 'leased-tmux' }> = {
+    kind: 'leased-tmux',
+    tmuxSocketPath: btmuxSocketPath,
+    sessionName,
+    brokerWindow: {
+      sessionId: brokerWindow.sessionId,
+      windowId: brokerWindow.windowId,
+      paneId: brokerWindow.paneId,
+    },
+    generation,
+    eventLedgerPath,
+  }
+
+  const base = {
+    endpoint,
+    substrate,
+    allocatedAt: now(),
+    attachToken,
+    brokerCommand,
+    ...(brokerPid !== undefined ? { brokerPid } : {}),
+    brokerWindow,
+  }
+
+  if (!tuiWindow) {
+    return { ...base, presentation: { kind: 'none' } }
+  }
+
+  // The lease handed to runtime.terminalSurface is the TUI pane (operators attach
+  // here) — NEVER the broker pane.
+  const tuiLease: BrokerTmuxLease = {
+    kind: 'tmux-pane',
+    ownership: 'hrc',
+    socketPath: tuiWindow.socketPath,
+    sessionId: tuiWindow.sessionId,
+    windowId: tuiWindow.windowId,
+    paneId: tuiWindow.paneId,
+    sessionName: tuiWindow.sessionName,
+    windowName: tuiWindow.windowName,
+    allowedOps: {
+      inspect: true,
+      sendInput: true,
+      sendInterrupt: true,
+      capture: true,
+      resize: false,
+    },
+  }
+  return {
+    ...base,
+    presentation: {
+      kind: 'tmux-tui',
+      tuiWindow: {
+        sessionId: tuiWindow.sessionId,
+        windowId: tuiWindow.windowId,
+        paneId: tuiWindow.paneId,
+      },
+      operatorAttachTarget: true,
+      attachCommand: `tmux -S ${btmuxSocketPath} attach -t ${sessionName}:tui`,
+    },
+    tuiWindow,
+    tuiLease,
+  }
+}
+
+/**
+ * T-01812 Phase 3 — durable interactive broker allocator. A thin adapter over
+ * {@link allocateBrokerSubstrate} with presentation='tmux-tui': it reproduces
+ * today's two-window interactive allocation (broker window over Unix IPC + TUI
+ * pane lease) and maps the substrate/presentation axes back to the legacy flat
+ * BrokerTmuxAllocation the controller persists. The controller dials
+ * `brokerIpcSocketPath` via connectUnix.
+ */
+export function createBrokerDurableTmuxAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  return {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+    }): Promise<BrokerTmuxAllocation> => {
+      const sub = await allocateBrokerSubstrate(options, deps, {
+        runtimeId,
+        hostSessionId,
+        generation,
+        driverKind: brokerDriver,
+        endpoint: 'unix-jsonrpc-ndjson',
+        presentation: 'tmux-tui',
+      })
+      // tmux-tui always yields a TUI window + lease.
+      const tuiWindow = sub.tuiWindow as BrokerWindowIdentity
+      const lease = sub.tuiLease as BrokerTmuxLease
+      return {
+        socketPath: sub.substrate.tmuxSocketPath,
+        allocatedAt: sub.allocatedAt,
+        generation: sub.substrate.generation,
+        lease,
+        brokerIpcSocketPath:
+          sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
+        attachToken: sub.attachToken,
+        ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
+          ? { attachTokenRef: sub.endpoint.attachTokenRef }
+          : {}),
+        brokerCommand: sub.brokerCommand,
+        ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
+        brokerWindow: sub.brokerWindow,
+        tuiWindow,
+        // Legacy single-pane fields mirror the TUI pane for restart reconcile /
+        // teardown that still reads the flat shape.
+        sessionId: tuiWindow.sessionId,
+        windowId: tuiWindow.windowId,
+        paneId: tuiWindow.paneId,
+        sessionName: tuiWindow.sessionName,
+        windowName: tuiWindow.windowName,
+      }
+    },
+  }
+}
+
+/**
+ * T-01874 Ph3 — durable HEADLESS broker allocator. A thin adapter over
+ * {@link allocateBrokerSubstrate} with presentation='none': it carves the leased
+ * broker substrate (broker window over Unix IPC + token + ledger) but creates NO
+ * TUI window and NO operator attach command, then maps the substrate/endpoint
+ * axes back to the legacy flat BrokerTmuxAllocation the controller persists. The
+ * controller dials `brokerIpcSocketPath` via connectUnix. Unlike the interactive
+ * allocator it carries NO `lease`/`tuiWindow`, so the controller dispatches no
+ * `runtime.terminalSurface` and persists presentation='none'.
+ */
+export function createBrokerDurableHeadlessAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  return {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+    }): Promise<BrokerTmuxAllocation> => {
+      const sub = await allocateBrokerSubstrate(options, deps, {
+        runtimeId,
+        hostSessionId,
+        generation,
+        driverKind: brokerDriver,
+        endpoint: 'unix-jsonrpc-ndjson',
+        presentation: 'none',
+      })
+      return {
+        socketPath: sub.substrate.tmuxSocketPath,
+        allocatedAt: sub.allocatedAt,
+        generation: sub.substrate.generation,
+        // No lease / tuiWindow: presentation='none' has no operator pane.
+        brokerIpcSocketPath:
+          sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
+        attachToken: sub.attachToken,
+        ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
+          ? { attachTokenRef: sub.endpoint.attachTokenRef }
+          : {}),
+        brokerCommand: sub.brokerCommand,
+        ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
+        brokerWindow: sub.brokerWindow,
+      }
+    },
+  }
+}

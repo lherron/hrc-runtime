@@ -1,14 +1,9 @@
-import { randomUUID } from 'node:crypto'
-
 import { HRC_API_VERSION, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
-  BrokerInspectResponse,
   DropContinuationResponse,
-  HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcStatusResponse,
-  InspectRuntimeResponse,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
   RestartStyle,
@@ -17,7 +12,6 @@ import type {
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
@@ -26,11 +20,7 @@ import {
   type BridgeSurfaceHandlersMethods,
   bridgeSurfaceHandlersMethods,
 } from './bridge-surface-handlers.js'
-import {
-  isClaudeGhosttyEnabled,
-  isInteractiveTmuxBrokerIntent,
-  shouldUseHeadlessTransport,
-} from './broker-decisions.js'
+import { isClaudeGhosttyEnabled } from './broker-decisions.js'
 import {
   type BrokerHeadlessHandlersMethods,
   brokerHeadlessHandlersMethods,
@@ -40,8 +30,6 @@ import {
   brokerInteractiveHandlersMethods,
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
-import { projectBrokerHostingState } from './broker/runtime-hosting.js'
-import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -52,26 +40,17 @@ import {
   type GhostmuxManager as ServerGhostmuxManager,
   createGhostmuxManager,
 } from './ghostmux.js'
+import { appendHrcEvent } from './hrc-event-helper.js'
 import {
-  buildStaleLaunchCallbackRejection,
-  parseLaunchContinuationPayload,
-  parseLaunchEventPayload,
-  parseLaunchLifecyclePayload,
-} from './hook-lifecycle.js'
-import {
-  appendHrcEvent,
-  deriveSemanticTurnEventFromLaunchEvent,
-  shouldSuppressDuplicateCodexInitialUserPrompt,
-} from './hrc-event-helper.js'
-import { readLaunchArtifact } from './launch/index.js'
+  type LaunchLifecycleHandlersMethods,
+  launchLifecycleHandlersMethods,
+} from './launch-lifecycle-handlers.js'
 import {
   resolveClaudeCodeTmuxBrokerEnabled,
-  resolveClaudeGhosttyIdleCleanupMinutes,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
-  startAspcFacadeBrokerClient,
 } from './option-resolvers.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
@@ -80,7 +59,7 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
-import { replaySpool, upsertLaunch } from './replay-spool.js'
+import { replaySpool } from './replay-spool.js'
 import {
   findManagedAppSessionForSession,
   requireKnownRuntime,
@@ -91,9 +70,12 @@ import {
   type RuntimeControlHandlersMethods,
   runtimeControlHandlersMethods,
 } from './runtime-control-handlers.js'
+import {
+  type RuntimeInspectHandlersMethods,
+  runtimeInspectHandlersMethods,
+} from './runtime-inspect-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
 import { createRuntimeListAdoptRoutes } from './runtime-list-adopt-handlers.js'
-import { findLatestRunForRuntime } from './runtime-select.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
   type SelectorMessageHandlersMethods,
@@ -116,16 +98,15 @@ import { writeServerLog } from './server-log.js'
 import { parseRuntimeIdQuery } from './server-misc.js'
 import {
   normalizeOptionalQuery,
-  parseBrokerInspectRequest,
   parseClearContextRequest,
   parseDropContinuationRequest,
-  parseInspectRuntimeRequest,
   parseJsonBody,
   parseResolveSessionRequest,
   parseRuntimeActionBody,
   parseSessionRef,
   parseTerminateRuntimeRequest,
 } from './server-parsers.js'
+import { exactRouteKey, matchLaunchSubroute } from './server-routing.js'
 import type {
   ExactRouteHandler,
   FollowSubscriber,
@@ -142,12 +123,8 @@ import {
   timestamp,
   unlinkIfExists,
 } from './server-util.js'
-import {
-  appendMissingHeadlessTurnCompleted,
-  reconcileStartupState,
-  warmDurableBrokerBindings,
-} from './startup-reconcile.js'
-import { toStatusSessionView, toStatusTmuxView } from './status-views.js'
+import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
+import { toStatusSessionView } from './status-views.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
   type TargetMessageHandlersMethods,
@@ -217,130 +194,8 @@ export type { GhostmuxManagerOptions }
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
 export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
 
-export type BrokerRunPreview = {
-  controllerKind: 'harness-broker'
-  brokerDriver: string
-  interactionMode: string
-  profileId: string
-  profileHash: string
-  specHash: string
-  startRequestHash: string
-  process: {
-    command: string
-    args: string[]
-    cwd: string
-  }
-  initialInput: boolean
-  launchInitialPromptLength?: number | undefined
-  inputQueue: string
-  interrupt: string
-  resource?: string | undefined
-  warnings: string[]
-}
-
-export async function buildBrokerRunPreview(
-  intent: HrcRuntimeIntent,
-  _options: {
-    sessionRef: string
-    restartStyle: RestartStyle
-    promptLength?: number | undefined
-  }
-): Promise<BrokerRunPreview | undefined> {
-  if (!isInteractiveTmuxBrokerIntent(intent) && !shouldUseHeadlessTransport(intent)) {
-    return undefined
-  }
-
-  const client = await startAspcFacadeBrokerClient()
-
-  try {
-    const compiled = await compileBrokerRuntimePlan(
-      {
-        intent,
-        hostSessionId: 'dry-run-host-session',
-        generation: 0,
-        continuation: undefined,
-      },
-      {
-        compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
-        ids: {
-          requestId: () => `dry-req-${randomUUID()}`,
-          operationId: () => `dry-op-${randomUUID()}`,
-          runtimeId: () => `dry-rt-${randomUUID()}`,
-          invocationId: () => `dry-inv-${randomUUID()}`,
-          initialInputId: () => `dry-input-${randomUUID()}`,
-          runId: () => `dry-run-${randomUUID()}`,
-          traceId: () => `dry-trace-${randomUUID()}`,
-        },
-      }
-    )
-
-    if (!compiled.admitted) {
-      return undefined
-    }
-
-    const spec = compiled.startRequest.spec
-    const launchInitialPrompt = spec.launch?.initialPrompt
-    const warnings = (compiled.profile.diagnostics ?? [])
-      .filter((diagnostic) => diagnostic.level !== 'error')
-      .map((diagnostic) => diagnostic.message)
-
-    return {
-      controllerKind: 'harness-broker',
-      brokerDriver: compiled.profile.brokerDriver,
-      interactionMode: compiled.profile.interactionMode,
-      profileId: compiled.profile.profileId,
-      profileHash: compiled.profile.profileHash,
-      specHash: compiled.specHash,
-      startRequestHash: compiled.startRequestHash,
-      process: {
-        command: spec.process.command,
-        args: spec.process.args,
-        cwd: spec.process.cwd,
-      },
-      initialInput: compiled.startRequest.initialInput !== undefined,
-      ...(typeof launchInitialPrompt === 'string'
-        ? { launchInitialPromptLength: launchInitialPrompt.length }
-        : {}),
-      inputQueue: spec.interaction?.inputQueue ?? 'none',
-      interrupt: compiled.profile.expectedCapabilities.turns.interrupt,
-      ...(compiled.profile.brokerTerminal?.host === 'tmux'
-        ? { resource: 'runtime-owned broker tmux lease socket' }
-        : {}),
-      warnings,
-    }
-  } finally {
-    await client.close().catch(() => undefined)
-  }
-}
-
-function exactRouteKey(method: string, pathname: string): string {
-  return `${method} ${pathname}`
-}
-
-const LAUNCH_SUBROUTE_PREFIX = '/v1/internal/launches/'
-const LAUNCH_SUBROUTE_SUFFIXES = [
-  'continuation',
-  'wrapper-started',
-  'child-started',
-  'event',
-  'exited',
-] as const
-
-function matchLaunchSubroute(
-  method: string,
-  pathname: string
-): { launchId: string; suffix: (typeof LAUNCH_SUBROUTE_SUFFIXES)[number] } | undefined {
-  if (method !== 'POST' || !pathname.startsWith(LAUNCH_SUBROUTE_PREFIX)) {
-    return undefined
-  }
-  for (const suffix of LAUNCH_SUBROUTE_SUFFIXES) {
-    if (pathname.endsWith(`/${suffix}`)) {
-      const launchId = pathname.slice(LAUNCH_SUBROUTE_PREFIX.length).replace(`/${suffix}`, '')
-      return { launchId, suffix }
-    }
-  }
-  return undefined
-}
+export type { BrokerRunPreview } from './broker-run-preview.js'
+export { buildBrokerRunPreview } from './broker-run-preview.js'
 
 // biome-ignore lint/correctness/noUnusedVariables: Declaration merges prototype-attached handler methods into HrcServerInstance.
 interface HrcServerInstance
@@ -357,7 +212,9 @@ interface HrcServerInstance
     TargetMessageHandlersMethods,
     EventNotificationHandlersMethods,
     SelectorMessageHandlersMethods,
-    SelectorWaitHandlersMethods {}
+    SelectorWaitHandlersMethods,
+    LaunchLifecycleHandlersMethods,
+    RuntimeInspectHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
@@ -872,163 +729,6 @@ class HrcServerInstance implements HrcServer {
     return await this.terminateRuntime(runtime, { dropContinuation: body.dropContinuation })
   }
 
-  async handleInspectRuntime(request: Request): Promise<Response> {
-    const body = parseInspectRuntimeRequest(await parseJsonBody(request))
-    const runtime = this.db.runtimes.getByRuntimeId(body.runtimeId)
-    if (!runtime) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_RUNTIME,
-        `unknown runtime "${body.runtimeId}"`,
-        { runtimeId: body.runtimeId }
-      )
-    }
-
-    const session = requireSession(this.db, runtime.hostSessionId)
-    const nowMs = Date.now()
-    const createdAtMs = Date.parse(runtime.createdAt)
-    const lastActivityAt = runtime.lastActivityAt ?? null
-    const lastActivityAtMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
-    const continuation = runtime.continuation ?? session.continuation ?? null
-    const eventHighWaterSeq = runtime.activeInvocationId
-      ? (this.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)?.lastEventSeq ??
-        null)
-      : null
-    const control = extractFullRuntimeControlState(runtime.runtimeStateJson, eventHighWaterSeq)
-    // T-01876 Ph5 — separate endpoint/substrate/presentation projection (spec
-    // §10.9). Undefined for non-broker / unparseable runtimes so those rows do
-    // not grow the new fields.
-    const brokerHosting = projectBrokerHostingState(runtime)
-    const sessionCreatedAtMs = Date.parse(session.createdAt)
-    const continuationAgeSec = Number.isFinite(sessionCreatedAtMs)
-      ? Math.max(0, Math.floor((nowMs - sessionCreatedAtMs) / 1000))
-      : 0
-
-    return json({
-      runtimeId: runtime.runtimeId,
-      hostSessionId: runtime.hostSessionId,
-      scopeRef: runtime.scopeRef,
-      laneRef: runtime.laneRef,
-      generation: runtime.generation,
-      transport: runtime.transport,
-      harness: runtime.harness,
-      provider: runtime.provider,
-      status: runtime.status,
-      createdAt: runtime.createdAt,
-      createdAgeSec: Number.isFinite(createdAtMs)
-        ? Math.max(0, Math.floor((nowMs - createdAtMs) / 1000))
-        : 0,
-      lastActivityAt,
-      lastActivityAgeSec: Number.isFinite(lastActivityAtMs)
-        ? Math.max(0, Math.floor((nowMs - lastActivityAtMs) / 1000))
-        : null,
-      activeRunId: runtime.activeRunId ?? null,
-      controllerKind: runtime.controllerKind ?? null,
-      activeOperationId: runtime.activeOperationId ?? null,
-      activeInvocationId: runtime.activeInvocationId ?? null,
-      wrapperPid: runtime.wrapperPid ?? null,
-      childPid: runtime.childPid ?? null,
-      continuation,
-      continuationKey: continuation?.key ?? null,
-      continuationStale:
-        continuation !== null &&
-        this.staleGenerationEnabled &&
-        this.staleGenerationThresholdSec > 0 &&
-        continuationAgeSec > this.staleGenerationThresholdSec,
-      ...(control ? { control } : {}),
-      ...(runtime.transport === 'tmux' ? { tmux: toStatusTmuxView(runtime.tmuxJson) } : {}),
-      ...(brokerHosting ? brokerHosting : {}),
-    } satisfies InspectRuntimeResponse)
-  }
-
-  /**
-   * T-01856 P3 — operator broker-inspect surface (T-01844 #4/#5).
-   *
-   * Read-only. MUST NOT mutate DB state. For broker-backed runtimes this calls
-   * the P2 controller read model (controller.listInvocations) and returns the
-   * broker's InvocationInspectionSummary[] passed through verbatim (no recompute,
-   * cody C-03259 render guards live broker-side / pass-through here). For
-   * non-broker runtimes it synthesizes an HRC-runtime-derived lifecycle view and
-   * LABELS it `source:'hrc-derived'` so operators never read a synthesized TTL as
-   * broker-enforced (item #5 must-not-mislead).
-   */
-  async handleBrokerInspect(request: Request): Promise<Response> {
-    const body = parseBrokerInspectRequest(await parseJsonBody(request))
-    const runtime = this.db.runtimes.getByRuntimeId(body.runtimeId)
-    if (!runtime) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_RUNTIME,
-        `unknown runtime "${body.runtimeId}"`,
-        { runtimeId: body.runtimeId }
-      )
-    }
-
-    const finalSummary = (runtime.runtimeStateJson as { finalSummary?: unknown } | undefined)
-      ?.finalSummary
-    const baseFacts = {
-      runtimeId: runtime.runtimeId,
-      transport: runtime.transport,
-      harness: runtime.harness,
-      status: runtime.status,
-      lastActivityAt: runtime.lastActivityAt ?? null,
-      ...(finalSummary !== undefined ? { finalSummary } : {}),
-    }
-
-    // Broker-backed: delegate to the P2 controller read model. The summaries pass
-    // through verbatim — liveness ('cached'/absent) and retention.blockedBy are
-    // broker truth and are NEVER re-derived or stripped here.
-    const controller = this.harnessBrokerController
-    if (runtime.controllerKind === 'harness-broker' && controller) {
-      const result = await controller.listInvocations(body.runtimeId, {
-        ...(body.includeDisposed !== undefined ? { includeDisposed: body.includeDisposed } : {}),
-        ...(body.probeLiveness !== undefined ? { probeLiveness: body.probeLiveness } : {}),
-      })
-      const invocations = Array.isArray(result) ? result : []
-      return json({
-        ...baseFacts,
-        source: 'broker',
-        invocations,
-      } satisfies BrokerInspectResponse)
-    }
-
-    // Non-broker fallback — HRC-runtime-derived, NEVER broker-reported.
-    const note = 'HRC-runtime-derived, not broker-reported'
-    const lastActivityAt = runtime.lastActivityAt ?? runtime.updatedAt
-
-    // ghostty + claude-code: synthesize the HRC-side idle-cleanup lifecycle
-    // (cleanupIdleClaudeGhosttyRuntimes policy; computedRetireAt = lastActivityAt
-    // + HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES). This is a synthesized view, not
-    // a broker-enforced TTL — hence source:'hrc-derived'.
-    if (runtime.transport === 'ghostty' && runtime.harness === 'claude-code') {
-      const idleTtlMs = resolveClaudeGhosttyIdleCleanupMinutes() * 60_000
-      const activityMs = Date.parse(lastActivityAt)
-      const computedRetireAt = Number.isFinite(activityMs)
-        ? new Date(activityMs + idleTtlMs).toISOString()
-        : undefined
-      return json({
-        ...baseFacts,
-        source: 'hrc-derived',
-        lifecycle: {
-          retention: {
-            mode: 'hrc-idle-cleanup',
-            idleTtlMs,
-            idleSince: lastActivityAt,
-            ...(computedRetireAt ? { computedRetireAt } : {}),
-          },
-        },
-        note,
-      } satisfies BrokerInspectResponse)
-    }
-
-    // pre-broker / adopted harness: runtime-DB facts ONLY. No idle policy applies,
-    // so no synthesized TTL — mode reflects db-only, never a broker retention mode.
-    return json({
-      ...baseFacts,
-      source: 'hrc-derived',
-      lifecycle: { retention: { mode: 'db-only' } },
-      note,
-    } satisfies BrokerInspectResponse)
-  }
-
   async handleDropContinuation(request: Request): Promise<Response> {
     const body = parseDropContinuationRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
@@ -1089,279 +789,6 @@ class HrcServerInstance implements HrcServer {
    * use the returned `session` for downstream work because the host session
    * ID may have changed.
    */
-
-  async handleWrapperStarted(launchId: string, request: Request): Promise<Response> {
-    const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'wrapper-started')
-    const session = requireSession(this.db, body.hostSessionId)
-    const rejection = buildStaleLaunchCallbackRejection(
-      this.db,
-      session,
-      launchId,
-      'wrapper_started'
-    )
-    if (rejection) {
-      this.notifyEvent(rejection.event)
-      throw rejection.error
-    }
-    const now = body.timestamp ?? timestamp()
-
-    const launch = upsertLaunch(this.db, launchId, session, {
-      status: 'wrapper_started',
-      wrapperPid: body.wrapperPid,
-      wrapperStartedAt: now,
-      updatedAt: now,
-    })
-
-    const event = appendHrcEvent(this.db, 'launch.wrapper_started', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: launch.runtimeId,
-      launchId,
-      payload: {
-        wrapperPid: launch.wrapperPid,
-      },
-    })
-    if (launch.runtimeId) {
-      this.db.runtimes.update(launch.runtimeId, {
-        wrapperPid: launch.wrapperPid,
-        launchId,
-        status: 'busy',
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-    }
-    this.notifyEvent(event)
-    return json({ ok: true })
-  }
-
-  async handleChildStarted(launchId: string, request: Request): Promise<Response> {
-    const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'child-started')
-    const session = requireSession(this.db, body.hostSessionId)
-    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'child_started')
-    if (rejection) {
-      this.notifyEvent(rejection.event)
-      throw rejection.error
-    }
-    const now = body.timestamp ?? timestamp()
-
-    const launch = upsertLaunch(this.db, launchId, session, {
-      status: 'child_started',
-      childPid: body.childPid,
-      childStartedAt: now,
-      updatedAt: now,
-    })
-
-    const event = appendHrcEvent(this.db, 'launch.child_started', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: launch.runtimeId,
-      launchId,
-      payload: {
-        childPid: body.childPid,
-      },
-    })
-    if (launch.runtimeId) {
-      this.db.runtimes.update(launch.runtimeId, {
-        childPid: body.childPid,
-        status: 'busy',
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-    }
-    this.notifyEvent(event)
-    return json({ ok: true })
-  }
-
-  async handleContinuation(launchId: string, request: Request): Promise<Response> {
-    const body = parseLaunchContinuationPayload(await parseJsonBody(request))
-    const session = requireSession(this.db, body.hostSessionId)
-    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'continuation')
-    if (rejection) {
-      this.notifyEvent(rejection.event)
-      throw rejection.error
-    }
-
-    const now = body.timestamp ?? timestamp()
-    const launch = upsertLaunch(this.db, launchId, session, {
-      status: 'child_started',
-      continuation: body.continuation,
-      ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-      updatedAt: now,
-    })
-
-    this.db.sessions.updateContinuation(session.hostSessionId, body.continuation, now)
-    if (launch.runtimeId) {
-      this.db.runtimes.update(launch.runtimeId, {
-        continuation: body.continuation,
-        ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-    }
-
-    const event = appendHrcEvent(this.db, 'launch.continuation_captured', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: launch.runtimeId,
-      launchId,
-      payload: {
-        continuation: body.continuation,
-        ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-      },
-    })
-    this.notifyEvent(event)
-    return json({ ok: true })
-  }
-
-  async handleLaunchEvent(launchId: string, request: Request): Promise<Response> {
-    const body = parseLaunchEventPayload(await parseJsonBody(request))
-    const launch = this.db.launches.getByLaunchId(launchId)
-    if (!launch) {
-      return new Response('launch not found', {
-        status: 404,
-        headers: { 'content-type': 'text/plain' },
-      })
-    }
-
-    const session = requireSession(this.db, launch.hostSessionId)
-    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'event')
-    if (rejection) {
-      this.notifyEvent(rejection.event)
-      throw rejection.error
-    }
-
-    const now = timestamp()
-    const runtime = launch.runtimeId ? this.db.runtimes.getByRuntimeId(launch.runtimeId) : null
-    const runId = runtime ? findLatestRunForRuntime(this.db, runtime.runtimeId)?.runId : undefined
-    const appendedEvent = this.db.events.append({
-      ts: now,
-      hostSessionId: launch.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: launch.generation,
-      ...(runId ? { runId } : {}),
-      ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
-      source: 'hrc',
-      eventKind: body.type,
-      eventJson: body,
-    })
-    if (runtime) {
-      this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    }
-    this.notifyEvent(appendedEvent)
-    const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
-    let suppressSemanticUserPrompt = false
-    if (
-      semanticEvent?.eventKind === 'turn.user_prompt' &&
-      body.type === 'codex.user_prompt' &&
-      typeof body['prompt'] === 'string'
-    ) {
-      const artifact = await readLaunchArtifact(launch.launchArtifactPath)
-      suppressSemanticUserPrompt = shouldSuppressDuplicateCodexInitialUserPrompt({
-        db: this.db,
-        launchId,
-        artifact,
-        hostSessionId: launch.hostSessionId,
-        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
-        ...(runId ? { runId } : {}),
-        prompt: body['prompt'],
-        currentEventSeq: appendedEvent.seq,
-      })
-    }
-    if (semanticEvent && !suppressSemanticUserPrompt) {
-      const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
-        ts: now,
-        hostSessionId: launch.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: launch.generation,
-        ...(runId ? { runId } : {}),
-        ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
-        launchId,
-        ...(runtime?.transport === 'headless' ? { transport: 'headless' as const } : {}),
-        payload: semanticEvent.payload,
-      })
-      this.notifyEvent(appendedSemanticEvent)
-    }
-    return json({ ok: true })
-  }
-
-  async handleExited(launchId: string, request: Request): Promise<Response> {
-    const body = parseLaunchLifecyclePayload(await parseJsonBody(request), 'exited')
-    const session = requireSession(this.db, body.hostSessionId)
-    const rejection = buildStaleLaunchCallbackRejection(this.db, session, launchId, 'exited')
-    if (rejection) {
-      this.notifyEvent(rejection.event)
-      throw rejection.error
-    }
-    const now = body.timestamp ?? timestamp()
-
-    const launch = upsertLaunch(this.db, launchId, session, {
-      status: 'exited',
-      exitedAt: now,
-      exitCode: body.exitCode,
-      signal: body.signal,
-      updatedAt: now,
-    })
-
-    const event = appendHrcEvent(this.db, 'launch.exited', {
-      ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: launch.runtimeId,
-      launchId,
-      payload: {
-        exitCode: body.exitCode,
-        signal: body.signal,
-      },
-    })
-    if (launch.runtimeId) {
-      const runtime = requireRuntime(this.db, launch.runtimeId)
-      const activeRunId = runtime.activeRunId
-      this.db.runtimes.updateRunId(launch.runtimeId, undefined, now)
-      const nextStatus = runtime.transport === 'headless' ? 'ready' : 'terminated'
-      this.db.runtimes.update(launch.runtimeId, {
-        status: nextStatus,
-        updatedAt: now,
-        lastActivityAt: now,
-      })
-      if (activeRunId) {
-        appendMissingHeadlessTurnCompleted(this.db, {
-          session,
-          runtime,
-          runId: activeRunId,
-          launchId,
-          exitCode: body.exitCode,
-          ts: now,
-          notify: (completedEvent) => this.notifyEvent(completedEvent),
-        })
-        this.db.runs.markCompleted(activeRunId, {
-          status: body.exitCode === 0 ? 'completed' : 'failed',
-          completedAt: now,
-          updatedAt: now,
-          ...(body.exitCode === 0
-            ? {}
-            : {
-                errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-                errorMessage: `launch exited with code ${body.exitCode ?? 'unknown'}`,
-              }),
-        })
-      }
-    }
-    this.notifyEvent(event)
-    return json({ ok: true })
-  }
 
   async handleHookIngest(request: Request): Promise<Response> {
     return handleHookIngest(this.ctx, request)
@@ -1455,7 +882,9 @@ Object.assign(
   targetMessageHandlersMethods,
   eventNotificationHandlersMethods,
   selectorMessageHandlersMethods,
-  selectorWaitHandlersMethods
+  selectorWaitHandlersMethods,
+  launchLifecycleHandlersMethods,
+  runtimeInspectHandlersMethods
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {

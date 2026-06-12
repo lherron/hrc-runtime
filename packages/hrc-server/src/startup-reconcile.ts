@@ -1,19 +1,14 @@
-import { readFile, readdir, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
 import { HrcErrorCode } from 'hrc-core'
 import type {
-  HrcEventEnvelope,
   HrcLaunchRecord,
   HrcLifecycleEvent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
-  KillBrokerTmuxLeasesResponse,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideLegacyRuntimeStartupDisposition,
-  getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
 import type {
@@ -22,95 +17,81 @@ import type {
   HarnessBrokerController,
 } from './broker/controller.js'
 import {
-  type BrokerLeaseProbe,
   brokerLeaseIdentityMatches,
   hasDurableBrokerEndpoint,
   hasLeasedBrokerSubstrate,
   parseBrokerRuntimeHostingState,
 } from './broker/runtime-hosting.js'
 import {
-  extractBrokerEndpoint,
   extractRuntimeControlState,
   withDirectTmuxDegradedControlState,
 } from './broker/runtime-state.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
-import { isRunActive, isTerminalBrokerInvocationState, requireSession } from './require-helpers.js'
+import { isRunActive, requireSession } from './require-helpers.js'
 import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
 import {
-  type TmuxManager as ServerTmuxManager,
-  type TmuxPaneState,
-  createTmuxManager,
-} from './tmux.js'
+  probePersistedBrokerLease,
+  resolvePersistedBrokerAttachToken,
+  toBrokerLeaseProbe,
+} from './startup-reconcile/broker-probe.js'
+import {
+  brokerTuiWindowMatches,
+  emitBrokerTmuxReassociated,
+  gcBrokerRuntimeOnRestart,
+  getPersistedDurableBrokerEndpoint,
+  markBrokerReattachStale,
+  reassociateBrokerTmuxLease,
+  sweepOrphanedBrokerTmuxLeases,
+} from './startup-reconcile/lease-identity.js'
+import {
+  getObservedTmuxSessionName,
+  logStartupIssue,
+  markRuntimeDead,
+  markRuntimeStale,
+  markRuntimeTerminatedAfterUserExit,
+} from './startup-reconcile/runtime-mutations.js'
+import {
+  DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+  HRC_REAPED_RUN_ERROR_MESSAGE,
+} from './startup-reconcile/types.js'
+import type {
+  BrokerReattachOutcome,
+  BrokerReattachProbe,
+  BrokerWarmupCategory,
+  BrokerWarmupSummary,
+  DurableBrokerReattachDeps,
+} from './startup-reconcile/types.js'
+import type { TmuxManager as ServerTmuxManager } from './tmux.js'
 
-const DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS = 5 * 60 * 1000
-const HRC_REAPED_RUN_ERROR_MESSAGE = 'runtime lifecycle is incompatible with an active run'
-const USER_INITIATED_CONTINUATION_CLEAR_REASONS = new Set(['prompt_input_exit', 'logout', 'clear'])
-
-type BrokerTmuxLeaseSweepOptions = {
-  graceMs: number
-  removeDeadSocketFiles: boolean
-  killLiveLeaseServers: boolean
-}
-
-type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
-
-/**
- * Application-level broker liveness, observed via a `broker.health` round-trip
- * (NOT a raw socket connect). `ok`/`degraded` are both IPC-live and attach-
- * eligible; `shutting_down` means the broker is draining (skip binding, but the
- * runtime is NOT dead); `unreachable` covers connect/timeout/RPC failure and is
- * treated as non-terminal for durable runtimes (the lease may still be valid).
- */
-export type BrokerHealthState = 'ok' | 'degraded' | 'shutting_down' | 'unreachable'
-
-export type BrokerReattachProbe = {
-  brokerSocketLive: boolean
-  brokerWindow: TmuxPaneState | null
-  tuiWindow: TmuxPaneState | null
-  userExited?: boolean | undefined
-  /** Result of the `broker.health` round-trip; absent for legacy/raw probes. */
-  brokerHealth?: BrokerHealthState | undefined
-}
-
-export type DurableBrokerReattachDeps = {
-  controller: Pick<HarnessBrokerController, 'attachAndReplay'>
-  brokerUnixClientFactory: BrokerUnixClientFactory
-  resolveAttachToken(runtime: HrcRuntimeSnapshot): Promise<string | undefined>
-  probeBrokerLease(runtime: HrcRuntimeSnapshot): Promise<BrokerReattachProbe>
-  /**
-   * When false, do classification/orphan work ONLY — probe + lease-identity
-   * checks that may stale a genuinely-dead runtime — but do NOT attach+replay a
-   * live one onto the controller (it returns `broker-attachable` and is left
-   * intact for the serving controller's warmup). This keeps a single attach
-   * authority: the pre-instance reconcile classifies; the post-construction
-   * serving warm is the only path that binds onto the request-serving controller
-   * (the one with a live `notifyEvent` loop). Defaults to true (attach).
-   */
-  attach?: boolean | undefined
-}
-
-export type BrokerReattachOutcome = {
-  runtimeId: string
-  state:
-    | 'broker-attached'
-    | 'broker-attachable'
-    | 'broker-shutting-down'
-    | 'direct-tmux-degraded'
-    | 'terminated'
-    | 'stale'
-    | 'broker-ipc-unavailable'
-  brokerAttached: boolean
-  replayedThroughSeq?: number | undefined
-  reason?: string | undefined
-}
-
-export type BrokerWindowObservation = {
-  brokerWindow: TmuxPaneState | null
-  tuiWindow: TmuxPaneState | null
-}
+export type {
+  BrokerHealthState,
+  BrokerReattachProbe,
+  DurableBrokerReattachDeps,
+  BrokerReattachOutcome,
+  BrokerWindowObservation,
+  BrokerWarmupCategory,
+  BrokerWarmupSummary,
+} from './startup-reconcile/types.js'
+export {
+  appendMissingHeadlessTurnCompleted,
+  getObservedTmuxSessionName,
+  markRuntimeDead,
+  markRuntimeStale,
+  findUserInitiatedContinuationClearReason,
+  findPersistedLifecycleTerminalReason,
+  markRuntimeTerminatedAfterUserExit,
+  logStartupIssue,
+} from './startup-reconcile/runtime-mutations.js'
+export {
+  sweepOrphanedBrokerTmuxLeases,
+  reassociateBrokerTmuxLease,
+  reassociateBrokerTmuxWindows,
+  brokerLeaseWindowsMatch,
+  brokerLeaseIdsMatch,
+} from './startup-reconcile/lease-identity.js'
 
 export async function reconcileStartupState(
   db: HrcDatabase,
@@ -598,22 +579,6 @@ export async function reattachDurableBrokerForDispatch(
   return outcome.state === 'broker-attached'
 }
 
-/** Operator-visible warmup category, derived from a BrokerReattachOutcome. */
-export type BrokerWarmupCategory =
-  | 'attached'
-  | 'skipped_shutting_down'
-  | 'ipc_unreachable_nonterminal'
-  | 'lease_identity_invalid_stale'
-  | 'attach_replay_failed'
-  | 'terminated'
-  | 'other'
-
-export type BrokerWarmupSummary = {
-  total: number
-  attached: number
-  byCategory: Record<BrokerWarmupCategory, number>
-}
-
 function warmupCategory(outcome: BrokerReattachOutcome): BrokerWarmupCategory {
   switch (outcome.state) {
     case 'broker-attached':
@@ -721,415 +686,6 @@ export async function warmDurableBrokerBindings(
   return summary
 }
 
-async function resolvePersistedBrokerAttachToken(
-  runtime: HrcRuntimeSnapshot
-): Promise<string | undefined> {
-  const broker = getRuntimeStateBrokerRecord(runtime)
-  const endpoint = extractBrokerEndpoint(getRecord(broker?.['endpoint']))
-  if (endpoint?.kind !== 'unix-jsonrpc-ndjson') {
-    return undefined
-  }
-  return (await readFile(endpoint.attachTokenRef.path, 'utf8')).trim()
-}
-
-async function probePersistedBrokerLease(
-  runtime: HrcRuntimeSnapshot
-): Promise<BrokerReattachProbe> {
-  const endpoint = getPersistedDurableBrokerEndpoint(runtime)
-  // T-01884: derive the lease tmux socket/session from the hosting-state substrate
-  // (durable headless AND interactive store it in runtime_state_json.broker, NOT the
-  // legacy tmuxJson). A durable HEADLESS runtime has NO tmuxJson, so the legacy
-  // getBrokerRuntimeTmuxSocketPath returned undefined → the broker window was never
-  // inspected → brokerWindow=null → broker_lease_identity_mismatch, failing reattach
-  // even though the leased broker is alive and accepting. Fall back to the legacy
-  // tmuxJson helpers only for pre-durable rows. (Mirrors the sweeper claim source.)
-  const hosting = parseBrokerRuntimeHostingState(runtime)
-  const leasedSubstrate = hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
-  const socketPath = leasedSubstrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)
-  const sessionName = leasedSubstrate?.sessionName ?? getBrokerRuntimeTmuxSessionName(runtime)
-  let brokerWindow: TmuxPaneState | null = null
-  let tuiWindow: TmuxPaneState | null = null
-  if (socketPath) {
-    const leaseTmux = createTmuxManager({ socketPath })
-    brokerWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' })
-    tuiWindow = await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' })
-  }
-  const brokerHealth: BrokerHealthState = endpoint
-    ? await probeBrokerHealth(endpoint.socketPath)
-    : 'unreachable'
-  return {
-    // `ok`/`degraded` are both attach-eligible; `shutting_down`/`unreachable` are
-    // not "live" for binding purposes (callers special-case `shutting_down`).
-    brokerSocketLive: brokerHealth === 'ok' || brokerHealth === 'degraded',
-    brokerHealth,
-    brokerWindow,
-    tuiWindow,
-  }
-}
-
-/**
- * Adapt a startup `BrokerReattachProbe` (TmuxPaneState windows) to the
- * hosting-state `BrokerLeaseProbe` (window-identity triples) consumed by
- * brokerLeaseIdentityMatches. The socket path + session name come from the
- * observed broker window. Returns undefined when no broker window was observed,
- * since identity cannot be fenced without it.
- */
-function toBrokerLeaseProbe(probe: BrokerReattachProbe): BrokerLeaseProbe | undefined {
-  const broker = probe.brokerWindow
-  if (!broker) {
-    return undefined
-  }
-  return {
-    tmuxSocketPath: broker.socketPath,
-    sessionName: broker.sessionName,
-    brokerWindow: {
-      sessionId: broker.sessionId,
-      windowId: broker.windowId,
-      paneId: broker.paneId,
-    },
-    ...(probe.tuiWindow
-      ? {
-          tuiWindow: {
-            sessionId: probe.tuiWindow.sessionId,
-            windowId: probe.tuiWindow.windowId,
-            paneId: probe.tuiWindow.paneId,
-          },
-        }
-      : {}),
-  }
-}
-
-/**
- * Application-level broker liveness via a `broker.health` round-trip. Replaces
- * the legacy raw `createConnection` probe (250ms), which only proved the kernel
- * accepted a unix-socket connect — it could not tell whether the JSON-RPC loop
- * was alive, and its tight timeout lost races under post-restart load (the
- * source of the spurious `broker_runtime_not_active` failures). `connectUnix`
- * performs a `broker.hello` handshake (already a real liveness signal) and the
- * follow-up `health()` returns the broker's drain state, so a draining broker
- * can be skipped rather than mistaken for dead. A generous budget is acceptable
- * here: this runs at boot and on the rare cold-binding dispatch, not on the hot
- * path. Any connect/timeout/RPC failure maps to `unreachable` (non-terminal for
- * durable runtimes), never to a false "dead" classification.
- */
-const BROKER_HEALTH_PROBE_BUDGET_MS = 2000
-
-async function probeBrokerHealth(socketPath: string): Promise<BrokerHealthState> {
-  let client: BrokerClient | undefined
-  try {
-    client = await BrokerClient.connectUnix({
-      socketPath,
-      timeoutMs: BROKER_HEALTH_PROBE_BUDGET_MS,
-    })
-    const response = await withTimeout(
-      client.health(),
-      BROKER_HEALTH_PROBE_BUDGET_MS,
-      'broker_health_timeout'
-    )
-    switch (response.status) {
-      case 'ok':
-      case 'degraded':
-      case 'shutting_down':
-        return response.status
-      default:
-        return 'unreachable'
-    }
-  } catch {
-    return 'unreachable'
-  } finally {
-    await client?.close().catch(() => undefined)
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(label)), ms)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      }
-    )
-  })
-}
-
-export function appendMissingHeadlessTurnCompleted(
-  db: HrcDatabase,
-  input: {
-    session: HrcSessionRecord
-    runtime?: HrcRuntimeSnapshot | undefined
-    runId: string
-    launchId: string
-    exitCode?: number | undefined
-    ts: string
-    replayed?: boolean | undefined
-    notify?: ((event: HrcLifecycleEvent) => void) | undefined
-  }
-): void {
-  if (input.runtime?.transport !== 'headless') {
-    return
-  }
-  if (db.hrcEvents.listByRun(input.runId, { eventKind: 'turn.completed' }).length > 0) {
-    return
-  }
-
-  const completedEvent = appendHrcEvent(db, 'turn.completed', {
-    ts: input.ts,
-    hostSessionId: input.session.hostSessionId,
-    scopeRef: input.session.scopeRef,
-    laneRef: input.session.laneRef,
-    generation: input.session.generation,
-    runtimeId: input.runtime.runtimeId,
-    runId: input.runId,
-    launchId: input.launchId,
-    transport: 'headless',
-    ...(input.replayed === true ? { replayed: true } : {}),
-    ...(input.exitCode === 0 ? {} : { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE }),
-    payload: {
-      success: input.exitCode === 0,
-      transport: 'headless',
-      source: 'launch_exit_synthesized',
-    },
-  })
-  input.notify?.(completedEvent)
-}
-
-export function getObservedTmuxSessionName(runtime: HrcRuntimeSnapshot): string | null {
-  const sessionId = runtime.tmuxJson?.['sessionId']
-  if (typeof sessionId === 'string' && sessionId.length > 0) {
-    return sessionId
-  }
-
-  const sessionName = runtime.tmuxJson?.['sessionName']
-  if (typeof sessionName === 'string' && sessionName.length > 0) {
-    return sessionName
-  }
-
-  return null
-}
-
-export function markRuntimeDead(
-  db: HrcDatabase,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  source: HrcEventEnvelope['source'],
-  eventJson: Record<string, unknown>
-): void {
-  const now = timestamp()
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} is dead after startup reconciliation`,
-    })
-  }
-
-  db.runtimes.update(runtime.runtimeId, {
-    status: 'dead',
-    updatedAt: now,
-    lastActivityAt: now,
-  })
-  db.events.append({
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    source,
-    eventKind: 'runtime.dead',
-    eventJson,
-  })
-}
-
-export function markRuntimeStale(
-  db: HrcDatabase,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  eventJson: Record<string, unknown>
-): HrcLifecycleEvent {
-  const now = timestamp()
-  const invocationId = runtime.activeInvocationId
-  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
-    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
-      db.brokerInvocations.update(invocationId, {
-        invocationState: 'disposed',
-        updatedAt: now,
-      })
-    }
-  }
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} is stale after startup reconciliation`,
-    })
-  }
-
-  db.runtimes.update(runtime.runtimeId, {
-    status: 'stale',
-    updatedAt: now,
-    lastActivityAt: now,
-    runtimeStateJson: {
-      ...(runtime.runtimeStateJson ?? {}),
-      status: 'stale',
-      updatedAt: now,
-      staleReason: eventJson['reason'],
-      stalePayload: eventJson,
-      ...(invocationId !== undefined
-        ? {
-            terminalInvocation: {
-              invocationId,
-              eventType: 'hrc.runtime.stale',
-            },
-          }
-        : {}),
-    },
-  })
-  return appendHrcEvent(db, 'runtime.stale', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    payload: eventJson,
-  })
-}
-
-export function findUserInitiatedContinuationClearReason(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot
-): string | undefined {
-  const invocationId = runtime.activeInvocationId
-  if (invocationId === undefined) {
-    return undefined
-  }
-
-  const row = db.sqlite
-    .query<{ reason: string | null }, [string]>(
-      `SELECT json_extract(broker_event_json, '$.reason') AS reason
-         FROM broker_invocation_events
-        WHERE invocation_id = ? AND type = 'continuation.cleared'
-        ORDER BY seq DESC
-        LIMIT 1`
-    )
-    .get(invocationId)
-
-  return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
-    ? row.reason
-    : undefined
-}
-
-/**
- * Read the lifecycle terminal reason already projected onto a broker runtime's
- * active invocation (WS-C persists this for terminal broker events such as
- * `harness.exited` / `invocation.exited { reason: 'idle-ttl' }`).
- *
- * When present, the broker has authoritatively classified this runtime's
- * termination; liveness/orphan reconciliation must DEFER to it rather than
- * synthesize a generic stale/dead reason from pane/session inspection.
- */
-export function findPersistedLifecycleTerminalReason(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot
-): string | undefined {
-  if (runtime.controllerKind !== 'harness-broker') {
-    return undefined
-  }
-  const invocationId = runtime.activeInvocationId
-  if (invocationId === undefined) {
-    return undefined
-  }
-  return db.brokerInvocations.getByInvocationId(invocationId)?.lifecycleTerminalReason
-}
-
-export function markRuntimeTerminatedAfterUserExit(
-  db: HrcDatabase,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  eventJson: Record<string, unknown>
-): HrcLifecycleEvent {
-  const now = timestamp()
-  const invocationId = runtime.activeInvocationId
-  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
-    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
-      db.brokerInvocations.update(invocationId, {
-        invocationState: 'exited',
-        updatedAt: now,
-      })
-    }
-  }
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} was terminated by user exit`,
-    })
-  }
-
-  db.runtimes.update(runtime.runtimeId, {
-    status: 'terminated',
-    updatedAt: now,
-    lastActivityAt: now,
-    runtimeStateJson: {
-      ...(runtime.runtimeStateJson ?? {}),
-      status: 'terminated',
-      updatedAt: now,
-      terminationReason: 'user_initiated_session_end',
-      userExitReason: eventJson['userExitReason'],
-      terminationPayload: eventJson,
-      ...(invocationId !== undefined
-        ? {
-            terminalInvocation: {
-              invocationId,
-              eventType: 'hrc.runtime.terminated',
-            },
-          }
-        : {}),
-    },
-  })
-  return appendHrcEvent(db, 'runtime.terminated', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    payload: {
-      ...eventJson,
-      reason: 'user_initiated_session_end',
-    },
-  })
-}
-
-export function logStartupIssue(
-  message: string,
-  detail: Record<string, unknown>,
-  error: unknown
-): void {
-  writeServerLog('ERROR', 'startup.issue', {
-    message,
-    detail,
-    error,
-  })
-}
-
 function resolveBrokerOrphanSweepGraceMs(): number {
   const raw = process.env['HRC_BROKER_ORPHAN_SWEEP_GRACE_MS']
   if (raw === undefined) {
@@ -1137,350 +693,6 @@ function resolveBrokerOrphanSweepGraceMs(): number {
   }
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS
-}
-
-/**
- * Sweep leaked broker-tmux lease sockets under `<runtimeRoot>/btmux/`. A socket
- * is reclaimed only when no non-terminal broker-tmux runtime claims it and it is
- * past the grace threshold. Live orphan servers are killed; dead socket files
- * are removed when requested. Claimed sockets are always preserved.
- */
-export async function sweepOrphanedBrokerTmuxLeases(
-  db: HrcDatabase,
-  runtimeRoot: string,
-  options: BrokerTmuxLeaseSweepOptions
-): Promise<BrokerTmuxLeaseSweepResult> {
-  const result: BrokerTmuxLeaseSweepResult = {
-    scanned: 0,
-    killedLiveLeaseServers: 0,
-    removedDeadSocketFiles: 0,
-    skippedClaimed: 0,
-    skippedWithinGrace: 0,
-    errors: 0,
-  }
-  const dir = join(runtimeRoot, 'btmux')
-  let entries: string[]
-  try {
-    entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
-  } catch {
-    // No btmux directory yet -> nothing to sweep.
-    return result
-  }
-  if (entries.length === 0) {
-    return result
-  }
-
-  // Lease sockets claimed by a still-live (non-terminal) harness-broker runtime.
-  // T-01875: derive the claim from the hosting-state SUBSTRATE (leased-tmux), NOT
-  // from runtime.transport — a durable HEADLESS runtime (transport='headless')
-  // legitimately claims a leased tmux substrate and must not be swept. Fall back
-  // to the legacy tmuxJson lease socket for pre-durable broker-tmux runtimes that
-  // have no parseable broker hosting state.
-  const claimedSockets = new Set<string>()
-  for (const runtime of db.runtimes.listAll()) {
-    if (
-      runtime.controllerKind !== 'harness-broker' ||
-      runtime.status === 'terminated' ||
-      runtime.status === 'dead' ||
-      isRuntimeUnavailableStatus(runtime.status)
-    ) {
-      continue
-    }
-    const hosting = parseBrokerRuntimeHostingState(runtime)
-    const socketPath =
-      hosting?.substrate.kind === 'leased-tmux'
-        ? hosting.substrate.tmuxSocketPath
-        : getBrokerRuntimeTmuxSocketPath(runtime)
-    if (socketPath) {
-      claimedSockets.add(socketPath)
-    }
-  }
-
-  const now = Date.now()
-
-  for (const entry of entries) {
-    const socketPath = join(dir, entry)
-    result.scanned += 1
-    if (claimedSockets.has(socketPath)) {
-      result.skippedClaimed += 1
-      continue
-    }
-    try {
-      let ageMs: number
-      try {
-        const stats = await stat(socketPath)
-        ageMs = now - stats.mtimeMs
-      } catch {
-        // Socket vanished between readdir and stat -> nothing to sweep.
-        continue
-      }
-      if (ageMs < options.graceMs) {
-        // Still within grace: a live other daemon may be allocating/draining it.
-        result.skippedWithinGrace += 1
-        continue
-      }
-
-      const leaseTmux = createTmuxManager({ socketPath })
-      const sessions = await leaseTmux.listSessionNames()
-      const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
-      if (orphanLeaseSessions.length === 0) {
-        if (options.removeDeadSocketFiles) {
-          await rm(socketPath, { force: true })
-          result.removedDeadSocketFiles += 1
-          writeServerLog('INFO', 'broker.dead_lease_socket_removed', {
-            socketPath,
-            ageMs,
-            graceMs: options.graceMs,
-          })
-        }
-        continue
-      }
-
-      if (!options.killLiveLeaseServers) {
-        continue
-      }
-      await leaseTmux.killServer()
-      result.killedLiveLeaseServers += 1
-      writeServerLog('INFO', 'broker.orphan_lease_swept', {
-        socketPath,
-        sessions: orphanLeaseSessions,
-        ageMs,
-        graceMs: options.graceMs,
-      })
-    } catch (error) {
-      result.errors += 1
-      logStartupIssue('broker orphan lease sweep failed', { socketPath }, error)
-    }
-  }
-  return result
-}
-
-export async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): Promise<boolean> {
-  const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
-  if (!socketPath) {
-    return false
-  }
-  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
-  const leaseTmux = createTmuxManager({ socketPath })
-  const persistedWindows = getPersistedBrokerWindows(runtime)
-  if (!persistedWindows?.brokerWindow && !persistedWindows?.tuiWindow) {
-    const inspected = await leaseTmux.inspectSession(sessionName)
-    if (!inspected) {
-      return false
-    }
-    return brokerLeaseIdsMatch(runtime, inspected)
-  }
-  return reassociateBrokerTmuxWindows(runtime, async () => ({
-    brokerWindow: await leaseTmux.inspectWindow({ sessionName, windowName: 'broker' }),
-    tuiWindow: await leaseTmux.inspectWindow({ sessionName, windowName: 'tui' }),
-  }))
-}
-
-export async function reassociateBrokerTmuxWindows(
-  runtime: HrcRuntimeSnapshot,
-  inspect: (runtime: HrcRuntimeSnapshot) => Promise<BrokerWindowObservation>
-): Promise<boolean> {
-  return brokerLeaseWindowsMatch(runtime, await inspect(runtime))
-}
-
-export function brokerLeaseWindowsMatch(
-  runtime: HrcRuntimeSnapshot,
-  observed: BrokerWindowObservation
-): boolean {
-  const persisted = getPersistedBrokerWindows(runtime)
-  if (!persisted?.brokerWindow || !persisted.tuiWindow) {
-    return false
-  }
-  return (
-    tmuxPaneIdentityMatches(persisted.brokerWindow, observed.brokerWindow) &&
-    tmuxPaneIdentityMatches(persisted.tuiWindow, observed.tuiWindow)
-  )
-}
-
-function emitBrokerTmuxReassociated(db: HrcDatabase, runtime: HrcRuntimeSnapshot): void {
-  const session = requireSession(db, runtime.hostSessionId)
-  appendHrcEvent(db, 'runtime.reassociated', {
-    ts: timestamp(),
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    payload: {
-      runtimeId: runtime.runtimeId,
-      reason: 'broker_tmux_lease_reassociated_on_restart',
-      generation: runtime.generation,
-    },
-  })
-}
-
-export function brokerLeaseIdsMatch(runtime: HrcRuntimeSnapshot, observed: TmuxPaneState): boolean {
-  const tmuxJson = runtime.tmuxJson
-  if (!tmuxJson) {
-    return false
-  }
-  for (const [key, value] of [
-    ['sessionId', observed.sessionId],
-    ['windowId', observed.windowId],
-    ['paneId', observed.paneId],
-  ] as const) {
-    const persisted = tmuxJson[key]
-    if (typeof persisted === 'string' && persisted !== value) {
-      return false
-    }
-  }
-  return true
-}
-
-function brokerTuiWindowMatches(
-  runtime: HrcRuntimeSnapshot,
-  observed: TmuxPaneState | null
-): boolean {
-  const persisted = getPersistedBrokerWindows(runtime)
-  return tmuxPaneIdentityMatches(persisted?.tuiWindow, observed)
-}
-
-function getPersistedDurableBrokerEndpoint(
-  runtime: HrcRuntimeSnapshot
-): { socketPath: string } | undefined {
-  const broker = getRuntimeStateBrokerRecord(runtime)
-  const endpoint = extractBrokerEndpoint(getRecord(broker?.['endpoint']))
-  return endpoint?.kind === 'unix-jsonrpc-ndjson' ? { socketPath: endpoint.socketPath } : undefined
-}
-
-function getPersistedBrokerWindows(
-  runtime: HrcRuntimeSnapshot
-): { brokerWindow?: TmuxPaneState | undefined; tuiWindow?: TmuxPaneState | undefined } | undefined {
-  const broker = getRuntimeStateBrokerRecord(runtime)
-  if (!broker) {
-    return undefined
-  }
-  return {
-    brokerWindow: toTmuxPaneState(broker['brokerWindow']),
-    tuiWindow: toTmuxPaneState(broker['tuiWindow']),
-  }
-}
-
-function getRuntimeStateBrokerRecord(
-  runtime: HrcRuntimeSnapshot
-): Record<string, unknown> | undefined {
-  return getRecord(runtime.runtimeStateJson?.['broker'])
-}
-
-function toTmuxPaneState(value: unknown): TmuxPaneState | undefined {
-  const record = getRecord(value)
-  if (!record) {
-    return undefined
-  }
-  const socketPath = record['socketPath']
-  const sessionName = record['sessionName']
-  const windowName = record['windowName']
-  const sessionId = record['sessionId']
-  const windowId = record['windowId']
-  const paneId = record['paneId']
-  if (
-    typeof socketPath !== 'string' ||
-    typeof sessionName !== 'string' ||
-    typeof windowName !== 'string' ||
-    typeof sessionId !== 'string' ||
-    typeof windowId !== 'string' ||
-    typeof paneId !== 'string'
-  ) {
-    return undefined
-  }
-  return { socketPath, sessionName, windowName, sessionId, windowId, paneId }
-}
-
-function tmuxPaneIdentityMatches(
-  persisted: TmuxPaneState | undefined,
-  observed: TmuxPaneState | null
-): boolean {
-  if (!persisted || !observed) {
-    return false
-  }
-  return (
-    persisted.socketPath === observed.socketPath &&
-    persisted.sessionName === observed.sessionName &&
-    persisted.windowName === observed.windowName &&
-    persisted.sessionId === observed.sessionId &&
-    persisted.windowId === observed.windowId &&
-    persisted.paneId === observed.paneId
-  )
-}
-
-function getRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function markBrokerReattachStale(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot,
-  reason: string,
-  error?: unknown
-): BrokerReattachOutcome {
-  const session = requireSession(db, runtime.hostSessionId)
-  markRuntimeStale(db, session, runtime, {
-    runtimeId: runtime.runtimeId,
-    reason,
-    generation: runtime.generation,
-    ...(error instanceof Error ? { error: error.message } : {}),
-  })
-  const now = timestamp()
-  const latest = db.runtimes.getByRuntimeId(runtime.runtimeId)
-  db.runtimes.update(runtime.runtimeId, {
-    runtimeStateJson: {
-      ...(latest?.runtimeStateJson ?? runtime.runtimeStateJson ?? {}),
-      control: {
-        mode: 'broker-ipc',
-        brokerAttached: false,
-        lastAttachError: {
-          code: reason,
-          message: error instanceof Error ? error.message : reason,
-        },
-      },
-      updatedAt: now,
-    },
-    updatedAt: now,
-    lastActivityAt: now,
-  })
-  return {
-    runtimeId: runtime.runtimeId,
-    state: 'stale',
-    brokerAttached: false,
-    reason,
-  }
-}
-
-function gcBrokerRuntimeOnRestart(
-  db: HrcDatabase,
-  runtime: HrcRuntimeSnapshot,
-  reason: string
-): void {
-  const session = requireSession(db, runtime.hostSessionId)
-  const now = timestamp()
-  const invocationId = runtime.activeInvocationId
-  if (invocationId !== undefined) {
-    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-    if (
-      invocation &&
-      invocation.invocationState !== 'disposed' &&
-      invocation.invocationState !== 'exited' &&
-      invocation.invocationState !== 'failed'
-    ) {
-      db.brokerInvocations.update(invocationId, {
-        invocationState: 'disposed',
-        updatedAt: now,
-      })
-    }
-  }
-  markRuntimeStale(db, session, runtime, {
-    runtimeId: runtime.runtimeId,
-    reason,
-    generation: runtime.generation,
-    ...(invocationId !== undefined ? { invocationId } : {}),
-  })
 }
 
 function isOrphanableLaunchStatus(status: string): boolean {
