@@ -34,8 +34,8 @@
  */
 import { describe, expect, it, mock } from 'bun:test'
 
-import type { HrcClient } from 'hrc-sdk'
 import type { HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
+import type { HrcClient } from 'hrc-sdk'
 
 // RED GATE: this import will fail until selector-resolve.ts is implemented
 import {
@@ -55,15 +55,31 @@ import {
 
 type PartialRuntime = Pick<
   HrcRuntimeSnapshot,
-  'runtimeId' | 'scopeRef' | 'laneRef' | 'hostSessionId' | 'generation' |
-  'transport' | 'harness' | 'provider' | 'status' | 'supportsInflightInput' |
-  'adopted' | 'createdAt' | 'updatedAt'
+  | 'runtimeId'
+  | 'scopeRef'
+  | 'laneRef'
+  | 'hostSessionId'
+  | 'generation'
+  | 'transport'
+  | 'harness'
+  | 'provider'
+  | 'status'
+  | 'supportsInflightInput'
+  | 'adopted'
+  | 'createdAt'
+  | 'updatedAt'
 >
 
 type PartialSession = Pick<
   HrcSessionRecord,
-  'hostSessionId' | 'scopeRef' | 'laneRef' | 'generation' | 'status' |
-  'createdAt' | 'updatedAt' | 'ancestorScopeRefs'
+  | 'hostSessionId'
+  | 'scopeRef'
+  | 'laneRef'
+  | 'generation'
+  | 'status'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'ancestorScopeRefs'
 >
 
 function makeRuntime(overrides: Partial<PartialRuntime> & { runtimeId: string }): PartialRuntime {
@@ -84,7 +100,9 @@ function makeRuntime(overrides: Partial<PartialRuntime> & { runtimeId: string })
   }
 }
 
-function makeSession(overrides: Partial<PartialSession> & { hostSessionId: string }): PartialSession {
+function makeSession(
+  overrides: Partial<PartialSession> & { hostSessionId: string }
+): PartialSession {
   return {
     hostSessionId: overrides.hostSessionId,
     scopeRef: overrides.scopeRef ?? 'agent:cody:project:hrc-runtime:task:primary',
@@ -162,10 +180,7 @@ describe('resolveRuntimeArg — runtime: prefix (runtime inspect / terminate / b
   it('resolves runtime: prefix to runtimeId (runtime not in snapshot)', async () => {
     // Prefixed form bypasses snapshot requirement — ID is extracted directly
     const client = mockClient([], [])
-    const result = await resolveRuntimeArg(
-      'runtime:rt-pfx-001',
-      client as unknown as HrcClient
-    )
+    const result = await resolveRuntimeArg('runtime:rt-pfx-001', client as unknown as HrcClient)
     expect(result).toBe('rt-pfx-001')
   })
 
@@ -173,10 +188,7 @@ describe('resolveRuntimeArg — runtime: prefix (runtime inspect / terminate / b
     const rt = makeRuntime({ runtimeId: 'rt-pfx-002' })
     const client = mockClient([rt], [])
 
-    const result = await resolveRuntimeArg(
-      'runtime:rt-pfx-002',
-      client as unknown as HrcClient
-    )
+    const result = await resolveRuntimeArg('runtime:rt-pfx-002', client as unknown as HrcClient)
     expect(result).toBe('rt-pfx-002')
   })
 })
@@ -191,10 +203,7 @@ describe('resolveRuntimeArg — bare handle (runtime inspect via scope handle)',
     const client = mockClient([rt], [])
 
     // cody@hrc-runtime qualifies to agent:cody:project:hrc-runtime:task:primary
-    const result = await resolveRuntimeArg(
-      'cody@hrc-runtime',
-      client as unknown as HrcClient
-    )
+    const result = await resolveRuntimeArg('cody@hrc-runtime', client as unknown as HrcClient)
     expect(result).toBe('rt-handle-001')
   })
 
@@ -288,10 +297,7 @@ describe('resolveSessionArg — host: prefix (session get)', () => {
   it('resolves host: prefix to hostSessionId (session not in snapshot)', async () => {
     const client = mockClient([], [])
 
-    const result = await resolveSessionArg(
-      'host:hs-pfx-001',
-      client as unknown as HrcClient
-    )
+    const result = await resolveSessionArg('host:hs-pfx-001', client as unknown as HrcClient)
     expect(result).toBe('hs-pfx-001')
   })
 })
@@ -305,10 +311,7 @@ describe('resolveSessionArg — bare handle (session get via scope handle)', () 
     })
     const client = mockClient([], [sess])
 
-    const result = await resolveSessionArg(
-      'cody@hrc-runtime',
-      client as unknown as HrcClient
-    )
+    const result = await resolveSessionArg('cody@hrc-runtime', client as unknown as HrcClient)
     expect(result).toBe('hs-handle-001')
   })
 
@@ -382,17 +385,11 @@ describe('per-command adapter contract coverage', () => {
   const SCOPE_REF = 'agent:cody:project:hrc-runtime:task:primary'
 
   function buildRuntimeClient(): ReturnType<typeof mockClient> {
-    return mockClient(
-      [makeRuntime({ runtimeId: RUNTIME_ID, scopeRef: SCOPE_REF })],
-      []
-    )
+    return mockClient([makeRuntime({ runtimeId: RUNTIME_ID, scopeRef: SCOPE_REF })], [])
   }
 
   function buildSessionClient(): ReturnType<typeof mockClient> {
-    return mockClient(
-      [],
-      [makeSession({ hostSessionId: SESSION_ID, scopeRef: SCOPE_REF })]
-    )
+    return mockClient([], [makeSession({ hostSessionId: SESSION_ID, scopeRef: SCOPE_REF })])
   }
 
   describe('runtime inspect', () => {
@@ -402,7 +399,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -413,7 +412,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -424,7 +425,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves host: selector via resolveSessionArg', async () => {
       const client = buildSessionClient()
-      expect(await resolveSessionArg(`host:${SESSION_ID}`, client as unknown as HrcClient)).toBe(SESSION_ID)
+      expect(await resolveSessionArg(`host:${SESSION_ID}`, client as unknown as HrcClient)).toBe(
+        SESSION_ID
+      )
     })
   })
 
@@ -435,7 +438,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -446,7 +451,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -457,7 +464,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -468,7 +477,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 
@@ -479,7 +490,9 @@ describe('per-command adapter contract coverage', () => {
     })
     it('resolves runtime: selector via resolveRuntimeArg', async () => {
       const client = buildRuntimeClient()
-      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(RUNTIME_ID)
+      expect(await resolveRuntimeArg(`runtime:${RUNTIME_ID}`, client as unknown as HrcClient)).toBe(
+        RUNTIME_ID
+      )
     })
   })
 })

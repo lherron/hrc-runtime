@@ -573,8 +573,12 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
           .filter((k) => !VOLATILE_RUNTIME_KEYS.has(k))
           .sort()
       }
-      const lsItem = lsBody.find((r) => r.runtimeId === runtimeId) as Record<string, unknown> | undefined
-      const legacyItem = legacyBody.find((r) => r.runtimeId === runtimeId) as Record<string, unknown> | undefined
+      const lsItem = lsBody.find((r) => r.runtimeId === runtimeId) as
+        | Record<string, unknown>
+        | undefined
+      const legacyItem = legacyBody.find((r) => r.runtimeId === runtimeId) as
+        | Record<string, unknown>
+        | undefined
       expect(stableRuntimeKeys(lsItem ?? {})).toEqual(stableRuntimeKeys(legacyItem ?? {}))
     })
 

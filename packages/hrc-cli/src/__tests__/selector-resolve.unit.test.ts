@@ -67,10 +67,7 @@
 import { describe, expect, it } from 'bun:test'
 
 // RED GATE: this import will fail until selector-resolve.ts is implemented
-import {
-  SelectorResolutionError,
-  resolveSelectorTarget,
-} from '../selector-resolve'
+import { SelectorResolutionError, resolveSelectorTarget } from '../selector-resolve'
 
 import type { SelectorSnapshot } from '../selector-resolve'
 
@@ -97,8 +94,8 @@ const SESSION_A = {
 }
 
 function snapshotWith(
-  runtimes: typeof RUNTIME_A[],
-  sessions?: typeof SESSION_A[]
+  runtimes: (typeof RUNTIME_A)[],
+  sessions?: (typeof SESSION_A)[]
 ): SelectorSnapshot {
   return {
     runtimes,
@@ -190,9 +187,9 @@ describe('resolveSelectorTarget — prefixed runtime: resolves', () => {
 describe('resolveSelectorTarget — type mismatch names accepted forms', () => {
   it('throws SelectorResolutionError(code=type-mismatch) for msg: prefix when expect is runtime', () => {
     const snapshot = snapshotWith([])
-    expect(() =>
-      resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
-    ).toThrow(SelectorResolutionError)
+    expect(() => resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })).toThrow(
+      SelectorResolutionError
+    )
 
     try {
       resolveSelectorTarget('msg:m-aaaaa', { expect: 'runtime', snapshot })
@@ -254,7 +251,7 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
     // Both RUNTIME_A and RUNTIME_B share scopeRef but differ only by laneRef.
     // A bare handle that resolves to the same scopeRef (no lane specified)
     // → both match → ambiguous.
-    const snapshot = snapshotWith([RUNTIME_A, RUNTIME_B])
+    const _snapshot = snapshotWith([RUNTIME_A, RUNTIME_B])
     // cody@hrc-runtime resolves to agent:cody:project:hrc-runtime:task:primary
     // or similar — the exact qualified form depends on resolveQualifiedScopeInput.
     // We build a snapshot where two runtimes have the same scopeRef but differ in laneRef,
@@ -273,11 +270,17 @@ describe('resolveSelectorTarget — ambiguous handle is a FATAL error', () => {
 
     expect(() =>
       // bare handle resolving to scopeRef that matches two different laneRefs
-      resolveSelectorTarget('smokey@hrc-runtime', { expect: 'runtime', snapshot: ambiguousSnapshot })
+      resolveSelectorTarget('smokey@hrc-runtime', {
+        expect: 'runtime',
+        snapshot: ambiguousSnapshot,
+      })
     ).toThrow(SelectorResolutionError)
 
     try {
-      resolveSelectorTarget('smokey@hrc-runtime', { expect: 'runtime', snapshot: ambiguousSnapshot })
+      resolveSelectorTarget('smokey@hrc-runtime', {
+        expect: 'runtime',
+        snapshot: ambiguousSnapshot,
+      })
     } catch (err) {
       expect(err).toBeInstanceOf(SelectorResolutionError)
       const resolveErr = err as SelectorResolutionError
