@@ -42,11 +42,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
-import { openHrcDatabase } from 'hrc-store-sqlite'
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 
@@ -161,11 +158,15 @@ function shouldUseSubprocess(args: string[]): boolean {
     case 'server':
       return true
     case 'run':
-      return !(args.includes('--no-attach') || args.includes('--dry-run') || args.includes('--attach-only'))
+      return !(
+        args.includes('--no-attach') ||
+        args.includes('--dry-run') ||
+        args.includes('--attach-only')
+      )
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
     case 'resume':
-      return !(args.includes('--dry-run'))
+      return !args.includes('--dry-run')
     default:
       return false
   }
@@ -414,11 +415,13 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
     it('resolves msg: selector and emits JSON with kind=message + messageId', async () => {
       // Seed a message via the SDK
       const { HrcClient } = await import('hrc-sdk')
-      const client = new HrcClient({ socketPath })
+      const client = new HrcClient(socketPath)
       const created = await client.createMessage({
-        scopeRef: testScope('show-msg'),
-        role: 'user',
-        content: 'hello show test',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: `${testScope('show-msg')}/lane:default` },
+        body: 'hello show test',
+        kind: 'dm',
+        phase: 'oneway',
       })
       const messageId = created.messageId
 
@@ -434,11 +437,13 @@ describe('hrc show — §3 (RED: command does not exist yet)', () => {
     it('resolves seq: selector and emits JSON with kind=message + seq', async () => {
       // Seed a message to get a sequence number
       const { HrcClient } = await import('hrc-sdk')
-      const client = new HrcClient({ socketPath })
+      const client = new HrcClient(socketPath)
       await client.createMessage({
-        scopeRef: testScope('show-seq'),
-        role: 'user',
-        content: 'hello seq test',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: `${testScope('show-seq')}/lane:default` },
+        body: 'hello seq test',
+        kind: 'dm',
+        phase: 'oneway',
       })
 
       // Use seq:1 — first message in the stream
@@ -542,7 +547,7 @@ describe('hrc ls — §4 (RED: command does not exist yet)', () => {
     })
 
     it('hrc ls runtimes returns same data as hrc runtime list', async () => {
-      const { runtimeId, hostSessionId } = await seedSessionAndRuntime('ls-vs-runtime-list')
+      const { runtimeId } = await seedSessionAndRuntime('ls-vs-runtime-list')
 
       const lsResult = await runCli(['ls', 'runtimes'], cliEnv())
       const legacyResult = await runCli(['runtime', 'list'], cliEnv())

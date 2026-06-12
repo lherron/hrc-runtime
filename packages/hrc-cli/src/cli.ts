@@ -65,7 +65,16 @@ import { cmdMonitorShow } from './monitor-show.js'
 import { MonitorWaitExit, cmdMonitorWait } from './monitor-wait.js'
 import { cmdMonitorWatch } from './monitor-watch.js'
 import { printJson } from './print.js'
-import { resolveRuntimeArg, resolveSessionArg } from './selector-resolve.js'
+import {
+  type ResolvedTarget,
+  SelectorResolutionError,
+  type SelectorSnapshot,
+  type SelectorTargetKind,
+  fetchSelectorSnapshot,
+  resolveRuntimeArg,
+  resolveSelectorTarget,
+  resolveSessionArg,
+} from './selector-resolve.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -1876,7 +1885,26 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
   )
 }
 
-async function cmdRunSweepZombies(args: string[]): Promise<void> {
+/**
+ * Emit the deprecation guidance for the legacy `hrc run sweep-zombies` /
+ * `hrc run reconcile-active` aliases. daedalus D3: keep these functional (no
+ * failing pointer) but point operators at the new `hrc admin runs ...`
+ * namespace via stderr so existing automation keeps working byte-for-byte on
+ * stdout.
+ */
+function emitRunAdminDeprecation(verb: 'sweep-zombies' | 'reconcile-active'): void {
+  process.stderr.write(
+    `hrc: 'hrc run ${verb}' is deprecated; use 'hrc admin runs ${verb}' instead\n`
+  )
+}
+
+async function cmdRunSweepZombies(
+  args: string[],
+  opts: { deprecatedAlias?: boolean } = {}
+): Promise<void> {
+  if (opts.deprecatedAlias) {
+    emitRunAdminDeprecation('sweep-zombies')
+  }
   const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run sweep-zombies')
 
   const request: SweepZombieRunsRequest = {
@@ -1910,7 +1938,13 @@ function printZombieSweepHuman(result: SweepZombieRunsResponse, dryRun: boolean)
   )
 }
 
-async function cmdRunReconcileActive(args: string[]): Promise<void> {
+async function cmdRunReconcileActive(
+  args: string[],
+  opts: { deprecatedAlias?: boolean } = {}
+): Promise<void> {
+  if (opts.deprecatedAlias) {
+    emitRunAdminDeprecation('reconcile-active')
+  }
   const { yes, jsonOutput, dryRun } = resolveMutationGate(args, 'run reconcile-active')
 
   const request: ReconcileActiveRunsRequest = {
@@ -1953,6 +1987,145 @@ async function cmdLaunchList(args: string[]): Promise<void> {
     ...(runtimeId ? { runtimeId } : {}),
   })
   printJson(launches)
+}
+
+// ── hrc show / hrc ls (T-04219 P2 — context-aware viewer + noun lister) ───────
+
+/**
+ * Resolve a `hrc show` selector to a concrete target by trying each accepted
+ * kind in priority order. daedalus INVARIANT: for an ambiguous raw ID, runtime
+ * wins, then host-session; explicit prefixes (`runtime:`, `host:`, `msg:`,
+ * `seq:`) are honored directly. A `type-mismatch` from one kind means "try the
+ * next kind"; any other resolution failure (ambiguous, parse-error) is fatal so
+ * we never silently pick the wrong object.
+ */
+function resolveShowTarget(rawArg: string, snapshot: SelectorSnapshot): ResolvedTarget {
+  const order: SelectorTargetKind[] = ['runtime', 'host-session', 'message']
+  let lastTypeMismatch: SelectorResolutionError | undefined
+  for (const expect of order) {
+    try {
+      return resolveSelectorTarget(rawArg, { expect, snapshot })
+    } catch (err) {
+      if (err instanceof SelectorResolutionError && err.code === 'type-mismatch') {
+        lastTypeMismatch = err
+        continue
+      }
+      throw err
+    }
+  }
+  throw (
+    lastTypeMismatch ??
+    new SelectorResolutionError('not-found', `selector "${rawArg}" did not resolve to any target`)
+  )
+}
+
+async function renderShowMessage(
+  client: HrcClient,
+  target: { kind: 'message'; messageId: string } | { kind: 'message-seq'; seq: number },
+  jsonOutput: boolean
+): Promise<void> {
+  const { messages } = await client.listMessages({})
+  const record =
+    target.kind === 'message'
+      ? messages.find((m) => m.messageId === target.messageId)
+      : messages.find((m) => m.messageSeq === target.seq)
+
+  if (!record) {
+    const ref = target.kind === 'message' ? target.messageId : `seq:${target.seq}`
+    fatal(`no message found for ${ref}`)
+  }
+
+  if (jsonOutput) {
+    // Spread first, then pin the stable show contract: kind='message' + the
+    // concrete identifiers. The record's own `kind` (dm|literal|system) is
+    // preserved as `messageKind` so it isn't lost to the overlay.
+    printJson({
+      ...record,
+      messageKind: record.kind,
+      kind: 'message',
+      messageId: record.messageId,
+      seq: record.messageSeq,
+    })
+    return
+  }
+
+  const lines = [
+    `message ${record.messageId}`,
+    '  kind          message',
+    `  seq           ${record.messageSeq}`,
+    `  messageKind   ${record.kind}`,
+    `  phase         ${record.phase}`,
+    `  createdAt     ${record.createdAt}`,
+    `  body          ${record.body}`,
+  ]
+  process.stdout.write(`${lines.join('\n')}\n`)
+}
+
+async function cmdShow(args: string[]): Promise<void> {
+  const selectorArg = requireArg(args, 0, '<selector>')
+  const jsonOutput = hasFlag(args, '--json')
+  const client = createClient()
+
+  const snapshot = await fetchSelectorSnapshot(client)
+  const target = resolveShowTarget(selectorArg, snapshot)
+
+  if (target.kind === 'runtime') {
+    const result = await client.inspectRuntime({ runtimeId: target.runtimeId })
+    if (jsonOutput) {
+      printJson({ ...result, kind: 'runtime', runtimeId: target.runtimeId })
+      return
+    }
+    process.stdout.write('kind: runtime\n')
+    printRuntimeInspect(result)
+    return
+  }
+
+  if (target.kind === 'host-session') {
+    const session = await client.getSession(target.hostSessionId)
+    if (jsonOutput) {
+      printJson({ ...session, kind: 'host-session', hostSessionId: target.hostSessionId })
+      return
+    }
+    process.stdout.write(`kind: host-session\nhostSessionId: ${target.hostSessionId}\n`)
+    printJson(session)
+    return
+  }
+
+  if (target.kind === 'bridge') {
+    // resolveShowTarget never expects bridge, so this is unreachable in practice;
+    // narrow defensively rather than mis-render.
+    fatal(`selector "${selectorArg}" resolved to a bridge, which 'hrc show' does not render`)
+  }
+
+  // message / message-seq
+  await renderShowMessage(client, target, jsonOutput)
+}
+
+const LS_NOUNS = ['runtimes', 'sessions', 'launches', 'messages'] as const
+
+async function cmdLs(noun: string | undefined, rest: string[]): Promise<void> {
+  if (noun === undefined) {
+    fatal(`ls requires a noun: ${LS_NOUNS.join(' | ')}`)
+  }
+  switch (noun) {
+    case 'runtimes':
+      await cmdRuntimeList(rest)
+      return
+    case 'sessions':
+      await cmdSessionList(rest)
+      return
+    case 'launches':
+      await cmdLaunchList(rest)
+      return
+    case 'messages': {
+      const client = createClient()
+      const { messages } = await client.listMessages({})
+      printJson(messages)
+      return
+    }
+    default:
+      fatal(`unknown ls noun "${noun}"; accepted: ${LS_NOUNS.join(' | ')}`)
+  }
 }
 
 async function cmdAdopt(args: string[]): Promise<void> {
@@ -2116,19 +2289,20 @@ export function explainScopeCommandError(
   return err instanceof Error ? err : new Error(raw)
 }
 
-function printManagedScopeUsage(command: 'run' | 'start'): void {
+function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
+  // `resume` is an exact alias of `run`; it renders run's option surface but
+  // under its own usage banner so `hrc resume` (no args) self-describes.
+  const isRunLike = command === 'run' || command === 'resume'
   const summary =
-    command === 'run'
-      ? 'Launch or reattach an agent harness in a managed tmux session.'
-      : 'Resolve a session and start its managed runtime without attaching.'
-  const attachSummary =
-    command === 'run'
-      ? '\n  By default, rerunning the same scope reattaches to the existing\n  runtime and preserves the PTY/context. Use --force-restart to\n  replace the runtime with a fresh PTY.\n'
-      : ''
-  const noAttachOption =
-    command === 'run'
-      ? '  --no-attach          Start/ensure without attaching to the tmux session\n'
-      : ''
+    command === 'start'
+      ? 'Resolve a session and start its managed runtime without attaching.'
+      : 'Launch or reattach an agent harness in a managed tmux session.'
+  const attachSummary = isRunLike
+    ? '\n  By default, rerunning the same scope reattaches to the existing\n  runtime and preserves the PTY/context. Use --force-restart to\n  replace the runtime with a fresh PTY.\n'
+    : ''
+  const noAttachOption = isRunLike
+    ? '  --no-attach          Start/ensure without attaching to the tmux session\n  --attach-only        Reattach to the existing runtime without starting one\n'
+    : ''
   const newSessionOption =
     command === 'start'
       ? '  --new-session        Rotate to a fresh host session before starting\n'
@@ -2154,9 +2328,18 @@ ${noAttachOption}${newSessionOption}  --dry-run            Local plan preview �
 `)
 }
 
-async function cmdRun(args: string[]): Promise<void> {
+async function cmdRun(args: string[], opts: { invokedAs?: 'run' | 'resume' } = {}): Promise<void> {
+  // `--attach-only` (daedalus D4): behave exactly like `hrc attach` — reuse the
+  // existing runtime and attach without starting/ensuring a new one. Strip the
+  // flag and delegate so attach's dry-run plan and real attach path are shared.
+  if (hasFlag(args, '--attach-only')) {
+    const attachArgs = args.filter((arg) => arg !== '--attach-only')
+    await cmdAttach(attachArgs)
+    return
+  }
+
   if (args.length === 0) {
-    printManagedScopeUsage('run')
+    printManagedScopeUsage(opts.invokedAs === 'resume' ? 'resume' : 'run')
     return
   }
 
@@ -3482,8 +3665,8 @@ Exit codes:
   const runtime = program.command('runtime').description('ensure, inspect, and control runtimes')
 
   runtime
-    .command('ensure')
-    .description('ensure a runtime')
+    .command('ensure', { hidden: true })
+    .description('ensure a runtime (low-level; hidden from operator help, used by API clients)')
     .argument('<hostSessionId>', 'host session ID')
     .option('--provider <provider>', 'provider (anthropic|openai)')
     .option('--restart-style <style>', 'restart style (reuse_pty|fresh_pty)')
@@ -3662,6 +3845,10 @@ Exit codes:
     .allowUnknownOption(true)
     .option('--force-restart', 'replace existing runtime with a fresh PTY')
     .option('--no-attach', 'start/ensure without attaching to the tmux session')
+    .option(
+      '--attach-only',
+      'reattach to the existing runtime without starting one (like `hrc attach`)'
+    )
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
@@ -3674,13 +3861,15 @@ Exit codes:
       const positionals: string[] = cmd.args
       if (positionals[0] === 'sweep-zombies') {
         await cmdRunSweepZombies(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }),
+          { deprecatedAlias: true }
         )
         return
       }
       if (positionals[0] === 'reconcile-active') {
         await cmdRunReconcileActive(
-          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }),
+          { deprecatedAlias: true }
         )
         return
       }
@@ -3688,13 +3877,97 @@ Exit codes:
       const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'dry-run', 'debug', 'json'],
+        booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['attach', 'register'],
       })
       await cmdRun(args)
     })
 
   run
+    .command('sweep-zombies')
+    .description(
+      'DEPRECATED: use `hrc admin runs sweep-zombies`. Sweep stale active runs into zombie terminal state (still functional)'
+    )
+    .option('--older-than <duration>', 'run inactivity threshold')
+    .option('--dry-run', 'preview without mutating')
+    .option('--yes', 'confirm mutation')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      const rawArgv = rawArgvForVerb(cmd, 'sweep-zombies', { offset: 1, fallback: [] })
+      await cmdRunSweepZombies(rawArgv, { deprecatedAlias: true })
+    })
+
+  run
+    .command('reconcile-active')
+    .description(
+      'DEPRECATED: use `hrc admin runs reconcile-active`. Reconcile active runs whose runtime lifecycle is already terminal or idle (still functional)'
+    )
+    .option('--older-than <duration>', 'run inactivity threshold')
+    .option('--dry-run', 'preview without mutating')
+    .option('--yes', 'confirm mutation')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
+      await cmdRunReconcileActive(rawArgv, { deprecatedAlias: true })
+    })
+
+  // -- resume (exact alias of `run`, T-04219 P2) -------------------------------
+  // daedalus D4: `resume` shares run's handler, flags, and semantics. It is NOT
+  // attach-only — it may start, reuse, or attach. Help text points at `attach` /
+  // `run --attach-only` for the attach-only path.
+  program
+    .command('resume')
+    .description('alias of `run`: start, reuse, or attach a managed runtime')
+    .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
+    .allowExcessArguments(true)
+    .allowUnknownOption(true)
+    .option('--force-restart', 'replace existing runtime with a fresh PTY')
+    .option('--no-attach', 'start/ensure without attaching to the tmux session')
+    .option(
+      '--attach-only',
+      'reattach to the existing runtime without starting one (like `hrc attach`)'
+    )
+    .option('--dry-run', 'local plan preview — no server calls')
+    .option('--debug', 'keep tmux shell alive after harness exits')
+    .option('--no-register', 'do not prompt to register cwd as a project marker')
+    .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
+    .option('--project-id <id>', 'override the inferred project id')
+    .option('--project-root <path>', 'override project root')
+    .option('-p <text>', 'initial prompt to send to the harness')
+    .option('--prompt-file <path>', 'read initial prompt from a file')
+    .addHelpText(
+      'after',
+      `
+Semantics:
+  resume is an exact alias of \`hrc run\`. It may start a new runtime, reuse an
+  existing one, or attach to a live one. It does NOT guarantee attach-only.
+  For attach-only behavior use \`hrc attach <scope>\` or \`hrc run --attach-only\`.
+`
+    )
+    .action(async (_scope, _opts, cmd: Command) => {
+      const positionals: string[] = cmd.args
+      const opts = cmd.opts()
+      const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
+      const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
+        strings: ['project-id', 'project-root', 'prompt-file'],
+        booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
+        negatedBooleans: ['attach', 'register'],
+      })
+      await cmdRun(args, { invokedAs: 'resume' })
+    })
+
+  // -- admin group (T-04219 P2: run-RECORD repair, distinct from runtime sweep) -
+  // daedalus D3: relocate run-record maintenance under `admin runs`. The old
+  // `run sweep-zombies` / `run reconcile-active` aliases stay functional and emit
+  // deprecation guidance to stderr.
+  const admin = program.command('admin').description('administrative maintenance commands')
+  const adminRuns = admin
+    .command('runs')
+    .description('repair run records (sweep zombies, reconcile active)')
+
+  adminRuns
     .command('sweep-zombies')
     .description('sweep stale active runs into zombie terminal state')
     .option('--older-than <duration>', 'run inactivity threshold')
@@ -3707,7 +3980,7 @@ Exit codes:
       await cmdRunSweepZombies(rawArgv)
     })
 
-  run
+  adminRuns
     .command('reconcile-active')
     .description('reconcile active runs whose runtime lifecycle is already terminal or idle')
     .option('--older-than <duration>', 'run inactivity threshold')
@@ -3718,6 +3991,43 @@ Exit codes:
       const cmd = actionArgs[actionArgs.length - 1] as Command
       const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
       await cmdRunReconcileActive(rawArgv)
+    })
+
+  // -- show / ls (T-04219 P2: context-aware viewer + noun lister) --------------
+  program
+    .command('show')
+    .description('show a runtime, host session, or message by selector')
+    .argument(
+      '<selector>',
+      'selector: runtimeId, runtime:<id>, host:<id>, scope:<ref>, msg:<id>, seq:<n>'
+    )
+    .option('--json', 'output structured JSON (stable shape: kind + concrete id)')
+    .addHelpText(
+      'after',
+      `
+Resolution order for a bare selector: runtime, then host-session, then message.
+Explicit prefixes (runtime:, host:, scope:, msg:, seq:) are honored directly.
+The output always names the resolved kind and the concrete ID(s).
+`
+    )
+    .action(async (selector, _opts, cmd: Command) => {
+      const args = toLegacyArgv([selector], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdShow(args)
+    })
+
+  program
+    .command('ls')
+    .alias('list')
+    .description('list runtimes | sessions | launches | messages')
+    .argument('[noun]', 'runtimes | sessions | launches | messages')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (noun: string | undefined, _opts, cmd: Command) => {
+      const rest = cmd.args.slice(1)
+      await cmdLs(noun, rest)
     })
 
   // -- turn (alias for `hrcchat turn`) -----------------------------------------
