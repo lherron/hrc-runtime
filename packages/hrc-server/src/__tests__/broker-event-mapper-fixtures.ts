@@ -302,6 +302,10 @@ export const Q_RUN_A_ID = 'run_queued_A'
 export const Q_RUN_B_ID = 'run_queued_B'
 export const Q_INPUT_A_ID = 'input_queued_A' as InputId
 export const Q_INPUT_B_ID = 'input_queued_B' as InputId
+// Run C: used in the defense-in-depth test (T-04239/7) — a clean turn on the
+// same invocation while runtime.activeRunId is a fossil from a prior wedge.
+export const Q_RUN_C_ID = 'run_queued_C'
+export const Q_INPUT_C_ID = 'input_queued_C' as InputId
 
 /**
  * The canonical ordered headless codex-app-server lifecycle used by the
@@ -463,6 +467,24 @@ export async function makeQueuedFixture(): Promise<SeededFixture> {
     updatedAt: ts(3),
     operationId: Q_OPERATION_ID,
     dispatchedInputId: Q_INPUT_B_ID,
+  })
+
+  // Run C: used by the defense-in-depth test (T-04239/7). A clean, correctly-
+  // attributed run on the same invocation while the runtime's activeRunId is a
+  // fossil from a prior bug-induced wedge.
+  db.runs.insert({
+    runId: Q_RUN_C_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    runtimeId: Q_RUNTIME_ID,
+    scopeRef: Q_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    status: 'accepted',
+    acceptedAt: ts(50),
+    updatedAt: ts(50),
+    operationId: Q_OPERATION_ID,
+    dispatchedInputId: Q_INPUT_C_ID,
   })
 
   // Broker invocation: tmux-interactive shape — no runId on the invocation row.
