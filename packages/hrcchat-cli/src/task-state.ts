@@ -1,4 +1,4 @@
-import { type ExecProcess, execProcess } from './consul-secrets.js'
+import { type ExecProcess, type ExecProcessResult, execProcess } from './consul-secrets.js'
 
 /**
  * Reads the live wrkq state for a task id (e.g. "T-04216") at terminal-frame
@@ -13,7 +13,7 @@ export async function readTaskState(
   taskId: string,
   runProcess: ExecProcess = execProcess
 ): Promise<string | null> {
-  let result
+  let result: ExecProcessResult
   try {
     result = await runProcess(['wrkq', 'cat', taskId, '--json'])
   } catch {

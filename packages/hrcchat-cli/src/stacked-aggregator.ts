@@ -1,7 +1,6 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
-import { readTaskState } from './task-state.js'
 import {
   FlushReason,
   Phase,
@@ -12,6 +11,7 @@ import {
   type Summarizer,
   type TurnStackedEvent,
 } from './stacked-types.js'
+import { readTaskState } from './task-state.js'
 
 type TimerHandle = unknown
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { Chalk } from 'chalk'
 import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
+import { Chalk } from 'chalk'
 
 type Options = {
   dryRun: boolean
@@ -340,8 +340,15 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
         COALESCE((SELECT event_kind FROM latest_event), '');
     `,
   ])
-  const [resolvedRuntime, runtimeStatus, turnStatus, runId, lastEventUtc, lastEventLocal, lastEventKind] =
-    output.trimEnd().split('\t')
+  const [
+    resolvedRuntime,
+    runtimeStatus,
+    turnStatus,
+    runId,
+    lastEventUtc,
+    lastEventLocal,
+    lastEventKind,
+  ] = output.trimEnd().split('\t')
 
   return {
     ...pane,
@@ -388,9 +395,7 @@ function sendEnter(pane: Pane, options: Options): void {
 function printStatus(statuses: PaneStatus[], options: Options): void {
   console.log(color.bold('HRC Headless Ghostty Cleanup'))
   console.log(
-    color.dim(
-      `title=${options.titleRegex}  wait=${options.waitSeconds}s  db=${options.hrcDbPath}`
-    )
+    color.dim(`title=${options.titleRegex}  wait=${options.waitSeconds}s  db=${options.hrcDbPath}`)
   )
   if (options.dryRun) console.log(color.yellow('Mode: dry run, no keys will be sent'))
   console.log()
@@ -449,7 +454,9 @@ async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promis
   const readline = createInterface({ input: process.stdin, output: process.stdout })
   const answer = (
     await readline.question(
-      color.yellow(`Send /quit to ${eligibleStatuses.length} eligible pane(s)? Press Enter to continue: `)
+      color.yellow(
+        `Send /quit to ${eligibleStatuses.length} eligible pane(s)? Press Enter to continue: `
+      )
     )
   ).trim()
   readline.close()
@@ -533,7 +540,9 @@ async function main(): Promise<void> {
       console.log(`  ${color.cyan(status.id)} ${color.green('enter sent')}`)
     } else {
       skipped += 1
-      console.log(`  ${color.cyan(status.id)} ${color.yellow('skipped')} ${color.dim('no close prompt')}`)
+      console.log(
+        `  ${color.cyan(status.id)} ${color.yellow('skipped')} ${color.dim('no close prompt')}`
+      )
     }
   }
   console.log(color.dim(`Summary: enter sent=${closed}, skipped=${skipped}`))

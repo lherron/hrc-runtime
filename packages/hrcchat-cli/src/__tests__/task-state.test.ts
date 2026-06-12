@@ -70,12 +70,18 @@ describe('readTaskState', () => {
   })
 
   it('returns null when the state field is an empty string', async () => {
-    const state = await readTaskState('T-1', fakeExec({ stdout: JSON.stringify([{ id: 'T-1', state: '' }]) }))
+    const state = await readTaskState(
+      'T-1',
+      fakeExec({ stdout: JSON.stringify([{ id: 'T-1', state: '' }]) })
+    )
     expect(state).toBeNull()
   })
 
   it('returns null when the state field is JSON null', async () => {
-    const state = await readTaskState('T-1', fakeExec({ stdout: JSON.stringify([{ id: 'T-1', state: null }]) }))
+    const state = await readTaskState(
+      'T-1',
+      fakeExec({ stdout: JSON.stringify([{ id: 'T-1', state: null }]) })
+    )
     expect(state).toBeNull()
   })
 })

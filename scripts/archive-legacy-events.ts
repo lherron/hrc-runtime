@@ -29,8 +29,7 @@
  */
 import { Database } from 'bun:sqlite'
 
-const DB_PATH =
-  process.env['HRC_DB_PATH'] ?? '/Users/lherron/praesidium/var/state/hrc/state.sqlite'
+const DB_PATH = process.env['HRC_DB_PATH'] ?? '/Users/lherron/praesidium/var/state/hrc/state.sqlite'
 const ACTIVE_SOURCES = ['broker', 'tmux']
 const ACTIVE_LIST = ACTIVE_SOURCES.map((s) => `'${s}'`).join(',')
 const LEGACY_PRED = `source NOT IN (${ACTIVE_LIST})`
