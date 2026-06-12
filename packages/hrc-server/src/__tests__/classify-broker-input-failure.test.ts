@@ -48,6 +48,18 @@ describe('classifyBrokerInputFailure', () => {
     expect(recommendation).toContain('marked the stale broker runtime unavailable')
   })
 
+  it('T-04297: terminal + binding-missing names the dead broker process, never "just retry"', () => {
+    const { headline, recommendation } = classifyBrokerInputFailure({
+      label: 'headless',
+      errorMessage: 'no active broker client for runtime rt-abc',
+      brokerBindingMissing: true,
+      terminalInputFailure: true,
+    })
+    expect(headline).toBe('headless broker process is gone (likely host reboot or broker crash)')
+    expect(recommendation).toContain('provisions a fresh broker on the same session')
+    expect(recommendation).not.toContain('just retry')
+  })
+
   it('falls back to the log-inspection guidance for unclassified rejections', () => {
     const { headline, recommendation } = classifyBrokerInputFailure({
       label: 'headless',

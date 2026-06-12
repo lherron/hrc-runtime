@@ -344,6 +344,16 @@ export function classifyBrokerInputFailure(opts: {
 }): { headline: string; recommendation: string } {
   const { label, errorMessage, brokerBindingMissing, terminalInputFailure } = opts
   if (terminalInputFailure) {
+    // T-04297: terminal + binding-missing means the broker process is provably
+    // gone (e.g. a host reboot killed it) and the reattach reaped the runtime —
+    // say that instead of leaking the "no active broker client" jargon.
+    if (brokerBindingMissing) {
+      return {
+        headline: `${label} broker process is gone (likely host reboot or broker crash)`,
+        recommendation:
+          'retry the turn; HRC marked the stale broker runtime unavailable and the retry provisions a fresh broker on the same session',
+      }
+    }
     return {
       headline: `${label} broker input failed: ${errorMessage}`,
       recommendation: 'retry the turn; HRC marked the stale broker runtime unavailable',

@@ -482,14 +482,27 @@ export async function reconcileDurableBrokerRuntimeReattach(
   // (reattachDurableBrokerForDispatch). Leave the runtime intact so it keeps
   // CLAIMING its lease (the orphan sweeper still reaps genuinely dead/leaked
   // leases that no non-terminal runtime references).
+  //
+  // T-04297: that nonterminal bet is only sound while the leased substrate is
+  // OBSERVABLY alive — i.e. the probe saw the lease's 'broker' window. When the
+  // lease tmux server/window is gone (probe.brokerWindow === null, e.g. a host
+  // reboot killed every tmux server), no broker can be hosted there and reattach
+  // can NEVER succeed (even a live socket without a window fails
+  // broker_lease_identity_mismatch). Leaving such a runtime `ready` produced the
+  // perpetual "headless broker connection was not live" zombie loop. Stale it so
+  // the next dispatch reprovisions a fresh broker on the SAME session via the
+  // reattach-failed branch in handleHeadlessBrokerDispatchTurn.
   const hosting = parseBrokerRuntimeHostingState(runtime)
   if (hosting?.substrate.kind === 'leased-tmux' && hosting.presentation.kind === 'none') {
-    return {
-      runtimeId,
-      state: 'broker-ipc-unavailable',
-      brokerAttached: false,
-      reason: 'broker_ipc_unavailable',
+    if (probe.brokerWindow) {
+      return {
+        runtimeId,
+        state: 'broker-ipc-unavailable',
+        brokerAttached: false,
+        reason: 'broker_ipc_unavailable',
+      }
     }
+    return markBrokerReattachStale(db, runtime, 'broker_lease_substrate_gone')
   }
 
   return markBrokerReattachStale(db, runtime, 'broker_socket_and_tui_unavailable')
@@ -591,6 +604,12 @@ function warmupCategory(outcome: BrokerReattachOutcome): BrokerWarmupCategory {
     case 'terminated':
       return 'terminated'
     case 'stale':
+      if (outcome.reason === 'broker_lease_substrate_gone') {
+        // T-04297: reboot-reaped durable headless runtimes (lease tmux gone) get
+        // their own bucket so `broker.warmup.complete` separates them from
+        // lease-identity stales.
+        return 'substrate_gone_stale'
+      }
       return outcome.reason === 'broker_attach_replay_failed' ||
         outcome.reason === 'broker_replay_retention_gap' ||
         outcome.reason === 'broker_event_retention_gap'
@@ -630,6 +649,7 @@ export async function warmDurableBrokerBindings(
       attached: 0,
       skipped_shutting_down: 0,
       ipc_unreachable_nonterminal: 0,
+      substrate_gone_stale: 0,
       lease_identity_invalid_stale: 0,
       attach_replay_failed: 0,
       terminated: 0,

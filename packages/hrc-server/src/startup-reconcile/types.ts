@@ -82,6 +82,7 @@ export type BrokerWarmupCategory =
   | 'attached'
   | 'skipped_shutting_down'
   | 'ipc_unreachable_nonterminal'
+  | 'substrate_gone_stale'
   | 'lease_identity_invalid_stale'
   | 'attach_replay_failed'
   | 'terminated'

@@ -1042,8 +1042,11 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
     const socketPath = join(btmuxDir(), `cc-${runtimeId}.sock`)
     const sessionName = `hrc-cc-${runtimeId}`
     leaseSockets.push(socketPath)
+    // T-04297: name the window 'broker' (the real headless lease shape) — the
+    // startup probe inspects the 'broker' window, and a leased substrate with NO
+    // observable broker window is now correctly staled+swept as a reboot zombie.
     const { exited } = Bun.spawn(
-      ['tmux', '-S', socketPath, 'new-session', '-d', '-s', sessionName, '-n', 'main'],
+      ['tmux', '-S', socketPath, 'new-session', '-d', '-s', sessionName, '-n', 'broker'],
       { stdout: 'ignore', stderr: 'ignore' }
     )
     expect(await exited).toBe(0)
@@ -1119,7 +1122,7 @@ describe('Scenario 6: orphan sweeper PRESERVES headless leased substrate', () =>
             brokerWindow: {
               socketPath, // ← the lease socket this runtime claims
               sessionName, // `hrc-cc-${runtimeId}`
-              windowName: 'main',
+              windowName: 'broker',
               sessionId: '$99',
               windowId: '@99',
               paneId: '%99',

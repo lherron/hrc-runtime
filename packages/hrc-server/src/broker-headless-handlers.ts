@@ -33,7 +33,7 @@ import {
 import { HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import { json, timestamp } from './server-util.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 
 export async function startHeadlessBrokerRuntime(
@@ -293,7 +293,17 @@ export async function executeHeadlessBrokerInputTurn(
       : result.error.message
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
     const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
+    // T-04297: the lazy reattach above may have just STALED this runtime (lease
+    // substrate gone after a host reboot, attach/replay failure, lease identity
+    // mismatch). Re-read the row and treat an unavailable status as terminal —
+    // writing 'ready' back here would resurrect the zombie the reattach just
+    // reaped, and the "usually transient — just retry" recommendation would
+    // loop the identical failure forever.
+    const currentRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+    const runtimeReapedByReattach =
+      currentRuntime != null && isRuntimeUnavailableStatus(currentRuntime.status)
     const terminalInputFailure =
+      runtimeReapedByReattach ||
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTerminalBrokerInputFailure(errorMessage)
     this.db.runs.markCompleted(runId, {
@@ -311,7 +321,10 @@ export async function executeHeadlessBrokerInputTurn(
       ...(terminalInputFailure
         ? {
             runtimeStateJson: {
-              ...(runtime.runtimeStateJson ?? {}),
+              // Spread the FRESH row state — the reattach may have just written
+              // control/lastAttachError there; the stale in-memory snapshot
+              // would clobber it.
+              ...(currentRuntime?.runtimeStateJson ?? runtime.runtimeStateJson ?? {}),
               status: 'stale',
               updatedAt: completedAt,
               terminalInvocation: {

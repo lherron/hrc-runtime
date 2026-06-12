@@ -46,7 +46,7 @@ import {
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import type { AttachBeforeInvocationStartOption } from './server-types.js'
-import { json, timestamp } from './server-util.js'
+import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { createTmuxManager } from './tmux.js'
 
@@ -495,7 +495,15 @@ export async function executeInteractiveBrokerInputTurn(
     }
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
     const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
+    // T-04297: the lazy reattach above may have just STALED this runtime (lease
+    // substrate gone, attach/replay failure, lease identity mismatch). Re-read
+    // the row and treat an unavailable status as terminal — writing 'ready'
+    // back here would resurrect the zombie the reattach just reaped.
+    const currentRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+    const runtimeReapedByReattach =
+      currentRuntime != null && isRuntimeUnavailableStatus(currentRuntime.status)
     const terminalInputFailure =
+      runtimeReapedByReattach ||
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTerminalBrokerInputFailure(errorMessage)
 
@@ -516,7 +524,9 @@ export async function executeInteractiveBrokerInputTurn(
       ...(terminalInputFailure
         ? {
             runtimeStateJson: {
-              ...(runtime.runtimeStateJson ?? {}),
+              // Spread the FRESH row state — the reattach may have just written
+              // control/lastAttachError there.
+              ...(currentRuntime?.runtimeStateJson ?? runtime.runtimeStateJson ?? {}),
               status: 'stale',
               updatedAt: completedAt,
               terminalInvocation: {
