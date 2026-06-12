@@ -67,6 +67,7 @@ import type {
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper'
+import { writeServerLog } from '../server-log.js'
 
 /**
  * Broker event type -> canonical HRC lifecycle `event_kind`. The `events` table
@@ -163,6 +164,9 @@ const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
   'turn.interrupted': 'turn.completed',
 }
 
+const TERMINAL_TURN_EVENT_TYPES = ['turn.completed', 'turn.failed', 'turn.interrupted'] as const
+const TERMINAL_TURN_EVENT_TYPE_SQL = TERMINAL_TURN_EVENT_TYPES.map((type) => `'${type}'`).join(', ')
+
 export type BrokerEventMapperDeps = {
   db: HrcDatabase
   now?: () => string
@@ -203,6 +207,8 @@ type ProjectionContext = {
   operationId: string
   runId: string | undefined
 }
+
+type RuntimeRecord = NonNullable<ReturnType<HrcDatabase['runtimes']['getByRuntimeId']>>
 
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
@@ -322,24 +328,14 @@ export class BrokerEventMapper {
   /**
    * Resolve the runId this event belongs to, robust to out-of-order projection.
    *
-   * Strategy: find the most-recent `input.accepted` at seq <= envelope.seq for
-   * this invocation and resolve the run HRC dispatched with that inputId
-   * (runs.dispatched_input_id). For the input.accepted event itself, the
-   * envelope's own inputId is used (avoids a redundant DB hit AND covers the
-   * case where appendEvent for the current envelope hasn't been written yet).
+   * Events with explicit inputId are authoritative. Events without inputId are
+   * attributed through the open turn bracket: find the most recent turn.started
+   * at seq <= event.seq that has not been closed by a terminal turn before the
+   * event, then resolve the input.accepted that started that bracket.
    *
-   * Why per-event time-travel beats a stateful runId-flip: the controller's
-   * `for await ... of` does pull envelopes sequentially, but envelopes
-   * delivered by the broker client at the same millisecond can race past it
-   * out of seq order (broker_invocation_events row evidence shows
-   * input.accepted seq 53 projected before its preceding turn.completed seq
-   * 52). A stateful flip would then misroute seq 52 onto run N+1. Time-travel
-   * lookup uses the immutable seq order regardless of arrival order.
-   *
-   * Falls back to fallbackRunId (invocation.runId) when no input.accepted
-   * precedes this event or when the matched input lacks a dispatched run
-   * (e.g. the initial start-turn input on a fresh invocation — that path
-   * pre-sets invocation.runId correctly).
+   * This is seq-based rather than arrival-order-based, so a later queued
+   * input.accepted row cannot steal ownership from the turn whose started
+   * bracket is still open.
    */
   private resolveRunIdForEvent(
     envelope: InvocationEventEnvelope,
@@ -347,34 +343,25 @@ export class BrokerEventMapper {
   ): string | undefined {
     // Prefer envelope.inputId when the broker sets it: input.accepted /
     // input.queued / input.rejected always carry it (contract), and
-    // input.queued specifically refers to the QUEUED input — its seq-based
-    // prior-input.accepted lookup would wrongly resolve to the currently-
-    // running input. For events without envelope.inputId (turn.*, assistant.*,
-    // diagnostics, etc.), find the most-recent input.accepted at seq <=
-    // envelope.seq — that's the input currently being applied by the driver.
+    // input.queued specifically refers to the QUEUED input.
     const envelopeInputId = envelope.inputId ?? this.extractInputIdFromPayload(envelope.payload)
-    let inputId = envelopeInputId
-    let terminalAfterPriorInput = false
-    if (inputId === undefined) {
-      const priorInput = this.findPriorInputAccepted(envelope.invocationId, envelope.seq)
-      if (priorInput) {
-        terminalAfterPriorInput = this.hasTerminalTurnAfter(
-          envelope.invocationId,
-          priorInput.seq,
-          envelope.seq
-        )
-        if (!terminalAfterPriorInput) {
-          inputId = priorInput.inputId
-        }
-      }
-    }
-    if (inputId !== undefined) {
-      const run = this.db.runs.getByDispatchedInputId(inputId)
+    if (envelopeInputId !== undefined) {
+      const run = this.db.runs.getByDispatchedInputId(envelopeInputId)
       if (run?.runId) return run.runId
+      return fallbackRunId
     }
-    if (terminalAfterPriorInput) {
-      return undefined
+
+    const openTurnStartedSeq = this.findOpenTurnStartedSeqForAttribution(envelope)
+    if (openTurnStartedSeq !== undefined) {
+      const bracketInput = this.findPriorInputAccepted(envelope.invocationId, openTurnStartedSeq)
+      if (bracketInput) {
+        const run = this.db.runs.getByDispatchedInputId(bracketInput.inputId)
+        if (run?.runId) return run.runId
+      }
+      return fallbackRunId
     }
+
+    if (this.findPriorInputAccepted(envelope.invocationId, envelope.seq)) return undefined
     return fallbackRunId
   }
 
@@ -405,17 +392,52 @@ export class BrokerEventMapper {
     return row?.inputId ? { inputId: row.inputId, seq: row.seq } : undefined
   }
 
-  private hasTerminalTurnAfter(invocationId: string, inputSeq: number, eventSeq: number): boolean {
+  private findOpenTurnStartedSeqForAttribution(
+    envelope: InvocationEventEnvelope
+  ): number | undefined {
+    if (envelope.type === 'turn.started') {
+      return envelope.seq
+    }
+    const row = this.db.sqlite
+      .query<{ seq: number }, [string, number, number]>(
+        `SELECT started.seq AS seq
+           FROM broker_invocation_events AS started
+          WHERE started.invocation_id = ?
+            AND started.type = 'turn.started'
+            AND started.seq <= ?
+            AND NOT EXISTS (
+              SELECT 1
+                FROM broker_invocation_events AS terminal
+               WHERE terminal.invocation_id = started.invocation_id
+                 AND terminal.type IN (${TERMINAL_TURN_EVENT_TYPE_SQL})
+                 AND terminal.seq > started.seq
+                 AND terminal.seq < ?
+            )
+          ORDER BY started.seq DESC
+          LIMIT 1`
+      )
+      .get(envelope.invocationId, envelope.seq, envelope.seq)
+    return row?.seq
+  }
+
+  private hasOpenTurnBracketAtSeq(invocationId: string, seq: number): boolean {
     const row = this.db.sqlite
       .query<{ count: number }, [string, number, number]>(
         `SELECT COUNT(*) AS count
-           FROM broker_invocation_events
-          WHERE invocation_id = ?
-            AND type IN ('turn.completed', 'turn.failed', 'turn.interrupted')
-            AND seq > ?
-            AND seq < ?`
+           FROM broker_invocation_events AS started
+          WHERE started.invocation_id = ?
+            AND started.type = 'turn.started'
+            AND started.seq <= ?
+            AND NOT EXISTS (
+              SELECT 1
+                FROM broker_invocation_events AS terminal
+               WHERE terminal.invocation_id = started.invocation_id
+                 AND terminal.type IN (${TERMINAL_TURN_EVENT_TYPE_SQL})
+                 AND terminal.seq > started.seq
+                 AND terminal.seq <= ?
+            )`
       )
-      .get(invocationId, inputSeq, eventSeq)
+      .get(invocationId, seq, seq)
     return (row?.count ?? 0) > 0
   }
 
@@ -680,6 +702,7 @@ export class BrokerEventMapper {
       case 'turn.started': {
         if (runId !== undefined) {
           db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
+          this.claimRuntimeTurnOwnership(ctx, runId, now)
         }
         db.brokerInvocations.update(invocationId, {
           invocationState: 'turn_active',
@@ -690,7 +713,7 @@ export class BrokerEventMapper {
       case 'turn.completed': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
-          this.markRuntimeTurnTerminal(ctx, runId, now)
+          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -704,7 +727,7 @@ export class BrokerEventMapper {
             updatedAt: now,
             errorMessage: payload.message,
           })
-          this.markRuntimeTurnTerminal(ctx, runId, now)
+          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -712,7 +735,7 @@ export class BrokerEventMapper {
       case 'turn.interrupted': {
         if (runId !== undefined) {
           db.runs.markCompleted(runId, { status: 'cancelled', completedAt: now, updatedAt: now })
-          this.markRuntimeTurnTerminal(ctx, runId, now)
+          this.markRuntimeTurnTerminal(ctx, envelope, runId, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -1037,6 +1060,35 @@ export class BrokerEventMapper {
     return this.db.runtimes.getByRuntimeId(runtimeId)?.status === 'awaiting_input'
   }
 
+  private claimRuntimeTurnOwnership(ctx: ProjectionContext, runId: string, now: string): void {
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    if (!runtime) return
+    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
+      const activeRun = this.db.runs.getByRunId(runtime.activeRunId)
+      if (activeRun && activeRun.completedAt === undefined) return
+    }
+
+    const runtimeStateJson = isRecord(runtime.runtimeStateJson)
+      ? runtime.runtimeStateJson
+      : undefined
+    this.db.runtimes.update(ctx.runtimeId, {
+      status: 'busy',
+      activeRunId: runId,
+      lastActivityAt: now,
+      updatedAt: now,
+      ...(runtimeStateJson !== undefined
+        ? {
+            runtimeStateJson: {
+              ...runtimeStateJson,
+              status: 'busy',
+              activeRunId: runId,
+              updatedAt: now,
+            },
+          }
+        : {}),
+    })
+  }
+
   /** Park the runtime on an open ask bracket (T-01946): turn is active but blocked. */
   private markRuntimeAwaitingInput(
     ctx: ProjectionContext,
@@ -1114,31 +1166,12 @@ export class BrokerEventMapper {
     })
   }
 
-  private markRuntimeTurnTerminal(ctx: ProjectionContext, runId: string, now: string): void {
-    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
-    if (!runtime) return
-    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
-      return
-    }
-
-    // Gate 3 / invariant (T-01946): never project `ready` while an ask bracket is
-    // still open on this runtime. A genuine same-run terminal closes this run's
-    // brackets (the authority requires no later same-run terminal), so this is
-    // normally false — it only holds if another run on the runtime is still
-    // parked, in which case the still-open bracket governs the runtime and we
-    // leave ownership/awaiting untouched rather than projecting a false `ready`.
-    if (runtimeHasAnyOpenAskBracket(this.db, runtime)) {
-      return
-    }
-
-    if (runtime.activeRunId === runId) {
-      this.db.runtimes.updateRunId(ctx.runtimeId, undefined, now)
-    }
-
+  private clearRuntimeTurnOwnership(runtime: RuntimeRecord, now: string): void {
+    this.db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
     const runtimeStateJson = isRecord(runtime.runtimeStateJson)
       ? omitRuntimeStateActiveRun(runtime.runtimeStateJson)
       : runtime.runtimeStateJson
-    this.db.runtimes.update(ctx.runtimeId, {
+    this.db.runtimes.update(runtime.runtimeId, {
       status: 'ready',
       lastActivityAt: now,
       updatedAt: now,
@@ -1152,6 +1185,59 @@ export class BrokerEventMapper {
           }
         : {}),
     })
+  }
+
+  private terminalBelongsToActiveInvocation(
+    runtime: RuntimeRecord,
+    ctx: ProjectionContext,
+    invocationId: string
+  ): boolean {
+    if (runtime.activeInvocationId !== undefined && runtime.activeInvocationId !== invocationId) {
+      return false
+    }
+    if (runtime.activeOperationId !== undefined && runtime.activeOperationId !== ctx.operationId) {
+      return false
+    }
+    return true
+  }
+
+  private markRuntimeTurnTerminal(
+    ctx: ProjectionContext,
+    envelope: InvocationEventEnvelope,
+    runId: string,
+    now: string
+  ): void {
+    const runtime = this.db.runtimes.getByRuntimeId(ctx.runtimeId)
+    if (!runtime) return
+    if (runtime.activeRunId !== undefined && runtime.activeRunId !== runId) {
+      const canUnwedge =
+        this.terminalBelongsToActiveInvocation(runtime, ctx, envelope.invocationId) &&
+        !this.hasOpenTurnBracketAtSeq(envelope.invocationId, envelope.seq) &&
+        !runtimeHasAnyOpenAskBracket(this.db, runtime)
+      if (canUnwedge) {
+        writeServerLog('WARN', 'broker.event_mapper.runtime_unwedged_on_run_mismatch', {
+          runtimeId: ctx.runtimeId,
+          invocationId: envelope.invocationId,
+          seq: envelope.seq,
+          activeRunId: runtime.activeRunId,
+          terminalRunId: runId,
+        })
+        this.clearRuntimeTurnOwnership(runtime, now)
+      }
+      return
+    }
+
+    // Gate 3 / invariant (T-01946): never project `ready` while an ask bracket is
+    // still open on this runtime. A genuine same-run terminal closes this run's
+    // brackets (the authority requires no later same-run terminal), so this is
+    // normally false — it only holds if another run on the runtime is still
+    // parked, in which case the still-open bracket governs the runtime and we
+    // leave ownership/awaiting untouched rather than projecting a false `ready`.
+    if (runtimeHasAnyOpenAskBracket(this.db, runtime)) {
+      return
+    }
+
+    this.clearRuntimeTurnOwnership(runtime, now)
   }
 
   /** Emit a single broker-sourced HRC event mirroring the broker envelope. */
