@@ -37,7 +37,7 @@ import {
 } from 'hrc-core'
 import { MonitorResult } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
 import {
   MSG_REQUIRED_CONDITIONS,
   POLL_MS,
@@ -71,6 +71,11 @@ export type MonitorWatchArgs = {
   maxLines?: number | undefined
   scopeWidth?: number | undefined
   signal?: AbortSignal | undefined
+  // -- Event filtering (T-04232) --
+  kind?: string | undefined // comma-separated event_kind list
+  tool?: string | undefined // comma-separated toolName list (turn.tool_call only)
+  grep?: string | undefined // payload substring match
+  milestone?: boolean | undefined // curated preset (supersedes kind/tool/grep)
 }
 
 /** Injectable dependencies for testing. */
@@ -101,8 +106,8 @@ export async function cmdMonitorWatch(
   argsOrArgv: string[] | MonitorWatchArgs,
   deps?: MonitorWatchDeps
 ): Promise<number | undefined> {
-  const io = deps ?? defaultDeps()
   const args = Array.isArray(argsOrArgv) ? parseArgv(argsOrArgv) : argsOrArgv
+  const io = deps ?? defaultDeps(args)
 
   try {
     const exitCode = await runWatch(args, io)
@@ -148,6 +153,14 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   // Validate condition
   assertValidUntilCondition(until)
 
+  // Validate event-filter flags (T-04232)
+  if (args.kind !== undefined && args.kind.trim() === '') {
+    throw new CliUsageError('--kind requires a non-empty value')
+  }
+  if (args.tool !== undefined && args.tool.trim() === '') {
+    throw new CliUsageError('--tool requires a non-empty value')
+  }
+
   if (args.last !== undefined) {
     if (!Number.isInteger(args.last) || args.last < 1) {
       throw new CliUsageError('--last must be a positive integer')
@@ -183,13 +196,18 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
     return 130
   }
 
+  // Apply server-side-equivalent event filtering (T-04232). In live mode the
+  // SQL layer already narrowed the firehose; this wrapper enforces the same
+  // predicate for injected/test state and preserves the global high-water.
+  const filteredIo = wrapWithEventFilter(io, args)
+
   // Build state
-  const state = await io.buildMonitorState()
+  const state = await filteredIo.buildMonitorState()
 
   if (until && follow) {
-    return runConditionWatch(state, args, selector, io, format)
+    return runConditionWatch(state, args, selector, filteredIo, format)
   }
-  return runReplayOrFollow(state, args, selector, io, format)
+  return runReplayOrFollow(state, args, selector, filteredIo, format)
 }
 
 // -- Condition-based watch (--follow --until) ---------------------------------
@@ -331,10 +349,6 @@ async function runPollingFollow(
   io: MonitorWatchDeps,
   writer: EventWriter
 ): Promise<number> {
-  if (args.signal?.aborted) {
-    return 130
-  }
-
   const initialReader = createMonitorReader(initialState)
   const snapshot = initialReader.snapshot(selector)
   writer.write({
@@ -344,8 +358,12 @@ async function runPollingFollow(
     snapshot,
   })
 
+  // When a filter is active, replay the curated set already matched on attach so
+  // the grader sees recent milestones — but keep the poll cursor global so we do
+  // not re-scan non-matching events (T-04232 daedalus high-water invariant).
+  const filterActive = isFilterActive(args)
   let nextSeq = Math.max(1, snapshot.eventHighWaterSeq + 1)
-  if (args.fromSeq !== undefined || args.last !== undefined) {
+  if (args.fromSeq !== undefined || args.last !== undefined || filterActive) {
     let replayHighWater = snapshot.eventHighWaterSeq
     const replayEvents: MonitorOutputEvent[] = []
     for await (const event of initialReader.watch({
@@ -365,7 +383,16 @@ async function runPollingFollow(
       const seq = numberField(enriched, 'seq')
       if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
     }
-    nextSeq = replayHighWater + 1
+    // Filtered follow keeps the global cursor (snapshot high-water); explicit
+    // --from-seq/--last windows advance past the replayed tail as before.
+    if (!filterActive) {
+      nextSeq = replayHighWater + 1
+    }
+  }
+
+  if (args.signal?.aborted) {
+    writer.flush()
+    return 130
   }
 
   while (!args.signal?.aborted) {
@@ -528,9 +555,10 @@ function sleep(ms: number): Promise<void> {
 
 // -- Default deps (live mode) -------------------------------------------------
 
-function defaultDeps(): MonitorWatchDeps {
+function defaultDeps(args: MonitorWatchArgs): MonitorWatchDeps {
+  const storeFilters = deriveStoreFilters(args)
   return {
-    buildMonitorState: buildLiveMonitorState,
+    buildMonitorState: () => buildLiveMonitorState(storeFilters),
     stdout: createDrainableStdout(process.stdout),
     stderr: process.stderr,
   }
@@ -564,7 +592,9 @@ function createDrainableStdout(stream: {
   }
 }
 
-async function buildLiveMonitorState(): Promise<HrcMonitorState> {
+async function buildLiveMonitorState(
+  storeFilters?: HrcLifecycleMonitorFilters | undefined
+): Promise<HrcMonitorState> {
   const socketPath = discoverSocket()
   const client = new HrcClient(socketPath)
 
@@ -597,11 +627,19 @@ async function buildLiveMonitorState(): Promise<HrcMonitorState> {
     ]
   })
 
-  // Load events from database
+  // Load events from database. When filters are active (T-04232) the query layer
+  // narrows the firehose server-side so the CLI never materializes it; the global
+  // high-water is captured separately so the follow cursor stays global.
   const db = openHrcDatabase(resolveDatabasePath())
   let events: HrcMonitorEvent[]
+  let eventGlobalHighWaterSeq: number | undefined
   try {
-    const rawEvents = db.hrcEvents.listFromHrcSeq(1)
+    const rawEvents = storeFilters
+      ? db.hrcEvents.listFromHrcSeqFiltered(1, storeFilters)
+      : db.hrcEvents.listFromHrcSeq(1)
+    if (storeFilters) {
+      eventGlobalHighWaterSeq = db.hrcEvents.maxHrcSeq()
+    }
     events = rawEvents.map((e) => {
       const payload = e.payload as Record<string, unknown> | null | undefined
       return {
@@ -652,6 +690,7 @@ async function buildLiveMonitorState(): Promise<HrcMonitorState> {
     runtimes,
     messages,
     events,
+    ...(eventGlobalHighWaterSeq !== undefined ? { eventGlobalHighWaterSeq } : {}),
   }
 }
 
@@ -687,6 +726,10 @@ function parseArgv(args: string[]): MonitorWatchArgs {
   let format: MonitorOutputFormat | undefined
   let maxLines: number | undefined
   let scopeWidth: number | undefined
+  let kind: string | undefined
+  let tool: string | undefined
+  let grep: string | undefined
+  let milestone = false
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -718,25 +761,22 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       follow = true
       continue
     }
-    if (arg === '--until') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--until requires a value')
-      until = val
-      i += 1
+    const untilMatch = matchStringFlag(arg, '--until', args, i)
+    if (untilMatch) {
+      until = untilMatch.value
+      i = untilMatch.next
       continue
     }
-    if (arg === '--timeout') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--timeout requires a value')
-      timeout = val
-      i += 1
+    const timeoutMatch = matchStringFlag(arg, '--timeout', args, i)
+    if (timeoutMatch) {
+      timeout = timeoutMatch.value
+      i = timeoutMatch.next
       continue
     }
-    if (arg === '--stall-after') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--stall-after requires a value')
-      stallAfter = val
-      i += 1
+    const stallMatch = matchStringFlag(arg, '--stall-after', args, i)
+    if (stallMatch) {
+      stallAfter = stallMatch.value
+      i = stallMatch.next
       continue
     }
     if (arg === '--json') {
@@ -790,6 +830,28 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       scopeWidth = parseNonNegativeInteger('--scope-width', arg.slice('--scope-width='.length))
       continue
     }
+    const kindMatch = matchStringFlag(arg, '--kind', args, i)
+    if (kindMatch) {
+      kind = kindMatch.value
+      i = kindMatch.next
+      continue
+    }
+    const toolMatch = matchStringFlag(arg, '--tool', args, i)
+    if (toolMatch) {
+      tool = toolMatch.value
+      i = toolMatch.next
+      continue
+    }
+    const grepMatch = matchStringFlag(arg, '--grep', args, i)
+    if (grepMatch) {
+      grep = grepMatch.value
+      i = grepMatch.next
+      continue
+    }
+    if (arg === '--milestone') {
+      milestone = true
+      continue
+    }
     if (arg.startsWith('-')) {
       throw new CliUsageError(`unknown option: ${arg}`)
     }
@@ -810,10 +872,37 @@ function parseArgv(args: string[]): MonitorWatchArgs {
     format,
     maxLines,
     scopeWidth,
+    kind,
+    tool,
+    grep,
+    ...(milestone ? { milestone: true } : {}),
     // Convert duration strings to ms for the internal API
     ...(timeout ? { timeoutMs: parseDuration(timeout) } : {}),
     ...(stallAfter ? { stallAfterMs: parseDuration(stallAfter) } : {}),
   }
+}
+
+/**
+ * Match a `--name value` or `--name=value` string flag. Returns the parsed
+ * value plus the index to resume from (so the caller advances past a consumed
+ * positional value), or undefined when `arg` is not this flag.
+ */
+function matchStringFlag(
+  arg: string,
+  name: string,
+  args: string[],
+  index: number
+): { value: string; next: number } | undefined {
+  if (arg === name) {
+    const val = args[index + 1]
+    if (val === undefined) throw new CliUsageError(`${name} requires a value`)
+    return { value: val, next: index + 1 }
+  }
+  const prefix = `${name}=`
+  if (arg.startsWith(prefix)) {
+    return { value: arg.slice(prefix.length), next: index }
+  }
+  return undefined
 }
 
 function parsePositiveInteger(flagName: string, raw: string): number {
@@ -830,6 +919,150 @@ function parseNonNegativeInteger(flagName: string, raw: string): number {
     throw new CliUsageError(`${flagName} must be a non-negative integer`)
   }
   return parsed
+}
+
+// -- Event filtering (T-04232) ------------------------------------------------
+
+const MILESTONE_EVENT_KINDS = new Set<string>([
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'session.started',
+  'session.cleared',
+  'runtime.idle',
+  'runtime.dead',
+])
+const MILESTONE_BASH_NEEDLES = [
+  'hrcchat dm',
+  'wrkq touch',
+  'wrkq set',
+  'wrkq comment',
+  'git commit',
+]
+
+function splitList(value: string): string[] {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+}
+
+/** True when any of the --kind/--tool/--grep/--milestone filters is requested. */
+function isFilterActive(args: MonitorWatchArgs): boolean {
+  return (
+    args.milestone === true ||
+    (args.kind !== undefined && args.kind.trim() !== '') ||
+    (args.tool !== undefined && args.tool.trim() !== '') ||
+    (args.grep !== undefined && args.grep !== '')
+  )
+}
+
+function eventKindOf(event: MonitorOutputEvent): string {
+  return stringField(event, 'eventKind') ?? stringField(event, 'event') ?? ''
+}
+
+function payloadOf(event: MonitorOutputEvent): Record<string, unknown> {
+  const payload = (event as Record<string, unknown>)['payload']
+  return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+}
+
+function payloadToolName(event: MonitorOutputEvent): string | undefined {
+  const tool = payloadOf(event)['toolName']
+  return typeof tool === 'string' ? tool : undefined
+}
+
+function isMilestoneEvent(event: MonitorOutputEvent): boolean {
+  const kind = eventKindOf(event)
+  if (MILESTONE_EVENT_KINDS.has(kind)) return true
+  if (kind === 'turn.tool_call') {
+    const tool = payloadToolName(event)
+    if (tool === 'Agent' || tool === 'Skill') return true
+    if (tool === 'Bash') {
+      const serialized = JSON.stringify(payloadOf(event))
+      return MILESTONE_BASH_NEEDLES.some((needle) => serialized.includes(needle))
+    }
+  }
+  return false
+}
+
+/**
+ * Build an in-memory predicate mirroring the SQL filter (T-04232). Used for
+ * injected/test state and as a redundant guard over already-filtered live state.
+ * `milestone` supersedes kind/tool/grep. Returns null when no filter is active.
+ */
+function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) => boolean) | null {
+  if (args.milestone === true) {
+    return (event) => isMilestoneEvent(event)
+  }
+  const predicates: Array<(event: MonitorOutputEvent) => boolean> = []
+  if (args.kind !== undefined && args.kind.trim() !== '') {
+    const kinds = new Set(splitList(args.kind))
+    predicates.push((event) => kinds.has(eventKindOf(event)))
+  }
+  if (args.tool !== undefined && args.tool.trim() !== '') {
+    const tools = new Set(splitList(args.tool))
+    predicates.push(
+      (event) => eventKindOf(event) === 'turn.tool_call' && tools.has(payloadToolName(event) ?? '')
+    )
+  }
+  if (args.grep !== undefined && args.grep !== '') {
+    const needle = args.grep
+    predicates.push((event) => JSON.stringify(payloadOf(event)).includes(needle))
+  }
+  if (predicates.length === 0) return null
+  return (event) => predicates.every((predicate) => predicate(event))
+}
+
+/**
+ * Derive the store-layer filter (server-side SQL narrowing) from CLI args.
+ * Returns undefined when no filter is active so the unfiltered fast path is kept.
+ */
+function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters | undefined {
+  if (args.milestone === true) return { milestone: true }
+  const filters: HrcLifecycleMonitorFilters = {}
+  let any = false
+  if (args.kind !== undefined && args.kind.trim() !== '') {
+    filters.eventKinds = splitList(args.kind)
+    any = true
+  }
+  if (args.tool !== undefined && args.tool.trim() !== '') {
+    filters.toolNames = splitList(args.tool)
+    any = true
+  }
+  if (args.grep !== undefined && args.grep !== '') {
+    filters.payloadContains = args.grep
+    any = true
+  }
+  return any ? filters : undefined
+}
+
+function eventsHighWater(events: HrcMonitorEvent[]): number {
+  return events.reduce((max, event) => {
+    const seq = numberField(event, 'seq')
+    return seq !== undefined ? Math.max(max, seq) : max
+  }, 0)
+}
+
+/**
+ * Wrap deps so every `buildMonitorState()` applies the active event filter and
+ * preserves the global event high-water (so the follow cursor stays global).
+ * Returns the deps unchanged when no filter is active.
+ */
+function wrapWithEventFilter(io: MonitorWatchDeps, args: MonitorWatchArgs): MonitorWatchDeps {
+  const predicate = buildEventFilter(args)
+  if (!predicate) return io
+  return {
+    ...io,
+    buildMonitorState: async () => {
+      const state = await io.buildMonitorState()
+      const globalHighWater = state.eventGlobalHighWaterSeq ?? eventsHighWater(state.events)
+      return {
+        ...state,
+        events: state.events.filter((event) => predicate(event)),
+        eventGlobalHighWaterSeq: globalHighWater,
+      }
+    },
+  }
 }
 
 // -- Helpers ------------------------------------------------------------------

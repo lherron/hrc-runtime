@@ -13,6 +13,7 @@ export type {
   ContinuityUpsertInput,
   EventQueryFilters,
   HrcActiveInputDeliveryRecord,
+  HrcLifecycleMonitorFilters,
   HrcLifecycleQueryFilters,
   HrcRuntimeBufferRecord,
   LaunchUpdatePatch,

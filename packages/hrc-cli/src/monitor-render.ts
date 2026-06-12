@@ -140,6 +140,13 @@ export function toMonitorJsonEvent(
   const payload = payloadFrom(event)
   if (payload !== undefined && !isEmptyObject(payload)) output['payload'] = payload
 
+  // monitor.snapshot carries a structured `snapshot` body (high-water, counts,
+  // resolution). Preserve it so consumers can read eventHighWaterSeq (T-04232).
+  const snapshot = (event as Record<string, unknown>)['snapshot']
+  if (eventName === 'monitor.snapshot' && snapshot !== undefined) {
+    output['snapshot'] = snapshot
+  }
+
   return output
 }
 

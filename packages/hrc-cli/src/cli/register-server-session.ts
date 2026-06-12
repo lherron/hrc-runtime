@@ -279,6 +279,10 @@ Exit codes:
     .option('--pretty', 'alias for --format=tree')
     .option('--max-lines <n>', 'tree mode: truncate body blocks to n lines')
     .option('--scope-width <n>', 'tree mode: per-row scope badge width in chars')
+    .option('--kind <kinds>', 'filter to comma-separated event_kind list')
+    .option('--tool <names>', 'filter to turn.tool_call events for comma-separated toolName list')
+    .option('--grep <substr>', 'filter to events whose payload contains the substring')
+    .option('--milestone', 'curated preset: turn/runtime lifecycle + operator tool calls')
     .action(async (selector, _opts, cmd: Command) => {
       const args = toLegacyArgv(selector ? [selector] : [], cmd.opts(), {
         strings: [
@@ -290,8 +294,11 @@ Exit codes:
           'format',
           'max-lines',
           'scope-width',
+          'kind',
+          'tool',
+          'grep',
         ],
-        booleans: ['follow', 'json', 'pretty'],
+        booleans: ['follow', 'json', 'pretty', 'milestone'],
       })
       await cmdMonitorWatch(args)
     })

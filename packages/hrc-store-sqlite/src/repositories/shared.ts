@@ -49,6 +49,39 @@ export type HrcLifecycleQueryFilters = {
   limit?: number | undefined
 }
 
+/**
+ * Filters for the monitor-watch server-side event query (T-04232).
+ *
+ * Combines the existing identity/scope narrowing (delegated to
+ * {@link buildLifecycleWhere}) with monitor-specific event-kind / tool-name /
+ * payload predicates so the full `hrc_events` firehose is never materialized in
+ * the CLI process. `milestone` is a curated preset that supersedes
+ * `eventKinds`/`toolNames`/`payloadContains` when true.
+ */
+export type HrcLifecycleMonitorFilters = {
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  runId?: string | undefined
+
+  // Event-kind set filter (SQL: event_kind IN (?,...))
+  eventKinds?: string[] | undefined
+
+  // Tool-name filter on turn.tool_call payload
+  // (SQL: event_kind = 'turn.tool_call' AND json_extract(payload_json,'$.toolName') IN (?,...))
+  toolNames?: string[] | undefined
+
+  // Payload substring match (parameterized LIKE '%<value>%')
+  payloadContains?: string | undefined
+
+  // Milestone curated preset (supersedes eventKinds/toolNames/payloadContains).
+  milestone?: boolean | undefined
+
+  limit?: number | undefined
+}
+
 export type HrcRuntimeBufferRecord = {
   runtimeId: string
   runId: string

@@ -63,6 +63,14 @@ export type HrcMonitorState = {
   runtimes: HrcMonitorRuntimeState[]
   messages?: HrcMonitorMessageState[] | undefined
   events: HrcMonitorEvent[]
+  /**
+   * Global event high-water override (T-04232). When set, supersedes
+   * `max(events[].seq)` for snapshot/resolution `eventHighWaterSeq`. Required so
+   * that a server-side filtered `events[]` subset does not collapse the cursor
+   * high-water to the last *matching* event — selector and cursor/high-water
+   * semantics must stay global, not filtered (daedalus invariant).
+   */
+  eventGlobalHighWaterSeq?: number | undefined
 }
 
 export type HrcMonitorResolvedSelector = {
@@ -191,7 +199,7 @@ function resolveSelectorWithParts(
       generation: session.generation,
       runtimeId: runtime.runtimeId,
       activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
-      eventHighWaterSeq: highWaterSeq(state.events),
+      eventHighWaterSeq: resolveHighWater(state),
     },
     parts,
   }
@@ -328,7 +336,7 @@ function snapshotState(
   return {
     kind: 'monitor.snapshot',
     ...(selector ? { selector: selectorView(selector) } : {}),
-    eventHighWaterSeq: highWaterSeq(state.events),
+    eventHighWaterSeq: resolveHighWater(state),
     ...(state.daemon ? { daemon: state.daemon } : {}),
     ...(state.socket ? { socket: state.socket } : {}),
     ...(state.tmux ? { tmux: state.tmux } : {}),
@@ -477,6 +485,15 @@ function selectorView(selector: HrcSelector): HrcMonitorResolvedSelector {
 
 function highWaterSeq(events: HrcMonitorEvent[]): number {
   return events.reduce((max, event) => Math.max(max, event.seq), 0)
+}
+
+/**
+ * Resolve the event high-water mark, honoring an explicit global override
+ * (T-04232) when present so a filtered `events[]` subset does not collapse the
+ * cursor to the last matching event.
+ */
+function resolveHighWater(state: HrcMonitorState): number {
+  return state.eventGlobalHighWaterSeq ?? highWaterSeq(state.events)
 }
 
 function isResolution(result: HrcMonitorResolutionResult): result is HrcMonitorResolution {

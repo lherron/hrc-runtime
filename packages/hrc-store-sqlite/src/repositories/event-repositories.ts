@@ -5,6 +5,7 @@ import {
   EVENT_COLUMNS,
   type EventQueryFilters,
   HRC_EVENT_COLUMNS,
+  type HrcLifecycleMonitorFilters,
   type HrcLifecycleQueryFilters,
   allocateStreamSeq,
   buildEventWhere,
@@ -13,6 +14,41 @@ import {
   mapEventRow,
   mapHrcEventRow,
 } from './shared.js'
+
+/**
+ * Curated "milestone" event kinds for `--milestone` filtering (T-04232):
+ * turn boundaries, session lifecycle, and runtime lifecycle.
+ */
+const MILESTONE_KINDS = [
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'session.started',
+  'session.cleared',
+  'runtime.idle',
+  'runtime.dead',
+] as const
+
+/**
+ * SQL predicate for the milestone preset. The `?` placeholders bind to
+ * {@link MILESTONE_KINDS}; the tool-name / Bash-command predicates are
+ * literal (a fixed curated set of operator actions).
+ */
+const MILESTONE_PREDICATE_SQL = `(
+  event_kind IN (${MILESTONE_KINDS.map(() => '?').join(', ')})
+  OR (event_kind = 'turn.tool_call' AND json_extract(payload_json, '$.toolName') IN ('Agent', 'Skill'))
+  OR (
+    event_kind = 'turn.tool_call'
+    AND json_extract(payload_json, '$.toolName') = 'Bash'
+    AND (
+      payload_json LIKE '%hrcchat dm%'
+      OR payload_json LIKE '%wrkq touch%'
+      OR payload_json LIKE '%wrkq set%'
+      OR payload_json LIKE '%wrkq comment%'
+      OR payload_json LIKE '%git commit%'
+    )
+  )
+)`
 
 export type EventAppendInput = Omit<HrcEventEnvelope, 'seq' | 'streamSeq'>
 
@@ -241,6 +277,72 @@ export class HrcLifecycleEventRepository {
       .query<{ max_seq: number | null }, []>('SELECT MAX(hrc_seq) AS max_seq FROM hrc_events')
       .get()
     return row?.max_seq ?? 0
+  }
+
+  /**
+   * Server-side filtered monitor query (T-04232).
+   *
+   * Narrows `hrc_events` at the SQLite query layer by identity/scope plus the
+   * monitor-specific predicates (`eventKinds`, `toolNames`, `payloadContains`,
+   * or the `milestone` preset). This keeps the full firehose out of the CLI
+   * process — a coordinator-grader only ever materializes matching rows.
+   *
+   * `milestone` supersedes `eventKinds`/`toolNames`/`payloadContains`. The
+   * global high-water (`maxHrcSeq()`) is intentionally NOT affected by these
+   * filters — cursor/high-water semantics must stay global (daedalus invariant).
+   */
+  listFromHrcSeqFiltered(
+    fromHrcSeq: number,
+    filters: HrcLifecycleMonitorFilters
+  ): HrcLifecycleEvent[] {
+    const baseFilters: HrcLifecycleQueryFilters = {
+      fromHrcSeq,
+      scopeRef: filters.scopeRef,
+      laneRef: filters.laneRef,
+      hostSessionId: filters.hostSessionId,
+      generation: filters.generation,
+      runtimeId: filters.runtimeId,
+      runId: filters.runId,
+    }
+    const { where, values } = buildLifecycleWhere(baseFilters, { includeSeqPredicates: true })
+
+    if (filters.milestone) {
+      where.push(MILESTONE_PREDICATE_SQL)
+      values.push(...MILESTONE_KINDS)
+    } else {
+      if (filters.eventKinds && filters.eventKinds.length > 0) {
+        const placeholders = filters.eventKinds.map(() => '?').join(', ')
+        where.push(`event_kind IN (${placeholders})`)
+        values.push(...filters.eventKinds)
+      }
+      if (filters.toolNames && filters.toolNames.length > 0) {
+        const placeholders = filters.toolNames.map(() => '?').join(', ')
+        where.push(
+          `(event_kind = 'turn.tool_call' AND json_extract(payload_json, '$.toolName') IN (${placeholders}))`
+        )
+        values.push(...filters.toolNames)
+      }
+      if (filters.payloadContains !== undefined) {
+        where.push('payload_json LIKE ?')
+        values.push(`%${filters.payloadContains}%`)
+      }
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+    const limitClause = filters.limit !== undefined ? ' LIMIT ?' : ''
+    if (filters.limit !== undefined) {
+      values.push(filters.limit)
+    }
+
+    const rows = this.db
+      .query<HrcEventRow, Array<string | number>>(
+        `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+          ${whereClause}
+          ORDER BY hrc_seq ASC${limitClause}`
+      )
+      .all(...values)
+
+    return rows.map(mapHrcEventRow)
   }
 
   /**

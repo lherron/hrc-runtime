@@ -9,6 +9,7 @@ export type {
   EventAppendInput,
   HrcActiveInputDeliveryRecord,
   HrcLifecycleEventInput,
+  HrcLifecycleMonitorFilters,
   HrcLifecycleQueryFilters,
   RunListFilters,
   RuntimeOperationUpdatePatch,

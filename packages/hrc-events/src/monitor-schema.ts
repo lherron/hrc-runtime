@@ -105,6 +105,16 @@ export const MonitorEventName = [
   'message.response',
   'monitor.completed',
   'monitor.stalled',
+  // Raw hrc_events lifecycle kinds surfaced verbatim by server-side filtering
+  // (T-04232). Monitor watch with --kind/--tool/--grep/--milestone emits these
+  // stored kinds as-is rather than the curated lifecycle names above.
+  'turn.completed',
+  'turn.failed',
+  'turn.tool_call',
+  'turn.tool_result',
+  'turn.message',
+  'session.started',
+  'session.cleared',
 ] as const
 
 export type MonitorEventName = (typeof MonitorEventName)[number]
