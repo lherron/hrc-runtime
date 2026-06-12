@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -291,14 +291,33 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   }
 
   async function cleanup(): Promise<void> {
+    // Kill the fixture's main tmux server AND every per-runtime broker tmux
+    // server under runtimeRoot/btmux. Broker dispatches allocate one tmux
+    // server per runtime (allocateBrokerSubstrate); without kill-server here
+    // the rm below only unlinks the sockets and the servers — plus the
+    // harness panes they host (broker, launch runner, claude) — outlive the
+    // test and leak ptys until the machine-wide pty pool is exhausted.
+    const tmuxSockets = [tmuxSocketPath]
     try {
-      const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-        stdout: 'ignore',
-        stderr: 'ignore',
-      })
-      await exited
+      const btmuxDir = join(runtimeRoot, 'btmux')
+      for (const entry of await readdir(btmuxDir)) {
+        if (entry.endsWith('.sock')) {
+          tmuxSockets.push(join(btmuxDir, entry))
+        }
+      }
     } catch {
-      // fine when no tmux server exists
+      // fine when no broker tmux allocations happened
+    }
+    for (const socket of tmuxSockets) {
+      try {
+        const { exited } = Bun.spawn(['tmux', '-S', socket, 'kill-server'], {
+          stdout: 'ignore',
+          stderr: 'ignore',
+        })
+        await exited
+      } catch {
+        // fine when no tmux server exists
+      }
     }
 
     await rm(tmpDir, { recursive: true, force: true })

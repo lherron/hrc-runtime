@@ -413,7 +413,11 @@ describe('C2. Ghostty availability', () => {
 
 describe('D. DM fallback', () => {
   it('fails closed for Anthropic headless DM fallback when no broker route exists', async () => {
-    await createTestServer()
+    // The premise is "no broker route exists" — the broker route is ON by
+    // default, and leaving it on makes this dispatch start a REAL interactive
+    // claude (per-runtime tmux server + harness-broker + launch runner) as a
+    // side effect of the DM.
+    await createTestServer({ claudeCodeTmuxBrokerEnabled: false })
 
     const dmRes = await fixture!.postJson('/v1/messages/dm', {
       from: { kind: 'entity', entity: 'human' },

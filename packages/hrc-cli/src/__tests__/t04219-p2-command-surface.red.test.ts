@@ -42,10 +42,12 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { main } from '../cli'
 
@@ -245,6 +247,33 @@ afterEach(async () => {
     server = null
   }
   process.env.PATH = originalPath
+  // Kill any tmux servers this run allocated (main socket + per-runtime broker
+  // servers under runtimeRoot/btmux) BEFORE rm: unlinking a socket does not
+  // stop its server, and a leaked server keeps its panes' processes (broker,
+  // launch runner, claude) and their ptys alive until the machine-wide pty
+  // pool is exhausted.
+  const tmuxSockets = [tmuxSocketPath]
+  try {
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    for (const entry of await readdir(btmuxDir)) {
+      if (entry.endsWith('.sock')) {
+        tmuxSockets.push(join(btmuxDir, entry))
+      }
+    }
+  } catch {
+    // fine when no broker tmux allocations happened
+  }
+  for (const socket of tmuxSockets) {
+    try {
+      const { exited } = Bun.spawn(['tmux', '-S', socket, 'kill-server'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      await exited
+    } catch {
+      // fine when no tmux server exists
+    }
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -272,13 +301,39 @@ async function seedSessionAndRuntime(
     cliEnv()
   )
   expect(resolveResult.exitCode).toBe(0)
-  const resolved = JSON.parse(resolveResult.stdout.trim()) as { hostSessionId: string }
+  const resolved = JSON.parse(resolveResult.stdout.trim()) as {
+    hostSessionId: string
+    generation?: number
+  }
   const hostSessionId = resolved.hostSessionId
 
-  const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
-  expect(ensureResult.exitCode).toBe(0)
-  const ensured = JSON.parse(ensureResult.stdout.trim()) as { runtimeId: string }
-  const runtimeId = ensured.runtimeId
+  // Seed the runtime row directly. These selector/list contracts only need the
+  // row to exist — `hrc runtime ensure` against a live broker-enabled server
+  // would START a real interactive harness (per-runtime tmux server +
+  // harness-broker + launch runner + claude TUI) per seed, which nothing in
+  // this suite tears down.
+  const runtimeId = `rt-test-${randomUUID()}`
+  const db = openHrcDatabase(dbPath)
+  const timestamp = new Date().toISOString()
+  try {
+    db.runtimes.insert({
+      runtimeId,
+      hostSessionId,
+      scopeRef,
+      laneRef: 'default',
+      generation: resolved.generation ?? 1,
+      transport: 'sdk',
+      harness: 'agent-sdk',
+      provider: 'anthropic',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+  } finally {
+    db.close()
+  }
 
   return { hostSessionId, runtimeId, scopeRef }
 }
