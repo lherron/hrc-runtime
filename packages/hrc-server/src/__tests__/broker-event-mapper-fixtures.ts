@@ -288,6 +288,21 @@ export const CONTINUATION_KEY = 'thread_abc123'
 export const TOOL_CALL_ID = 'tool_call_w3a_1'
 export const TOOL_NAME = 'shell'
 
+// ── Queued-input attribution fixture identifiers (T-04239) ──────────────────
+// Two-run scenario: run A is running (activeRunId on runtime), run B is the
+// queued input that arrived mid-turn. The bug: findPriorInputAccepted returns
+// input_B (seq=3) for events at seq≥4, misattributing them to run B instead of
+// the still-open run A.
+export const Q_HOST_SESSION_ID = 'hsid_queued_attr'
+export const Q_SCOPE_REF = 'agent:smokey:project:hrc-runtime:task:T-04239'
+export const Q_OPERATION_ID = 'op_queued_attr'
+export const Q_RUNTIME_ID = 'rt_queued_attr'
+export const Q_INVOCATION_ID = 'inv_queued_attr' as InvocationId
+export const Q_RUN_A_ID = 'run_queued_A'
+export const Q_RUN_B_ID = 'run_queued_B'
+export const Q_INPUT_A_ID = 'input_queued_A' as InputId
+export const Q_INPUT_B_ID = 'input_queued_B' as InputId
+
 /**
  * The canonical ordered headless codex-app-server lifecycle used by the
  * projection-mapping and replay tests:
@@ -362,4 +377,118 @@ export function emittedEventsMentioning(
   needle: string
 ): Array<{ eventKind: string; eventJson: unknown }> {
   return events.filter((event) => JSON.stringify(event.eventJson ?? null).includes(needle))
+}
+
+/**
+ * Queued-input fixture for T-04239 RED tests.
+ *
+ * Models the runtime state AFTER dispatching run A (active, TUI busy) and
+ * BEFORE the queued run B's turn.started fires. Key characteristics:
+ *  - claude-code-tmux transport (supportsInflightInput=true, input.queue=true)
+ *  - Runtime is 'busy' with activeRunId=Q_RUN_A_ID
+ *  - Run A: dispatchedInputId=Q_INPUT_A_ID, status='accepted' (will become 'running' on turn.started)
+ *  - Run B: dispatchedInputId=Q_INPUT_B_ID, status='accepted' (queued)
+ *  - Broker invocation: no runId (tmux interactive — input.accepted rows carry the run linkage)
+ */
+export async function makeQueuedFixture(): Promise<SeededFixture> {
+  const dir = await mkdtemp(join(tmpdir(), 'hrc-broker-queued-'))
+  const dbPath = join(dir, 'test.sqlite')
+  const db = openHrcDatabase(dbPath)
+  const now = ts()
+
+  db.sessions.insert({
+    hostSessionId: Q_HOST_SESSION_ID,
+    scopeRef: Q_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+    ancestorScopeRefs: [],
+  })
+
+  db.runtimes.insert({
+    runtimeId: Q_RUNTIME_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    scopeRef: Q_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    harness: 'claude-code',
+    provider: 'anthropic',
+    status: 'starting',
+    supportsInflightInput: true,
+    adopted: false,
+    controllerKind: 'harness-broker',
+    activeOperationId: Q_OPERATION_ID,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // Put runtime in busy state with activeRunId=A (as dispatch would have done)
+  db.runtimes.update(Q_RUNTIME_ID, {
+    status: 'busy',
+    activeRunId: Q_RUN_A_ID,
+    runtimeStateJson: { status: 'busy', activeRunId: Q_RUN_A_ID },
+    updatedAt: ts(1),
+  })
+
+  // Run A: the currently-running input (dispatched before B arrived)
+  db.runs.insert({
+    runId: Q_RUN_A_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    runtimeId: Q_RUNTIME_ID,
+    scopeRef: Q_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    status: 'accepted',
+    acceptedAt: now,
+    updatedAt: now,
+    operationId: Q_OPERATION_ID,
+    dispatchedInputId: Q_INPUT_A_ID,
+  })
+
+  // Run B: the queued input (arrived while A was in-flight)
+  db.runs.insert({
+    runId: Q_RUN_B_ID,
+    hostSessionId: Q_HOST_SESSION_ID,
+    runtimeId: Q_RUNTIME_ID,
+    scopeRef: Q_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    status: 'accepted',
+    acceptedAt: ts(3),
+    updatedAt: ts(3),
+    operationId: Q_OPERATION_ID,
+    dispatchedInputId: Q_INPUT_B_ID,
+  })
+
+  // Broker invocation: tmux-interactive shape — no runId on the invocation row.
+  // The run linkage flows through input.accepted.inputId → runs.dispatched_input_id.
+  db.brokerInvocations.insert({
+    invocationId: Q_INVOCATION_ID,
+    operationId: Q_OPERATION_ID,
+    runtimeId: Q_RUNTIME_ID,
+    // runId intentionally absent — tmux-interactive shape
+    brokerProtocol: 'harness-broker/0.1',
+    brokerDriver: 'claude-code-tmux',
+    invocationState: 'turn_active',
+    capabilitiesJson: JSON.stringify({ turns: 'multi', 'input.queue': true }),
+    specHash: 'sha256:spec-queued',
+    startRequestHash: 'sha256:req-queued',
+    selectedProfileHash: 'sha256:prof-queued',
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return {
+    db,
+    dbPath,
+    cleanup: async () => {
+      db.close()
+      await rm(dir, { recursive: true, force: true })
+    },
+  }
 }
