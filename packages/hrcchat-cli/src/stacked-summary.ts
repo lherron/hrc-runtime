@@ -6,7 +6,10 @@ import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stack
 import { FlushReason, Phase, type Summarizer, type SummarizerInput } from './stacked-types.js'
 
 const MODEL = 'claude-haiku-4-5'
-const DEFAULT_CONSUL_KEY = 'cfg/dev/_global/llm/anthropic/api_key'
+// Dedicated, narrowly-scoped key for the stacked-summary feature only — a
+// restricted Anthropic key (haiku-tier, low limits) kept separate from the
+// broadly-shared cfg/dev/_global/llm/anthropic/api_key.
+const DEFAULT_CONSUL_KEY = 'cfg/dev/_global/hrcchat/stacked_summaries_api_key'
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_DIGEST_BYTES = 24_000
 const DEFAULT_MAX_EVENTS = 120
