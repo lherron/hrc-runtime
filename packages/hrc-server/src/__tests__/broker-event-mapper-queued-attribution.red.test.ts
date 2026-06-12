@@ -40,32 +40,33 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { BrokerEventMapper } from '../broker/event-mapper'
 
+import type {
+  InvocationEventEnvelope,
+  InvocationEventType,
+  TurnId,
+} from 'spaces-harness-broker-protocol'
 import {
-  GENERATION,
-  LANE_REF,
-  Q_HOST_SESSION_ID,
   Q_INPUT_A_ID,
   Q_INPUT_B_ID,
   Q_INPUT_C_ID,
   Q_INVOCATION_ID,
-  Q_OPERATION_ID,
   Q_RUNTIME_ID,
   Q_RUN_A_ID,
   Q_RUN_B_ID,
   Q_RUN_C_ID,
-  Q_SCOPE_REF,
   type SeededFixture,
   makeQueuedFixture,
   ts,
 } from './broker-event-mapper-fixtures'
-import type { InvocationEventEnvelope, InvocationEventType, TurnId } from 'spaces-harness-broker-protocol'
 
 // ── Envelope builder scoped to the queued fixture's invocationId ──────────────
 function qEnv(
   type: InvocationEventType,
   seq: number,
   payload: unknown,
-  extra: Partial<Pick<InvocationEventEnvelope, 'turnId' | 'inputId' | 'harnessGeneration' | 'turnAttempt'>> = {}
+  extra: Partial<
+    Pick<InvocationEventEnvelope, 'turnId' | 'inputId' | 'harnessGeneration' | 'turnAttempt'>
+  > = {}
 ): InvocationEventEnvelope {
   return {
     invocationId: Q_INVOCATION_ID,
@@ -105,7 +106,12 @@ function applyAMidTurnSequence() {
 /** Apply A's terminal turn.completed (seq=7) and return the result. */
 function applyATerminal() {
   return mapper.apply(
-    qEnv('turn.completed', 7, { turnId: TURN_A, status: 'completed', producedContent: true }, { turnId: TURN_A })
+    qEnv(
+      'turn.completed',
+      7,
+      { turnId: TURN_A, status: 'completed', producedContent: true },
+      { turnId: TURN_A }
+    )
   )
 }
 
@@ -125,11 +131,16 @@ describe('[RED T-04239/1] interleave A: events during A turn attribute to run A'
   it('assistant.message during A turn resolves to run A (not the queued run B)', () => {
     applyAMidTurnSequence()
     const result = mapper.apply(
-      qEnv('assistant.message.completed', 4, {
-        messageId: 'msg_A_1',
-        content: [{ type: 'text', text: 'A response' }],
-        final: true,
-      }, { turnId: TURN_A })
+      qEnv(
+        'assistant.message.completed',
+        4,
+        {
+          messageId: 'msg_A_1',
+          content: [{ type: 'text', text: 'A response' }],
+          final: true,
+        },
+        { turnId: TURN_A }
+      )
     )
     // FAILS: current code returns Q_RUN_B_ID (queued input at seq=3 is newest)
     expect(result.lifecycleEvents[0]?.runId).toBe(Q_RUN_A_ID)
@@ -138,11 +149,16 @@ describe('[RED T-04239/1] interleave A: events during A turn attribute to run A'
   it('tool.call.started during A turn resolves to run A', () => {
     applyAMidTurnSequence()
     const result = mapper.apply(
-      qEnv('tool.call.started', 5, {
-        toolCallId: 'tool_A_1',
-        name: 'Bash',
-        input: { command: 'echo hi' },
-      }, { turnId: TURN_A })
+      qEnv(
+        'tool.call.started',
+        5,
+        {
+          toolCallId: 'tool_A_1',
+          name: 'Bash',
+          input: { command: 'echo hi' },
+        },
+        { turnId: TURN_A }
+      )
     )
     // FAILS: current code returns Q_RUN_B_ID
     expect(result.lifecycleEvents[0]?.runId).toBe(Q_RUN_A_ID)
@@ -169,10 +185,10 @@ describe('[RED T-04239/1] interleave A: events during A turn attribute to run A'
     const runB = fixture.db.runs.getByRunId(Q_RUN_B_ID)!
     const runtime = fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
 
-    expect(runA.status).toBe('completed')        // FAILS: stays 'running'
-    expect(runB.status).toBe('accepted')          // FAILS: gets 'completed'
-    expect(runtime.status).toBe('ready')          // FAILS: stays 'busy'
-    expect(runtime.activeRunId).toBeUndefined()   // FAILS: stays Q_RUN_A_ID
+    expect(runA.status).toBe('completed') // FAILS: stays 'running'
+    expect(runB.status).toBe('accepted') // FAILS: gets 'completed'
+    expect(runtime.status).toBe('ready') // FAILS: stays 'busy'
+    expect(runtime.activeRunId).toBeUndefined() // FAILS: stays Q_RUN_A_ID
   })
 })
 
@@ -192,14 +208,12 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
     applyAMidTurnSequence()
     applyATerminal()
 
-    const result = mapper.apply(
-      qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B })
-    )
+    const result = mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
     // FAILS: hasTerminalTurnAfter(3, 9) finds turn.completed at seq=7 → runId=undefined
     expect(result.lifecycleEvents[0]?.runId).toBe(Q_RUN_B_ID)
   })
 
-  it("turn.started(B) claims runtime.activeRunId=B so the runtime is not orphaned", () => {
+  it('turn.started(B) claims runtime.activeRunId=B so the runtime is not orphaned', () => {
     applyAMidTurnSequence()
     applyATerminal()
     mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
@@ -219,11 +233,16 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
       qEnv('user.message', 10, { content: 'prompt for B' }, { turnId: TURN_B })
     )
     const assistResult = mapper.apply(
-      qEnv('assistant.message.completed', 11, {
-        messageId: 'msg_B_1',
-        content: [{ type: 'text', text: 'B response' }],
-        final: true,
-      }, { turnId: TURN_B })
+      qEnv(
+        'assistant.message.completed',
+        11,
+        {
+          messageId: 'msg_B_1',
+          content: [{ type: 'text', text: 'B response' }],
+          final: true,
+        },
+        { turnId: TURN_B }
+      )
     )
     // FAILS: runId=undefined for both (hasTerminalTurnAfter suppresses B's attribution)
     expect(userResult.lifecycleEvents[0]?.runId).toBe(Q_RUN_B_ID)
@@ -236,7 +255,12 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
     mapper.apply(qEnv('turn.started', 9, { turnId: TURN_B }, { turnId: TURN_B }))
 
     const terminalB = mapper.apply(
-      qEnv('turn.completed', 12, { turnId: TURN_B, status: 'completed', producedContent: true }, { turnId: TURN_B })
+      qEnv(
+        'turn.completed',
+        12,
+        { turnId: TURN_B, status: 'completed', producedContent: true },
+        { turnId: TURN_B }
+      )
     )
 
     // FAILS: runId=undefined → run_B never completed; runtime stays wedged
@@ -244,8 +268,8 @@ describe('[RED T-04239/2] then B: after A terminal, B turn events attribute to r
 
     const runB = fixture.db.runs.getByRunId(Q_RUN_B_ID)!
     const runtime = fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    expect(runB.status).toBe('completed')   // FAILS: stays 'accepted'
-    expect(runtime.status).toBe('ready')    // FAILS: stays 'busy'
+    expect(runB.status).toBe('completed') // FAILS: stays 'accepted'
+    expect(runtime.status).toBe('ready') // FAILS: stays 'busy'
   })
 })
 
@@ -286,8 +310,8 @@ describe('[RED T-04239/3] post-terminal guard: stray event gets undefined + runt
     // Runtime MUST be ready after A's terminal. FAILS: stuck 'busy' because
     // markRuntimeTurnTerminal never ran (attribution gave run_B ≠ activeRunId=run_A).
     const runtime = fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    expect(runtime.status).toBe('ready')           // FAILS
-    expect(runtime.activeRunId).toBeUndefined()     // FAILS
+    expect(runtime.status).toBe('ready') // FAILS
+    expect(runtime.activeRunId).toBeUndefined() // FAILS
   })
 })
 
@@ -312,11 +336,16 @@ describe('[guard T-04239/4] non-queued regression: single-input sequence attribu
 
     // NO input.accepted(B) — only A's turn events
     const assistResult = mapper.apply(
-      qEnv('assistant.message.completed', 4, {
-        messageId: 'msg_A_nr',
-        content: [{ type: 'text', text: 'non-queued response' }],
-        final: true,
-      }, { turnId: TURN_A })
+      qEnv(
+        'assistant.message.completed',
+        4,
+        {
+          messageId: 'msg_A_nr',
+          content: [{ type: 'text', text: 'non-queued response' }],
+          final: true,
+        },
+        { turnId: TURN_A }
+      )
     )
 
     const terminalResult = applyATerminal()
@@ -358,8 +387,8 @@ describe('[RED T-04239/5] out-of-order: input.accepted(B) before turn.started(A)
     expect(terminalResult.lifecycleEvents[0]?.runId).toBe(Q_RUN_A_ID)
 
     const runtime = fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    expect(runtime.status).toBe('ready')         // FAILS: stuck 'busy'
-    expect(runtime.activeRunId).toBeUndefined()   // FAILS: stays Q_RUN_A_ID
+    expect(runtime.status).toBe('ready') // FAILS: stuck 'busy'
+    expect(runtime.activeRunId).toBeUndefined() // FAILS: stays Q_RUN_A_ID
   })
 })
 
@@ -381,24 +410,34 @@ describe('[RED T-04239/6] ask-bracket guard: closed ask bracket + correct termin
 
     // Open ask bracket (seq=5) — will misattribute to run_B with current code
     mapper.apply(
-      qEnv('tool.call.started', 5, {
-        toolCallId: 'tc_ask_A',
-        name: 'AskUserQuestion',
-        input: { prompt: 'Are you sure?' },
-      }, { turnId: TURN_A })
+      qEnv(
+        'tool.call.started',
+        5,
+        {
+          toolCallId: 'tc_ask_A',
+          name: 'AskUserQuestion',
+          input: { prompt: 'Are you sure?' },
+        },
+        { turnId: TURN_A }
+      )
     )
     // Runtime enters awaiting_input (ask bracket open, attributed to run_B in buggy code)
     expect(fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!.status).toBe('awaiting_input')
 
     // Close ask bracket (seq=6) — operator answered; runtime resumes as 'busy'
     mapper.apply(
-      qEnv('tool.call.completed', 6, {
-        toolCallId: 'tc_ask_A',
-        name: 'AskUserQuestion',
-        result: { output: 'yes' },
-        isError: false,
-        durationMs: 50,
-      }, { turnId: TURN_A })
+      qEnv(
+        'tool.call.completed',
+        6,
+        {
+          toolCallId: 'tc_ask_A',
+          name: 'AskUserQuestion',
+          result: { output: 'yes' },
+          isError: false,
+          durationMs: 50,
+        },
+        { turnId: TURN_A }
+      )
     )
     // Ask bracket now closed — runtime should be back to 'busy'
     expect(fixture.db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!.status).toBe('busy')
@@ -458,21 +497,28 @@ describe('[RED T-04239/7] defense-in-depth: fossil-mismatch un-wedges runtime wi
     // Attribution is CORRECT — no queued-input confusion here.
     mapper.apply(qEnv('input.accepted', 50, { inputId: Q_INPUT_C_ID }, { inputId: Q_INPUT_C_ID }))
     mapper.apply(qEnv('turn.started', 51, { turnId: TURN_C }, { turnId: TURN_C }))
-    mapper.apply(qEnv('turn.completed', 52, { turnId: TURN_C, status: 'completed', producedContent: true }, { turnId: TURN_C }))
+    mapper.apply(
+      qEnv(
+        'turn.completed',
+        52,
+        { turnId: TURN_C, status: 'completed', producedContent: true },
+        { turnId: TURN_C }
+      )
+    )
 
     const runtime = db.runtimes.getByRuntimeId(Q_RUNTIME_ID)!
-    const runA = db.runs.getByRunId(Q_RUN_A_ID)!  // fossil
-    const runC = db.runs.getByRunId(Q_RUN_C_ID)!  // clean run
+    const runA = db.runs.getByRunId(Q_RUN_A_ID)! // fossil
+    const runC = db.runs.getByRunId(Q_RUN_C_ID)! // clean run
 
     // FAILS: current code's markRuntimeTurnTerminal early-returns on
     //   `runtime.activeRunId (run_A) !== runId (run_C)` → runtime stays 'busy'.
     // After fix (defense-in-depth path): detects invocation=active, no open turn,
     // no ask bracket → clears busy without completing the fossil run.
-    expect(runtime.status).toBe('ready')           // FAILS: stays 'busy'
-    expect(runtime.activeRunId).toBeUndefined()     // FAILS: stays 'run_queued_A'
+    expect(runtime.status).toBe('ready') // FAILS: stays 'busy'
+    expect(runtime.activeRunId).toBeUndefined() // FAILS: stays 'run_queued_A'
 
     // run_C's terminal correctly completes run_C (its own turn finished).
-    expect(runC.status).toBe('completed')           // FAILS: stays 'accepted' (early-return never marks it)
+    expect(runC.status).toBe('completed') // FAILS: stays 'accepted' (early-return never marks it)
 
     // Fossil run_A must NOT be marked completed — the defense path only un-wedges
     // the runtime; it does not assume the fossil run actually finished.
