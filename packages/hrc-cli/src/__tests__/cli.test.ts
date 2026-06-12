@@ -273,6 +273,28 @@ afterEach(async () => {
       // fine when no lease server was created
     }
   }
+  // Kill the per-runtime broker tmux servers under runtimeRoot/btmux too:
+  // every broker dispatch (e.g. via `runtime ensure`) allocates one, and the
+  // rm below only unlinks the sockets — a leaked server keeps its panes
+  // (broker, launch runner, harness) and their ptys alive until the
+  // machine-wide pty pool is exhausted.
+  try {
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    for (const entry of await readdir(btmuxDir)) {
+      if (!entry.endsWith('.sock')) continue
+      try {
+        const { exited } = Bun.spawn(['tmux', '-S', join(btmuxDir, entry), 'kill-server'], {
+          stdout: 'ignore',
+          stderr: 'ignore',
+        })
+        await exited
+      } catch {
+        // fine when no server is on this socket
+      }
+    }
+  } catch {
+    // fine when no broker tmux allocations happened
+  }
   process.env.PATH = originalPath
   process.env.ASP_CLAUDE_PATH = originalClaudePath
   await rm(tmpDir, { recursive: true, force: true })

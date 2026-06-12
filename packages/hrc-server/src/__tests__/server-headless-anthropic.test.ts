@@ -419,17 +419,23 @@ describe('D. DM fallback', () => {
     // side effect of the DM.
     await createTestServer({ claudeCodeTmuxBrokerEnabled: false })
 
+    // Wait on the reply so the response snapshot is taken AFTER the dispatch
+    // settles: the retired SDK harness path hard-fails asynchronously, and a
+    // no-wait response races it (state reads 'started' at admission time).
     const dmRes = await fixture!.postJson('/v1/messages/dm', {
       from: { kind: 'entity', entity: 'human' },
       to: { kind: 'session', sessionRef: 'agent:clod:project:agent-spaces/lane:main' },
       body: 'fallback to anthropic headless transport',
       runtimeIntent: headlessIntent('anthropic'),
+      wait: { enabled: true, timeoutMs: 1_000 },
     })
     expect(dmRes.status).toBe(200)
 
     const dm = (await dmRes.json()) as SemanticDmResponse
     expect(dm.execution).toBeUndefined()
     expect(dm.request.execution.state).toBe('failed')
+    expect(dm.reply).toBeUndefined()
+    expect(dm.waited).toEqual({ matched: false, reason: 'timeout' })
   })
 
   it('does not use legacy headless exec for non-wait Codex DM fallback', async () => {
