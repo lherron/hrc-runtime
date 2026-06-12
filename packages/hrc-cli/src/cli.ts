@@ -3260,15 +3260,43 @@ ADDRESSING TARGETS
     Low-level session resolve defaults to main unless --lane is passed.
     If project is omitted, HRC may infer it from the current directory.
 
+SELECTOR GRAMMAR
+  Every noun command that takes an identifier accepts the same selector
+  grammar (not just monitor). A selector is one of:
+
+    runtime:<id>      a live runtime by runtime ID
+    host:<id>         a host session by host-session ID
+    session:<ref>     a session by session ref
+    scope:<ref>       a scope ref (agent:…:project:…[:task:…])
+    msg:<id>          a durable message by message ID
+    seq:<n>           a durable message by sequence number
+    <handle>          a bare target handle (cody@agent-spaces:T-123)
+
+  Resolution is deterministic: a raw native ID for the command's expected
+  type wins first, then explicit prefixes are honored by prefix, then a
+  bare handle. Ambiguity is a hard error. Selector acceptance is additive —
+  existing raw-ID invocations keep working unchanged.
+
+ORIENTATION SHORTCUTS
+  Show whatever a selector resolves to (renders the resolved kind + IDs):
+    hrc show <selector>
+    hrc show runtime:<id>      hrc show cody@agent-spaces      hrc show seq:42
+
+  List a noun:
+    hrc ls runtimes | sessions | launches | messages
+
 COMMON CONTROL FLOWS
   Start or reattach a managed runtime and attach to it:
     hrc run cody@agent-spaces
 
-  Start detached without attaching:
-    hrc start cody@agent-spaces
+  Start, reuse, or attach (exact alias of run — NOT attach-only):
+    hrc resume cody@agent-spaces
 
-  Attach to an already-running target:
-    hrc attach cody@agent-spaces
+  Reattach without starting a new runtime:
+    hrc run --attach-only cody@agent-spaces   (or: hrc attach cody@agent-spaces)
+
+  Start detached without attaching:
+    hrc start cody@agent-spaces               (or: hrc run --no-attach …)
 
   Send a turn to an agent (alias for hrcchat turn):
     hrc turn <target> "Continue."
@@ -3281,6 +3309,11 @@ COMMON CONTROL FLOWS
 
   Clear continuity / rotate generation:
     hrc session clear-context <hostSessionId>
+
+  Repair run records (maintenance):
+    hrc admin runs sweep-zombies | reconcile-active
+    (the old 'hrc run sweep-zombies|reconcile-active' still work but are
+     deprecated — they print the 'admin runs' replacement to stderr.)
 
 SAFETY RULES
   Prefer stable target handles first.
@@ -3306,12 +3339,16 @@ ENVIRONMENT
   HRC_SESSION_REF   Caller identity for HRC-aware child processes
 
 COMMANDS
+  show              Show a runtime/session/message by selector (context-aware)
+  ls                List runtimes | sessions | launches | messages
   server            Daemon lifecycle, health, and tmux backend control
   monitor           Show, watch, and wait on HRC monitor snapshots/events
   session           Resolve, list, and inspect sessions
-  runtime           Ensure, inspect, and control runtimes
+  runtime           Inspect and control runtimes
+  broker            Inspect broker-backed runtime invocations
   launch            List launches
-  run               Resolve, launch, and attach
+  run               Resolve, launch, and attach (--no-attach, --attach-only)
+  resume            Alias of run: start, reuse, or attach
   start             Resolve and start detached
   attach            Attach to a live runtime
   turn              Dispatch turns to a session
@@ -3319,6 +3356,15 @@ COMMANDS
   capture           Capture live runtime output
   surface           Manage surface bindings
   bridge            Manage low-level local bridge delivery
+  admin             Administrative maintenance (admin runs sweep-zombies|…)
+
+  Low-level (hidden from --help, for API/client use):
+    runtime ensure <hostSessionId>   ensure a runtime exists
+
+VERB VOCABULARY
+  Going forward nouns are singular and verbs come from a fixed set:
+    list  show  watch  wait  start  stop  restart  send  bind  unbind
+  Prefer these spellings; 'ls' is the documented shorthand for 'list'.
 
 NEXT STEP
   Run hrc <command> --help for command-specific flags and edge cases.
