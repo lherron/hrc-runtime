@@ -13,6 +13,8 @@ import {
 } from '../broker-decisions.js'
 import { type BrokerTmuxAllocator, HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
+import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
+import { renderStatusBar, viewerTerminalBg } from '../headless-viewer-status.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
@@ -216,12 +218,37 @@ export async function spawnHeadlessClaudeViewer(
     // `session-report` is best-effort and always reaches the keypress gate, so a
     // missing/slow summary never closes the window early or hangs it silently.
     const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; exit`
+    // A turn is being dispatched into this viewer, so the bar opens at `running`;
+    // the lifecycle projector takes over the right field from here (T-04439).
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       runtimeId: runtime.runtimeId,
       attachCommand,
       title: `hrc headless ${runtime.scopeRef}`,
+      statusBar: renderStatusBar(runtime.scopeRef, 'running'),
+      terminalBg: viewerTerminalBg(runtime.scopeRef),
     })
+    // Bind the viewer surface to the CURRENT runtime as the projector's primary
+    // cache. bind() upserts on (kind, surfaceId), so a reused window rebinds to
+    // the new runtime. Best-effort: a binding failure must not break the turn.
+    if (result.status !== 'failed') {
+      try {
+        this.db.surfaceBindings.bind({
+          surfaceKind: HEADLESS_VIEWER_SURFACE_KIND,
+          surfaceId: result.surfaceId,
+          hostSessionId: runtime.hostSessionId,
+          runtimeId: runtime.runtimeId,
+          generation: runtime.generation,
+          boundAt: timestamp(),
+        })
+      } catch (bindError) {
+        writeServerLog('WARN', 'headless_claude_viewer.bind_failed', {
+          runtimeId: runtime.runtimeId,
+          scopeRef: runtime.scopeRef,
+          error: bindError instanceof Error ? bindError.message : String(bindError),
+        })
+      }
+    }
     writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,

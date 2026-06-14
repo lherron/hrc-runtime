@@ -43,10 +43,49 @@ const CLAUDE_TAB_ROLE = 'claude-surfaces'
 const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
 const HEADLESS_VIEWER_ROLE = 'hrc-headless-viewer'
 
+/** surface_bindings kind for the headless Claude viewer window (T-04439). */
+export const HEADLESS_VIEWER_SURFACE_KIND = 'ghostty-headless-viewer'
+
+/**
+ * Full Ghostty status-bar triplet. ghostmux `statusbar set` sets all three text
+ * fields at once, so callers always supply the whole bar (T-04439).
+ */
+export type GhostmuxStatusBarSpec = {
+  left: string
+  center: string
+  right: string
+  fg?: string | undefined
+  bg?: string | undefined
+}
+
 export type HeadlessViewerResult =
   | { status: 'created'; surfaceId: string }
   | { status: 'reused'; surfaceId: string }
   | { status: 'failed'; error: string }
+
+/**
+ * An old Ghostty / ghostmux without a given subcommand fails with a recognizable
+ * capability error rather than a transient surface error. We memo that off for
+ * the process so we stop generating background load. Callers keep SEPARATE memo
+ * flags per command — a statusbar no-op is not a set-bg failure and vice versa.
+ */
+function isUnsupportedCommandError(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('unknown command') ||
+    normalized.includes('unknown subcommand') ||
+    normalized.includes('unrecognized') ||
+    normalized.includes('not implemented') ||
+    normalized.includes('unsupported') ||
+    normalized.includes('no such command') ||
+    normalized.includes('404')
+  )
+}
+
+/** Status-bar fields are `|`-delimited on the wire; keep them single-line and `|`-free. */
+function sanitizeStatusField(value: string): string {
+  return value.replace(/[|\r\n]+/g, ' ').trim()
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -154,6 +193,11 @@ function selectSplitDirection(surface: GhostmuxSurfaceState): GhostmuxSplitDirec
 }
 
 export class GhostmuxManager {
+  /** Set once a recognizable "statusbar unsupported" error is seen (T-04439). */
+  private statusBarUnsupported = false
+  /** Separate memo: set once `set-bg` is seen to be unsupported (T-04439). */
+  private setBgUnsupported = false
+
   constructor(
     private readonly ghostmuxBinary = 'ghostmux',
     private readonly runner?: GhostmuxRunner | undefined
@@ -315,10 +359,38 @@ export class GhostmuxManager {
     runtimeId: string
     attachCommand: string
     title: string
+    /**
+     * Optional initial status-bar triplet. Applied best-effort and OFF the
+     * awaited critical path (fire-and-forget) so a slow/failed statusbar write
+     * never delays the broker start that awaits this call (daedalus, T-04439).
+     */
+    statusBar?: GhostmuxStatusBarSpec | undefined
+    /**
+     * Optional agent-color terminal tint (`set-bg`). Identity, not state —
+     * applied once on create/reuse, never per lifecycle event. Same fire-and-
+     * forget discipline as the status bar.
+     */
+    terminalBg?: string | undefined
   }): Promise<HeadlessViewerResult> {
     try {
       const existing = await this.findHeadlessViewer(options.scopeRef)
-      if (existing) return { status: 'reused', surfaceId: existing.surfaceId }
+      if (existing) {
+        // The same viewer window can be reused for a later runtime; refresh the
+        // recovery metadata so a post-restart resolve still finds the surface by
+        // the CURRENT runtime id, then repaint the bar. Both best-effort.
+        await this.setMetadata(
+          existing.surfaceId,
+          {
+            hrc_role: HEADLESS_VIEWER_ROLE,
+            hrc_scope_ref: options.scopeRef,
+            hrc_runtime_id: options.runtimeId,
+          },
+          true
+        ).catch(() => undefined)
+        this.applyStatusBarBestEffort(existing.surfaceId, options.statusBar)
+        this.applyTerminalBackgroundBestEffort(existing.surfaceId, options.terminalBg)
+        return { status: 'reused', surfaceId: existing.surfaceId }
+      }
 
       // `ghostmux new` itself frequently hits the transient libghostty
       // surface_not_realize race under load; ghostmux's own guidance is to retry
@@ -341,6 +413,8 @@ export class GhostmuxManager {
       await this.withGhostmuxBackoff(() =>
         this.exec(['send-keys', '-t', created.surfaceId, options.attachCommand])
       )
+      this.applyStatusBarBestEffort(created.surfaceId, options.statusBar)
+      this.applyTerminalBackgroundBestEffort(created.surfaceId, options.terminalBg)
       return { status: 'created', surfaceId: created.surfaceId }
     } catch (error) {
       return {
@@ -348,6 +422,86 @@ export class GhostmuxManager {
         error: error instanceof Error ? error.message : String(error),
       }
     }
+  }
+
+  /**
+   * Find the headless viewer surface bound to a runtime by its stamped Ghostty
+   * metadata. The projector's recovery path when the durable surface_binding is
+   * missing (e.g. after a DB-less restart) — DB binding is the primary cache.
+   */
+  async findHeadlessViewerSurfaceByRuntimeId(runtimeId: string): Promise<string | null> {
+    try {
+      const surfaces = parseGhostmuxSurfaceList(
+        (await this.exec(['list-surfaces', '--json'])).stdout
+      )
+      for (const surface of surfaces) {
+        const metadata = await this.getMetadata(surface.surfaceId, true).catch(() => undefined)
+        if (
+          isRecord(metadata) &&
+          metadata['hrc_role'] === HEADLESS_VIEWER_ROLE &&
+          metadata['hrc_runtime_id'] === runtimeId
+        ) {
+          return surface.surfaceId
+        }
+      }
+    } catch {
+      // best-effort
+    }
+    return null
+  }
+
+  /**
+   * Apply a full status-bar triplet. Public primitive — all status-bar writes
+   * go through here. Single attempt (NO multi-second backoff), swallows every
+   * failure, and memoizes an unsupported-statusbar capability OFF so old Ghostty
+   * stops generating background load (daedalus, T-04439).
+   */
+  async setStatusBar(surfaceId: string, spec: GhostmuxStatusBarSpec): Promise<void> {
+    if (this.statusBarUnsupported) return
+    const text = [spec.left, spec.center, spec.right].map(sanitizeStatusField).join('|')
+    const args = ['statusbar', 'set', '-t', surfaceId, text]
+    if (spec.fg) args.push('--fg', spec.fg)
+    if (spec.bg) args.push('--bg', spec.bg)
+    try {
+      await this.exec(args)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isUnsupportedCommandError(message)) this.statusBarUnsupported = true
+      // Cosmetic — never propagate.
+    }
+  }
+
+  /**
+   * Set the terminal default background (OSC 11 via `set-bg`) — the agent-color
+   * identity channel for headless viewer surfaces, since this Ghostty ignores
+   * statusbar bg. Public primitive: single attempt, swallows every failure,
+   * memoizes an unsupported `set-bg` capability SEPARATELY from statusbar
+   * (daedalus, T-04439).
+   */
+  async setTerminalBackground(surfaceId: string, hex: string): Promise<void> {
+    if (this.setBgUnsupported) return
+    try {
+      await this.exec(['set-bg', '-t', surfaceId, hex, '--json'])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isUnsupportedCommandError(message)) this.setBgUnsupported = true
+      // Cosmetic — never propagate.
+    }
+  }
+
+  /** Fire-and-forget status-bar write; keeps the awaited spawn path clean. */
+  private applyStatusBarBestEffort(
+    surfaceId: string,
+    spec: GhostmuxStatusBarSpec | undefined
+  ): void {
+    if (!spec) return
+    void this.setStatusBar(surfaceId, spec)
+  }
+
+  /** Fire-and-forget terminal-tint write; keeps the awaited spawn path clean. */
+  private applyTerminalBackgroundBestEffort(surfaceId: string, hex: string | undefined): void {
+    if (!hex) return
+    void this.setTerminalBackground(surfaceId, hex)
   }
 
   private async findHeadlessViewer(scopeRef: string): Promise<GhostmuxSurfaceState | null> {

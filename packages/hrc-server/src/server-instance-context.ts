@@ -15,6 +15,7 @@ import type {
   HarnessBrokerController,
 } from './broker/controller.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
+import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { ServerContext } from './server-context.js'
 import type {
   HrcServerOptions,
@@ -38,6 +39,8 @@ export type HrcServerInstanceForHandlers = {
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
   readonly ghostmux: ServerGhostmuxManager
+  /** Headless-viewer status-bar projection observer (T-04439). */
+  readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
   readonly runtimeAttachOperations: Map<string, Promise<Response>>
   readonly runtimeStartOperations: Map<string, Promise<HrcRuntimeSnapshot>>

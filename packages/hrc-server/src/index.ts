@@ -37,9 +37,11 @@ import {
 } from './event-notification-handlers.js'
 import {
   type GhostmuxManagerOptions,
+  HEADLESS_VIEWER_SURFACE_KIND,
   type GhostmuxManager as ServerGhostmuxManager,
   createGhostmuxManager,
 } from './ghostmux.js'
+import { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   type LaunchLifecycleHandlersMethods,
@@ -245,6 +247,8 @@ class HrcServerInstance implements HrcServer {
   harnessBrokerController: HarnessBrokerController | undefined
   /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
   brokerWarmupComplete?: Promise<void> | undefined
+  /** Headless-viewer status-bar projection observer (T-04439). */
+  readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
@@ -376,6 +380,23 @@ class HrcServerInstance implements HrcServer {
       ghostmux: this.ghostmux,
       notifyEvent: (event) => this.notifyEvent(event),
     }
+    this.headlessViewerStatus = new HeadlessViewerStatusProjector({
+      resolveSurfaceId: (runtimeId) => {
+        const binding = this.db.surfaceBindings
+          .findByRuntime(runtimeId)
+          .find(
+            (record) =>
+              record.surfaceKind === HEADLESS_VIEWER_SURFACE_KIND && record.unboundAt === undefined
+          )
+        if (binding) return binding.surfaceId
+        return this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(runtimeId)
+      },
+      applyStatusBar: (surfaceId, spec) => this.ghostmux.setStatusBar(surfaceId, spec),
+      onError: (error) =>
+        writeServerLog('WARN', 'headless_viewer_statusbar.project_failed', {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+    })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),

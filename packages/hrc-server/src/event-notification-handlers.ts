@@ -71,6 +71,9 @@ export function notifyEvent(
   for (const subscriber of this.followSubscribers) {
     subscriber(event)
   }
+  // Project canonical lifecycle events onto headless-viewer status bars. Pure
+  // observer: never authority, never throws, never blocks dispatch (T-04439).
+  this.headlessViewerStatus.observe(event)
   if (
     'hrcSeq' in event &&
     (event.eventKind === 'turn.completed' ||

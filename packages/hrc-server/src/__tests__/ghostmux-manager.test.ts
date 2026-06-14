@@ -278,4 +278,224 @@ describe('GhostmuxManager.ensureHeadlessViewer', () => {
 
     expect(result.status).toBe('failed')
   })
+
+  const statusBar = {
+    left: '◆ CLOD',
+    center: 'hrc-runtime',
+    right: '▶ running',
+    fg: '#F2EEE6',
+    bg: '#6B4FB0',
+  }
+
+  it('applies the status bar on the created path (off the critical path)', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      if (args.join(' ') === 'list-surfaces --json')
+        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
+      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-x' }), stderr: '' }
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-12',
+      attachCommand: 'hrc attach rt-12',
+      title: 'hrc headless',
+      statusBar,
+      terminalBg: '#1e1631',
+    })
+    await Promise.resolve()
+
+    expect(result.status).toBe('created')
+    expect(calls).toContainEqual([
+      'statusbar',
+      'set',
+      '-t',
+      'viewer-x',
+      '◆ CLOD|hrc-runtime|▶ running',
+      '--fg',
+      '#F2EEE6',
+      '--bg',
+      '#6B4FB0',
+    ])
+    // color identity comes from the terminal tint, applied on the created path
+    expect(calls).toContainEqual(['set-bg', '-t', 'viewer-x', '#1e1631', '--json'])
+  })
+
+  it('refreshes metadata and repaints the bar on the reused path', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      const key = args.join(' ')
+      if (key === 'list-surfaces --json')
+        return { stdout: JSON.stringify({ terminals: [{ id: 'existing-viewer' }] }), stderr: '' }
+      if (key === 'metadata get -t existing-viewer --window --json')
+        return {
+          stdout: JSON.stringify({ hrc_role: 'hrc-headless-viewer', hrc_scope_ref: scopeRef }),
+          stderr: '',
+        }
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-13',
+      attachCommand: 'hrc attach rt-13',
+      title: 'hrc headless',
+      statusBar,
+      terminalBg: '#1e1631',
+    })
+    await Promise.resolve()
+
+    expect(result).toEqual({ status: 'reused', surfaceId: 'existing-viewer' })
+    expect(calls.some((c) => c[0] === 'new')).toBe(false)
+    // tint reapplied on reuse too
+    expect(calls).toContainEqual(['set-bg', '-t', 'existing-viewer', '#1e1631', '--json'])
+    // metadata refreshed to the CURRENT runtime id
+    expect(calls).toContainEqual([
+      'metadata',
+      'set',
+      '-t',
+      'existing-viewer',
+      JSON.stringify({
+        hrc_role: 'hrc-headless-viewer',
+        hrc_scope_ref: scopeRef,
+        hrc_runtime_id: 'rt-13',
+      }),
+      '--window',
+      '--json',
+    ])
+    expect(calls.some((c) => c[0] === 'statusbar')).toBe(true)
+  })
+
+  it('does not fail or delay the viewer when the status bar write throws', async () => {
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      if (args.join(' ') === 'list-surfaces --json')
+        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
+      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-y' }), stderr: '' }
+      if (args[0] === 'statusbar') throw new Error('boom')
+      return { stdout: '{}', stderr: '' }
+    })
+
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef,
+      runtimeId: 'rt-14',
+      attachCommand: 'hrc attach rt-14',
+      title: 'hrc headless',
+      statusBar,
+    })
+
+    expect(result).toEqual({ status: 'created', surfaceId: 'viewer-y' })
+  })
+})
+
+describe('GhostmuxManager.setStatusBar', () => {
+  it('emits the canonical statusbar set argv', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setStatusBar('surf-1', {
+      left: '◆ CODY',
+      center: 'wrkq · T-1',
+      right: '✓ idle',
+      fg: '#F2EEE6',
+      bg: '#1F7A78',
+    })
+
+    expect(calls).toEqual([
+      [
+        'statusbar',
+        'set',
+        '-t',
+        'surf-1',
+        '◆ CODY|wrkq · T-1|✓ idle',
+        '--fg',
+        '#F2EEE6',
+        '--bg',
+        '#1F7A78',
+      ],
+    ])
+  })
+
+  it('sanitizes pipe/newline characters out of fields', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setStatusBar('surf-1', {
+      left: 'a|b',
+      center: 'c\nd',
+      right: 'e',
+    })
+
+    expect(calls[0]?.[4]).toBe('a b|c d|e')
+  })
+
+  it('swallows failures and never throws', async () => {
+    const manager = new GhostmuxManager('ghostmux', async () => {
+      throw new Error('transient surface error')
+    })
+    await expect(
+      manager.setStatusBar('surf-1', { left: 'a', center: 'b', right: 'c' })
+    ).resolves.toBeUndefined()
+  })
+
+  it('memoizes an unsupported-statusbar capability and stops calling ghostmux', async () => {
+    let count = 0
+    const manager = new GhostmuxManager('ghostmux', async () => {
+      count++
+      throw new Error('error: unknown command "statusbar"')
+    })
+
+    await manager.setStatusBar('surf-1', { left: 'a', center: 'b', right: 'c' })
+    await manager.setStatusBar('surf-1', { left: 'a', center: 'b', right: 'c' })
+
+    expect(count).toBe(1)
+  })
+})
+
+describe('GhostmuxManager.setTerminalBackground', () => {
+  it('emits the set-bg argv', async () => {
+    const calls: string[][] = []
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      calls.push(args)
+      return { stdout: '{}', stderr: '' }
+    })
+    await manager.setTerminalBackground('surf-1', '#241B36')
+    expect(calls).toEqual([['set-bg', '-t', 'surf-1', '#241B36', '--json']])
+  })
+
+  it('swallows failures and never throws', async () => {
+    const manager = new GhostmuxManager('ghostmux', async () => {
+      throw new Error('no such surface')
+    })
+    await expect(manager.setTerminalBackground('surf-1', '#241B36')).resolves.toBeUndefined()
+  })
+
+  it('memoizes set-bg unsupported SEPARATELY from statusbar', async () => {
+    let setBgCalls = 0
+    let statusBarCalls = 0
+    const manager = new GhostmuxManager('ghostmux', async (args) => {
+      if (args[0] === 'set-bg') {
+        setBgCalls++
+        throw new Error('error: unknown command "set-bg"')
+      }
+      statusBarCalls++
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await manager.setTerminalBackground('surf-1', '#241B36')
+    await manager.setTerminalBackground('surf-1', '#241B36')
+    // set-bg memoized off after the first failure
+    expect(setBgCalls).toBe(1)
+    // statusbar capability is unaffected by the set-bg memo
+    await manager.setStatusBar('surf-1', { left: 'a', center: 'b', right: 'c' })
+    expect(statusBarCalls).toBe(1)
+  })
 })
