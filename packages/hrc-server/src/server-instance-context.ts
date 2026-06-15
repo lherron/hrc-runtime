@@ -5,36 +5,125 @@ import type {
   HrcMessageRecord,
   HrcProvider,
   HrcRuntimeSnapshot,
-  HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import type { AppSessionHandlersMethods } from './app-session-handlers.js'
+import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
+import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
+import type { BrokerInteractiveHandlersMethods } from './broker-interactive-handlers.js'
 import type {
   BrokerClientFactory,
   BrokerUnixClientFactory,
   HarnessBrokerController,
 } from './broker/controller.js'
+import type { EventHandlersMethods } from './event-handlers.js'
+import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
+import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
+import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
+import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
+import type { RuntimeIoHandlersMethods } from './runtime-io-handlers.js'
+import type { SdkTurnHandlersMethods } from './sdk-turn-handlers.js'
+import type { SelectorMessageHandlersMethods } from './selector-message-handlers.js'
+import type { SelectorWaitHandlersMethods } from './selector-wait-handlers.js'
 import type { ServerContext } from './server-context.js'
 import type {
   HrcServerOptions,
   PendingBrokerLiteralInput,
   TurnResponseFinalizer,
 } from './server-types.js'
+import type { SweepHandlersMethods } from './sweep-handlers.js'
+import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
+import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
 
-// biome-ignore lint/suspicious/noExplicitAny: Split prototype handlers preserve the existing monolith method surface while the concrete methods keep their original signatures.
+// biome-ignore lint/suspicious/noExplicitAny: Loose fallback ONLY for the handful of methods defined directly on the HrcServerInstance class body (not in a decomposed *-handlers module), whose concrete signatures are not exported as a reusable type. The decomposed handler surface below is derived from the real method definitions, not hand-mirrored.
 type HandlerMethod = (...args: any[]) => any
-// biome-ignore lint/suspicious/noExplicitAny: Split prototype handlers preserve the existing monolith method surface while the concrete methods keep their original signatures.
-type HandlerNever = (...args: any[]) => never
-// biome-ignore lint/suspicious/noExplicitAny: Split prototype handlers preserve the existing monolith method surface while the concrete methods keep their original signatures.
-type HandlerSessionRecord = (...args: any[]) => HrcSessionRecord
 
-export type HrcServerInstanceForHandlers = {
+/**
+ * The cross-handler call surface, derived from the REAL method definitions.
+ *
+ * Each `*HandlersMethods` type is `typeof <handlersMethodsObject>` — the exact
+ * functions (with their real parameter/return types and `this:
+ * HrcServerInstanceForHandlers`) that index.ts declaration-merges onto
+ * `HrcServerInstance.prototype`. Intersecting them here means a method's
+ * signature lives in exactly one place (its handler module) and can never drift
+ * from what is actually attached to the prototype. This intentionally tightens
+ * the previous `(...args: any[]) => any` mirror so cross-handler calls are
+ * type-checked.
+ */
+type DecomposedHandlerMethods = AppSessionHandlersMethods &
+  BridgeSurfaceHandlersMethods &
+  BrokerHeadlessHandlersMethods &
+  BrokerInteractiveHandlersMethods &
+  EventHandlersMethods &
+  EventNotificationHandlersMethods &
+  LaunchLifecycleHandlersMethods &
+  RuntimeControlHandlersMethods &
+  RuntimeInspectHandlersMethods &
+  RuntimeIoHandlersMethods &
+  SdkTurnHandlersMethods &
+  SelectorMessageHandlersMethods &
+  SelectorWaitHandlersMethods &
+  SweepHandlersMethods &
+  TargetMessageHandlersMethods &
+  TurnDispatchHandlersMethods
+
+export type HrcServerInstanceForHandlers = HrcServerInstanceDataForHandlers &
+  Omit<DecomposedHandlerMethods, keyof HrcServerInstanceNeverReturningHandlers> &
+  HrcServerInstanceNeverReturningHandlers &
+  HrcServerInstanceClassMethodsForHandlers
+
+/**
+ * `failCliStartPath` / `failSdkHarnessPath` are declared `=> never` in their
+ * source modules (they always throw). Because `HrcServerInstanceForHandlers` is
+ * itself the `this` type of those functions, the self-referential intersection
+ * above resolves their return type lazily and loses the `never`, which would
+ * break the terminal-`never` control-flow analysis at their call sites. We
+ * re-assert `never` here while still deriving the parameter list from the real
+ * functions — no hand-mirrored parameters, contract preserved exactly.
+ */
+type HrcServerInstanceNeverReturningHandlers = {
+  failCliStartPath: (
+    ...args: Parameters<OmitThisParameter<RuntimeControlHandlersMethods['failCliStartPath']>>
+  ) => never
+  failSdkHarnessPath: (
+    ...args: Parameters<OmitThisParameter<SdkTurnHandlersMethods['failSdkHarnessPath']>>
+  ) => never
+}
+
+/**
+ * Methods declared directly on the `HrcServerInstance` class body (not in a
+ * decomposed `*-handlers` module). Their concrete signatures are not exported
+ * as a reusable type, so they remain loosely typed here rather than being
+ * hand-mirrored (which would be the drift-prone failure mode this refactor
+ * avoids). Tightening these would require exporting their signatures from the
+ * class — tracked as a follow-up.
+ */
+type HrcServerInstanceClassMethodsForHandlers = {
+  handleAttach: HandlerMethod
+  handleCapture: HandlerMethod
+  handleClearContext: HandlerMethod
+  handleDropContinuation: HandlerMethod
+  handleGetSessionByHost: HandlerMethod
+  handleHealth: HandlerMethod
+  handleHookIngest: HandlerMethod
+  handleInterrupt: HandlerMethod
+  handleListSessions: HandlerMethod
+  handleOtlpRequest: HandlerMethod
+  handleRequest: HandlerMethod
+  handleResolveSession: HandlerMethod
+  handleStatus: HandlerMethod
+  handleTerminate: HandlerMethod
+  stop: HandlerMethod
+}
+
+type HrcServerInstanceDataForHandlers = {
   readonly options: HrcServerOptions
   readonly db: HrcDatabase
   readonly tmux: ServerTmuxManager
@@ -73,160 +162,4 @@ export type HrcServerInstanceForHandlers = {
   brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
   readonly followSubscribers: Set<(event: HrcEventEnvelope | HrcLifecycleEvent) => void>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
-  appendEvent: HandlerMethod
-  appendInflightRejected: HandlerMethod
-  appendSweepCompletedEvent: HandlerMethod
-  attachRuntime: HandlerMethod
-  attachRuntimeEffectfully: HandlerMethod
-  captureRuntime: HandlerMethod
-  claimRuntimeForSweep: HandlerMethod
-  createHeadlessRuntimeForSession: HandlerMethod
-  deliverBridgeText: HandlerMethod
-  deliverInFlightInputToRuntime: HandlerMethod
-  deliverReassociatedBrokerTmuxInput: HandlerMethod
-  deliverTmuxQuestionAnswer: HandlerMethod
-  dispatchTurnForSession: HandlerMethod
-  ensureCommandRuntimeForSession: HandlerMethod
-  ensureRuntimeForSession: HandlerMethod
-  ensureTargetSession: HandlerSessionRecord
-  executeHeadlessBrokerInputTurn: HandlerMethod
-  executeHeadlessBrokerStartTurn: HandlerMethod
-  executeHeadlessSdkTurn: HandlerMethod
-  executeInteractiveBrokerInputTurn: HandlerMethod
-  executeSemanticTurn: HandlerMethod
-  failCliStartPath: HandlerNever
-  failSdkHarnessPath: HandlerNever
-  finalizeSemanticTurnResponse: HandlerMethod
-  getHarnessBrokerController: HandlerMethod
-  handleActiveRunContribution: HandlerMethod
-  handleAppSessionAttach: HandlerMethod
-  handleAppSessionCapture: HandlerMethod
-  handleAppSessionClearContext: HandlerMethod
-  handleAppSessionDispatchTurn: HandlerMethod
-  handleAppSessionInFlightInput: HandlerMethod
-  handleAppSessionInterrupt: HandlerMethod
-  handleAppSessionLiteralInput: HandlerMethod
-  handleAppSessionTerminate: HandlerMethod
-  handleApplyAppSessions: HandlerMethod
-  handleApplyManagedAppSessions: HandlerMethod
-  handleAttach: HandlerMethod
-  handleAttachRuntime: HandlerMethod
-  handleBindSurface: HandlerMethod
-  handleBrokerInspect: HandlerMethod
-  handleBrokerLiteralInputBySelector: HandlerMethod
-  handleCapture: HandlerMethod
-  handleCaptureBySelector: HandlerMethod
-  handleChildStarted: HandlerMethod
-  handleClearContext: HandlerMethod
-  handleCloseBridge: HandlerMethod
-  handleContinuation: HandlerMethod
-  handleCreateMessage: HandlerMethod
-  handleDeliverBridge: HandlerMethod
-  handleDeliverBridgeText: HandlerMethod
-  handleDispatchTurn: HandlerMethod
-  handleDispatchTurnBySelector: HandlerMethod
-  handleDropContinuation: HandlerMethod
-  handleEnsureAppSession: HandlerMethod
-  ensureAppSessionFromBody: HandlerMethod
-  handleEnsureAppSessionDryRun: HandlerMethod
-  handleEnsureRuntime: HandlerMethod
-  handleEnsureTarget: HandlerMethod
-  handleEvents: HandlerMethod
-  handleEventsLatestBySession: HandlerMethod
-  handleExited: HandlerMethod
-  handleGetActiveRunContribution: HandlerMethod
-  handleGetManagedAppSessionByKey: HandlerMethod
-  handleGetSessionByHost: HandlerMethod
-  handleGetTarget: HandlerMethod
-  handleHeadlessBrokerDispatchTurn: HandlerMethod
-  handleHeadlessDispatchTurn: HandlerMethod
-  handleHealth: HandlerMethod
-  handleHookIngest: HandlerMethod
-  handleInFlightInput: HandlerMethod
-  handleInspectRuntime: HandlerMethod
-  handleInteractiveTmuxBrokerDispatchTurn: HandlerMethod
-  handleInterrupt: HandlerMethod
-  handleKillBrokerTmuxLeases: HandlerMethod
-  handleLaunchEvent: HandlerMethod
-  handleListAppSessions: HandlerMethod
-  handleListBridges: HandlerMethod
-  handleListManagedAppSessions: HandlerMethod
-  handleListSessions: HandlerMethod
-  handleListSurfaces: HandlerMethod
-  handleListTargets: HandlerMethod
-  handleLiteralInputBySelector: HandlerMethod
-  handleOtlpRequest: HandlerMethod
-  handlePrepareAttachedRun: HandlerMethod
-  handleQueryMessages: HandlerMethod
-  handleReconcileActiveRuns: HandlerMethod
-  handleRegisterBridgeTarget: HandlerMethod
-  handleRemoveAppSession: HandlerMethod
-  removeAppSessionFromBody: HandlerMethod
-  handleRequest: HandlerMethod
-  handleResolveSession: HandlerMethod
-  handleResumeAttachedRun: HandlerMethod
-  handleSdkDispatchTurn: HandlerMethod
-  handleSemanticDm: HandlerMethod
-  handleSemanticTurnHandoff: HandlerMethod
-  handleStartRuntime: HandlerMethod
-  handleStatus: HandlerMethod
-  handleSweepRuntimes: HandlerMethod
-  handleSweepZombieRuns: HandlerMethod
-  handleTerminate: HandlerMethod
-  handleUnbindSurface: HandlerMethod
-  handleWaitMessage: HandlerMethod
-  handleWatchMessages: HandlerMethod
-  handleWrapperStarted: HandlerMethod
-  insertAndNotifyMessage: HandlerMethod
-  interruptGhosttyRuntime: HandlerMethod
-  interruptHeadlessRuntime: HandlerMethod
-  interruptRuntime: HandlerMethod
-  interruptTmuxRuntime: HandlerMethod
-  invalidateHostContext: HandlerMethod
-  launchCommandSpecInPane: HandlerMethod
-  listAllSessions: HandlerMethod
-  listSessionsByScope: HandlerMethod
-  markRuntimeStaleForBrokerReprovision: HandlerMethod
-  maybeAutoRotateStaleSession: (
-    session: HrcSessionRecord,
-    options: { allowStaleGeneration?: boolean | undefined; trigger: string }
-  ) => Promise<{ session: HrcSessionRecord; rotated: boolean }>
-  maybeCompleteInteractiveSemanticTurn: HandlerMethod
-  notifyEvent: HandlerMethod
-  notifyMessageSubscribers: HandlerMethod
-  parseEventsRouteFilters: HandlerMethod
-  prepareSemanticDmPayload: HandlerMethod
-  reconcileTmuxRuntimeLiveness: HandlerMethod
-  recordDetachedHeadlessTurnFailure: HandlerMethod
-  recordDetachedSemanticTurnFailure: HandlerMethod
-  rejectBusyHeadlessSemanticDm: HandlerMethod
-  resolveBridgePane: HandlerMethod
-  resolveBridgeTargetBinding: HandlerMethod
-  resolveManagedSessionRuntime: HandlerMethod
-  resolveSweepSummarySession: HandlerMethod
-  rotateSessionContext: HandlerMethod
-  runClaudeGhosttyIdleCleanup: HandlerMethod
-  runHeadlessSdkStartLaunch: HandlerMethod
-  runHeadlessStartLaunch: HandlerMethod
-  runRecurringActiveRunReconcile: HandlerMethod
-  runRecurringZombieSweep: HandlerMethod
-  selectInteractiveTmuxBrokerOptions: HandlerMethod
-  startActiveRunReconciler: HandlerMethod
-  startClaudeGhosttyIdleCleanup: HandlerMethod
-  startHeadlessBrokerRuntime: HandlerMethod
-  spawnHeadlessClaudeViewer: HandlerMethod
-  startInteractiveTmuxBrokerRuntime: HandlerMethod
-  startRuntimeForSession: HandlerMethod
-  startZombieRunSweeper: HandlerMethod
-  stop: HandlerMethod
-  terminateGhosttyRuntime: HandlerMethod
-  terminateHeadlessRuntime: HandlerMethod
-  terminateRuntime: HandlerMethod
-  terminateTmuxRuntime: HandlerMethod
-  tmuxForPane: HandlerMethod
-  toBridgeTargetResponse: HandlerMethod
-  tryDeliverSemanticTurnToInteractiveRuntime: HandlerMethod
-  waitForHeadlessBrokerRunCompletion: HandlerMethod
-  waitForInteractiveBrokerRunCompletion: HandlerMethod
-  waitForMessage: HandlerMethod
 }

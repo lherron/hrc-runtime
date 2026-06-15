@@ -6,26 +6,31 @@ import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
   ActiveInputDeliveryRepository,
-  AppManagedSessionRepository,
-  AppSessionRepository,
+  LocalBridgeRepository,
+  RuntimeBufferRepository,
+  SurfaceBindingRepository,
+} from './repositories/bridge-repositories.js'
+import {
   BrokerInvocationEventRepository,
   BrokerInvocationRepository,
   CompiledRuntimePlanRepository,
-  ContinuityRepository,
-  EventRepository,
-  HrcLifecycleEventRepository,
-  LaunchRepository,
   LifecyclePolicyRepository,
-  LocalBridgeRepository,
   PermissionDecisionRepository,
-  RunRepository,
   RuntimeArtifactRepository,
-  RuntimeBufferRepository,
   RuntimeOperationRepository,
+} from './repositories/broker-repositories.js'
+import { EventRepository, HrcLifecycleEventRepository } from './repositories/event-repositories.js'
+import {
+  LaunchRepository,
+  RunRepository,
   RuntimeRepository,
+} from './repositories/runtime-repositories.js'
+import {
+  AppManagedSessionRepository,
+  AppSessionRepository,
+  ContinuityRepository,
   SessionRepository,
-  SurfaceBindingRepository,
-} from './repositories.js'
+} from './repositories/session-repositories.js'
 
 export type HrcDatabase = {
   sqlite: Database

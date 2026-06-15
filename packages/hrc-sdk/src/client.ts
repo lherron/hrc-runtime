@@ -116,7 +116,23 @@ const ERROR_BODY_EXCERPT_MAX = 200
 /** Suffix appended when an error-body excerpt is truncated. */
 const ELLIPSIS = '…'
 
+/**
+ * Bun's `fetch` accepts a non-standard `unix` field to route a request over a
+ * unix-domain socket. Modeling it here lets every fetch in this client inject
+ * the socket path without an `as RequestInit` cast at each call site.
+ */
+type BunRequestInit = RequestInit & { unix?: string }
+
 type QueryValue = string | number | boolean | readonly string[] | undefined
+
+/** Coerce an empty string (or other falsy value) to `undefined` so `buildPath` drops it. */
+function emptyToUndefined<T extends string>(value: T | null | undefined): T | undefined {
+  return value || undefined
+}
+
+function boolField(value: boolean | null | undefined): 'true' | undefined {
+  return value ? 'true' : undefined
+}
 
 /**
  * Build a path with an optional query string. Skips `undefined` values, joins
@@ -172,13 +188,22 @@ export class HrcClient {
 
   // -- HTTP primitives -------------------------------------------------------
 
+  /**
+   * Single transport choke-point: joins `path` onto `BASE_URL` and routes the
+   * request over the unix socket. The Bun-specific `unix` field is injected
+   * here so no call site needs an `as RequestInit` cast. Returns the raw
+   * `Response` so streaming callers can consume `res.body` directly.
+   */
+  private unixFetch(path: string, init: BunRequestInit = {}): Promise<Response> {
+    return fetch(`${BASE_URL}${path}`, { ...init, unix: this.socketPath })
+  }
+
   private async postJson<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
+    const res = await this.unixFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      unix: this.socketPath,
-    } as RequestInit)
+    })
 
     if (!res.ok) {
       await this.throwTypedError(res)
@@ -187,10 +212,7 @@ export class HrcClient {
   }
 
   private async getJson<T>(path: string): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: 'GET',
-      unix: this.socketPath,
-    } as RequestInit)
+    const res = await this.unixFetch(path, { method: 'GET' })
 
     if (!res.ok) {
       await this.throwTypedError(res)
@@ -232,8 +254,8 @@ export class HrcClient {
 
   async listSessions(filter?: SessionFilter): Promise<HrcSessionRecord[]> {
     const path = buildPath('/v1/sessions', {
-      scopeRef: filter?.scopeRef || undefined,
-      laneRef: filter?.laneRef || undefined,
+      scopeRef: emptyToUndefined(filter?.scopeRef),
+      laneRef: emptyToUndefined(filter?.laneRef),
     })
     return this.getJson<HrcSessionRecord[]>(path)
   }
@@ -410,19 +432,19 @@ export class HrcClient {
 
   async getStatus(options?: { includeArchived?: boolean }): Promise<StatusResponse> {
     const path = buildPath('/v1/status', {
-      includeArchived: options?.includeArchived ? 'true' : undefined,
+      includeArchived: boolField(options?.includeArchived),
     })
     return this.getJson<StatusResponse>(path)
   }
 
   async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
     const path = buildPath('/v1/runtimes', {
-      hostSessionId: filter?.hostSessionId || undefined,
-      transport: filter?.transport || undefined,
+      hostSessionId: emptyToUndefined(filter?.hostSessionId),
+      transport: emptyToUndefined(filter?.transport),
       status: filter?.status,
       stale: filter?.stale,
-      olderThan: filter?.olderThan || undefined,
-      scope: filter?.scope || undefined,
+      olderThan: emptyToUndefined(filter?.olderThan),
+      scope: emptyToUndefined(filter?.scope),
       json: filter?.json,
     })
     return this.getJson<RuntimeRecord[]>(path)
@@ -430,9 +452,9 @@ export class HrcClient {
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {
     const path = buildPath('/v1/runs', {
-      hostSessionId: filter?.hostSessionId || undefined,
+      hostSessionId: emptyToUndefined(filter?.hostSessionId),
       generation: filter?.generation,
-      runtimeId: filter?.runtimeId || undefined,
+      runtimeId: emptyToUndefined(filter?.runtimeId),
       limit: filter?.limit,
     })
     return this.getJson<RunRecord[]>(path)
@@ -452,8 +474,8 @@ export class HrcClient {
 
   async listLaunches(filter?: LaunchListFilter): Promise<LaunchRecord[]> {
     const path = buildPath('/v1/launches', {
-      hostSessionId: filter?.hostSessionId || undefined,
-      runtimeId: filter?.runtimeId || undefined,
+      hostSessionId: emptyToUndefined(filter?.hostSessionId),
+      runtimeId: emptyToUndefined(filter?.runtimeId),
     })
     return this.getJson<LaunchRecord[]>(path)
   }
@@ -466,9 +488,9 @@ export class HrcClient {
 
   async listTargets(filter?: TargetListFilter): Promise<HrcTargetView[]> {
     const path = buildPath('/v1/targets', {
-      projectId: filter?.projectId || undefined,
-      lane: filter?.lane || undefined,
-      discover: filter?.discover ? 'true' : undefined,
+      projectId: emptyToUndefined(filter?.projectId),
+      lane: emptyToUndefined(filter?.lane),
+      discover: boolField(filter?.discover),
     })
     return this.getJson<HrcTargetView[]>(path)
   }
@@ -538,9 +560,8 @@ export class HrcClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        unix: this.socketPath,
         ...(options?.signal ? { signal: options.signal } : {}),
-      } as RequestInit,
+      },
       options?.signal
     )
   }
@@ -565,7 +586,7 @@ export class HrcClient {
   async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
     const path = buildPath('/v1/events', {
       fromSeq: options?.fromSeq,
-      follow: options?.follow ? 'true' : undefined,
+      follow: boolField(options?.follow),
       ...eventFilterParams(options),
     })
 
@@ -573,9 +594,8 @@ export class HrcClient {
       path,
       {
         method: 'GET',
-        unix: this.socketPath,
         ...(options?.signal ? { signal: options.signal } : {}),
-      } as RequestInit,
+      },
       options?.signal,
       (event) => matchesWatchOptions(event, options)
     )
@@ -589,11 +609,11 @@ export class HrcClient {
    */
   private async *streamNdjson<T>(
     path: string,
-    init: RequestInit,
+    init: BunRequestInit,
     signal?: AbortSignal,
     predicate?: (value: T) => boolean
   ): AsyncIterable<T> {
-    const res = await fetch(`${BASE_URL}${path}`, init)
+    const res = await this.unixFetch(path, init)
 
     if (!res.ok) {
       await this.throwTypedError(res)
@@ -601,6 +621,24 @@ export class HrcClient {
 
     const body = res.body
     if (!body) return
+
+    // Parse one NDJSON line and yield it if it survives JSON.parse and the
+    // optional predicate. Malformed lines are skipped (M-10). Shared by the
+    // per-chunk loop and the trailing-buffer flush.
+    const emit = function* (raw: string): Generator<T> {
+      const trimmed = raw.trim()
+      if (trimmed.length === 0) return
+      let value: T
+      try {
+        value = JSON.parse(trimmed) as T
+      } catch {
+        // M-10: skip malformed NDJSON lines instead of crashing the generator
+        return
+      }
+      if (!predicate || predicate(value)) {
+        yield value
+      }
+    }
 
     const decoder = new TextDecoder()
     let buffer = ''
@@ -612,35 +650,12 @@ export class HrcClient {
       // Keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (trimmed.length === 0) continue
-        let value: T
-        try {
-          value = JSON.parse(trimmed) as T
-        } catch {
-          // M-10: skip malformed NDJSON lines instead of crashing the generator
-          continue
-        }
-        if (!predicate || predicate(value)) {
-          yield value
-        }
+        yield* emit(line)
         if (signal?.aborted) return
       }
     }
 
     // Flush any remaining content
-    const remaining = buffer.trim()
-    if (remaining.length > 0) {
-      let value: T
-      try {
-        value = JSON.parse(remaining) as T
-      } catch {
-        // M-10: skip malformed trailing content
-        return
-      }
-      if (!predicate || predicate(value)) {
-        yield value
-      }
-    }
+    yield* emit(buffer)
   }
 }

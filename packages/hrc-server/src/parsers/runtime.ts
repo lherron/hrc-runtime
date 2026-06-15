@@ -23,8 +23,12 @@ import {
   parseFenceInput,
   parseOptionalBooleanQuery,
   parseOptionalNonNegativeIntegerQuery,
+  pickOptionalQuery,
+  readOptionalBooleanField,
   readOptionalNonEmptyStringField,
   readOptionalStringField,
+  requireOneOf,
+  requireOptionalOneOf,
   requireTrimmedStringField,
 } from './common.js'
 import { resolveHarnessFromPlacement } from './runtime-harness-resolver.js'
@@ -58,19 +62,13 @@ export type ListRunsFilter = {
 }
 
 export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
-  const transport = normalizeOptionalQuery(url.searchParams.get('transport'))
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'transport must be one of: tmux, headless, sdk',
-      { field: 'transport', value: transport }
-    )
-  }
+  const transportRaw = normalizeOptionalQuery(url.searchParams.get('transport'))
+  const transport = requireOptionalOneOf(
+    transportRaw,
+    ['tmux', 'headless', 'sdk'],
+    'transport must be one of: tmux, headless, sdk',
+    { field: 'transport', value: transportRaw }
+  )
 
   const statusRaw = normalizeOptionalQuery(url.searchParams.get('status'))
   const status = statusRaw
@@ -83,14 +81,10 @@ export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
   const olderThan = normalizeOptionalQuery(url.searchParams.get('olderThan'))
 
   return {
-    ...(normalizeOptionalQuery(url.searchParams.get('hostSessionId'))
-      ? { hostSessionId: normalizeOptionalQuery(url.searchParams.get('hostSessionId')) }
-      : {}),
+    ...pickOptionalQuery(url, 'hostSessionId'),
     ...(transport !== undefined ? { transport } : {}),
     ...(status !== undefined && status.length > 0 ? { status } : {}),
-    ...(normalizeOptionalQuery(url.searchParams.get('scope'))
-      ? { scope: normalizeOptionalQuery(url.searchParams.get('scope')) }
-      : {}),
+    ...pickOptionalQuery(url, 'scope'),
     ...(stale !== undefined ? { stale } : {}),
     ...(olderThan !== undefined ? { olderThan, olderThanMs: parseDurationMs(olderThan) } : {}),
     ...(json !== undefined ? { json } : {}),
@@ -105,14 +99,37 @@ export function parseListRunsFilter(url: URL): ListRunsFilter {
   const limit = parseOptionalNonNegativeIntegerQuery(url.searchParams.get('limit'), 'limit')
 
   return {
-    ...(normalizeOptionalQuery(url.searchParams.get('hostSessionId'))
-      ? { hostSessionId: normalizeOptionalQuery(url.searchParams.get('hostSessionId')) }
-      : {}),
+    ...pickOptionalQuery(url, 'hostSessionId'),
     ...(generation !== undefined ? { generation } : {}),
-    ...(normalizeOptionalQuery(url.searchParams.get('runtimeId'))
-      ? { runtimeId: normalizeOptionalQuery(url.searchParams.get('runtimeId')) }
-      : {}),
+    ...pickOptionalQuery(url, 'runtimeId'),
     ...(limit !== undefined ? { limit } : {}),
+  }
+}
+
+function parseInlineHarness(harness: Record<string, unknown>): HrcRuntimeIntent['harness'] {
+  const provider = requireOneOf(
+    requireTrimmedStringField(harness, 'provider'),
+    ['anthropic', 'openai'],
+    'harness.provider must be "anthropic" or "openai"',
+    { field: 'harness.provider' }
+  )
+
+  const interactive = harness['interactive']
+  if (typeof interactive !== 'boolean') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'harness.interactive must be a boolean',
+      { field: 'harness.interactive' }
+    )
+  }
+
+  return {
+    provider: provider as HrcProvider,
+    interactive,
+    ...(typeof harness['id'] === 'string' ? { id: harness['id'] as HrcHarness } : {}),
+    ...(typeof harness['fallback'] === 'string' ? { fallback: harness['fallback'] } : {}),
+    ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
+    ...(harness['yolo'] === true ? { yolo: true } : {}),
   }
 }
 
@@ -124,34 +141,7 @@ export function parseRuntimeIntent(input: Record<string, unknown>): HrcRuntimeIn
   const initialPrompt = input['initialPrompt']
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const resolvedHarness = isRecord(harness)
-    ? (() => {
-        const provider = requireTrimmedStringField(harness, 'provider')
-        if (provider !== 'anthropic' && provider !== 'openai') {
-          throw new HrcBadRequestError(
-            HrcErrorCode.MALFORMED_REQUEST,
-            'harness.provider must be "anthropic" or "openai"',
-            { field: 'harness.provider' }
-          )
-        }
-
-        const interactive = harness['interactive']
-        if (typeof interactive !== 'boolean') {
-          throw new HrcBadRequestError(
-            HrcErrorCode.MALFORMED_REQUEST,
-            'harness.interactive must be a boolean',
-            { field: 'harness.interactive' }
-          )
-        }
-
-        return {
-          provider: provider as HrcProvider,
-          interactive,
-          ...(typeof harness['id'] === 'string' ? { id: harness['id'] as HrcHarness } : {}),
-          ...(typeof harness['fallback'] === 'string' ? { fallback: harness['fallback'] } : {}),
-          ...(harness['model'] !== undefined ? { model: String(harness['model']) } : {}),
-          ...(harness['yolo'] === true ? { yolo: true } : {}),
-        }
-      })()
+    ? parseInlineHarness(harness)
     : resolveHarnessFromPlacement(placement, execution)
 
   return {
@@ -253,22 +243,13 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
     throw new HrcUnprocessableEntityError(HrcErrorCode.MISSING_RUNTIME_INTENT, 'intent is required')
   }
 
-  const restartStyle = input['restartStyle']
-  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'restartStyle must be "reuse_pty" or "fresh_pty"'
-    )
-  }
+  const restartStyle = requireOptionalOneOf(
+    input['restartStyle'],
+    ['reuse_pty', 'fresh_pty'],
+    'restartStyle must be "reuse_pty" or "fresh_pty"'
+  )
 
-  const allowStaleGeneration = input['allowStaleGeneration']
-  if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'allowStaleGeneration must be a boolean',
-      { field: 'allowStaleGeneration' }
-    )
-  }
+  const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -333,22 +314,8 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const runtimeIntent = input['runtimeIntent']
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
-  const waitForCompletion = input['waitForCompletion']
-  if (waitForCompletion !== undefined && typeof waitForCompletion !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'waitForCompletion must be a boolean',
-      { field: 'waitForCompletion' }
-    )
-  }
-  const allowStaleGeneration = input['allowStaleGeneration']
-  if (allowStaleGeneration !== undefined && typeof allowStaleGeneration !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'allowStaleGeneration must be a boolean',
-      { field: 'allowStaleGeneration' }
-    )
-  }
+  const waitForCompletion = readOptionalBooleanField(input, 'waitForCompletion')
+  const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -410,27 +377,13 @@ export function parseClearContextRequest(input: unknown): ClearContextRequest {
   }
 
   const hostSessionId = input['hostSessionId']
-  const relaunch = input['relaunch']
-  const dropContinuation = input['dropContinuation']
   if (typeof hostSessionId !== 'string' || hostSessionId.trim().length === 0) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'hostSessionId is required', {
       field: 'hostSessionId',
     })
   }
-  if (relaunch !== undefined && typeof relaunch !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'relaunch must be a boolean', {
-      field: 'relaunch',
-    })
-  }
-  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'dropContinuation must be a boolean',
-      {
-        field: 'dropContinuation',
-      }
-    )
-  }
+  const relaunch = readOptionalBooleanField(input, 'relaunch')
+  const dropContinuation = readOptionalBooleanField(input, 'dropContinuation')
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -462,16 +415,7 @@ export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRe
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const dropContinuation = input['dropContinuation']
-  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'dropContinuation must be a boolean',
-      {
-        field: 'dropContinuation',
-      }
-    )
-  }
+  const dropContinuation = readOptionalBooleanField(input, 'dropContinuation')
 
   const stringField = (field: 'reason' | 'source' | 'actor'): string | undefined => {
     const value = input[field]
@@ -507,25 +451,8 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const probeLiveness = input['probeLiveness']
-  if (probeLiveness !== undefined && typeof probeLiveness !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'probeLiveness must be a boolean',
-      {
-        field: 'probeLiveness',
-      }
-    )
-  }
-
-  const includeDisposed = input['includeDisposed']
-  if (includeDisposed !== undefined && typeof includeDisposed !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'includeDisposed must be a boolean',
-      { field: 'includeDisposed' }
-    )
-  }
+  const probeLiveness = readOptionalBooleanField(input, 'probeLiveness')
+  const includeDisposed = readOptionalBooleanField(input, 'includeDisposed')
 
   return {
     runtimeId: body.runtimeId,

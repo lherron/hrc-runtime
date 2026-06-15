@@ -4,6 +4,7 @@ import type {
   ToolExecutionEndEvent,
   UserPromptEvent,
 } from './events.js'
+import { asRecord, getBoolean, getRecord, getString } from './internal/record.js'
 
 export type PiHookEnvelopeInput = {
   launchId: string
@@ -60,36 +61,6 @@ function extractPiEventName(hookData: unknown): string {
       : typeof record['type'] === 'string'
         ? record['type']
         : 'unknown'
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function getString(record: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string') return value
-  }
-  return undefined
-}
-
-function getBoolean(record: Record<string, unknown>, ...keys: string[]): boolean | undefined {
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'boolean') return value
-  }
-  return undefined
-}
-
-function getRecord(record: Record<string, unknown>, ...keys: string[]): Record<string, unknown> {
-  for (const key of keys) {
-    const value = asRecord(record[key])
-    if (value) return value
-  }
-  return {}
 }
 
 function normalizePayload(hookData: unknown): Record<string, unknown> {

@@ -214,6 +214,24 @@ describe('admission labels', () => {
     expect(admissionLabelFromResponse({ admission: { kind: 'queued_run' } })).toBe('Queued')
   })
 
+  test('keeps admission response precedence stable', () => {
+    expect(
+      admissionLabelFromResponse({
+        admission: { kind: 'queued_run' },
+        currentState: {
+          applicationStatus: 'ambiguous',
+          reason: 'contribution_unsupported_fallback_queued',
+        },
+      })
+    ).toBe('Contribution ambiguous')
+    expect(
+      admissionLabelFromResponse({
+        admission: { kind: 'queued_run' },
+        currentState: { reason: 'contribution_unsupported_fallback_queued' },
+      })
+    ).toBe('Unsupported contribution fallback queued')
+  })
+
   test('falls back to applicationStatus, then admissionKind, then empty string', () => {
     expect(admissionLabelFromResponse({ inputApplication: { status: 'some_status' } })).toBe(
       'some_status'

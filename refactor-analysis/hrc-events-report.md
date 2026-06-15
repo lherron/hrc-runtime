@@ -1,116 +1,84 @@
-# Refactor Analysis — `packages/hrc-events`
+# 🔧 Refactoring Analysis — packages/hrc-events/src
 
-Behavior-preserving refactor audit. Report only; no source edited in this phase.
+**Target:** `packages/hrc-events/src` (analysis profile: general) · **Files read:** 9/9 source (`.ts`, non-test) · **Lines:** 1,641 · **Package type:** general (pure normalizer + schema library, multi-consumer)
 
-## Package shape
+## 🧭 Summary
 
-| File | LOC | Role |
-|---|---|---|
-| `src/tool-output-formatter.ts` | 312 | Coerce/render tool responses (Write/Edit diff rendering) |
-| `src/hook-normalizer.ts` | 298 | Claude Code hook payload → `HookDerivedEvent[]` |
-| `src/pi-normalizer.ts` | 267 | Pi hook envelope → derived + semantic events |
-| `src/otel-normalizer.ts` | 225 | Codex OTEL record → `HookDerivedEvent[]` |
-| `src/monitor-schema.ts` | 168 | Zod schema for `hrc monitor` output (`MonitorEvent`) |
-| `src/events.ts` | 127 | Event type interfaces + `isHookDerivedEvent` guard |
-| `src/schemas.ts` | 112 | Zod schemas mirroring `events.ts` |
-| `src/index.ts` | 65 | Public barrel |
+`hrc-events` is a clean, pure-function library: three harness normalizers (Claude hook, Codex OTEL, Pi hook) that fold raw payloads into a shared `HookDerivedEvent` union, plus the Zod schemas and the monitor-output contract. All three normalizers already use a dispatch-table mechanism — the structure is healthy. The main repairable mechanism is a **missing shared abstraction**: each normalizer independently reimplements the same JSON-accessor primitives (`getString` / `asRecord` / `getAttrString`), and `asRecord` (pi) duplicates `asToolInputRecord` (internal/record.ts) with a subtle array-handling divergence. Everything else is deliberately left alone.
 
-This is a small, pure, well-documented package: every public function is a pure normalizer/formatter with no IO or DI collaborators. There is no DIP/Liskov/ISG exposure of note (no classes, no inheritance, no fat interfaces). Findings are concentrated in three structurally identical long if-chain dispatchers and some helper duplication.
+## 🚪 Public boundary (assess first)
 
-## SOLID scorecard
+The barrel `index.ts` re-exports types + values from `events.ts`, `schemas.ts`, the three normalizers, `tool-output-formatter.ts`, and `monitor-schema.ts`. **Real external consumers exist** (`hrc-server`: `hrc-event-helper.ts`, `otel-ingest.ts`, `hook-lifecycle.ts`, broker `event-mapper`; `hrc-cli`: `monitor-watch.ts`; `hrc-store-sqlite` tests). This is **not** a leaf package — M02 expand/contract applies to any contract change.
 
-| Principle | Grade | Notes |
-|---|---|---|
-| SRP | B | Files are reasonably scoped, but three normalizer entrypoints (`normalizeClaudeHook` 127 LOC, `normalizeCodexOtelEvent` 99 LOC, `normalizePiPayload` 74 LOC) each mix dispatch + per-case construction in one long function. |
-| OCP | B- | Three `if (name === ...)`/`switch (toolName)` chains keyed on an event/tool name that grow one branch per new case. Acceptable for a closed vocabulary; flagged as the dominant structural smell. |
-| LSP | A | No inheritance, no overrides, no type-narrowing-before-call. N/A in practice. |
-| ISP | A | No interfaces > 10 members; the exported types are plain data DTOs. |
-| DIP | A | All functions pure; `diffLines` from `diff` and `z` from `zod` are leaf deps, not injected collaborators — no concrete-collaborator `new` in business logic. |
+- **T07 (align interface to usage):** The surface is narrow and matches usage; exported functions are pure with stable result-object shapes. No fat/leaky interface found.
+- **M02:** No contract change is being proposed (all findings below are internal-only). The exported `getString`/`asRecord` helpers are **not** exported — they are file-private, so consolidating them is invisible to consumers.
+- Internal helpers `asToolInputRecord` are correctly kept out of the barrel (`internal/record.ts` header documents this intent).
 
-Overall: **B+**. Healthy package; the work is dedupe + extracting per-case handlers out of long dispatchers, all internal-only.
+**Verdict: 🟢** — public boundary is well-shaped; no breaking changes warranted. All findings are internal churn.
 
-## Priority refactorings
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-### P1 — Duplicated `asToolInputRecord` helper across two files
-- **Location:** `src/tool-output-formatter.ts:51-54` and `src/hook-normalizer.ts:37-40`
-- **Current:** Byte-identical private helper `asToolInputRecord(value): Record<string,unknown> | undefined` defined twice.
-- **Suggested:** Extract to a private internal helper module and import. Keep it un-exported from the barrel so the public surface is unchanged.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S (~10 min)
-- **Tests:** No direct test; both call sites are exercised by `hook-normalizer.test.ts` and the Edit/Write paths in tool-output formatting. Behavior identical.
+### F1 — [T15] Extract the duplicated JSON-accessor primitives into `internal/`
+- **Location:** `pi-normalizer.ts:65` (`asRecord`), `pi-normalizer.ts:71` (`getString` variadic), `pi-normalizer.ts:79` (`getBoolean`), `pi-normalizer.ts:87` (`getRecord`); `hook-normalizer.ts:38` (`getString` single-key); `otel-normalizer.ts:52` (`getAttrString`), `otel-normalizer.ts:61` (`getAttrBool`)
+- **Mechanism repaired:** missing abstraction — three normalizers reimplement the same "read a typed field off an `unknown` record" primitive in three incompatible signatures. The repair is one shared accessor module under `internal/` (not exported), so each normalizer consumes a single canonical `getString(record, ...keys)` / `getBoolean(...)` / `asRecord(...)`.
+- **Symptom (duplicated intent):** `hook-normalizer.getString(obj,key)` is the single-key special case of `pi-normalizer.getString(record,...keys)`. `otel.getAttrString` is `getString` pre-bound to the attrs object. `otel.getAttrBool` and `pi.getBoolean` differ only in that OTEL also coerces the strings `'true'`/`'false'` (attribute values arrive stringified) — so the merged `getBoolean` must keep an opt-in string-coercion path or remain two functions.
+- **Current → Suggested:** keep `internal/record.ts`'s `asToolInputRecord`; add `getString`, `getBoolean`, `getRecord`, `asRecord` there (or a sibling `internal/access.ts`); delete the per-file copies and import. Preserve the variadic `...keys` signature (hook's single-key callers pass one key — behavior identical).
+- **Direction:** consolidate (de-duplicate), not extract-more.
+- **Preservation:** test-suite — `hook-normalizer.test.ts`, `pi-normalizer.test.ts`, `otel-normalizer.test.ts` exist and exercise each normalizer's field extraction.
+- **Falsifiable signal:** all three normalizer test suites stay green; net LOC drops (~5 helper functions collapse to one set); no new import of the helpers appears in `index.ts` (proves the surface is unchanged).
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** M
+- **Tests:** existing three suites + run full `hrc-events` suite.
+- **Contraindication:** the OTEL `getAttrBool` string-coercion (`'true'`/`'false'`) is load-bearing (OTEL attributes are stringly-typed) — do NOT let the merge silently drop it. Keep a `coerceStrings` flag or a thin `getAttrBool` wrapper. Merging it away would change OTEL behavior (a redesign, not a refactor).
 
-### P2 — `normalizeClaudeHook` is a 127-line if-chain dispatcher (SRP/OCP)
-- **Location:** `src/hook-normalizer.ts:171-298`
-- **Current:** One function reads the hook name, then a flat `if (hookName === 'PreToolUse') {...} if (hookName === 'PostToolUse') {...}` chain, each block ~15-30 lines building a `NormalizeHookResult`.
-- **Suggested:** Extract each branch to a private `handlePreToolUse(unwrapped, ctx)`, `handlePostToolUse(...)`, etc., returning `NormalizeHookResult`; the entrypoint becomes a thin dispatch table `Record<string, Handler>` (mirrors the existing `toolRenderers` table pattern already in `tool-output-formatter.ts`). Pure mechanical extraction — same inputs/outputs.
-- **Risk:** Low
-- **API-impact:** internal-only (entrypoint signature unchanged)
-- **Effort:** M (~30-40 min)
-- **Tests:** `__tests__/hook-normalizer.test.ts` covers the branches; re-run after extraction.
+### F2 — [T15/T16] Reconcile `pi.asRecord` vs `internal/asToolInputRecord` (array-handling divergence)
+- **Location:** `pi-normalizer.ts:65` vs `internal/record.ts:7`
+- **Mechanism repaired:** duplicated-with-drift abstraction. `asToolInputRecord` returns any object (arrays included) as a record; `pi.asRecord` additionally rejects arrays (`!Array.isArray(value)`). Two near-identical coercers with different array semantics are an invariant trap — a caller picking the "wrong" one silently changes behavior.
+- **Symptom:** the same conceptual operation ("is this an object-record?") has two answers in the package.
+- **Current → Suggested:** make the array-rejecting variant the canonical `asRecord` in `internal/`, and have `asToolInputRecord` either delegate or be documented as the deliberate "arrays-allowed" variant. Do NOT blindly unify — verify each call site's intent first (hook-normalizer passes `tool_input`, which can legitimately be array-shaped for some tools).
+- **Direction:** consolidate, with a documented split if both semantics are genuinely needed.
+- **Preservation:** test-suite + careful call-site audit (this one is behavior-sensitive).
+- **Falsifiable signal:** suites green; the two coercers either become one or carry explicit doc comments naming why arrays differ.
+- **Risk:** Med (semantic drift if unified carelessly) · **API-impact:** internal-only · **Effort:** S
+- **Tests:** pi + hook normalizer suites; add a characterization test for array-shaped `tool_input` if none exists.
+- **Contraindication:** if `asToolInputRecord` callers rely on arrays-passing-through, the divergence is intentional — keep both, just name the distinction. Unifying would be a behavior change.
 
-### P3 — `normalizeCodexOtelEvent` is a 99-line if-chain dispatcher (SRP/OCP)
-- **Location:** `src/otel-normalizer.ts:126-225`
-- **Current:** Flat `if (eventName === 'codex.tool_decision') {...} if (eventName === 'codex.tool_result') {...}` chain, each ~15-30 lines.
-- **Suggested:** Extract per-event handlers (`handleToolDecision`, `handleToolResult`, `handleUserPrompt`, `handleConversationStart`) and dispatch by name; entrypoint stays thin. Behavior-preserving.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** M (~30 min)
-- **Tests:** `__tests__/otel-normalizer.test.ts` covers the mapped events; re-run.
+### F3 — [T15] Lift the duplicated `truncate` literal + helper out of the formatters
+- **Location:** `hook-normalizer.ts:55` (`truncate` closure + `…`), `otel-normalizer.ts:183` (inline prompt truncation with `…`), `tool-output-formatter.ts` (preview truncation `... +N more lines`)
+- **Mechanism repaired:** missing abstraction — "truncate a string to N chars with an ellipsis" is reimplemented inline in two places (hook closure, otel inline ternary) using the same `…` sentinel. A single `truncate(s, max)` in `internal/` removes the magic-character duplication.
+- **Symptom:** repeated `s.length > max ? \`${s.slice(0, max)}…\` : s` shape.
+- **Current → Suggested:** one `truncate(s, max)` helper; the per-tool char limits (`CMD_TRUNCATE=80`, `PATH_TRUNCATE=60`, `PROMPT_TRUNCATE=200`) stay as named constants in their own files (they are domain limits, not duplication).
+- **Direction:** consolidate the verb, keep the per-domain constants distinct.
+- **Preservation:** char-test/test-suite — hook + otel suites assert truncated output.
+- **Falsifiable signal:** suites green; `…` literal appears once.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Contraindication:** the `tool-output-formatter` "+N more lines" truncation is a *different* shape (line-count, not char-count, different suffix) — do NOT fold it into the char truncator; that would change Write-preview output.
 
-### P4 — `normalizePiPayload` is a 74-line if-chain dispatcher (SRP/OCP)
-- **Location:** `src/pi-normalizer.ts:152-226`
-- **Current:** Flat `if (eventName === 'tool_execution_start') {...}` chain; the message_start/update/end branch (lines 195-215) builds two near-identical objects differing only by `role`.
-- **Suggested:** Extract per-event handlers and dispatch by name. Within the message branch, collapse the user/assistant ternary to a single object literal with a computed `role` (the two arms are structurally identical — see Quick Win QW2).
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** M (~30 min)
-- **Tests:** `__tests__/pi-normalizer.test.ts`; re-run.
+### F4 — [T16] Re-confirm the dispatch tables are NOT over-abstraction (de-abstraction check — NEGATIVE)
+- **Location:** `hookHandlers` (`hook-normalizer.ts:313`), `otelEventHandlers` (`otel-normalizer.ts:209`), `piEventHandlers` (`pi-normalizer.ts:217`), `toolRenderers` (`tool-output-formatter.ts:250`)
+- **Finding:** each table has **multiple distinct entries with real behavioral variation** (8, 4, 8, and 2 implementors respectively). These are genuine conditional→dispatch payoffs, not premature abstraction. **No T16 collapse warranted.** Recorded here so the negative is explicit (direction honesty: not everything extracts/collapses).
+- **Risk:** n/a (no change) · leave as-is.
 
-### P5 — Inline `langMap` magic table + 38-line `Write` renderer
-- **Location:** `src/tool-output-formatter.ts:237-256` (langMap), renderer `227-265`
-- **Current:** A 17-entry extension→language map is allocated inline on every `Write` render call, inside a ~38-line arrow renderer.
-- **Suggested:** Hoist `langMap` to a module-level `const LANG_BY_EXT` (also avoids per-call allocation) and optionally split the preview-building into a small private helper. Pure internal change.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S (~10 min)
-- **Tests:** No dedicated test for the Write renderer path; covered indirectly via PostToolUse formatting. Output string must remain byte-identical — verify the hoisted map has identical entries.
+## 🪶 Deliberately left alone (where-NOT)
 
-### P6 — Duplicated diff-output construction between structured-patch and line-diff builders
-- **Location:** `src/tool-output-formatter.ts:89-131` (`buildEditOutputFromStructuredPatches`) and `142-177` (`buildEditOutputFromLineDiff`)
-- **Current:** Two builders independently emit the `${line}|c|`, `${line}|+|`, `${line}|-|` format, both compute `added`/`removed`, both finish with `summarizeEdit(...)` + `[summary, ...outputLines].join('\n')`.
-- **Suggested:** Extract a shared private `renderEditLines(lines, added, removed)` tail that produces the final `{output, added, removed}` envelope; keep the two prefix-emitting loops distinct (they walk different shapes). Modest dedupe only.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S (~15 min)
-- **Tests:** Edit-path behavior — output format is load-bearing (consumed downstream for diff rendering). Keep strings identical; re-run hook-normalizer Edit cases.
+- **`monitor-schema.ts` enum arrays** (`MonitorResult`, `MonitorFailureKind`, `MonitorEventName`): these are a FROZEN output contract (§10, FROZEN Q2/Q5). They look like "stringly-typed primitive obsession" but the `as const` + `z.enum` pattern is exactly the right reification; touching them is a contract change. T13 (push-invariant-into-constraint) is already satisfied by the Zod enums.
+- **`isHookDerivedEvent` literal list** (`events.ts:118`): duplicates the union discriminants, but it is the runtime projection of a compile-time union — a small, intentional, load-bearing redundancy. Parameterizing it off the union is not possible without a registry; leave it.
+- **`events.ts` / `schemas.ts` type↔schema parallelism:** the interfaces and Zod schemas are deliberately kept in lockstep by hand. This is duplication, but it is the type/runtime-validation seam; auto-deriving one from the other (`z.infer`) would be a redesign with consumer-visible inference changes.
+- **Per-tool `formatToolSummary` switch** (`hook-normalizer.ts:57`): a flat `switch` over ~10 tools each extracting a different field with a different label — converting to a data table is possible but the variation is genuinely per-arm (different keys, different prose), so a table buys little and reads worse. Leave it.
+- **The three normalizers' separate files:** they share *primitive* helpers (F1) but their *domain* logic is correctly separated by harness (Claude/Codex/Pi). No T03 relocation — cohesion is already high.
 
-## Code smells
+## 🔭 If applying: outside-in sequence
 
-| # | Location | Smell | Note |
-|---|---|---|---|
-| CS1 | `hook-normalizer.ts:37-45`, `otel-normalizer.ts:52-59`, `pi-normalizer.ts:71-77` | Duplicated `getString` helper (3 variants) | Three slightly different `getString`/`getAttrString` helpers (single-key vs variadic vs attrs-aware). Could consolidate the two single-key ones; the variadic Pi one and attrs one differ enough to leave. Low value. |
-| CS2 | `hook-normalizer.ts:53-113` | Long method + switch chain | `formatToolSummary` 60 LOC `switch (toolName)`; OCP grows per tool. **Public export** — could become a `Record<tool, (input)=>string>` table internally, but it is exported, so any refactor must preserve the exact signature/output. Defer the riskier table swap. |
-| CS3 | `tool-output-formatter.ts:237-256` | Magic data inline | `langMap` allocated per call (see P5). |
-| CS4 | `pi-normalizer.ts:200-214` | Duplicated block | user/assistant arms differ only by literal `role`; collapse (QW2). |
-| CS5 | `pi-normalizer.ts:51-63` | Nested ternary | `extractPiEventName` triple-nested ternary; readable but could be a loop over key candidates. Cosmetic. |
-| CS6 | `hook-normalizer.ts:269-272` | Awkward conditional | `(agentType ?? agentId) ? ... : 'subagent'` — grouped-coalesce-as-boolean is hard to read; an early `if (!agentType && !agentId)` would be clearer. Cosmetic, Low. |
-| CS7 | `events.ts:118-126` & `schemas.ts:105-112` | Parallel maintenance | `isHookDerivedEvent`'s string array and `HookDerivedEventSchema`'s union must be kept in sync by hand with the `HookDerivedEvent` union. No bug today; note as drift risk. Changing it touches the public guard/schema → defer. |
+1. **(A/T40)** Confirm the three normalizer test suites + `monitor-schema.acceptance.test.ts` are green as the characterization baseline (public surface is already covered).
+2. **F1** — add the shared accessors to `internal/`, migrate `pi`/`hook`/`otel` one file at a time, run that file's suite after each. Keep OTEL's string-coercing bool as a wrapper.
+3. **F2** — audit `asToolInputRecord` vs `asRecord` call sites; unify or document. Behavior-sensitive — do this with the array characterization test in hand.
+4. **F3** — extract `truncate`, leave per-domain constants and the line-count truncator untouched.
+5. Re-run the **full** `hrc-events` suite; confirm `index.ts` exports are byte-identical (no surface drift).
 
-## Quick wins (safe, internal-only)
+## ✅ Safety checklist
 
-- **QW1 (P1):** Dedupe `asToolInputRecord` into one private helper. ~10 min, Low.
-- **QW2 (CS4):** Collapse the Pi message user/assistant ternary (`pi-normalizer.ts:200-214`) into one object literal with computed `role`. Output unchanged. ~5 min, Low.
-- **QW3 (P5):** Hoist `langMap` to module-level const. ~5 min, Low.
-- **QW4 (CS6):** Replace the grouped-coalesce boolean in `subagent_start` label with an explicit early return. Cosmetic, Low.
-
-## Technical debt notes
-
-- **Triple normalizer parallelism (OCP):** `normalizeClaudeHook`, `normalizeCodexOtelEvent`, and `normalizePiPayload` are three independent dispatch-by-string-name functions producing overlapping `HookDerivedEvent` shapes. There is a latent opportunity for a shared `handler-table` micro-pattern, but unifying them across harness vocabularies (Claude hooks vs Codex OTEL vs Pi) would be a design change, not a behavior-preserving refactor — **out of scope for this pass.** Keep each per-harness; only do the per-file table extraction (P2/P3/P4).
-- **events.ts ↔ schemas.ts ↔ guard drift (CS7):** the type union, the Zod union, and the `isHookDerivedEvent` literal array encode the same set three times. A single source of truth (deriving the array from the schema, or the schema from a const tuple) would remove drift, but it changes the exported guard/schema surface → **defer (public-surface).**
-- **Edit/Write output format is a downstream contract:** the `|c|`/`|+|`/`|-|` line format and the "Created … with N lines" string are consumed by UI/event-store renderers in hrc-server. Any P5/P6 dedupe must keep the emitted strings byte-identical. Treated as Low because the suggested refactors are pure extraction, but call out in review.
-
-## Auto-apply vs defer summary
-
-- **Safe to auto-apply (Low, internal-only):** P1, P2, P3, P4, P5, P6 (six distinct refactorings); QW1–QW4 are subsumed by these.
-- **Defer (public-surface):** CS2 (`formatToolSummary` is an exported function) and CS7 (events↔schemas↔`isHookDerivedEvent` single-source-of-truth) — both touch the public exported surface and require human sign-off. The per-file dispatcher extractions (P2/P3/P4) keep their public entrypoint signatures intact and are therefore safe.
+- [ ] No edit to `index.ts` export set (public surface frozen).
+- [ ] No edit to `monitor-schema.ts` enum members (FROZEN contract).
+- [ ] OTEL `'true'`/`'false'` string-bool coercion preserved after F1 merge.
+- [ ] Array-shaped `tool_input` behavior preserved/characterized before F2.
+- [ ] Write-preview "+N more lines" truncation NOT merged into char-truncate (F3).
+- [ ] Full `hrc-events` suite green; net LOC down, no new barrel imports.

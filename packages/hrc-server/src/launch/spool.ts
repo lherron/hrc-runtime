@@ -34,8 +34,11 @@ export async function spoolCallback(
   let nextSeq = existing.length > 0 ? Math.max(...existing) + 1 : 1
 
   while (true) {
-    const filePath = join(launchSpoolDir, `${String(nextSeq).padStart(6, '0')}.json`)
+    const filePath = join(launchSpoolDir, seqFilename(nextSeq))
     try {
+      // `wx` (exclusive create) is load-bearing: it makes seq allocation atomic
+      // against concurrent hook writers spooling to the same launchId. On EEXIST
+      // we advance to the next seq and retry rather than overwrite.
       await writeFile(filePath, serializedPayload, {
         encoding: 'utf-8',
         flag: 'wx',
@@ -65,8 +68,8 @@ export async function readSpoolEntries(spoolDir: string, launchId: string): Prom
 
   const entries: SpoolEntry[] = []
   for (const file of jsonFiles) {
-    const seq = Number.parseInt(file.replace('.json', ''), 10)
-    if (Number.isNaN(seq)) continue
+    const seq = parseSeqFromFilename(file)
+    if (seq === null) continue
 
     const filePath = join(launchSpoolDir, file)
     const raw = await readFile(filePath, 'utf-8')
@@ -121,10 +124,20 @@ async function readExistingSeqs(dir: string): Promise<number[]> {
     return []
   }
 
-  return files
-    .filter((f) => f.endsWith('.json'))
-    .map((f) => Number.parseInt(f.replace('.json', ''), 10))
-    .filter((n) => !Number.isNaN(n))
+  return files.map((f) => parseSeqFromFilename(f)).filter((seq): seq is number => seq !== null)
+}
+
+function seqFilename(seq: number): string {
+  return `${String(seq).padStart(6, '0')}.json`
+}
+
+function parseSeqFromFilename(file: string): number | null {
+  if (!file.endsWith('.json')) {
+    return null
+  }
+
+  const seq = Number.parseInt(file.replace('.json', ''), 10)
+  return Number.isNaN(seq) ? null : seq
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

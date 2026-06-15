@@ -1,5 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode, HrcInternalError } from '../errors.js'
 import type { HrcSelector } from '../selectors.js'
+import { isResolutionError, selectorMatchesMessageResponse } from './index.js'
 import type {
   HrcMonitorCapture,
   HrcMonitorEvent,
@@ -217,31 +218,74 @@ function assertConditionSelector(request: HrcMonitorConditionWaitRequest): void 
   }
 }
 
+type ConditionStrategy = {
+  start: (
+    context: EvaluationContext,
+    snapshot: HrcMonitorSnapshot
+  ) => HrcMonitorConditionOutcome | null
+  event: (
+    context: EvaluationContext,
+    event: MonitorOutputEvent
+  ) => HrcMonitorConditionOutcome | null
+}
+
+// Per-condition strategy table co-locating the start-snapshot and streaming-event
+// halves for each HrcMonitorCondition (previously two parallel `switch (condition)`
+// statements that had to be kept congruent by hand). `satisfies
+// Record<HrcMonitorCondition, ConditionStrategy>` forces every condition to define
+// BOTH halves at compile time — adding/removing a condition is a single compiler
+// error here instead of two silently-divergent switches. Per-condition behavior
+// and dispatch are byte-identical to the prior switches.
+const CONDITION_STRATEGIES = {
+  'turn-finished': {
+    start: (context) =>
+      context.capture.activeTurnId === null
+        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) => evaluateTurnFinished(context, event),
+  },
+  idle: {
+    start: (_context, snapshot) =>
+      isIdleRuntimeStatus(snapshot.runtime?.status)
+        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) =>
+      eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
+        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
+        : null,
+  },
+  busy: {
+    start: (_context, snapshot) =>
+      snapshot.runtime?.status === 'busy'
+        ? { result: 'already_busy', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) =>
+      eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
+        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
+        : null,
+  },
+  'runtime-dead': {
+    start: (_context, snapshot) =>
+      isDeadRuntimeStatus(snapshot.runtime?.status)
+        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) => runtimeDeathOutcome(context, event),
+  },
+  response: {
+    start: () => null,
+    event: (context, event) => evaluateResponse(context, event),
+  },
+  'response-or-idle': {
+    start: () => null,
+    event: (context, event) => evaluateResponseOrIdle(context, event),
+  },
+} satisfies Record<HrcMonitorCondition, ConditionStrategy>
+
 function evaluateStartSnapshot(
   context: EvaluationContext,
   snapshot: HrcMonitorSnapshot
 ): HrcMonitorConditionOutcome | null {
-  const runtimeStatus = snapshot.runtime?.status
-
-  switch (context.condition) {
-    case 'turn-finished':
-      return context.capture.activeTurnId === null
-        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
-        : null
-    case 'idle':
-      return isIdleRuntimeStatus(runtimeStatus)
-        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
-        : null
-    case 'busy':
-      return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: EXIT_CODE.ok } : null
-    case 'runtime-dead':
-      return isDeadRuntimeStatus(runtimeStatus)
-        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
-        : null
-    case 'response':
-    case 'response-or-idle':
-      return null
-  }
+  return CONDITION_STRATEGIES[context.condition].start(context, snapshot)
 }
 
 function evaluateEvent(
@@ -253,27 +297,14 @@ function evaluateEvent(
   const contextChanged = evaluateContextChanged(context, event)
   if (contextChanged) return contextChanged
 
-  const runtimeFailure = evaluateRuntimeFailure(context, event)
-  if (runtimeFailure) return runtimeFailure
-
-  switch (context.condition) {
-    case 'turn-finished':
-      return evaluateTurnFinished(context, event)
-    case 'idle':
-      return eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
-        : null
-    case 'busy':
-      return eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
-        : null
-    case 'response':
-      return evaluateResponse(context, event)
-    case 'response-or-idle':
-      return evaluateResponseOrIdle(context, event)
-    case 'runtime-dead':
-      return runtimeDeathOutcome(context, event)
+  // The dedicated 'runtime-dead' arm below handles runtime death explicitly;
+  // for every other condition, surface a runtime death/crash as the outcome.
+  if (context.condition !== 'runtime-dead') {
+    const runtimeFailure = runtimeDeathOutcome(context, event)
+    if (runtimeFailure) return runtimeFailure
   }
+
+  return CONDITION_STRATEGIES[context.condition].event(context, event)
 }
 
 function evaluateTurnFinished(
@@ -336,14 +367,6 @@ function runtimeDeathOutcome(
     }
   }
   return null
-}
-
-function evaluateRuntimeFailure(
-  context: EvaluationContext,
-  event: MonitorOutputEvent
-): HrcMonitorConditionOutcome | null {
-  if (context.condition === 'runtime-dead') return null
-  return runtimeDeathOutcome(context, event)
 }
 
 function evaluateContextChanged(
@@ -419,20 +442,12 @@ function messageResponseMatchesSelector(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): boolean {
-  switch (context.selector.kind) {
-    case 'message': {
-      const messageId = context.selector.messageId
-      return (
-        unknownString(event, 'messageId') === messageId ||
-        unknownString(event, 'replyToMessageId') === messageId ||
-        unknownString(event, 'rootMessageId') === messageId
-      )
-    }
-    case 'message-seq':
-      return unknownNumber(event, 'messageSeq') === context.selector.messageSeq
-    default:
-      return false
-  }
+  return selectorMatchesMessageResponse(context.selector, {
+    messageId: unknownString(event, 'messageId'),
+    replyToMessageId: unknownString(event, 'replyToMessageId'),
+    rootMessageId: unknownString(event, 'rootMessageId'),
+    messageSeq: unknownNumber(event, 'messageSeq'),
+  })
 }
 
 function resultValue(
@@ -574,11 +589,11 @@ function isIdleRuntimeStatus(status: string | undefined): boolean {
 function isCapture(
   result: HrcMonitorCapture | HrcMonitorResolutionResult
 ): result is HrcMonitorCapture {
-  return !('ok' in result && result.ok === false)
+  return !isResolutionError(result)
 }
 
 function resolutionError(result: HrcMonitorResolutionResult): Error {
-  if ('ok' in result && result.ok === false) {
+  if (isResolutionError(result)) {
     return new HrcBadRequestError(
       HrcErrorCode.INVALID_SELECTOR,
       result.error.message,

@@ -129,6 +129,80 @@ export function admitStartedInvocation(
   }
 }
 
+/**
+ * The capability arms shared VERBATIM by both checkPreStartDriverCapabilities and
+ * checkInvocationCapabilities (F3 / T-04736). Both operate on the same
+ * InvocationCapabilities shape (DriverSummary.capabilities IS InvocationCapabilities).
+ *
+ * The two functions diverge in EXACTLY two arms — `input.queue` (requiredOnly-wrap
+ * vs passthrough) and `turns.concurrency` (=== 'multiple' vs !== 'any') — which sit
+ * positionally BETWEEN `input.fileRefs` and `turns.interrupt`. Because the returned
+ * `missing[]` ORDER is observable (it is serialized into the admission detail), the
+ * shared arms are split into a HEAD (the five leading input checks) and a TRAILING
+ * block (turns.interrupt onward); each caller emits its own two divergent arms in
+ * between, preserving the exact ordering.
+ */
+function checkCommonInputCapabilities(
+  missing: string[],
+  requirements: CapabilityRequirements,
+  caps: InvocationCapabilities
+): void {
+  checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
+  checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
+  checkNeed(
+    missing,
+    'input.appendContext',
+    requirements.input?.appendContext,
+    caps.input.appendContext
+  )
+  checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
+  checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
+}
+
+function checkCommonTrailingCapabilities(
+  missing: string[],
+  requirements: CapabilityRequirements,
+  caps: InvocationCapabilities
+): void {
+  checkNeed(
+    missing,
+    'turns.interrupt',
+    requirements.turns?.interrupt,
+    caps.turns.interrupt !== 'unsupported'
+  )
+  checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
+  if (requirements.permissions === 'client-mediated') {
+    checkNeed(
+      missing,
+      'permissions.brokerToClientRequests',
+      'required',
+      caps.permissions?.brokerToClientRequests ?? false
+    )
+  }
+  checkNeed(
+    missing,
+    'events.assistantDeltas',
+    requirements.events?.assistantDeltas,
+    caps.events.assistantDeltas
+  )
+  checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
+  checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
+  checkNeed(
+    missing,
+    'events.diagnostics',
+    requirements.events?.diagnostics,
+    caps.events.diagnostics
+  )
+  checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
+  checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
+  checkNeed(
+    missing,
+    'control.reconcile',
+    requirements.control?.reconcile,
+    caps.control.status ?? false
+  )
+}
+
 function checkPreStartDriverCapabilities(
   requirements: CapabilityRequirements,
   driver: DriverSummary
@@ -138,60 +212,18 @@ function checkPreStartDriverCapabilities(
     return []
   }
   const missing: string[] = []
-  checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
-  checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
-  checkNeed(
-    missing,
-    'input.appendContext',
-    requirements.input?.appendContext,
-    caps.input.appendContext
-  )
-  checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
-  checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
+  checkCommonInputCapabilities(missing, requirements, caps)
+  // Divergent (pre-start): queue is requiredOnly-wrapped (a 'forbidden' queue
+  // requirement is NOT enforced before start).
   checkNeed(missing, 'input.queue', requiredOnly(requirements.input?.queue), caps.input.queue)
+  // Divergent (pre-start): only a 'multiple' concurrency requirement is enforced.
   if (
     requirements.turns?.concurrency === 'multiple' &&
     requirements.turns.concurrency !== caps.turns.concurrency
   ) {
     missing.push(`turns.concurrency.${requirements.turns.concurrency}`)
   }
-  checkNeed(
-    missing,
-    'turns.interrupt',
-    requirements.turns?.interrupt,
-    caps.turns.interrupt !== 'unsupported'
-  )
-  checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
-  if (requirements.permissions === 'client-mediated') {
-    checkNeed(
-      missing,
-      'permissions.brokerToClientRequests',
-      'required',
-      caps.permissions?.brokerToClientRequests ?? false
-    )
-  }
-  checkNeed(
-    missing,
-    'events.assistantDeltas',
-    requirements.events?.assistantDeltas,
-    caps.events.assistantDeltas
-  )
-  checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
-  checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
-  checkNeed(
-    missing,
-    'events.diagnostics',
-    requirements.events?.diagnostics,
-    caps.events.diagnostics
-  )
-  checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
-  checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
-  checkNeed(
-    missing,
-    'control.reconcile',
-    requirements.control?.reconcile,
-    caps.control.status ?? false
-  )
+  checkCommonTrailingCapabilities(missing, requirements, caps)
   return missing
 }
 
@@ -200,17 +232,10 @@ function checkInvocationCapabilities(
   caps: InvocationCapabilities
 ): string[] {
   const missing: string[] = []
-  checkNeed(missing, 'input.user', requirements.input?.user, caps.input.user)
-  checkNeed(missing, 'input.steer', requirements.input?.steer, caps.input.steer)
-  checkNeed(
-    missing,
-    'input.appendContext',
-    requirements.input?.appendContext,
-    caps.input.appendContext
-  )
-  checkNeed(missing, 'input.localImages', requirements.input?.localImages, caps.input.localImages)
-  checkNeed(missing, 'input.fileRefs', requirements.input?.fileRefs, caps.input.fileRefs)
+  checkCommonInputCapabilities(missing, requirements, caps)
+  // Divergent (post-start): queue requirement passes through unwrapped.
   checkNeed(missing, 'input.queue', requirements.input?.queue, caps.input.queue)
+  // Divergent (post-start): any non-'any' concurrency requirement is enforced.
   if (
     requirements.turns?.concurrency &&
     requirements.turns.concurrency !== 'any' &&
@@ -218,43 +243,7 @@ function checkInvocationCapabilities(
   ) {
     missing.push(`turns.concurrency.${requirements.turns.concurrency}`)
   }
-  checkNeed(
-    missing,
-    'turns.interrupt',
-    requirements.turns?.interrupt,
-    caps.turns.interrupt !== 'unsupported'
-  )
-  checkNeed(missing, 'continuation', requirements.continuation, caps.continuation.supported)
-  if (requirements.permissions === 'client-mediated') {
-    checkNeed(
-      missing,
-      'permissions.brokerToClientRequests',
-      'required',
-      caps.permissions?.brokerToClientRequests ?? false
-    )
-  }
-  checkNeed(
-    missing,
-    'events.assistantDeltas',
-    requirements.events?.assistantDeltas,
-    caps.events.assistantDeltas
-  )
-  checkNeed(missing, 'events.toolCalls', requirements.events?.toolCalls, caps.events.toolCalls)
-  checkNeed(missing, 'events.usage', requirements.events?.usage, caps.events.usage)
-  checkNeed(
-    missing,
-    'events.diagnostics',
-    requirements.events?.diagnostics,
-    caps.events.diagnostics
-  )
-  checkNeed(missing, 'control.stop', requirements.control?.stop, caps.control.stop)
-  checkNeed(missing, 'control.dispose', requirements.control?.dispose, caps.control.dispose)
-  checkNeed(
-    missing,
-    'control.reconcile',
-    requirements.control?.reconcile,
-    caps.control.status ?? false
-  )
+  checkCommonTrailingCapabilities(missing, requirements, caps)
   return missing
 }
 

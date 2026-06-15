@@ -2,7 +2,14 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { HrcLifecycleEvent } from 'hrc-core'
 
 import { consulKvGet as defaultConsulKvGet } from './consul-secrets.js'
-import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
+import {
+  isRecord,
+  mechanicalSummary,
+  redactSecrets,
+  stringValue,
+  truncateBytes,
+  truncateChars,
+} from './stacked-shared.js'
 import { FlushReason, Phase, type Summarizer, type SummarizerInput } from './stacked-types.js'
 
 const MODEL = 'claude-haiku-4-5'
@@ -14,8 +21,6 @@ const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_DIGEST_BYTES = 24_000
 const DEFAULT_MAX_EVENTS = 120
 const TEXT_PREVIEW_CHARS = 500
-
-const textEncoder = new TextEncoder()
 
 type AnthropicLike = {
   messages: {
@@ -163,7 +168,7 @@ function buildPrompt(input: {
   const digest = buildDigest(input.events, input.maxEvents)
   const windowLabel = formatWindow(input.windowMs)
   const prefix = `Summarize what this agent did in the past ${windowLabel}. One sentence, present tense, concrete. Phase: ${input.phase}. Flush: ${input.flush}. Events:\n`
-  return boundString(redactSecrets(`${prefix}${digest}`), input.maxDigestBytes)
+  return truncateBytes(redactSecrets(`${prefix}${digest}`), input.maxDigestBytes)
 }
 
 function buildDigest(events: HrcLifecycleEvent[], maxEvents: number): string {
@@ -204,7 +209,7 @@ function payloadPreview(payload: Record<string, unknown>): string {
     payload['error'] ??
     payload['messageText'] ??
     payload['textDelta']
-  return truncateText(stringifyValue(interesting), TEXT_PREVIEW_CHARS)
+  return truncateChars(stringifyValue(interesting), TEXT_PREVIEW_CHARS, '...[truncated]')
 }
 
 function stringifyValue(value: unknown): string {
@@ -219,27 +224,6 @@ function stringifyValue(value: unknown): string {
   } catch {
     return String(value)
   }
-}
-
-function boundString(value: string, maxBytes: number): string {
-  const encoded = textEncoder.encode(value)
-  if (encoded.byteLength <= maxBytes) {
-    return value
-  }
-  const marker = '\n[truncated]'
-  const room = Math.max(0, maxBytes - marker.length)
-  let bounded = value.slice(0, room)
-  while (textEncoder.encode(bounded).byteLength > room) {
-    bounded = bounded.slice(0, -1)
-  }
-  return `${bounded}${marker}`
-}
-
-function truncateText(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value
-  }
-  return `${value.slice(0, Math.max(0, maxChars - 14))}...[truncated]`
 }
 
 function formatWindow(ms: number): string {

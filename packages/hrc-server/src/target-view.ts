@@ -9,7 +9,12 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
-import { normalizeTargetLane, normalizeTargetSessionRef, targetLaneCandidates } from './messages.js'
+import {
+  formatSessionRef,
+  normalizeTargetLane,
+  normalizeTargetSessionRef,
+  targetLaneCandidates,
+} from './messages.js'
 import { isRuntimeUnavailableStatus, requireContinuity, requireSession } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
 import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
@@ -191,7 +196,7 @@ export function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTar
   const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
 
   return {
-    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+    sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
     laneRef,
     state,

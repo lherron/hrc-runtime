@@ -18,7 +18,6 @@ import {
 } from './runtime-select.js'
 import {
   type ExecAttachDescriptor,
-  buildManagedAttachIntent,
   buildManagedRunIntent,
   buildManagedStartIntent,
   parseScopePrompt,
@@ -585,7 +584,6 @@ export async function cmdAttach(args: string[]): Promise<void> {
   try {
     const scope = resolveManagedScopeContext(target)
     sessionRef = scope.sessionRef
-    const intent = buildManagedAttachIntent(scope)
 
     if (dryRun) {
       await printLocalAttachPreview(target, sessionRef)
@@ -607,8 +605,7 @@ export async function cmdAttach(args: string[]): Promise<void> {
     const descriptor: ExecAttachDescriptor = await attachWithRetry(
       client,
       resolved.hostSessionId,
-      runtime,
-      intent
+      runtime
     )
     execAttachCommand(descriptor.argv, descriptor.env)
   } catch (err) {

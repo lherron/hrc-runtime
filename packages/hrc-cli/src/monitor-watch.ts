@@ -38,6 +38,8 @@ import {
 import { MonitorResult } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
+import { splitCsv } from './cli/argv.js'
+import { matchStringFlag, parseNonNegativeInteger, parsePositiveInteger } from './monitor-args.js'
 import {
   MSG_REQUIRED_CONDITIONS,
   POLL_MS,
@@ -55,6 +57,15 @@ import {
 // -- Types -------------------------------------------------------------------
 
 type MonitorOutputEvent = HrcMonitorEvent | Record<string, unknown>
+
+type FilterSpec =
+  | { milestone: true }
+  | {
+      milestone?: false | undefined
+      kinds?: string[] | undefined
+      tools?: string[] | undefined
+      grep?: string | undefined
+    }
 
 /** Structured args accepted when invoked directly (e.g. from tests). */
 export type MonitorWatchArgs = {
@@ -882,45 +893,6 @@ function parseArgv(args: string[]): MonitorWatchArgs {
   }
 }
 
-/**
- * Match a `--name value` or `--name=value` string flag. Returns the parsed
- * value plus the index to resume from (so the caller advances past a consumed
- * positional value), or undefined when `arg` is not this flag.
- */
-function matchStringFlag(
-  arg: string,
-  name: string,
-  args: string[],
-  index: number
-): { value: string; next: number } | undefined {
-  if (arg === name) {
-    const val = args[index + 1]
-    if (val === undefined) throw new CliUsageError(`${name} requires a value`)
-    return { value: val, next: index + 1 }
-  }
-  const prefix = `${name}=`
-  if (arg.startsWith(prefix)) {
-    return { value: arg.slice(prefix.length), next: index }
-  }
-  return undefined
-}
-
-function parsePositiveInteger(flagName: string, raw: string): number {
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new CliUsageError(`${flagName} must be a positive integer`)
-  }
-  return parsed
-}
-
-function parseNonNegativeInteger(flagName: string, raw: string): number {
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new CliUsageError(`${flagName} must be a non-negative integer`)
-  }
-  return parsed
-}
-
 // -- Event filtering (T-04232) ------------------------------------------------
 
 const MILESTONE_EVENT_KINDS = new Set<string>([
@@ -940,21 +912,29 @@ const MILESTONE_BASH_NEEDLES = [
   'git commit',
 ]
 
-function splitList(value: string): string[] {
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+function normalizeEventFilterSpec(args: MonitorWatchArgs): FilterSpec | undefined {
+  if (args.milestone === true) return { milestone: true }
+
+  const spec: FilterSpec = {}
+  let any = false
+  if (args.kind !== undefined && args.kind.trim() !== '') {
+    spec.kinds = splitCsv(args.kind)
+    any = true
+  }
+  if (args.tool !== undefined && args.tool.trim() !== '') {
+    spec.tools = splitCsv(args.tool)
+    any = true
+  }
+  if (args.grep !== undefined && args.grep !== '') {
+    spec.grep = args.grep
+    any = true
+  }
+  return any ? spec : undefined
 }
 
 /** True when any of the --kind/--tool/--grep/--milestone filters is requested. */
 function isFilterActive(args: MonitorWatchArgs): boolean {
-  return (
-    args.milestone === true ||
-    (args.kind !== undefined && args.kind.trim() !== '') ||
-    (args.tool !== undefined && args.tool.trim() !== '') ||
-    (args.grep !== undefined && args.grep !== '')
-  )
+  return normalizeEventFilterSpec(args) !== undefined
 }
 
 function eventKindOf(event: MonitorOutputEvent): string {
@@ -991,25 +971,26 @@ function isMilestoneEvent(event: MonitorOutputEvent): boolean {
  * `milestone` supersedes kind/tool/grep. Returns null when no filter is active.
  */
 function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) => boolean) | null {
-  if (args.milestone === true) {
+  const spec = normalizeEventFilterSpec(args)
+  if (spec === undefined) return null
+  if (spec.milestone === true) {
     return (event) => isMilestoneEvent(event)
   }
   const predicates: Array<(event: MonitorOutputEvent) => boolean> = []
-  if (args.kind !== undefined && args.kind.trim() !== '') {
-    const kinds = new Set(splitList(args.kind))
+  if (spec.kinds !== undefined) {
+    const kinds = new Set(spec.kinds)
     predicates.push((event) => kinds.has(eventKindOf(event)))
   }
-  if (args.tool !== undefined && args.tool.trim() !== '') {
-    const tools = new Set(splitList(args.tool))
+  if (spec.tools !== undefined) {
+    const tools = new Set(spec.tools)
     predicates.push(
       (event) => eventKindOf(event) === 'turn.tool_call' && tools.has(payloadToolName(event) ?? '')
     )
   }
-  if (args.grep !== undefined && args.grep !== '') {
-    const needle = args.grep
+  if (spec.grep !== undefined) {
+    const needle = spec.grep
     predicates.push((event) => JSON.stringify(payloadOf(event)).includes(needle))
   }
-  if (predicates.length === 0) return null
   return (event) => predicates.every((predicate) => predicate(event))
 }
 
@@ -1018,22 +999,14 @@ function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) 
  * Returns undefined when no filter is active so the unfiltered fast path is kept.
  */
 function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters | undefined {
-  if (args.milestone === true) return { milestone: true }
-  const filters: HrcLifecycleMonitorFilters = {}
-  let any = false
-  if (args.kind !== undefined && args.kind.trim() !== '') {
-    filters.eventKinds = splitList(args.kind)
-    any = true
+  const spec = normalizeEventFilterSpec(args)
+  if (spec === undefined) return undefined
+  if (spec.milestone === true) return { milestone: true }
+  return {
+    ...(spec.kinds !== undefined ? { eventKinds: spec.kinds } : {}),
+    ...(spec.tools !== undefined ? { toolNames: spec.tools } : {}),
+    ...(spec.grep !== undefined ? { payloadContains: spec.grep } : {}),
   }
-  if (args.tool !== undefined && args.tool.trim() !== '') {
-    filters.toolNames = splitList(args.tool)
-    any = true
-  }
-  if (args.grep !== undefined && args.grep !== '') {
-    filters.payloadContains = args.grep
-    any = true
-  }
-  return any ? filters : undefined
 }
 
 function eventsHighWater(events: HrcMonitorEvent[]): number {

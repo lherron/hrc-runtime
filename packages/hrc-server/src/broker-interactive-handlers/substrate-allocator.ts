@@ -252,6 +252,30 @@ export async function allocateBrokerSubstrate(
 }
 
 /**
+ * Project the SUBSTRATE/ENDPOINT axes of a {@link BrokerSubstrateAllocation} down
+ * to the fields BOTH durable adapters map identically into the legacy flat
+ * {@link BrokerTmuxAllocation}. The tmux adapter appends the TUI lease + window +
+ * legacy single-pane mirror; the headless adapter uses this base unchanged. The
+ * conditional `attachTokenRef`/`brokerPid` spreads are preserved exactly (never
+ * materialised as `undefined`) so the persisted shape is byte-identical.
+ */
+function projectBaseAllocation(sub: BrokerSubstrateAllocation): BrokerTmuxAllocation {
+  return {
+    socketPath: sub.substrate.tmuxSocketPath,
+    allocatedAt: sub.allocatedAt,
+    generation: sub.substrate.generation,
+    brokerIpcSocketPath: sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
+    attachToken: sub.attachToken,
+    ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
+      ? { attachTokenRef: sub.endpoint.attachTokenRef }
+      : {}),
+    brokerCommand: sub.brokerCommand,
+    ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
+    brokerWindow: sub.brokerWindow,
+  }
+}
+
+/**
  * T-01812 Phase 3 — durable interactive broker allocator. A thin adapter over
  * {@link allocateBrokerSubstrate} with presentation='tmux-tui': it reproduces
  * today's two-window interactive allocation (broker window over Unix IPC + TUI
@@ -282,19 +306,8 @@ export function createBrokerDurableTmuxAllocator(
       const tuiWindow = sub.tuiWindow as BrokerWindowIdentity
       const lease = sub.tuiLease as BrokerTmuxLease
       return {
-        socketPath: sub.substrate.tmuxSocketPath,
-        allocatedAt: sub.allocatedAt,
-        generation: sub.substrate.generation,
+        ...projectBaseAllocation(sub),
         lease,
-        brokerIpcSocketPath:
-          sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
-        attachToken: sub.attachToken,
-        ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
-          ? { attachTokenRef: sub.endpoint.attachTokenRef }
-          : {}),
-        brokerCommand: sub.brokerCommand,
-        ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
-        brokerWindow: sub.brokerWindow,
         tuiWindow,
         // Legacy single-pane fields mirror the TUI pane for restart reconcile /
         // teardown that still reads the flat shape.
@@ -337,21 +350,8 @@ export function createBrokerDurableHeadlessAllocator(
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'none',
       })
-      return {
-        socketPath: sub.substrate.tmuxSocketPath,
-        allocatedAt: sub.allocatedAt,
-        generation: sub.substrate.generation,
-        // No lease / tuiWindow: presentation='none' has no operator pane.
-        brokerIpcSocketPath:
-          sub.endpoint.kind === 'unix-jsonrpc-ndjson' ? sub.endpoint.socketPath : '',
-        attachToken: sub.attachToken,
-        ...(sub.endpoint.kind === 'unix-jsonrpc-ndjson'
-          ? { attachTokenRef: sub.endpoint.attachTokenRef }
-          : {}),
-        brokerCommand: sub.brokerCommand,
-        ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
-        brokerWindow: sub.brokerWindow,
-      }
+      // No lease / tuiWindow: presentation='none' has no operator pane.
+      return projectBaseAllocation(sub)
     },
   }
 }

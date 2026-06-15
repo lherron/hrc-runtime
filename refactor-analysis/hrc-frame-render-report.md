@@ -1,190 +1,125 @@
-# Refactor Analysis — `packages/hrc-frame-render`
+# 🔧 Refactoring Analysis — packages/hrc-frame-render/src
 
-Behavior-preserving refactor audit. Scope: `src/` (excluding `src/tests/`).
-Date: 2026-06-08.
+**Target:** `packages/hrc-frame-render/src` (profile: general) · **Files read:** 5/5 source (index.ts, types.ts, logger.ts, session-events-manager.ts, hrc-event-adapter.ts) + both test files scanned · **Lines:** 1566 source · **Package type:** near-leaf library, ONE in-repo consumer (`hrcchat-cli`)
 
-## Package shape
+## 🧭 Summary
 
-| File | Lines | Role |
-|------|-------|------|
-| `src/session-events-manager.ts` | 973 | Event-fold projection + frame builder + `SessionEventsManager` class |
-| `src/hrc-event-adapter.ts` | 321 | HRC lifecycle event → `SessionEventEnvelope` adapter |
-| `src/types.ts` | 193 | Public type/union/const surface |
-| `src/logger.ts` | 61 | JSON line logger factory |
-| `src/index.ts` | 34 | Barrel of public exports |
+The package folds gateway/HRC session events into a per-run projection (`RunState`) and renders frames (`RenderFrame`). It is well-structured: immutable-ish reducer, derived-tuple metadata-event type, decent characterization tests in `tests/`. The central risk is `processEvent` (a 460-line `noExcessiveCognitiveComplexity`-suppressed switch with subtle assistant-segment state). The biggest *mechanism* opportunities are de-abstraction: a wide exported surface (sink metadata, second callback, several helper exports, all `Gateway*` event types) that has **no in-repo consumer**, plus the implicit assistant-segment state machine that the `upsertAssistantSegment` mode-flags reify by accident.
 
-Test coverage: `src/tests/session-events-manager.test.ts` (450 LOC) exercises `SessionEventsManager.receive`/`runStateToFrame`/projection; `src/tests/hrc-event-adapter.test.ts` (244 LOC) exercises `adaptHrcLifecycleEvent`. The core projection logic is well covered, which makes internal extraction relatively safe (behavior is pinned by tests).
+## 🚪 Public boundary (assess first)
 
----
+`index.ts` re-exports: `adaptHrcLifecycleEvent`, `canonicalSessionRefFromEvent`, `hrcLifecycleEventToSessionEnvelope` (alias), `HrcLifecycleEventPayload`; `createLogger`; `SessionEventsManager`, `runStateToFrame`, `AssistantSegment`, `OnRenderCallback`, `OnRunQueuedCallback`, `RunState`; plus ~17 type exports (`Gateway*Event`, `RenderFrame/Block/Action`, `PermissionAction`, `RunId`, `ProjectId`, `SessionEventEnvelope`).
 
-## SOLID Scorecard
+**Actual in-repo usage (`hrcchat-cli` only):** `SessionEventsManager` (constructor with 2-arg `onRender`, `.subscribe`, `.receive`), `adaptHrcLifecycleEvent`, and the types `RenderFrame`, `RenderBlock`, `RenderAction`, `SessionEventEnvelope`. That's it.
 
-| Principle | Grade | Notes |
-|-----------|-------|-------|
-| **S** — Single Responsibility | **D** | `session-events-manager.ts` mixes a 480-line event-fold reducer, the frame-rendering pipeline, AND the stateful manager class in one 973-line file. `processEvent` alone is one giant function with nested closures. |
-| **O** — Open/Closed | **C** | Two parallel `switch(event.type)` chains (`processEvent`, `getAffectedRunId`) that must both grow per new event type. Acceptable for a closed event union, but the duplication-of-cases coupling is real. |
-| **L** — Liskov | **A** | No inheritance, no overrides. N/A and clean. |
-| **I** — Interface Segregation | **A** | No fat interfaces; `RunState`/`ToolExecution` are data records, not behavior contracts. |
-| **D** — Dependency Inversion | **B** | `createLogger` is called at module scope as a hidden singleton (`const log = ...`) in two files — a minor hardcoded dependency, but callbacks (`onRender`, `onRunQueued`) are properly injected into the manager. |
+**Unconsumed in-repo:** `runStateToFrame` (used internally; exported but no external caller), `canonicalSessionRefFromEvent`, `hrcLifecycleEventToSessionEnvelope` alias, `OnRunQueuedCallback` + the manager's `onRunQueued` ctor param, `SessionEventsManager.setSinkMetadata` + `getRunState`, the `RunState.sinkMetadata` field, the 5th `run` arg of `OnRenderCallback`, and every `Gateway*Event` type plus `PermissionAction`/`RunId`/`ProjectId`.
 
----
+The doc comments (`sinkMetadata`, `deriveProjectId`) name **gateway-discord** as the intended consumer, but no such package exists in this repo. So this surface is either (a) genuinely public API for an out-of-repo/future consumer, or (b) speculative generality. **Contraindication is real:** removing a published export is an M02 contract break and may strand an external sink. Treat all surface-narrowing as DEFERRED/public — do not auto-apply.
 
-## Priority Refactorings
+- **[T07] narrow leaky boundary — `onRender` 5th arg `run: RunState`** (`session-events-manager.ts:791-797`): consumer ignores it (`(_sessionRef, _projectId, _runId, frame) =>`). Exposes the full mutable internal `RunState` to every sink. DEFERRED (public-surface). 
+- **[T16] collapse speculative generality — sink metadata + 2nd callback + helper exports**: `setSinkMetadata`/`getRunState`/`sinkMetadata`/`onRunQueued`/`canonicalSessionRefFromEvent`/`hrcLifecycleEventToSessionEnvelope` have zero in-repo callers. DEFERRED (public-surface; requires confirming no external consumer).
 
-### P1 — Split `session-events-manager.ts` into reducer / frame-builder / manager modules
-- **Location:** `src/session-events-manager.ts:1-973`
-- **Principle:** S (Single Responsibility), file > 300 lines.
-- **Current:** One file holds three distinct concerns: (a) the event-fold reducer (`processEvent` + helpers, lines 84-618), (b) the frame projection pipeline (`runStateToFrame` + `toolBlocks`/`noticeBlocks`/`segmentBlocks`/`permissionBlock`/`progressPlaceholder`/`mediaRefBlocks`/`titleFor`/`formatToolSummary`, lines 620-805), (c) the `SessionEventsManager` stateful class (lines 817-973).
-- **Suggested:** Move the reducer to `src/run-reducer.ts`, the frame pipeline to `src/run-state-to-frame.ts`, keep the class in `session-events-manager.ts`. Re-export the same symbols from `index.ts` so the public surface is byte-identical. Internal-only file moves.
-- **Risk:** **Med** — touches many internal imports; mechanical but broad. `index.ts` re-export keeps the public API stable.
-- **API-impact:** **internal-only** (public exports preserved via barrel).
-- **Effort:** M
-- **Tests:** Existing two test files import from package root / module paths — verify their import specifiers. If they import `./session-events-manager.js` directly for `runStateToFrame`/`SessionEventsManager`, keep those symbols re-exported from that file or update test imports (a private-symbol-follow rename, allowed). Run full `bun test` after.
+**Verdict: 🟡** — internals are healthy and safe to churn; the boundary is wider than its single consumer and several constructs are unexercised, but they may serve an out-of-repo sink, so narrowing is deferred to a human.
 
-### P2 — Decompose `processEvent` (≈480 lines, one function)
-- **Location:** `src/session-events-manager.ts:134-618`
-- **Principle:** S; long method; deep nesting; high cognitive complexity (already has a `biome-ignore noExcessiveCognitiveComplexity` suppression at line 134, an explicit smell marker).
-- **Current:** A single function containing 3 nested closures (`getOrCreateRun`, `closeActiveSegment`, `upsertAssistantSegment`) plus a 15-case `switch`. Each case mutates `run` and calls `newState.runs.set(...)`. `tool_execution_end` (lines 470-565) is ~95 lines by itself.
-- **Suggested:** Extract each `case` body into a private handler `handleRunQueued(run, event, seq)`, `handleToolExecutionEnd(run, event, seq)`, etc., each mutating the cloned `run`. Lift `getOrCreateRun`/`closeActiveSegment`/`upsertAssistantSegment` to module-level helpers taking explicit params (they close over only `newState`/`state`/`run`, all passable). This drops nesting and lets the biome suppression be removed.
-- **Risk:** **Med** — large surface, but pinned by `session-events-manager.test.ts`. Pure behavior-preserving extraction.
-- **API-impact:** **internal-only** (`processEvent` is not exported).
-- **Effort:** L
-- **Tests:** `src/tests/session-events-manager.test.ts` covers the projection end-to-end; rely on it as the safety net. No test edits expected.
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-### P3 — Lift the inline `result` shape type in `tool_execution_end`
-- **Location:** `src/session-events-manager.ts:487-510`
-- **Principle:** primitive obsession / duplicated block; smell.
-- **Current:** A ~24-line inline structural type for `event.result` with `content` and `details.content` arrays of the *identical* block shape declared twice.
-- **Suggested:** Declare a private `type ToolResultContentBlock = {...}` once and reuse it for both `content` and `details.content`. Pure internal type alias.
-- **Risk:** **Low**
-- **API-impact:** **internal-only**
+### F1 — [T10] Reify the implicit assistant-segment state machine
+- **Location:** `session-events-manager.ts:181-230` (`upsertAssistantSegment`) consumed by `message_start/update/end`, `turn_end`, `run_completed` (lines 289-439).
+- **Mechanism repaired:** implicit state machine. The "active segment vs. current message ref vs. id-keyed segment" lifecycle is encoded across four boolean-ish dimensions (`mode: append|replace|set`, `close`, `rawId !== undefined`, `activeAssistantSegmentId`). The transitions live as ad-hoc `findIndex` branches duplicated in `message_update` (lines 387-389, 405-407) and the `upsert` helper.
+- **Symptom:** `noExcessiveCognitiveComplexity` suppression on `processEvent`; the segment branches are the bulk of it.
+- **Current→Suggested:** extract a small `AssistantSegmentBuffer` with named transitions (`startMessage(ref)`, `appendDelta(ref?, text)`, `replaceBody(ref?, text)`, `closeActive()`) owning `assistantSegments` + `activeAssistantSegmentId` + `currentAssistantMessageRef`. `processEvent` calls intent-named methods instead of passing mode/close flags.
+- **Direction:** extract missing abstraction (toward structure — but it *replaces* the flag-bag, not adds to it).
+- **Preservation:** test-suite (the two existing suites + `hrcchat-cli/render-frame.test.ts` cover start/update/end/turn_end ordering); ideally add char-tests first.
+- **Falsifiable signal:** `processEvent` drops below the complexity threshold and the `biome-ignore` on line 141 can be removed; segment tests stay green.
+- **Risk:** Med · **API-impact:** internal-only · **Effort:** M
+- **Tests:** existing segment-ordering tests; add a focused buffer unit test.
+- **Contraindication:** the four call-sites have *subtly* different `targetRef ?? currentAssistantMessageRef` fallbacks (lines 338, 378); the extraction must preserve each, not unify them prematurely.
+
+### F2 — [T15] Extract the duplicated "merge new-or-keep-existing tool payload" intent
+- **Location:** `session-events-manager.ts:514-547` (`tool_execution_end`).
+- **Mechanism repaired:** missing abstraction / duplicated intent. The `finalOutput`/`finalImages`/`finalMediaRefs` "prefer new else keep existing" computation (lines 519-521) plus the two near-identical object-spreads (the `toolIndex >= 0` update vs. the `else` push, lines 523-547) restate one merge rule twice.
+- **Symptom:** parallel triplets `output||existing`, `images.length? : existing`, `mediaRefs.length? : existing`; copy-pasted push/update shapes.
+- **Current→Suggested:** a local `mergeToolResult(existing | undefined, {status, output, images, mediaRefs})` returning the finished `ToolExecution`; both arms call it.
+- **Direction:** extract (toward structure, dedup).
+- **Preservation:** char-test (the existing manager test exercises tool start→end). 
+- **Falsifiable signal:** the two spread blocks collapse to one return; tool-result tests green.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Tests:** existing tool-execution test cases.
+- **Contraindication:** the `images.length > 0 ? images : existingImages` keeps a *present-but-empty* prior array distinct from undefined — preserve exact truthiness, don't coalesce with `??`.
+
+### F3 — [T22] Guard-clause the per-case `if (!runId) break` prologue
+- **Location:** `session-events-manager.ts` — repeated at lines 290-292, 330-332, 372-374, 416-418, 442-444, 478-480, 580-582 (seven cases).
+- **Mechanism repaired:** flatten nesting / dedup of the run-context precondition. Every context-run event opens with the same 3-line guard + `getOrCreateRun(runId)` + `run.lastSeq = seq`.
+- **Symptom:** seven identical 5-line preambles inside the switch.
+- **Current→Suggested:** since `getAffectedRunId` (lines 940-956) *already* classifies which events carry their own `runId` vs. context `runId`, resolve the effective `runId` once before the switch and skip the case if absent — or pass the resolved `run` into per-event handler functions. Lightest version: hoist `if (!runId) return newState` for the context-run group.
+- **Direction:** collapse (toward less nesting).
+- **Preservation:** test-suite; behavior identical because every guarded case currently `break`s (no state mutation) when `runId` is absent.
+- **Falsifiable signal:** seven guards become one; switch arms shrink; all tests green.
+- **Risk:** Med (touches the central reducer) · **API-impact:** internal-only · **Effort:** M
+- **Tests:** both manager suites + consumer render-frame suite.
+- **Contraindication:** `getAffectedRunId` and `processEvent` must agree on the event→runId mapping; don't let the hoist diverge from the dispatcher classification. Best done *with* F1 (per-event handler functions) rather than before it.
+
+### F4 — [T17] Make `STATUS_TO_PHASE` total at the type level instead of relying on the `Record` literal
+- **Location:** `session-events-manager.ts:604-619` (`STATUS_TO_PHASE`, `PHASE_EMOJI`).
+- **Mechanism repaired:** partial→total via constraint. These are already `Record<RunState['status'], ...>` / `Record<RenderFrame['phase'], ...>`, so the compiler *already* enforces totality. **This is a where-NOT candidate confirmed: the smell is absent.** No action. (Recorded so a later pass doesn't "fix" it.)
+
+### F5 — [T16] `hrcLifecycleEventToSessionEnvelope` alias is a pure pass-through
+- **Location:** `hrc-event-adapter.ts:321` (`export const hrcLifecycleEventToSessionEnvelope = adaptHrcLifecycleEvent`).
+- **Mechanism repaired:** remove middle man (T23) / collapse premature abstraction. Two exported names for one function; the alias has no in-repo caller.
+- **Symptom:** duplicate public name.
+- **Current→Suggested:** drop the alias (or, if kept for an external consumer, leave it). 
+- **Direction:** de-abstract (remove).
+- **Preservation:** type/compiler-proof (removal surfaces as a missing-export error if anything imports it).
+- **Falsifiable signal:** build stays green after removal.
+- **Risk:** Low (mechanically) but **API-impact: public-surface** → DEFERRED. A human must confirm no external import.
 - **Effort:** S
-- **Tests:** Covered by tool-result projection cases in the manager test.
+- **Contraindication:** may be the *intended* stable name for gateway-discord; the canonical `adaptHrcLifecycleEvent` could be the one to deprecate instead.
 
-### P4 — Dedupe the `mediaRef` block shape, repeated 4×
-- **Location:** `src/session-events-manager.ts:20-27, 480-485, 679-690, 756-764`
-- **Principle:** DRY / duplicated block.
-- **Current:** The `{ url; mimeType?; filename?; alt? }` mediaRef record literal is re-spelled in `ToolExecution.mediaRefs`, the local `mediaRefs` accumulator, `collectMediaRefs`'s return type and its inner `allMediaRefs`, and `mediaRefBlocks`.
-- **Suggested:** Introduce one private `type MediaRef = { url: string; mimeType?: string | undefined; filename?: string | undefined; alt?: string | undefined }` and reference it everywhere. Internal type only.
-- **Risk:** **Low**
-- **API-impact:** **internal-only** (not exported; `RenderBlock`'s `media_ref` variant in `types.ts` stays untouched).
-- **Effort:** S
-- **Tests:** Existing media-ref projection test.
+### F6 — [T15] Hoist the repeated `getString`-on-record admission destructure
+- **Location:** `hrc-event-adapter.ts:263-275` (the `input.` branch).
+- **Mechanism repaired:** small missing abstraction / readability; low priority. The inline `isRecord(payload) ? payload : {}` then four `getString(pr, …)` calls mirror the `adaptToolCall`/`adaptToolResult` record-guard pattern.
+- **Current→Suggested:** marginal; only worth it alongside a broader adapter pass. Could factor a `recordOrEmpty(payload)` helper used by all `adapt*` functions (lines 93, 113, 143, 199, 264).
+- **Direction:** extract (minor).
+- **Preservation:** char-test (adapter suite covers `input.*` → notice).
+- **Falsifiable signal:** `isRecord(x) ? x : {}` appears once.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Contraindication:** the guards return *different* sentinels in different functions (`undefined` vs `{}`); a shared helper must not flatten that distinction.
 
-### P5 — Collapse the redundant trailing `default` in `processEvent`
-- **Location:** `src/session-events-manager.ts:610-614`
-- **Principle:** dead code / no-op branch.
-- **Current:**
-  ```ts
-  default:
-    if (isSessionMetadataEvent(event)) {
-      break
-    }
-    break
-  ```
-  Both branches `break`; the `if` has no observable effect.
-- **Suggested:** Replace with a bare `default: break`. If the `isSessionMetadataEvent` call documents "known-but-ignored", swap for a comment instead of a dead conditional.
-- **Risk:** **Low**
-- **API-impact:** **internal-only**
-- **Effort:** S
-- **Tests:** Metadata-event drop is covered; no behavior change.
+### F7 — [T01] `createLogger` reads `process.env['LOG_LEVEL']` on every `write`
+- **Location:** `logger.ts:17-26` (`thresholdFromEnv` called per `write`).
+- **Mechanism repaired:** substitution seam / hidden global. The threshold is recomputed from `process.env` on every log line; there is no seam to inject a level for tests, and re-reading env per-call is both a hidden dependency and needless work.
+- **Symptom:** singleton env read buried in the hot path.
+- **Current→Suggested:** compute the threshold once at module/logger creation (or accept an optional `level` in `createLogger`'s arg object). 
+- **Direction:** seam (toward injectability) + minor de-work.
+- **Preservation:** observational/char-test; **behavior changes** for the (unlikely) case of `LOG_LEVEL` mutated mid-process — flag as a behavior-affecting nuance, so prefer the "read once at creation" form only if no test mutates env between calls.
+- **Falsifiable signal:** env read happens once per logger; log output unchanged in tests.
+- **Risk:** Low · **API-impact:** internal-only (the `createLogger` arg is exported; adding an *optional* field is additive) · **Effort:** S
+- **Contraindication:** if any test sets `LOG_LEVEL` after constructing a logger and expects the change to take effect, caching breaks it — verify first. Given this nuance, treat as borderline; only auto-apply the no-arg cache if env-mutation tests are absent.
 
-### P6 — Name magic numbers in title/summary truncation
-- **Location:** `src/session-events-manager.ts:644 (100), 654/658 (80), 659 (2)`
-- **Principle:** magic number.
-- **Current:** Title truncates at `100`, tool summaries at `80`, and `json.length > 2` (the empty-`{}` guard) are bare literals.
-- **Suggested:** Module-level `const TITLE_MAX_LEN = 100`, `const TOOL_SUMMARY_MAX_LEN = 80`, `const EMPTY_JSON_LEN = 2`. Internal constants only.
-- **Risk:** **Low**
-- **API-impact:** **internal-only**
-- **Effort:** S
-- **Tests:** Title/summary formatting covered by manager test.
+## 🪶 Deliberately left alone (where-NOT)
 
-### P7 — `formatToolSummary` ignores its first parameter
-- **Location:** `src/session-events-manager.ts:648` (`_toolName` unused), call sites `670, 750`
-- **Principle:** dead parameter / misleading signature.
-- **Current:** `formatToolSummary(_toolName, toolInput)` — the tool name is passed but never used.
-- **Suggested:** Drop the unused first parameter and update the two internal call sites. `formatToolSummary` is **not exported** (absent from `index.ts`), so this is internal-only. Verify `src/tests/` does not import it directly first; if it does, this becomes a private-symbol-follow edit (allowed) — otherwise leave as-is.
-- **Risk:** **Low** (becomes **Med** if a test imports the symbol directly)
-- **API-impact:** **internal-only**
-- **Effort:** S
-- **Tests:** Confirm no direct import in `session-events-manager.test.ts`.
+- **`STATUS_TO_PHASE` / `PHASE_EMOJI` (F4):** already `Record`-keyed on the source union → compiler-total. No partial-function smell.
+- **`SESSION_METADATA_EVENT_TYPES` tuple → union derivation (`types.ts:143-162`):** exemplary [T15] already done; the comment explicitly prevents drift. Do not "simplify."
+- **Magic numbers `TITLE_MAX_LEN`/`TOOL_SUMMARY_MAX_LEN`/`EMPTY_JSON_LEN` (`session-events-manager.ts:11-13`):** already named constants. Smell absent.
+- **`isRecord` duplicated in two files:** load-bearing micro-helper; extracting to a shared module would couple two otherwise-independent files for 3 lines. Leave (dup is cheaper than coupling here).
+- **Immutable-copy in `getOrCreateRun` (lines 150-175):** deliberate defensive cloning so the reducer doesn't mutate prior state shared with emitted frames. Do not "optimize away" the spreads.
+- **The wide `Gateway*Event` type exports:** likely the real contract for an external sink (gateway-discord per the doc comments). Narrowing is M02 — left for a human with consumer knowledge.
 
-### P8 — Reduce `runStateToFrame` length & nesting via small private extracts
-- **Location:** `src/session-events-manager.ts:766-805`
-- **Principle:** S (function ~40 lines doing assemble + sort + fallback + actions mapping).
-- **Current:** Builds timeline, sorts, appends permission/placeholder/media, maps actions, returns frame — several responsibilities inline.
-- **Suggested:** Extract `buildOrderedBlocks(run, phase)` and `buildActions(run)` private helpers. Minor; mostly aids P2 readability.
-- **Risk:** **Low**
-- **API-impact:** **internal-only** (`runStateToFrame` keeps identical signature/behavior).
-- **Effort:** S
-- **Tests:** Frame-assembly cases in manager test.
+## 🔭 If applying: outside-in sequence
 
-### P9 — Shorten `adaptHrcLifecycleEvent` (≈90 LOC) by extracting the kind dispatch
-- **Location:** `src/hrc-event-adapter.ts:228-319`
-- **Principle:** S; long method; switch chain.
-- **Current:** Guards (runId/projectId/sessionRef) + notice short-circuit + a 13-case `switch(event.eventKind)` + the `input.*` default branch, all inline in the exported function.
-- **Suggested:** Extract a private `adaptEventByKind(eventKind, payload, hrcSeq)` holding the switch, leaving `adaptHrcLifecycleEvent` to do guard/derive/envelope assembly. Behavior-identical; the extracted helper is not exported.
-- **Risk:** **Low**
-- **API-impact:** **internal-only**
-- **Effort:** S
-- **Tests:** `src/tests/hrc-event-adapter.test.ts` covers all kinds.
+1. **A [T40]:** add/confirm characterization tests on `SessionEventsManager.receive` → `RenderFrame` for the segment lifecycle and tool-merge paths (cover F1/F2/F3 before touching them). The consumer's `render-frame.test.ts` already gives partial coverage.
+2. **F2** (tool-merge dedup) — smallest, lowest risk, internal.
+3. **F6** (adapter record-guard) — internal, isolated.
+4. **F7** (logger env cache) — only after confirming no env-mutation test.
+5. **F1 + F3 together** (segment state machine + guard hoist) — the big internal win; do as one move since F3's per-event handlers fall out of F1's extraction.
+6. **DEFERRED (human):** boundary narrowing (onRender 5th arg, sink metadata, onRunQueued, alias F5) — only after confirming there is no out-of-repo consumer; M02 expand/contract if proceeding.
 
-### P10 — `hrcLifecycleEventToSessionEnvelope` is a public alias of `adaptHrcLifecycleEvent`
-- **Location:** `src/hrc-event-adapter.ts:321`; both re-exported in `index.ts:2,4`.
-- **Principle:** duplicated public name / possible dead alias.
-- **Current:** `export const hrcLifecycleEventToSessionEnvelope = adaptHrcLifecycleEvent` — two public names for one function.
-- **Suggested:** Likely a back-compat alias. **DEFER** — removing it changes the exported surface; a consumer in another package may import the old name.
-- **Risk:** **High** (export removal)
-- **API-impact:** **public-surface**
-- **Effort:** S (but defer)
-- **Tests:** N/A this phase.
+## ✅ Safety checklist
 
----
-
-## Code Smells Table
-
-| # | Location | Smell | Severity | Disposition |
-|---|----------|-------|----------|-------------|
-| 1 | `session-events-manager.ts:134-618` | Long function (480 LOC) + explicit cognitive-complexity suppression | High | P2 — apply |
-| 2 | `session-events-manager.ts:1-973` | God file (3 concerns) | High | P1 — apply (Med risk) |
-| 3 | `session-events-manager.ts:470-565` | Long case body (~95 LOC) `tool_execution_end` | Med | P2 — apply |
-| 4 | `session-events-manager.ts:487-510` | Duplicated inline block type | Med | P3 — apply |
-| 5 | `session-events-manager.ts:20-27,480-485,679-690,756-764` | mediaRef shape repeated 4× | Med | P4 — apply |
-| 6 | `session-events-manager.ts:610-614` | No-op `default` branch | Low | P5 — apply |
-| 7 | `session-events-manager.ts:644,654,658,659` | Magic numbers (100/80/2) | Low | P6 — apply |
-| 8 | `session-events-manager.ts:648` | Unused `_toolName` param | Low | P7 — apply (verify no test import) |
-| 9 | `session-events-manager.ts:174-223` | `upsertAssistantSegment` — 3-branch find/mutate duplication | Med | folded into P2 |
-| 10 | `session-events-manager.ts:956-972` vs `225-615` | Parallel `switch(event.type)` chains (`getAffectedRunId` mirrors `processEvent` cases) | Med | note (O) — leave; closed union |
-| 11 | `hrc-event-adapter.ts:228-319` | `adaptHrcLifecycleEvent` ~90 LOC guards + 13-case switch | Med | P9 — apply |
-| 12 | `hrc-event-adapter.ts:321` | Dead/duplicate public alias | High | P10 — DEFER (public) |
-| 13 | `logger.ts:7` / `hrc-event-adapter.ts:7` / `session-events-manager.ts:10` | Module-scope `createLogger` singleton (hidden dep) | Low | note (D) — leave; idiomatic |
-
----
-
-## Quick Wins (Low risk, internal-only — safe to auto-apply)
-
-- **P3** — single `ToolResultContentBlock` type.
-- **P4** — single `MediaRef` type.
-- **P5** — collapse no-op `default`.
-- **P6** — named truncation constants.
-- **P7** — drop unused `_toolName` param (pending no-test-import check).
-- **P8** — frame-builder extracts (`buildOrderedBlocks`/`buildActions`).
-- **P9** — extract `adaptEventByKind` from the adapter switch.
-
-## Medium (internal-only, larger — apply with the test suite as the gate)
-
-- **P1** — module split (re-export-preserving).
-- **P2** — `processEvent` decomposition into per-case private handlers + module-level segment helpers.
-
-## Deferred (do NOT touch this phase)
-
-- **P10 / Smell 12** — removing `hrcLifecycleEventToSessionEnvelope` alias: **public-surface, High risk.** Requires a cross-package grep for consumers and an owner decision.
-
----
-
-## Technical Debt Notes
-
-- **Two switch chains must co-evolve.** `processEvent` (state fold) and `getAffectedRunId` (run-id resolution) both branch on `event.type`. Adding an event type means editing both; nothing enforces parity. A future (non-behavior-preserving, out of scope) improvement is a single per-event descriptor table mapping `type → { affectedRunId, fold }`. Note only.
-- **`upsertAssistantSegment` is the trickiest logic** (3 fallback branches over active-segment vs explicit id; append/replace/set modes). Highest-value target to keep pinned by tests; preserve semantics exactly during P2.
-- **`Date.now()` inside `processEvent`/`runStateToFrame`** (lines 416, 803) makes output time-dependent. Do not "improve" by injecting a clock in this phase — that would be a behavior/API change.
-- The public type surface in `types.ts` is deliberately verbose (explicit `| undefined` unions, single-source `SESSION_METADATA_EVENT_TYPES` tuple driving the union). Intentional — do not "simplify".
+- [ ] Char-tests green BEFORE F1/F3 (central reducer).
+- [ ] F2: preserve `images.length>0 ? : existing` truthiness (not `??`).
+- [ ] F1: preserve each call-site's distinct `targetRef` fallback (lines 338 vs 378).
+- [ ] F3: keep `getAffectedRunId` classification in sync with the hoisted guard.
+- [ ] F7: do not cache the env read if any test mutates `LOG_LEVEL` post-construction.
+- [ ] No public export removed without confirming zero external consumers (F5 and all boundary items DEFERRED).
+- [ ] Run `hrc-frame-render` suite + `hrcchat-cli/render-frame.test.ts` after each step.

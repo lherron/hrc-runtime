@@ -185,10 +185,6 @@ export class SessionRepository {
     return row ? mapSessionRow(row) : null
   }
 
-  findByHostSessionId(hostSessionId: string): HrcSessionRecord | null {
-    return this.getByHostSessionId(hostSessionId)
-  }
-
   listByScopeRef(scopeRef: string, laneRef?: string | undefined): HrcSessionRecord[] {
     return this.listByFilters({ scopeRef, laneRef })
   }

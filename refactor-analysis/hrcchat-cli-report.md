@@ -1,137 +1,118 @@
-# Refactor Audit — `packages/hrcchat-cli/`
+# 🔧 Refactoring Analysis — packages/hrcchat-cli/src
 
-Behavior-preserving refactor pass. Read of all non-test `src/*.ts` and `src/commands/*.ts`.
-No source files were edited in this phase; report only.
+**Target:** `packages/hrcchat-cli/src` · **Files read:** 21/21 source `.ts` (all non-test) · **Lines:** ~3,477 · **Package type:** leaf CLI (private, `bin: hrcchat`, no `index.ts`, no library consumers)
 
-## Package shape
+## 🧭 Summary
+A well-factored Commander CLI with a clean command/helper split, injectable seams (timers, clients, `consulKvGet`, `readTaskState`), and a real test suite under `src/__tests__/`. The bulk of complexity lives in the `--stacked`/`--follow` aggregator pipeline. Findings are mostly small de-dup / cohesion repairs; the highest-value item is a **divergent duplicate `isTurnEnd`** whose two definitions disagree on which event kinds end a turn.
 
-- Bin entry: `src/main.ts` (commander program; the `hrcchat` CLI). The package
-  exposes **no `index.ts` barrel** and `package.json` ships only `dist` with a
-  single `bin`. The exported functions in `render-frame.ts`, `stacked-aggregator.ts`,
-  `stacked-summary.ts`, `stacked-types.ts`, `normalize.ts`, `resolve-intent.ts`,
-  `domain-error-format.ts`, `consul-secrets.ts` are consumed by **in-package tests**
-  (and `cmdTurn` re-uses them). No other package imports `hrcchat-cli` except one
-  `hrc-server` acceptance test that shells the CLI, not its symbols.
-- Practical consequence for safety: there is no published module API map, but the
-  emitted **NDJSON/`turn_stacked` JSON contract** (field order, key names, exit
-  codes) IS a runtime/public contract for downstream hosts (Monitor tool, `hrc
-  monitor wait`). Anything that changes those shapes is `public-surface` and DEFERRED.
+## 🚪 Public boundary (assess first)
+The observable surface is the **CLI contract**: command names/aliases, flags, exit codes (0/1/2/3/4/5/130 documented on `TurnExitError`), the `turn_stacked` NDJSON schema (`stacked-types.ts`, field order load-bearing), the `render_frame` NDJSON schema, and the `DmHandoffEnvelope` JSON (consumed by `hrc monitor wait msg:<id>`). No package imports from this one — there is no JS/TS API consumer, so **M02 expand/contract does not apply**; only the CLI/NDJSON contracts must be preserved.
 
-## SOLID scorecard
+- **T07 (align interface to usage):** none warranted. Command-handler signatures `(client, opts, positionals)` are uniform and intentional.
+- **M02:** N/A (leaf package, no importers).
+- **Verdict:** 🟢 Boundary is healthy. All findings below are internal-only except where explicitly flagged.
 
-| Principle | Grade | Notes |
-|-----------|-------|-------|
-| S — Single Responsibility | C+ | `stacked-aggregator.ts` (511) and `render-frame.ts` (507) each mix several concerns; `cmdTurn` (479, one function ~330 lines) interleaves arg-parse, dispatch, watch-loop, exit-code policy. |
-| O — Open/Closed | B | A few enum-keyed switch/if-chains for `eventKind`/`phase`/`flush` but they are exhaustive and small; growth pressure is low. |
-| L — Liskov | A | No bad overrides, no "not implemented" throws, no base-behavior drops. |
-| I — Interface Segregation | A- | Interfaces are small (`Summarizer` has 1 method; `TerminalFrameRenderer` 1). No fat interfaces. |
-| D — Dependency Inversion | A- | Strong seams: timers, `now`, summarizer, anthropic client, consul `kvGet`, streams all injectable. Only `main.ts` `createClient()` hardcodes `new HrcClient` (acceptable at composition root). |
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-Overall the package is well-factored for a CLI. Findings are mostly **local extractions** and **named constants**, all internal-only and low risk. The two genuinely large units (`cmdTurn`, the aggregator) are the meaningful S-targets.
+### F1 — Divergent duplicate `isTurnEnd` (two definitions, different semantics)
+- **Location:** `commands/turn.ts:395` and `stacked-aggregator.ts:448`
+- **Technique:** T15 extract missing abstraction (the *correct* terminal-event predicate)
+- **Mechanism repaired:** single source of truth for "what ends a turn" — currently two predicates silently disagree.
+- **Symptom:** `turn.ts` returns true for `turn_end || turn.completed`; the aggregator returns true for `turn.completed` only. The watch loop in `turn.ts` (line 302) gates `enrichFinalEvent` on its own `isTurnEnd`, then hands the event to the aggregator whose `receive()` (line 142) re-checks with the *narrower* predicate. A `turn_end` event would be enriched by the caller but **not** treated as terminal by the aggregator.
+- **Current → Suggested:** extract one `isTurnEndEvent` into `stacked-shared.ts` (or a new `event-kinds.ts`). **Direction note:** this is NOT a mechanical dedupe — the two bodies differ, so collapsing them is a *behavior decision*. Confirm via the live event stream which kinds the broker actually emits, then unify to the superset; that is why this is **deferred**, not auto-applied.
+- **Direction:** consolidate (after confirming the union is correct).
+- **Preservation:** test-suite (`stacked-aggregator.test.ts`, `turn.test.ts`) + observational (live broker event kinds).
+- **Falsifiable signal:** a fixture emitting `turn_end` (not `turn.completed`) produces a single terminal `phase:final` stacked line and exit 0.
+- **Risk:** Med · **API-impact:** internal-only (but affects observable terminal-frame timing) · **Effort:** S
+- **Tests:** add a `turn_end`-kind fixture to the aggregator test asserting terminal flush.
+- **Contraindication:** the narrower aggregator predicate may be deliberate if the broker never emits `turn_end` on the stacked path — verify before unifying.
 
----
+### F2 — Duplicate `stringValue` helper (identical body, two files)
+- **Location:** `stacked-shared.ts:30` and `domain-error-format.ts:70`
+- **Technique:** T15 extract missing abstraction / collapse duplication
+- **Mechanism repaired:** one canonical "non-empty string coercion".
+- **Symptom:** byte-identical `stringValue(value: unknown): string | undefined` defined twice.
+- **Current → Suggested:** import `stringValue` from `stacked-shared.ts` in `domain-error-format.ts`; delete the local copy.
+- **Direction:** consolidate.
+- **Preservation:** type/compiler-proof (identical signature) + test-suite (`domain-error-format.test.ts`).
+- **Falsifiable signal:** `domain-error-format.test.ts` stays green after the import swap.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** XS
+- **Tests:** existing.
+- **Contraindication:** `stacked-shared`'s docstring frames it as "stacked" helpers; if you want to avoid coupling domain-error formatting to the stacked module, move `stringValue`/`isRecord` to a neutral `primitives.ts` instead. Either way the duplication goes. **Auto-applicable.**
 
-## Priority Refactorings
+### F3 — Misleading `await` on a synchronous function
+- **Location:** `commands/summon.ts:20` (`await resolveRuntimeIntentForTarget(...)`)
+- **Technique:** T23 remove middle man / collapse pass-through (here: remove the false async signal)
+- **Mechanism repaired:** call-site honesty — `resolveRuntimeIntentForTarget` returns `HrcRuntimeIntent` (not a Promise; `resolve-intent.ts:109`). `turn.ts:122` and `dm.ts:42` correctly call it without `await`; only `summon.ts` awaits.
+- **Symptom:** `await` on a non-thenable — harmless at runtime, but implies I/O that isn't there and invites a future reader to assume the function is async.
+- **Current → Suggested:** drop the `await`.
+- **Direction:** simplify.
+- **Preservation:** type/compiler-proof (return type unchanged) + test-suite.
+- **Falsifiable signal:** `summon` smoke test unchanged; `tsc` green.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** XS
+- **Tests:** existing smoke.
+- **Contraindication:** none. **Auto-applicable.**
 
-### P1 — `cmdTurn` is a ~330-line function with 5 distinct responsibilities
-- **Location:** `src/commands/turn.ts:63` (`cmdTurn`, lines 63–392)
-- **Principle/smell:** S (Single Responsibility); long method; deep nesting in the watch loop.
-- **Current:** One function does: (1) body-source mutex + read, (2) duration/flag validation, (3) scope resolution + `--dry-run` print, (4) project-required guard, (5) `--new` clearContext, (6) handoff dispatch, (7) sink-format resolution, (8) the `for await` watch loop with stacked-vs-frame branching, (9) terminal-event/exit-code determination across `catch`/`finally` and post-loop blocks.
-- **Suggested:** Extract private helpers within the file (no signature change to `cmdTurn`):
-  `resolveTurnBody(opts, positionals)`, `validateStackedFlags(opts)`,
-  `buildDryRunPlan(...)`, `runWatchLoop(...)`, `finalizeExitCode(lastPhase, turnCompleted, stackedAggregator)`.
-  Keep all exports and behavior identical; this is pure decomposition.
-- **Risk:** Med (logic-dense; stall/SIGINT/abort interplay must be preserved exactly).
-- **API-impact:** internal-only (no exported-signature change; exit codes preserved).
-- **Effort:** M (2–3h, careful).
-- **Tests:** `src/__tests__/turn.test.ts` exercises this path — run after each extraction.
+### F4 — Truncation logic duplicated with subtly different markers
+- **Location:** `stacked-aggregator.ts:525` (`truncateFinalBody`, marker `...[truncated]`) and `stacked-summary.ts:238` (`truncateText`, marker `...[truncated]`) and `:224` (`boundString`, byte-bounded, marker `\n[truncated]`)
+- **Technique:** T15 extract missing abstraction (a `truncate.ts` with char-cap + byte-cap variants)
+- **Mechanism repaired:** one truncation policy module; today three near-copies drift independently.
+- **Symptom:** three hand-rolled truncators across two files; the char-cap pair is nearly identical, the byte-cap differs by design.
+- **Current → Suggested:** factor `truncateChars(s, cap, marker)` and `truncateBytes(s, cap)` into `stacked-shared.ts`. Keep the *exact existing markers* per call-site to preserve emitted strings (the NDJSON body is part of the contract).
+- **Direction:** consolidate.
+- **Preservation:** char-test (assert exact truncated output) — markers are observable in `turn_stacked` lines.
+- **Falsifiable signal:** aggregator/summary tests asserting the truncated suffix stay byte-identical.
+- **Risk:** Low · **API-impact:** internal-only (output bytes preserved) · **Effort:** S
+- **Tests:** add an exact-suffix char-test before refactor.
+- **Contraindication:** the differing markers are **load-bearing** (the byte-cap intentionally newline-prefixes). Do NOT unify the markers — only unify the mechanics. **Auto-applicable** if markers preserved.
 
-### P2 — `StackedAggregator` mixes timer scheduling, flush queueing, event classification, and line building
-- **Location:** `src/stacked-aggregator.ts:64` (class) + free functions 420–511.
-- **Principle/smell:** S (SRP); class has ~14 methods spanning 3 concerns (timer lifecycle, flush pipeline, JSON line construction).
-- **Current:** `buildLine` (351–406) is a 55-line method that also owns the load-bearing key-order contract; `phaseForFlush`, `summarizeSafely`, `enqueueFlush`, `flush` are all in one class.
-- **Suggested:** Extract `buildLine` into a private module-level pure function `buildStackedLine(input, opts, handoff, stackSeq)` (already nearly pure — only reads `this.options`/`this.stackSeq`/`++this.stackSeq`). Pass the incremented seq in. Keeps timer/flush state in the class. Low-risk because the function is already structured as a single return object.
-- **Risk:** Med (the JSON key order is a downstream truncation contract — extraction must preserve insertion order byte-for-byte).
-- **API-impact:** internal-only IF the emitted line shape is unchanged; the **emitted `turn_stacked` JSON itself is public-surface**, so the extraction is safe ONLY as a behavior-preserving move. Flag the contract, do not alter it.
-- **Effort:** M.
-- **Tests:** `src/__tests__/stacked-aggregator.test.ts`.
+### F5 — Repeated `aggregator.finish({phase, flush, exitCode, result, error?})` + `throw TurnExitError` blocks
+- **Location:** `commands/turn.ts:323-332`, `:359-370`, `:372-381`, `:383-390`
+- **Technique:** T19 conditional → dispatch (table of terminal outcomes) / T15
+- **Mechanism repaired:** one terminal-outcome table mapping `(phase → exitCode, result, message)` instead of four hand-aligned `finish(...) ; throw` pairs where the `exitCode`/`result`/`message` triple must be kept consistent by hand.
+- **Symptom:** four structurally identical "finalize the aggregator with this phase, then throw the matching exit error" blocks; e.g. `TURN_EXIT_RUNTIME_DEAD` is reused for both runtime-dead and turn-error with different `Result` values — easy to mis-pair.
+- **Current → Suggested:** a `const TERMINALS: Record<TerminalKind, {phase, flush, exitCode, result, message}>` plus a single `await finalizeTurn(kind)` helper.
+- **Direction:** consolidate / reify the implicit outcome machine.
+- **Preservation:** test-suite (`turn.test.ts` exercises exit codes) — but coverage of all four arms should be confirmed first.
+- **Falsifiable signal:** each terminal kind still yields its documented exit code and (stacked) emits its terminal frame once.
+- **Risk:** Med · **API-impact:** internal-only (exit codes are the contract — must not shift) · **Effort:** M
+- **Tests:** confirm `turn.test.ts` covers stall(1)/runtime-dead(4)/permission(5)/error; add missing arms before refactor.
+- **Contraindication:** the arms are not *byte*-identical (different messages/results); a table must preserve every triple exactly. Because exit codes are the user-facing contract, this is **deferred** for a human to verify per-arm coverage. **Deferred.**
 
-### P3 — `renderFrameToTerminalText` is a 90-line orchestrator with inline section logic
-- **Location:** `src/render-frame.ts:285` (`renderFrameToTerminalText`, 285–372).
-- **Principle/smell:** S (SRP); long method composed of header/title/status/permission/activity/answer/footer sections inline.
-- **Current:** Each `── section ──` comment block builds into a shared `lines` array; the activity-skip math and answer separator live inline.
-- **Suggested:** Extract per-section private helpers returning `string[]`: `headerLines`, `titleLines`, `permissionLines` (partly exists via `renderPermissionActions`), `activityLines`, `answerLines`, then concatenate. All helpers already have the inputs to be pure.
-- **Risk:** Low (pure string assembly; output identical).
-- **API-impact:** internal-only (the exported function signature/output unchanged).
-- **Effort:** M.
-- **Tests:** `src/__tests__/render-frame.test.ts`.
+### F6 — `extractTaskId` / task-id parsing duplicated across modules
+- **Location:** `stacked-aggregator.ts:521` (regex `/(?:^|:)T-\d+\b/`) vs `normalize.ts:15` (`inferTaskIdFromCallerSession`, `:task:<id>` segment scan)
+- **Technique:** T03 relocate by affinity (task-id extraction belongs in one place)
+- **Mechanism repaired:** cohesion — "how do we pull a task id out of a scope/sessionRef" lives in two grammars.
+- **Symptom:** two different parsers for the same conceptual operation (one regex on a scope string, one `:`-split on a sessionRef). They accept different inputs by design but represent the same domain notion.
+- **Current → Suggested:** keep both *call sites* but consider a shared `taskId.ts` exposing `taskIdFromScope` and `taskIdFromSessionRef`. Low urgency.
+- **Direction:** consolidate (mild).
+- **Preservation:** test-suite (`normalize.test.ts`, `stacked-aggregator.test.ts`).
+- **Falsifiable signal:** both extraction tests green after relocation.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Tests:** existing.
+- **Contraindication:** the two grammars genuinely differ (scope vs sessionRef shapes); merging into one regex would be **wrong**. This is relocation-only, not unification. Marginal value — **left mostly alone** (see below).
 
-### P4 — Duplicated `isRecord` (and divergent `isTurnEnd`) definitions
-- **Location:** `src/commands/turn.ts:477` (`isRecord`) duplicates `src/stacked-shared.ts:34`; `src/commands/turn.ts:394` (`isTurnEnd` — matches `turn_end` OR `turn.completed`) overlaps `src/stacked-aggregator.ts:420` (`isTurnEnd` — only `turn.completed`).
-- **Principle/smell:** Duplicated block; primitive-obsession on event-kind string checks scattered across files.
-- **Current:** `turn.ts` defines its own private `isRecord` even though `stacked-shared.ts` already exports one. The two `isTurnEnd` functions have **subtly different** semantics (turn.ts also accepts `turn_end`), which is a latent confusion, not a bug.
-- **Suggested:** Import `isRecord` from `stacked-shared.js` in `turn.ts` and delete the local copy (behavior identical). Leave the two `isTurnEnd` variants alone — do NOT unify them (semantics differ; unifying changes terminal-event detection). Dedup `isRecord` only.
-- **Risk:** Low (for the `isRecord` dedup only).
-- **API-impact:** internal-only.
-- **Effort:** S.
-- **Tests:** `turn.test.ts`.
+## 🪶 Deliberately left alone (where-NOT)
+- **`stacked-types.ts` field order & `buildLine` spread order** — explicitly load-bearing (truncation-survival ordering, documented). Spread/projection must preserve the exact field set; do not "tidy".
+- **Magic numbers** (`FINAL_BODY_CAP`, `TOOL_INPUT_CAP`, `DEFAULT_TERMINAL_WIDTH`, spinner frames, caps) — already named constants. No T15 needed.
+- **Injectable seams** (`now`/`setTimeout`/`clearTimeout`, `createAnthropicClient`, `consulKvGet`, `readTaskState`, `summarizer`) — these are deliberate substitution seams (T01 already satisfied), exercised by tests. Not premature abstraction; **do not collapse**.
+- **`levenshteinDistance` / suggestion engine in `main.ts`** — self-contained, tested via `did-you-mean` red test. Fine.
+- **`redactSecrets` regex chain** (`stacked-shared.ts:11`) — parameterizing the literals would risk a biome `useValidTypeof`/regex lint and obscure each rule; the explicit list is the right shape.
+- **Per-command `if (!target) throw CliUsageError` guards** — tiny, local, readable; a parameter object would add indirection without payoff.
+- **`Summarizer` interface (one implementor)** — looks like a one-implementor interface (T16 candidate) but is a **deliberate test seam** (`createStackedSummarizer` is injected into the aggregator and stubbed in tests). Contraindication honored: keep it.
 
-### P5 — Repeated `err instanceof Error ? err.message : String(err)` idiom
-- **Location:** `src/commands/doctor.ts:33,59,116` (3×).
-- **Principle/smell:** Duplicated block.
-- **Current:** The `instanceof Error ? .message : String()` idiom appears 3 times in `cmdDoctor`.
-- **Suggested:** Extract a private `errDetail(err: unknown): string` helper in `doctor.ts`.
-- **Risk:** Low.
-- **API-impact:** internal-only.
-- **Effort:** S.
-- **Tests:** no dedicated doctor test found; behavior identical (noted in Tech Debt).
+## 🔭 If applying: outside-in sequence
+1. **F2** (dup `stringValue`) — XS, compiler-proof, zero behavior risk.
+2. **F3** (drop false `await`) — XS, compiler-proof.
+3. **F4** (truncation helpers, markers preserved) — add exact-suffix char-tests, then extract.
+4. **F6** (relocate task-id parsers) — only if touching the files anyway.
+5. **F1** (divergent `isTurnEnd`) — DEFERRED: confirm live broker event kinds first.
+6. **F5** (terminal-outcome table) — DEFERRED: confirm per-arm exit-code coverage first.
 
----
-
-## Code Smells
-
-| # | Location | Smell | Detail | Risk | API-impact |
-|---|----------|-------|--------|------|------------|
-| 1 | `stacked-aggregator.ts:497,505` | Magic numbers | `cap = 4_096`, `truncateFinalBody(text, 1_000)` inline defaults | Low | internal-only |
-| 2 | `stacked-aggregator.ts:494` | Magic regex / primitive obsession | `T-\d+` task-id regex inlined in `extractTaskId`; also computed twice in `buildLine` (392–394) | Low | internal-only |
-| 3 | `render-frame.ts:92,153,167-169` | Magic numbers | `100` (title cap), `120` (col clamp), `12`/`6`/`2` clamps in `renderBlockLines` — only some are named constants | Low | internal-only |
-| 4 | `stacked-summary.ts:219-230` | Inefficiency | `boundString` calls `new TextEncoder().encode` repeatedly (incl. in a `while` trim loop) | Low | internal-only |
-| 5 | `stacked-aggregator.ts:392-394` | Duplicated call | `extractTaskId(this.options.targetScope)` invoked twice (condition + value) | Low | internal-only |
-| 6 | `commands/turn.ts:300-332` | Deep nesting (4+) | watch-loop branches: stacked vs frame, terminal-event, runtime-dead all nested in `for await` inside `try` | Med | internal-only |
-| 7 | `commands/turn.ts:337-339` | Control-flow smell | `catch` block with a comment-only `if (turnCompleted) { /* fall through */ }` empty branch | Low | internal-only |
-| 8 | `resolve-intent.ts:70-72` | Magic transform | `schema_version`→`schemaVersion` regex rewrite of TOML source is surprising; deserves a named helper | Low | internal-only |
-| 9 | `commands/summon.ts:20` vs `commands/turn.ts:121` | Inconsistent await | `await resolveRuntimeIntentForTarget(...)` (summon) vs non-await (turn); the function is **synchronous** (returns `HrcRuntimeIntent`) — the `await` in summon is a harmless no-op but misleading | Low | internal-only |
-| 10 | `stacked-summary.ts` & `stacked-aggregator.ts` | Enum/string union sprawl | `FlushReason \| \`${FlushReason}\`` accepted in many signatures (string-or-enum) — primitive obsession around the enum boundary | Low | public-surface (type contract) |
-
----
-
-## Quick Wins (safe, internal-only, Low risk — recommended to auto-apply)
-
-1. **Dedup `isRecord` in `turn.ts`** — import from `stacked-shared.js`, delete local (P4). `turn.ts:477`.
-2. **Name the magic caps** — `FINAL_BODY_CAP = 4_096`, `TOOL_INPUT_CAP = 1_000` constants in `stacked-aggregator.ts` (smell #1).
-3. **Hoist duplicated `extractTaskId` call** in `buildLine` to a `const taskId = extractTaskId(...)` (smell #5), `stacked-aggregator.ts:392`.
-4. **Extract `errDetail` helper** in `doctor.ts` for the 3× `instanceof Error` idiom (P5).
-5. **Name remaining render-frame magic numbers** (`MAX_TITLE_CHARS = 100`, `MAX_TERMINAL_WIDTH = 120`) (smell #3).
-6. **Cache the `TextEncoder`** in `stacked-summary.ts boundString` to one instance (smell #4) — keep behavior identical.
-7. **Remove the comment-only `if (turnCompleted)` empty branch** in `turn.ts` catch by restructuring (smell #7) — behavior-preserving de-nesting.
-
-## Technical Debt notes
-
-- **No `index.ts` / no exports map**: the package leans on file-path imports and tests
-  for its "API". Fine for a private CLI, but means there's no single seam declaring
-  what's public. Decomposing `cmdTurn`/aggregator is safe precisely because nothing
-  external imports their internals.
-- **`turn_stacked` JSON key order is a load-bearing contract** (documented in
-  `stacked-types.ts:54` and `stacked-aggregator.ts:367`). Any aggregator refactor must
-  preserve insertion order. This is the single highest-care invariant in the package —
-  flagged as DEFERRED for the line-shape itself.
-- **Two divergent `isTurnEnd` definitions** (turn.ts accepts `turn_end`; aggregator
-  only `turn.completed`). Looks like drift; unifying would change terminal detection.
-  Leave as-is, document — do not "fix" in a behavior-preserving pass.
-- **`doctor.ts` has no dedicated unit test**; it also calls `process.exit(1)` directly
-  (line 134) rather than throwing a typed exit error like `turn.ts` does. Inconsistent
-  exit policy across commands — a future (non-preserving) cleanup, DEFERRED.
-- **`resolve-intent.ts` reads TOML and rewrites `schema_version`**: an IO + parse +
-  merge unit; reasonably cohesive but the regex rewrite is a smell worth a named helper.
-- **`summon.ts` awaits a synchronous function** — harmless now, but the inconsistency
-  invites bugs. Aligning is a 1-line change but touches a command's control flow; note only.
+## ✅ Safety checklist
+- [ ] `bun test` green in `packages/hrcchat-cli` before and after each step.
+- [ ] `tsc --noEmit` clean.
+- [ ] F4: assert the exact truncated suffix bytes are unchanged (NDJSON contract).
+- [ ] F1/F5: do NOT auto-apply — exit codes and terminal-frame timing are user-facing; verify against live broker event stream / per-arm tests.
+- [ ] No change to `turn_stacked` / `render_frame` / `DmHandoffEnvelope` field sets or order.
+- [ ] No new biome lint (watch redaction/regex parameterization).

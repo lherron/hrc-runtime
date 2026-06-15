@@ -1,121 +1,99 @@
-# Refactor Analysis — `packages/agent-action-render`
+# 🔧 Refactoring Analysis — packages/agent-action-render/src
 
-Scope: `packages/agent-action-render/src` (9 source files, 617 LoC total). Tests:
-`src/__tests__/formatters.test.ts` (covers `admissionLabel`, `formatToolLine`,
-`getHrcEventIcon`, `formatNoticeLine`, `extractToolPreview`, `getToolEmoji`,
-`renderMarkdownBlock`, `formatEventPreviewLine`). All findings are report-only; no
-source edited in this phase.
+**Target:** `packages/agent-action-render/src` · **Files read:** 9 source + 1 test (all) · **Lines:** 622 source · **Package type:** leaf rendering/formatting library (general profile, pure functions, no I/O, no concurrency)
 
-This package is small, cohesive, and was already passed over in the d19ade8 SOLID
-sweep (presenter registry extraction, named event-kind constants, etc.). There are
-**no High-risk structural problems**. Findings below are minor polish / quick wins.
+## 🧭 Summary
+A small, well-factored pure-formatting library. The recently-introduced `ToolPresenter` registry (`tool-presenters.ts`) is the live abstraction; `tool-formatters.ts` still carries two `@deprecated` derived maps (`TOOL_EMOJI`, `PRIMARY_ARG_KEY`) that have **zero external consumers** and are prime de-abstraction candidates. The main mechanism wins are: collapse the deprecated/derived emoji+arg maps, unify the three `⚙️` fallback-icon literals, and narrow the very wide public surface (35-line index re-exporting ~25 symbols where only 4 are consumed off-package).
 
-## SOLID Scorecard
+## 🚪 Public boundary (assess first)
 
-| Principle | Grade | Notes |
-|-----------|-------|-------|
-| SRP | A- | Each file owns one rendering concern (tool lines, notices, markdown blocks, icons, budgets, admission labels). Largest file 213 LoC; largest function ~30 LoC. No file > 300, no function > 50. |
-| OCP | A | Tool rendering is data-driven via the `PRESENTERS` registry + `resolveToolPresenter`. New tools = new array entry, no branch edits. Minor: `getHrcEventIcon` and `admissionLabel` still use switch/if-chains, but they key on a bounded, slow-moving enum of HRC event kinds (acceptable; see TD-1). |
-| LSP | A | No class hierarchies / overrides. `ToolPresenter` is a plain data interface; no inheritance to violate. |
-| ISP | A | `ToolPresenter` interface has 5 members, 2 optional; implementors (the registry literals) only fill what they use. No fat interfaces. |
-| DIP | A | No `new Concrete()` of collaborators; pure functions and module-level data tables. Dependencies flow one direction (formatters -> budgets / presenters). No singletons beyond const lookup tables. |
+`index.ts` re-exports ~25 symbols. Off-package consumers (whole monorepo) import exactly **four**:
+- `formatToolLine`, `formatNoticeLine`, `renderMarkdownBlock` ← `packages/hrcchat-cli/src/render-frame.ts`
+- `admissionLabel` ← `packages/hrc-frame-render/src/hrc-event-adapter.ts`
 
-## Priority Refactorings
+Everything else (`TOOL_EMOJI`, `PRIMARY_ARG_KEY`, `DEFAULT_TOOL_EMOJI`, `getToolEmoji`, `extractToolPreview`, `resolveToolPresenter`, `getToolDisplayName`, `looksLikeShell`, `unwrapShell`, `PRESENTERS`, `DEFAULT_PRESENTER`, `ToolPresenter`, `PRIMARY_FIELD_BY_KIND`, `extractEventPreview`, `formatEventPreviewLine`, `getHrcEventIcon`, `NOTICE_ICON`, `admissionLabelFromResponse`, `MAX_LINE_CHARS`, `MAX_PREVIEW_CHARS`, `truncateText`, markdown types) is consumed only by the in-package test or by sibling modules within this package — i.e. effectively **internal-only despite being public**.
 
-### P1 — Duplicated default icon literal `'⚙️'`
-- **Location**: `src/tool-formatters.ts:13` (`DEFAULT_TOOL_EMOJI`),
-  `src/hrc-kind-icons.ts:3` (`DEFAULT_HRC_ICON`),
-  `src/tool-presenters.ts:181` (`DEFAULT_PRESENTER.emoji`) and the inline literal at
-  `src/tool-presenters.ts:174`.
-- **Principle/Smell**: Magic-value duplication (DRY); the default fallback emoji is
-  defined as a literal in 4 places.
-- **Current**: Three separately-declared constants plus an inline literal, all equal
-  to `'⚙️'`.
-- **Suggested**: Internal dedupe only — have one reference the other inside the
-  package, or add a private shared const. Keep the *exported* constant names AND
-  values byte-identical.
-- **Risk**: Low. **API-impact**: internal-only (provided exported values are
-  preserved). **Effort**: XS.
-- **Tests**: `getToolEmoji` default path and `getHrcEventIcon` default path both
-  covered in `formatters.test.ts`; value drift would be caught.
+**T07 (narrow leaky interface):** the boundary is much wider than its real usage. Two exports are explicitly `@deprecated` with no remaining callers. Because this is a published package name (`agent-action-render`) consumed by two other packages, contracting the surface is technically a public-surface change → handled via M02 expand/contract and **DEFERRED** (a human should confirm no out-of-tree/Discord-gateway consumer before removing exports).
 
-### P2 — `extractToolPreview` implicit "first non-empty string" fallback loop
-- **Location**: `src/tool-formatters.ts:45-49`.
-- **Principle/Smell**: Minor readability / unclear fallback; inline
-  `for (const value of Object.values(input))` re-implements a "first string value"
-  scan.
-- **Current**: Inline `for` loop returning the first non-empty string field of
-  `input`.
-- **Suggested**: Extract a private `firstStringValue(input)` helper; behavior
-  identical, file-private.
-- **Risk**: Low. **API-impact**: internal-only. **Effort**: XS.
-- **Tests**: `extractToolPreview` covered (2 assertions); fallback path exercised.
+**Verdict: 🟡** — surface is healthy in shape but over-broad; the only concrete defects are the two dead `@deprecated` exports and a leaky `getToolEmoji` whose internal contract diverges from the presenter registry (see F1/F4).
 
-### P3 — `admissionLabelFromResponse` long if-chain with embedded eventKind mapping
-- **Location**: `src/admission-labels.ts:78-122`.
-- **Principle/Smell**: Sequential `if` chain (5 branches) mapping
-  `(admissionKind, applicationStatus, reason)` -> eventKind; mild OCP pressure and a
-  44-line function.
-- **Current**: Five guard `if` blocks each calling `admissionLabel({eventKind})`,
-  then a primitive fallback.
-- **Suggested**: Optionally extract a private `resolveAdmissionEventKind(payload)`
-  returning the eventKind (or `undefined`), leaving the public function to do the
-  single label lookup. Signature unchanged.
-- **Risk**: Low. **API-impact**: internal-only (public signature unchanged; only a
-  private helper added). **Effort**: S.
-- **Tests**: NOT covered by `formatters.test.ts` (no assertions on
-  `admissionLabelFromResponse`). Because it is untested, safest posture is to leave
-  it; documented as optional only.
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-## Code Smells
+### F1 — Collapse the deprecated derived `TOOL_EMOJI` / `PRIMARY_ARG_KEY` maps and `getToolEmoji`
+- **Location:** `tool-formatters.ts:5-24, 57-59` (and re-exports `index.ts:20-22`)
+- **Mechanism repaired:** T16 collapse premature/duplicate abstraction — a second source of truth (`TOOL_EMOJI`) derived from `PRESENTERS` that only partially mirrors it.
+- **Symptom:** `TOOL_EMOJI` and `PRIMARY_ARG_KEY` are `@deprecated`, built by flat-mapping the string-match presenters; `getToolEmoji` does `TOOL_EMOJI[toolName] ?? DEFAULT_TOOL_EMOJI`. This **silently diverges** from the registry: function-match presenters (`isShellLikeExecTool`, the `mcp:` regex) contribute no key, so `getToolEmoji('command_execution')` returns the default `⚙️` even though `resolveToolPresenter` would pick `💻` for a shell-like command. Two emoji-resolution paths with different answers.
+- **Current → Suggested:** Internally, `getHrcEventIcon` (the only in-package caller of `getToolEmoji`) should resolve via `resolveToolPresenter(toolName, {}).emoji`; then delete `TOOL_EMOJI`, `PRIMARY_ARG_KEY`, `getToolEmoji`, `DEFAULT_TOOL_EMOJI` once external absence is confirmed.
+- **Direction:** DE-abstraction (remove duplicated derived map).
+- **Preservation:** test-suite — `getHrcEventIcon` is exercised in `formatters.test.ts:106-113,144-155`. **Caution:** swapping `getToolEmoji` for `resolveToolPresenter(...).emoji` is *not* behavior-preserving for the empty-input case (`tool_execution_start` with `toolName:'exec_command'` currently returns `💻` via the `exec_command` string presenter, which still holds — but any tool whose only match is function-based would change). Needs a characterization test added first (rung: char-test).
+- **Falsifiable signal:** `getHrcEventIcon` test block stays green; `grep TOOL_EMOJI packages` returns nothing after removal.
+- **Risk:** Med · **API-impact:** public-surface (exports removed) · **Effort:** M
+- **Contraindication:** the `@deprecated` exports may be a deliberate one-release-deprecation window; removing them is a breaking change to the package surface. **DEFERRED.**
 
-| # | Location | Smell | Severity | Risk | API-impact |
-|---|----------|-------|----------|------|------------|
-| C1 | `tool-presenters.ts:70-176` | Large literal table (`PRESENTERS`, 106 LoC) | Info — desired OCP shape, not a fix | n/a | public-surface (exported) |
-| C2 | `tool-formatters.ts:13`, `hrc-kind-icons.ts:3`, `tool-presenters.ts:174,181` | Magic-string `'⚙️'` repeated | Low | Low | mixed (P1) |
-| C3 | `tool-formatters.ts:45-49` | Implicit first-string-value scan | Low | Low | internal-only (P2) |
-| C4 | `admission-labels.ts:78-122` | 44-line if-chain mapper | Low | Low | internal-only (P3) |
-| C5 | `tool-formatters.ts:68` | Dead `const suffix = ''` then `- suffix.length` / `${suffix}` no-ops | Low | Low | internal-only |
-| C6 | `markdown-block.ts:14-37` | `wrapLine` nesting depth ~3 with multiple mutation points | Info — readable, within budget | Low | internal-only |
+### F2 — Unify the three identical `⚙️` fallback-icon literals
+- **Location:** `tool-presenters.ts:10` (`FALLBACK_TOOL_EMOJI`), `tool-formatters.ts:13` (`DEFAULT_TOOL_EMOJI`), `hrc-kind-icons.ts:3` (`DEFAULT_HRC_ICON`)
+- **Mechanism repaired:** T15 extract missing abstraction — one semantic constant (“no-dedicated-icon fallback”) expressed as three separate literals.
+- **Symptom:** Same `'⚙️'` glyph defined three times; a future change to the fallback glyph must be made in three files or they drift.
+- **Current → Suggested:** Export a single `FALLBACK_ICON` from `budgets.ts` (or a new `icons.ts`) and reference it from all three. `DEFAULT_TOOL_EMOJI` and `DEFAULT_HRC_ICON` are public and can re-export it for compatibility.
+- **Direction:** extract shared constant (mild RE-abstraction).
+- **Preservation:** type/compiler-proof — identical literal value, pure reference swap; `formatters.test.ts:153-154` asserts `⚙️` for unknown kinds.
+- **Falsifiable signal:** single literal definition; tests green.
+- **Risk:** Low · **API-impact:** internal-only (if public consts keep re-exporting) · **Effort:** S
+- **Tests:** existing `getHrcEventIcon` unknown-kind asserts.
+- **Contraindication:** the three may be *intentionally* independent (tool fallback vs event fallback could diverge later). Low confidence this is load-bearing — they have always been equal — but worth a one-line comment if kept separate. **AUTO-APPLICABLE.**
 
-### C5 detail — dead `suffix`
-`src/tool-formatters.ts:68` declares `const suffix = ''` then subtracts/appends it at
-`:69` and `:72`. It is always empty, so the arithmetic and concatenation are no-ops.
-Removing it is a behavior-preserving dead-code cleanup. Risk Low, internal-only.
-Covered by `formatToolLine` tests (16 assertions).
+### F3 — Notice-icon table duplicated between `notice-formatters.ts` and `hrc-kind-icons.ts`
+- **Location:** `notice-formatters.ts:3-7` (`NOTICE_ICON` map) vs `hrc-kind-icons.ts:35-39` (inline `if level==='warn'…'error'…else info` branch)
+- **Mechanism repaired:** T15 extract missing abstraction / single source of truth for notice level → icon.
+- **Symptom:** Two encodings of `{warn:⚠️, error:❌, info/default:ℹ️}`. Adding a level (e.g. `debug`) requires editing both; drift is silently possible.
+- **Current → Suggested:** Have `getHrcEventIcon`’s notice branch consult `NOTICE_ICON[level] ?? NOTICE_ICON.info`. Behavior identical for the three known levels.
+- **Direction:** dedupe (RE-abstraction onto the existing `NOTICE_ICON` map).
+- **Preservation:** test-suite — `formatters.test.ts:150-152` covers warn/error/default notice icons through `getHrcEventIcon`; `100-103` covers `formatNoticeLine`.
+- **Falsifiable signal:** one notice-icon table; both notice tests green.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Contraindication:** `getHrcEventIcon` currently does not import `notice-formatters`; introducing the import creates a new intra-package edge (acyclic, harmless). **AUTO-APPLICABLE.**
 
-## Quick Wins (safe, internal-only, behavior-preserving)
+### F4 — `getToolEmoji` is a leaky internal seam (covered by F1)
+- **Location:** `tool-formatters.ts:57-59`, called from `hrc-kind-icons.ts:33`
+- **Mechanism repaired:** T07 align interface to usage — its sole in-package caller wants “icon for a tool name,” which the presenter registry already answers more correctly.
+- **Symptom:** see F1 divergence. Listed separately to record that even if F1’s public removal is deferred, the *internal* call site in `hrc-kind-icons.ts:33` can be pointed at `resolveToolPresenter(name,{}).emoji` independently.
+- **Direction:** redirect internal call to the canonical resolver.
+- **Preservation:** char-test — add a test pinning `getHrcEventIcon('tool_execution_start',{toolName})` for each presenter family BEFORE switching, since empty-`{}` resolution can change shell-like results. **This is a behavior risk, not a pure refactor** for function-match tools.
+- **Falsifiable signal:** new char-tests stay green across the swap.
+- **Risk:** Med · **API-impact:** internal-only (the call site) · **Effort:** M
+- **Contraindication:** behavior-divergence risk for function-matched tools; do F1 char-tests first. **DEFERRED** (paired with F1; not auto-applied because it is not provably behavior-preserving without the new characterization tests).
 
-1. **Remove dead `suffix` in `formatToolLine`** (`tool-formatters.ts:68-72`). Pure
-   dead-code removal; well covered. Risk Low.
-2. **Internal dedupe of the `'⚙️'` default emoji** keeping exported values identical
-   (P1). Risk Low.
-3. **Extract `firstStringValue` private helper** in `tool-formatters.ts` (P2). Risk
-   Low.
+### F5 — `admissionLabelFromResponse` branch chain → table-driven (optional, low value)
+- **Location:** `admission-labels.ts:78-122`
+- **Mechanism repaired:** T19 conditional → dispatch.
+- **Symptom:** 5 sequential `if` blocks mapping (admissionKind, applicationStatus, reason) → eventKind. Readable but additive growth means more branches.
+- **Current → Suggested:** a small ordered rule list `[{when:(k,s,r)=>…, eventKind, reason?}]`. **Honest direction note:** this is borderline — current form is already clear and only 5 cases; converting to a rule table is lateral, not a clear win.
+- **Direction:** lateral (conditional→dispatch).
+- **Preservation:** test-suite — `formatters.test.ts:191-223` covers every branch incl. precedence (ambiguous before reason before queued) and the empty-string fallback.
+- **Falsifiable signal:** branch tests green; precedence preserved.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** M
+- **Contraindication:** the explicit `if` ordering *is* the precedence spec and is easy to read; a rule table can obscure precedence. **Left alone** — flagged for completeness only, not recommended.
 
-## Technical Debt Notes
+## 🪶 Deliberately left alone (where-NOT)
 
-- **TD-1 (accepted debt, do NOT change):** `getHrcEventIcon`
-  (`hrc-kind-icons.ts:23-44`) and `admissionLabel` (`admission-labels.ts:43-73`) use
-  switch / if-chains keyed on event-kind enums. These are deliberate readable
-  lookup-with-special-cases (`notice` level sub-branch, `message_*` prefix match,
-  `REASON_FALLBACK_QUEUED` override) a pure table cannot express cleanly. Slow-growing
-  and heavily test-covered. Not worth restructuring.
+- **`budgets.ts` / `truncateText`** — minimal, total, well-tested. No magic numbers worth extracting beyond the named `MAX_LINE_CHARS`/`MAX_PREVIEW_CHARS` constants that already exist.
+- **`PRESENTERS` registry (`tool-presenters.ts:73-179`)** — the live, correct abstraction. The mixed `match` union (string | RegExp | predicate) is justified by real variation (string tools, `mcp:` regex, shell-detection predicate). Do **not** collapse it; the variation is materialized. The repeated `primaryString('x')` presenter objects are data, not duplication.
+- **`event-previews.ts` `PRIMARY_FIELD_BY_KIND`** — data table of per-kind extractors; appropriate dispatch, no smell.
+- **`markdown-block.ts` `wrapLine`** — nesting is ≤3 and the logic is intrinsic word-wrap; flattening would not help. `MIN_BLOCK_WIDTH=20` is already a named constant.
+- **`hrc-kind-icons.ts` `ICON_BY_EVENT_KIND` + `TOOL_KEYED_EVENT_KINDS`** — clean data-driven dispatch; the `message_` prefix special-case is intentional.
+- **Public re-export shape of the 4 consumed symbols** — correct; do not touch.
 
-- **TD-2 (public-surface, DEFER):** `TOOL_EMOJI` and `PRIMARY_ARG_KEY`
-  (`tool-formatters.ts:7-24`) are `@deprecated` ("Use the ToolPresenter registry
-  instead") yet still exported from `index.ts:21-22`. Removing them is a
-  public-surface breaking change for downstream consumers (CLI, projection,
-  ops-server, ops-web, Discord gateway). DEFER — needs a cross-package consumer audit
-  + coordinated removal; out of scope for a behavior-preserving pass.
+## 🔭 If applying: outside-in sequence
+1. **F2** (unify `⚙️` fallback literal) — Low risk, pure reference swap, run package tests.
+2. **F3** (dedupe notice-icon table via `NOTICE_ICON`) — Low risk, tests cover all levels.
+3. *(Deferred, human-gated):* F1+F4 together — first add characterization tests for `getHrcEventIcon` across presenter families, then redirect the internal `getToolEmoji` call site, then (after confirming no off-tree consumers) remove the `@deprecated` `TOOL_EMOJI`/`PRIMARY_ARG_KEY`/`getToolEmoji`/`DEFAULT_TOOL_EMOJI` exports via M02 expand/contract.
+4. F5 — not recommended.
 
-- **TD-3 (public-surface, informational):** `PRESENTERS` and the `ToolPresenter`
-  interface are exported; `resolveToolPresenter` is first-match-wins, so ordering is
-  observable behavior. `isShellLikeExecTool` MUST stay first to keep shell-detection
-  precedence. No change recommended; flagged so a future refactor does not reorder.
-
-## Auto-apply summary
-
-Safe to auto-apply (Low + internal-only): C5 dead-`suffix` removal, P1 internal emoji
-dedupe (values preserved), P2 `firstStringValue` extract. P3 left optional (no direct
-test coverage). TD-2 deferred (public-surface deprecated export).
+## ✅ Safety checklist
+- [x] Public boundary assessed before internals; the 4 off-package symbols identified and protected.
+- [x] Every finding names the repaired mechanism, not just the smell.
+- [x] Smells re-verified against source (the `⚙️`×3 and notice-table×2 duplications confirmed live; `TOOL_EMOJI` divergence confirmed via match-type analysis).
+- [x] Direction marked honestly (F1 is DE-abstraction/removal; F5 lateral and declined).
+- [x] Behavior-preservation rung stated; F1/F4 flagged as NOT provably preserving without new char-tests → deferred.
+- [x] No biome `useValidTypeof`-style literal-parameterization risk introduced (no `typeof` dedup proposed).
+- [x] Auto-applicable set restricted to Low/Med + internal-only + behavior-preserving (F2, F3 only).

@@ -7,7 +7,6 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { AppManagedSessionRecord } from 'hrc-store-sqlite'
-import { BrokerControllerError } from '../broker/controller.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
   requireContinuity,
@@ -21,6 +20,8 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
+import { disposeBrokerRuntime } from './broker-dispose.js'
+import { sessionEventBase } from './session-event-base.js'
 
 export function resolveManagedSessionRuntime(
   this: HrcServerInstanceForHandlers,
@@ -108,11 +109,7 @@ export async function maybeAutoRotateStaleSession(
 
   const next = requireSession(this.db, rotation.hostSessionId)
   appendHrcEvent(this.db, 'session.generation_auto_rotated', {
-    ts: timestamp(),
-    hostSessionId: next.hostSessionId,
-    scopeRef: next.scopeRef,
-    laneRef: next.laneRef,
-    generation: next.generation,
+    ...sessionEventBase(next, timestamp()),
     payload: {
       priorHostSessionId,
       priorGeneration,
@@ -198,11 +195,7 @@ export async function rotateSessionContext(
   }
 
   const clearedEvent = appendHrcEvent(this.db, 'context.cleared', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     ...(options.managed
       ? {
           appId: options.managed.appId,
@@ -222,11 +215,7 @@ export async function rotateSessionContext(
   this.notifyEvent(clearedEvent)
 
   const createdEvent = appendHrcEvent(this.db, 'session.created', {
-    ts: now,
-    hostSessionId: nextSession.hostSessionId,
-    scopeRef: nextSession.scopeRef,
-    laneRef: nextSession.laneRef,
-    generation: nextSession.generation,
+    ...sessionEventBase(nextSession, now),
     payload: {
       created: true,
       priorHostSessionId: session.hostSessionId,
@@ -299,25 +288,9 @@ export async function invalidateHostContext(
       runtime.controllerKind === 'harness-broker' &&
       runtime.tmuxJson
     ) {
-      const disposeResult = await this.getHarnessBrokerController()
-        .dispose(runtime.runtimeId)
-        .catch((error: unknown) => ({
-          ok: false as const,
-          error:
-            error instanceof BrokerControllerError
-              ? error
-              : new BrokerControllerError(
-                  'broker_dispose_failed',
-                  error instanceof Error ? error.message : String(error)
-                ),
-        }))
-      if (!disposeResult.ok && disposeResult.error.code !== 'broker_runtime_not_active') {
-        writeServerLog('WARN', 'broker runtime dispose failed during context invalidation', {
-          runtimeId: runtime.runtimeId,
-          error: disposeResult.error.message,
-          code: disposeResult.error.code,
-        })
-      }
+      await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
+        logMessage: 'broker runtime dispose failed during context invalidation',
+      })
     } else if (runtime.transport === 'tmux' && runtime.tmuxJson) {
       const tmuxPane = requireTmuxPane(runtime)
       const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)

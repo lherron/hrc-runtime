@@ -1,134 +1,109 @@
-# Refactor Analysis — `packages/hrc-core/`
+# 🔧 Refactoring Analysis — packages/hrc-core/src
 
-Behavior-preserving SOLID + code-smell audit. **Report only — no source edited in this phase.** Date: 2026-06-08.
+**Target:** `packages/hrc-core/src` (general profile) · **Files read:** 10/10 source `.ts` (all non-test) · **Lines:** ~4227 · **Package type:** shared contracts/core library (type-heavy, consumed by 180+ files across hrc-server, hrc-cli, hrc-sdk, hrc-store-sqlite, hrcchat-cli)
 
-## Package shape
+## 🧭 Summary
+hrc-core is the monorepo's contract spine: 4 of 10 files (`contracts.ts`, `http-contracts.ts`, `hrcchat-contracts.ts`, and most of `errors.ts`/`selectors.ts` types) are pure exported type declarations with exactly one runtime value export outside errors/selectors/monitor (`OPERATOR_REAP_REASON`). The real executable logic lives in `monitor/condition-engine.ts`, `monitor/index.ts`, `selectors.ts`, `fences.ts`, `errors.ts`, `paths.ts`. The code is already unusually well-factored (named exit codes, derived-from-source-of-truth sets, parameter objects via `EvaluationContext`, guard-clause style). Findings are therefore few, mostly internal-only Low-risk dedup/seam items; everything touching the exported type surface is DEFERRED because the blast radius is the whole repo.
 
-`hrc-core` is the HRC domain layer: error taxonomy, selectors, fences, path resolution, the monitor reader + condition engine, and a large body of pure TypeScript **type contracts** (`contracts.ts`, `http-contracts.ts`, `hrcchat-contracts.ts`). The three contract files together (~1856 lines) contain **zero runtime functions** — they are pure `export type`/`interface` declarations and constitute the package's public type surface. They are out of scope for behavior-preserving extraction and any change there is public-surface by definition.
+## 🚪 Public boundary (assess first)
+`index.ts` re-exports ~150 named types + a handful of runtime functions. Consumers: hrc-server (119 files), hrc-cli (22), hrcchat-cli (17), hrc-store-sqlite (16), hrc-sdk (6). This is a **leaf-of-the-dependency-graph contract package whose entire reason to exist is its public surface** — [M02 expand/contract] applies to ANY shape change, and even a "narrow" [T07] is a breaking change for downstream `.d.ts` consumers (several consume the built `dist/*.d.ts`).
 
-Logic-bearing files (all with test coverage):
+- **[T07] surface width:** The surface is wide but that width is *load-bearing* — each exported type is the wire/RPC contract for a distinct endpoint. No fat-interface or leaky-abstraction finding survives pressure-testing; narrowing would break consumers, not align to usage.
+- **[M02] contract additions** (e.g. `eventGlobalHighWaterSeq?`, `OPERATOR_REAP_REASON`) are already done additively/optionally — the established pattern is correct.
+- **Verdict: 🟢** The boundary is healthy and deliberately wide. Do **not** restructure exported types in a refactor pass; any change there is a redesign requiring an expand/contract migration across 5 packages.
 
-| File | Lines | Tests |
-|---|---|---|
-| `src/monitor/condition-engine.ts` | 611 | `monitor-condition-engine.acceptance.test.ts` |
-| `src/monitor/index.ts` | 566 | `monitor.acceptance.test.ts` |
-| `src/selectors.ts` | 466 | `selectors.test.ts` |
-| `src/errors.ts` | 188 | `errors.test.ts` |
-| `src/fences.ts` | 143 | `fences.test.ts` |
-| `src/paths.ts` | 86 | `paths.test.ts` |
-| `src/index.ts` | 271 | (barrel — re-exports only) |
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-## SOLID scorecard
+### F1 — Duplicated message-correlation intent across the two monitor modules
+- **Location:** `monitor/condition-engine.ts:418-436` (`messageResponseMatchesSelector`) and `monitor/index.ts:424-441` (`isCorrelatedMessageResponse`)
+- **Mechanism repaired:** [T15] extract missing abstraction — duplicated *intent* ("does this event correlate to this msg:/seq: selector via messageId | replyToMessageId | rootMessageId | messageSeq").
+- **Symptom:** Two copies of the same 3-field-OR / messageSeq-equality predicate, one reading typed `HrcMonitorEvent` fields, the other reading via `unknownString(event,...)`. They must stay in lock-step (both encode the same correlation rule) but live in different files with no shared definition.
+- **Current → Suggested:** Extract one `selectorMatchesMessageResponse(selector, { messageId, replyToMessageId, rootMessageId, messageSeq })` accepting a plain projected record, and call it from both sites (condition-engine projects via its `unknownString` helpers, index passes typed fields). Direction: **extract/consolidate**.
+- **Direction:** extract.
+- **Preservation:** test-suite — `selectors.test.ts`, `monitor.acceptance.test.ts`, `monitor-condition-engine.acceptance.test.ts` cover both paths; behavior is byte-identical because the predicate is unchanged.
+- **Falsifiable signal:** the OR-predicate exists in exactly one place afterward; a deliberately-introduced asymmetry (e.g. dropping `rootMessageId`) fails an acceptance test in both modules.
+- **Risk:** Low · **API-impact:** internal-only (both functions are module-private) · **Effort:** S
+- **Tests:** existing acceptance tests.
+- **Contraindication:** the two are *not* identical today (typed vs `unknown` access). The shared helper must take a pre-projected record so the index path keeps its compiler-checked field access — do not force `condition-engine` to import `HrcMonitorEvent`-typed access or you lose its defensive `unknownString` coercion.
 
-| Principle | Grade | Notes |
-|---|---|---|
-| **S** — Single Responsibility | B | `condition-engine.ts` (611) and `monitor/index.ts` (566) exceed the 300-line guide, but each is one cohesive module of small pure functions. The contract files are large but are pure type aggregates, not mixed-concern units. No single function > 50 lines. |
-| **O** — Open/Closed | B+ | Selector/condition logic is `switch`-on-discriminated-union. These are exhaustive switches over closed unions (TS enforces exhaustiveness), not growth-prone `if-else` ladders. Standard discriminated-union tradeoff, well-contained. |
-| **L** — Liskov | A | No overrides that throw/no-op. The `HrcDomainError` subclass hierarchy only narrows the constructor `code` type via `Extract<>` and sets `name`; base behavior preserved. |
-| **I** — Interface Segregation | A- | `HrcMonitorConditionEngineReader` (3 members) and `HrcMonitorConditionEngine` (1 member) are tight. No fat interfaces, no stubbed-unused implementors. `HrcMonitorEvent` has many optional fields but it is an event envelope (data), not a service interface. |
-| **D** — Dependency Inversion | A | The condition engine takes its reader via `createMonitorConditionEngine(reader)` injection. `createMonitorReader(state)` is a closure factory. No hardcoded singletons in business logic. |
+### F2 — `evaluateRuntimeFailure` is a one-line conditional pass-through (middle man)
+- **Location:** `monitor/condition-engine.ts:341-347`
+- **Mechanism repaired:** [T23] remove middle man / collapse pass-through.
+- **Symptom:** `evaluateRuntimeFailure` exists only to early-return `null` when `condition === 'runtime-dead'` and otherwise delegate verbatim to `runtimeDeathOutcome`. It adds a stack frame and a name for "runtimeDeathOutcome but suppressed for the dedicated case."
+- **Current → Suggested:** Inline at the single call site (`evaluateEvent:256`): `if (context.condition !== 'runtime-dead') { const f = runtimeDeathOutcome(context, event); if (f) return f }`. Direction: **inline/collapse**.
+- **Direction:** collapse.
+- **Preservation:** type/compiler-proof + test-suite — pure relocation of a guard already adjacent in `evaluateEvent`.
+- **Falsifiable signal:** call graph loses one hop; condition-engine acceptance tests unchanged green.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Contraindication:** the named function documents *why* the suppression exists (the `runtime-dead` branch handles it explicitly below). If the team values the self-documenting name over the collapse, leave it — this is a judgment call, not a clear win. Keep a one-line comment if inlined.
 
-Overall: a clean, well-factored domain package. Findings are localized dedup / dead-code / micro-clarity items, all internal-only and low risk.
+### F3 — Duplicated `isResolution`/`isCapture`/`resolutionError` discriminator
+- **Location:** `monitor/index.ts:499-501` (`isResolution`), `monitor/condition-engine.ts:574-578` (`isCapture`), `:580-589` (`resolutionError`)
+- **Mechanism repaired:** [T15] extract missing abstraction — the `!('ok' in result && result.ok === false)` discriminator for "this is a success not an `HrcMonitorResolutionResult` error" is written three times across the two files.
+- **Symptom:** Three sites hand-decode the same `{ ok: false, error }` tagged-union shape. The shape is defined in `monitor/index.ts` (`HrcMonitorResolutionResult`); the discriminator should travel with it.
+- **Current → Suggested:** Export a single `isResolutionError(result): result is …{ok:false}` (or its positive form) from `monitor/index.ts` and reuse in condition-engine. Direction: **extract**.
+- **Direction:** extract.
+- **Preservation:** type/compiler-proof — the type guard narrows identically; compiler verifies the predicate.
+- **Falsifiable signal:** one definition of the `ok:false` check; grep for `'ok' in result` returns a single hit.
+- **Risk:** Low · **API-impact:** internal-only if the helper stays unexported from the package `index.ts` (export only across the two `monitor/*` modules). · **Effort:** S
+- **Contraindication:** `isCapture` and `isResolution` narrow to *different* positive types (`HrcMonitorCapture` vs `HrcMonitorResolution`). Share only the negative discriminator (`isResolutionError`) and let each caller keep its own positively-typed wrapper, or you weaken the narrowing.
 
----
+### F4 — Parallel `switch (condition)` dispatch tables that must be kept congruent
+- **Location:** `monitor/condition-engine.ts:226-244` (`evaluateStartSnapshot`) and `:259-276` (`evaluateEvent`)
+- **Mechanism repaired:** [T19] conditional ↔ dispatch (note: candidate, leans **leave-as-is**).
+- **Symptom:** Two `switch` statements over the same `HrcMonitorCondition` union, in two functions, each contributing the start-snapshot arm and the streaming-event arm for the same condition. Adding a new condition requires editing both, with no compiler link between the halves.
+- **Current → Suggested:** A per-condition strategy record `{ start, event }` keyed by `HrcMonitorCondition` would co-locate the two halves and let `satisfies Record<HrcMonitorCondition, …>` force exhaustiveness across both. Direction: **conditional→dispatch**.
+- **Direction:** dispatch (tentative).
+- **Preservation:** test-suite — the acceptance suite exercises every condition arm.
+- **Falsifiable signal:** removing a condition from the union produces exactly one compiler error (the record), not silent partial handling.
+- **Risk:** Med · **API-impact:** internal-only · **Effort:** M
+- **Contraindication:** Both switches already use a bare `switch` with no `default`, so TS *already* enforces exhaustiveness per-function via the union return path; the only real gain is co-locating the two halves. The current shape is readable and the conditions genuinely have different start vs stream logic. **Recommend leaving as-is** unless a third parallel switch appears — flagged for awareness, not for application.
 
-## Priority Refactorings
+### F5 — `protectStreamCursor` Proxy: defensive structure with no demonstrated variation
+- **Location:** `monitor/index.ts:503-527`
+- **Mechanism repaired:** [T16] collapse premature abstraction (candidate) — a full `Proxy` with get/set/defineProperty traps exists solely to make one field (`streamCursorSeq`) read-only on a returned capture object.
+- **Symptom:** 25 lines of `Proxy` machinery to enforce immutability of a single numeric field. No consumer in the repo attempts to mutate `streamCursorSeq` (the field is set once in `captureStart`). The Proxy also changes object identity/perf characteristics versus a plain object.
+- **Current → Suggested:** Replace with `Object.freeze`-style intent or a plain readonly field — `Object.defineProperty(captured, 'streamCursorSeq', { value: streamCursorSeq, writable: false, enumerable: true })`, or simply rely on the TS `readonly`-typed return. Direction: **de-abstract/simplify**.
+- **Direction:** collapse.
+- **Preservation:** char-test — needs a characterization test asserting `streamCursorSeq` survives spread/JSON and (if the runtime guarantee matters) that assignment is rejected, BEFORE simplifying. The Proxy's enumerable/spread behavior is subtle; a naive `Object.freeze` over the whole capture would change mutability of *other* fields.
+- **Falsifiable signal:** `captureStart` returns a plain object; existing monitor acceptance tests stay green; a new char-test pins the read-only contract.
+- **Risk:** Med · **API-impact:** internal-only (`HrcMonitorCapture` shape unchanged) · **Effort:** M
+- **Contraindication:** The Proxy may be a deliberate guard against a real past bug where the inclusive-replay cursor got mutated (the inline comment at `:165` stresses the monotonic-cursor contract). If the read-only guarantee is load-bearing for the cursor invariant, this is a deliberate option — **do not remove the protection, only swap the mechanism** (Proxy → `defineProperty`/frozen single field) and only if a char-test proves equivalence. Lean toward leaving it.
 
-### P1 — Dead/redundant branch in `evaluateTurnFinished`
-- **Location:** `src/monitor/condition-engine.ts:287-294`
-- **Current:** The two failure `if` bodies (`turn_failed`; `runtime_dead || runtime_crashed`) are byte-identical. The final ternary `result === 'turn_succeeded' ? result : 'turn_succeeded'` is a no-op — both arms yield `'turn_succeeded'`.
-- **Suggested:** Collapse the two failure guards into one `if (result === 'turn_failed' || result === 'runtime_dead' || result === 'runtime_crashed')`, and simplify the tail to `return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }`.
-- **Risk:** Low
-- **API-impact:** internal-only (private function; return values unchanged)
-- **Effort:** S (~5 min)
-- **Tests:** `monitor-condition-engine.acceptance.test.ts` covers turn.finished success/failure/runtime-dead; behavior identical, existing reds stay green.
+### F6 — `scopeRef` string assembly via repeated concat (primitive obsession)
+- **Location:** `selectors.ts:224-244` (`formatCanonicalScopeRef`)
+- **Mechanism repaired:** [T15] extract missing abstraction (minor) — scopeRef is built by `scopeRef += ':project:' + …` etc., re-encoding the `agent:…:project:…:task:…:role:…` grammar that `agent-scope` already owns.
+- **Symptom:** Manual string concatenation of a structured ref that the imported `agent-scope` package already has parse/format primitives for (`parseScopeRef`, `formatScopeHandle`). The literal segment keys (`:project:`, `:task:`, `:role:`) are magic strings local to this function.
+- **Current → Suggested:** If `agent-scope` exposes a `formatScopeRef({agentId, projectId, taskId, roleName})`, delegate to it. If not, this is acceptable local glue. Direction: **extract/delegate** (only if the upstream primitive exists).
+- **Direction:** extract (conditional).
+- **Preservation:** test-suite — `selectors.test.ts` covers ref formatting; final `validateScopeRef` guard already pins correctness.
+- **Falsifiable signal:** the `:project:`/`:task:`/`:role:` literals disappear from hrc-core; `selectors.test.ts` green.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S
+- **Contraindication:** If `agent-scope` has no builder, the manual concat IS the local abstraction and dedup would mean *adding* a dependency surface — leave it. Verify the upstream API before touching. Marked applicable-conditional, defaulting to leave-alone if the primitive is absent.
 
-### P2 — Repeated `unknownString(event, 'sessionRef')` reads in `evaluateContextChanged`
-- **Location:** `src/monitor/condition-engine.ts:369,380-383,392-395`
-- **Current:** `unknownString(event, 'sessionRef')` is recomputed up to 4× in one function; the `sessionRef === capture.sessionRef` guard is duplicated.
-- **Suggested:** Hoist `const eventSessionRef = unknownString(event, 'sessionRef')` once at the top and reuse; collapse the duplicated guards.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S
-- **Tests:** condition-engine acceptance covers context-changed (generation / session_rebound / cleared); no behavior change.
+## 🪶 Deliberately left alone (where-NOT)
+- **`contracts.ts`, `http-contracts.ts`, `hrcchat-contracts.ts`** — pure exported type declarations = the wire contract. No executable smell; any "consolidation" is a public-surface redesign (DEFERRED, not a refactor).
+- **`errors.ts` `HRC_ERROR_STATUS_BY_CODE` + per-class `Extract<HrcErrorCode, …>` unions** — this looks like a candidate for [T19], but the `Record<HrcErrorCode, HrcHttpStatus>` already forces exhaustiveness at compile time, and the `Extract<…>` unions make illegal (code, class) pairings unrepresentable [T12 already satisfied]. Leave it.
+- **`EXIT_CODE`, `CONDITION_RESULTS`/`CONDITION_RESULT_SET`, `DEAD_RUNTIME_STATUSES` etc.** — already the textbook [T15] result: named constants derived from a single source via `satisfies`. No magic numbers remain. Do not "extract more."
+- **`EvaluationContext` parameter object (condition-engine)** — [T21] already applied; the evaluate* family takes one context object. No data clump to introduce.
+- **`fences.ts`** — clean guard-clause parsing + total result union (`{ok:true}|{ok:false}`); [T18]/[T17] already satisfied. Leave.
+- **`paths.ts`** — small, linear env-precedence resolvers; the env-name literals are intrinsic config, not magic numbers. Leave.
+- **F4 parallel switches & F5 Proxy** — flagged above but recommended **left alone** absent a concrete trigger; removing defensive structure without proof of dead variation risks reintroducing a guarded bug.
 
-### P3 — Pointless indirection `evaluateRuntimeDead` → `runtimeDeathOutcome`
-- **Location:** `src/monitor/condition-engine.ts:344-357`
-- **Current:** `evaluateRuntimeDead` is a one-line passthrough to `runtimeDeathOutcome`; `evaluateRuntimeFailure` is the same call guarded by `condition !== 'runtime-dead'`.
-- **Suggested:** Inline `evaluateRuntimeDead` at its single call site (the `runtime-dead` switch arm), keeping `evaluateRuntimeFailure` as the guarded variant.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S
-- **Tests:** covered by runtime-dead/crashed acceptance cases.
+## 🔭 If applying: outside-in sequence
+1. [T40] Add/confirm characterization coverage for F1 (message correlation in both modules) and F5 (cursor read-only + spread) — the two findings whose behavior is subtle.
+2. F3 (`isResolutionError` shared discriminator) — pure type-guard extraction, compiler-proven, lowest risk.
+3. F1 (shared `selectorMatchesMessageResponse`) — extract with a pre-projected record param.
+4. F2 (inline `evaluateRuntimeFailure`) — only if the team prefers the collapse over the self-documenting name.
+5. F6 — only after verifying an `agent-scope` builder exists; otherwise skip.
+6. Leave F4 and F5 unless a concrete trigger (third parallel switch / proven cursor-mutation bug) materializes.
+7. Re-run full hrc-core suite + a typecheck of the 5 consumer packages (no public type changed, so this is a sanity gate not a contract migration).
 
-### P4 — Duplicate `concrete`/`host` selector arms (multiple sites)
-- **Location:** `src/monitor/index.ts:198-207` (`resolveParts`), `:387-390` (`eventMatchesSelector`), mirrored in `notFoundDetail:527-534`.
-- **Current:** `case 'concrete'` and `case 'host'` bodies are identical (both match on `hostSessionId`), written out twice in each switch.
-- **Suggested:** Use switch fall-through (`case 'concrete': case 'host': return …`) so the identical arms share one body — the pattern already used for `stable`/`target`/`session`.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S
-- **Tests:** `monitor.acceptance.test.ts` exercises host/concrete resolution.
-
-### P5 — Double `resolveParts` traversal in `snapshotState`
-- **Location:** `src/monitor/index.ts:313-315`
-- **Current:** `resolveSelector(...)` internally calls `resolveParts(...)` (line 171), then `snapshotState` calls `resolveParts(state, selector)` *again* (line 315) for the same `{session, runtime}`. The selector is also re-cast with `as HrcSelector`.
-- **Suggested:** Add a private variant of `resolveSelector` that returns the already-computed `parts` alongside the resolution (or compute `parts` once and derive the resolution), removing the second traversal and the cast. Keep the public `resolveSelector` method signature unchanged.
-- **Risk:** Med (touches resolve/snapshot data flow; must preserve exact `resolution`/`session`/`runtime` shape and the "resolution present but parts null" edge)
-- **API-impact:** internal-only (private helpers; `createMonitorReader`'s returned method signatures unchanged)
-- **Effort:** M
-- **Tests:** `monitor.acceptance.test.ts` covers snapshot with/without resolution and the not-found branch. Verify the case where `resolution` succeeds but `resolveParts` returns null still omits `session`/`runtime`.
-
-### P6 — Runtime-resolution fallback duplicated across `partsFromSession`/`partsFromMessage`
-- **Location:** `src/monitor/index.ts:235-239` and `:268-272`
-- **Current:** Both repeat the same "prefer explicit `runtimeId`, else last runtime by `hostSessionId`" block.
-- **Suggested:** Extract a private `resolveRuntimeFor(state, hostSessionId, preferredRuntimeId?)` helper used by both.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S
-- **Tests:** covered by session/message resolution acceptance cases.
-
-### P7 — Duplicated catch-fallback in `parseTargetMonitorSelector`
-- **Location:** `src/selectors.ts:303-307,316-319`
-- **Current:** Two `catch` blocks each compute `error instanceof Error ? error.message : 'invalid target selector'` before calling `invalidMonitorSelector('target', 0, reason)`.
-- **Suggested:** Extract a private `selectorReason(error, fallback)` helper (also reusable by `parseSessionMonitorSelector:280-283`). De-dupes 3 catch fallbacks.
-- **Risk:** Low
-- **API-impact:** internal-only
-- **Effort:** S
-- **Tests:** `selectors.test.ts` covers invalid target/session inputs.
-
----
-
-## Code Smells table
-
-| # | Location | Smell | Note | Risk | API-impact |
-|---|---|---|---|---|---|
-| 1 | `monitor/condition-engine.ts:287-294` | Dead code / duplicate branch | identical failure guards + no-op ternary (P1) | Low | internal-only |
-| 2 | `monitor/condition-engine.ts:369-395` | Duplicated guard / repeated computation | `sessionRef` read 4× (P2) | Low | internal-only |
-| 3 | `monitor/condition-engine.ts:344-349` | Speculative indirection | one-line passthrough wrapper (P3) | Low | internal-only |
-| 4 | `monitor/index.ts:198-207,387-390,527-534` | Duplicated switch arms | `concrete`/`host` written twice (P4) | Low | internal-only |
-| 5 | `monitor/index.ts:313-315` | Redundant work | `resolveParts` run twice per snapshot (P5) | Med | internal-only |
-| 6 | `monitor/index.ts:235-272` | Duplicated block | runtime-fallback logic repeated (P6) | Low | internal-only |
-| 7 | `selectors.ts:280-283,303-319` | Duplicated catch fallback | `selectorReason` helper (P7) | Low | internal-only |
-| 8 | `selectors.ts:274-283` | Definite-assignment `let` | `let sessionRef; let parts;` assigned inside try, used after — relies on `invalidMonitorSelector` being `never`. Correct but fragile; a value-returning helper would remove the `let`. | Low | internal-only |
-| 9 | `contracts.ts` / `http-contracts.ts` / `hrcchat-contracts.ts` | Large files (>300, up to 910) | Pure type aggregates; size inherent to a contracts module. Splitting risks changing import paths — **defer**, public surface, no logic to extract. | High | public-surface |
-| 10 | `errors.ts:11` | Deprecated alias retained | `CONFLICT: 'stale_context'` marked `@deprecated`. Removal is a breaking export change — leave as-is. | High | public-surface |
-
-## Quick Wins (safe to auto-apply)
-
-- **P1** — collapse dead/duplicate branch in `evaluateTurnFinished`.
-- **P2** — hoist repeated `sessionRef` read in `evaluateContextChanged`.
-- **P3** — inline the `evaluateRuntimeDead` passthrough.
-- **P4** — fall-through the identical `concrete`/`host` switch arms (3 sites).
-- **P6** — extract `resolveRuntimeFor` helper.
-- **P7** — extract `selectorReason(error, fallback)` helper.
-
-All private-symbol-only, behavior-preserving, guarded by existing acceptance tests.
-
-## Technical Debt notes
-
-- **Magic numbers already addressed.** `condition-engine.ts` already names its exit codes (`EXIT_CODE`) and runtime-status sets. `DEFAULT_REPLAY_TAIL = 100` is named. No raw magic-number debt remains in logic files.
-- **`protectStreamCursor` Proxy** (`monitor/index.ts:476-500`) is a deliberate immutability guard on `streamCursorSeq` that intentionally allows mutation of other fields. Not a refactor target without a behavior-equivalence argument; **leave**.
-- **`paths.ts`** mixes `process.env` reads with path building (an SRP nit), but this is the canonical config-resolution seam and is small/tested. Injecting an env reader would be a public-surface change for negligible benefit; **leave / defer**.
-- **Contract files (#9):** the package's exported type surface. Any reorganization is public-surface and must be human-reviewed, not auto-applied.
-- **`errors.ts` deprecated `CONFLICT` alias (#10):** safe to remove *eventually* but breaks downstream imports; defer to an intentional API-version bump.
+## ✅ Safety checklist
+- [ ] No exported type in `index.ts` changed (boundary frozen — 180+ consumers).
+- [ ] F1/F3 helpers stay module/`monitor`-private; not re-exported from package `index.ts`.
+- [ ] F1 shared predicate preserves the exact field set (messageId, replyToMessageId, rootMessageId, messageSeq) — no field added/dropped.
+- [ ] F3 shares only the negative discriminator; positive narrowing to `HrcMonitorCapture` vs `HrcMonitorResolution` preserved per-caller.
+- [ ] F5 only attempted with a char-test pinning spread/JSON/enumerable behavior of `streamCursorSeq`; whole-object `Object.freeze` rejected.
+- [ ] No new biome lint (the F1/F3 dedup parameterizes object access, not a `typeof`, so `useValidTypeof` is not at risk — confirm `biome check` clean).
+- [ ] Behavior preserved: `monitor.acceptance`, `monitor-condition-engine.acceptance`, `selectors`, `fences`, `errors` test files all green.

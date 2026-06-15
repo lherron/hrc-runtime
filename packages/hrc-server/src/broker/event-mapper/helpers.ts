@@ -9,9 +9,11 @@ import type { HrcEventEnvelope, HrcLifecycleEvent, HrcLifecycleTransport } from 
 import type { ContentBlock, ToolResult } from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+// Canonical definition now lives in broker/json.ts (F5 / T-04738); re-exported
+// here so existing `./helpers` importers keep their import path unchanged.
+import { isRecord } from '../json'
+
+export { isRecord }
 
 export function omitRuntimeStateActiveRun(value: Record<string, unknown>): Record<string, unknown> {
   const { activeRunId: _activeRunId, ...rest } = value

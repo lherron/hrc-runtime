@@ -10,13 +10,13 @@ import {
   type RunListFilters,
   type RunUpdatePatch,
   type RuntimeUpdatePatch,
+  buildEventWhere,
   buildSetClause,
   collectPatchEntries,
   execute,
   mapLaunchRow,
   mapRunRow,
   mapRuntimeRow,
-  nullableTransform,
   requireRecord,
   serializeJson,
   toSqliteBoolean,
@@ -59,23 +59,11 @@ const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
   { key: 'planHash', column: 'plan_hash' },
   { key: 'selectedProfileHash', column: 'selected_profile_hash' },
   { key: 'runtimeStateJson', column: 'runtime_state_json', transform: (v) => serializeJson(v) },
-  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash', transform: nullableTransform },
-  {
-    key: 'currentHarnessGeneration',
-    column: 'current_harness_generation',
-    transform: nullableTransform,
-  },
-  { key: 'currentTurnAttempt', column: 'current_turn_attempt', transform: nullableTransform },
-  {
-    key: 'lifecycleTerminalReason',
-    column: 'lifecycle_terminal_reason',
-    transform: nullableTransform,
-  },
-  {
-    key: 'lastLifecycleEscalationJson',
-    column: 'last_lifecycle_escalation_json',
-    transform: nullableTransform,
-  },
+  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash' },
+  { key: 'currentHarnessGeneration', column: 'current_harness_generation' },
+  { key: 'currentTurnAttempt', column: 'current_turn_attempt' },
+  { key: 'lifecycleTerminalReason', column: 'lifecycle_terminal_reason' },
+  { key: 'lastLifecycleEscalationJson', column: 'last_lifecycle_escalation_json' },
   { key: 'createdAt', column: 'created_at' },
   { key: 'updatedAt', column: 'updated_at' },
 ]
@@ -391,20 +379,9 @@ export class RunRepository {
 
   listRuns(filters: RunListFilters = {}): HrcRunRecord[] {
     const predicates: string[] = []
-    const values: SQLQueryBindings[] = []
+    const values: Array<string | number> = []
 
-    if (filters.hostSessionId !== undefined) {
-      predicates.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      predicates.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.runtimeId !== undefined) {
-      predicates.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
+    buildEventWhere(filters, predicates, values)
 
     const limit = filters.limit ?? 100
     const where = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''

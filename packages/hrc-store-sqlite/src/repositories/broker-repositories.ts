@@ -36,7 +36,6 @@ import {
   buildSetClause,
   collectPatchEntries,
   execute,
-  nullableTransform,
   requireRecord,
 } from './shared.js'
 
@@ -149,29 +148,25 @@ export type RuntimeOperationUpdatePatch = Partial<
 
 const RUNTIME_OPERATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeOperationUpdatePatch>> = [
   { key: 'runtimeId', column: 'runtime_id' },
-  { key: 'runId', column: 'run_id', transform: nullableTransform },
+  { key: 'runId', column: 'run_id' },
   { key: 'hostSessionId', column: 'host_session_id' },
   { key: 'generation', column: 'generation' },
   { key: 'operationKind', column: 'operation_kind' },
   { key: 'controller', column: 'controller' },
-  { key: 'compileId', column: 'compile_id', transform: nullableTransform },
-  { key: 'planHash', column: 'plan_hash', transform: nullableTransform },
-  { key: 'selectedProfileId', column: 'selected_profile_id', transform: nullableTransform },
-  { key: 'selectedProfileHash', column: 'selected_profile_hash', transform: nullableTransform },
+  { key: 'compileId', column: 'compile_id' },
+  { key: 'planHash', column: 'plan_hash' },
+  { key: 'selectedProfileId', column: 'selected_profile_id' },
+  { key: 'selectedProfileHash', column: 'selected_profile_hash' },
   { key: 'startupMethod', column: 'startup_method' },
-  { key: 'turnDelivery', column: 'turn_delivery', transform: nullableTransform },
+  { key: 'turnDelivery', column: 'turn_delivery' },
   { key: 'status', column: 'status' },
   { key: 'routeDecisionJson', column: 'route_decision_json' },
-  {
-    key: 'capabilityResolutionJson',
-    column: 'capability_resolution_json',
-    transform: nullableTransform,
-  },
-  { key: 'startedAt', column: 'started_at', transform: nullableTransform },
-  { key: 'completedAt', column: 'completed_at', transform: nullableTransform },
+  { key: 'capabilityResolutionJson', column: 'capability_resolution_json' },
+  { key: 'startedAt', column: 'started_at' },
+  { key: 'completedAt', column: 'completed_at' },
   { key: 'updatedAt', column: 'updated_at' },
-  { key: 'errorCode', column: 'error_code', transform: nullableTransform },
-  { key: 'errorMessage', column: 'error_message', transform: nullableTransform },
+  { key: 'errorCode', column: 'error_code' },
+  { key: 'errorMessage', column: 'error_message' },
 ]
 
 export class RuntimeOperationRepository {
@@ -286,51 +281,27 @@ export type BrokerInvocationUpdatePatch = Partial<
 const BROKER_INVOCATION_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<BrokerInvocationUpdatePatch>> = [
   { key: 'operationId', column: 'operation_id' },
   { key: 'runtimeId', column: 'runtime_id' },
-  { key: 'runId', column: 'run_id', transform: nullableTransform },
+  { key: 'runId', column: 'run_id' },
   { key: 'brokerProtocol', column: 'broker_protocol' },
   { key: 'brokerDriver', column: 'broker_driver' },
-  { key: 'brokerPid', column: 'broker_pid', transform: nullableTransform },
-  { key: 'childPid', column: 'child_pid', transform: nullableTransform },
+  { key: 'brokerPid', column: 'broker_pid' },
+  { key: 'childPid', column: 'child_pid' },
   { key: 'invocationState', column: 'invocation_state' },
   { key: 'capabilitiesJson', column: 'capabilities_json' },
-  { key: 'continuationJson', column: 'continuation_json', transform: nullableTransform },
-  {
-    key: 'brokerContinuationJson',
-    column: 'broker_continuation_json',
-    transform: nullableTransform,
-  },
+  { key: 'continuationJson', column: 'continuation_json' },
+  { key: 'brokerContinuationJson', column: 'broker_continuation_json' },
   { key: 'specHash', column: 'spec_hash' },
   { key: 'startRequestHash', column: 'start_request_hash' },
   { key: 'selectedProfileHash', column: 'selected_profile_hash' },
-  { key: 'specProjectionJson', column: 'spec_projection_json', transform: nullableTransform },
-  {
-    key: 'startRequestProjectionJson',
-    column: 'start_request_projection_json',
-    transform: nullableTransform,
-  },
-  { key: 'lastEventSeq', column: 'last_event_seq', transform: nullableTransform },
-  {
-    key: 'ownerServerInstanceId',
-    column: 'owner_server_instance_id',
-    transform: nullableTransform,
-  },
-  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash', transform: nullableTransform },
-  {
-    key: 'currentHarnessGeneration',
-    column: 'current_harness_generation',
-    transform: nullableTransform,
-  },
-  { key: 'currentTurnAttempt', column: 'current_turn_attempt', transform: nullableTransform },
-  {
-    key: 'lifecycleTerminalReason',
-    column: 'lifecycle_terminal_reason',
-    transform: nullableTransform,
-  },
-  {
-    key: 'lastLifecycleEscalationJson',
-    column: 'last_lifecycle_escalation_json',
-    transform: nullableTransform,
-  },
+  { key: 'specProjectionJson', column: 'spec_projection_json' },
+  { key: 'startRequestProjectionJson', column: 'start_request_projection_json' },
+  { key: 'lastEventSeq', column: 'last_event_seq' },
+  { key: 'ownerServerInstanceId', column: 'owner_server_instance_id' },
+  { key: 'lifecyclePolicyHash', column: 'lifecycle_policy_hash' },
+  { key: 'currentHarnessGeneration', column: 'current_harness_generation' },
+  { key: 'currentTurnAttempt', column: 'current_turn_attempt' },
+  { key: 'lifecycleTerminalReason', column: 'lifecycle_terminal_reason' },
+  { key: 'lastLifecycleEscalationJson', column: 'last_lifecycle_escalation_json' },
   { key: 'updatedAt', column: 'updated_at' },
 ]
 
@@ -499,9 +470,9 @@ type BrokerInvocationEventProjectionUpdate = {
 const BROKER_INVOCATION_EVENT_PROJECTION_SPEC: ReadonlyArray<
   PatchEntrySpec<BrokerInvocationEventProjectionUpdate>
 > = [
-  { key: 'hrcEventSeq', column: 'hrc_event_seq', transform: nullableTransform },
+  { key: 'hrcEventSeq', column: 'hrc_event_seq' },
   { key: 'projectionStatus', column: 'projection_status' },
-  { key: 'projectionError', column: 'projection_error', transform: nullableTransform },
+  { key: 'projectionError', column: 'projection_error' },
 ]
 
 export class BrokerInvocationEventRepository {

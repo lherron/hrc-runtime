@@ -34,3 +34,35 @@ export function stringValue(value: unknown): string | undefined {
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+const sharedTextEncoder = new TextEncoder()
+
+/**
+ * Truncate by character count, appending `marker` when the cap is exceeded.
+ * The marker is load-bearing in the NDJSON contract, so callers pass it
+ * explicitly and the emitted bytes must stay identical.
+ */
+export function truncateChars(value: string, cap: number, marker: string): string {
+  if (value.length <= cap) {
+    return value
+  }
+  return `${value.slice(0, Math.max(0, cap - marker.length))}${marker}`
+}
+
+/**
+ * Truncate by encoded byte count, appending the newline-prefixed `[truncated]`
+ * marker. The byte cap is intentionally distinct from the char-cap variant.
+ */
+export function truncateBytes(value: string, maxBytes: number): string {
+  const encoded = sharedTextEncoder.encode(value)
+  if (encoded.byteLength <= maxBytes) {
+    return value
+  }
+  const marker = '\n[truncated]'
+  const room = Math.max(0, maxBytes - marker.length)
+  let bounded = value.slice(0, room)
+  while (sharedTextEncoder.encode(bounded).byteLength > room) {
+    bounded = bounded.slice(0, -1)
+  }
+  return `${bounded}${marker}`
+}

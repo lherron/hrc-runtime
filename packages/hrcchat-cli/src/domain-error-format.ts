@@ -1,4 +1,5 @@
 import type { HrcDomainError } from 'hrc-core'
+import { stringValue } from './stacked-shared.js'
 
 const DETAIL_KEYS = ['runtimeId', 'runId', 'invocationId', 'activeRunId', 'route', 'flag', 'status']
 
@@ -65,8 +66,4 @@ function diagnosticLines(err: HrcDomainError): string[] {
     const messageSuffix = message ? `: ${message}` : ''
     return [`diagnostic: ${level}${where}${codeSuffix}${messageSuffix}`]
   })
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined
 }

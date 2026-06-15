@@ -36,7 +36,7 @@ import { createHrcServer } from 'hrc-server'
 import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { main } from '../cli'
-import { attachOpenAiRuntime, selectLatestUsableRuntime } from '../cli'
+import { attachWithRetry, selectLatestUsableRuntime } from '../cli'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const describeDaemonLifecycle =
@@ -1823,11 +1823,7 @@ describe('hrc attach <scope>', () => {
       },
     } as unknown as import('hrc-sdk').HrcClient
 
-    const descriptor = await attachOpenAiRuntime(
-      client,
-      initialRuntime.hostSessionId,
-      initialRuntime
-    )
+    const descriptor = await attachWithRetry(client, initialRuntime.hostSessionId, initialRuntime)
 
     expect(descriptor.argv).toContain('attach-session')
     expect(descriptor.bindingFence.runtimeId).toBe(fallbackRuntime.runtimeId)
@@ -1902,11 +1898,7 @@ describe('hrc attach <scope>', () => {
       },
     } as unknown as import('hrc-sdk').HrcClient
 
-    const descriptor = await attachOpenAiRuntime(
-      client,
-      initialRuntime.hostSessionId,
-      initialRuntime
-    )
+    const descriptor = await attachWithRetry(client, initialRuntime.hostSessionId, initialRuntime)
 
     expect(descriptor.argv).toContain('attach-session')
     expect(descriptor.bindingFence.runtimeId).toBe(fallbackRuntime.runtimeId)
@@ -2021,7 +2013,7 @@ describe('hrc run', () => {
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const session = db.sessions.findByHostSessionId(hostSessionId)
+      const session = db.sessions.getByHostSessionId(hostSessionId)
       expect(session).toBeDefined()
       expect(session!.scopeRef).toBe('agent:rex:project:agent-spaces:task:T-00123')
       expect(session!.laneRef).toBe('main')

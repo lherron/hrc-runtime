@@ -63,7 +63,7 @@ export {
   resolveAgentHarness,
 } from './cli/scope.js'
 export {
-  attachOpenAiRuntime,
+  attachWithRetry,
   selectLatestUsableRuntime,
 } from './cli/runtime-select.js'
 export { explainScopeCommandError } from './cli/errors.js'

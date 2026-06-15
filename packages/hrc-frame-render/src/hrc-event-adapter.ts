@@ -19,6 +19,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function recordFrom(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
+}
+
 function getString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   return typeof value === 'string' ? value : undefined
@@ -90,17 +98,18 @@ function isNoticePayload(payload: unknown): payload is {
 }
 
 function adaptToolCall(payload: unknown): GatewaySessionEvent | undefined {
-  if (!isRecord(payload)) {
+  const record = recordFrom(payload)
+  if (!record) {
     return undefined
   }
 
-  const toolUseId = getString(payload, 'toolUseId')
-  const toolName = getString(payload, 'toolName')
+  const toolUseId = getString(record, 'toolUseId')
+  const toolName = getString(record, 'toolName')
   if (!toolUseId || !toolName) {
     return undefined
   }
 
-  const input = payload['input']
+  const input = record['input']
   return {
     type: 'tool_execution_start',
     toolUseId,
@@ -110,19 +119,20 @@ function adaptToolCall(payload: unknown): GatewaySessionEvent | undefined {
 }
 
 function adaptToolResult(payload: unknown): GatewaySessionEvent | undefined {
-  if (!isRecord(payload)) {
+  const record = recordFrom(payload)
+  if (!record) {
     return undefined
   }
 
-  const toolUseId = getString(payload, 'toolUseId')
-  const toolName = getString(payload, 'toolName')
+  const toolUseId = getString(record, 'toolUseId')
+  const toolName = getString(record, 'toolName')
   if (!toolUseId || !toolName) {
     return undefined
   }
 
   // turn.tool_result uses `result`; sdk.tool_result uses `output` — accept either
-  const result = payload['result'] ?? payload['output']
-  const isError = getBoolean(payload, 'isError')
+  const result = record['result'] ?? record['output']
+  const isError = getBoolean(record, 'isError')
   return {
     type: 'tool_execution_end',
     toolUseId,
@@ -140,13 +150,14 @@ function adaptAssistantMessage(
   payload: unknown,
   fallbackMessageId?: string
 ): GatewaySessionEvent | undefined {
-  if (!isRecord(payload)) {
+  const record = recordFrom(payload)
+  if (!record) {
     return undefined
   }
 
-  const message = isRecord(payload['message']) ? payload['message'] : payload
+  const message = isRecord(record['message']) ? record['message'] : record
   const messageId =
-    getString(payload, 'messageId') ??
+    getString(record, 'messageId') ??
     (isRecord(message) ? getString(message, 'id') : undefined) ??
     fallbackMessageId
   if (message['role'] !== 'assistant') {
@@ -165,16 +176,17 @@ function adaptAssistantMessage(
       role: 'assistant',
       content: content as Message['content'],
     },
-    ...(getBoolean(payload, 'truncated') === true ? { truncated: true } : {}),
+    ...(getBoolean(record, 'truncated') === true ? { truncated: true } : {}),
   }
 }
 
 function adaptAssistantMessageStart(payload: unknown): GatewaySessionEvent | undefined {
-  if (!isRecord(payload)) {
+  const record = recordFrom(payload)
+  if (!record) {
     return undefined
   }
 
-  const message = isRecord(payload['message']) ? payload['message'] : undefined
+  const message = isRecord(record['message']) ? record['message'] : undefined
   if (message === undefined || message['role'] !== 'assistant') {
     return undefined
   }
@@ -184,7 +196,7 @@ function adaptAssistantMessageStart(payload: unknown): GatewaySessionEvent | und
     return undefined
   }
 
-  const messageId = getString(payload, 'messageId')
+  const messageId = getString(record, 'messageId')
   return {
     type: 'message_start',
     ...(messageId !== undefined ? { messageId } : {}),
@@ -196,14 +208,15 @@ function adaptAssistantMessageStart(payload: unknown): GatewaySessionEvent | und
 }
 
 function adaptAssistantMessageUpdate(payload: unknown): GatewaySessionEvent | undefined {
-  if (!isRecord(payload)) {
+  const record = recordFrom(payload)
+  if (!record) {
     return undefined
   }
 
-  const messageId = getString(payload, 'messageId')
-  const textDelta = getString(payload, 'textDelta')
-  const contentBlocks = Array.isArray(payload['contentBlocks'])
-    ? (payload['contentBlocks'] as ContentBlock[])
+  const messageId = getString(record, 'messageId')
+  const textDelta = getString(record, 'textDelta')
+  const contentBlocks = Array.isArray(record['contentBlocks'])
+    ? (record['contentBlocks'] as ContentBlock[])
     : undefined
 
   if (textDelta === undefined && contentBlocks === undefined) {
@@ -261,7 +274,7 @@ function adaptEventByKind(
       return adaptTurnCompleted(payload)
     default:
       if (eventKind.startsWith('input.')) {
-        const pr = isRecord(payload) ? payload : {}
+        const pr = recordOrEmpty(payload)
         return {
           type: 'notice',
           level: 'info',

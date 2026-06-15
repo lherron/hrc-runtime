@@ -26,10 +26,14 @@ import { isRuntimeUnavailableStatus, json, timestamp } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import type { TmuxPaneState } from '../tmux.js'
 
-export async function handleCaptureBySelector(
-  this: HrcServerInstanceForHandlers,
+/**
+ * Parse a by-selector request body and extract the required, non-empty
+ * `selector.sessionRef`. Throws the canonical `MALFORMED_REQUEST` errors used by
+ * every by-selector handler when the selector or sessionRef is missing/empty.
+ */
+async function parseSelectorRequest(
   request: Request
-): Promise<Response> {
+): Promise<{ body: Record<string, unknown>; sessionRef: string }> {
   const body = await parseJsonBody(request)
   if (!isRecord(body) || !isRecord(body['selector'])) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
@@ -45,6 +49,42 @@ export async function handleCaptureBySelector(
       }
     )
   }
+
+  return { body, sessionRef }
+}
+
+/** Canonical `scopeRef/lane:<normalizedLane>` rendering for a target session. */
+function formatSelectorRef(session: HrcSessionRecord): string {
+  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+  return `${session.scopeRef}/lane:${laneRef}`
+}
+
+/**
+ * Build the canonical `DeliverLiteralBySelectorResponse` JSON. The base field
+ * set is shared across every literal-delivery path; the optional `runId`/`status`
+ * are only present on the broker-dispatch path and stay conditional so no
+ * `undefined` keys leak into the response.
+ */
+function deliverLiteralResponse(
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  extra?: { runId: string; status: DispatchTurnResponse['status'] }
+): Response {
+  return json({
+    delivered: true,
+    sessionRef: formatSelectorRef(session),
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    ...(extra ? { runId: extra.runId, status: extra.status } : {}),
+  } satisfies DeliverLiteralBySelectorResponse)
+}
+
+export async function handleCaptureBySelector(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const { body, sessionRef } = await parseSelectorRequest(request)
 
   const session = findTargetSession(this.db, sessionRef)
   if (!session) {
@@ -82,10 +122,9 @@ export async function handleCaptureBySelector(
   const now = timestamp()
   this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
 
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
   return json({
     text,
-    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+    sessionRef: formatSelectorRef(session),
     runtimeId: runtime.runtimeId,
   } satisfies CaptureBySelectorResponse)
 }
@@ -94,21 +133,7 @@ export async function handleLiteralInputBySelector(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isRecord(body) || !isRecord(body['selector'])) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
-  }
-
-  const sessionRef = (body['selector'] as Record<string, unknown>)['sessionRef']
-  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'selector.sessionRef is required',
-      {
-        field: 'selector.sessionRef',
-      }
-    )
-  }
+  const { body, sessionRef } = await parseSelectorRequest(request)
 
   if (typeof body['text'] !== 'string') {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'text is required', {
@@ -208,14 +233,7 @@ export async function handleLiteralInputBySelector(
     this.notifyEvent(promptEvent)
   }
 
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
-  return json({
-    delivered: true,
-    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-  } satisfies DeliverLiteralBySelectorResponse)
+  return deliverLiteralResponse(session, runtime)
 }
 
 export async function handleBrokerLiteralInputBySelector(
@@ -231,7 +249,40 @@ export async function handleBrokerLiteralInputBySelector(
   const { session, runtime, sessionRef, text, enter } = input
   const pending = this.pendingBrokerLiteralInputs.get(runtime.runtimeId)
   const now = timestamp()
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+
+  // Shared epilogue for all three broker-literal delivery arms: emit the
+  // observable `target.literal-input` event and return the canonical
+  // delivery response. The decision arms below own the state mutation
+  // (buffer / flush) and the per-arm event data — `ts`, `payloadLength`,
+  // `enter`, the `delivery` tag, and the optional `runId` (event + response)
+  // — all of which stay byte-identical to the pre-refactor inline blocks.
+  const emitLiteralInputAndRespond = (variant: {
+    ts: string
+    payloadLength: number
+    enter: boolean
+    delivery: 'broker-buffered-literal' | 'broker-empty-enter' | 'broker-dispatch-input'
+    runId?: string
+    responseExtra?: { runId: string; status: DispatchTurnResponse['status'] }
+  }): Response => {
+    const event = appendHrcEvent(this.db, 'target.literal-input', {
+      ts: variant.ts,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      ...(variant.runId !== undefined ? { runId: variant.runId } : {}),
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        sessionRef,
+        payloadLength: variant.payloadLength,
+        enter: variant.enter,
+        delivery: variant.delivery,
+      },
+    })
+    this.notifyEvent(event)
+    return deliverLiteralResponse(session, runtime, variant.responseExtra)
+  }
 
   if (!enter) {
     const buffered = `${pending?.text ?? ''}${text}`
@@ -242,29 +293,12 @@ export async function handleBrokerLiteralInputBySelector(
       text: buffered,
     })
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = appendHrcEvent(this.db, 'target.literal-input', {
+    return emitLiteralInputAndRespond({
       ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'tmux',
-      payload: {
-        sessionRef,
-        payloadLength: text.length,
-        enter: false,
-        delivery: 'broker-buffered-literal',
-      },
+      payloadLength: text.length,
+      enter: false,
+      delivery: 'broker-buffered-literal',
     })
-    this.notifyEvent(event)
-    return json({
-      delivered: true,
-      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-    } satisfies DeliverLiteralBySelectorResponse)
   }
 
   const prompt = `${pending?.text ?? ''}${text}`
@@ -273,29 +307,12 @@ export async function handleBrokerLiteralInputBySelector(
     const pane = requireTmuxPane(runtime)
     await this.tmuxForPane(pane).sendEnter(pane.paneId)
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = appendHrcEvent(this.db, 'target.literal-input', {
+    return emitLiteralInputAndRespond({
       ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'tmux',
-      payload: {
-        sessionRef,
-        payloadLength: 0,
-        enter: true,
-        delivery: 'broker-empty-enter',
-      },
+      payloadLength: 0,
+      enter: true,
+      delivery: 'broker-empty-enter',
     })
-    this.notifyEvent(event)
-    return json({
-      delivered: true,
-      sessionRef: `${session.scopeRef}/lane:${laneRef}`,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-    } satisfies DeliverLiteralBySelectorResponse)
   }
 
   this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
@@ -310,54 +327,24 @@ export async function handleBrokerLiteralInputBySelector(
     }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-  const event = appendHrcEvent(this.db, 'target.literal-input', {
+  // `ts` is deliberately RECOMPUTED here (not the `now` captured at entry): the
+  // dispatch arm awaits the turn, so the event timestamp reflects post-dispatch
+  // wall-clock. Preserved from the pre-refactor inline block.
+  return emitLiteralInputAndRespond({
     ts: timestamp(),
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    payloadLength: prompt.length,
+    enter: true,
+    delivery: 'broker-dispatch-input',
     runId: turnBody.runId,
-    runtimeId: runtime.runtimeId,
-    transport: 'tmux',
-    payload: {
-      sessionRef,
-      payloadLength: prompt.length,
-      enter: true,
-      delivery: 'broker-dispatch-input',
-    },
+    responseExtra: { runId: turnBody.runId, status: turnBody.status },
   })
-  this.notifyEvent(event)
-
-  return json({
-    delivered: true,
-    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
-    hostSessionId: session.hostSessionId,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    runId: turnBody.runId,
-    status: turnBody.status,
-  } satisfies DeliverLiteralBySelectorResponse)
 }
 
 export async function handleDispatchTurnBySelector(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
-  const body = await parseJsonBody(request)
-  if (!isRecord(body) || !isRecord(body['selector'])) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required')
-  }
-
-  const sessionRef = (body['selector'] as Record<string, unknown>)['sessionRef']
-  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'selector.sessionRef is required',
-      {
-        field: 'selector.sessionRef',
-      }
-    )
-  }
+  const { body, sessionRef } = await parseSelectorRequest(request)
 
   if (typeof body['prompt'] !== 'string') {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'prompt is required', {
@@ -414,7 +401,7 @@ export async function handleDispatchTurnBySelector(
     { runId }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-  const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless' | 'ghostty'
+  const transport = turnBody.transport
 
   let finalOutput: string | undefined
   if (transport !== 'tmux' && transport !== 'ghostty') {
@@ -427,11 +414,10 @@ export async function handleDispatchTurnBySelector(
     }
   }
 
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
-  const turnStatus = turnBody.status as 'completed' | 'started'
+  const turnStatus = turnBody.status
   return json({
     runId: turnBody.runId,
-    sessionRef: `${session.scopeRef}/lane:${laneRef}`,
+    sessionRef: formatSelectorRef(session),
     hostSessionId: turnBody.hostSessionId,
     generation: turnBody.generation,
     runtimeId: turnBody.runtimeId,

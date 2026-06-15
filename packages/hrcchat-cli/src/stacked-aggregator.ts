@@ -1,6 +1,12 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
-import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
+import {
+  isRecord,
+  mechanicalSummary,
+  redactSecrets,
+  stringValue,
+  truncateChars,
+} from './stacked-shared.js'
 import {
   FlushReason,
   Phase,
@@ -11,6 +17,7 @@ import {
   type Summarizer,
   type TurnStackedEvent,
 } from './stacked-types.js'
+import { taskIdFromScope } from './taskId.js'
 import { readTaskState } from './task-state.js'
 
 type TimerHandle = unknown
@@ -340,7 +347,7 @@ export class StackedAggregator {
   }
 
   private async resolveTaskState(): Promise<string | null> {
-    const taskId = extractTaskId(this.options.targetScope)
+    const taskId = taskIdFromScope(this.options.targetScope)
     if (taskId === undefined) {
       return null
     }
@@ -392,7 +399,7 @@ export class StackedAggregator {
   }): TurnStackedEvent {
     const at = new Date(input.atMs).toISOString()
     const hrcSeqRange = seqRange(input.events)
-    const taskId = extractTaskId(this.options.targetScope)
+    const taskId = taskIdFromScope(this.options.targetScope)
     // Key order is load-bearing: downstream consumers see this JSON line via
     // hosts that truncate around 500 chars. High-signal fields come first so the
     // actionable bits survive truncation; stable identifiers come last.
@@ -518,16 +525,8 @@ function seqRange(events: HrcLifecycleEvent[]): { from: number; to: number } | u
   return { from: Math.min(...seqs), to: Math.max(...seqs) }
 }
 
-function extractTaskId(scope: string): string | undefined {
-  return scope.match(/(?:^|:)T-\d+\b/)?.[0].replace(/^:/, '')
-}
-
 function truncateFinalBody(body: string, cap = FINAL_BODY_CAP): string {
-  const marker = '...[truncated]'
-  if (body.length <= cap) {
-    return body
-  }
-  return `${body.slice(0, Math.max(0, cap - marker.length))}${marker}`
+  return truncateChars(body, cap, '...[truncated]')
 }
 
 function redactAndTruncate(value: unknown): unknown {

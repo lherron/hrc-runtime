@@ -7,6 +7,7 @@ import type {
   HrcMessagePhase,
   HrcMessageRecord,
 } from 'hrc-core'
+import { execute } from './repositories/shared.js'
 
 // -- Row shape ----------------------------------------------------------------
 
@@ -110,10 +111,6 @@ export type MessageInsertInput = {
 }
 
 // -- Repository ---------------------------------------------------------------
-
-function execute(db: Database, sql: string, ...params: SQLQueryBindings[]): void {
-  db.prepare<never, SQLQueryBindings[]>(sql).run(...params)
-}
 
 /** Maps a defined patch field to its SQL column for {@link collectSetClause}. */
 type PatchColumnSpec<P> = { readonly key: keyof P & string; readonly column: string }

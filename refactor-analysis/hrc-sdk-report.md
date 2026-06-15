@@ -1,83 +1,94 @@
-# Refactor Analysis — `packages/hrc-sdk/`
+# 🔧 Refactoring Analysis — packages/hrc-sdk/src
 
-Scope: `packages/hrc-sdk/src` (excluding `__tests__`). Behavior-preserving audit only; no source edited.
+**Target:** packages/hrc-sdk/src · **Files read:** 4/4 (client.ts, types.ts, index.ts, discover.ts) + cross-ref into hrc-server (sdk-turn-handlers.ts, parsers/runtime.ts) and consumers (hrc-cli handlers-control.ts) · **Lines:** 929 · **Package type:** general (HTTP-over-unix-socket SDK; NOT a leaf — 6+ consumer packages)
 
-## Package shape
+## 🧭 Summary
+The SDK is a thin, well-disciplined typed client: a `HrcClient` class with ~50 one-line method wrappers over `postJson`/`getJson`, a shared NDJSON streaming loop, and a single-source-of-truth event-filter projection (`EVENT_FILTER_FIELDS`). It has already absorbed most of the obvious refactors (dedup'd wire DTOs via re-export, centralized filter fields, shared streaming). Remaining findings are small and mostly internal; the only public-surface item is the long-deprecated `input` field on `SendInFlightInputRequest`.
 
-| File | Lines | Role |
-|------|-------|------|
-| `src/client.ts` | 638 | `HrcClient` — typed RPC façade over the HRC Unix-socket HTTP API |
-| `src/types.ts` | 201 | SDK type re-exports from `hrc-core` + SDK-only filter/option types |
-| `src/index.ts` | 67 | Public barrel (re-exports `HrcClient`, `discoverSocket`, types) |
-| `src/discover.ts` | 15 | Socket discovery helper |
+## 🚪 Public boundary (assess first)
+**API surface:** `discoverSocket()`, `HrcClient` class (~50 async methods), and a large re-exported type barrel (`index.ts` / `types.ts`). Consumers: hrcchat-cli, hrc-cli, hrc-server tests, agent tooling. **204 `HrcClient` references** across the repo — this is a heavily-used, fan-out boundary. Contract changes are EXPENSIVE and must go through M02 expand/contract.
 
-Tests: `src/__tests__/{sdk,sdk-phase6-bridge,sdk-watch-generation-filter}.test.ts` (~1.4k lines). Coverage includes `throwTypedError` non-JSON excerpt path (m-22), watch generation filtering, and bridge methods.
+**T07 (align interface to usage):** The method surface maps 1:1 to server routes and is genuinely used. No fat/leaky interface to narrow. The type barrel in `index.ts` re-exports a curated subset of `types.ts` (e.g. `BrokerInspectRequest`, `SweepRuntimesRequest`, `DropContinuationRequest` are in `types.ts` but NOT re-exported from `index.ts`) — these are reachable via the client methods' inferred types, so the asymmetry is intentional, not leaky. Leave alone.
 
-This package is already in good shape: a prior pass extracted the shared helpers `buildPath`, `eventFilterParams`, `matchesWatchOptions`, `streamNdjson`, and the `EVENT_FILTER_FIELDS` single-source-of-truth array. There are no long methods, no deep nesting, no obvious dead code, and no concrete-collaborator instantiation. Findings below are minor and mostly DEFERRED because the package's entire purpose is its public surface.
+**M02 (contract change):** One genuine candidate — the `@deprecated input` field on `SendInFlightInputRequest` (types.ts:99) plus its forwarding in `sendInFlightInput` (client.ts:271–279). The server (`parsers/runtime.ts:373`) reads `prompt` and only falls back to `input`. Removing `input` is a contract contraction requiring a deprecation cycle. DEFERRED.
 
-## SOLID scorecard
+**Verdict: 🟢** — boundary is healthy, aligned to usage, and well-typed. One deferred deprecation-cleanup.
 
-| Principle | Grade | Notes |
-|-----------|-------|-------|
-| S — Single Responsibility | B | `HrcClient` has ~45 public methods (well over the 10-method guideline) but each is a thin, single-statement RPC delegate. The class genuinely owns one responsibility (talk to the daemon); the count is a façade artifact, not mixed concerns. IO + transport + error mapping are cleanly separated into private primitives (`postJson`/`getJson`/`throwTypedError`/`streamNdjson`). |
-| O — Open/Closed | A | No type-keyed switch/if-else chains. New endpoints = new methods; the `EVENT_FILTER_FIELDS` array is an explicit OCP seam for filter fields. |
-| L — Liskov | A | No inheritance; no overrides; no throwing stubs. |
-| I — Interface Segregation | C | `HrcClient` is a single fat class (~45 methods) with no role interfaces; consumers depend on the whole class even if they only call `dispatchTurn`. This is the only real, but low-value, structural issue — splitting it is a public-surface change and is DEFERRED. |
-| D — Dependency Inversion | B | `fetch` and `BASE_URL` are module-level constants; `socketPath` is injected via constructor. No `new Concrete()` of collaborators. The hard dependency on global `fetch` (Bun unix-socket fetch) is the only un-injected seam; acceptable for an SDK. |
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-## Priority refactorings
+### F1 — `sendInFlightInput` manual spread duplicates the deprecated-field plumbing (DEFERRED)
+- **Location:** client.ts:271–279, types.ts:96–103
+- **Mechanism repaired:** B/M02 contract contraction — collapse the dual `input`/`prompt` field into a single canonical `prompt`, removing the partial-total branch that carries a deprecated alias forward.
+- **Symptom:** `SendInFlightInputRequest` carries both `prompt` (required) and `input` (`@deprecated`); the method spreads each conditionally and ships BOTH on the wire when a caller (hrc-cli handlers-control.ts:73–79) passes both. The server already prefers `prompt`.
+- **Current → Suggested:** Keep `input` accepted for one release but stop forwarding it once all in-repo callers pass `prompt` (hrc-cli already does); eventually drop the `input` field. Schedule via expand/contract.
+- **Direction:** DE-abstract (remove a deprecated alias).
+- **Preservation:** test-suite (sdk.test.ts + hrc-server in-flight handler tests) + observational (server prefers `prompt`).
+- **Falsifiable signal:** grep shows zero remaining callers passing only `input`; wire payload no longer contains `input`.
+- **Risk:** Med · **API-impact:** public-surface · **Effort:** S · **Tests:** sdk.test.ts, hrc-server sdk-turn-handlers tests.
+- **Contraindication:** `input` is load-bearing for any out-of-repo/older-server consumer; the server fallback exists precisely for wire compatibility. Do NOT drop unilaterally.
 
-### P1 — Named constants for magic numbers in `throwTypedError`
-- **Location**: `src/client.ts:205-206` — `text.length > 200`, `text.slice(0, 200)`, `'…'`.
-- **Principle/smell**: Magic number; duplicated literal `200`.
-- **Current**: `excerpt = text.length > 200 ? \`${text.slice(0, 200)}…\` : text`.
-- **Suggested**: Introduce a module-level `const ERROR_BODY_EXCERPT_MAX = 200` (and optionally `ELLIPSIS = '…'`) and use it in both spots. Pure internal rename of a literal; output is byte-identical, and the m-22 test (`sdk.test.ts:860`) keeps passing.
-- **Risk**: Low
-- **API-impact**: internal-only
-- **Effort**: ~5 min
-- **Tests**: Covered by `sdk.test.ts` m-22 case; no test change needed.
+### F2 — Per-call manual `|| undefined` normalization in list filters is repeated 5×
+- **Location:** client.ts:233–238 (listSessions), 418–429 (listRuntimes), 431–439 (listRuns), 453–459 (listLaunches), 467–474 (listTargets)
+- **Mechanism repaired:** C/T15 — extract the recurring "empty-string-to-undefined" intent that's open-coded as `filter?.x || undefined` at every query-string boundary.
+- **Symptom:** The idiom `field: filter?.field || undefined` appears ~12 times to coerce `''`/`null` to `undefined` so `buildPath` drops it. Duplicated intent (treat falsy string as absent).
+- **Current → Suggested:** A small helper `emptyToUndefined(v)` OR have `buildPath` itself skip empty strings (`if (value === '') continue`) so call sites can pass `filter?.field` directly. The latter centralizes the rule in one place.
+- **Direction:** Extract abstraction (modest).
+- **Preservation:** type/compiler + test-suite (existing buildPath behavior must still drop empties).
+- **Falsifiable signal:** removing `|| undefined` at call sites leaves generated query strings byte-identical in sdk.test.ts.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S · **Tests:** sdk.test.ts buildPath/list assertions.
+- **Contraindication:** If any endpoint must distinguish `''` (explicit empty) from absent, centralizing the coercion in `buildPath` would change behavior — verify none does (none observed; all are string identifiers/scopes).
 
-### P2 — Route single-param GET query strings through `buildPath`
-- **Location**: `src/client.ts:292, 296, 359, 393, 470` — methods that hand-build a query string with `encodeURIComponent` (`capture`, `getAttachDescriptor`, `listSurfaces`, `listBridges`, `getTarget`).
-- **Principle/smell**: Mild duplication; two idioms for the same job (`buildPath` vs inline `?x=${encodeURIComponent(...)}`).
-- **Current**: e.g. `\`/v1/capture?runtimeId=${encodeURIComponent(runtimeId)}\``.
-- **Suggested**: Reuse `buildPath('/v1/capture', { runtimeId })`. NOTE: `buildPath` uses `URLSearchParams.set` (percent-encodes), so encoding is equivalent but **not guaranteed byte-identical** to `encodeURIComponent` for some characters (e.g. spaces → `+` vs `%20`). Path-segment cases (`getSession:235`, `getActiveRunContribution:283` — value is in the path, not the query) must NOT be converted. Because the daemon decodes both forms in practice but the wire bytes can differ, this is a behavioral-equivalence judgment call.
-- **Risk**: Med (encoding-equivalence risk on the wire)
-- **API-impact**: internal-only (paths the SDK emits)
-- **Effort**: ~20 min + verify against `sdk.test.ts` path assertions
-- **Tests**: `sdk.test.ts` asserts exact request paths in several places — converting could require updating those expected-path strings, which the safety policy discourages. **DEFERRED** (ambiguous-to-do-safely + risk of touching tests).
+### F3 — `getStatus`/`listTargets` repeat the `? 'true' : undefined` boolean-flag idiom
+- **Location:** client.ts:411–415 (includeArchived), 467–474 (discover), 568 (follow in watch)
+- **Mechanism repaired:** C/T15 — extract the "boolean → 'true'|undefined' query flag" projection.
+- **Symptom:** `options?.x ? 'true' : undefined` is hand-written at 3 sites. Meanwhile `buildPath` already supports a real `boolean` `QueryValue` (used by `stale`/`json` in listRuntimes), which renders `true`/`false` via `String(value)` — an INCONSISTENCY: some flags emit `'true'`/absent, others emit `'true'`/`'false'`.
+- **Current → Suggested:** Decide one convention. If "presence = true, absence = false" is the wire contract for these flags, a `boolField(v)` helper makes it explicit and uniform.
+- **Direction:** Extract abstraction + remove inconsistency.
+- **Preservation:** char-test — server-side parsing of each flag must be confirmed before unifying (the two conventions may both be intentionally honored server-side).
+- **Falsifiable signal:** query strings unchanged for the existing convention each endpoint already uses.
+- **Risk:** Med · **API-impact:** internal-only (wire-shape-sensitive) · **Effort:** S · **Tests:** sdk.test.ts + server parser tests for status/targets/runtimes.
+- **Contraindication:** Do NOT mechanically unify to `String(boolean)` — `?'true':undefined` and `boolean` render DIFFERENTLY (absent vs `'false'`); unifying could silently change a request. This is a re-read-confirmed real inconsistency but the fix is contract-sensitive, so keep it as a documented internal cleanup, not an auto-apply.
 
-### P3 — `HrcClient` method count / fat façade (ISG/SRP)
-- **Location**: `src/client.ts:161-638` — `HrcClient` class, ~45 public methods spanning sessions, runtimes, runs, bridges, surfaces, targets, messages, events, diagnostics.
-- **Principle/smell**: Interface Segregation / Single Responsibility (class > 10 methods, multiple domain groupings already flagged with `// --` banners).
-- **Current**: One monolithic client class.
-- **Suggested (human review only)**: Either (a) accept as an intentional SDK façade — recommended — or (b) split into role-grouped sub-clients (`client.sessions`, `client.runtimes`, `client.bridges`, …) via lazy getters that share the transport primitives. Option (b) changes the public call shape (`client.dispatchTurn` → `client.runtimes.dispatchTurn`) and breaks every consumer.
-- **Risk**: High
-- **API-impact**: public-surface
-- **Effort**: Large (multi-package, all callers)
-- **Tests**: Would rewrite the entire SDK test suite and every downstream caller. **DEFERRED — do not touch.**
+### F4 — `streamNdjson` duplicates the parse-line block for the trailing flush
+- **Location:** client.ts:614–628 (loop body) vs 632–644 (trailing flush)
+- **Mechanism repaired:** E/T23-ish — collapse the near-identical "trim → JSON.parse (swallow) → predicate → yield" logic into one local closure.
+- **Symptom:** The same 8-line try/parse/predicate/yield sequence is written twice (once per-line, once for the buffered remainder).
+- **Current → Suggested:** Inline a `function* emit(raw: string)` (or `tryYield`) closure used by both the loop and the flush. Pure mechanical dedup.
+- **Direction:** DE-duplicate.
+- **Preservation:** type/compiler-proof + test-suite (sdk-watch-generation-filter.test.ts, sdk-phase6-bridge.test.ts exercise streaming).
+- **Falsifiable signal:** streaming tests still pass byte-for-byte; same events yielded for split-chunk inputs.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S · **Tests:** sdk-watch-generation-filter.test.ts, sdk-phase6-bridge.test.ts.
+- **Contraindication:** The two blocks differ subtly — the loop `continue`s on malformed lines, the flush `return`s. A shared generator-closure must preserve that "flush stops on first malformed remainder" semantic (it's the last chunk, so `return` vs `continue` is observationally identical there, but keep the early-exit explicit).
 
-## Code smells
+### F5 — `RequestInit` cast `as RequestInit` repeated for the `unix:` extension
+- **Location:** client.ts:181, 192–193, 542, 577, 596 (every fetch carries `{ unix: this.socketPath } as RequestInit`)
+- **Mechanism repaired:** C/T01-adjacent — introduce a single typed `unixFetch(path, init)` seam so the Bun-specific `unix` field and `BASE_URL` concatenation live in ONE place instead of being cast at 5 sites.
+- **Symptom:** Bun's non-standard `unix` socket field forces an `as RequestInit` cast at each fetch; `${BASE_URL}${path}` is also repeated 5×. `postJson`/`getJson` already centralize two of them, but `streamNdjson`, `watch`, and `watchMessages` re-implement the cast and URL join.
+- **Current → Suggested:** A private `private unixFetch(path: string, init: Omit<RequestInit,'unix'> & { unix?: never })` or a typed `BunRequestInit = RequestInit & { unix?: string }` so the cast happens once and the socket is injected centrally. This also makes the socket a true substitution seam (testability).
+- **Direction:** Extract seam (consolidate hardcoded transport detail).
+- **Preservation:** type/compiler-proof (the type alias removes casts) + test-suite.
+- **Falsifiable signal:** zero `as RequestInit` casts remain; all fetches route through one method; tests unchanged.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** S · **Tests:** full sdk.test.ts suite.
+- **Contraindication:** `watch`/`watchMessages` need the streaming body, not a parsed JSON — the seam must return the raw `Response` (or be parameterized), so don't fold streaming into `getJson`/`postJson`. Keep `unixFetch` returning `Response`.
 
-| # | Location | Smell | Severity | Disposition |
-|---|----------|-------|----------|-------------|
-| 1 | `client.ts:205-206` | Magic number `200` duplicated; bare `'…'` literal | Low | APPLY (P1) |
-| 2 | `client.ts:292,296,359,393,470` | Two idioms for query strings (`buildPath` vs inline `encodeURIComponent`) | Low | DEFER (P2 — encoding/test risk) |
-| 3 | `client.ts:161-638` | Fat façade class (~45 methods) | Low (structural) | DEFER (P3 — public surface) |
-| 4 | `client.ts:264-270` | `sendInFlightInput` spreads conditional `input`/`prompt`/`inputType` into body — minor object assembly, but correct and readable | Info | No action |
-| 5 | `types.ts:99` | `input?` field marked `@deprecated` but still forwarded by `sendInFlightInput` | Info | No action (public type contract; DEFER any removal) |
+## 🪶 Deliberately left alone (where-NOT)
+- **`EVENT_FILTER_FIELDS` projection (client.ts:103–164):** already the ideal single-source-of-truth pattern (T15 done) shared by `watch`, `listLatestEventBySession`, `matchesWatchOptions` with a `satisfies` compiler guard. Do not touch.
+- **The ~50 one-line method wrappers:** these are NOT a "middle man" (T23). Each adds a typed request/response contract and a stable route binding — collapsing them would re-leak HTTP route strings to callers. Pass-throughs are load-bearing.
+- **`types.ts` re-export barrel:** the asymmetry between `types.ts` and `index.ts` exports is a deliberate curated public surface, not an omission.
+- **`throwTypedError` clone/text-excerpt dance (client.ts:201–225):** correct error-handling structure (typed domain error vs truncated text excerpt). Not a swallowed catch — the inner `catch {}` around `cloned.text()` is a legitimate best-effort fallback. Leave.
+- **`discover.ts`:** 15 lines, single responsibility, correct fail-fast. Nothing to do.
+- **`getLatestRunForSession` (client.ts:441–451):** thin convenience over `listRuns` with `limit:1`; clear intent, keep.
 
-No dead code, no truly long methods (largest is `streamNdjson` ~55 lines at 582-637, cohesive and single-purpose), no deep nesting beyond the intrinsic stream loop, no long parameter lists (>4), no feature envy.
+## 🔭 If applying: outside-in sequence
+1. **F5** first (typed `unixFetch` seam) — removes casts and gives a single transport choke-point that the rest build on.
+2. **F4** (streamNdjson dedup) — localized, independent.
+3. **F2** (empty-string coercion in `buildPath`) — but ONLY after confirming no endpoint distinguishes `''` from absent; verify with server parser tests.
+4. **F3** (boolean-flag convention) — document/decide convention; do NOT mechanically unify (wire-shape risk). Treat as a tracked internal cleanup, not a blind auto-apply.
+5. **F1** (`input` deprecation) — DEFERRED, schedule via M02 across releases.
 
-## Quick wins (safe to auto-apply)
-
-1. **P1** — Extract `ERROR_BODY_EXCERPT_MAX = 200` (and `ELLIPSIS = '…'`) named constants in `client.ts`. Low risk, internal-only, behavior-identical, covered by existing m-22 test.
-
-That is the only auto-applicable finding. Everything else is either already clean or touches the public surface / wire bytes / tests and is deferred.
-
-## Technical debt notes
-
-- **`streamNdjson` is the one non-trivial method (~55 lines)** and is correctly factored (decode → buffer → split-on-`\n` → parse-or-skip → predicate → flush trailing). At the edge of the 50-line guideline but splitting it would fragment a single coherent algorithm and is **not** recommended.
-- **Global `fetch` dependency** (Bun unix-socket `fetch`) is an un-injected seam. Tests stub it via global override. Introducing a constructor-injected fetcher would improve DI but is a public-constructor signature change → **public-surface, DEFER**.
-- **`sendInFlightInput` deprecated `input` field** (`types.ts:99`): SDK still forwards `input` when present. Removing it is a public type-contract change → DEFER; track for a future major.
-- The package mirrors `hrc-core` wire DTOs via re-export rather than redefining them (good — avoids duplication). No action.
+## ✅ Safety checklist
+- [ ] Re-run full hrc-sdk suite (sdk.test.ts, sdk-watch-generation-filter.test.ts, sdk-phase6-bridge.test.ts).
+- [ ] For F2/F3: confirm generated query strings are byte-identical (assert in test) before/after — these are wire-shape changes masquerading as cleanups.
+- [ ] For F1: grep all consumers (hrc-cli, hrcchat-cli, hrc-server) for `input:`-only callers before any contraction; do not drop the server `prompt ?? input` fallback in the same change.
+- [ ] No behavior change to `streamNdjson` malformed-line swallowing (M-10 invariant) — F4 must preserve continue-vs-return semantics.
+- [ ] Spread/projection refactors (F2) preserve the exact emitted field set.

@@ -29,6 +29,7 @@
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
+import { isRecord } from './json'
 import type { BrokerAttachTokenRef } from './runtime-state'
 
 // ── Canonical internal types (spec §9.1) ──────────────────────────────────────
@@ -88,10 +89,6 @@ export type BrokerLeaseProbe = {
 }
 
 // ── low-level extraction helpers ──────────────────────────────────────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 /** Extract a tmux window identity ({sessionId,windowId,paneId}) from any record.
  *  Tolerant of extra fields (e.g. the flat BrokerWindowView carries socketPath,

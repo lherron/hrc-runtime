@@ -1,226 +1,115 @@
-# Refactor Analysis — `packages/hrc-cli/`
+# 🔧 Refactoring Analysis — packages/hrc-cli/src
 
-Behavior-preserving refactor audit. Source read in full: `cli.ts` (3967), `cli-runtime.ts` (854),
-`monitor-render.ts` (1042), `monitor-watch.ts` (815), `monitor-wait.ts` (533), `monitor-show.ts` (384),
-plus trivial `print.ts`, `runtime-args.ts`. Tests in `src/__tests__/` were read for coverage mapping only.
+**Target:** packages/hrc-cli/src (analysis profile: general) · **Files read:** 29/29 (all non-test `.ts`) · **Lines:** ~8,950 · **Package type:** leaf CLI binary (`bin: hrc → src/cli.ts`), no `exports` map, no in-repo importers.
 
-## Package surface note (drives API-impact tagging)
+## 🧭 Summary
+This is a recently-decomposed CLI (the big-file `index.ts` split is done; `cli.ts` re-exports a historical surface that the test-suite still imports). Structure is healthy: handlers are thin, the commander wiring is mechanical, and prior dedup passes already extracted `monitor-conditions.ts` / `monitor-fields.ts`. The remaining smells are concentrated in the hand-rolled `parseArgv` in `monitor-watch.ts` (duplicated flag-parsing intent vs `monitor-wait.ts`), a dead `_intent` parameter + a pure pass-through `attachOpenAiRuntime`, and the triple-encoded event-filter predicate (`buildEventFilter` / `deriveStoreFilters` / `isFilterActive`). No concurrency hazards beyond best-effort polling that is already correctly guarded.
 
-`package.json` declares **only** `bin: { hrc: ./src/cli.ts }` and `files: ["dist"]`. There is **no library
-`exports`/`main`** field — no other package imports from `hrc-cli`. The `export`ed functions in `cli.ts`
-(`main`, `chooseDefaultProjectId`, `selectLatestUsableRuntime`, `attachOpenAiRuntime`, `resolveAgentHarness`,
-`harnessStringToHarnessId`, `explainScopeCommandError`) and in `cli-runtime.ts` are consumed **only by this
-package's own tests**. Therefore:
+## 🚪 Public boundary (assess first)
+**API surface:** Two surfaces. (1) The user-facing CLI contract — verbs, flags, exit codes, stdout/stderr bytes — exercised end-to-end through `main()`. (2) A small re-export surface on `cli.ts` (`chooseDefaultProjectId`, `harnessStringToHarnessId`, `resolveAgentHarness`, `attachOpenAiRuntime`, `selectLatestUsableRuntime`, `explainScopeCommandError`, `main`). Grep confirms **no other package imports `hrc-cli`** (no `exports` map; `files: ["dist"]`), but the **test suite imports every one of these from `'../cli'`**, so the re-export surface is load-bearing *internally* and is NOT free to break.
 
-- The **true public surface is the CLI command/flag/exit-code/stdout-JSON contract** (argv in, bytes out).
-  Anything that changes a flag name, exit code, JSON shape, or human output is `public-surface`.
-- The exported helper functions are an **internal-to-package test seam**. Renaming/moving them is `internal-only`
-  but DEFERRED-by-policy when a test imports the symbol (a rename/move forces a test edit). Pure-internal
-  (non-exported) extraction is freely applicable.
+**T07/M02 findings:** None warranted at the boundary. Because there are no cross-package consumers, M02 expand/contract does not apply (leaf package). The re-exports are deliberate test seams, not leaky internals — keep them. The dual-signature `cmdMonitorWatch(argv | args, deps)` is an intentional test seam (documented), not a fat interface to narrow.
 
----
+**Verdict:** 🟢 — boundary is coherent and well-characterized; all proposed work is behind it.
 
-## SOLID Scorecard
+## 🎯 Findings by mechanism (outside-in, highest impact first)
 
-| Principle | Grade | Notes |
-|-----------|-------|-------|
-| **S** — Single Responsibility | **D** | `cli.ts` is a 3967-line god-file: env loading, arg-parsing glue, scope resolution, intent building, ~40 command handlers, dry-run preview rendering, error explanation, two giant usage blobs, AND the full commander tree. `monitor-render.ts` (1042) mixes 5 renderer strategies + ~30 tool-formatting free functions. |
-| **O** — Open/Closed | **B** | Renderer factory + per-format classes are genuinely open/closed. Weak spots: `formatToolDisplayName`/`formatToolSummary`/`formatToolCallBody` are parallel `if (toolName === …)` ladders that grow per tool; `--transport` validation duplicated as inline `!== 'tmux' && !== 'headless' && !== 'sdk'`. |
-| **L** — Liskov | **A** | Renderer classes share `MonitorRenderer` and substitute cleanly; no throwing/no-op overrides. |
-| **I** — Interface Segregation | **B** | `ServerRuntimeStatus` carries redundant flattened+nested mirrors (`pid`+`daemon.pid`, `socketPath`+`socket.path`); not a fat interface but duplicative. Renderer interface is minimal/good. |
-| **D** — Dependency Inversion | **C** | Command handlers call `createClient()` (concrete `HrcClient` over a discovered socket) directly; fine for a CLI but no seam, so handlers are integration-tested only. `monitor-watch.ts` *does* model the seam well (`MonitorWatchDeps`); `monitor-wait.ts` and `monitor-show.ts` do not, and duplicate the live-state builder instead. |
+### F1 — Dead `_intent` parameter on `attachWithRetry` (partial→total / boundary narrowing)
+- **Location:** `cli/runtime-select.ts:87-92` (param `_intent?: HrcRuntimeIntent`), caller `cli/handlers-scope-cmd.ts:607-612` passes `intent`.
+- **Mechanism repaired:** [T07] align interface to actual usage — the parameter is accepted, named `_intent` (underscore = "unused"), and never read. The signature lies about what the function consumes.
+- **Symptom:** Caller threads a constructed `intent` into a function that ignores it; a reader cannot tell whether attach is intent-sensitive.
+- **Current→Suggested:** Drop the `_intent` param from `attachWithRetry`; drop the now-dead `intent` argument at the call site.
+- **Direction:** DE-abstraction (remove unused surface).
+- **Preservation:** type/compiler-proof — removing an unread param cannot change behavior; tsc + suite confirm.
+- **Falsifiable signal:** suite still green; `attachWithRetry` arity drops by one with no behavioral diff.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** XS · **Tests:** existing attach tests in `cli.test.ts`.
+- **Contraindication:** `attachOpenAiRuntime` (see F2) also calls `attachWithRetry` without intent — confirm it is the only other caller before removing (it is). None.
 
-Code-smell density: **High** — driven by `cli.ts` size, the `toLegacyArgv`/`toLegacyArgvForScopeCommand`
-duplication, the commander↔legacy-argv double-encoding of every command, and triplicated monitor helpers.
+### F2 — `attachOpenAiRuntime` is a pure pass-through middle-man (remove middle man)
+- **Location:** `cli/runtime-select.ts:79-85`. Body is `return attachWithRetry(client, hostSessionId, runtime)`.
+- **Mechanism repaired:** [T23] remove middle man / collapse pass-through. It adds no behavior over `attachWithRetry` and exists only on the re-export surface.
+- **Symptom:** Two names for one operation; the OpenAI-specific name is misleading (it is provider-agnostic).
+- **Current→Suggested:** Two options. (a) Inline at the only non-test caller — but there is none; it is exported via `cli.ts` and referenced **only** by `cli.test.ts`. So the honest move is to collapse the test onto `attachWithRetry` and delete `attachOpenAiRuntime` + its re-export. (b) If the name is wanted as a stable test seam, keep it but document it as an alias. Prefer (a).
+- **Direction:** DE-abstraction.
+- **Preservation:** test-suite (the test importing it must be updated in the same commit) — this is the one rung above char-test because a test references it.
+- **Falsifiable signal:** suite green after the test is repointed; symbol count on `cli.ts` re-export block drops by one.
+- **Risk:** Low · **API-impact:** internal-only (test-facing re-export) · **Effort:** XS.
+- **Contraindication:** It IS on the documented re-export surface; because a test imports it, treat the edit as touching the (internal) public surface — bundle the test change. Marginal; defer-or-apply judgment call → I classify as auto-applicable since it is internal-only + behavior-preserving, but it edits a test.
 
----
+### F3 — Hand-rolled `parseArgv` flag loop duplicates intent across two monitor commands (extract missing abstraction)
+- **Location:** `monitor-watch.ts:716-906` (`parseArgv`, `matchStringFlag`, `parsePositiveInteger`, `parseNonNegativeInteger`) vs `monitor-wait.ts:105-163` (`parseWaitArgs`) — both re-implement `--until`/`--timeout`/`--stall-after` long-flag `=`/space parsing by hand; `cli/argv.ts` already has `parseFlag`.
+- **Mechanism repaired:** [T15] extract missing abstraction for the shared "string flag with `--name value` and `--name=value`" parsing intent. The `matchStringFlag` helper in `monitor-watch.ts` is exactly the abstraction; `monitor-wait.ts` open-codes the same three cases.
+- **Symptom:** The same `--until`/`--timeout`/`--stall-after` parse logic exists in two files with subtly different unknown-option handling; a new shared flag must be edited in two places.
+- **Current→Suggested:** Lift `matchStringFlag` (+ the two integer parsers) into a shared private module (e.g. `monitor-args.ts` next to `monitor-conditions.ts`/`monitor-fields.ts`, the established pattern) and have `parseWaitArgs` consume it.
+- **Direction:** extract (toward shared abstraction) — but conservative; do NOT also fold in `cli/argv.ts`'s `parseFlag` (different error model: `fatal()` vs `CliUsageError`).
+- **Preservation:** char-test — the byte-for-byte error strings (`--until requires a value`, `unknown option: …`) are asserted by `monitor-wait.acceptance.test.ts`; keep messages identical.
+- **Falsifiable signal:** both monitor suites green; one copy of the flag-matcher remains.
+- **Risk:** Med (two error-model dialects; easy to converge them by accident) · **API-impact:** internal-only · **Effort:** S.
+- **Contraindication:** The duplication is partly load-bearing — `monitor-wait` throws `CliUsageError`, `cli/argv.ts` calls `fatal()` (process.exit). Only unify the two that share the `CliUsageError` model; do not collapse into `argv.ts`.
 
-## Priority Refactorings
+### F4 — Event-filter predicate is encoded three times (extract missing abstraction / single source of truth)
+- **Location:** `monitor-watch.ts` — `buildEventFilter` (993-1014, in-memory predicate), `deriveStoreFilters` (1020-1037, SQL filter), `isFilterActive` (951-958, boolean). All three independently re-derive "is `--kind`/`--tool`/`--grep`/`--milestone` set and what does each mean."
+- **Mechanism repaired:** [T15] extract the filter *spec* once (a normalized `{milestone?, kinds?, tools?, grep?}` parsed from args) and derive the predicate, the store-filter, and the active-flag from that single object.
+- **Symptom:** `args.grep !== '' ` vs `args.kind.trim() !== ''` activation rules are repeated and must stay in lockstep across three functions; a fourth filter dimension means editing three sites. The `milestone supersedes kind/tool/grep` rule lives in two of them.
+- **Current→Suggested:** Introduce `normalizeEventFilterSpec(args) → FilterSpec | undefined`; have `isFilterActive` = `spec !== undefined`, `buildEventFilter` consume `spec`, `deriveStoreFilters` map `spec → HrcLifecycleMonitorFilters`.
+- **Direction:** extract (introduce a parameter object / value type — borders on [T21]).
+- **Preservation:** char-test — `monitor-watch` filtering is exercised by the T-04232 tests; the SQL-vs-in-memory parity is the documented invariant. Re-run the watch suite.
+- **Falsifiable signal:** the three activation predicates collapse to one; T-04232 filter tests stay green.
+- **Risk:** Med (parity between in-memory and SQL filter is a stated invariant; a refactor that drifts them is a regression) · **API-impact:** internal-only · **Effort:** S-M.
+- **Contraindication:** The in-memory predicate is a *deliberate redundant guard* over already-narrowed live state (documented at 988-992). Preserve both consumers; only unify their *source*, not their existence.
 
-### P1 — Split `cli.ts` (3967 lines) into cohesive command-group modules
-- **Location:** `src/cli.ts` (whole file)
-- **Principle:** S (Single Responsibility), file > 300 lines by 13×.
-- **Current:** One module holds env loading, arg helpers, the commander→legacy argv bridge, scope/intent
-  resolution, ~40 `cmd*` handlers (server, session, runtime, broker, launch, run/start/attach, surface, bridge,
-  inflight, sweep/reconcile), dry-run preview rendering, error explanation, two multi-hundred-line usage strings,
-  and `buildProgram()`.
-- **Suggested:** Extract into siblings mirroring the existing monitor split: `cli-args.ts` (argv helpers +
-  `toLegacyArgv*`), `scope-intent.ts` (`resolveManagedScopeContext`, `buildManaged*Intent`, `resolveAgentHarness`),
-  `commands/server.ts`, `commands/runtime.ts`, `commands/bridge.ts`, `commands/scope.ts` (run/start/attach +
-  previews), `commands/sweep.ts`, `usage.ts` (the two big strings). `cli.ts` keeps only `buildProgram()` + `main()`.
-  Move symbol-by-symbol with no signature changes.
-- **Risk:** **Med** — large mechanical move; risk is in import re-wiring and the `import.meta.main` guard, not logic.
-- **API-impact:** **internal-only** (no package exports consumed externally) BUT several moved symbols
-  (`chooseDefaultProjectId`, `selectLatestUsableRuntime`, `attachOpenAiRuntime`, `resolveAgentHarness`,
-  `harnessStringToHarnessId`, `explainScopeCommandError`, `main`) are imported by tests via `'../cli'`, so a move
-  forces test-import edits — outside the "no test edits" safety rule.
-- **Effort:** L.
-- **Tests:** `cli.test.ts`, `cli-intent.test.ts`, `choose-default-project-id.test.ts`,
-  `explain-scope-command-error.test.ts`, `smoke.test.ts` import from `'../cli'`.
-- **DEFER** — too broad to be a behavior-preserving auto-apply; forces test edits.
+### F5 — Two coexisting `fatal()` + `hasFlag()` definitions with different semantics (substitution seam clarity)
+- **Location:** `runtime-args.ts:1-8` (`fatal` → `process.exit(1)`; `hasFlag`) vs `cli/shared.ts:10-12` (`fatal` → `throw new CliUsageError`) and `cli/argv.ts:31-33` (`hasFlag`).
+- **Mechanism repaired:** [T16]/[T03] collapse/relocate — `runtime-args.ts` is a 8-line near-duplicate. `cli-runtime.ts` imports `fatal`/`hasFlag` from `runtime-args.js`; the rest of `cli/*` imports the throwing `fatal` from `shared.js`. The two `fatal`s are NOT interchangeable (one exits, one throws into the commander error handler).
+- **Symptom:** Same-named helpers with divergent control-flow semantics in one package is a footgun — an edit that swaps the import silently changes whether a usage error is catchable.
+- **Current→Suggested:** Do **not** merge the two `fatal`s (semantics differ — see contraindication). Instead, (a) rename `runtime-args.ts`'s `fatal` to `fatalExit` to make the process-exit semantics explicit, and (b) have `runtime-args.ts` re-use `hasFlag` from `cli/argv.ts` (identical `args.includes(flag)` body) to delete the duplicate.
+- **Direction:** clarify + de-dup the identical half (`hasFlag`); keep the divergent half (`fatal`) but disambiguate the name.
+- **Preservation:** type/compiler-proof for `hasFlag` (identical body); char-test for the rename (no behavior change).
+- **Falsifiable signal:** one `hasFlag` definition remains; grep for `fatal` shows two distinct names with documented semantics.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** XS.
+- **Contraindication:** The two `fatal`s are load-bearing-different. `cli-runtime.ts` runs in daemon/launchctl paths where a hard `process.exit(1)` is correct; the `cli/*` throwing `fatal` must reach the commander handler. Merging them would break one path. Only de-dup `hasFlag`.
 
-### P2 — De-duplicate `toLegacyArgv` vs `toLegacyArgvForScopeCommand`
-- **Location:** `src/cli.ts:252-355`
-- **Principle:** Code smell (duplicated block), DRY.
-- **Current:** `toLegacyArgvForScopeCommand` (312-355) is `toLegacyArgv` (252-295) copied verbatim — identical
-  string-flag, boolean-flag, and negated-boolean loops — plus a trailing `-p` short-flag emit. The negated-boolean
-  block differs only in `rawArgv ?? process.argv` vs a required `rawArgv`.
-- **Suggested:** Have `toLegacyArgvForScopeCommand` call `toLegacyArgv(positionals, opts, schema, rawArgv)` then
-  append `-p`, OR add an optional `shortFlags?` param to `toLegacyArgv`. Both private.
-- **Risk:** **Low** — pure internal dedupe, both functions private (not exported, not imported by tests).
-- **API-impact:** **internal-only**.
-- **Effort:** S.
-- **Tests:** Covered indirectly by `cli.test.ts` (drives `main()` through commander for run/start). **APPLY.**
+### F6 — Repeated CSV-split-and-trim idiom (extract missing abstraction)
+- **Location:** `handlers-runtime.ts:42-46` (`--status` split), `handlers-runtime.ts:278-283` (sweep `--status` split); `monitor-watch.ts:943-948` already has `splitList`.
+- **Mechanism repaired:** [T15] extract the `split(',').map(trim).filter(len>0)` clump into one shared `splitCsv` (the `splitList` in `monitor-watch.ts` is exactly it, privately).
+- **Symptom:** The same comma-list normalization is inlined twice in `handlers-runtime.ts` and once (named) in monitor.
+- **Current→Suggested:** Promote `splitList` to a shared `cli/argv.ts` (or `cli/shared.ts`) `splitCsv` and call it from the runtime handlers.
+- **Direction:** extract.
+- **Preservation:** type/compiler-proof (pure, identical body).
+- **Falsifiable signal:** one CSV-split helper; `runtime list`/`runtime sweep` status filtering unchanged in tests.
+- **Risk:** Low · **API-impact:** internal-only · **Effort:** XS.
+- **Contraindication:** None. (Note: the bodies are byte-identical, so no biome `useValidTypeof`-style lint risk — this is a list op, not a `typeof` compare.)
 
-### P3 — Extract triplicated `stringField`/`numberField` (+`booleanField`) monitor field readers
-- **Location:** `monitor-render.ts:1024-1037`, `monitor-watch.ts:807-815`, `monitor-wait.ts:521-529`
-- **Principle:** Code smell — three byte-identical `stringField`/`numberField` definitions; render also has
-  `booleanField`.
-- **Current:** Each monitor file re-declares the same `typeof value === 'string' ? value : undefined` readers.
-- **Suggested:** A private `monitor-fields.ts` (`stringField`, `numberField`, `booleanField`) imported by all three.
-- **Risk:** **Low** — all private, behavior identical.
-- **API-impact:** **internal-only**.
-- **Effort:** S.
-- **Tests:** Exercised via `monitor-watch.test.ts`, `monitor-wait.acceptance.test.ts`, `monitor-show.test.ts`. **APPLY.**
+### F7 — `printResultsNdjson` already shared, but three near-identical human formatters remain (low-priority, leave-mostly-alone)
+- **Location:** `handlers-runtime.ts:313-419` (`printSweepHuman`, `printZombieSweepHuman`, `printReconcileActiveHuman`).
+- **Mechanism repaired:** would be [T15], but the per-row columns and summary keys genuinely differ (matched/stale/terminated vs matched/zombied vs matched/reaped/suspect).
+- **Symptom:** structural rhyme, not duplication.
+- **Current→Suggested:** **Leave alone.** The shared `printResultsNdjson` already captured the one truly-identical path; the human formatters carry distinct, byte-asserted column layouts. Parameterizing them would trade three readable functions for one config-driven one with no net simplicity.
+- **Direction:** none (de-abstraction not warranted, extraction not warranted).
+- **Risk/Effort:** n/a.
+- **Contraindication:** The differing summary fields are load-bearing output contract; a shared formatter would risk drift.
 
-### P4 — Hoist duplicated monitor condition constants
-- **Location:** `monitor-watch.ts:84-96` and `monitor-wait.ts:37-47`
-- **Principle:** Code smell (duplicated literal sets / magic constants).
-- **Current:** `VALID_CONDITIONS`, `MSG_REQUIRED_CONDITIONS`, `POLL_MS` defined identically in both files. The two
-  `--until` validations (`monitor-wait.ts:178-182`, `monitor-watch.ts:147-151`) duplicate the "invalid condition: …
-  (valid: …)" message.
-- **Suggested:** A shared `monitor-conditions.ts` exporting the two sets + `POLL_MS`, and a
-  `validateUntilCondition(value)` helper.
-- **Risk:** **Low** — constants are private.
-- **API-impact:** **internal-only**.
-- **Effort:** S.
-- **Tests:** `monitor-watch.test.ts`, `monitor-wait.acceptance.test.ts`. **APPLY.**
+## 🪶 Deliberately left alone (where-NOT)
+- **`cli.ts` re-export block** — looks like a leaky surface but is a deliberate, test-consumed seam (and documented as preserving the historical import surface). Keep.
+- **Dual-signature `cmdMonitorWatch` / `MonitorWatchDeps`** — intentional dependency-injection test seam; not a fat interface.
+- **`monitor-render.ts` renderer classes (Tree/Compact/Verbose/Json)** — a real dispatch over four output modes with four live instantiations via `createMonitorRenderer`; this is correct [T19] conditional→dispatch already done, not premature abstraction. Leave.
+- **`toLegacyArgv` / `toLegacyArgvForScopeCommand` / `rawArgvForVerb`** — transitional commander→legacy glue, well-documented, with subtle negated-boolean handling that is load-bearing. Do not "simplify" without the full negation matrix.
+- **`waitForAttachProcess` / `cmdSessionReport` polling loops** — best-effort retry against a documented reap-vs-reconcile race; the swallowed catches are intentional and annotated. Not [T18] candidates.
+- **Three human sweep formatters (F7)** — distinct output contracts; parameterizing is a net loss.
+- **The two `fatal` semantics** — divergence is intentional (process-exit vs throw); only the duplicate `hasFlag` is dedup-safe (F5).
 
-### P5 — De-duplicate the live-monitor-state builders
-- **Location:** `monitor-watch.ts:537-643`, `monitor-wait.ts:241-410`, `monitor-show.ts:157-254`.
-- **Principle:** S + DRY — three near-parallel implementations that read sessions/runtimes/events/messages and
-  assemble an `HrcMonitorState`. They differ in real ways (wait normalizes runtime status + injects
-  `message.response` synthetic events + renames event kinds; watch reads via `client.getStatus()`; show reads via
-  `client.listRuntimes()`), so this is **not** a verbatim copy.
-- **Suggested:** A `monitor-state.ts` with a single builder taking options (`{ normalizeStatus?,
-  includeMessageResponses?, eventKindAliases? }`) and shared row→state mappers. Must be done with acceptance tests
-  green because variants encode behavior differences.
-- **Risk:** **Med** — kind aliasing (`turn.completed→turn.finished`), status normalization, synthetic message events
-  must be preserved exactly; easy to regress a condition outcome.
-- **API-impact:** **internal-only** (builders private), but it changes runtime data assembly feeding exit codes.
-- **Effort:** M.
-- **Tests:** `monitor-wait.acceptance.test.ts`, `monitor-watch.test.ts`, `monitor-show.test.ts`.
-- **DEFER** — semantic-merge risk; not a safe blind auto-apply.
+## 🔭 If applying: outside-in sequence
+1. F5 (de-dup `hasFlag`, rename `runtime-args.fatal`→`fatalExit`) — smallest, unblocks nothing but reduces footgun.
+2. F1 (drop dead `_intent`) — compiler-proof, mechanical.
+3. F2 (remove `attachOpenAiRuntime` middle-man, repoint its test).
+4. F6 (shared `splitCsv`).
+5. F3 (shared monitor flag-matcher) — char-test guarded, keep error bytes identical.
+6. F4 (single filter-spec) — last, Med-risk, re-run T-04232 watch suite to prove SQL/in-memory parity.
 
-### P6 — Collapse the `--transport` enum validation duplicated across handlers
-- **Location:** `cli.ts:1560-1567` (`cmdRuntimeList`), `cli.ts:1774-1781` (`cmdRuntimeSweep`).
-- **Principle:** O / code smell — inline `transport !== 'tmux' && transport !== 'headless' && transport !== 'sdk'`
-  with a duplicated fatal message. Same pattern for `'anthropic'|'openai'` provider in `cmdRuntimeEnsure`.
-- **Suggested:** Private `parseTransportFlag(args): Transport | undefined` (and `parseProviderFlag`) owning the
-  allowed set + message once.
-- **Risk:** **Low** — private helper, message preserved verbatim.
-- **API-impact:** **internal-only** (CLI error text unchanged).
-- **Effort:** S.
-- **Tests:** Covered by `smoke.test.ts` argument paths. **APPLY** (keep error string byte-identical).
-
-### P7 — Split the 149-line `printLocalRunPreview` (run/start dry-run path)
-- **Location:** `cli.ts:2354-2503`.
-- **Principle:** S — function > 50 lines by 3×, two distinct branches (broker-plan vs spec-build preview).
-- **Suggested:** Extract `renderBrokerPlanPreview(w, brokerPreview, …)` and `renderSpecBuildPreview(w, intent, …)`
-  private helpers; `printLocalRunPreview` orchestrates. No output bytes change.
-- **Risk:** **Low** — pure private extraction; identical writes.
-- **API-impact:** **internal-only** (but the stdout text IS the dry-run contract — keep emitted lines byte-identical).
-- **Effort:** S–M.
-- **Tests:** dry-run output asserted in `cli.test.ts`. **APPLY** with byte-preserve care.
-
-### P8 — Extract the repeated TTY/`--yes`/dry-run mutation-gate in sweep/reconcile handlers
-- **Location:** `cmdRuntimeSweep` (`cli.ts:1786-1791`), `cmdRunSweepZombies` (`cli.ts:1854-1856`),
-  `cmdRunReconcileActive` (`cli.ts:1893-1895`) + matching `dryRun: dryRunFlag || (!yes && Boolean(isTTY))` lines.
-- **Principle:** Code smell (triplicated guard logic).
-- **Suggested:** A private `resolveMutationGate(args, { noun }): { dryRun; yes; json }` returning resolved flags and
-  fataling with the canonical message (parameterize the command noun).
-- **Risk:** **Low** — private helper; preserve fatal strings exactly.
-- **API-impact:** **internal-only**.
-- **Effort:** S.
-- **Tests:** No dedicated unit; this is the safety gate — preserve strings. **APPLY.**
-
-### P9 — Reduce tool-formatter `if (toolName === …)` ladders in `monitor-render.ts`
-- **Location:** `formatToolDisplayName` (625-631), `formatToolSummary` (633-683), `formatToolCallBody` (685-693).
-- **Principle:** O — three parallel dispatch ladders keyed on `toolName`; per-tool knowledge spread across all three.
-- **Suggested:** A single `TOOL_FORMATTERS: Record<string, { displayName?; summary?; body? }>` table so each tool's
-  rendering lives in one entry; the three functions become lookups with current default fallbacks.
-- **Risk:** **Med** — touches user-visible monitor `tree`/`verbose` output; must reproduce every branch exactly
-  (`exec_command`/`command_execution`→`Bash`, `mcp:` prefix, etc.).
-- **API-impact:** **public-surface** (rendered human stream is a user-facing contract; assertions in
-  `monitor-watch.test.ts` may pin it).
-- **Effort:** M.
-- **DEFER** — output-shaping change.
-
----
-
-## Code Smells (catalog)
-
-| # | Location | Smell | Suggested fix | Risk | API |
-|---|----------|-------|---------------|------|-----|
-| 1 | `cli.ts` (whole) | God file 3967 lines / mixed concerns | module split (P1) | Med | internal* |
-| 2 | `cli.ts:252-355` | Duplicated `toLegacyArgv*` | delegate/param (P2) | Low | internal |
-| 3 | `cli.ts:1560-1567`,`1774-1781` | Triplicated `--transport` enum guard | `parseTransportFlag` (P6) | Low | internal |
-| 4 | `cli.ts:1786-1895` | Triplicated mutation-gate guard | `resolveMutationGate` (P8) | Low | internal |
-| 5 | `cli.ts:2354-2503` | 149-line `printLocalRunPreview` | extract 2 helpers (P7) | Low | internal |
-| 6 | `cli.ts:1835-1926` | `printSweepHuman`/`printZombieSweepHuman`/`printReconcileActiveHuman` near-parallel row+summary printers | shared row/summary formatter | Low | public-surface (stdout) |
-| 7 | `cli.ts:2137-2352` | `cmdRun`/`cmdStart` ~90% duplicated body | shared `runScopeCommand(kind, args)` core | Med | internal |
-| 8 | `cli.ts:1218-1356` | repeated `parseIntegerFlag('--timeout-ms')` + `collectServerRuntimeStatus()` + launchd-owner branch across server cmds | `resolveServerTimeout`/`withLaunchdOwner` helpers | Low | internal |
-| 9 | `monitor-render.ts:1024`,`monitor-watch.ts:807`,`monitor-wait.ts:521` | Triplicated `stringField`/`numberField` | shared module (P3) | Low | internal |
-| 10 | `monitor-watch.ts:84`,`monitor-wait.ts:37` | Duplicated condition consts | shared consts (P4) | Low | internal |
-| 11 | `monitor-{watch,wait,show}.ts` | Triplicated live-state builders + `toMonitor*` mappers | unified builder (P5) | Med | internal |
-| 12 | `monitor-render.ts:625-693` | Parallel `toolName ===` ladders | formatter table (P9) | Med | public-surface |
-| 13 | `cli-runtime.ts:32-63` | `ServerRuntimeStatus` mirrors flat+nested fields (`pid`/`daemon.pid`, `socketPath`/`socket.path`) | — (shape is the `--json` contract) | High | public-surface |
-| 14 | `cli.ts:1027-1043`,`1761-1770` | duplicated duration/age formatting; magic `3600/86400/64` | named constants / shared util | Low | public-surface (text) |
-| 15 | `monitor-render.ts:214,505,1086`; `cli.ts:2437,2468` | Magic numbers (`88/60/120` rule width, `width=64`, `80`/`160`/`120` truncations) | named constants | Low | internal/public |
-| 16 | `cli.ts:2944-3064` (`INFO_TEXT`), `3070-3125` (`printUsage`) | Two long static blobs inside dispatch file | move to `usage.ts` | Low | public-surface (help) |
-| 17 | `cli.ts:3596-3643` | `run` sub-cmd routing done BOTH via commander subcommands AND inline `positionals[0] === 'sweep-zombies'` shim | pick one routing path | Med | internal |
-
-\* internal but test-imported (see surface note).
-
----
-
-## Quick Wins (safe, low-risk — APPLY)
-
-1. **P3** — shared `monitor-fields.ts` for `stringField`/`numberField`/`booleanField` (3 dupes → 1).
-2. **P4** — shared `monitor-conditions.ts` for `VALID_CONDITIONS`/`MSG_REQUIRED_CONDITIONS`/`POLL_MS`.
-3. **P2** — fold `toLegacyArgvForScopeCommand` onto `toLegacyArgv`.
-4. **P6** — `parseTransportFlag`/`parseProviderFlag` private helpers (preserve error strings byte-for-byte).
-5. **P8** — `resolveMutationGate` for the sweep/reconcile TTY/`--yes` guard (preserve strings).
-6. **Magic-number constants (smell #15):** name `TREE_RULE_MIN/MAX`, `SUMMARY_WIDTH=64`, `MAX_SUMMARY_CHARS=80`,
-   `MAX_ENV_VALUE_CHARS=160` where they sit. Internal, no output change.
-7. **P7** — extract the two preview-rendering helpers from `printLocalRunPreview` (byte-preserve stdout).
-
-All touch **private, non-exported, non-test-imported** symbols (or pure constants) — none force a test edit, none
-change a flag/exit-code/stdout contract.
-
-## Deferred (need a human decision)
-
-- **P1** god-file split — large move; forces test-import path edits.
-- **P5** unified live-monitor-state builder — semantic merge of three behaviorally-distinct builders feeding exit codes.
-- **P9 / smell #12** tool-formatter table — reshapes user-facing monitor output.
-- **Smell #6 / #14 / #16** human-output dedupe (sweep printers, duration/age, usage/info text) — alter or risk
-  altering user-facing stdout/help bytes.
-- **Smell #13** `ServerRuntimeStatus` flat+nested mirror — collapsing changes `hrc server status --json` shape.
-- **Smell #7** `cmdRun`/`cmdStart` unification — Med-risk (differ in `--no-attach`/`--new-session` and
-  prepare/attach vs start flows).
-- **Smell #17** dual run-subcommand routing — touches dispatch correctness.
-
-## Technical Debt Notes
-
-- **commander↔legacy-argv double encoding.** Every command is declared twice: a commander `.command()/.option()`
-  tree (`buildProgram`, ~770 lines) AND a legacy `(args: string[])` handler, bridged by `toLegacyArgv`. Explicitly
-  transitional ("Phase 6"). Real cleanup: let handlers consume `cmd.opts()` typed objects directly and delete
-  `toLegacyArgv*` + per-handler `parseFlag`/`hasFlag` re-parsing. High value but behavior-changing per command →
-  tracked follow-up, out of scope for this pass.
-- **`-p` short-flag special-casing** and the `negatedBooleans` raw-argv rescan exist only because commander
-  auto-negation collapses `--x`/`--no-x`. Documented but fragile; subsumed by the argv-bridge removal above.
-- **No DI seam for `HrcClient`** in most handlers (`createClient()` inline). `monitor-watch.ts` shows the intended
-  pattern (`MonitorWatchDeps`); `monitor-wait`/`monitor-show` and all `cli.ts` handlers lack it → integration-tested
-  only. Adding a deps seam is behavior-preserving but wide → follow-up.
-- **Test coupling to internal exports.** `cli.ts`/`cli-runtime.ts` export functions solely for tests; any module
-  split (P1) must update those imports — the single biggest blocker to mechanically decomposing the god-file.
+## ✅ Safety checklist
+- [ ] `bun test` green in `packages/hrc-cli` before and after each step (18 test files; they exercise `main()` end-to-end + the re-exports).
+- [ ] `tsc --noEmit` clean (F1/F2 are compiler-provable).
+- [ ] Error-message bytes unchanged for F3 (asserted by `monitor-wait.acceptance.test.ts`) and F4 (T-04232).
+- [ ] F2 edits the importing test in the same commit (internal public-surface change).
+- [ ] No biome lint regressions (F6 is a list op, not a `typeof` parameterization).
+- [ ] Do NOT merge the two `fatal()`s (F5 contraindication) — only `hasFlag`.

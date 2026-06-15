@@ -34,6 +34,11 @@ export function normalizeOptionalQuery(value: string | null): string | undefined
   return normalized.length > 0 ? normalized : undefined
 }
 
+export function pickOptionalQuery(url: URL, key: string): Record<string, string> {
+  const normalized = normalizeOptionalQuery(url.searchParams.get(key))
+  return normalized !== undefined ? { [key]: normalized } : {}
+}
+
 export function parseOptionalNonNegativeIntegerQuery(
   raw: string | null,
   field: string
@@ -85,18 +90,15 @@ export function parseDurationMs(input: string): number {
   }
 
   const amount = Number.parseFloat(match[1] ?? '')
-  const unit = match[2]
-  const multiplier =
-    unit === 'ms'
-      ? 1
-      : unit === 's'
-        ? 1000
-        : unit === 'm'
-          ? 60 * 1000
-          : unit === 'h'
-            ? 60 * 60 * 1000
-            : 24 * 60 * 60 * 1000
-  const durationMs = amount * multiplier
+  const unit = match[2] as 'ms' | 's' | 'm' | 'h' | 'd'
+  const UNIT_MS: Record<'ms' | 's' | 'm' | 'h' | 'd', number> = {
+    ms: 1,
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  }
+  const durationMs = amount * UNIT_MS[unit]
   if (!Number.isFinite(durationMs) || durationMs < 0) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'olderThan must be positive', {
       field: 'olderThan',
@@ -156,6 +158,23 @@ export function readBooleanField(input: Record<string, unknown>, field: string):
   return value
 }
 
+export function readOptionalBooleanField(
+  input: Record<string, unknown>,
+  field: string
+): boolean | undefined {
+  const value = input[field]
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'boolean') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a boolean`, {
+      field,
+    })
+  }
+
+  return value
+}
+
 export function readOptionalStringField(
   input: Record<string, unknown>,
   field: string
@@ -189,6 +208,32 @@ export function readOptionalNonEmptyStringField(
   }
 
   return value.trim()
+}
+
+export function requireOneOf<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  message: string,
+  detail?: Record<string, unknown>
+): T {
+  if (!allowed.includes(value as T)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, detail)
+  }
+
+  return value as T
+}
+
+export function requireOptionalOneOf<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  message: string,
+  detail?: Record<string, unknown>
+): T | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  return requireOneOf(value, allowed, message, detail)
 }
 
 export function parsePromptPayload(input: Record<string, unknown>): string {

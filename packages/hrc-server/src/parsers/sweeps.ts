@@ -6,26 +6,19 @@ import type {
   SweepZombieRunsRequest,
 } from 'hrc-core'
 
-import { isRecord } from './common.js'
+import { isRecord, readOptionalBooleanField, requireOptionalOneOf } from './common.js'
 
 export function parseSweepRuntimesRequest(input: unknown): SweepRuntimesRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const transport = input['transport']
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'transport must be one of: tmux, headless, sdk',
-      { field: 'transport' }
-    )
-  }
+  const transport = requireOptionalOneOf(
+    input['transport'],
+    ['tmux', 'headless', 'sdk'],
+    'transport must be one of: tmux, headless, sdk',
+    { field: 'transport' }
+  )
 
   const status = input['status']
   if (status !== undefined && !Array.isArray(status)) {
@@ -62,28 +55,9 @@ export function parseSweepRuntimesRequest(input: unknown): SweepRuntimesRequest 
     )
   }
 
-  const dropContinuation = input['dropContinuation']
-  if (dropContinuation !== undefined && typeof dropContinuation !== 'boolean') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'dropContinuation must be a boolean',
-      { field: 'dropContinuation' }
-    )
-  }
-
-  const dryRun = input['dryRun']
-  if (dryRun !== undefined && typeof dryRun !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'dryRun must be a boolean', {
-      field: 'dryRun',
-    })
-  }
-
-  const yes = input['yes']
-  if (yes !== undefined && typeof yes !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'yes must be a boolean', {
-      field: 'yes',
-    })
-  }
+  const dropContinuation = readOptionalBooleanField(input, 'dropContinuation')
+  const dryRun = readOptionalBooleanField(input, 'dryRun')
+  const yes = readOptionalBooleanField(input, 'yes')
 
   return {
     ...(transport ? { transport: transport as SweepRuntimeTransport } : {}),
@@ -110,19 +84,8 @@ export function parseSweepZombieRunsRequest(input: unknown): SweepZombieRunsRequ
     )
   }
 
-  const dryRun = input['dryRun']
-  if (dryRun !== undefined && typeof dryRun !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'dryRun must be a boolean', {
-      field: 'dryRun',
-    })
-  }
-
-  const yes = input['yes']
-  if (yes !== undefined && typeof yes !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'yes must be a boolean', {
-      field: 'yes',
-    })
-  }
+  const dryRun = readOptionalBooleanField(input, 'dryRun')
+  const yes = readOptionalBooleanField(input, 'yes')
 
   return {
     ...(olderThan ? { olderThan: olderThan.trim() } : {}),
@@ -145,19 +108,8 @@ export function parseReconcileActiveRunsRequest(input: unknown): ReconcileActive
     )
   }
 
-  const dryRun = input['dryRun']
-  if (dryRun !== undefined && typeof dryRun !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'dryRun must be a boolean', {
-      field: 'dryRun',
-    })
-  }
-
-  const yes = input['yes']
-  if (yes !== undefined && typeof yes !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'yes must be a boolean', {
-      field: 'yes',
-    })
-  }
+  const dryRun = readOptionalBooleanField(input, 'dryRun')
+  const yes = readOptionalBooleanField(input, 'yes')
 
   return {
     ...(olderThan ? { olderThan: olderThan.trim() } : {}),

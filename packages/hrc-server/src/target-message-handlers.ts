@@ -23,6 +23,7 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   extractProjectId,
   formatDmPayload,
+  formatSessionRef,
   normalizeTargetLane,
   parseMessageFilter,
   parseSemanticDmRequest,
@@ -170,7 +171,7 @@ export async function handleSemanticTurnHandoff(
   })
   session = rotationResult.session
 
-  const sessionRef = `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`
+  const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
   this.db.messages.updateExecution(record.messageId, {
     sessionRef,
     hostSessionId: session.hostSessionId,
@@ -498,7 +499,7 @@ export async function handleSemanticDm(
       // target session even if no turn is dispatched (e.g. unsummoned target,
       // no runtimeIntent). This survives the originating dm-process exit.
       this.db.messages.updateExecution(record.messageId, {
-        sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+        sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
         hostSessionId: session.hostSessionId,
         generation: session.generation,
       })
@@ -577,8 +578,7 @@ export function rejectBusyHeadlessSemanticDm(
   record: HrcMessageRecord,
   runtime: HrcRuntimeSnapshot
 ): void {
-  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
-  const sessionRef = `${session.scopeRef}/lane:${laneRef}`
+  const sessionRef = formatSessionRef(session.scopeRef, session.laneRef)
   const activeRunId = runtime.activeRunId
 
   this.db.messages.updateExecution(record.messageId, {
@@ -677,7 +677,7 @@ export async function executeSemanticTurn(
     const turnStatus = turnBody.status as 'completed' | 'started'
     const execution: DispatchTurnBySelectorResponse = {
       runId: turnBody.runId,
-      sessionRef: `${session.scopeRef}/lane:${normalizeTargetLane(session.laneRef) ?? session.laneRef}`,
+      sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
       hostSessionId: turnBody.hostSessionId,
       generation: turnBody.generation,
       runtimeId: turnBody.runtimeId,

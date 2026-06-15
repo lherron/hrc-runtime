@@ -17,7 +17,7 @@ export async function cmdSummon(
   if (!targetInput) throw new CliUsageError('summon requires <target>')
   const sessionRef = resolveTargetToSessionRef(targetInput)
 
-  const runtimeIntent = await resolveRuntimeIntentForTarget(targetInput)
+  const runtimeIntent = resolveRuntimeIntentForTarget(targetInput)
 
   const result = await client.ensureTarget({
     sessionRef,
