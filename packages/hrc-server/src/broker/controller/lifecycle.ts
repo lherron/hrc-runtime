@@ -33,6 +33,40 @@ export type LifecycleContext = {
   fireBrokerTmuxLeaseReap: (runtimeId: string, reason: string) => void
 }
 
+/**
+ * Stamp a runtime to a terminal/stale status with a single diagnostic block.
+ *
+ * Factored from failReplayStale + markBrokerCrashTerminal (F6 / T-04737): both
+ * repeat the exact "spread the prior runtimeStateJson, re-stamp status+updatedAt,
+ * append one diagnostic block, mirror status/lastActivityAt/updatedAt on the row"
+ * shape. The merge order is load-bearing and preserved verbatim: prior keys
+ * first, then status/updatedAt, then the caller's diagnostic LAST (so a
+ * diagnostic key like `control` overwrites the prior one). Each caller keeps
+ * ownership of its own diagnostic key set (lastAttachError vs brokerCrash).
+ *
+ * NOTE: markStartedInvocationFailed is deliberately NOT routed through this —
+ * it builds runtimeStateJson from scratch (no prior spread) and stamps extra
+ * activeInvocation/Operation/Run fields, so a shared spread helper would change
+ * its observable field set (T-04737 STOP, see wrkq comment).
+ */
+function applyTerminalRuntimeState(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  params: { status: string; now: string; diagnostic: Record<string, unknown> }
+): void {
+  db.runtimes.update(runtime.runtimeId, {
+    status: params.status,
+    lastActivityAt: params.now,
+    runtimeStateJson: {
+      ...(runtime.runtimeStateJson ?? {}),
+      status: params.status,
+      updatedAt: params.now,
+      ...params.diagnostic,
+    },
+    updatedAt: params.now,
+  })
+}
+
 export function markBrokerInvocationTerminal(
   ctx: LifecycleContext,
   runtimeId: string,
@@ -156,13 +190,10 @@ export async function failReplayStale(
     ownerServerInstanceId: ctx.serverInstanceId,
     updatedAt: now,
   })
-  ctx.db.runtimes.update(runtime.runtimeId, {
+  applyTerminalRuntimeState(ctx.db, runtime, {
     status: 'stale',
-    lastActivityAt: now,
-    runtimeStateJson: {
-      ...(runtime.runtimeStateJson ?? {}),
-      status: 'stale',
-      updatedAt: now,
+    now,
+    diagnostic: {
       control: {
         mode: 'broker-ipc',
         brokerAttached: false,
@@ -173,7 +204,6 @@ export async function failReplayStale(
         },
       },
     },
-    updatedAt: now,
   })
   await client.close().catch((closeError: unknown) => {
     ctx.logger.warn?.('harness broker close after replay failure failed', {
@@ -221,20 +251,16 @@ export function markBrokerCrashTerminal(
   }
 
   if (runtime) {
-    ctx.db.runtimes.update(runtimeId, {
+    applyTerminalRuntimeState(ctx.db, runtime, {
       status: 'terminated',
-      lastActivityAt: now,
-      runtimeStateJson: {
-        ...(runtime.runtimeStateJson ?? {}),
-        status: 'terminated',
-        updatedAt: now,
+      now,
+      diagnostic: {
         brokerCrash: {
           code: error.code,
           message: error.message,
           detail: error.detail,
         },
       },
-      updatedAt: now,
     })
     ctx.db.events.append({
       ts: now,

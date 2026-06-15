@@ -3,6 +3,7 @@ import type { InvocationRuntimeContext } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import type { BrokerTmuxAllocation } from './controller'
+import { isRecord } from './json'
 
 export type RuntimeControlState = {
   mode: string
@@ -72,10 +73,6 @@ export function extractBrokerEndpoint(
     }
   }
   return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function withDirectTmuxDegradedControlState(
