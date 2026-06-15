@@ -9,6 +9,7 @@ import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 export type DmOptions = {
   respondTo?: string
   replyTo?: string
+  crossScopeReply?: boolean
   mode?: 'auto' | 'headless' | 'nonInteractive'
   file?: string
   json?: boolean | undefined
@@ -51,6 +52,7 @@ export async function cmdDm(
       replyToMessageId,
       runtimeIntent,
       createIfMissing: true,
+      ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
     })
 
   // T-01744: a stale/unresolvable --reply-to anchor (e.g. the parent message was

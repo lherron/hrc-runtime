@@ -227,6 +227,10 @@ const dmCmd = program
   .argument('[message]', 'message body (use - for stdin)')
   .option('--respond-to <kind>', 'human|agent|system')
   .option('--reply-to <id>', 'reply to a specific message ID')
+  .option(
+    '--cross-scope-reply',
+    'allow --reply-to to thread across conversation scopes (blocked by default)'
+  )
   .option('--mode <mode>', 'auto|headless|nonInteractive')
   .option('--file <path>', 'read body from file')
   .option(
@@ -239,7 +243,11 @@ const dmCmd = program
     if (opts.follow !== undefined) {
       await cmdTurn(
         client,
-        { follow: opts.follow, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}) },
+        {
+          follow: opts.follow,
+          ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+          ...(opts.crossScopeReply ? { crossScopeReply: true } : {}),
+        },
         [target, ...(message !== undefined ? [message] : [])]
       )
       return
@@ -338,6 +346,10 @@ const turnCmd = program
   )
   .option('--follow <duration>', 'alias for --stacked')
   .option('--reply-to <id>', 'reply to a specific message ID')
+  .option(
+    '--cross-scope-reply',
+    'allow --reply-to to thread across conversation scopes (blocked by default)'
+  )
   .option('--file <path>', 'read prompt from file')
   .action(async (target, prompt, opts) => {
     const client = createClient()

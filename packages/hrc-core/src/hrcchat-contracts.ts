@@ -265,6 +265,13 @@ export type SemanticDmRequest = {
    * session age exceeds the server's stale threshold).
    */
   allowStaleGeneration?: boolean | undefined
+  /**
+   * Permit a `--reply-to` anchor that lives in a different conversation scope
+   * than the target. Defaults to `false`: a cross-scope reply is rejected with
+   * `reply_to_scope_mismatch` before the message is persisted, so a threaded
+   * reply cannot silently land in the wrong conversation.
+   */
+  allowCrossScopeReply?: boolean | undefined
 }
 
 export type SemanticDmResponse = {

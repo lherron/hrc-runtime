@@ -30,6 +30,7 @@ export type TurnOptions = {
   stacked?: string | undefined
   follow?: string | undefined
   replyTo?: string | undefined
+  crossScopeReply?: boolean | undefined
 }
 
 /**
@@ -284,6 +285,7 @@ export async function cmdTurn(
     runtimeIntent,
     createIfMissing: true,
     replyToMessageId: opts.replyTo,
+    allowCrossScopeReply: opts.crossScopeReply,
   })
 
   // ── Resolve sink format ──

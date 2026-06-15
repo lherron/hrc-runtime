@@ -29,6 +29,8 @@ export const HrcErrorCode = {
   SESSION_KIND_MISMATCH: 'session_kind_mismatch',
   UNSUPPORTED_CAPABILITY: 'unsupported_capability',
   MISSING_SESSION_SPEC: 'missing_session_spec',
+  /** A `--reply-to` anchor lives in a different conversation scope than the target. */
+  REPLY_TO_SCOPE_MISMATCH: 'reply_to_scope_mismatch',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -72,6 +74,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.SESSION_KIND_MISMATCH]: 422,
   [HrcErrorCode.UNSUPPORTED_CAPABILITY]: 422,
   [HrcErrorCode.MISSING_SESSION_SPEC]: 422,
+  [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {
@@ -144,7 +147,11 @@ export class HrcConflictError extends HrcDomainError {
   constructor(
     code: Extract<
       HrcErrorCode,
-      'stale_context' | 'runtime_busy' | 'run_mismatch' | 'app_session_removed'
+      | 'stale_context'
+      | 'runtime_busy'
+      | 'run_mismatch'
+      | 'app_session_removed'
+      | 'reply_to_scope_mismatch'
     >,
     message: string,
     detail: Record<string, unknown> = {}

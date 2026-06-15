@@ -285,6 +285,7 @@ export function parseSemanticDmRequest(input: unknown): {
   parsedScopeJson?: Record<string, unknown> | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
+  allowCrossScopeReply?: boolean | undefined
 } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -346,6 +347,11 @@ export function parseSemanticDmRequest(input: unknown): {
       ? (input['allowStaleGeneration'] as boolean)
       : undefined
 
+  const allowCrossScopeReply =
+    typeof input['allowCrossScopeReply'] === 'boolean'
+      ? (input['allowCrossScopeReply'] as boolean)
+      : undefined
+
   return {
     from: parseMessageAddress(input['from'], 'from'),
     to: parseMessageAddress(input['to'], 'to'),
@@ -358,6 +364,7 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
+    ...(allowCrossScopeReply !== undefined ? { allowCrossScopeReply } : {}),
   }
 }
 

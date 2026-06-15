@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
-import { HrcBadRequestError, HrcDomainError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
+import {
+  HrcBadRequestError,
+  HrcConflictError,
+  HrcDomainError,
+  HrcErrorCode,
+  HrcNotFoundError,
+} from 'hrc-core'
 import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
@@ -96,6 +102,56 @@ export async function handleQueryMessages(
   } satisfies ListMessagesResponse)
 }
 
+/** Extract the lane-stripped scopeRef from a canonical `<scopeRef>/lane:<lane>` ref. */
+function scopeRefOf(sessionRef: string): string {
+  const idx = sessionRef.indexOf('/lane:')
+  return idx === -1 ? sessionRef : sessionRef.slice(0, idx)
+}
+
+/**
+ * Guard against a `--reply-to` anchor that threads into a different conversation
+ * scope than the outgoing target (T-04767). A threaded reply must stay within the
+ * scope of one of the parent message's session participants; otherwise the reply
+ * silently lands in the wrong conversation — as happened when a completion for
+ * `clod@agent-loop:refacwrk` was threaded into `clod@agent-loop:primary`.
+ *
+ * Throws REPLY_TO_SCOPE_MISMATCH (409) before the message is persisted, unless the
+ * caller opted in via `allowCrossScopeReply`. The error names both scopes and the
+ * remedies so the calling agent can self-correct.
+ */
+export function assertReplyScopeMatches(
+  parent: HrcMessageRecord,
+  to: HrcMessageAddress,
+  allowCrossScopeReply: boolean | undefined
+): void {
+  if (allowCrossScopeReply || to.kind !== 'session') return
+
+  const targetScope = scopeRefOf(to.sessionRef)
+  const participantScopes = [parent.from, parent.to]
+    .filter((a): a is Extract<HrcMessageAddress, { kind: 'session' }> => a.kind === 'session')
+    .map((a) => scopeRefOf(a.sessionRef))
+
+  // No session participant to anchor against (e.g. a human↔human thread): nothing to guard.
+  if (participantScopes.length === 0 || participantScopes.includes(targetScope)) return
+
+  const anchorScope = participantScopes[0]
+  const message = [
+    'cross-scope reply blocked — not sent.',
+    `  --reply-to ${parent.messageId} belongs to scope  ${anchorScope}`,
+    `  but you are sending to               scope  ${targetScope}`,
+    'A threaded reply must stay in the same conversation. To self-correct:',
+    "  • send to the reply-to message's scope, or",
+    '  • drop --reply-to to start a new thread in the target scope, or',
+    '  • pass --cross-scope-reply if you really mean to thread across scopes',
+  ].join('\n')
+  throw new HrcConflictError(HrcErrorCode.REPLY_TO_SCOPE_MISMATCH, message, {
+    replyToMessageId: parent.messageId,
+    replyToScope: anchorScope,
+    replyToScopes: participantScopes,
+    targetScope,
+  })
+}
+
 export async function handleSemanticTurnHandoff(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -124,6 +180,8 @@ export async function handleSemanticTurnHandoff(
       }
     )
   }
+
+  if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
 
   const respondTo = body.respondTo ?? body.from
   const record = this.insertAndNotifyMessage({
@@ -451,6 +509,8 @@ export async function handleSemanticDm(
       }
     )
   }
+
+  if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
 
   const respondTo = body.respondTo ?? body.from
   const record = this.insertAndNotifyMessage({
