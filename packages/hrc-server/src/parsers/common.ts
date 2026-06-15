@@ -210,6 +210,32 @@ export function readOptionalNonEmptyStringField(
   return value.trim()
 }
 
+export function requireOneOf<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  message: string,
+  detail?: Record<string, unknown>
+): T {
+  if (!allowed.includes(value as T)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, message, detail)
+  }
+
+  return value as T
+}
+
+export function requireOptionalOneOf<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  message: string,
+  detail?: Record<string, unknown>
+): T | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  return requireOneOf(value, allowed, message, detail)
+}
+
 export function parsePromptPayload(input: Record<string, unknown>): string {
   const prompt = input['prompt']
   if (typeof prompt === 'string' && prompt.trim().length > 0) {

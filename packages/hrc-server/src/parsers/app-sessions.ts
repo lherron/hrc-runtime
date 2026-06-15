@@ -28,6 +28,8 @@ import {
   readOptionalBooleanField,
   readOptionalNonEmptyStringField,
   readOptionalStringField,
+  requireOneOf,
+  requireOptionalOneOf,
   requireTrimmedStringField,
 } from './common.js'
 import { parseRuntimeIntent } from './runtime.js'
@@ -95,19 +97,12 @@ function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
   }
 
   const command = (input ?? {}) as Record<string, unknown>
-  const launchMode = command['launchMode']
-  if (
-    launchMode !== undefined &&
-    launchMode !== 'shell' &&
-    launchMode !== 'exec' &&
-    launchMode !== 'app-server'
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'spec.command.launchMode must be "shell", "exec", or "app-server"',
-      { field: 'spec.command.launchMode' }
-    )
-  }
+  const launchMode = requireOptionalOneOf(
+    command['launchMode'],
+    ['shell', 'exec', 'app-server'],
+    'spec.command.launchMode must be "shell", "exec", or "app-server"',
+    { field: 'spec.command.launchMode' }
+  )
 
   const argvRaw = command['argv']
   if (argvRaw !== undefined && !Array.isArray(argvRaw)) {
@@ -130,7 +125,7 @@ function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
     return entry
   })
 
-  const effectiveLaunchMode = (launchMode ?? 'exec') as 'shell' | 'exec' | 'app-server'
+  const effectiveLaunchMode = launchMode ?? 'exec'
   if (effectiveLaunchMode !== 'shell' && (!argv || argv.length === 0)) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
@@ -191,14 +186,12 @@ function parseAppSessionSpec(input: unknown): HrcAppSessionSpec {
       field: 'spec',
     })
   }
-  const kind = requireTrimmedStringField(input, 'kind')
-  if (kind !== 'harness' && kind !== 'command') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'spec.kind must be "harness" or "command"',
-      { field: 'spec.kind' }
-    )
-  }
+  const kind = requireOneOf(
+    requireTrimmedStringField(input, 'kind'),
+    ['harness', 'command'],
+    'spec.kind must be "harness" or "command"',
+    { field: 'spec.kind' }
+  )
 
   if (kind === 'harness') {
     const runtimeIntent = input['runtimeIntent']
@@ -270,14 +263,12 @@ export function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRe
     })
   }
 
-  const restartStyle = input['restartStyle']
-  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'restartStyle must be "reuse_pty" or "fresh_pty"',
-      { field: 'restartStyle' }
-    )
-  }
+  const restartStyle = requireOptionalOneOf(
+    input['restartStyle'],
+    ['reuse_pty', 'fresh_pty'],
+    'restartStyle must be "reuse_pty" or "fresh_pty"',
+    { field: 'restartStyle' }
+  )
 
   return {
     selector,

@@ -6,26 +6,19 @@ import type {
   SweepZombieRunsRequest,
 } from 'hrc-core'
 
-import { isRecord, readOptionalBooleanField } from './common.js'
+import { isRecord, readOptionalBooleanField, requireOptionalOneOf } from './common.js'
 
 export function parseSweepRuntimesRequest(input: unknown): SweepRuntimesRequest {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const transport = input['transport']
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'transport must be one of: tmux, headless, sdk',
-      { field: 'transport' }
-    )
-  }
+  const transport = requireOptionalOneOf(
+    input['transport'],
+    ['tmux', 'headless', 'sdk'],
+    'transport must be one of: tmux, headless, sdk',
+    { field: 'transport' }
+  )
 
   const status = input['status']
   if (status !== undefined && !Array.isArray(status)) {

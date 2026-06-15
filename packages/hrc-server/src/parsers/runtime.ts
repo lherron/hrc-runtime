@@ -27,6 +27,8 @@ import {
   readOptionalBooleanField,
   readOptionalNonEmptyStringField,
   readOptionalStringField,
+  requireOneOf,
+  requireOptionalOneOf,
   requireTrimmedStringField,
 } from './common.js'
 import { resolveHarnessFromPlacement } from './runtime-harness-resolver.js'
@@ -60,19 +62,13 @@ export type ListRunsFilter = {
 }
 
 export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
-  const transport = normalizeOptionalQuery(url.searchParams.get('transport'))
-  if (
-    transport !== undefined &&
-    transport !== 'tmux' &&
-    transport !== 'headless' &&
-    transport !== 'sdk'
-  ) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'transport must be one of: tmux, headless, sdk',
-      { field: 'transport', value: transport }
-    )
-  }
+  const transportRaw = normalizeOptionalQuery(url.searchParams.get('transport'))
+  const transport = requireOptionalOneOf(
+    transportRaw,
+    ['tmux', 'headless', 'sdk'],
+    'transport must be one of: tmux, headless, sdk',
+    { field: 'transport', value: transportRaw }
+  )
 
   const statusRaw = normalizeOptionalQuery(url.searchParams.get('status'))
   const status = statusRaw
@@ -111,14 +107,12 @@ export function parseListRunsFilter(url: URL): ListRunsFilter {
 }
 
 function parseInlineHarness(harness: Record<string, unknown>): HrcRuntimeIntent['harness'] {
-  const provider = requireTrimmedStringField(harness, 'provider')
-  if (provider !== 'anthropic' && provider !== 'openai') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'harness.provider must be "anthropic" or "openai"',
-      { field: 'harness.provider' }
-    )
-  }
+  const provider = requireOneOf(
+    requireTrimmedStringField(harness, 'provider'),
+    ['anthropic', 'openai'],
+    'harness.provider must be "anthropic" or "openai"',
+    { field: 'harness.provider' }
+  )
 
   const interactive = harness['interactive']
   if (typeof interactive !== 'boolean') {
@@ -249,13 +243,11 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
     throw new HrcUnprocessableEntityError(HrcErrorCode.MISSING_RUNTIME_INTENT, 'intent is required')
   }
 
-  const restartStyle = input['restartStyle']
-  if (restartStyle !== undefined && restartStyle !== 'reuse_pty' && restartStyle !== 'fresh_pty') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'restartStyle must be "reuse_pty" or "fresh_pty"'
-    )
-  }
+  const restartStyle = requireOptionalOneOf(
+    input['restartStyle'],
+    ['reuse_pty', 'fresh_pty'],
+    'restartStyle must be "reuse_pty" or "fresh_pty"'
+  )
 
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
 

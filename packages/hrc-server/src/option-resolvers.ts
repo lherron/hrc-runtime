@@ -45,25 +45,47 @@ export function resolveStaleGenerationThresholdSec(options: HrcServerOptions): n
   return Math.floor(hours * 60 * 60)
 }
 
-export function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): boolean {
-  if (typeof options.headlessCodexBrokerEnabled === 'boolean') {
-    return options.headlessCodexBrokerEnabled
+/**
+ * Resolve a boolean feature flag: an explicit `options` override always wins;
+ * otherwise consult the env var. `defaultOn` selects the env semantics —
+ * `true` means default-ON (enabled unless an explicit falsy flag), `false`
+ * means default-OFF (dark unless an explicit truthy flag). The asymmetry is
+ * intentional and load-bearing (broker cutover flags default ON; durable-IPC
+ * dark), so each call site passes `defaultOn` explicitly.
+ */
+function resolveBooleanFlag(
+  override: boolean | undefined,
+  envValue: string | undefined,
+  { defaultOn }: { defaultOn: boolean }
+): boolean {
+  if (typeof override === 'boolean') {
+    return override
   }
-  return !isFalsyFeatureFlag(process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV])
+  return defaultOn ? !isFalsyFeatureFlag(envValue) : isTruthyFeatureFlag(envValue)
+}
+
+export function resolveHeadlessCodexBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.headlessCodexBrokerEnabled,
+    process.env[HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
 }
 
 export function resolveClaudeCodeTmuxBrokerEnabled(options: HrcServerOptions): boolean {
-  if (typeof options.claudeCodeTmuxBrokerEnabled === 'boolean') {
-    return options.claudeCodeTmuxBrokerEnabled
-  }
-  return !isFalsyFeatureFlag(process.env[HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV])
+  return resolveBooleanFlag(
+    options.claudeCodeTmuxBrokerEnabled,
+    process.env[HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
 }
 
 export function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boolean {
-  if (typeof options.codexCliTmuxBrokerEnabled === 'boolean') {
-    return options.codexCliTmuxBrokerEnabled
-  }
-  return !isFalsyFeatureFlag(process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV])
+  return resolveBooleanFlag(
+    options.codexCliTmuxBrokerEnabled,
+    process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
 }
 
 /**
@@ -72,10 +94,11 @@ export function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boo
  * dark until explicitly enabled. An explicit `options` override wins over env.
  */
 export function resolveBrokerDurableIpcEnabled(options: HrcServerOptions): boolean {
-  if (typeof options.brokerDurableIpcEnabled === 'boolean') {
-    return options.brokerDurableIpcEnabled
-  }
-  return isTruthyFeatureFlag(process.env[HRC_BROKER_DURABLE_IPC_ENABLED_ENV])
+  return resolveBooleanFlag(
+    options.brokerDurableIpcEnabled,
+    process.env[HRC_BROKER_DURABLE_IPC_ENABLED_ENV],
+    { defaultOn: false }
+  )
 }
 
 export function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {
