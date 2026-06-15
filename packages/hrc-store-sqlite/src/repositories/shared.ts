@@ -458,15 +458,17 @@ export type PatchEntrySpec<P> = {
   readonly transform?: (value: unknown) => string | number | null
 }
 
-/** Transform that coerces a possibly-null patch value to `value ?? null`. */
-export const nullableTransform = (value: unknown): string | number | null =>
-  (value as string | number | null) ?? null
-
 /**
  * Collect `[column, value]` entries for every patch field that is not
  * `undefined`, in spec order, applying each spec's optional transform. This is
  * the shared, behavior-preserving replacement for the per-repository
  * `update(patch)` column ladders.
+ *
+ * Null handling is native: only `undefined` fields are skipped, so an explicit
+ * `null` is always emitted and binds to SQL `NULL`. A transform is therefore
+ * only needed for genuine value coercion (e.g. `serializeJson`,
+ * `toSqliteBoolean`); a pass-through `value ?? null` transform would be a no-op
+ * here and is intentionally not provided.
  */
 export function collectPatchEntries<P>(
   patch: P,

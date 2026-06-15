@@ -21,7 +21,7 @@ import { phase1Migrations } from '../migrations.js'
 // computePermissionIdentityKey is the stable canonical join the repo layer must
 // expose (null gen/attempt normalized consistently). Imported here so the RED
 // suite fails to resolve until it exists.
-import { computePermissionIdentityKey } from '../repositories.js'
+import { computePermissionIdentityKey } from '../repositories/broker-repositories.js'
 
 let tmpDir: string
 let dbPath: string

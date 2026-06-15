@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createHrcDatabase } from '../database.js'
 import { openHrcDatabase } from '../index'
 import { phase1Migrations } from '../migrations.js'
-import { BrokerInvocationEventConflictError } from '../repositories.js'
+import { BrokerInvocationEventConflictError } from '../repositories/broker-repositories.js'
 
 let tmpDir: string
 let dbPath: string

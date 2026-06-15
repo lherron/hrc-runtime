@@ -2021,7 +2021,7 @@ describe('hrc run', () => {
 
     const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const session = db.sessions.findByHostSessionId(hostSessionId)
+      const session = db.sessions.getByHostSessionId(hostSessionId)
       expect(session).toBeDefined()
       expect(session!.scopeRef).toBe('agent:rex:project:agent-spaces:task:T-00123')
       expect(session!.laneRef).toBe('main')
