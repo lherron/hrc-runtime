@@ -747,7 +747,12 @@ class HrcServerInstance implements HrcServer {
   async handleTerminate(request: Request): Promise<Response> {
     const body = parseTerminateRuntimeRequest(await parseJsonBody(request))
     const runtime = requireRuntime(this.db, body.runtimeId)
-    return await this.terminateRuntime(runtime, { dropContinuation: body.dropContinuation })
+    return await this.terminateRuntime(runtime, {
+      dropContinuation: body.dropContinuation,
+      ...(body.reason !== undefined ? { reason: body.reason } : {}),
+      ...(body.source !== undefined ? { source: body.source } : {}),
+      ...(body.actor !== undefined ? { actor: body.actor } : {}),
+    })
   }
 
   async handleDropContinuation(request: Request): Promise<Response> {

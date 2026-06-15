@@ -473,9 +473,27 @@ export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRe
     )
   }
 
+  const stringField = (field: 'reason' | 'source' | 'actor'): string | undefined => {
+    const value = input[field]
+    if (value === undefined) return undefined
+    if (typeof value !== 'string') {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
+        field,
+      })
+    }
+    return value
+  }
+
+  const reason = stringField('reason')
+  const source = stringField('source')
+  const actor = stringField('actor')
+
   return {
     runtimeId: body.runtimeId,
     ...(typeof dropContinuation === 'boolean' ? { dropContinuation } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+    ...(source !== undefined ? { source } : {}),
+    ...(actor !== undefined ? { actor } : {}),
   }
 }
 

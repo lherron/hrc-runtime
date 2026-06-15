@@ -126,6 +126,8 @@ export function registerRuntimeCommands(program: Command): void {
     .argument('<runtimeId>', 'runtime ID')
     .option('--drop-continuation', 'drop continuation on terminate')
     .option('--no-drop-continuation', 'explicitly preserve continuation')
+    .option('--reason <reason>', 'operator intent stamped on the runtime.terminated audit event')
+    .option('--source <source>', 'tool/source that initiated the terminate')
     .action(async (runtimeId, _opts, cmd: Command) => {
       // Scope the negated-flag scan to the active command path's raw argv,
       // not the full process.argv, to avoid surprise matches from globals.
@@ -134,7 +136,7 @@ export function registerRuntimeCommands(program: Command): void {
         [runtimeId],
         cmd.opts(),
         {
-          strings: [],
+          strings: ['reason', 'source'],
           booleans: [],
           negatedBooleans: ['drop-continuation'],
         },

@@ -228,8 +228,10 @@ class FakeBrokerClient implements BrokerClientLike {
     return { accepted: true, effect: 'turn_interrupted' }
   }
 
-  async stop(_req: InvocationStopRequest): Promise<InvocationStopResponse> {
+  readonly stopReasons: Array<string | undefined> = []
+  async stop(req: InvocationStopRequest): Promise<InvocationStopResponse> {
     this.callOrder.push('stop')
+    this.stopReasons.push(req.reason)
     return { accepted: true, state: 'stopping' }
   }
 
@@ -307,6 +309,46 @@ describe('HarnessBrokerController', () => {
       'ready'
     )
     expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
+  })
+
+  it('dispose forwards an operator_reap reason to broker stop (T-04423)', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    const result = await controller.dispose('runtime_w2', { reason: 'operator_reap' })
+
+    expect(result.ok).toBe(true)
+    // stop carries the operator intent; dispose follows.
+    expect(fake.stopReasons).toContain('operator_reap')
+    expect(fake.callOrder).toContain('stop')
+    expect(fake.callOrder).toContain('dispose')
+    expect(fixture.db.runtimes.getByRuntimeId('runtime_w2')?.status).toBe('disposed')
+  })
+
+  it('dispose defaults to reason "dispose" when none is supplied', async () => {
+    const fake = new FakeBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    const result = await controller.dispose('runtime_w2')
+
+    expect(result.ok).toBe(true)
+    expect(fake.stopReasons).toContain('dispose')
   })
 
   it('allocates and persists an HRC-owned tmux socket on interactive broker-tmux dispatch', async () => {

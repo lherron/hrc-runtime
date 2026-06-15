@@ -207,6 +207,7 @@ export type {
   ClearAppSessionContextRequest,
   ClearAppSessionContextResponse,
 } from './http-contracts.js'
+export { OPERATOR_REAP_REASON } from './http-contracts.js'
 
 export type {
   HrcMessageAddress,

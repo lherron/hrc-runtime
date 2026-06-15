@@ -23,6 +23,9 @@ type PaneStatus = Pane & {
   scopeRef: string
   runtimeId: string
   runtimeStatus: string
+  transport: string
+  controllerKind: string
+  activeRunId: string
   turnStatus: string
   runId: string
   lastEventUtc: string
@@ -40,8 +43,13 @@ function usage(): never {
   bun scripts/close-headless-ghostmux.ts [--dry-run] [--simulate] [--yes]
 
 Find Ghostty panes whose titles match TITLE_REGEX, print HRC status, ask for
-confirmation, send /quit, wait, then send Enter only to panes whose captured
+confirmation, then reap each eligible broker-tmux runtime over the broker RPC
+channel via 'hrc runtime terminate --no-drop-continuation --reason operator_reap'
+(continuation preserved), wait, and send Enter only to panes whose captured
 contents match CLOSE_PROMPT_REGEX.
+
+Eligible = surface resolves to one runtime with controllerKind=harness-broker,
+transport=tmux, status=ready, NO active run, latest turn=completed.
 
 Environment:
   TITLE_REGEX          Default: ^hrc headless agent:
@@ -50,9 +58,9 @@ Environment:
   HRC_DB_PATH          Default: /Users/lherron/praesidium/var/state/hrc/state.sqlite
 
 Options:
-  --dry-run            Print intended ghostmux actions without sending keys.
+  --dry-run            Print intended reap/ghostmux actions without running them.
   --simulate           Run against built-in fake panes/captures; implies dry-run.
-  -y, --yes            Skip the interactive confirmation before sending /quit.`)
+  -y, --yes            Skip the interactive confirmation before reaping.`)
   process.exit(0)
 }
 
@@ -202,8 +210,22 @@ function eventKindColor(eventKind: string): string {
   return color.yellow(eventKind)
 }
 
+// Operator idle-viewer reap invariant (T-04423, daedalus ruling): a reap is
+// valid iff the surface metadata resolves to exactly ONE broker-tmux runtime
+// that is idle-and-complete with NO active run. The `activeRunId` guard is the
+// HIGH-severity one: without it, terminating a `ready`-with-active-run runtime
+// makes `finalizeRuntimeTermination` fail the live run. The transport/controller
+// guards keep us off true headless/sdk runtimes (where `/v1/terminate` only
+// finalizes HRC state without a broker dispose) and off non-broker tmux panes.
 function isQuitEligible(status: PaneStatus): boolean {
-  return status.runtimeStatus === 'ready' && status.turnStatus === 'completed'
+  return (
+    status.runtimeId !== '' &&
+    status.controllerKind === 'harness-broker' &&
+    status.transport === 'tmux' &&
+    status.runtimeStatus === 'ready' &&
+    status.activeRunId === '' &&
+    status.turnStatus === 'completed'
+  )
 }
 
 function simPanes(): Pane[] {
@@ -266,6 +288,9 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
       scopeRef,
       runtimeId,
       runtimeStatus: 'ready',
+      transport: 'tmux',
+      controllerKind: 'harness-broker',
+      activeRunId: '',
       turnStatus: 'completed',
       runId: `run-sim-${pane.id}`,
       lastEventUtc: '2026-06-09T14:00:00.000Z',
@@ -281,6 +306,9 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
       scopeRef,
       runtimeId,
       runtimeStatus: 'unknown',
+      transport: '',
+      controllerKind: '',
+      activeRunId: '',
       turnStatus: 'unknown',
       runId: '',
       lastEventUtc: '',
@@ -301,7 +329,7 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
         VALUES ('${escapedScope}', '${escapedRuntime}')
       ),
       latest_runtime AS (
-        SELECT runtime_id, status, active_run_id, updated_at
+        SELECT runtime_id, status, active_run_id, transport, controller_kind, updated_at
         FROM runtimes
         WHERE (runtime_id = (SELECT runtime_id FROM target) AND (SELECT runtime_id FROM target) <> '')
            OR (scope_ref = (SELECT scope_ref FROM target) AND (SELECT scope_ref FROM target) <> '')
@@ -333,6 +361,9 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
       SELECT
         COALESCE(NULLIF('${escapedRuntime}', ''), (SELECT runtime_id FROM latest_runtime), ''),
         COALESCE((SELECT status FROM latest_runtime), 'unknown'),
+        COALESCE((SELECT transport FROM latest_runtime), ''),
+        COALESCE((SELECT controller_kind FROM latest_runtime), ''),
+        COALESCE((SELECT active_run_id FROM latest_runtime), ''),
         COALESCE((SELECT status FROM latest_run), 'none'),
         COALESCE((SELECT run_id FROM latest_run), ''),
         COALESCE((SELECT ts FROM latest_event), ''),
@@ -343,6 +374,9 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
   const [
     resolvedRuntime,
     runtimeStatus,
+    transport,
+    controllerKind,
+    activeRunId,
     turnStatus,
     runId,
     lastEventUtc,
@@ -356,6 +390,9 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
     scopeRef,
     runtimeId: resolvedRuntime || runtimeId,
     runtimeStatus: runtimeStatus || 'unknown',
+    transport: transport || '',
+    controllerKind: controllerKind || '',
+    activeRunId: activeRunId || '',
     turnStatus: turnStatus || 'none',
     runId: runId || '',
     lastEventUtc: lastEventUtc || '',
@@ -376,12 +413,29 @@ Press enter to exit`
   return tryRun(['ghostmux', 'capture-pane', '-t', pane.id])
 }
 
-function sendQuit(pane: Pane, options: Options): void {
+// Broker-backed operator reap (T-04423): instead of typing `/quit` into the
+// live TUI prompt (timing-fragile keystroke injection), tear the broker-tmux
+// runtime down deterministically over the broker RPC channel via the existing
+// `hrc runtime terminate`. `--no-drop-continuation` preserves the session so the
+// next turn resumes; `--reason operator_reap --source` stamps durable operator
+// intent + attribution onto the `runtime.terminated` audit event.
+function sendReap(status: PaneStatus, options: Options): void {
+  const argv = [
+    'hrc',
+    'runtime',
+    'terminate',
+    status.runtimeId,
+    '--no-drop-continuation',
+    '--reason',
+    'operator_reap',
+    '--source',
+    'close-headless-ghostmux',
+  ]
   if (options.dryRun) {
-    console.log(color.dim(`  dry-run: ghostmux send-keys -t ${pane.id} /quit`))
+    console.log(color.dim(`  dry-run: ${argv.join(' ')}`))
     return
   }
-  run(['ghostmux', 'send-keys', '-t', pane.id, '/quit'])
+  run(argv)
 }
 
 function sendEnter(pane: Pane, options: Options): void {
@@ -455,13 +509,13 @@ async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promis
   const answer = (
     await readline.question(
       color.yellow(
-        `Send /quit to ${eligibleStatuses.length} eligible pane(s)? Press Enter to continue: `
+        `Reap ${eligibleStatuses.length} eligible runtime(s) via hrc runtime terminate? Press Enter to continue: `
       )
     )
   ).trim()
   readline.close()
   if (answer !== '') {
-    throw Object.assign(new Error('aborted before sending /quit'), { exitCode: 130 })
+    throw Object.assign(new Error('aborted before reaping'), { exitCode: 130 })
   }
   console.log(color.green('Confirmation accepted.'))
 }
@@ -488,6 +542,7 @@ async function main(): Promise<void> {
   if (!options.simulate) {
     requireCommand('ghostmux')
     requireCommand('sqlite3')
+    requireCommand('hrc')
   }
 
   const panes = listPanes(options)
@@ -499,23 +554,27 @@ async function main(): Promise<void> {
     console.log()
     console.log(
       color.dim(
-        `Quit eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires runtime=ready and turn=completed).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, transport=tmux, runtime=ready, no active run, latest turn=completed).`
       )
     )
   }
   await confirm(eligibleStatuses, options)
 
   if (eligibleStatuses.length === 0) {
-    console.log(color.yellow('No eligible panes; /quit not sent.'))
+    console.log(color.yellow('No eligible panes; reap not sent.'))
     printRemaining(options)
     return
   }
 
   console.log()
-  console.log(color.bold('Sending /quit'))
+  console.log(color.bold('Reaping (hrc runtime terminate --reason operator_reap)'))
   for (const status of eligibleStatuses) {
-    sendQuit(status, options)
-    console.log(`  ${color.cyan(status.id)} ${color.green('quit sent')} ${color.dim(status.agent)}`)
+    sendReap(status, options)
+    console.log(
+      `  ${color.cyan(status.id)} ${color.green('reap sent')} ${color.dim(status.agent)} ${color.dim(
+        shortRuntime(status.runtimeId)
+      )}`
+    )
   }
 
   console.log()
@@ -550,7 +609,14 @@ async function main(): Promise<void> {
   printRemaining(options)
 }
 
-main().catch((error) => {
-  console.error(color.red(error instanceof Error ? error.message : String(error)))
-  process.exit(typeof error?.exitCode === 'number' ? error.exitCode : 1)
-})
+// Only run as a CLI; guarded so importing the module for unit tests
+// (e.g. the `isQuitEligible` predicate fixture) does not execute the reaper.
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(color.red(error instanceof Error ? error.message : String(error)))
+    process.exit(typeof error?.exitCode === 'number' ? error.exitCode : 1)
+  })
+}
+
+export { isQuitEligible }
+export type { PaneStatus }

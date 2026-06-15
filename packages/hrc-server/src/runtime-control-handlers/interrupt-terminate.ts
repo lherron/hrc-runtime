@@ -165,10 +165,19 @@ export function interruptHeadlessRuntime(
 export async function terminateRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
-  opts: { dropContinuation?: boolean | undefined } = {}
+  opts: {
+    dropContinuation?: boolean | undefined
+    reason?: string | undefined
+    source?: string | undefined
+    actor?: string | undefined
+  } = {}
 ): Promise<Response> {
   if (runtime.transport === 'tmux') {
-    return await this.terminateTmuxRuntime(runtime)
+    return await this.terminateTmuxRuntime(runtime, {
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      ...(opts.source !== undefined ? { source: opts.source } : {}),
+      ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
+    })
   }
   if (runtime.transport === 'ghostty') {
     return await this.terminateGhosttyRuntime(runtime)
@@ -180,10 +189,28 @@ export async function terminateRuntime(
 
 export async function terminateTmuxRuntime(
   this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
+  runtime: HrcRuntimeSnapshot,
+  opts: { reason?: string | undefined; source?: string | undefined; actor?: string | undefined } = {}
 ): Promise<Response> {
   const session = requireSession(this.db, runtime.hostSessionId)
   const tmux = requireTmuxPane(runtime)
+
+  // Idempotency: a runtime we already finalized is `terminated`. A repeated
+  // terminate (e.g. two reap requests, or a reap racing the broker close-path)
+  // must NOT re-run teardown, re-mutate runs, or append a second terminal audit
+  // event. The lease teardown below is itself idempotent, but `appendHrcEvent`
+  // always appends and `finalizeRuntimeTermination` re-touches rows — so guard
+  // the whole terminal effect on the already-terminated state. (`dead`/`stale`
+  // are NOT guarded: their first terminate is legitimate cleanup that should
+  // still tear the lease down.)
+  if (runtime.status === 'terminated') {
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      droppedContinuation: false,
+    } satisfies TerminateRuntimeResponse)
+  }
 
   const now = timestamp()
   // Broker-tmux runtimes own a tmux server on a PER-RUNTIME lease socket
@@ -192,7 +219,7 @@ export async function terminateTmuxRuntime(
   // server (removing the socket); never touch the default server.
   if (runtime.controllerKind === 'harness-broker') {
     const disposeResult = await this.getHarnessBrokerController()
-      .dispose(runtime.runtimeId)
+      .dispose(runtime.runtimeId, opts.reason !== undefined ? { reason: opts.reason } : {})
       .catch((error: unknown) => ({
         ok: false as const,
         error:
@@ -239,6 +266,12 @@ export async function terminateTmuxRuntime(
       transport: 'tmux',
       sessionName: tmux.sessionName,
       droppedContinuation: false,
+      // Operator intent + attribution: the AUTHORITATIVE audit record lives here
+      // on the HRC event (broker `stop` reason delivery can race/vanish during
+      // dispose). Lets a reap be distinguished from a generic terminate.
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      ...(opts.source !== undefined ? { source: opts.source } : {}),
+      ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
     },
   })
   this.notifyEvent(event)

@@ -133,12 +133,16 @@ export async function cmdTerminate(args: string[]): Promise<void> {
   if (dropContinuation && noDropContinuation) {
     fatal('--drop-continuation and --no-drop-continuation are mutually exclusive')
   }
+  const reason = parseFlag(args, '--reason')
+  const source = parseFlag(args, '--source')
 
   const client = createClient()
   const runtimeId = await resolveRuntimeArg(runtimeArg, client)
   const result = await client.terminate(runtimeId, {
     ...(dropContinuation ? { dropContinuation: true } : {}),
     ...(noDropContinuation ? { dropContinuation: false } : {}),
+    ...(reason ? { reason } : {}),
+    ...(source ? { source } : {}),
   })
   printJson(result)
 }

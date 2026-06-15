@@ -315,9 +315,24 @@ export type RuntimeActionResponse = {
   warning?: string | undefined
 }
 
+/**
+ * Documented HRC terminate-reason for an operator-initiated idle-viewer reap.
+ * Distinct from the harness TUI slash-command exit (`prompt_input_exit`), which
+ * is the harness's own graceful `/quit` semantic: `operator_reap` is host/operator
+ * intent stamped on the `runtime.terminated` audit event so a reap is
+ * distinguishable from a generic terminate during later audit/reconciliation.
+ */
+export const OPERATOR_REAP_REASON = 'operator_reap'
+
 export type TerminateRuntimeRequest = {
   runtimeId: string
   dropContinuation?: boolean | undefined
+  /** Operator intent stamped on the runtime.terminated audit event (e.g. 'operator_reap'). */
+  reason?: string | undefined
+  /** Tool/source that initiated the terminate (e.g. 'close-headless-ghostmux'). */
+  source?: string | undefined
+  /** Optional actor scope/handle that requested the terminate. */
+  actor?: string | undefined
 }
 
 export type TerminateRuntimeResponse = RuntimeActionResponse & {

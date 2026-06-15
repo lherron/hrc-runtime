@@ -566,16 +566,20 @@ export class HarnessBrokerController {
     }
   }
 
-  async dispose(runtimeId: string): Promise<BrokerControllerRpcResult<{ disposed: true }>> {
+  async dispose(
+    runtimeId: string,
+    opts: { reason?: string } = {}
+  ): Promise<BrokerControllerRpcResult<{ disposed: true }>> {
     const active = this.active.get(runtimeId)
     if (!active) {
       return { ok: false, error: this.notActive(runtimeId) }
     }
-    this.markBrokerClosing(runtimeId, 'dispose')
+    const reason = opts.reason ?? 'dispose'
+    this.markBrokerClosing(runtimeId, reason)
     try {
       await active.client.stop({
         invocationId: active.invocationId as InvocationId,
-        reason: 'dispose',
+        reason,
       })
       await active.client
         .dispose({ invocationId: active.invocationId as InvocationId })
