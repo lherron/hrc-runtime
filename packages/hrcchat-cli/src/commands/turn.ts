@@ -383,7 +383,7 @@ export async function cmdTurn(
       signal: abortController.signal,
     })) {
       const stackedEvent =
-        stackedAggregator && isTurnEnd(event)
+        stackedAggregator && isWatchLoopTurnTerminal(event)
           ? await enrichFinalEvent(client, handoff, event)
           : event
       if (stackedAggregator) {
@@ -397,7 +397,7 @@ export async function cmdTurn(
       }
 
       // Check for terminal events
-      if (isTurnEnd(event)) {
+      if (isWatchLoopTurnTerminal(event)) {
         turnCompleted = true
         abortController.abort()
         break
@@ -448,7 +448,15 @@ export async function cmdTurn(
   // exit 0 — success (implicit return)
 }
 
-function isTurnEnd(event: HrcLifecycleEvent): boolean {
+/**
+ * Watch-loop terminal predicate: which events end the turn for the watch loop
+ * (both the stacked and non-stacked paths). Deliberately BROADER than the
+ * stacked aggregator's own `isStackedAggregatorFinal` (turn.completed only) —
+ * the two are intentionally distinct, NOT a duplicate. Do not unify the bodies;
+ * see T-04733 (daedalus-gated) for why widening/narrowing either is a behavior
+ * change.
+ */
+function isWatchLoopTurnTerminal(event: HrcLifecycleEvent): boolean {
   return event.eventKind === 'turn_end' || event.eventKind === 'turn.completed'
 }
 
