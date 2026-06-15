@@ -364,27 +364,13 @@ export class HarnessBrokerController {
   async dispatchInput(
     input: BrokerControllerDispatchInput
   ): Promise<BrokerControllerDispatchResult> {
-    const active = this.active.get(input.runtimeId)
-    if (!active) {
-      return {
-        ok: false,
-        error: new BrokerControllerError(
-          'broker_runtime_not_active',
-          `no active broker client for runtime ${input.runtimeId}`
-        ),
-      }
-    }
-
-    try {
-      const response = await active.client.input({
+    return this.withActive(input.runtimeId, 'broker_input_failed', (active) =>
+      active.client.input({
         invocationId: active.invocationId as InvocationId,
         input: input.input,
         ...(input.policy ? { policy: input.policy } : {}),
       })
-      return { ok: true, response }
-    } catch (error) {
-      return { ok: false, error: toControllerError('broker_input_failed', error) }
-    }
+    )
   }
 
   async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
@@ -395,42 +381,24 @@ export class HarnessBrokerController {
     runtimeId: string,
     options: Omit<InvocationInterruptRequest, 'invocationId'>
   ): Promise<BrokerControllerRpcResult<InvocationInterruptResponse>> {
-    const active = this.active.get(runtimeId)
-    if (!active) {
-      return { ok: false, error: this.notActive(runtimeId) }
-    }
-    try {
-      return {
-        ok: true,
-        response: await active.client.interrupt({
-          invocationId: active.invocationId as InvocationId,
-          ...options,
-        }),
-      }
-    } catch (error) {
-      return { ok: false, error: toControllerError('broker_interrupt_failed', error) }
-    }
+    return this.withActive(runtimeId, 'broker_interrupt_failed', (active) =>
+      active.client.interrupt({
+        invocationId: active.invocationId as InvocationId,
+        ...options,
+      })
+    )
   }
 
   async stop(
     runtimeId: string,
     options: Omit<InvocationStopRequest, 'invocationId'> = {}
   ): Promise<BrokerControllerRpcResult<InvocationStopResponse>> {
-    const active = this.active.get(runtimeId)
-    if (!active) {
-      return { ok: false, error: this.notActive(runtimeId) }
-    }
-    try {
-      return {
-        ok: true,
-        response: await active.client.stop({
-          invocationId: active.invocationId as InvocationId,
-          ...options,
-        }),
-      }
-    } catch (error) {
-      return { ok: false, error: toControllerError('broker_stop_failed', error) }
-    }
+    return this.withActive(runtimeId, 'broker_stop_failed', (active) =>
+      active.client.stop({
+        invocationId: active.invocationId as InvocationId,
+        ...options,
+      })
+    )
   }
 
   async status(
@@ -442,11 +410,7 @@ export class HarnessBrokerController {
       invocation?: InvocationStatusResponse | undefined
     }>
   > {
-    const active = this.active.get(runtimeId)
-    if (!active) {
-      return { ok: false, error: this.notActive(runtimeId) }
-    }
-    try {
+    return this.withActive(runtimeId, 'broker_status_failed', async (active) => {
       const health = await active.client.health({ probeDrivers: true })
       // T-01855 tri-state gating: pass probeLiveness ONLY when the caller asked
       // AND the broker does not explicitly forbid a live probe (liveness
@@ -457,10 +421,8 @@ export class HarnessBrokerController {
         invocationId: active.invocationId as InvocationId,
         ...(probeLiveness ? { probeLiveness: true } : {}),
       })
-      return { ok: true, response: { health, invocation } }
-    } catch (error) {
-      return { ok: false, error: toControllerError('broker_status_failed', error) }
-    }
+      return { health, invocation }
+    })
   }
 
   /**
@@ -929,5 +891,27 @@ export class HarnessBrokerController {
       'broker_runtime_not_active',
       `no active broker client for runtime ${runtimeId}`
     )
+  }
+
+  /**
+   * Shared RPC scaffold: resolve the active runtime (short-circuiting to
+   * `notActive` when absent), run `fn`, and map any thrown error to a controller
+   * error tagged `code`. The callback receives the full active record (not just
+   * `.client`) so liveness gating via `.inspection` stays intact.
+   */
+  private async withActive<T>(
+    runtimeId: string,
+    code: string,
+    fn: (active: ActiveBrokerRuntime) => Promise<T>
+  ): Promise<BrokerControllerRpcResult<T>> {
+    const active = this.active.get(runtimeId)
+    if (!active) {
+      return { ok: false, error: this.notActive(runtimeId) }
+    }
+    try {
+      return { ok: true, response: await fn(active) }
+    } catch (error) {
+      return { ok: false, error: toControllerError(code, error) }
+    }
   }
 }

@@ -1,7 +1,7 @@
 import { readSync } from 'node:fs'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
-import type { HrcRuntimeIntent, HrcRuntimeSnapshot } from 'hrc-core'
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 
@@ -87,8 +87,7 @@ export async function attachOpenAiRuntime(
 export async function attachWithRetry(
   client: HrcClient,
   hostSessionId: string,
-  runtime: HrcRuntimeSnapshot,
-  _intent?: HrcRuntimeIntent
+  runtime: HrcRuntimeSnapshot
 ): Promise<ExecAttachDescriptor> {
   const attemptedRuntimeIds = new Set<string>()
   let candidate: HrcRuntimeSnapshot | undefined = runtime

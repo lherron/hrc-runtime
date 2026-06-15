@@ -10,6 +10,7 @@ import {
   type RunListFilters,
   type RunUpdatePatch,
   type RuntimeUpdatePatch,
+  buildEventWhere,
   buildSetClause,
   collectPatchEntries,
   execute,
@@ -391,20 +392,9 @@ export class RunRepository {
 
   listRuns(filters: RunListFilters = {}): HrcRunRecord[] {
     const predicates: string[] = []
-    const values: SQLQueryBindings[] = []
+    const values: Array<string | number> = []
 
-    if (filters.hostSessionId !== undefined) {
-      predicates.push('host_session_id = ?')
-      values.push(filters.hostSessionId)
-    }
-    if (filters.generation !== undefined) {
-      predicates.push('generation = ?')
-      values.push(filters.generation)
-    }
-    if (filters.runtimeId !== undefined) {
-      predicates.push('runtime_id = ?')
-      values.push(filters.runtimeId)
-    }
+    buildEventWhere(filters, predicates, values)
 
     const limit = filters.limit ?? 100
     const where = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''

@@ -71,6 +71,14 @@ function getSharedAgentSpacesClient(): AgentSpacesClient {
 // Phase 3: In-flight input capability and delivery
 // ---------------------------------------------------------------------------
 
+// Default window to keep retrying when the upstream run is not yet active.
+const DEFAULT_MISSING_ACTIVE_RUN_RETRY_MS = 10_000
+// Default delay between in-flight delivery retries.
+const DEFAULT_RETRY_DELAY_MS = 250
+// Upstream (agent-spaces) message substring signalling the run isn't active yet.
+// Centralized so the string contract has a single, testable source of truth.
+const MISSING_ACTIVE_RUN_MESSAGE = 'No active in-flight run'
+
 export function getSdkInflightCapability(frontend: HrcHarness): boolean {
   // agent-sdk supports in-flight input via queueInFlightInput; pi-sdk does not.
   return frontend === 'agent-sdk'
@@ -116,8 +124,9 @@ export async function deliverSdkInflightInput(
 ): Promise<SdkInflightInputResult> {
   const client = options.client ?? getSharedAgentSpacesClient()
   const onHrcEvent = options.onHrcEvent ?? (() => {})
-  const retryUntil = Date.now() + (options.missingActiveRunRetryMs ?? 10_000)
-  const retryDelayMs = options.retryDelayMs ?? 250
+  const retryUntil =
+    Date.now() + (options.missingActiveRunRetryMs ?? DEFAULT_MISSING_ACTIVE_RUN_RETRY_MS)
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
 
   let response: Awaited<ReturnType<SdkInflightInputClient['queueInFlightInput']>>
   for (;;) {
@@ -165,7 +174,7 @@ export async function deliverSdkInflightInput(
 }
 
 function isMissingActiveRunError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('No active in-flight run')
+  return error instanceof Error && error.message.includes(MISSING_ACTIVE_RUN_MESSAGE)
 }
 
 function delay(ms: number): Promise<void> {

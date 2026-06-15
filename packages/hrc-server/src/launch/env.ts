@@ -1,4 +1,4 @@
-const SCRUB_EXACT_KEYS = new Set([
+const SCRUB_EXACT_KEYS: ReadonlySet<string> = new Set([
   'BUILD_NUMBER',
   'CI',
   'CLICOLOR_FORCE',
@@ -7,12 +7,12 @@ const SCRUB_EXACT_KEYS = new Set([
   'GITHUB_ACTIONS',
   'NO_COLOR',
   'RUN_ID',
-] as const)
+])
 
 const SCRUB_PREFIXES = ['AGENTCHAT_', 'AGENT_', 'CODEX_', 'HRC_'] as const
 
 export function shouldScrubInheritedEnvKey(key: string): boolean {
-  if (SCRUB_EXACT_KEYS.has(key as typeof SCRUB_EXACT_KEYS extends Set<infer T> ? T : never)) {
+  if (SCRUB_EXACT_KEYS.has(key)) {
     return true
   }
 

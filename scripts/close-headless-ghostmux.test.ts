@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { isQuitEligible, type PaneStatus } from './close-headless-ghostmux'
+import { type PaneStatus, isQuitEligible } from './close-headless-ghostmux'
 
 // Operator idle-viewer reap predicate (T-04423). Eligible iff the surface
 // resolves to exactly one broker-tmux runtime that is idle-and-complete with NO
@@ -53,9 +53,9 @@ describe('isQuitEligible (operator reap predicate)', () => {
     expect(isQuitEligible(eligibleStatus({ activeRunId: 'run-live' }))).toBe(false)
     // ready + active run is exactly the corrupt state that would otherwise have
     // its live run failed by finalizeRuntimeTermination.
-    expect(isQuitEligible(eligibleStatus({ runtimeStatus: 'ready', activeRunId: 'run-live' }))).toBe(
-      false
-    )
+    expect(
+      isQuitEligible(eligibleStatus({ runtimeStatus: 'ready', activeRunId: 'run-live' }))
+    ).toBe(false)
   })
 
   it('skips when the latest turn is not completed', () => {

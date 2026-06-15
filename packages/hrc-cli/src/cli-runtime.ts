@@ -16,7 +16,7 @@ import {
 import type { HrcStatusResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
-import { fatal, hasFlag } from './runtime-args.js'
+import { fatalExit, hasFlag } from './runtime-args.js'
 
 export type ServerPaths = {
   runtimeRoot: string
@@ -311,7 +311,7 @@ export async function launchctlKickstart(
   const result = await execProcess(argv)
   if (result.exitCode !== 0) {
     const detail = (result.stderr || result.stdout).trim()
-    fatal(`launchctl kickstart failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`)
+    fatalExit(`launchctl kickstart failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`)
   }
 }
 
@@ -481,7 +481,7 @@ export function resolveServerMode(
   const wantsForeground = hasFlag(args, '--foreground')
 
   if (wantsDaemon && wantsForeground) {
-    fatal('choose either --foreground or --daemon/--background, not both')
+    fatalExit('choose either --foreground or --daemon/--background, not both')
   }
 
   if (wantsForeground) return 'foreground'
@@ -508,7 +508,7 @@ export async function daemonizeAndWait(timeoutMs = 5_000): Promise<number> {
 
   const ready = await waitForCondition(() => isUnixSocketResponsive(socketPath), timeoutMs)
   if (!ready) {
-    fatal(
+    fatalExit(
       `daemon did not become responsive within ${timeoutMs}ms (pid ${proc.pid}); log at ${logPath}`
     )
   }
@@ -675,7 +675,7 @@ export async function stopServerProcess(options?: {
     if (!socketResponsive || options?.allowNotRunning) {
       return
     }
-    fatal(`daemon is responsive on ${socketPath}, but pid file is missing at ${pidPath}`)
+    fatalExit(`daemon is responsive on ${socketPath}, but pid file is missing at ${pidPath}`)
   }
 
   const timeoutMs = options?.timeoutMs ?? 5_000
@@ -688,7 +688,7 @@ export async function stopServerProcess(options?: {
     if (!socketResponsive || options?.allowNotRunning) {
       return
     }
-    fatal(`daemon socket ${socketPath} is still responsive, but pid ${pid} is not alive`)
+    fatalExit(`daemon socket ${socketPath} is still responsive, but pid ${pid} is not alive`)
   }
 
   process.kill(pid, 'SIGTERM')
@@ -706,7 +706,7 @@ export async function stopServerProcess(options?: {
   }
 
   if (!stopped) {
-    fatal(
+    fatalExit(
       `daemon pid ${pid} did not stop within ${timeoutMs}ms${force ? ' after SIGTERM/SIGKILL' : ''}`
     )
   }

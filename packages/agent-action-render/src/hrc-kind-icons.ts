@@ -1,6 +1,8 @@
+import { FALLBACK_ICON } from './budgets.js'
+import { NOTICE_ICON } from './notice-formatters.js'
 import { getToolEmoji } from './tool-formatters.js'
 
-export const DEFAULT_HRC_ICON = '⚙️'
+export const DEFAULT_HRC_ICON = FALLBACK_ICON
 
 /** Event kinds whose icon derives from the tool name (with a default fallback). */
 const TOOL_KEYED_EVENT_KINDS = new Set([
@@ -33,9 +35,7 @@ export function getHrcEventIcon(
     return options.toolName !== undefined ? getToolEmoji(options.toolName) : DEFAULT_HRC_ICON
   }
   if (eventKind === 'notice') {
-    if (options.level === 'warn') return '⚠️'
-    if (options.level === 'error') return '❌'
-    return 'ℹ️'
+    return NOTICE_ICON[options.level ?? 'info'] ?? DEFAULT_HRC_ICON
   }
   const exact = ICON_BY_EVENT_KIND[eventKind]
   if (exact !== undefined) return exact

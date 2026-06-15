@@ -1,3 +1,5 @@
+import { FALLBACK_ICON } from './budgets.js'
+
 export interface ToolPresenter {
   match: string | RegExp | ((toolName: string, input: Record<string, unknown>) => boolean)
   displayName: string | ((toolName: string, input: Record<string, unknown>) => string)
@@ -7,7 +9,7 @@ export interface ToolPresenter {
 }
 
 /** Fallback emoji for tools with no dedicated presenter (e.g. mcp:* and the default). */
-const FALLBACK_TOOL_EMOJI = '⚙️'
+const FALLBACK_TOOL_EMOJI = FALLBACK_ICON
 
 function commandInput(input: Record<string, unknown>): string | undefined {
   const command = input['command']

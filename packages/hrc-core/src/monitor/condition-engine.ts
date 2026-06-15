@@ -1,5 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode, HrcInternalError } from '../errors.js'
 import type { HrcSelector } from '../selectors.js'
+import { isResolutionError, selectorMatchesMessageResponse } from './index.js'
 import type {
   HrcMonitorCapture,
   HrcMonitorEvent,
@@ -253,8 +254,12 @@ function evaluateEvent(
   const contextChanged = evaluateContextChanged(context, event)
   if (contextChanged) return contextChanged
 
-  const runtimeFailure = evaluateRuntimeFailure(context, event)
-  if (runtimeFailure) return runtimeFailure
+  // The dedicated 'runtime-dead' arm below handles runtime death explicitly;
+  // for every other condition, surface a runtime death/crash as the outcome.
+  if (context.condition !== 'runtime-dead') {
+    const runtimeFailure = runtimeDeathOutcome(context, event)
+    if (runtimeFailure) return runtimeFailure
+  }
 
   switch (context.condition) {
     case 'turn-finished':
@@ -338,14 +343,6 @@ function runtimeDeathOutcome(
   return null
 }
 
-function evaluateRuntimeFailure(
-  context: EvaluationContext,
-  event: MonitorOutputEvent
-): HrcMonitorConditionOutcome | null {
-  if (context.condition === 'runtime-dead') return null
-  return runtimeDeathOutcome(context, event)
-}
-
 function evaluateContextChanged(
   context: EvaluationContext,
   event: MonitorOutputEvent
@@ -419,20 +416,12 @@ function messageResponseMatchesSelector(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): boolean {
-  switch (context.selector.kind) {
-    case 'message': {
-      const messageId = context.selector.messageId
-      return (
-        unknownString(event, 'messageId') === messageId ||
-        unknownString(event, 'replyToMessageId') === messageId ||
-        unknownString(event, 'rootMessageId') === messageId
-      )
-    }
-    case 'message-seq':
-      return unknownNumber(event, 'messageSeq') === context.selector.messageSeq
-    default:
-      return false
-  }
+  return selectorMatchesMessageResponse(context.selector, {
+    messageId: unknownString(event, 'messageId'),
+    replyToMessageId: unknownString(event, 'replyToMessageId'),
+    rootMessageId: unknownString(event, 'rootMessageId'),
+    messageSeq: unknownNumber(event, 'messageSeq'),
+  })
 }
 
 function resultValue(
@@ -574,11 +563,11 @@ function isIdleRuntimeStatus(status: string | undefined): boolean {
 function isCapture(
   result: HrcMonitorCapture | HrcMonitorResolutionResult
 ): result is HrcMonitorCapture {
-  return !('ok' in result && result.ok === false)
+  return !isResolutionError(result)
 }
 
 function resolutionError(result: HrcMonitorResolutionResult): Error {
-  if ('ok' in result && result.ok === false) {
+  if (isResolutionError(result)) {
     return new HrcBadRequestError(
       HrcErrorCode.INVALID_SELECTOR,
       result.error.message,

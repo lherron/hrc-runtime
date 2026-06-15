@@ -674,45 +674,6 @@ class HrcServerInstance implements HrcServer {
     return json(session)
   }
 
-  // -- Managed app-session registry (Phase 3) ---------------------------------
-
-  /**
-   * GET /v1/events/latest-by-session
-   *
-   * Returns the latest HRC lifecycle event per `(host_session_id, generation)`
-   * using an indexed SQL grouping. Backs ACP `listMobileSessions` freshness so
-   * `lastHrcSeq` and `lastActivityAt` remain reliable on large stores without
-   * scanning a bounded recent window.
-   *
-   * Accepts the same filter query params as `/v1/events` (hostSessionId,
-   * generation, scopeRef, laneRef, runtimeId, runId, category, eventKind);
-   * `fromSeq` / `follow` are not supported.
-   */
-
-  /**
-   * Provision a headless codex runtime THROUGH the HarnessBrokerController and
-   * return its HrcRuntimeSnapshot (controllerKind='harness-broker'). Compiles
-   * the headless plan via the ASPC facade and hands off to controller.start;
-   * the controller owns runtime allocation + controllerKind persistence, so
-   * callers MUST NOT createHeadlessRuntimeForSession beforehand.
-   *
-   * Shared by (T-01757, Wave C, A2):
-   *   - startRuntimeForSession's headless codex START path (replaces exec.ts;
-   *     parent acceptance: "Codex headless sessions start through HarnessBrokerController").
-   *   - executeHeadlessBrokerStartTurn (first-turn dispatch), which wraps the
-   *     returned snapshot in a DispatchTurnResponse.
-   */
-
-  // T-01770 Phase C: block a synchronous caller until an interactive broker turn
-  // reaches a terminal run state. Unlike the headless variant this does NOT mutate
-  // runtime pointers — the broker event-mapper owns the interactive runtime
-  // lifecycle (pane stays live across turns); we only observe the run row.
-
-  /**
-   * Anthropic headless: execute via agent-sdk in-process.
-   * Produces the same transport:'headless' records as the CLI path.
-   */
-
   async handleClearContext(request: Request): Promise<Response> {
     const body = parseClearContextRequest(await parseJsonBody(request))
     const session = requireSession(this.db, body.hostSessionId)
@@ -793,29 +754,6 @@ class HrcServerInstance implements HrcServer {
     } satisfies DropContinuationResponse)
   }
 
-  /** Anthropic headless start: run an initial SDK turn to establish continuation. */
-
-  /**
-   * Resolve the tmux controller for a specific runtime pane. Broker-tmux
-   * pane-lease runtimes live on a per-runtime lease socket (not the default
-   * HRC tmux server), so literal delivery / capture / interrupt against them
-   * must target that lease socket. Returns the shared default-socket controller
-   * unchanged for legacy interactive runtimes (pane on the default server).
-   */
-
-  /**
-   * Enforce the stale-generation auto-rotation policy on a session before
-   * dispatch. If the session's `createdAt` is older than the configured
-   * threshold and the caller did not opt in to stale reuse, the session is
-   * rotated (new generation, continuation dropped) and the fresh session is
-   * returned. Emits a `session.generation_auto_rotated` HRC event so the
-   * rotation is visible in dashboards/audit.
-   *
-   * Callers pass the session they originally resolved; on return, they MUST
-   * use the returned `session` for downstream work because the host session
-   * ID may have changed.
-   */
-
   async handleHookIngest(request: Request): Promise<Response> {
     return handleHookIngest(this.ctx, request)
   }
@@ -877,20 +815,6 @@ class HrcServerInstance implements HrcServer {
       sessions: sessions.map((session) => toStatusSessionView(this.db, session)),
     } satisfies HrcStatusResponse)
   }
-
-  // -- hrcchat: target ensure (summon) ------------------------------------------
-
-  // -- hrcchat: raw message creation --------------------------------------------
-
-  // -- hrcchat: selector-based capture (peek) -----------------------------------
-
-  // -- hrcchat: selector-based literal send -------------------------------------
-
-  // -- hrcchat: selector-based turn dispatch ------------------------------------
-
-  // -- hrcchat: blocking message wait -------------------------------------------
-
-  // -- hrcchat: NDJSON message watch stream -------------------------------------
 }
 
 Object.assign(

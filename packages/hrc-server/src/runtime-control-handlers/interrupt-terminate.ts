@@ -3,11 +3,9 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
-import { BrokerControllerError } from '../broker/controller.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireGhosttySurface, requireSession, requireTmuxPane } from '../require-helpers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { json, timestamp } from '../server-util.js'
 import { getTmuxSocketPath } from '../tmux-socket.js'
@@ -16,6 +14,8 @@ import {
   type TmuxPaneState,
   createTmuxManager,
 } from '../tmux.js'
+import { disposeBrokerRuntime } from './broker-dispose.js'
+import { sessionEventBase } from './session-event-base.js'
 
 export async function interruptRuntime(
   this: HrcServerInstanceForHandlers,
@@ -47,11 +47,7 @@ export async function interruptGhosttyRuntime(
   const now = timestamp()
   this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     transport: 'ghostty',
     payload: {
@@ -90,11 +86,7 @@ export async function interruptTmuxRuntime(
   const now = timestamp()
   this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     transport: 'tmux',
     payload: {
@@ -140,11 +132,7 @@ export function interruptHeadlessRuntime(
     lastActivityAt: now,
   })
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     runId: runtime.activeRunId,
     transport,
@@ -190,7 +178,11 @@ export async function terminateRuntime(
 export async function terminateTmuxRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
-  opts: { reason?: string | undefined; source?: string | undefined; actor?: string | undefined } = {}
+  opts: {
+    reason?: string | undefined
+    source?: string | undefined
+    actor?: string | undefined
+  } = {}
 ): Promise<Response> {
   const session = requireSession(this.db, runtime.hostSessionId)
   const tmux = requireTmuxPane(runtime)
@@ -218,25 +210,10 @@ export async function terminateTmuxRuntime(
   // the lease down via a TmuxManager bound to the lease socket and kill its
   // server (removing the socket); never touch the default server.
   if (runtime.controllerKind === 'harness-broker') {
-    const disposeResult = await this.getHarnessBrokerController()
-      .dispose(runtime.runtimeId, opts.reason !== undefined ? { reason: opts.reason } : {})
-      .catch((error: unknown) => ({
-        ok: false as const,
-        error:
-          error instanceof BrokerControllerError
-            ? error
-            : new BrokerControllerError(
-                'broker_dispose_failed',
-                error instanceof Error ? error.message : String(error)
-              ),
-      }))
-    if (!disposeResult.ok && disposeResult.error.code !== 'broker_runtime_not_active') {
-      writeServerLog('WARN', 'broker runtime dispose failed during tmux terminate', {
-        runtimeId: runtime.runtimeId,
-        error: disposeResult.error.message,
-        code: disposeResult.error.code,
-      })
-    }
+    await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      logMessage: 'broker runtime dispose failed during tmux terminate',
+    })
 
     const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime) ?? tmux.socketPath
     const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
@@ -255,11 +232,7 @@ export async function terminateTmuxRuntime(
 
   finalizeRuntimeTermination(this.db, runtime, now)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     transport: 'tmux',
     payload: {
@@ -296,11 +269,7 @@ export async function terminateGhosttyRuntime(
 
   finalizeRuntimeTermination(this.db, runtime, now)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     transport: 'ghostty',
     payload: {
@@ -334,11 +303,7 @@ export async function terminateHeadlessRuntime(
   finalizeRuntimeTermination(this.db, runtime, now)
   const transport = runtime.transport === 'headless' ? 'headless' : 'sdk'
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
     transport,
     payload: {

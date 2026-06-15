@@ -12,6 +12,7 @@
  */
 
 import type { HookDerivedEvent } from './events.js'
+import { getBooleanCoerced, getString, truncate } from './internal/record.js'
 
 // ============================================================================
 // Input type — matches otel-ingest.ts NormalizedOtelLogRecord shape
@@ -53,18 +54,13 @@ function getAttrString(
   attrs: Record<string, unknown> | undefined,
   key: string
 ): string | undefined {
-  if (!attrs) return undefined
-  const v = attrs[key]
-  return typeof v === 'string' ? v : undefined
+  return attrs ? getString(attrs, key) : undefined
 }
 
+// OTEL attribute values arrive stringly-typed, so booleans may be the strings
+// 'true'/'false' — getBooleanCoerced preserves that coercion.
 function getAttrBool(attrs: Record<string, unknown> | undefined, key: string): boolean | undefined {
-  if (!attrs) return undefined
-  const v = attrs[key]
-  if (typeof v === 'boolean') return v
-  if (v === 'true') return true
-  if (v === 'false') return false
-  return undefined
+  return attrs ? getBooleanCoerced(attrs, key) : undefined
 }
 
 /**
@@ -180,8 +176,7 @@ function handleToolResult(attrs: OtelAttrs): HookDerivedEvent[] {
 
 function handleUserPrompt(attrs: OtelAttrs): HookDerivedEvent[] {
   const prompt = getAttrString(attrs, 'prompt') ?? ''
-  const truncated =
-    prompt.length > PROMPT_TRUNCATE ? `${prompt.slice(0, PROMPT_TRUNCATE)}\u2026` : prompt
+  const truncated = truncate(prompt, PROMPT_TRUNCATE)
 
   return [
     {

@@ -1,4 +1,5 @@
 import {
+  buildScopeRef,
   formatScopeHandle,
   formatSessionHandle,
   parseScopeRef,
@@ -221,20 +222,16 @@ export function formatCanonicalScopeRef(input: CanonicalScopeRefInput): string {
     return normalized
   }
 
-  const agentId = assertNonEmptyString(input.agentId, 'agentId')
-  let scopeRef = `agent:${agentId}`
-
-  if (input.projectId !== undefined) {
-    scopeRef += `:project:${assertNonEmptyString(input.projectId, 'projectId')}`
-  }
-
-  if (input.taskId !== undefined) {
-    scopeRef += `:task:${assertNonEmptyString(input.taskId, 'taskId')}`
-  }
-
-  if (input.roleName !== undefined) {
-    scopeRef += `:role:${assertNonEmptyString(input.roleName, 'roleName')}`
-  }
+  const scopeRef = buildScopeRef({
+    agentId: assertNonEmptyString(input.agentId, 'agentId'),
+    projectId:
+      input.projectId !== undefined
+        ? assertNonEmptyString(input.projectId, 'projectId')
+        : undefined,
+    taskId: input.taskId !== undefined ? assertNonEmptyString(input.taskId, 'taskId') : undefined,
+    roleName:
+      input.roleName !== undefined ? assertNonEmptyString(input.roleName, 'roleName') : undefined,
+  })
 
   const validation = validateScopeRef(scopeRef)
   if (!validation.ok) {

@@ -1,6 +1,12 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
 
-import { isRecord, mechanicalSummary, redactSecrets, stringValue } from './stacked-shared.js'
+import {
+  isRecord,
+  mechanicalSummary,
+  redactSecrets,
+  stringValue,
+  truncateChars,
+} from './stacked-shared.js'
 import {
   FlushReason,
   Phase,
@@ -523,11 +529,7 @@ function extractTaskId(scope: string): string | undefined {
 }
 
 function truncateFinalBody(body: string, cap = FINAL_BODY_CAP): string {
-  const marker = '...[truncated]'
-  if (body.length <= cap) {
-    return body
-  }
-  return `${body.slice(0, Math.max(0, cap - marker.length))}${marker}`
+  return truncateChars(body, cap, '...[truncated]')
 }
 
 function redactAndTruncate(value: unknown): unknown {

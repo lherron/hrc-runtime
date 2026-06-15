@@ -1,4 +1,4 @@
-import { MAX_LINE_CHARS, MAX_PREVIEW_CHARS, truncateText } from './budgets.js'
+import { FALLBACK_ICON, MAX_LINE_CHARS, MAX_PREVIEW_CHARS, truncateText } from './budgets.js'
 import { PRESENTERS, getToolDisplayName, resolveToolPresenter } from './tool-presenters.js'
 
 /**
@@ -10,7 +10,7 @@ export const TOOL_EMOJI: Record<string, string> = Object.fromEntries(
   )
 )
 
-export const DEFAULT_TOOL_EMOJI = '⚙️'
+export const DEFAULT_TOOL_EMOJI = FALLBACK_ICON
 
 /**
  * @deprecated Use the ToolPresenter registry instead.

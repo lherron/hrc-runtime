@@ -6,7 +6,7 @@
  */
 
 import type { HookDerivedEvent } from './events.js'
-import { asToolInputRecord } from './internal/record.js'
+import { asToolInputRecord, getString, truncate } from './internal/record.js'
 import { formatToolOutput } from './tool-output-formatter.js'
 
 // ============================================================================
@@ -35,11 +35,6 @@ export type NormalizeHookResult = {
 // Helpers (from CP's hook-event-handler.ts)
 // ============================================================================
 
-function getString(obj: Record<string, unknown>, key: string): string | undefined {
-  const v = obj[key]
-  return typeof v === 'string' ? v : undefined
-}
-
 /** Max characters of a shell command echoed into a tool summary before truncation. */
 const CMD_TRUNCATE = 80
 /** Max characters of a path/pattern/query echoed into a tool summary before truncation. */
@@ -51,8 +46,6 @@ export function formatToolSummary(
   toolInput: Record<string, unknown> | undefined
 ): string {
   if (!toolInput) return toolName
-
-  const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}\u2026` : s)
 
   switch (toolName) {
     case 'Bash': {

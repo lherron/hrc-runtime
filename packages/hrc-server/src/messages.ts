@@ -96,10 +96,18 @@ export function targetLaneCandidates(laneRef: string): string[] {
   return normalized === 'main' ? ['main', 'default'] : [normalized]
 }
 
+/**
+ * Build a normalized session ref string (`<scopeRef>/lane:<lane>`) from a record's
+ * scope/lane fields, applying the target lane normalization (default → main).
+ */
+export function formatSessionRef(scopeRef: string, laneRef: string): string {
+  return `${scopeRef}/lane:${normalizeTargetLane(laneRef) ?? laneRef}`
+}
+
 export function normalizeTargetSessionRef(sessionRef: string): string {
   const normalized = normalizeSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
-  return `${scopeRef}/lane:${normalizeTargetLane(laneRef) ?? laneRef}`
+  return formatSessionRef(scopeRef, laneRef)
 }
 
 export function extractProjectId(scopeRef: string): string | undefined {

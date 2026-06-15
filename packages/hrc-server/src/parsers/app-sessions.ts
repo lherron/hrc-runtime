@@ -25,6 +25,7 @@ import {
   parseFenceInput,
   parseOptionalStringArray,
   parsePromptPayload,
+  readOptionalBooleanField,
   readOptionalNonEmptyStringField,
   readOptionalStringField,
   requireTrimmedStringField,
@@ -377,11 +378,7 @@ export function parseClearAppSessionContextRequest(
       field: 'selector',
     })
   }
-  if (input['relaunch'] !== undefined && typeof input['relaunch'] !== 'boolean') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'relaunch must be a boolean', {
-      field: 'relaunch',
-    })
-  }
+  const relaunch = readOptionalBooleanField(input, 'relaunch')
   if (input['reason'] !== undefined && typeof input['reason'] !== 'string') {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'reason must be a string', {
       field: 'reason',
@@ -390,7 +387,7 @@ export function parseClearAppSessionContextRequest(
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
-    ...(typeof input['relaunch'] === 'boolean' ? { relaunch: input['relaunch'] } : {}),
+    ...(relaunch !== undefined ? { relaunch } : {}),
     ...(typeof input['reason'] === 'string' && input['reason'].trim().length > 0
       ? { reason: input['reason'].trim() }
       : {}),

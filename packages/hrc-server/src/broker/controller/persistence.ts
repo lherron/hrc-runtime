@@ -354,23 +354,50 @@ export function markStartedInvocationFailed(
   })
 }
 
+/**
+ * Latest `continuation.cleared` reason for an invocation, optionally restricted
+ * to events strictly before a terminal seq. Returns the raw reason (or
+ * undefined); the user-initiated filter is applied by the callers below.
+ *
+ * The `beforeSeq` predicate is load-bearing for the terminal-seq variant: it
+ * must look strictly *before* the terminal envelope.
+ */
+function latestContinuationClearReason(
+  db: HrcDatabase,
+  invocationId: string,
+  beforeSeq?: number
+): string | undefined {
+  if (beforeSeq !== undefined) {
+    const row = db.sqlite
+      .query<{ reason: string | null }, [string, number]>(
+        `SELECT json_extract(broker_event_json, '$.reason') AS reason
+         FROM broker_invocation_events
+        WHERE invocation_id = ? AND type = 'continuation.cleared' AND seq < ?
+        ORDER BY seq DESC
+        LIMIT 1`
+      )
+      .get(invocationId, beforeSeq)
+    return row?.reason ?? undefined
+  }
+  const row = db.sqlite
+    .query<{ reason: string | null }, [string]>(
+      `SELECT json_extract(broker_event_json, '$.reason') AS reason
+         FROM broker_invocation_events
+        WHERE invocation_id = ? AND type = 'continuation.cleared'
+        ORDER BY seq DESC
+        LIMIT 1`
+    )
+    .get(invocationId)
+  return row?.reason ?? undefined
+}
+
 export function findUserInitiatedContinuationClearReason(
   db: HrcDatabase,
   invocationId: string,
   beforeSeq: number
 ): string | undefined {
-  const row = db.sqlite
-    .query<{ reason: string | null }, [string, number]>(
-      `SELECT json_extract(broker_event_json, '$.reason') AS reason
-         FROM broker_invocation_events
-        WHERE invocation_id = ? AND type = 'continuation.cleared' AND seq < ?
-        ORDER BY seq DESC
-        LIMIT 1`
-    )
-    .get(invocationId, beforeSeq)
-  return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
-    ? row.reason
-    : undefined
+  const reason = latestContinuationClearReason(db, invocationId, beforeSeq)
+  return reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(reason) ? reason : undefined
 }
 
 /**
@@ -388,16 +415,6 @@ export function findUserInitiatedContinuationClearReasonForRuntime(
   if (invocationId === undefined) {
     return undefined
   }
-  const row = db.sqlite
-    .query<{ reason: string | null }, [string]>(
-      `SELECT json_extract(broker_event_json, '$.reason') AS reason
-         FROM broker_invocation_events
-        WHERE invocation_id = ? AND type = 'continuation.cleared'
-        ORDER BY seq DESC
-        LIMIT 1`
-    )
-    .get(invocationId)
-  return row?.reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(row.reason)
-    ? row.reason
-    : undefined
+  const reason = latestContinuationClearReason(db, invocationId)
+  return reason && USER_INITIATED_CONTINUATION_CLEAR_REASONS.has(reason) ? reason : undefined
 }

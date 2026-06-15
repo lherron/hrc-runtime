@@ -511,14 +511,7 @@ function processEvent(
         }
       }
 
-      const existingOutput = toolIndex >= 0 ? run.toolExecutions[toolIndex]?.output : undefined
-      const existingImages = toolIndex >= 0 ? run.toolExecutions[toolIndex]?.images : undefined
-      const existingMediaRefs =
-        toolIndex >= 0 ? run.toolExecutions[toolIndex]?.mediaRefs : undefined
-
-      const finalOutput = output || existingOutput || ''
-      const finalImages = images.length > 0 ? images : existingImages
-      const finalMediaRefs = mediaRefs.length > 0 ? mediaRefs : existingMediaRefs
+      const status: ToolExecution['status'] = event.isError ? 'failed' : 'completed'
 
       if (toolIndex >= 0) {
         const existingTool = run.toolExecutions[toolIndex]
@@ -528,10 +521,10 @@ function processEvent(
 
         run.toolExecutions[toolIndex] = {
           ...existingTool,
-          status: event.isError ? 'failed' : 'completed',
-          output: finalOutput,
-          images: finalImages,
-          mediaRefs: finalMediaRefs,
+          status,
+          output: output || existingTool.output || '',
+          images: images.length > 0 ? images : existingTool.images,
+          mediaRefs: mediaRefs.length > 0 ? mediaRefs : existingTool.mediaRefs,
         }
       } else {
         run.toolExecutions.push({
@@ -539,10 +532,10 @@ function processEvent(
           toolName: event.toolName,
           input: {},
           seq,
-          status: event.isError ? 'failed' : 'completed',
-          output: finalOutput,
-          images: finalImages,
-          mediaRefs: finalMediaRefs,
+          status,
+          output: output || '',
+          images: images.length > 0 ? images : undefined,
+          mediaRefs: mediaRefs.length > 0 ? mediaRefs : undefined,
         })
       }
 

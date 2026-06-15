@@ -421,23 +421,52 @@ function eventMatchesSelector(
   }
 }
 
+/**
+ * Projected message-correlation fields read off an event, used by the shared
+ * `selectorMatchesMessageResponse` predicate so the typed (`HrcMonitorEvent`)
+ * and the defensively-coerced (`unknownString`) callers can share one rule.
+ */
+export type MessageResponseProjection = {
+  messageId?: string | undefined
+  replyToMessageId?: string | undefined
+  rootMessageId?: string | undefined
+  messageSeq?: number | undefined
+}
+
+/**
+ * Single definition of the msg:/seq: correlation rule. Shared between the
+ * monitor reader (typed access) and the condition engine (coerced access) so
+ * the 3-field-OR / messageSeq-equality predicate cannot drift between modules.
+ */
+export function selectorMatchesMessageResponse(
+  selector: HrcSelector,
+  projection: MessageResponseProjection
+): boolean {
+  switch (selector.kind) {
+    case 'message':
+      return (
+        projection.messageId === selector.messageId ||
+        projection.replyToMessageId === selector.messageId ||
+        projection.rootMessageId === selector.messageId
+      )
+    case 'message-seq':
+      return projection.messageSeq === selector.messageSeq
+    default:
+      return false
+  }
+}
+
 function isCorrelatedMessageResponse(event: HrcMonitorEvent, selector: HrcSelector): boolean {
   if (event.event !== 'message.response') {
     return false
   }
 
-  switch (selector.kind) {
-    case 'message':
-      return (
-        event.messageId === selector.messageId ||
-        event.replyToMessageId === selector.messageId ||
-        event.rootMessageId === selector.messageId
-      )
-    case 'message-seq':
-      return event.messageSeq === selector.messageSeq
-    default:
-      return false
-  }
+  return selectorMatchesMessageResponse(selector, {
+    messageId: event.messageId,
+    replyToMessageId: event.replyToMessageId,
+    rootMessageId: event.rootMessageId,
+    messageSeq: event.messageSeq,
+  })
 }
 
 function messageEventMatches(
@@ -496,8 +525,20 @@ function resolveHighWater(state: HrcMonitorState): number {
   return state.eventGlobalHighWaterSeq ?? highWaterSeq(state.events)
 }
 
+/**
+ * Negative discriminator for the `HrcMonitorResolutionResult` tagged union:
+ * `true` when `result` is the `{ ok: false, error }` error arm. Lives with the
+ * union so the `'ok' in result` check is defined exactly once; positive
+ * narrowing to `HrcMonitorResolution`/`HrcMonitorCapture` stays per-caller.
+ */
+export function isResolutionError(
+  result: HrcMonitorResolutionResult
+): result is ReturnType<typeof createHrcError> & { ok: false } {
+  return 'ok' in result && result.ok === false
+}
+
 function isResolution(result: HrcMonitorResolutionResult): result is HrcMonitorResolution {
-  return !('ok' in result && result.ok === false)
+  return !isResolutionError(result)
 }
 
 function protectStreamCursor(

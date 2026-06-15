@@ -38,6 +38,7 @@ import {
 import { MonitorResult } from 'hrc-events'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
+import { splitCsv } from './cli/argv.js'
 import {
   MSG_REQUIRED_CONDITIONS,
   POLL_MS,
@@ -940,13 +941,6 @@ const MILESTONE_BASH_NEEDLES = [
   'git commit',
 ]
 
-function splitList(value: string): string[] {
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
 /** True when any of the --kind/--tool/--grep/--milestone filters is requested. */
 function isFilterActive(args: MonitorWatchArgs): boolean {
   return (
@@ -996,11 +990,11 @@ function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) 
   }
   const predicates: Array<(event: MonitorOutputEvent) => boolean> = []
   if (args.kind !== undefined && args.kind.trim() !== '') {
-    const kinds = new Set(splitList(args.kind))
+    const kinds = new Set(splitCsv(args.kind))
     predicates.push((event) => kinds.has(eventKindOf(event)))
   }
   if (args.tool !== undefined && args.tool.trim() !== '') {
-    const tools = new Set(splitList(args.tool))
+    const tools = new Set(splitCsv(args.tool))
     predicates.push(
       (event) => eventKindOf(event) === 'turn.tool_call' && tools.has(payloadToolName(event) ?? '')
     )
@@ -1022,11 +1016,11 @@ function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters 
   const filters: HrcLifecycleMonitorFilters = {}
   let any = false
   if (args.kind !== undefined && args.kind.trim() !== '') {
-    filters.eventKinds = splitList(args.kind)
+    filters.eventKinds = splitCsv(args.kind)
     any = true
   }
   if (args.tool !== undefined && args.tool.trim() !== '') {
-    filters.toolNames = splitList(args.tool)
+    filters.toolNames = splitCsv(args.tool)
     any = true
   }
   if (args.grep !== undefined && args.grep !== '') {

@@ -32,6 +32,18 @@ export function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag)
 }
 
+/**
+ * Split a comma-separated list value into trimmed, non-empty entries (e.g.
+ * `--status busy, dead ` → `['busy', 'dead']`). Shared by the runtime
+ * list/sweep `--status` filters and the monitor `--kind`/`--tool` filters.
+ */
+export function splitCsv(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
 export function parseIntegerFlag(
   args: string[],
   flag: string,

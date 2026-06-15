@@ -20,7 +20,7 @@ import {
   resolveRuntimeArg,
   resolveSelectorTarget,
 } from '../selector-resolve.js'
-import { hasFlag, parseFlag, parseTransportFlag } from './argv.js'
+import { hasFlag, parseFlag, parseTransportFlag, splitCsv } from './argv.js'
 import { requireArg } from './argv.js'
 import { printHrcDomainErrorBody } from './errors.js'
 import { cmdSessionList } from './handlers-server.js'
@@ -37,14 +37,7 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
   const runtimes = await client.listRuntimes({
     ...(hostSessionId ? { hostSessionId } : {}),
     ...(transport ? { transport } : {}),
-    ...(status
-      ? {
-          status: status
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0),
-        }
-      : {}),
+    ...(status ? { status: splitCsv(status) } : {}),
     ...(hasFlag(args, '--stale') ? { stale: true } : {}),
     ...(olderThan ? { olderThan } : {}),
     ...(scope ? { scope } : {}),
@@ -273,14 +266,7 @@ export async function cmdRuntimeSweep(args: string[]): Promise<void> {
   const request: SweepRuntimesRequest = {
     ...(transport ? { transport } : {}),
     olderThan: parseFlag(args, '--older-than') ?? '24h',
-    ...(statusRaw
-      ? {
-          status: statusRaw
-            .split(',')
-            .map((status) => status.trim())
-            .filter((status) => status.length > 0),
-        }
-      : {}),
+    ...(statusRaw ? { status: splitCsv(statusRaw) } : {}),
     ...(scope ? { scope } : {}),
     ...(hasFlag(args, '--drop-continuation') ? { dropContinuation: true } : {}),
     dryRun,
