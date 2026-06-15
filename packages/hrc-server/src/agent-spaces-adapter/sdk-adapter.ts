@@ -191,7 +191,14 @@ function delay(ms: number): Promise<void> {
 
 const VALID_PROVIDERS: readonly string[] = ['anthropic', 'openai'] satisfies readonly HrcProvider[]
 
-function toFrontend(provider: HrcProvider): 'agent-sdk' | 'pi-sdk' {
+/**
+ * Map a provider to the SDK frontend string expected by agent-spaces.
+ *
+ * Exported so a characterization test can pin the exact provider→frontend
+ * mapping and the T-04744 RED test can assert the throw-on-unknown behaviour
+ * before the impl lands.
+ */
+export function toFrontend(provider: HrcProvider): 'agent-sdk' | 'pi-sdk' {
   const frontend = resolveHarnessFrontendForProvider(provider, 'sdk')
   if (frontend === 'agent-sdk' || frontend === 'pi-sdk') {
     return frontend
