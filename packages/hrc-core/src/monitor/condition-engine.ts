@@ -218,31 +218,74 @@ function assertConditionSelector(request: HrcMonitorConditionWaitRequest): void 
   }
 }
 
+type ConditionStrategy = {
+  start: (
+    context: EvaluationContext,
+    snapshot: HrcMonitorSnapshot
+  ) => HrcMonitorConditionOutcome | null
+  event: (
+    context: EvaluationContext,
+    event: MonitorOutputEvent
+  ) => HrcMonitorConditionOutcome | null
+}
+
+// Per-condition strategy table co-locating the start-snapshot and streaming-event
+// halves for each HrcMonitorCondition (previously two parallel `switch (condition)`
+// statements that had to be kept congruent by hand). `satisfies
+// Record<HrcMonitorCondition, ConditionStrategy>` forces every condition to define
+// BOTH halves at compile time — adding/removing a condition is a single compiler
+// error here instead of two silently-divergent switches. Per-condition behavior
+// and dispatch are byte-identical to the prior switches.
+const CONDITION_STRATEGIES = {
+  'turn-finished': {
+    start: (context) =>
+      context.capture.activeTurnId === null
+        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) => evaluateTurnFinished(context, event),
+  },
+  idle: {
+    start: (_context, snapshot) =>
+      isIdleRuntimeStatus(snapshot.runtime?.status)
+        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) =>
+      eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
+        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
+        : null,
+  },
+  busy: {
+    start: (_context, snapshot) =>
+      snapshot.runtime?.status === 'busy'
+        ? { result: 'already_busy', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) =>
+      eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
+        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
+        : null,
+  },
+  'runtime-dead': {
+    start: (_context, snapshot) =>
+      isDeadRuntimeStatus(snapshot.runtime?.status)
+        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
+        : null,
+    event: (context, event) => runtimeDeathOutcome(context, event),
+  },
+  response: {
+    start: () => null,
+    event: (context, event) => evaluateResponse(context, event),
+  },
+  'response-or-idle': {
+    start: () => null,
+    event: (context, event) => evaluateResponseOrIdle(context, event),
+  },
+} satisfies Record<HrcMonitorCondition, ConditionStrategy>
+
 function evaluateStartSnapshot(
   context: EvaluationContext,
   snapshot: HrcMonitorSnapshot
 ): HrcMonitorConditionOutcome | null {
-  const runtimeStatus = snapshot.runtime?.status
-
-  switch (context.condition) {
-    case 'turn-finished':
-      return context.capture.activeTurnId === null
-        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
-        : null
-    case 'idle':
-      return isIdleRuntimeStatus(runtimeStatus)
-        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
-        : null
-    case 'busy':
-      return runtimeStatus === 'busy' ? { result: 'already_busy', exitCode: EXIT_CODE.ok } : null
-    case 'runtime-dead':
-      return isDeadRuntimeStatus(runtimeStatus)
-        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
-        : null
-    case 'response':
-    case 'response-or-idle':
-      return null
-  }
+  return CONDITION_STRATEGIES[context.condition].start(context, snapshot)
 }
 
 function evaluateEvent(
@@ -261,24 +304,7 @@ function evaluateEvent(
     if (runtimeFailure) return runtimeFailure
   }
 
-  switch (context.condition) {
-    case 'turn-finished':
-      return evaluateTurnFinished(context, event)
-    case 'idle':
-      return eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'idle'), exitCode: EXIT_CODE.ok }
-        : null
-    case 'busy':
-      return eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
-        ? { result: resultValue(event, 'busy'), exitCode: EXIT_CODE.ok }
-        : null
-    case 'response':
-      return evaluateResponse(context, event)
-    case 'response-or-idle':
-      return evaluateResponseOrIdle(context, event)
-    case 'runtime-dead':
-      return runtimeDeathOutcome(context, event)
-  }
+  return CONDITION_STRATEGIES[context.condition].event(context, event)
 }
 
 function evaluateTurnFinished(

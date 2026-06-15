@@ -541,6 +541,14 @@ function isResolution(result: HrcMonitorResolutionResult): result is HrcMonitorR
   return !isResolutionError(result)
 }
 
+// Enforces a *silent* read-only contract on `streamCursorSeq`: reads return the
+// captured cursor, while writes and re-`defineProperty` are swallowed WITHOUT
+// throwing — even under strict mode. This silent-rejection semantics cannot be
+// reproduced by `Object.defineProperty({ writable: false })`, which throws a
+// TypeError on strict-mode assignment/redefine and reports a different property
+// descriptor. The exact observable behavior is pinned by
+// `__tests__/monitor-stream-cursor.char.test.ts` (T-04718 / F5); do not swap the
+// mechanism without re-proving equivalence against that characterization test.
 function protectStreamCursor(
   capture: HrcMonitorCapture,
   streamCursorSeq: number
