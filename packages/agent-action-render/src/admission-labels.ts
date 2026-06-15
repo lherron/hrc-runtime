@@ -40,6 +40,58 @@ const APPLICATION_STATUS = {
 
 const REASON_FALLBACK_QUEUED = 'contribution_unsupported_fallback_queued'
 
+type AdmissionResponsePayload = {
+  admission?: { kind?: string } | undefined
+  inputApplication?: { status?: string } | undefined
+  currentState?:
+    | {
+        applicationStatus?: string
+        queueStatus?: string
+        reason?: string
+      }
+    | undefined
+}
+
+type AdmissionResponseContext = {
+  admissionKind?: string | undefined
+  applicationStatus?: string | undefined
+  reason?: string | undefined
+}
+
+const ADMISSION_RESPONSE_LABEL_RULES: ReadonlyArray<{
+  matches: (context: AdmissionResponseContext) => boolean
+  label: (context: AdmissionResponseContext) => string
+}> = [
+  {
+    matches: ({ admissionKind, applicationStatus }) =>
+      admissionKind === ADMISSION_KIND.acceptedInFlight &&
+      applicationStatus === APPLICATION_STATUS.accepted,
+    label: () => admissionLabel({ eventKind: EVENT_KIND.applicationAccepted }),
+  },
+  {
+    matches: ({ admissionKind, applicationStatus }) =>
+      admissionKind === ADMISSION_KIND.admissionPending &&
+      applicationStatus === APPLICATION_STATUS.pending,
+    label: () => admissionLabel({ eventKind: EVENT_KIND.applicationPending }),
+  },
+  {
+    matches: ({ applicationStatus }) => applicationStatus === APPLICATION_STATUS.ambiguous,
+    label: () => admissionLabel({ eventKind: EVENT_KIND.applicationAmbiguous }),
+  },
+  {
+    matches: ({ reason }) => reason === REASON_FALLBACK_QUEUED,
+    label: () =>
+      admissionLabel({
+        eventKind: EVENT_KIND.queued,
+        reason: REASON_FALLBACK_QUEUED,
+      }),
+  },
+  {
+    matches: ({ admissionKind }) => admissionKind === ADMISSION_KIND.queuedRun,
+    label: () => admissionLabel({ eventKind: EVENT_KIND.queued }),
+  },
+]
+
 export function admissionLabel(input: AdmissionLabelInput): string {
   const { eventKind, reason } = input
 
@@ -75,46 +127,18 @@ export function admissionLabel(input: AdmissionLabelInput): string {
 /**
  * Derive the label for a CLI table row from a send response payload.
  */
-export function admissionLabelFromResponse(payload: {
-  admission?: { kind?: string } | undefined
-  inputApplication?: { status?: string } | undefined
-  currentState?:
-    | {
-        applicationStatus?: string
-        queueStatus?: string
-        reason?: string
-      }
-    | undefined
-}): string {
+export function admissionLabelFromResponse(payload: AdmissionResponsePayload): string {
   const admissionKind = payload.admission?.kind
   const applicationStatus =
     payload.inputApplication?.status ?? payload.currentState?.applicationStatus
   const reason = payload.currentState?.reason
+  const context = { admissionKind, applicationStatus, reason }
 
   // Map admission kind + application status to an eventKind for label lookup
-  if (
-    admissionKind === ADMISSION_KIND.acceptedInFlight &&
-    applicationStatus === APPLICATION_STATUS.accepted
-  ) {
-    return admissionLabel({ eventKind: EVENT_KIND.applicationAccepted })
-  }
-  if (
-    admissionKind === ADMISSION_KIND.admissionPending &&
-    applicationStatus === APPLICATION_STATUS.pending
-  ) {
-    return admissionLabel({ eventKind: EVENT_KIND.applicationPending })
-  }
-  if (applicationStatus === APPLICATION_STATUS.ambiguous) {
-    return admissionLabel({ eventKind: EVENT_KIND.applicationAmbiguous })
-  }
-  if (reason === REASON_FALLBACK_QUEUED) {
-    return admissionLabel({
-      eventKind: EVENT_KIND.queued,
-      reason: REASON_FALLBACK_QUEUED,
-    })
-  }
-  if (admissionKind === ADMISSION_KIND.queuedRun) {
-    return admissionLabel({ eventKind: EVENT_KIND.queued })
+  for (const rule of ADMISSION_RESPONSE_LABEL_RULES) {
+    if (rule.matches(context)) {
+      return rule.label(context)
+    }
   }
 
   // Fallback: use applicationStatus or admissionKind as-is
