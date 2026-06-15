@@ -339,19 +339,13 @@ export function parseAppHarnessInFlightInputRequest(
 
   const runId = readOptionalNonEmptyStringField(input, 'runId')
   const prompt = parsePromptPayload(input)
-  if (input['inputType'] !== undefined && typeof input['inputType'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'inputType must be a string', {
-      field: 'inputType',
-    })
-  }
+  const inputType = readOptionalStringField(input, 'inputType')
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
     prompt,
     ...(runId !== undefined ? { runId } : {}),
-    ...(typeof input['inputType'] === 'string' && input['inputType'].trim().length > 0
-      ? { inputType: input['inputType'].trim() }
-      : {}),
+    ...inputType,
     ...(Object.hasOwn(input, 'fence') ? { fence: parseAppSessionFence(input['fence']) } : {}),
   }
 }
@@ -370,18 +364,12 @@ export function parseClearAppSessionContextRequest(
     })
   }
   const relaunch = readOptionalBooleanField(input, 'relaunch')
-  if (input['reason'] !== undefined && typeof input['reason'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'reason must be a string', {
-      field: 'reason',
-    })
-  }
+  const reason = readOptionalStringField(input, 'reason')
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
     ...(relaunch !== undefined ? { relaunch } : {}),
-    ...(typeof input['reason'] === 'string' && input['reason'].trim().length > 0
-      ? { reason: input['reason'].trim() }
-      : {}),
+    ...reason,
     ...(Object.hasOwn(input, 'spec') ? { spec: parseAppSessionSpec(input['spec']) } : {}),
   }
 }
