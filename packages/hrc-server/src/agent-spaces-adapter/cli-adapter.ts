@@ -23,7 +23,10 @@ import type {
   HrcProvider,
   HrcRuntimeIntent,
 } from 'hrc-core'
-import { type ResolvedRuntimeBundle, getAspHome } from 'spaces-config'
+import type { ResolvedRuntimeBundle } from 'spaces-config'
+
+import { optional } from './optional.js'
+import { placementPlaceholders } from './placement-placeholders.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -302,12 +305,9 @@ export async function buildCliInvocation(
     ioMode,
     ...(options?.continuation ? { continuation: options.continuation } : {}),
     ...(intent.harness.yolo ? { yolo: true } : {}),
-    ...(initialPrompt !== undefined ? { prompt: initialPrompt } : {}),
-    ...(intent.attachments !== undefined ? { attachments: intent.attachments } : {}),
-    // Required by the type but ignored when placement is set
-    aspHome: getAspHome(),
-    spec: { spaces: [] },
-    cwd: '/',
+    ...optional('prompt', initialPrompt),
+    ...optional('attachments', intent.attachments),
+    ...placementPlaceholders(),
   }
 
   const response = await specBuilder(placementReq)
@@ -335,12 +335,8 @@ export async function buildCliInvocation(
     ioMode,
     resolvedBundle: response.resolvedBundle,
     prompts: responseSpec.prompts,
-    ...(responseSpec.systemPromptFile !== undefined
-      ? { systemPromptFile: responseSpec.systemPromptFile }
-      : {}),
-    ...(responseSpec.codexAppServer !== undefined
-      ? { codexAppServer: responseSpec.codexAppServer }
-      : {}),
+    ...optional('systemPromptFile', responseSpec.systemPromptFile),
+    ...optional('codexAppServer', responseSpec.codexAppServer),
     warnings: response.warnings,
   }
 }

@@ -16,11 +16,7 @@ import {
   type HrcRuntimeIntent,
   HrcUnprocessableEntityError,
 } from 'hrc-core'
-import {
-  getAspHome,
-  resolveHarnessFrontendForProvider,
-  resolveHarnessProvider,
-} from 'spaces-config'
+import { resolveHarnessFrontendForProvider, resolveHarnessProvider } from 'spaces-config'
 import {
   detectAgentLocalComponents,
   prepareAgentBrainRuntime,
@@ -28,6 +24,8 @@ import {
 } from 'spaces-execution'
 
 import { UnsupportedHarnessError, buildHrcCorrelationEnv, mergeEnv } from './cli-adapter.js'
+import { optional } from './optional.js'
+import { placementPlaceholders } from './placement-placeholders.js'
 
 export type SdkTurnRunner = (
   request: RunTurnNonInteractiveRequest
@@ -134,11 +132,9 @@ export async function deliverSdkInflightInput(
       response = await client.queueInFlightInput({
         hostSessionId: options.hostSessionId,
         runId: options.runId,
-        ...(options.inputApplicationId !== undefined
-          ? { inputApplicationId: options.inputApplicationId }
-          : {}),
-        ...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
-        ...(options.semantics !== undefined ? { semantics: options.semantics } : {}),
+        ...optional('inputApplicationId', options.inputApplicationId),
+        ...optional('idempotencyKey', options.idempotencyKey),
+        ...optional('semantics', options.semantics),
         prompt: options.prompt,
       })
       break
@@ -163,7 +159,7 @@ export async function deliverSdkInflightInput(
     eventJson: {
       prompt: options.prompt,
       accepted: response.accepted,
-      ...(options.semantics !== undefined ? { semantics: options.semantics } : {}),
+      ...optional('semantics', options.semantics),
     },
   })
 
@@ -173,7 +169,15 @@ export async function deliverSdkInflightInput(
   }
 }
 
-function isMissingActiveRunError(error: unknown): boolean {
+/**
+ * Classifies the upstream agent-spaces "run not yet active" error as
+ * retry-eligible. The upstream throws a PLAIN `Error` (no typed code/subclass —
+ * see agent-spaces client.ts queueInFlightInput / interruptInFlightTurn), so a
+ * substring match on the centralized {@link MISSING_ACTIVE_RUN_MESSAGE} is the
+ * only available signal. Exported so a characterization test can pin the exact
+ * upstream wording and go red if it drifts.
+ */
+export function isMissingActiveRunError(error: unknown): boolean {
   return error instanceof Error && error.message.includes(MISSING_ACTIVE_RUN_MESSAGE)
 }
 
@@ -345,17 +349,13 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
   const env = await buildSdkRequestEnv(options.intent)
 
   const runnerPromise = runner({
-    aspHome: getAspHome(), // required by type but ignored when placement is set
-    spec: { spaces: [] }, // required by type but ignored when placement is set
-    cwd: '/', // required by type but ignored when placement is set
+    ...placementPlaceholders(),
     placement: options.intent.placement,
     frontend,
     model: options.intent.harness.model,
     env,
     prompt: options.prompt,
-    ...(options.intent.attachments !== undefined
-      ? { attachments: options.intent.attachments }
-      : {}),
+    ...optional('attachments', options.intent.attachments),
     runId: options.runId,
     hostSessionId: options.hostSessionId,
     ...(options.continuation ? { continuation: options.continuation } : {}),

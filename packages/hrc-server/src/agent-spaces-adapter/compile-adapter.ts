@@ -57,6 +57,7 @@ import {
   type BrokerProfileRejectionCode,
   selectBrokerExecutionProfile,
 } from './compile-profile-selector'
+import { optional } from './optional.js'
 
 /**
  * Allocates the runtime identities used by a single compile+dispatch operation.
@@ -268,7 +269,7 @@ export async function compileBrokerRuntimePlan(
     runtimeId: identity.runtimeId,
     invocationId: identity.invocationId,
     traceId: identity.traceId,
-    ...(identity.runId !== undefined ? { runId: identity.runId } : {}),
+    ...optional('runId', identity.runId),
   }
 
   // (3) Translate intent + overlays. dispatchEnv rides on placement as a

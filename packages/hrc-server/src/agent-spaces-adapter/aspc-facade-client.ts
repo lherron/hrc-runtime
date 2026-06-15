@@ -31,6 +31,8 @@ import type {
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
 
+import { optional } from './optional.js'
+
 export type AspcFacadeStartOptions = StdioTransportStartOptions
 
 export type PermissionRequestHandler = (
@@ -137,11 +139,9 @@ export class AspcFacadeBrokerClient {
     try {
       const response = await this.#transport.request<InvocationStartResponse>('invocation.start', {
         startRequest: structuredClone(request),
-        ...(options.dispatchEnv !== undefined ? { dispatchEnv: options.dispatchEnv } : {}),
-        ...(options.runtime !== undefined ? { runtime: options.runtime } : {}),
-        ...(options.lifecyclePolicy !== undefined
-          ? { lifecyclePolicy: options.lifecyclePolicy }
-          : {}),
+        ...optional('dispatchEnv', options.dispatchEnv),
+        ...optional('runtime', options.runtime),
+        ...optional('lifecyclePolicy', options.lifecyclePolicy),
       })
       const events = expectedEvents ?? this.#eventStream(response.invocationId)
       return {
