@@ -1,0 +1,109 @@
+[
+  {
+    "batch": "agent-action-render",
+    "pkg": "agent-action-render",
+    "ids": [
+      "T-04711",
+      "T-04713"
+    ]
+  },
+  {
+    "batch": "hrc-cli",
+    "pkg": "hrc-cli",
+    "ids": [
+      "T-04714",
+      "T-04715",
+      "T-04716"
+    ]
+  },
+  {
+    "batch": "hrc-core",
+    "pkg": "hrc-core",
+    "ids": [
+      "T-04717",
+      "T-04718"
+    ]
+  },
+  {
+    "batch": "hrc-frame-render",
+    "pkg": "hrc-frame-render",
+    "ids": [
+      "T-04720",
+      "T-04721",
+      "T-04723",
+      "T-04724"
+    ]
+  },
+  {
+    "batch": "hrc-sdk",
+    "pkg": "hrc-sdk",
+    "ids": [
+      "T-04728"
+    ]
+  },
+  {
+    "batch": "hrc-store-sqlite",
+    "pkg": "hrc-store-sqlite",
+    "ids": [
+      "T-04730",
+      "T-04731",
+      "T-04732"
+    ]
+  },
+  {
+    "batch": "hrcchat-cli",
+    "pkg": "hrcchat-cli",
+    "ids": [
+      "T-04733",
+      "T-04734",
+      "T-04735"
+    ]
+  },
+  {
+    "batch": "hrc-server-broker",
+    "pkg": "hrc-server",
+    "ids": [
+      "T-04736",
+      "T-04737",
+      "T-04738",
+      "T-04739"
+    ]
+  },
+  {
+    "batch": "hrc-server-asp-adapter",
+    "pkg": "hrc-server",
+    "ids": [
+      "T-04743",
+      "T-04745",
+      "T-04746"
+    ]
+  },
+  {
+    "batch": "hrc-server-parsers",
+    "pkg": "hrc-server",
+    "ids": [
+      "T-04747",
+      "T-04748",
+      "T-04749",
+      "T-04750"
+    ]
+  },
+  {
+    "batch": "hrc-server-misc",
+    "pkg": "hrc-server",
+    "ids": [
+      "T-04752",
+      "T-04753",
+      "T-04754"
+    ]
+  },
+  {
+    "batch": "hrc-server-root",
+    "pkg": "hrc-server",
+    "ids": [
+      "T-04758",
+      "T-04759",
+      "T-04760"
+    ]
+  }
+]
