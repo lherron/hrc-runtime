@@ -250,6 +250,40 @@ export async function handleBrokerLiteralInputBySelector(
   const pending = this.pendingBrokerLiteralInputs.get(runtime.runtimeId)
   const now = timestamp()
 
+  // Shared epilogue for all three broker-literal delivery arms: emit the
+  // observable `target.literal-input` event and return the canonical
+  // delivery response. The decision arms below own the state mutation
+  // (buffer / flush) and the per-arm event data — `ts`, `payloadLength`,
+  // `enter`, the `delivery` tag, and the optional `runId` (event + response)
+  // — all of which stay byte-identical to the pre-refactor inline blocks.
+  const emitLiteralInputAndRespond = (variant: {
+    ts: string
+    payloadLength: number
+    enter: boolean
+    delivery: 'broker-buffered-literal' | 'broker-empty-enter' | 'broker-dispatch-input'
+    runId?: string
+    responseExtra?: { runId: string; status: DispatchTurnResponse['status'] }
+  }): Response => {
+    const event = appendHrcEvent(this.db, 'target.literal-input', {
+      ts: variant.ts,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      ...(variant.runId !== undefined ? { runId: variant.runId } : {}),
+      runtimeId: runtime.runtimeId,
+      transport: 'tmux',
+      payload: {
+        sessionRef,
+        payloadLength: variant.payloadLength,
+        enter: variant.enter,
+        delivery: variant.delivery,
+      },
+    })
+    this.notifyEvent(event)
+    return deliverLiteralResponse(session, runtime, variant.responseExtra)
+  }
+
   if (!enter) {
     const buffered = `${pending?.text ?? ''}${text}`
     this.pendingBrokerLiteralInputs.set(runtime.runtimeId, {
@@ -259,23 +293,12 @@ export async function handleBrokerLiteralInputBySelector(
       text: buffered,
     })
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = appendHrcEvent(this.db, 'target.literal-input', {
+    return emitLiteralInputAndRespond({
       ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'tmux',
-      payload: {
-        sessionRef,
-        payloadLength: text.length,
-        enter: false,
-        delivery: 'broker-buffered-literal',
-      },
+      payloadLength: text.length,
+      enter: false,
+      delivery: 'broker-buffered-literal',
     })
-    this.notifyEvent(event)
-    return deliverLiteralResponse(session, runtime)
   }
 
   const prompt = `${pending?.text ?? ''}${text}`
@@ -284,23 +307,12 @@ export async function handleBrokerLiteralInputBySelector(
     const pane = requireTmuxPane(runtime)
     await this.tmuxForPane(pane).sendEnter(pane.paneId)
     this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
-    const event = appendHrcEvent(this.db, 'target.literal-input', {
+    return emitLiteralInputAndRespond({
       ts: now,
-      hostSessionId: session.hostSessionId,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      transport: 'tmux',
-      payload: {
-        sessionRef,
-        payloadLength: 0,
-        enter: true,
-        delivery: 'broker-empty-enter',
-      },
+      payloadLength: 0,
+      enter: true,
+      delivery: 'broker-empty-enter',
     })
-    this.notifyEvent(event)
-    return deliverLiteralResponse(session, runtime)
   }
 
   this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
@@ -315,27 +327,16 @@ export async function handleBrokerLiteralInputBySelector(
     }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
-  const event = appendHrcEvent(this.db, 'target.literal-input', {
+  // `ts` is deliberately RECOMPUTED here (not the `now` captured at entry): the
+  // dispatch arm awaits the turn, so the event timestamp reflects post-dispatch
+  // wall-clock. Preserved from the pre-refactor inline block.
+  return emitLiteralInputAndRespond({
     ts: timestamp(),
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
+    payloadLength: prompt.length,
+    enter: true,
+    delivery: 'broker-dispatch-input',
     runId: turnBody.runId,
-    runtimeId: runtime.runtimeId,
-    transport: 'tmux',
-    payload: {
-      sessionRef,
-      payloadLength: prompt.length,
-      enter: true,
-      delivery: 'broker-dispatch-input',
-    },
-  })
-  this.notifyEvent(event)
-
-  return deliverLiteralResponse(session, runtime, {
-    runId: turnBody.runId,
-    status: turnBody.status,
+    responseExtra: { runId: turnBody.runId, status: turnBody.status },
   })
 }
 

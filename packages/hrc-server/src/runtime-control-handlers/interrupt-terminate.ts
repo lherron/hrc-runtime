@@ -17,6 +17,16 @@ import {
 import { disposeBrokerRuntime } from './broker-dispose.js'
 import { sessionEventBase } from './session-event-base.js'
 
+/**
+ * Normalize a runtime's transport into the `'headless' | 'sdk'` discriminant used
+ * by the headless interrupt/terminate audit events. A durable headless runtime
+ * (`transport === 'headless'`) audits as `'headless'`; every other non-tmux/ghostty
+ * transport (the SDK path) audits as `'sdk'`. Single source of the mapping.
+ */
+function headlessAuditTransport(runtime: HrcRuntimeSnapshot): 'headless' | 'sdk' {
+  return runtime.transport === 'headless' ? 'headless' : 'sdk'
+}
+
 export async function interruptRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
@@ -108,7 +118,7 @@ export function interruptHeadlessRuntime(
   runtime: HrcRuntimeSnapshot
 ): Response {
   const session = requireSession(this.db, runtime.hostSessionId)
-  const transport = runtime.transport === 'headless' ? 'headless' : 'sdk'
+  const transport = headlessAuditTransport(runtime)
 
   if (runtime.activeRunId === undefined) {
     return json({
@@ -301,7 +311,7 @@ export async function terminateHeadlessRuntime(
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
-  const transport = runtime.transport === 'headless' ? 'headless' : 'sdk'
+  const transport = headlessAuditTransport(runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,

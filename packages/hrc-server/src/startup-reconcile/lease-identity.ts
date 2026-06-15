@@ -12,7 +12,7 @@ import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireSession } from '../require-helpers.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
-import { type TmuxPaneState, createTmuxManager } from '../tmux.js'
+import { type TmuxManager, type TmuxPaneState, createTmuxManager } from '../tmux.js'
 import { logStartupIssue, markRuntimeStale } from './runtime-mutations.js'
 import type {
   BrokerReattachOutcome,
@@ -87,54 +87,92 @@ export async function sweepOrphanedBrokerTmuxLeases(
       result.skippedClaimed += 1
       continue
     }
+    // The whole classify+act body is wrapped so any REAL failure (stat after the
+    // race window, listSessionNames, rm, killServer) increments `errors`. The
+    // benign "socket vanished between readdir and stat" race is caught INSIDE
+    // `classifyLeaseSocket` and surfaces as a `vanished` classification — it must
+    // NOT touch `errors`.
     try {
-      let ageMs: number
-      try {
-        const stats = await stat(socketPath)
-        ageMs = now - stats.mtimeMs
-      } catch {
-        // Socket vanished between readdir and stat -> nothing to sweep.
-        continue
-      }
-      if (ageMs < options.graceMs) {
-        // Still within grace: a live other daemon may be allocating/draining it.
-        result.skippedWithinGrace += 1
-        continue
-      }
-
-      const leaseTmux = createTmuxManager({ socketPath })
-      const sessions = await leaseTmux.listSessionNames()
-      const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
-      if (orphanLeaseSessions.length === 0) {
-        if (options.removeDeadSocketFiles) {
-          await rm(socketPath, { force: true })
-          result.removedDeadSocketFiles += 1
-          writeServerLog('INFO', 'broker.dead_lease_socket_removed', {
+      const classified = await classifyLeaseSocket(socketPath, now, options.graceMs)
+      switch (classified.kind) {
+        case 'vanished':
+          // Socket vanished between readdir and stat -> nothing to sweep.
+          continue
+        case 'within-grace':
+          // Still within grace: a live other daemon may be allocating/draining it.
+          result.skippedWithinGrace += 1
+          continue
+        case 'dead':
+          if (options.removeDeadSocketFiles) {
+            await rm(socketPath, { force: true })
+            result.removedDeadSocketFiles += 1
+            writeServerLog('INFO', 'broker.dead_lease_socket_removed', {
+              socketPath,
+              ageMs: classified.ageMs,
+              graceMs: options.graceMs,
+            })
+          }
+          continue
+        case 'live-orphan':
+          if (!options.killLiveLeaseServers) {
+            continue
+          }
+          await classified.leaseTmux.killServer()
+          result.killedLiveLeaseServers += 1
+          writeServerLog('INFO', 'broker.orphan_lease_swept', {
             socketPath,
-            ageMs,
+            sessions: classified.sessions,
+            ageMs: classified.ageMs,
             graceMs: options.graceMs,
           })
-        }
-        continue
+          continue
       }
-
-      if (!options.killLiveLeaseServers) {
-        continue
-      }
-      await leaseTmux.killServer()
-      result.killedLiveLeaseServers += 1
-      writeServerLog('INFO', 'broker.orphan_lease_swept', {
-        socketPath,
-        sessions: orphanLeaseSessions,
-        ageMs,
-        graceMs: options.graceMs,
-      })
     } catch (error) {
       result.errors += 1
       logStartupIssue('broker orphan lease sweep failed', { socketPath }, error)
     }
   }
   return result
+}
+
+/** Outcome of inspecting one unclaimed lease socket during the orphan sweep. */
+type LeaseSocketClassification =
+  | { kind: 'vanished' }
+  | { kind: 'within-grace' }
+  | { kind: 'dead'; ageMs: number }
+  | { kind: 'live-orphan'; ageMs: number; sessions: string[]; leaseTmux: TmuxManager }
+
+/**
+ * Classify one unclaimed `.sock` lease for the orphan sweep WITHOUT mutating the
+ * sweep counters or filesystem. The inner stat-catch maps the readdir↔stat race
+ * to `vanished` (a benign skip, NOT an error); every other failure
+ * (`listSessionNames`) propagates to the caller's error-counting catch. The
+ * caller performs the side effects (rm / killServer / logging) per classification.
+ */
+async function classifyLeaseSocket(
+  socketPath: string,
+  now: number,
+  graceMs: number
+): Promise<LeaseSocketClassification> {
+  let ageMs: number
+  try {
+    const stats = await stat(socketPath)
+    ageMs = now - stats.mtimeMs
+  } catch {
+    // Socket vanished between readdir and stat -> nothing to sweep.
+    return { kind: 'vanished' }
+  }
+  if (ageMs < graceMs) {
+    return { kind: 'within-grace' }
+  }
+
+  const leaseTmux = createTmuxManager({ socketPath })
+  const sessions = await leaseTmux.listSessionNames()
+  const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
+  if (orphanLeaseSessions.length === 0) {
+    return { kind: 'dead', ageMs }
+  }
+  return { kind: 'live-orphan', ageMs, sessions: orphanLeaseSessions, leaseTmux }
 }
 
 export async function reassociateBrokerTmuxLease(runtime: HrcRuntimeSnapshot): Promise<boolean> {
