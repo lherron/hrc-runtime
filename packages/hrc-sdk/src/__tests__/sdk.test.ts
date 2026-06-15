@@ -268,6 +268,52 @@ describe('runtime lifecycle client methods', () => {
     expect(result[0].startedAt).toBe('2026-05-18T12:00:01.000Z')
     expect(result[0].updatedAt).toBe('2026-05-18T12:00:02.000Z')
   })
+
+  it('getStatus preserves includeArchived as a true-or-absent query flag', async () => {
+    const capturedQueries: string[] = []
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedQueries.push(url.searchParams.toString())
+        return Response.json({ ok: true })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+
+    await client.getStatus()
+    await client.getStatus({ includeArchived: false })
+    await client.getStatus({ includeArchived: true })
+
+    expect(capturedQueries).toEqual(['', '', 'includeArchived=true'])
+  })
+
+  it('listTargets preserves discover as a true-or-absent query flag', async () => {
+    const capturedQueries: string[] = []
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedQueries.push(url.searchParams.toString())
+        return Response.json([])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+
+    await client.listTargets({ projectId: 'project-a', lane: 'main' })
+    await client.listTargets({ projectId: 'project-a', lane: 'main', discover: false })
+    await client.listTargets({ projectId: 'project-a', lane: 'main', discover: true })
+
+    expect(capturedQueries).toEqual([
+      'projectId=project-a&lane=main',
+      'projectId=project-a&lane=main',
+      'projectId=project-a&lane=main&discover=true',
+    ])
+  })
 })
 
 // Error parsing tests use a minimal HTTP server that returns known error shapes
@@ -497,7 +543,29 @@ describe('watch NDJSON parsing', () => {
       // should be empty
     }
 
-    expect(capturedUrl).toContain('follow=true')
+    expect(new URL(capturedUrl).searchParams.toString()).toBe('follow=true')
+  })
+
+  it('omits follow query parameter when false', async () => {
+    let capturedUrl = ''
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        capturedUrl = req.url
+        return new Response('', {
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+
+    for await (const _event of client.watch({ follow: false })) {
+      // should be empty
+    }
+
+    expect(new URL(capturedUrl).searchParams.toString()).toBe('')
   })
 })
 

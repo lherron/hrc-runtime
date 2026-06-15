@@ -130,6 +130,10 @@ function emptyToUndefined<T extends string>(value: T | null | undefined): T | un
   return value || undefined
 }
 
+function boolField(value: boolean | null | undefined): 'true' | undefined {
+  return value ? 'true' : undefined
+}
+
 /**
  * Build a path with an optional query string. Skips `undefined` values, joins
  * array values with commas, and only appends `?` when at least one param is set.
@@ -428,7 +432,7 @@ export class HrcClient {
 
   async getStatus(options?: { includeArchived?: boolean }): Promise<StatusResponse> {
     const path = buildPath('/v1/status', {
-      includeArchived: options?.includeArchived ? 'true' : undefined,
+      includeArchived: boolField(options?.includeArchived),
     })
     return this.getJson<StatusResponse>(path)
   }
@@ -486,7 +490,7 @@ export class HrcClient {
     const path = buildPath('/v1/targets', {
       projectId: emptyToUndefined(filter?.projectId),
       lane: emptyToUndefined(filter?.lane),
-      discover: filter?.discover ? 'true' : undefined,
+      discover: boolField(filter?.discover),
     })
     return this.getJson<HrcTargetView[]>(path)
   }
@@ -582,7 +586,7 @@ export class HrcClient {
   async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
     const path = buildPath('/v1/events', {
       fromSeq: options?.fromSeq,
-      follow: options?.follow ? 'true' : undefined,
+      follow: boolField(options?.follow),
       ...eventFilterParams(options),
     })
 
