@@ -8,6 +8,8 @@ import type {
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import type { HrcServerInstanceClassBodyMethods } from './index.js'
+
 import type { AppSessionHandlersMethods } from './app-session-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
@@ -41,9 +43,6 @@ import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
 export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
-
-// biome-ignore lint/suspicious/noExplicitAny: Loose fallback ONLY for the handful of methods defined directly on the HrcServerInstance class body (not in a decomposed *-handlers module), whose concrete signatures are not exported as a reusable type. The decomposed handler surface below is derived from the real method definitions, not hand-mirrored.
-type HandlerMethod = (...args: any[]) => any
 
 /**
  * The cross-handler call surface, derived from the REAL method definitions.
@@ -99,29 +98,13 @@ type HrcServerInstanceNeverReturningHandlers = {
 
 /**
  * Methods declared directly on the `HrcServerInstance` class body (not in a
- * decomposed `*-handlers` module). Their concrete signatures are not exported
- * as a reusable type, so they remain loosely typed here rather than being
- * hand-mirrored (which would be the drift-prone failure mode this refactor
- * avoids). Tightening these would require exporting their signatures from the
- * class — tracked as a follow-up.
+ * decomposed `*-handlers` module). Derived from the REAL class definitions
+ * (`HrcServerInstanceClassBodyMethods` in index.ts) via `typeof`/`Pick` so they
+ * can never drift from the methods actually attached to the instance — the same
+ * no-hand-mirror invariant the `*HandlersMethods` types provide for the
+ * prototype-attached handlers (T-04758 follow-up T-04775).
  */
-type HrcServerInstanceClassMethodsForHandlers = {
-  handleAttach: HandlerMethod
-  handleCapture: HandlerMethod
-  handleClearContext: HandlerMethod
-  handleDropContinuation: HandlerMethod
-  handleGetSessionByHost: HandlerMethod
-  handleHealth: HandlerMethod
-  handleHookIngest: HandlerMethod
-  handleInterrupt: HandlerMethod
-  handleListSessions: HandlerMethod
-  handleOtlpRequest: HandlerMethod
-  handleRequest: HandlerMethod
-  handleResolveSession: HandlerMethod
-  handleStatus: HandlerMethod
-  handleTerminate: HandlerMethod
-  stop: HandlerMethod
-}
+type HrcServerInstanceClassMethodsForHandlers = HrcServerInstanceClassBodyMethods
 
 type HrcServerInstanceDataForHandlers = {
   readonly options: HrcServerOptions
