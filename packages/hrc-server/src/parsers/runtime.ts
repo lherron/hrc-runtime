@@ -26,6 +26,7 @@ import {
   pickOptionalQuery,
   readOptionalBooleanField,
   readOptionalNonEmptyStringField,
+  readOptionalRawStringField,
   readOptionalStringField,
   requireOneOf,
   requireOptionalOneOf,
@@ -417,20 +418,9 @@ export function parseTerminateRuntimeRequest(input: unknown): TerminateRuntimeRe
 
   const dropContinuation = readOptionalBooleanField(input, 'dropContinuation')
 
-  const stringField = (field: 'reason' | 'source' | 'actor'): string | undefined => {
-    const value = input[field]
-    if (value === undefined) return undefined
-    if (typeof value !== 'string') {
-      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
-        field,
-      })
-    }
-    return value
-  }
-
-  const reason = stringField('reason')
-  const source = stringField('source')
-  const actor = stringField('actor')
+  const reason = readOptionalRawStringField(input, 'reason')
+  const source = readOptionalRawStringField(input, 'source')
+  const actor = readOptionalRawStringField(input, 'actor')
 
   return {
     runtimeId: body.runtimeId,
