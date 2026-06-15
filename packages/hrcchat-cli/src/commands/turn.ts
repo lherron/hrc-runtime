@@ -61,6 +61,88 @@ export const TURN_EXIT_RUNTIME_DEAD = 4
 export const TURN_EXIT_PERMISSION_BLOCKED = 5
 export const TURN_EXIT_SIGINT = 130
 
+/**
+ * The four terminal outcomes of the turn watch loop, reified as a table so the
+ * (phase, flush, exitCode, result, message) tuple for each is declared in one
+ * place rather than hand-aligned across four `aggregator.finish(...) ; throw`
+ * blocks. Every triple is preserved byte-for-byte from the original blocks —
+ * exit codes (0/4/5) are the user-facing CLI contract and must not shift.
+ *
+ *   runtimeDead — runtime exited before the turn completed (exit 4)
+ *   permission  — turn blocked on a permission request (exit 5)
+ *   error       — turn ended with an error (exit 4, reusing RUNTIME_DEAD)
+ *   success     — turn completed normally (exit 0, no throw)
+ *
+ * Note `runtimeDead` and `error` share TURN_EXIT_RUNTIME_DEAD but carry
+ * different Result values (RuntimeDead vs TurnError) and messages.
+ */
+type TerminalKind = 'runtimeDead' | 'permission' | 'error' | 'success'
+
+type TerminalOutcome = {
+  phase: Phase
+  flush: FlushReason
+  exitCode: number
+  result: Result
+  /** aggregator-finish error payload; omitted when the arm carries no error */
+  errorMessage?: string
+  /** TurnExitError message; omitted for the non-throwing success arm */
+  throwMessage?: string
+}
+
+const TERMINALS: Record<TerminalKind, TerminalOutcome> = {
+  runtimeDead: {
+    phase: Phase.Error,
+    flush: FlushReason.Error,
+    exitCode: TURN_EXIT_RUNTIME_DEAD,
+    result: Result.RuntimeDead,
+    errorMessage: 'runtime exited before turn completed',
+    throwMessage: 'runtime exited before turn completed',
+  },
+  permission: {
+    phase: Phase.Permission,
+    flush: FlushReason.Permission,
+    exitCode: TURN_EXIT_PERMISSION_BLOCKED,
+    result: Result.PermissionBlocked,
+    throwMessage: 'turn blocked on permission request (no interactive approval in MVP)',
+  },
+  error: {
+    phase: Phase.Error,
+    flush: FlushReason.Error,
+    exitCode: TURN_EXIT_RUNTIME_DEAD,
+    result: Result.TurnError,
+    errorMessage: 'turn ended with error',
+    throwMessage: 'turn ended with error',
+  },
+  success: {
+    phase: Phase.Final,
+    flush: FlushReason.Final,
+    exitCode: 0,
+    result: Result.Success,
+  },
+}
+
+/**
+ * Finalize the stacked aggregator for a terminal outcome, then (for every arm
+ * except success) throw the matching TurnExitError. Preserves the exact
+ * finish(...) payload and exit-code/message of the original inline blocks.
+ */
+async function finalizeTurn(
+  aggregator: StackedAggregator | undefined,
+  kind: TerminalKind
+): Promise<void> {
+  const outcome = TERMINALS[kind]
+  await aggregator?.finish({
+    phase: outcome.phase,
+    flush: outcome.flush,
+    exitCode: outcome.exitCode,
+    result: outcome.result,
+    ...(outcome.errorMessage !== undefined ? { error: { message: outcome.errorMessage } } : {}),
+  })
+  if (outcome.throwMessage !== undefined) {
+    throw new TurnExitError(outcome.exitCode, outcome.throwMessage)
+  }
+}
+
 export async function cmdTurn(
   client: HrcClient,
   opts: TurnOptions,
@@ -321,14 +403,7 @@ export async function cmdTurn(
 
       // Runtime died before turn completed
       if (isRuntimeDead(event)) {
-        await stackedAggregator?.finish({
-          phase: Phase.Error,
-          flush: FlushReason.Error,
-          exitCode: TURN_EXIT_RUNTIME_DEAD,
-          result: Result.RuntimeDead,
-          error: { message: 'runtime exited before turn completed' },
-        })
-        throw new TurnExitError(TURN_EXIT_RUNTIME_DEAD, 'runtime exited before turn completed')
+        await finalizeTurn(stackedAggregator, 'runtimeDead')
       }
     }
   } catch (err) {
@@ -357,36 +432,15 @@ export async function cmdTurn(
 
   // ── Determine exit code from final state ──
   if (lastPhase === 'permission') {
-    await stackedAggregator?.finish({
-      phase: Phase.Permission,
-      flush: FlushReason.Permission,
-      exitCode: TURN_EXIT_PERMISSION_BLOCKED,
-      result: Result.PermissionBlocked,
-    })
-    throw new TurnExitError(
-      TURN_EXIT_PERMISSION_BLOCKED,
-      'turn blocked on permission request (no interactive approval in MVP)'
-    )
+    await finalizeTurn(stackedAggregator, 'permission')
   }
 
   if (lastPhase === 'error') {
-    await stackedAggregator?.finish({
-      phase: Phase.Error,
-      flush: FlushReason.Error,
-      exitCode: TURN_EXIT_RUNTIME_DEAD,
-      result: Result.TurnError,
-      error: { message: 'turn ended with error' },
-    })
-    throw new TurnExitError(TURN_EXIT_RUNTIME_DEAD, 'turn ended with error')
+    await finalizeTurn(stackedAggregator, 'error')
   }
 
   if (stackedAggregator && turnCompleted) {
-    await stackedAggregator.finish({
-      phase: Phase.Final,
-      flush: FlushReason.Final,
-      exitCode: 0,
-      result: Result.Success,
-    })
+    await finalizeTurn(stackedAggregator, 'success')
   }
 
   // exit 0 — success (implicit return)

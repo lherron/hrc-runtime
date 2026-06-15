@@ -7,6 +7,8 @@ import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
+import { taskIdFromSessionRef } from './taskId.js'
+
 /**
  * Extract a taskId from HRC_SESSION_REF, when the caller is already running
  * inside a task-scoped session. Returns undefined when the env var is unset
@@ -15,14 +17,7 @@ import { inferProjectIdFromCwd } from 'spaces-config'
 function inferTaskIdFromCallerSession(): string | undefined {
   const raw = process.env['HRC_SESSION_REF']
   if (!raw) return undefined
-  // Strip lane suffix and scan for `:task:<id>`.
-  const scopePart = raw.split('/')[0] ?? raw
-  const parts = scopePart.split(':')
-  const taskIdx = parts.indexOf('task')
-  if (taskIdx >= 0 && parts[taskIdx + 1]) {
-    return parts[taskIdx + 1]
-  }
-  return undefined
+  return taskIdFromSessionRef(raw)
 }
 
 /**
