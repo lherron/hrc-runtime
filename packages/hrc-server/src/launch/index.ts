@@ -6,3 +6,11 @@ export { readSpoolEntries, replaySpoolEntries, spoolCallback } from './spool.js'
 export type { SpoolEntry, SpoolPostCallback, SpoolReplayResult } from './spool.js'
 export { buildHookEnvelope } from './hook.js'
 export type { HookEnvelope, HookEnvelopeEnv } from './hook.js'
+export {
+  listInheritedEnvKeysToScrub,
+  sanitizeTmuxClientEnv,
+  sanitizeTmuxServerPath,
+  scrubInheritedEnv,
+  shouldScrubInheritedEnvKey,
+} from './env.js'
+export { injectCodexOtelConfig } from './codex-otel.js'

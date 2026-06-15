@@ -6,7 +6,7 @@ import {
   sanitizeTmuxServerPath,
   scrubInheritedEnv,
   shouldScrubInheritedEnvKey,
-} from '../launch/env'
+} from '../launch/index'
 
 describe('launch inherited env scrubbing', () => {
   it('removes color, ci, and hrc/codex correlation variables', () => {

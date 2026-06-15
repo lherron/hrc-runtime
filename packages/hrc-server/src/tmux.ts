@@ -5,7 +5,7 @@ import {
   listInheritedEnvKeysToScrub,
   sanitizeTmuxClientEnv,
   sanitizeTmuxServerPath,
-} from './launch/env.js'
+} from './launch/index.js'
 
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 export type TmuxManagerOptions = {
