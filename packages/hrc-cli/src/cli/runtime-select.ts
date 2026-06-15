@@ -76,14 +76,6 @@ function selectNextUsableRuntime(
   )
 }
 
-export async function attachOpenAiRuntime(
-  client: HrcClient,
-  hostSessionId: string,
-  runtime: HrcRuntimeSnapshot
-): Promise<ExecAttachDescriptor> {
-  return attachWithRetry(client, hostSessionId, runtime)
-}
-
 export async function attachWithRetry(
   client: HrcClient,
   hostSessionId: string,

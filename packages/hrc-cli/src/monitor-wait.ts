@@ -16,6 +16,7 @@ import {
 } from 'hrc-core'
 import { discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import { matchStringFlag } from './monitor-args.js'
 import {
   MSG_REQUIRED_CONDITIONS,
   POLL_MS,
@@ -117,37 +118,22 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
       json = true
       continue
     }
-    if (arg === '--until') {
-      const value = args[i + 1]
-      if (value === undefined) throw new CliUsageError('--until requires a value')
-      until = value
-      i += 1
+    const untilMatch = matchStringFlag(arg, '--until', args, i)
+    if (untilMatch) {
+      until = untilMatch.value
+      i = untilMatch.next
       continue
     }
-    if (arg.startsWith('--until=')) {
-      until = arg.slice('--until='.length)
+    const timeoutMatch = matchStringFlag(arg, '--timeout', args, i)
+    if (timeoutMatch) {
+      timeout = timeoutMatch.value
+      i = timeoutMatch.next
       continue
     }
-    if (arg === '--timeout') {
-      const value = args[i + 1]
-      if (value === undefined) throw new CliUsageError('--timeout requires a value')
-      timeout = value
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--timeout=')) {
-      timeout = arg.slice('--timeout='.length)
-      continue
-    }
-    if (arg === '--stall-after') {
-      const value = args[i + 1]
-      if (value === undefined) throw new CliUsageError('--stall-after requires a value')
-      stallAfter = value
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--stall-after=')) {
-      stallAfter = arg.slice('--stall-after='.length)
+    const stallMatch = matchStringFlag(arg, '--stall-after', args, i)
+    if (stallMatch) {
+      stallAfter = stallMatch.value
+      i = stallMatch.next
       continue
     }
     if (arg.startsWith('-')) {
