@@ -88,6 +88,136 @@ interface ProjectState {
   focusedRunId?: string | undefined
 }
 
+type AssistantSegmentMode = 'append' | 'replace' | 'set'
+
+class AssistantSegmentBuffer {
+  constructor(private readonly run: RunState) {}
+
+  get length(): number {
+    return this.run.assistantSegments.length
+  }
+
+  closeActive(): void {
+    this.run.activeAssistantSegmentId = undefined
+  }
+
+  clearCurrentMessageRef(): void {
+    this.run.currentAssistantMessageRef = undefined
+  }
+
+  clearCurrentMessageRefIf(ref: string | undefined): void {
+    if (ref !== undefined && ref === this.run.currentAssistantMessageRef) {
+      this.run.currentAssistantMessageRef = undefined
+    }
+  }
+
+  startMessage(ref: string, seq: number, text: string): void {
+    this.closeActive()
+    this.run.currentAssistantMessageRef = ref
+    this.upsert({ id: ref, seq, text, mode: 'set' })
+  }
+
+  appendDelta(ref: string | undefined, seq: number, text: string): void {
+    this.upsert({ id: ref, seq, text, mode: 'append' })
+    this.captureActiveRefWhenAnonymous(ref)
+  }
+
+  replaceBody(ref: string | undefined, seq: number, text: string): void {
+    this.upsert({ id: ref, seq, text, mode: 'replace' })
+    this.captureActiveRefWhenAnonymous(ref)
+  }
+
+  setFinal(seq: number, text: string): void {
+    this.upsert({ id: undefined, seq, text, mode: 'set', close: true })
+  }
+
+  endMessage(ref: string | undefined, seq: number, text: string): void {
+    if (ref === undefined && this.run.assistantSegments.length > 0) {
+      this.closeActive()
+      return
+    }
+
+    this.upsert({ id: ref, seq, text, mode: 'replace', close: true })
+  }
+
+  closeExisting(ref: string | undefined): void {
+    if (ref === undefined) {
+      return
+    }
+
+    const idx = this.run.assistantSegments.findIndex((s) => s.id === ref)
+    if (idx >= 0) {
+      this.run.activeAssistantSegmentId = undefined
+    }
+  }
+
+  private captureActiveRefWhenAnonymous(ref: string | undefined): void {
+    if (ref === undefined && this.run.activeAssistantSegmentId !== undefined) {
+      this.run.currentAssistantMessageRef = this.run.activeAssistantSegmentId
+    }
+  }
+
+  private upsert(options: {
+    id: string | undefined
+    seq: number
+    text: string
+    mode: AssistantSegmentMode
+    close?: boolean
+  }): void {
+    const { id: rawId, seq: segSeq, text, mode, close = false } = options
+    if (rawId !== undefined) {
+      const idx = this.run.assistantSegments.findIndex((s) => s.id === rawId)
+      if (idx >= 0) {
+        const existing = this.run.assistantSegments[idx]
+        if (existing) {
+          this.run.assistantSegments[idx] = {
+            ...existing,
+            text: mode === 'append' ? existing.text + text : text,
+          }
+        }
+        this.run.activeAssistantSegmentId = close ? undefined : rawId
+        return
+      }
+    }
+
+    if (
+      mode === 'append' &&
+      this.run.activeAssistantSegmentId !== undefined &&
+      rawId === undefined
+    ) {
+      const idx = this.run.assistantSegments.findIndex(
+        (s) => s.id === this.run.activeAssistantSegmentId
+      )
+      const existing = idx >= 0 ? this.run.assistantSegments[idx] : undefined
+      if (existing) {
+        this.run.assistantSegments[idx] = { ...existing, text: existing.text + text }
+        if (close) this.run.activeAssistantSegmentId = undefined
+        return
+      }
+    }
+
+    if (
+      mode === 'replace' &&
+      rawId === undefined &&
+      this.run.activeAssistantSegmentId !== undefined
+    ) {
+      const idx = this.run.assistantSegments.findIndex(
+        (s) => s.id === this.run.activeAssistantSegmentId
+      )
+      const existing = idx >= 0 ? this.run.assistantSegments[idx] : undefined
+      if (existing) {
+        this.run.assistantSegments[idx] = { ...existing, text }
+        if (close) this.run.activeAssistantSegmentId = undefined
+        return
+      }
+    }
+
+    const newId = rawId ?? `seg-${segSeq}`
+    this.run.assistantSegments.push({ id: newId, seq: segSeq, text })
+    this.run.activeAssistantSegmentId = close ? undefined : newId
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -138,7 +268,21 @@ function extractTurnEndAssistantMessage(payload: unknown): string | undefined {
   return text.trim().length > 0 ? text : undefined
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: central dispatcher folding gateway session events into per-run projection state.
+function eventUsesContextRun(event: GatewaySessionEvent): boolean {
+  switch (event.type) {
+    case 'message_start':
+    case 'message_end':
+    case 'message_update':
+    case 'turn_end':
+    case 'tool_execution_start':
+    case 'tool_execution_end':
+    case 'notice':
+      return true
+    default:
+      return false
+  }
+}
+
 function processEvent(
   state: ProjectState,
   event: GatewaySessionEvent,
@@ -174,59 +318,8 @@ function processEvent(
     }
   }
 
-  const closeActiveSegment = (run: RunState): void => {
-    run.activeAssistantSegmentId = undefined
-  }
-
-  const upsertAssistantSegment = (
-    run: RunState,
-    options: {
-      id: string | undefined
-      seq: number
-      text: string
-      mode: 'append' | 'replace' | 'set'
-      close?: boolean
-    }
-  ): void => {
-    const { id: rawId, seq: segSeq, text, mode, close = false } = options
-    if (rawId !== undefined) {
-      const idx = run.assistantSegments.findIndex((s) => s.id === rawId)
-      if (idx >= 0) {
-        const existing = run.assistantSegments[idx]
-        if (existing) {
-          run.assistantSegments[idx] = {
-            ...existing,
-            text: mode === 'append' ? existing.text + text : text,
-          }
-        }
-        run.activeAssistantSegmentId = close ? undefined : rawId
-        return
-      }
-    }
-
-    if (mode === 'append' && run.activeAssistantSegmentId !== undefined && rawId === undefined) {
-      const idx = run.assistantSegments.findIndex((s) => s.id === run.activeAssistantSegmentId)
-      const existing = idx >= 0 ? run.assistantSegments[idx] : undefined
-      if (existing) {
-        run.assistantSegments[idx] = { ...existing, text: existing.text + text }
-        if (close) run.activeAssistantSegmentId = undefined
-        return
-      }
-    }
-
-    if (mode === 'replace' && rawId === undefined && run.activeAssistantSegmentId !== undefined) {
-      const idx = run.assistantSegments.findIndex((s) => s.id === run.activeAssistantSegmentId)
-      const existing = idx >= 0 ? run.assistantSegments[idx] : undefined
-      if (existing) {
-        run.assistantSegments[idx] = { ...existing, text }
-        if (close) run.activeAssistantSegmentId = undefined
-        return
-      }
-    }
-
-    const newId = rawId ?? `seg-${segSeq}`
-    run.assistantSegments.push({ id: newId, seq: segSeq, text })
-    run.activeAssistantSegmentId = close ? undefined : newId
+  if (eventUsesContextRun(event) && !runId) {
+    return newState
   }
 
   switch (event.type) {
@@ -257,13 +350,7 @@ function processEvent(
       run.status = 'completed'
       run.completedAt = event.completedAt
       if (event.finalOutput && run.assistantSegments.length === 0) {
-        upsertAssistantSegment(run, {
-          id: undefined,
-          seq,
-          text: event.finalOutput,
-          mode: 'set',
-          close: true,
-        })
+        new AssistantSegmentBuffer(run).setFinal(seq, event.finalOutput)
       }
       run.currentAssistantMessageRef = undefined
       newState.runs.set(event.runId, run)
@@ -287,12 +374,10 @@ function processEvent(
     }
 
     case 'message_start': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
+      const segments = new AssistantSegmentBuffer(run)
       const message = event.message
       const messageId = event.messageId
       if (message) {
@@ -301,38 +386,22 @@ function processEvent(
         if (message.role === 'user') {
           run.userMessage = content
         } else if (message.role === 'assistant') {
-          closeActiveSegment(run)
           const ref = messageId ?? `seg-${seq}`
-          run.currentAssistantMessageRef = ref
-          upsertAssistantSegment(run, {
-            id: ref,
-            seq,
-            text: content,
-            mode: 'set',
-          })
+          segments.startMessage(ref, seq, content)
         }
       } else if (messageId !== undefined) {
-        closeActiveSegment(run)
-        run.currentAssistantMessageRef = messageId
-        upsertAssistantSegment(run, {
-          id: messageId,
-          seq,
-          text: '',
-          mode: 'set',
-        })
+        segments.startMessage(messageId, seq, '')
       }
 
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
     case 'message_end': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
+      const segments = new AssistantSegmentBuffer(run)
       const message = event.message
       const messageId = event.messageId
       const targetRef = messageId ?? run.currentAssistantMessageRef
@@ -342,51 +411,26 @@ function processEvent(
         if (message.role === 'user') {
           run.userMessage = content
         } else if (message.role === 'assistant') {
-          if (targetRef === undefined && run.assistantSegments.length > 0) {
-            closeActiveSegment(run)
-          } else {
-            upsertAssistantSegment(run, {
-              id: targetRef,
-              seq,
-              text: content,
-              mode: 'replace',
-              close: true,
-            })
-          }
+          segments.endMessage(targetRef, seq, content)
         }
       } else if (targetRef !== undefined) {
-        const idx = run.assistantSegments.findIndex((s) => s.id === targetRef)
-        if (idx >= 0) {
-          run.activeAssistantSegmentId = undefined
-        }
+        segments.closeExisting(targetRef)
       }
-      if (targetRef !== undefined && targetRef === run.currentAssistantMessageRef) {
-        run.currentAssistantMessageRef = undefined
-      }
+      segments.clearCurrentMessageRefIf(targetRef)
 
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
     case 'message_update': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
+      const segments = new AssistantSegmentBuffer(run)
       const targetRef = event.messageId ?? run.currentAssistantMessageRef
 
       if (event.textDelta) {
-        upsertAssistantSegment(run, {
-          id: targetRef,
-          seq,
-          text: event.textDelta,
-          mode: 'append',
-        })
-        if (targetRef === undefined && run.activeAssistantSegmentId !== undefined) {
-          run.currentAssistantMessageRef = run.activeAssistantSegmentId
-        }
+        segments.appendDelta(targetRef, seq, event.textDelta)
       }
 
       if (event.contentBlocks) {
@@ -396,56 +440,37 @@ function processEvent(
           .join('')
 
         if (textContent) {
-          upsertAssistantSegment(run, {
-            id: targetRef,
-            seq,
-            text: textContent,
-            mode: 'replace',
-          })
-          if (targetRef === undefined && run.activeAssistantSegmentId !== undefined) {
-            run.currentAssistantMessageRef = run.activeAssistantSegmentId
-          }
+          segments.replaceBody(targetRef, seq, textContent)
         }
       }
 
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
     case 'turn_end': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
       run.status = 'completed'
       run.completedAt = Date.now()
+      const segments = new AssistantSegmentBuffer(run)
       const completedMessage = extractTurnEndAssistantMessage(event.payload)
-      if (completedMessage !== undefined && run.assistantSegments.length === 0) {
-        upsertAssistantSegment(run, {
-          id: undefined,
-          seq,
-          text: completedMessage,
-          mode: 'set',
-          close: true,
-        })
+      if (completedMessage !== undefined && segments.length === 0) {
+        segments.setFinal(seq, completedMessage)
       } else {
-        closeActiveSegment(run)
+        segments.closeActive()
       }
       run.currentAssistantMessageRef = undefined
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
     case 'tool_execution_start': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
-      closeActiveSegment(run)
+      new AssistantSegmentBuffer(run).closeActive()
       const existingIndex = run.toolExecutions.findIndex(
         (tool) => tool.toolUseId === event.toolUseId
       )
@@ -470,16 +495,13 @@ function processEvent(
         })
       }
 
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
     case 'tool_execution_end': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
       const toolIndex = run.toolExecutions.findIndex((tool) => tool.toolUseId === event.toolUseId)
       let output = ''
@@ -539,7 +561,7 @@ function processEvent(
         })
       }
 
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
@@ -570,11 +592,8 @@ function processEvent(
     }
 
     case 'notice': {
-      if (!runId) {
-        break
-      }
-
-      const run = getOrCreateRun(runId)
+      const contextRunId = runId as string
+      const run = getOrCreateRun(contextRunId)
       run.lastSeq = seq
       run.noticeEntries.push({
         id: String(seq),
@@ -582,7 +601,7 @@ function processEvent(
         message: event.message,
         seq,
       })
-      newState.runs.set(runId, run)
+      newState.runs.set(contextRunId, run)
       break
     }
 
