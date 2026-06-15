@@ -203,7 +203,11 @@ export function toFrontend(provider: HrcProvider): 'agent-sdk' | 'pi-sdk' {
   if (frontend === 'agent-sdk' || frontend === 'pi-sdk') {
     return frontend
   }
-  return 'agent-sdk'
+  throw new HrcUnprocessableEntityError(
+    HrcErrorCode.PROVIDER_MISMATCH,
+    `unexpected SDK frontend "${frontend}" resolved for provider "${provider}" (expected one of: agent-sdk, pi-sdk)`,
+    { provider, frontend }
+  )
 }
 
 function toEventKind(event: AgentEvent): string {
