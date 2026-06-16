@@ -22,6 +22,7 @@ import {
   writeShutdownIntent,
 } from '../cli-runtime.js'
 import { printJson } from '../print.js'
+import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { resolveSessionArg } from '../selector-resolve.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
@@ -265,7 +266,31 @@ export async function cmdSessionList(args: string[]): Promise<void> {
     ...(scope ? { scopeRef: scope } : {}),
     ...(lane ? { laneRef: lane } : {}),
   })
-  printJson(sessions)
+
+  if (hasFlag(args, '--porcelain')) {
+    process.stdout.write(renderPorcelain(sessions))
+    return
+  }
+
+  // JSON when forced or piped (keeps `hrc session list | jq` working); the
+  // human render only kicks in for an interactive TTY launch.
+  if (hasFlag(args, '--json') || !process.stdout.isTTY) {
+    printJson(sessions)
+    return
+  }
+
+  const since = parseFlag(args, '--since')
+  process.stdout.write(
+    renderSessions(sessions, {
+      now: new Date(),
+      color: process.stdout.isTTY === true,
+      all: hasFlag(args, '--all'),
+      gens: hasFlag(args, '--gens'),
+      groupBy: hasFlag(args, '--by-project') ? 'project' : 'agent',
+      ...(since ? { sinceMs: parseSinceMs(since) } : {}),
+      ...(scope ? { scope } : {}),
+    })
+  )
 }
 
 export async function cmdSessionGet(args: string[]): Promise<void> {
