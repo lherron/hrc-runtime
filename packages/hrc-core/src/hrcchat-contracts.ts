@@ -16,7 +16,18 @@ export type HrcMessageAddress =
 
 // -- Target capability view ---------------------------------------------------
 
-export type HrcTargetState = 'discoverable' | 'summoned' | 'bound' | 'busy' | 'broken'
+export type HrcTargetState =
+  | 'discoverable'
+  | 'summoned'
+  | 'bound'
+  | 'busy'
+  | 'broken'
+  /**
+   * T-04827 — archived/no-live-runtime session whose continuation artifact is
+   * present (or unknown); resume is possible via successor-from-continuation.
+   * `broken` is reserved for corrupt/missing/non-resumable continuity ONLY.
+   */
+  | 'dormant'
 
 export type TargetCapabilityView = {
   state: HrcTargetState
