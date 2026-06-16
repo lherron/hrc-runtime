@@ -1,6 +1,14 @@
 // -- Usage --------------------------------------------------------------------
 
-const INFO_TEXT = `hrc — HRC operator CLI
+import type { Command } from 'commander'
+
+import { renderCommandRoster } from './command-roster.js'
+
+// Curated prose, head + tail. The COMMANDS roster is NOT hand-listed here — it is generated from the
+// live registry by buildInfoText() so it can never drift (the old hand list omitted `info` and
+// `session-report`). Inline `hrc <cmd>` / `hrcchat <cmd>` examples and `--flags` in this prose are
+// validated by scripts/check-cli-surface.ts against the registry.
+const INFO_HEAD = `hrc — HRC operator CLI
 
 ABOUT
   HRC is the local runtime control plane for agent sessions.
@@ -134,29 +142,9 @@ ENVIRONMENT
   HRC_STATE_DIR     Override persistent state root
   ASP_PROJECT       Default project context for shorthand resolution
   ASP_AGENTS_ROOT   Agents root for managed run/start resolution
-  HRC_SESSION_REF   Caller identity for HRC-aware child processes
+  HRC_SESSION_REF   Caller identity for HRC-aware child processes`
 
-COMMANDS
-  show              Show a runtime/session/message by selector (context-aware)
-  ls                List runtimes | sessions | launches | messages
-  server            Daemon lifecycle, health, and tmux backend control
-  monitor           Show, watch, and wait on HRC monitor snapshots/events
-  session           Resolve, list, and inspect sessions
-  runtime           Inspect and control runtimes
-  broker            Inspect broker-backed runtime invocations
-  launch            List launches
-  run               Resolve, launch, and attach (--no-attach, --attach-only)
-  resume            Alias of run: start, reuse, or attach
-  start             Resolve and start detached
-  attach            Attach to a live runtime
-  turn              Dispatch turns to a session
-  inflight          Send in-flight runtime input
-  capture           Capture live runtime output
-  surface           Manage surface bindings
-  bridge            Manage low-level local bridge delivery
-  admin             Administrative maintenance (admin runs sweep-zombies|…)
-
-  Low-level (hidden from --help, for API/client use):
+const INFO_TAIL = `  Low-level (hidden from --help, for API/client use):
     runtime ensure <hostSessionId>   ensure a runtime exists
 
 VERB VOCABULARY
@@ -168,12 +156,23 @@ NEXT STEP
   Run hrc <command> --help for command-specific flags and edge cases.
 `
 
-export function printInfo(): void {
-  process.stdout.write(INFO_TEXT)
+/** Full `hrc info` text: curated prose with a COMMANDS roster generated from the live registry. */
+export function buildInfoText(program: Command): string {
+  return `${INFO_HEAD}
+
+COMMANDS
+${renderCommandRoster(program)}
+
+${INFO_TAIL}`
 }
 
-export function printUsage(): void {
-  process.stderr.write(`hrc — HRC operator CLI
+export function printInfo(program: Command): void {
+  process.stdout.write(buildInfoText(program))
+}
+
+// Curated usage reference. Hand-written (richer than the auto --help), so every command path and
+// --flag here is validated against the live registry by scripts/check-cli-surface.ts.
+export const USAGE_TEXT = `hrc — HRC operator CLI
 
 Usage: hrc <command> [options]
 
@@ -226,5 +225,8 @@ Commands:
   bridge deliver <bridgeId> --text <text>                              (compat)
   bridge list <runtimeId>             List active local bridges for a runtime
   bridge close <bridgeId>             Close a local bridge
-`)
+`
+
+export function printUsage(): void {
+  process.stderr.write(USAGE_TEXT)
 }

@@ -191,7 +191,7 @@ program
   .command('info')
   .description('show CLI/runtime info')
   .action(() => {
-    cmdInfo()
+    cmdInfo(program)
   })
 
 // -- who ----------------------------------------------------------------------
@@ -398,6 +398,10 @@ UTILITY
 )
 
 // -- Run (guarded — only when executed directly, not when imported) -----------
+
+// Exported for the CLI-surface conformance gate (scripts/check-cli-surface.ts), which introspects
+// the live command registry. Import is side-effect-free: parseAsync is guarded by import.meta.main.
+export { program }
 
 if (import.meta.main) {
   try {

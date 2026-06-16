@@ -1,7 +1,3 @@
-import type { AgentBrainRuntimeContext, BrainRuntimeResolution } from 'spaces-execution'
-
-import type { BrainContextSource, BrainRule } from './format.js'
-
 export interface BrainEnricherInput {
   session: { scopeRef: string; hostSessionId: string }
   intent: { placement: { agentRoot: string } }
@@ -12,29 +8,12 @@ export interface BrainEnricherInput {
 export interface BrainEnricherResult {
   prompt: string
   applied: boolean
-  reason:
-    | 'enabled'
-    | 'disabled'
-    | 'injection-disabled'
-    | 'resolution-error'
-    | 'query-timeout'
-    | 'empty-prompt'
-    | 'non-agent-scope'
+  reason: 'disabled' | 'empty-prompt' | 'non-agent-scope'
   sources?: ReadonlyArray<{ slug: string; score: number }> | undefined
 }
 
-export type BrainRuntimeResolver = (
-  context: AgentBrainRuntimeContext,
-  baseEnv?: Record<string, string> | undefined
-) => Promise<BrainRuntimeResolution>
-
-type BrainEnricherDeps = {
-  brainRuntimeResolver?: BrainRuntimeResolver | undefined
-}
-
 export async function enrichTurnPromptForBrain(
-  input: BrainEnricherInput,
-  _deps: BrainEnricherDeps = {}
+  input: BrainEnricherInput
 ): Promise<BrainEnricherResult> {
   if (!input.session.scopeRef.startsWith('agent:')) {
     return passThrough(input.prompt, 'non-agent-scope')
@@ -50,5 +29,3 @@ export async function enrichTurnPromptForBrain(
 function passThrough(prompt: string, reason: BrainEnricherResult['reason']): BrainEnricherResult {
   return { prompt, applied: false, reason }
 }
-
-export type { BrainContextSource, BrainRule }

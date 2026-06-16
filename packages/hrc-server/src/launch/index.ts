@@ -2,7 +2,15 @@
 
 export { readLaunchArtifact, writeLaunchArtifact } from './launch-artifact.js'
 export { postCallback } from './callback-client.js'
-export { readSpoolEntries, replaySpoolEntries, spoolCallback } from './spool.js'
-export type { SpoolEntry, SpoolPostCallback, SpoolReplayResult } from './spool.js'
+export { readSpoolEntries, spoolCallback } from './spool.js'
+export type { SpoolEntry } from './spool.js'
 export { buildHookEnvelope } from './hook.js'
 export type { HookEnvelope, HookEnvelopeEnv } from './hook.js'
+export {
+  listInheritedEnvKeysToScrub,
+  sanitizeTmuxClientEnv,
+  sanitizeTmuxServerPath,
+  scrubInheritedEnv,
+  shouldScrubInheritedEnvKey,
+} from './env.js'
+export { injectCodexOtelConfig } from './codex-otel.js'

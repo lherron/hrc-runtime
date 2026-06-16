@@ -251,34 +251,6 @@ describe('SessionEventsManager — adapter + projection', () => {
     expect(renders).toHaveLength(1)
   })
 
-  test('setSinkMetadata stores opaque metadata on run state', () => {
-    const manager = new SessionEventsManager('test', () => {})
-    manager.subscribe(TEST_SESSION, 'test-proj')
-
-    receive(manager, {
-      projectId: 'test-proj',
-      runId: 'run-1',
-      seq: 1,
-      event: {
-        type: 'run_started',
-        runId: 'run-1',
-        projectId: 'test-proj',
-        startedAt: 1,
-      },
-    })
-
-    manager.setSinkMetadata(TEST_SESSION, 'run-1', {
-      discordMessageId: 'msg-123',
-      discordChannelId: 'ch-456',
-    })
-
-    const run = manager.getRunState(TEST_SESSION, 'run-1')
-    expect(run?.sinkMetadata).toEqual({
-      discordMessageId: 'msg-123',
-      discordChannelId: 'ch-456',
-    })
-  })
-
   test('interleaves assistant segments between tool and notice blocks by arrival seq', () => {
     let lastFrame: RenderFrame | undefined
     const manager = new SessionEventsManager('test', (_sessionRef, _pid, _rid, frame) => {

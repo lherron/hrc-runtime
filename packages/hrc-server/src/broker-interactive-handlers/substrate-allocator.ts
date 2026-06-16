@@ -252,6 +252,91 @@ export async function allocateBrokerSubstrate(
 }
 
 /**
+ * Thrown when a `presentation='tmux-tui'` {@link BrokerSubstrateAllocation} is
+ * missing — or carries a partial — TUI window / lease that the tmux-tui contract
+ * guarantees to be COMPLETE. This is an INTERNAL invariant break in
+ * {@link allocateBrokerSubstrate} (a code regression making the value partial),
+ * never a user/input error. T-04755 replaced the prior `as BrokerWindowIdentity`
+ * / `as BrokerTmuxLease` casts — which would have silently passed a partial value
+ * downstream — with this fail-fast validation.
+ */
+export class BrokerTuiAllocationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BrokerTuiAllocationError'
+  }
+}
+
+/**
+ * Validate-and-narrow `sub.tuiWindow` to a COMPLETE {@link BrokerWindowIdentity}.
+ * For `presentation='tmux-tui'` the allocator always produces all 6 string fields
+ * (smokey char-test, T-04755); this asserts that invariant at runtime instead of
+ * trusting an unchecked `as` cast. Throws {@link BrokerTuiAllocationError} on a
+ * genuinely-missing/empty field (a latent regression upstream).
+ */
+function assertCompleteBrokerWindowIdentity(
+  value: BrokerWindowIdentity | undefined,
+  label: string
+): asserts value is BrokerWindowIdentity {
+  if (!value) {
+    throw new BrokerTuiAllocationError(
+      `${label}: expected a complete BrokerWindowIdentity for presentation='tmux-tui', got ${value}`
+    )
+  }
+  for (const field of [
+    'socketPath',
+    'sessionId',
+    'windowId',
+    'paneId',
+    'sessionName',
+    'windowName',
+  ] as const) {
+    if (typeof value[field] !== 'string' || value[field].length === 0) {
+      throw new BrokerTuiAllocationError(`${label}: missing/empty required field '${field}'`)
+    }
+  }
+}
+
+/**
+ * Validate-and-narrow `sub.tuiLease` to a COMPLETE {@link BrokerTmuxLease}. The
+ * tmux-tui allocator builds this lease as a complete literal (kind='tmux-pane',
+ * ownership='hrc', the four tmux ids, and the canonical capability ops). Asserts
+ * that shape at runtime in place of the prior unchecked `as` cast; throws
+ * {@link BrokerTuiAllocationError} on any missing discriminant/field/capability.
+ */
+function assertCompleteBrokerTmuxLease(
+  value: BrokerTmuxLease | undefined,
+  label: string
+): asserts value is BrokerTmuxLease {
+  if (!value) {
+    throw new BrokerTuiAllocationError(
+      `${label}: expected a complete BrokerTmuxLease for presentation='tmux-tui', got ${value}`
+    )
+  }
+  if (value.kind !== 'tmux-pane') {
+    throw new BrokerTuiAllocationError(
+      `${label}: expected kind='tmux-pane', got '${String(value.kind)}'`
+    )
+  }
+  if (value.ownership !== 'hrc') {
+    throw new BrokerTuiAllocationError(
+      `${label}: expected ownership='hrc', got '${String(value.ownership)}'`
+    )
+  }
+  for (const field of ['socketPath', 'sessionId', 'windowId', 'paneId'] as const) {
+    if (typeof value[field] !== 'string' || value[field].length === 0) {
+      throw new BrokerTuiAllocationError(`${label}: missing/empty required field '${field}'`)
+    }
+  }
+  const ops = value.allowedOps
+  if (!ops || ops.inspect !== true || ops.sendInput !== true || ops.sendInterrupt !== true) {
+    throw new BrokerTuiAllocationError(
+      `${label}: allowedOps must grant inspect/sendInput/sendInterrupt`
+    )
+  }
+}
+
+/**
  * Project the SUBSTRATE/ENDPOINT axes of a {@link BrokerSubstrateAllocation} down
  * to the fields BOTH durable adapters map identically into the legacy flat
  * {@link BrokerTmuxAllocation}. The tmux adapter appends the TUI lease + window +
@@ -302,9 +387,13 @@ export function createBrokerDurableTmuxAllocator(
         endpoint: 'unix-jsonrpc-ndjson',
         presentation: 'tmux-tui',
       })
-      // tmux-tui always yields a TUI window + lease.
-      const tuiWindow = sub.tuiWindow as BrokerWindowIdentity
-      const lease = sub.tuiLease as BrokerTmuxLease
+      // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
+      // the optional fields at runtime (fail-fast on a latent partial) rather than
+      // trusting an unchecked `as` cast (T-04755).
+      const tuiWindow = sub.tuiWindow
+      const lease = sub.tuiLease
+      assertCompleteBrokerWindowIdentity(tuiWindow, 'tmux-tui allocation tuiWindow')
+      assertCompleteBrokerTmuxLease(lease, 'tmux-tui allocation tuiLease')
       return {
         ...projectBaseAllocation(sub),
         lease,

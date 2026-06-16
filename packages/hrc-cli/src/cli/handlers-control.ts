@@ -73,7 +73,6 @@ export async function cmdInflightSend(args: string[]): Promise<void> {
   const result = await client.sendInFlightInput({
     runtimeId,
     runId,
-    input,
     prompt: input,
     ...(inputType ? { inputType } : {}),
   })

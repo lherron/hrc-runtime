@@ -817,6 +817,38 @@ class HrcServerInstance implements HrcServer {
   }
 }
 
+/**
+ * The handler-relevant methods defined directly on the `HrcServerInstance` class
+ * body (not in a decomposed `*-handlers` module). Derived from the REAL method
+ * definitions via `Pick`/`OmitThisParameter` so `HrcServerInstanceForHandlers`
+ * (server-instance-context.ts) can reference their true signatures instead of a
+ * hand-mirrored `(...args: any[]) => any` shape — keeping the no-hand-mirror /
+ * no-drift invariant T-04758 established for the prototype-attached handlers.
+ *
+ * `OmitThisParameter` strips the class's implicit `this: HrcServerInstance` so
+ * these read as plain callable members of the structural handler surface (whose
+ * `this` is `HrcServerInstanceForHandlers`), exactly like the `*HandlersMethods`
+ * objects whose functions declare `this: HrcServerInstanceForHandlers`.
+ */
+export type HrcServerInstanceClassBodyMethods = {
+  [K in
+    | 'handleAttach'
+    | 'handleCapture'
+    | 'handleClearContext'
+    | 'handleDropContinuation'
+    | 'handleGetSessionByHost'
+    | 'handleHealth'
+    | 'handleHookIngest'
+    | 'handleInterrupt'
+    | 'handleListSessions'
+    | 'handleOtlpRequest'
+    | 'handleRequest'
+    | 'handleResolveSession'
+    | 'handleStatus'
+    | 'handleTerminate'
+    | 'stop']: OmitThisParameter<HrcServerInstance[K]>
+}
+
 Object.assign(
   HrcServerInstance.prototype,
   appSessionHandlersMethods,

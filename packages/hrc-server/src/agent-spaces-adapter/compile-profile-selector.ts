@@ -77,7 +77,7 @@ export function isBrokerControllerProfile(
   )
 }
 
-export function isHeadlessCodexBrokerProfile(
+function isHeadlessCodexBrokerProfile(
   profile: RuntimeExecutionProfile
 ): profile is BrokerExecutionProfile {
   return (
@@ -88,7 +88,7 @@ export function isHeadlessCodexBrokerProfile(
   )
 }
 
-export function isInteractiveTmuxBrokerProfile(
+function isInteractiveTmuxBrokerProfile(
   profile: RuntimeExecutionProfile
 ): profile is BrokerExecutionProfile {
   return (

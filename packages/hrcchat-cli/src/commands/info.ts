@@ -1,4 +1,12 @@
-const INFO_TEXT = `hrcchat — semantic directed messaging for HRC agents
+import type { Command } from 'commander'
+
+import { renderCommandRoster } from '../command-roster.js'
+
+// Curated prose. The COMMANDS roster is NOT listed here — it is generated from the live registry by
+// buildInfoText() so it can never drift (this block previously omitted `turn`). Inline command
+// examples in this prose are validated by scripts/check-cli-surface.ts: every `hrcchat <cmd>` /
+// `hrc <cmd>` and `--flag` must resolve to a real registered command/option.
+const INFO_HEAD = `hrcchat — semantic directed messaging for HRC agents
 
 ABOUT
   hrcchat provides semantic directed messaging, durable message history,
@@ -54,21 +62,16 @@ ENVIRONMENT VARIABLES
   HRC_SESSION_REF   Caller session identity used for "me" resolution
   ASP_PROJECT       Default project context for target resolution
   ASP_AGENTS_ROOT   Agents root used when resolving summon/dm runtime intent
-
-COMMANDS
-  info              Show this help
-  who               List targets visible in the current project context
-  summon            Materialize a target without starting a live runtime
-  dm                Send a semantic directed request and capture any durable reply
-  send              Deliver literal input to a currently live runtime
-  show              Show one durable message by seq or message ID
-  peek              Capture live output from a currently bound runtime
-  messages          Query durable directed message history
-  doctor            Run connectivity and target health checks
 `
 
-export function cmdInfo(): void {
-  process.stdout.write(INFO_TEXT)
+/** Full `hrcchat info` text: curated prose + a COMMANDS roster generated from the live registry. */
+export function buildInfoText(program: Command): string {
+  return `${INFO_HEAD}
+COMMANDS
+${renderCommandRoster(program)}
+`
 }
 
-export { INFO_TEXT }
+export function cmdInfo(program: Command): void {
+  process.stdout.write(buildInfoText(program))
+}

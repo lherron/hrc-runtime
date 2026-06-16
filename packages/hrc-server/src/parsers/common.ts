@@ -193,6 +193,30 @@ export function readOptionalStringField(
   return trimmed.length > 0 ? { [field]: trimmed } : {}
 }
 
+/**
+ * Raw optional string: present-and-non-string throws `<field> must be a string`;
+ * a string value (INCLUDING '') is returned verbatim with NO trimming. Distinct
+ * from readOptionalNonEmptyStringField (which trims + rejects empty) — callers
+ * that must preserve empty/whitespace exactly (e.g. terminate reason/source/actor)
+ * use this lax reader.
+ */
+export function readOptionalRawStringField(
+  input: Record<string, unknown>,
+  field: string
+): string | undefined {
+  const value = input[field]
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
+      field,
+    })
+  }
+
+  return value
+}
+
 export function readOptionalNonEmptyStringField(
   input: Record<string, unknown>,
   field: string

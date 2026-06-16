@@ -146,7 +146,7 @@ export class StackedAggregator {
       return
     }
 
-    if (isTurnEnd(event)) {
+    if (isStackedAggregatorFinal(event)) {
       this.phase = Phase.Final
       const final = finalFromEvent(event)
       this.finalBody = final.finalBody
@@ -452,7 +452,15 @@ export class StackedAggregator {
   }
 }
 
-function isTurnEnd(event: HrcLifecycleEvent): boolean {
+/**
+ * Stacked-aggregator final predicate: which events the aggregator treats as a
+ * terminal Final flush. Deliberately NARROWER than the watch loop's
+ * `isWatchLoopTurnTerminal` (turn_end || turn.completed) — `turn_end` must NOT
+ * trigger a terminal flush here (it would pre-empt the permission/error terminal
+ * frame; see characterization tests + T-04733). The two predicates are
+ * intentionally distinct; do not unify the bodies.
+ */
+function isStackedAggregatorFinal(event: HrcLifecycleEvent): boolean {
   return event.eventKind === 'turn.completed'
 }
 

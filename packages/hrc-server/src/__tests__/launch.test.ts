@@ -23,7 +23,6 @@ import type { HrcLaunchArtifact } from 'hrc-core'
 // These imports are the RED gates — they will fail until Curly implements the modules
 import { readLaunchArtifact, writeLaunchArtifact } from '../launch/launch-artifact'
 
-import { replaySpoolEntries } from '../launch/index'
 import { readSpoolEntries, spoolCallback } from '../launch/spool'
 
 import { buildHookEnvelope } from '../launch/hook'
@@ -278,49 +277,6 @@ describe('Spool helpers', () => {
         .sort((left, right) => left - right)
     ).toEqual(Array.from({ length: 25 }, (_, i) => i))
   })
-
-  it('replays spooled callbacks through the public helper and removes delivered entries', async () => {
-    const spoolDir = join(tmpDir, 'spool')
-    const launchId = 'launch-replay'
-    const deliveredCalls: Array<{ endpoint: string; payload: object }> = []
-
-    await spoolCallback(spoolDir, launchId, {
-      endpoint: '/v1/internal/launches/launch-replay/wrapper-started',
-      payload: { step: 'wrapper-started' },
-    })
-    await spoolCallback(spoolDir, launchId, {
-      endpoint: '/v1/internal/launches/launch-replay/exited',
-      payload: { step: 'exited' },
-    })
-
-    const replayed = await replaySpoolEntries(
-      spoolDir,
-      launchId,
-      '/tmp/unused.sock',
-      async (_socketPath, endpoint, payload) => {
-        deliveredCalls.push({ endpoint, payload })
-        return endpoint.endsWith('/wrapper-started')
-      }
-    )
-
-    expect(replayed).toEqual({ attempted: 2, delivered: 1, retained: 1 })
-    expect(deliveredCalls).toEqual([
-      {
-        endpoint: '/v1/internal/launches/launch-replay/wrapper-started',
-        payload: { step: 'wrapper-started' },
-      },
-      {
-        endpoint: '/v1/internal/launches/launch-replay/exited',
-        payload: { step: 'exited' },
-      },
-    ])
-
-    const remaining = await readSpoolEntries(spoolDir, launchId)
-    expect(remaining.length).toBe(1)
-    expect((remaining[0].payload as { endpoint: string }).endpoint).toBe(
-      '/v1/internal/launches/launch-replay/exited'
-    )
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -469,35 +425,6 @@ describe('n-37: Error-path integration (T-00985)', () => {
     const finalEntries = await readSpoolEntries(spoolDir, launchId)
     expect(finalEntries.length).toBe(15)
     expect(new Set(finalEntries.map((e) => e.seq)).size).toBe(15)
-  })
-
-  // --- Replay with all deliveries failing ---
-  it('retains all entries when replay delivers none', async () => {
-    const spoolDir = join(tmpDir, 'replay-all-fail')
-    const launchId = 'launch-replay-fail'
-
-    await spoolCallback(spoolDir, launchId, {
-      endpoint: '/v1/internal/launches/launch-replay-fail/wrapper-started',
-      payload: { step: 'wrapper-started' },
-    })
-    await spoolCallback(spoolDir, launchId, {
-      endpoint: '/v1/internal/launches/launch-replay-fail/exited',
-      payload: { step: 'exited' },
-    })
-
-    // All deliveries fail
-    const result = await replaySpoolEntries(
-      spoolDir,
-      launchId,
-      '/tmp/unused.sock',
-      async () => false
-    )
-
-    expect(result).toEqual({ attempted: 2, delivered: 0, retained: 2 })
-
-    // All entries must still be on disk
-    const remaining = await readSpoolEntries(spoolDir, launchId)
-    expect(remaining.length).toBe(2)
   })
 
   // --- Spool write to parent that is a file (not a directory) ---

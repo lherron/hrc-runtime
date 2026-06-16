@@ -294,8 +294,7 @@ export class HrcClient {
     return this.postJson<SendInFlightInputResponse>('/v1/in-flight-input', {
       runtimeId: request.runtimeId,
       runId: request.runId,
-      ...(request.input !== undefined ? { input: request.input } : {}),
-      ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+      prompt: request.prompt,
       ...(request.inputType !== undefined ? { inputType: request.inputType } : {}),
     })
   }

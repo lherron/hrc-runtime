@@ -89,6 +89,22 @@ function parseAppSessionSelector(input: unknown): { appId: string; appSessionKey
   }
 }
 
+/**
+ * Check-only selector presence guard. Throws 'selector is required' (detail
+ * {field:'selector'}) when `selector` is absent, then returns the raw value
+ * unparsed so callers keep invoking parseAppSessionSelector at their original
+ * site — preserving each parser's error precedence byte-for-byte.
+ */
+function requireSelectorPresent(input: Record<string, unknown>): unknown {
+  const selectorRaw = input['selector']
+  if (selectorRaw === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
+      field: 'selector',
+    })
+  }
+  return selectorRaw
+}
+
 function parseCommandLaunchSpec(input: unknown): HrcCommandLaunchSpec {
   if (input !== undefined && !isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'spec.command must be an object', {
@@ -240,12 +256,7 @@ export function parseEnsureAppSessionRequest(input: unknown): EnsureAppSessionRe
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
   const selector = parseAppSessionSelector(selectorRaw)
 
   const specRaw = input['spec']
@@ -291,12 +302,7 @@ export function parseDispatchAppHarnessTurnRequest(
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
 
   const prompt = parsePromptPayload(input)
   const runtimeIntent = input['runtimeIntent']
@@ -330,28 +336,17 @@ export function parseAppHarnessInFlightInputRequest(
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
 
   const runId = readOptionalNonEmptyStringField(input, 'runId')
   const prompt = parsePromptPayload(input)
-  if (input['inputType'] !== undefined && typeof input['inputType'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'inputType must be a string', {
-      field: 'inputType',
-    })
-  }
+  const inputType = readOptionalStringField(input, 'inputType')
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
     prompt,
     ...(runId !== undefined ? { runId } : {}),
-    ...(typeof input['inputType'] === 'string' && input['inputType'].trim().length > 0
-      ? { inputType: input['inputType'].trim() }
-      : {}),
+    ...inputType,
     ...(Object.hasOwn(input, 'fence') ? { fence: parseAppSessionFence(input['fence']) } : {}),
   }
 }
@@ -363,25 +358,14 @@ export function parseClearAppSessionContextRequest(
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
   const relaunch = readOptionalBooleanField(input, 'relaunch')
-  if (input['reason'] !== undefined && typeof input['reason'] !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'reason must be a string', {
-      field: 'reason',
-    })
-  }
+  const reason = readOptionalStringField(input, 'reason')
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
     ...(relaunch !== undefined ? { relaunch } : {}),
-    ...(typeof input['reason'] === 'string' && input['reason'].trim().length > 0
-      ? { reason: input['reason'].trim() }
-      : {}),
+    ...reason,
     ...(Object.hasOwn(input, 'spec') ? { spec: parseAppSessionSpec(input['spec']) } : {}),
   }
 }
@@ -394,12 +378,7 @@ export function parseRemoveAppSessionRequest(input: unknown): {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
 
   return {
     selector: parseAppSessionSelector(selectorRaw),
@@ -414,12 +393,7 @@ export function parseSendLiteralInputRequest(input: unknown): SendLiteralInputRe
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
   }
 
-  const selectorRaw = input['selector']
-  if (selectorRaw === undefined) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'selector is required', {
-      field: 'selector',
-    })
-  }
+  const selectorRaw = requireSelectorPresent(input)
 
   if (typeof input['text'] !== 'string') {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'text must be a string', {

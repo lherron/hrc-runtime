@@ -23,9 +23,9 @@
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
-    "agent-scope": "0.1.1-dev.20260614235026",
-    "spaces-config": "0.1.1-dev.20260614235026",
-    "spaces-runtime": "0.1.1-dev.20260614235026"
+    "agent-scope": "0.1.1-dev.20260615150746",
+    "spaces-config": "0.1.1-dev.20260615150746",
+    "spaces-runtime": "0.1.1-dev.20260615150746"
   },
   "devDependencies": {
     "@types/bun": "latest",
