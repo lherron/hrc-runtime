@@ -24,7 +24,7 @@ export function buildProgram(): Command {
     .command('info')
     .description('show HRC orientation and first-contact guidance')
     .action(() => {
-      printInfo()
+      printInfo(program)
     })
 
   registerServerSessionCommands(program)

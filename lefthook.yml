@@ -14,6 +14,8 @@ pre-commit:
       run: bun scripts/check-boundaries.ts
     manifests:
       run: bun scripts/check-manifest-edges.ts
+    cli-surface:
+      run: bun scripts/check-cli-surface.ts
     typecheck:
       run: bun run build && bun run typecheck
 

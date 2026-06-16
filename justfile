@@ -47,6 +47,7 @@ typecheck:
 check:
     bun scripts/check-boundaries.ts
     bun scripts/check-manifest-edges.ts
+    bun scripts/check-cli-surface.ts
 
 # Run all verification (check + lint + typecheck + test)
 verify: check lint typecheck test
