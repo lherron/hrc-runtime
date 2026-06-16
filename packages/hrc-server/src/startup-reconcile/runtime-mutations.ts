@@ -67,6 +67,64 @@ export function getObservedTmuxSessionName(runtime: HrcRuntimeSnapshot): string 
   return null
 }
 
+/**
+ * Shared runtime-terminal-mutation skeleton (T-04751).
+ *
+ * `markRuntime{Dead,Stale,Terminated}` all detach + fail the runtime's active
+ * run in exactly the same way — only the `errorMessage` fragment differs. The
+ * extracted helper guarantees that detach/markCompleted shape (status='failed',
+ * errorCode=RUNTIME_UNAVAILABLE, the updateRunId-then-markCompleted order) stays
+ * byte-for-byte identical across all three callers. The divergent terminal
+ * `runtimes.update` (status / runtimeStateJson) and event-append tails stay
+ * inline in each caller.
+ */
+function finalizeActiveRun(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  now: string,
+  errorMessage: string
+): void {
+  if (runtime.activeRunId === undefined) {
+    return
+  }
+  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+  db.runs.markCompleted(runtime.activeRunId, {
+    status: 'failed',
+    completedAt: now,
+    updatedAt: now,
+    errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+    errorMessage,
+  })
+}
+
+/**
+ * Shared broker-invocation settlement (T-04751).
+ *
+ * `markRuntimeStale` / `markRuntimeTerminatedAfterUserExit` settle a live
+ * (non-terminal) broker invocation to a terminal state — `'disposed'` for stale,
+ * `'exited'` for terminated. `markRuntimeDead` does NOT settle (it has no broker
+ * tail), so it does not call this. The guard chain (harness-broker only,
+ * invocation present, not already terminal) is preserved exactly; the target
+ * state diverges per caller and is passed in.
+ */
+function settleInvocation(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  invocationId: string | undefined,
+  now: string,
+  invocationState: 'disposed' | 'exited'
+): void {
+  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
+    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
+    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
+      db.brokerInvocations.update(invocationId, {
+        invocationState,
+        updatedAt: now,
+      })
+    }
+  }
+}
+
 export function markRuntimeDead(
   db: HrcDatabase,
   session: HrcSessionRecord,
@@ -75,16 +133,7 @@ export function markRuntimeDead(
   eventJson: Record<string, unknown>
 ): void {
   const now = timestamp()
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} is dead after startup reconciliation`,
-    })
-  }
+  finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} is dead after startup reconciliation`)
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'dead',
@@ -112,25 +161,8 @@ export function markRuntimeStale(
 ): HrcLifecycleEvent {
   const now = timestamp()
   const invocationId = runtime.activeInvocationId
-  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
-    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
-      db.brokerInvocations.update(invocationId, {
-        invocationState: 'disposed',
-        updatedAt: now,
-      })
-    }
-  }
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} is stale after startup reconciliation`,
-    })
-  }
+  settleInvocation(db, runtime, invocationId, now, 'disposed')
+  finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} is stale after startup reconciliation`)
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
@@ -218,25 +250,8 @@ export function markRuntimeTerminatedAfterUserExit(
 ): HrcLifecycleEvent {
   const now = timestamp()
   const invocationId = runtime.activeInvocationId
-  if (runtime.controllerKind === 'harness-broker' && invocationId !== undefined) {
-    const invocation = db.brokerInvocations.getByInvocationId(invocationId)
-    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
-      db.brokerInvocations.update(invocationId, {
-        invocationState: 'exited',
-        updatedAt: now,
-      })
-    }
-  }
-  if (runtime.activeRunId !== undefined) {
-    db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
-    db.runs.markCompleted(runtime.activeRunId, {
-      status: 'failed',
-      completedAt: now,
-      updatedAt: now,
-      errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
-      errorMessage: `runtime ${runtime.runtimeId} was terminated by user exit`,
-    })
-  }
+  settleInvocation(db, runtime, invocationId, now, 'exited')
+  finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} was terminated by user exit`)
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
