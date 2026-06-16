@@ -66,6 +66,7 @@ export {
   type BrokerDurableTmuxAllocatorDeps,
   type BrokerSubstrateAllocation,
   type BrokerSubstratePresentationKind,
+  BrokerTuiAllocationError,
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
   type DurableTmuxManagerLike,
