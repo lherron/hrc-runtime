@@ -1,3 +1,5 @@
+import { checkContinuationArtifact } from 'agent-spaces'
+import type { ContinuationArtifactResult } from 'agent-spaces'
 import { HrcBadRequestError, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
@@ -18,6 +20,8 @@ import {
 import { isRuntimeUnavailableStatus, requireContinuity, requireSession } from './require-helpers.js'
 import { findBoundSessionRuntime } from './runtime-select.js'
 import { type BridgeTargetRequest, parseSessionRef } from './server-parsers.js'
+
+export type ContinuationArtifactPresence = ContinuationArtifactResult
 
 export function findContinuitySession(
   db: HrcDatabase,
@@ -76,6 +80,10 @@ export function selectLatestTargetSession(sessions: HrcSessionRecord[]): HrcSess
 }
 
 export function isActiveTargetSession(db: HrcDatabase, session: HrcSessionRecord): boolean {
+  if (session.status === 'archived') {
+    return false
+  }
+
   const continuity = db.continuities.getByKey(session.scopeRef, session.laneRef)
   if (!continuity) {
     return true
@@ -86,8 +94,16 @@ export function isActiveTargetSession(db: HrcDatabase, session: HrcSessionRecord
 
 export function toTargetState(
   session: HrcSessionRecord,
-  runtime: HrcTargetRuntimeView | undefined
+  runtime: HrcTargetRuntimeView | undefined,
+  artifact: ContinuationArtifactPresence = 'unknown'
 ): HrcTargetState {
+  if (session.status === 'archived') {
+    if (!session.continuation?.key) {
+      return 'broken'
+    }
+    return artifact === 'missing' ? 'broken' : 'dormant'
+  }
+
   if (session.status !== 'active') {
     return 'broken'
   }
@@ -207,6 +223,52 @@ export function toTargetView(db: HrcDatabase, session: HrcSessionRecord): HrcTar
     generation: session.generation,
     runtime,
     capabilities: toTargetCapabilities(session, runtime, state),
+  }
+}
+
+export async function toTargetViewWithArtifactProbe(
+  db: HrcDatabase,
+  session: HrcSessionRecord,
+  mode: 'stat' | 'scan' = 'stat'
+): Promise<HrcTargetView> {
+  const runtime = toTargetRuntimeView(findBoundSessionRuntime(db, session.hostSessionId))
+  const artifact = await probeContinuationArtifact(session, mode)
+  const state = toTargetState(session, runtime, artifact)
+  const laneRef = normalizeTargetLane(session.laneRef) ?? session.laneRef
+
+  return {
+    sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
+    scopeRef: session.scopeRef,
+    laneRef,
+    state,
+    parsedScopeJson: session.parsedScopeJson,
+    lastAppliedIntentJson: session.lastAppliedIntentJson,
+    continuation: session.continuation,
+    activeHostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtime,
+    capabilities: toTargetCapabilities(session, runtime, state),
+  }
+}
+
+async function probeContinuationArtifact(
+  session: HrcSessionRecord,
+  mode: 'stat' | 'scan'
+): Promise<ContinuationArtifactPresence> {
+  if (session.status !== 'archived' || !session.continuation?.key) {
+    return 'unknown'
+  }
+
+  try {
+    return await checkContinuationArtifact(
+      {
+        provider: session.continuation.provider,
+        key: session.continuation.key,
+      },
+      { mode }
+    )
+  } catch {
+    return 'unknown'
   }
 }
 

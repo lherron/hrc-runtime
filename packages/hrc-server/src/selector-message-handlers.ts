@@ -32,6 +32,7 @@ import { mapSessionRow } from './server-misc.js'
 import { isRecord, parseJsonBody, parseSessionRef } from './server-parsers.js'
 import type { SessionRow } from './server-types.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import { findTargetSession, toTargetView } from './target-view.js'
 
 export {
@@ -162,6 +163,21 @@ export function ensureTargetSession(
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
     const now = timestamp()
+    if (existing.status === 'archived' && existing.continuation?.key) {
+      const successor = createSessionSuccessorFromContinuation(this.db, existing, {
+        lastAppliedIntentJson: intent,
+        ...(parsedScopeJson ? { parsedScopeJson } : {}),
+      })
+      this.notifyEvent(
+        this.appendEvent(successor, 'session.created', {
+          created: true,
+          summon: true,
+          priorHostSessionId: existing.hostSessionId,
+          reason: 'successor-from-continuation',
+        })
+      )
+      return successor
+    }
     this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
     if (parsedScopeJson) {
       this.db.sessions.updateParsedScope(existing.hostSessionId, parsedScopeJson, now)

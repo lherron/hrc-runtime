@@ -303,6 +303,10 @@ class HrcServerInstance implements HrcServer {
       this.handleClearContext(request),
     [exactRouteKey('POST', '/v1/sessions/drop-continuation')]: (request) =>
       this.handleDropContinuation(request),
+    [exactRouteKey('POST', '/v1/sessions/create-successor')]: (request) =>
+      this.handleCreateSessionSuccessor(request),
+    [exactRouteKey('POST', '/v1/sessions/archive-abandoned')]: (request) =>
+      this.handleArchiveAbandonedSessions(request),
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       this.handleHookIngest(request),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),

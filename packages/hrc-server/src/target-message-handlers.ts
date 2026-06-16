@@ -34,7 +34,11 @@ import {
   parseMessageFilter,
   parseSemanticDmRequest,
 } from './messages.js'
-import { assertRuntimeNotBusy, isBrokerRuntimeQueueCapable } from './require-helpers.js'
+import {
+  assertRuntimeNotBusy,
+  isBrokerRuntimeQueueCapable,
+  requireSession,
+} from './require-helpers.js'
 import { findBusyHeadlessRuntimeForSession, findLatestRuntime } from './runtime-select.js'
 import {
   HRC_BUSY_HEADLESS_DM_REJECTION_CODE,
@@ -45,7 +49,13 @@ import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
 import type { PreparedSemanticDmPayload } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
-import { findTargetSession, isActiveTargetSession, toTargetView } from './target-view.js'
+import { createSessionSuccessorFromContinuation } from './session-successor.js'
+import {
+  findTargetSession,
+  isActiveTargetSession,
+  toTargetView,
+  toTargetViewWithArtifactProbe,
+} from './target-view.js'
 
 export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL): Response {
   const projectId = normalizeOptionalQuery(url.searchParams.get('projectId'))
@@ -73,7 +83,10 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
   return json(Array.from(targets.values()).sort((a, b) => a.sessionRef.localeCompare(b.sessionRef)))
 }
 
-export function handleGetTarget(this: HrcServerInstanceForHandlers, url: URL): Response {
+export async function handleGetTarget(
+  this: HrcServerInstanceForHandlers,
+  url: URL
+): Promise<Response> {
   const sessionRef = normalizeOptionalQuery(url.searchParams.get('sessionRef'))
   if (!sessionRef) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
@@ -88,7 +101,158 @@ export function handleGetTarget(this: HrcServerInstanceForHandlers, url: URL): R
     })
   }
 
-  return json(toTargetView(this.db, session))
+  return json(await toTargetViewWithArtifactProbe(this.db, session, 'scan'))
+}
+
+export async function handleCreateSessionSuccessor(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const sessionRef = body['sessionRef']
+  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
+      field: 'sessionRef',
+    })
+  }
+
+  const priorHostSessionId = body['priorHostSessionId']
+  if (priorHostSessionId !== undefined && typeof priorHostSessionId !== 'string') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'priorHostSessionId must be a string',
+      {
+        field: 'priorHostSessionId',
+      }
+    )
+  }
+
+  const prior =
+    priorHostSessionId !== undefined
+      ? requireSession(this.db, priorHostSessionId)
+      : findTargetSession(this.db, sessionRef)
+  if (!prior) {
+    throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
+      sessionRef,
+    })
+  }
+  if (!prior.continuation?.key) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'session has no continuation to resume',
+      { hostSessionId: prior.hostSessionId }
+    )
+  }
+
+  const successor = createSessionSuccessorFromContinuation(this.db, prior)
+  this.notifyEvent(
+    this.appendEvent(successor, 'session.created', {
+      created: true,
+      priorHostSessionId: prior.hostSessionId,
+      reason: 'successor-from-continuation',
+    })
+  )
+
+  return json({
+    hostSessionId: successor.hostSessionId,
+    status: successor.status,
+    generation: successor.generation,
+    priorHostSessionId: successor.priorHostSessionId,
+    continuation: successor.continuation,
+    scopeRef: successor.scopeRef,
+    laneRef: successor.laneRef,
+    session: successor,
+  })
+}
+
+export async function handleArchiveAbandonedSessions(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const rawIdleThresholdDays = body['idleThresholdDays']
+  const idleThresholdDays =
+    rawIdleThresholdDays === undefined
+      ? 7
+      : typeof rawIdleThresholdDays === 'number' && Number.isFinite(rawIdleThresholdDays)
+        ? rawIdleThresholdDays
+        : undefined
+  if (idleThresholdDays === undefined || idleThresholdDays < 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'idleThresholdDays must be a non-negative number',
+      { field: 'idleThresholdDays' }
+    )
+  }
+
+  const cutoffMs = Date.now() - idleThresholdDays * 24 * 60 * 60 * 1000
+  const now = timestamp()
+  let archived = 0
+  let skippedPrimary = 0
+
+  for (const session of this.listAllSessions()) {
+    if (session.status !== 'active') {
+      continue
+    }
+    if (isPrimaryScopeRef(session.scopeRef)) {
+      skippedPrimary += 1
+      continue
+    }
+
+    const abandonedRuntime = this.db.runtimes
+      .listByHostSessionId(session.hostSessionId)
+      .find((runtime) => {
+        if (!isRuntimeUnavailableStatus(runtime.status)) {
+          return false
+        }
+        const lastActivityMs = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+        return Number.isFinite(lastActivityMs) && lastActivityMs <= cutoffMs
+      })
+    if (!abandonedRuntime) {
+      continue
+    }
+
+    this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
+    archived += 1
+  }
+
+  return json({ archived, skippedPrimary, idleThresholdDays })
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isPrimaryScopeRef(scopeRef: string): boolean {
+  return !scopeRef.includes(':task:')
+}
+
+function createNotifiedSessionSuccessor(
+  server: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent | undefined,
+  parsedScopeJson: Record<string, unknown> | undefined
+): HrcSessionRecord {
+  const successor = createSessionSuccessorFromContinuation(server.db, session, {
+    ...(intent ? { lastAppliedIntentJson: intent } : {}),
+    ...(parsedScopeJson ? { parsedScopeJson } : {}),
+  })
+  server.notifyEvent(
+    server.appendEvent(successor, 'session.created', {
+      created: true,
+      priorHostSessionId: session.hostSessionId,
+      reason: 'successor-from-continuation',
+    })
+  )
+  return successor
 }
 
 export async function handleQueryMessages(
@@ -220,6 +384,15 @@ export async function handleSemanticTurnHandoff(
       HrcErrorCode.UNKNOWN_SESSION,
       `unknown session "${body.to.sessionRef}"`,
       { sessionRef: body.to.sessionRef }
+    )
+  }
+
+  if (session.status === 'archived' && session.continuation?.key) {
+    session = createNotifiedSessionSuccessor(
+      this,
+      session,
+      body.runtimeIntent,
+      body.parsedScopeJson
     )
   }
 
@@ -544,6 +717,15 @@ export async function handleSemanticDm(
     }
 
     if (session) {
+      if (session.status === 'archived' && session.continuation?.key) {
+        session = createNotifiedSessionSuccessor(
+          this,
+          session,
+          body.runtimeIntent,
+          body.parsedScopeJson
+        )
+      }
+
       // Rotate before delivery if the target session is stale and the
       // caller did not opt in to stale reuse. This both prevents DMs from
       // silently dispatching into corrupted legacy sessions and keeps the
@@ -801,6 +983,8 @@ export async function executeSemanticTurn(
 export const targetMessageHandlersMethods = {
   handleListTargets,
   handleGetTarget,
+  handleCreateSessionSuccessor,
+  handleArchiveAbandonedSessions,
   handleQueryMessages,
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
