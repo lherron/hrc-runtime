@@ -232,7 +232,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isPrimaryScopeRef(scopeRef: string): boolean {
-  return !scopeRef.includes(':task:')
+  return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
 }
 
 function createNotifiedSessionSuccessor(
