@@ -74,12 +74,6 @@ export interface RunState {
         actions: PermissionAction[]
       }
     | undefined
-  /**
-   * Opaque sink-specific metadata. Sinks (e.g. Discord, terminal) can stash
-   * their own tracking state here without the shared projection knowing the
-   * shape. For example, gateway-discord stores { discordMessageId, discordChannelId }.
-   */
-  sinkMetadata?: Record<string, unknown> | undefined
 }
 
 interface ProjectState {
@@ -813,13 +807,11 @@ export type OnRunQueuedCallback = (projectId: string, runId: string, inputConten
 export class SessionEventsManager {
   private readonly gatewayId: string
   private readonly onRender: OnRenderCallback
-  private readonly onRunQueued?: OnRunQueuedCallback | undefined
   private readonly sessions = new Map<string, ProjectState>()
 
-  constructor(gatewayId: string, onRender: OnRenderCallback, onRunQueued?: OnRunQueuedCallback) {
+  constructor(gatewayId: string, onRender: OnRenderCallback) {
     this.gatewayId = gatewayId
     this.onRender = onRender
-    this.onRunQueued = onRunQueued
   }
 
   subscribe(sessionRef: string, projectId: string): void {
@@ -893,20 +885,6 @@ export class SessionEventsManager {
     return this.sessions.get(sessionRef)?.runs.get(runId)
   }
 
-  /**
-   * Set opaque sink-specific metadata on a run state. Sinks use this to stash
-   * their own tracking info (e.g. Discord message/channel IDs, terminal pane refs).
-   */
-  setSinkMetadata(sessionRef: string, runId: string, metadata: Record<string, unknown>): void {
-    const project = this.sessions.get(sessionRef)
-    const run = project?.runs.get(runId)
-    if (!run) {
-      return
-    }
-
-    run.sinkMetadata = { ...(run.sinkMetadata ?? {}), ...metadata }
-  }
-
   private ensureSession(sessionRef: string, projectId: string): ProjectState {
     const existing = this.sessions.get(sessionRef)
     if (existing) {
@@ -931,10 +909,6 @@ export class SessionEventsManager {
     const state = this.ensureSession(sessionRef, projectId)
     const newState = processEvent(state, event, runId, seq)
     this.sessions.set(sessionRef, newState)
-
-    if (event.type === 'run_queued' && this.onRunQueued) {
-      this.onRunQueued(event.projectId, event.runId, event.input.content)
-    }
 
     const affectedRunId = this.getAffectedRunId(event, runId)
     if (!affectedRunId) {
