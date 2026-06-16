@@ -969,7 +969,8 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
     })
 
     const client = new HrcClient(stubSocketPath)
-    // prompt is currently optional in the type — after fix it should be required
+    // prompt is required; the deprecated top-level `input` field has been dropped
+    // from both the type and the client payload (T-04727 SDK contraction).
     await client.sendInFlightInput({
       runtimeId: 'rt-1',
       runId: 'run-1',
@@ -978,6 +979,42 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
 
     expect(capturedBody).toBeDefined()
     expect(capturedBody.prompt).toBe('Continue with analysis')
+    // Payload must contain ONLY the canonical fields — no legacy `input`.
+    expect(capturedBody.input).toBeUndefined()
+    expect(Object.keys(capturedBody).sort()).toEqual(['prompt', 'runId', 'runtimeId'])
+  })
+
+  // -- m-19b: inputType is forwarded when provided (and still no `input`) --
+  it('m-19: sendInFlightInput forwards inputType and never emits legacy input', async () => {
+    let capturedBody: any
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      async fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname === '/v1/in-flight-input') {
+          capturedBody = await req.json()
+          return Response.json({ accepted: true, runtimeId: 'rt-1', runId: 'run-1' })
+        }
+        return new Response('Not found', { status: 404 })
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    await client.sendInFlightInput({
+      runtimeId: 'rt-1',
+      runId: 'run-1',
+      prompt: 'Continue with analysis',
+      inputType: 'text',
+    })
+
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.input).toBeUndefined()
+    expect(Object.keys(capturedBody).sort()).toEqual([
+      'inputType',
+      'prompt',
+      'runId',
+      'runtimeId',
+    ])
   })
 
   it('semanticTurnHandoff posts to the handoff endpoint and returns watch filters', async () => {

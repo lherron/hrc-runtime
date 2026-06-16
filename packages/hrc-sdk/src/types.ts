@@ -96,8 +96,6 @@ export type LatestEventBySessionFilter = {
 export type SendInFlightInputRequest = {
   runtimeId: string
   runId: string
-  /** @deprecated Use `prompt` instead */
-  input?: string | undefined
   prompt: string
   inputType?: string | undefined
 }
