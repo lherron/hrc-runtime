@@ -46,7 +46,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { openHrcDatabase, type AppManagedSessionRecord } from 'hrc-store-sqlite'
+import { type AppManagedSessionRecord, openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcTargetView } from 'hrc-core'
 
@@ -132,7 +132,10 @@ async function getTargetByRef(sessionRef: string): Promise<{ status: number; bod
   return { status: res.status, body: await res.json() }
 }
 
-async function safePostJson(path: string, body: Record<string, unknown>): Promise<{
+async function safePostJson(
+  path: string,
+  body: Record<string, unknown>
+): Promise<{
   status: number
   body: Record<string, unknown>
 }> {
@@ -356,19 +359,76 @@ describe('[RED 3d] POST /v1/sessions/archive-abandoned archives idle non-primary
     }
   })
 
-  it('skips primary-scope sessions (must not archive primary)', async () => {
-    const primaryScope = 'agent:test:project:t04831-group3'
+  it('skips primary-scope sessions (must not archive :task:primary)', async () => {
+    // T-04833: PRIMARY shape is `…:task:primary` — NOT a no-task scope.
+    // The old fixture used 'agent:test:project:t04831-group3' (no :task: segment)
+    // which masked the bug: isPrimaryScopeRef = !scopeRef.includes(':task:') returns
+    // false for the real primary shape, so the reaper wrongly archives it.
+    const primaryScope = 'agent:test:project:t04831-group3:task:primary'
     const primaryResolved = await fixture.resolveSession(primaryScope)
 
-    await postArchiveAbandoned({ idleThresholdDays: 0 }) // threshold=0 would catch everything
+    // NON-PRIMARY companion: a regular task session that MUST be reaped
+    const nonPrimaryScope = 'agent:test:project:t04831-group3:task:T-04833-reapme'
+    const nonPrimaryResolved = await fixture.resolveSession(nonPrimaryScope)
 
-    const db = openHrcDatabase(fixture.dbPath)
+    // Seed terminal runtimes for BOTH so the reaper would archive them if unprotected
+    const pastDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
+    const setupDb = openHrcDatabase(fixture.dbPath)
     try {
-      const primarySession = db.sessions.getByHostSessionId(primaryResolved.hostSessionId)
-      // Primary scope must never be reaped
+      setupDb.runtimes.insert({
+        runtimeId: 'rt-primary-skip-3d',
+        hostSessionId: primaryResolved.hostSessionId,
+        scopeRef: primaryScope,
+        laneRef: 'default',
+        generation: primaryResolved.generation,
+        transport: 'headless',
+        harness: 'agent-sdk',
+        provider: 'anthropic',
+        status: 'terminated',
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: pastDate,
+        createdAt: pastDate,
+        updatedAt: pastDate,
+      })
+      setupDb.runtimes.insert({
+        runtimeId: 'rt-nonprimary-reap-3d',
+        hostSessionId: nonPrimaryResolved.hostSessionId,
+        scopeRef: nonPrimaryScope,
+        laneRef: 'default',
+        generation: nonPrimaryResolved.generation,
+        transport: 'headless',
+        harness: 'agent-sdk',
+        provider: 'anthropic',
+        status: 'terminated',
+        supportsInflightInput: false,
+        adopted: false,
+        lastActivityAt: pastDate,
+        createdAt: pastDate,
+        updatedAt: pastDate,
+      })
+    } finally {
+      setupDb.close()
+    }
+
+    await postArchiveAbandoned({ idleThresholdDays: 7 })
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      const nonPrimarySession = verifyDb.sessions.getByHostSessionId(
+        nonPrimaryResolved.hostSessionId
+      )
+      // Companion: non-primary :task:T-04833-reapme WITH terminal+idle runtime MUST be
+      // archived. Proves the reaper still fires correctly for task sessions.
+      // This assertion passes both before and after the fix.
+      expect(nonPrimarySession?.status).toBe('archived')
+
+      const primarySession = verifyDb.sessions.getByHostSessionId(primaryResolved.hostSessionId)
+      // RED: current isPrimaryScopeRef = !scopeRef.includes(':task:') returns FALSE
+      // for ':task:primary' — so the reaper archives it wrongly. This assertion FAILS.
       expect(primarySession?.status).toBe('active')
     } finally {
-      db.close()
+      verifyDb.close()
     }
   })
 })
