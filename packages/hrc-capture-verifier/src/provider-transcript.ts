@@ -5,6 +5,7 @@ import {
   CAPTURE_OBSERVATION_SCHEMA,
   CAPTURE_VERIFIER_SCHEMA,
   type CaptureObservation,
+  type CaptureObservationType,
   type CaptureProvider,
   type ParseProviderTranscriptInput,
   type ParsedProviderTranscript,
@@ -12,7 +13,9 @@ import {
 
 type AdapterResult = {
   event?: CaptureObservation | undefined
+  events?: CaptureObservation[] | undefined
   warning?: string | undefined
+  disposition?: 'ignored' | 'unsupported' | 'unknown' | undefined
 }
 
 export async function parseProviderTranscript(
@@ -21,9 +24,15 @@ export async function parseProviderTranscript(
   const raw = await readFile(input.path, 'utf8')
   const warnings: string[] = []
   const observations: CaptureObservation[] = []
+  const observationsByType = emptyObservationCounts()
   let provider: CaptureProvider = 'unknown'
   const lines = raw.split(/\r?\n/)
   let lineCount = 0
+  let parsedRecords = 0
+  let invalidJsonRecords = 0
+  let ignoredRecords = 0
+  let unsupportedRecords = 0
+  let unknownRecords = 0
   const ignoredCodexCallIds = new Set<string>()
 
   for (let idx = 0; idx < lines.length; idx += 1) {
@@ -33,27 +42,52 @@ export async function parseProviderTranscript(
     const parsed = safeJsonParse(line)
     const lineNo = idx + 1
     if (!isRecord(parsed)) {
+      invalidJsonRecords += 1
       warnings.push(`line ${lineNo}: invalid JSON`)
       continue
     }
+    parsedRecords += 1
 
     const codex = adaptCodexRecord(parsed, lineNo, ignoredCodexCallIds)
-    if (codex.event || codex.warning) {
+    if (isAdapterResult(codex)) {
       provider = provider === 'claude-code' ? 'unknown' : 'codex'
-      if (codex.event) observations.push(codex.event)
+      appendObservations(observations, observationsByType, eventsFromAdapter(codex))
       if (codex.warning) warnings.push(codex.warning)
+      incrementDisposition(codex.disposition, {
+        ignored: () => {
+          ignoredRecords += 1
+        },
+        unsupported: () => {
+          unsupportedRecords += 1
+        },
+        unknown: () => {
+          unknownRecords += 1
+        },
+      })
       continue
     }
 
     const claude = adaptClaudeRecord(parsed, lineNo)
-    if (claude.event || claude.warning) {
+    if (isAdapterResult(claude)) {
       provider = provider === 'codex' ? 'unknown' : 'claude-code'
-      if (claude.event) observations.push(claude.event)
+      appendObservations(observations, observationsByType, eventsFromAdapter(claude))
       if (claude.warning) warnings.push(claude.warning)
+      incrementDisposition(claude.disposition, {
+        ignored: () => {
+          ignoredRecords += 1
+        },
+        unsupported: () => {
+          unsupportedRecords += 1
+        },
+        unknown: () => {
+          unknownRecords += 1
+        },
+      })
       continue
     }
 
     if (recordLooksProviderRelevant(parsed)) {
+      unknownRecords += 1
       warnings.push(`line ${lineNo}: provider JSONL record is not capture-relevant in verifier v1`)
     }
   }
@@ -65,6 +99,15 @@ export async function parseProviderTranscript(
     observations,
     warnings,
     lineCount,
+    totalLines: lineCount,
+    parsedRecords,
+    invalidJsonRecords,
+    applicableObservations: observations.length,
+    ignoredRecords,
+    unsupportedRecords,
+    unknownRecords,
+    warningCount: warnings.length,
+    observationsByType,
   }
 }
 
@@ -96,14 +139,17 @@ function adaptCodexRecord(
   if (record['type'] !== 'response_item') return {}
   const payload = record['payload']
   if (!isRecord(payload)) {
-    return { warning: `line ${line}: Codex response_item has non-object payload` }
+    return {
+      warning: `line ${line}: Codex response_item has non-object payload`,
+      disposition: 'unknown',
+    }
   }
 
   if (payload['type'] === 'message') {
     const role = payload['role']
     const text = compactText(textFromContent(payload['content']))
     if (role === 'user') {
-      return {}
+      return { disposition: 'ignored' }
     }
     if (role === 'assistant' && text !== undefined) {
       return {
@@ -116,7 +162,10 @@ function adaptCodexRecord(
         }),
       }
     }
-    return { warning: `line ${line}: Codex message response_item has no capture-relevant text` }
+    return {
+      warning: `line ${line}: Codex message response_item has no capture-relevant text`,
+      disposition: 'unknown',
+    }
   }
 
   if (payload['type'] === 'function_call') {
@@ -126,6 +175,7 @@ function adaptCodexRecord(
       if (callId !== undefined) ignoredCallIds.add(callId)
       return {
         warning: `line ${line}: Codex function_call ${rawName} is outside broker JSONL v1 scope`,
+        disposition: 'unsupported',
       }
     }
     const parsedInput = parseMaybeJson(payload['arguments'])
@@ -143,11 +193,11 @@ function adaptCodexRecord(
   if (payload['type'] === 'function_call_output') {
     const callId = stringField(payload, 'call_id') ?? stringField(payload, 'id')
     if (callId !== undefined && ignoredCallIds.has(callId)) {
-      return {}
+      return { disposition: 'ignored' }
     }
     const output = typeof payload['output'] === 'string' ? payload['output'] : ''
     if (isCodexPendingCommandOutput(output)) {
-      return {}
+      return { disposition: 'ignored' }
     }
     const result = extractCodexCommandResult(output)
     const failed = result.exitCode !== undefined ? result.exitCode !== 0 : false
@@ -165,7 +215,7 @@ function adaptCodexRecord(
     }
   }
 
-  return {}
+  return { disposition: 'ignored' }
 }
 
 function adaptClaudeRecord(record: Record<string, unknown>, line: number): AdapterResult {
@@ -236,6 +286,50 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
   }
 
   return {}
+}
+
+function emptyObservationCounts(): Record<CaptureObservationType, number> {
+  return {
+    'user.message': 0,
+    'assistant.message.completed': 0,
+    'tool.call.started': 0,
+    'tool.call.completed': 0,
+    'tool.call.failed': 0,
+  }
+}
+
+function isAdapterResult(result: AdapterResult): boolean {
+  return (
+    result.event !== undefined ||
+    result.events !== undefined ||
+    result.warning !== undefined ||
+    result.disposition !== undefined
+  )
+}
+
+function eventsFromAdapter(result: AdapterResult): CaptureObservation[] {
+  if (result.events !== undefined) return result.events
+  return result.event !== undefined ? [result.event] : []
+}
+
+function appendObservations(
+  observations: CaptureObservation[],
+  counts: Record<CaptureObservationType, number>,
+  events: CaptureObservation[]
+): void {
+  for (const event of events) {
+    observations.push(event)
+    counts[event.type] = (counts[event.type] ?? 0) + 1
+  }
+}
+
+function incrementDisposition(
+  disposition: AdapterResult['disposition'],
+  callbacks: Record<NonNullable<AdapterResult['disposition']>, () => void>
+): void {
+  if (disposition !== undefined) {
+    callbacks[disposition]()
+  }
 }
 
 function recordLooksProviderRelevant(record: Record<string, unknown>): boolean {

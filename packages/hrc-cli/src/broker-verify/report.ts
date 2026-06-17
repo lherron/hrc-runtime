@@ -43,6 +43,7 @@ export function renderReportHuman(report: CaptureVerificationReport): string {
       `provider events: ${report.transcript?.observations.length ?? 0}`
     )
   }
+  lines.push(...renderAnalyticsHuman(report), '')
   const errors = report.findings.filter((issue) => issue.severity === 'error')
   const warnings = report.findings.filter((issue) => issue.severity === 'warning')
   lines.push(`issues: ${errors.length} error(s), ${warnings.length} warning(s)`, '')
@@ -63,4 +64,19 @@ export function renderReportHuman(report: CaptureVerificationReport): string {
   }
   lines.push('')
   return `${lines.join('\n')}\n`
+}
+
+function renderAnalyticsHuman(report: CaptureVerificationReport): string[] {
+  const analytics = report.analytics
+  const provider = analytics.providerJsonl
+  const malformed = analytics.rawEvents.malformedEventJson + analytics.rawEvents.malformedPayload
+  return [
+    'analytics:',
+    provider !== undefined
+      ? `  provider JSONL: lines=${provider.totalLines} parsed=${provider.parsedRecords} applicable=${provider.applicableObservations} ignored=${provider.ignoredRecords} unsupported=${provider.unsupportedRecords} unknown=${provider.unknownRecords} warnings=${provider.warningCount}`
+      : '  provider JSONL: not supplied',
+    `  broker ledger: events=${analytics.brokerLedger.eventCount} applied=${analytics.rawEvents.appliedBrokerRows} seq=${analytics.brokerLedger.firstSeq ?? '-'}..${analytics.brokerLedger.lastSeq ?? '-'} holes=${analytics.brokerLedger.seqHoleCount} duplicates=${analytics.brokerLedger.duplicateSeqCount}`,
+    `  raw events: matched=${analytics.rawEvents.matched}/${analytics.rawEvents.expectedFromBroker} missing=${analytics.rawEvents.missing} mismatched=${analytics.rawEvents.mismatched} malformed=${malformed}`,
+    `  lifecycle: present=${analytics.lifecycleProjection.present} expected=${analytics.lifecycleProjection.expected} missing=${analytics.lifecycleProjection.missing} suppressed=${analytics.lifecycleProjection.suppressed} notApplicable=${analytics.lifecycleProjection.notApplicable} policy=${analytics.lifecycleProjection.policyId}@${analytics.lifecycleProjection.policyHash}`,
+  ]
 }

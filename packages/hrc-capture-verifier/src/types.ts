@@ -137,6 +137,15 @@ export type ParsedProviderTranscript = {
   observations: CaptureObservation[]
   warnings: string[]
   lineCount: number
+  totalLines: number
+  parsedRecords: number
+  invalidJsonRecords: number
+  applicableObservations: number
+  ignoredRecords: number
+  unsupportedRecords: number
+  unknownRecords: number
+  warningCount: number
+  observationsByType: Record<CaptureObservationType, number>
 }
 
 export type TranscriptResolution = {
@@ -187,8 +196,121 @@ export type LifecycleCheck = {
   brokerSeq: number
   brokerType: string
   lifecycleKind?: string | undefined
-  status: 'present' | 'missing' | 'not_applicable'
+  status: 'present' | 'missing' | 'not_applicable' | 'suppressed'
   hrcSeq?: number | undefined
+}
+
+export type ProviderJsonlAnalytics = {
+  path: string
+  provider: CaptureProvider
+  totalLines: number
+  parsedRecords: number
+  invalidJsonRecords: number
+  applicableObservations: number
+  ignoredRecords: number
+  unsupportedRecords: number
+  unknownRecords: number
+  warningCount: number
+  observationsByType: Record<CaptureObservationType, number>
+}
+
+export type BrokerLedgerAnalytics = {
+  invocationId: string
+  eventCount: number
+  firstSeq?: number | undefined
+  lastSeq?: number | undefined
+  seqHoleCount: number
+  duplicateSeqCount: number
+  statuses: Record<string, number>
+  eventsByType: Record<string, number>
+  runtimeIdentityMismatchCount: number
+  runDivergenceWarningCount: number
+  staleGenerationCount: number
+  staleAttemptCount: number
+}
+
+export type RawEventsAnalytics = {
+  expectedFromBroker: number
+  appliedBrokerRows: number
+  linkedByHrcEventSeq: number
+  found: number
+  matched: number
+  missing: number
+  /** Row-level count; field-specific mismatch counts may sum above this value. */
+  mismatched: number
+  wrongSource: number
+  wrongEventKind: number
+  wrongInvocation: number
+  wrongSeq: number
+  wrongType: number
+  payloadMismatch: number
+  malformedEventJson: number
+  malformedPayload: number
+}
+
+export type LifecycleProjectionAnalyticsBucket = {
+  policyMapped: number
+  expected: number
+  present: number
+  missing: number
+  suppressed: number
+  notApplicable: number
+}
+
+export type LifecycleKindAnalyticsBucket = {
+  expected: number
+  present: number
+  missing: number
+  suppressed: number
+}
+
+export type LifecycleProjectionAnalytics = {
+  policyId: string
+  policyVersion: 'v1'
+  policyHash: string
+  checkedBrokerEvents: number
+  policyMapped: number
+  expected: number
+  present: number
+  missing: number
+  suppressed: number
+  notApplicable: number
+  byBrokerType: Record<string, LifecycleProjectionAnalyticsBucket>
+  byLifecycleKind: Record<string, LifecycleKindAnalyticsBucket>
+}
+
+export type CrossSinkAnalytics = {
+  providerToBroker?:
+    | {
+        expected: number
+        matched: number
+        missing: number
+        divergent: number
+        textMismatchTolerated: number
+      }
+    | undefined
+  brokerToRaw: {
+    expected: number
+    matched: number
+    missing: number
+    mismatched: number
+  }
+  brokerToLifecycle: {
+    expected: number
+    present: number
+    missing: number
+    suppressed: number
+    notApplicable: number
+  }
+}
+
+export type CaptureVerificationAnalytics = {
+  schema: typeof CAPTURE_VERIFIER_SCHEMA
+  providerJsonl?: ProviderJsonlAnalytics | undefined
+  brokerLedger: BrokerLedgerAnalytics
+  rawEvents: RawEventsAnalytics
+  lifecycleProjection: LifecycleProjectionAnalytics
+  crossSink: CrossSinkAnalytics
 }
 
 export type CaptureVerificationReport = {
@@ -207,6 +329,7 @@ export type CaptureVerificationReport = {
   providerMatches: ProviderObservationMatch[]
   lifecycle: LifecycleCheck[]
   findings: CaptureVerificationFinding[]
+  analytics: CaptureVerificationAnalytics
 }
 
 export type ResolveProviderTranscriptInput = {

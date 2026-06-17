@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
-import type { CaptureVerificationStore, ParsedProviderTranscript } from '../index.js'
+import type {
+  CaptureObservationType,
+  CaptureVerificationStore,
+  ParsedProviderTranscript,
+} from '../index.js'
 import {
   CAPTURE_VERIFIER_SCHEMA,
   hashPayload,
@@ -90,6 +94,19 @@ describe('provider transcript adapters', () => {
       expect(transcript.warnings).toContain(
         'line 4: Codex function_call write_stdin is outside broker JSONL v1 scope'
       )
+      expect(transcript.totalLines).toBe(5)
+      expect(transcript.parsedRecords).toBe(5)
+      expect(transcript.invalidJsonRecords).toBe(0)
+      expect(transcript.applicableObservations).toBe(3)
+      expect(transcript.ignoredRecords).toBe(1)
+      expect(transcript.unsupportedRecords).toBe(1)
+      expect(transcript.unknownRecords).toBe(0)
+      expect(transcript.warningCount).toBe(1)
+      expect(transcript.observationsByType).toMatchObject({
+        'assistant.message.completed': 1,
+        'tool.call.started': 1,
+        'tool.call.completed': 1,
+      })
       expect(transcript.observations[1]?.normalizedPayload).toEqual({
         toolCallId: 'call-1',
         name: 'command',
@@ -176,6 +193,46 @@ describe('provider transcript adapters', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('reports parser disposition stats without deriving them from warnings', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-capture-verifier-stats-'))
+    const path = join(dir, 'stats.jsonl')
+    await writeFile(
+      path,
+      [
+        '{bad json',
+        JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user' } }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'function_call', call_id: 'call-x', name: 'write_stdin' },
+        }),
+        JSON.stringify({ type: 'session_meta', sessionId: 's1' }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'message', role: 'assistant', content: 'one' },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'message', role: 'assistant', content: 'two' },
+        }),
+      ].join('\n')
+    )
+
+    try {
+      const transcript = await parseProviderTranscript({ path })
+      expect(transcript.totalLines).toBe(6)
+      expect(transcript.parsedRecords).toBe(5)
+      expect(transcript.invalidJsonRecords).toBe(1)
+      expect(transcript.ignoredRecords).toBe(1)
+      expect(transcript.unsupportedRecords).toBe(1)
+      expect(transcript.unknownRecords).toBe(1)
+      expect(transcript.warningCount).toBe(3)
+      expect(transcript.applicableObservations).toBe(2)
+      expect(transcript.observationsByType['assistant.message.completed']).toBe(2)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('capture verifier with injected stores', () => {
@@ -202,6 +259,43 @@ describe('capture verifier with injected stores', () => {
     expect(report.rawMirror).toEqual({ checked: 1, matched: 1 })
     expect(report.providerMatches[0]?.status).toBe('matched')
     expect(report.lifecycle[0]?.status).toBe('present')
+    expect(report.analytics.providerJsonl).toMatchObject({
+      totalLines: 1,
+      applicableObservations: 1,
+    })
+    expect(report.analytics.rawEvents).toMatchObject({
+      expectedFromBroker: 1,
+      found: 1,
+      matched: 1,
+      missing: 0,
+      mismatched: 0,
+    })
+    expect(report.analytics.lifecycleProjection).toMatchObject({
+      checkedBrokerEvents: 1,
+      policyMapped: 1,
+      expected: 1,
+      present: 1,
+      missing: 0,
+      suppressed: 0,
+      notApplicable: 0,
+    })
+    expect(report.analytics.crossSink).toMatchObject({
+      providerToBroker: { expected: 1, matched: 1, missing: 0, divergent: 0 },
+      brokerToRaw: { expected: 1, matched: 1, missing: 0, mismatched: 0 },
+      brokerToLifecycle: { expected: 1, present: 1, missing: 0, suppressed: 0 },
+    })
+  })
+
+  it('omits provider analytics when no JSONL transcript is supplied', async () => {
+    const report = await verifyInvocation({
+      store: fakeStore([brokerEvent(1, 'user.message', { content: 'hello' })]),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.analytics.providerJsonl).toBeUndefined()
+    expect(report.analytics.crossSink.providerToBroker).toBeUndefined()
+    expect(report.analytics.brokerLedger.eventCount).toBe(1)
+    expect(report.analytics.rawEvents.expectedFromBroker).toBe(1)
   })
 
   it('fails on seq holes, non-applied rows, and raw mirror mismatches', async () => {
@@ -222,6 +316,128 @@ describe('capture verifier with injected stores', () => {
     expect(report.findings.map((finding) => finding.code)).toContain('projection_not_applied')
     expect(report.findings.map((finding) => finding.code)).toContain('raw_mirror_mismatch')
     expect(report.findings.map((finding) => finding.code)).toContain('raw_mirror_seq_missing')
+    expect(report.analytics.brokerLedger.seqHoleCount).toBe(1)
+    expect(report.analytics.rawEvents).toMatchObject({
+      expectedFromBroker: 2,
+      appliedBrokerRows: 1,
+      linkedByHrcEventSeq: 1,
+      found: 1,
+      matched: 0,
+      missing: 1,
+      mismatched: 1,
+      payloadMismatch: 1,
+    })
+  })
+
+  it('summarizes ledger duplicate, identity, divergence, generation, and attempt evidence', async () => {
+    const report = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'user.message', { content: 'hello' }),
+        brokerEvent(
+          1,
+          'assistant.message.completed',
+          { content: 'hi' },
+          {
+            runtimeId: 'rt_other',
+            runId: 'run_prior',
+            harnessGeneration: 0,
+            turnAttempt: 0,
+          }
+        ),
+      ]),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.analytics.brokerLedger).toMatchObject({
+      eventCount: 2,
+      duplicateSeqCount: 1,
+      runtimeIdentityMismatchCount: 1,
+      runDivergenceWarningCount: 1,
+      staleGenerationCount: 1,
+      staleAttemptCount: 1,
+    })
+    expect(report.analytics.brokerLedger.eventsByType).toMatchObject({
+      'user.message': 1,
+      'assistant.message.completed': 1,
+    })
+  })
+
+  it('summarizes raw mirror mismatch fields with row-level mismatched semantics', async () => {
+    const report = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'user.message', { content: 'hello' }, { skipMirror: true }),
+        brokerEvent(2, 'user.message', { content: 'hello' }, { omitRawMirror: true }),
+        brokerEvent(3, 'user.message', { content: 'hello' }, { rawSource: 'operator' }),
+        brokerEvent(4, 'user.message', { content: 'hello' }, { rawEventKind: 'broker.other' }),
+        brokerEvent(5, 'user.message', { content: 'hello' }, { rawInvocationId: 'other' }),
+        brokerEvent(6, 'user.message', { content: 'hello' }, { rawBrokerSeq: 99 }),
+        brokerEvent(7, 'user.message', { content: 'hello' }, { rawBrokerType: 'other' }),
+        brokerEvent(8, 'user.message', { content: 'hello' }, { rawEventJson: 'not-json' }),
+        brokerEvent(9, 'user.message', { content: 'hello' }, { rawPayloadMissing: true }),
+        brokerEvent(
+          10,
+          'user.message',
+          { content: 'hello' },
+          { mirrorPayload: { content: 'other' } }
+        ),
+      ]),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.analytics.rawEvents).toMatchObject({
+      expectedFromBroker: 10,
+      linkedByHrcEventSeq: 9,
+      found: 8,
+      matched: 0,
+      missing: 2,
+      mismatched: 8,
+      wrongSource: 1,
+      wrongEventKind: 1,
+      wrongInvocation: 1,
+      wrongSeq: 1,
+      wrongType: 1,
+      malformedEventJson: 1,
+      malformedPayload: 1,
+      payloadMismatch: 1,
+    })
+    expect(
+      report.analytics.rawEvents.wrongSource + report.analytics.rawEvents.wrongEventKind
+    ).toBeLessThan(report.analytics.rawEvents.mismatched)
+  })
+
+  it('summarizes lifecycle present, missing, suppressed, and not-applicable evidence', async () => {
+    const report = await verifyInvocation({
+      store: fakeStore([
+        brokerEvent(1, 'user.message', { content: 'present' }),
+        brokerEvent(2, 'assistant.message.completed', { content: 'missing' }),
+        brokerEvent(3, 'provider.internal', {}),
+        brokerEvent(4, 'tool.call.started', { toolCallId: 'stale' }, { harnessGeneration: 0 }),
+      ]),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.lifecycle.map((item) => [item.brokerSeq, item.status])).toEqual([
+      [1, 'present'],
+      [2, 'missing'],
+      [3, 'not_applicable'],
+      [4, 'suppressed'],
+    ])
+    expect(report.analytics.lifecycleProjection).toMatchObject({
+      checkedBrokerEvents: 4,
+      policyMapped: 3,
+      expected: 2,
+      present: 1,
+      missing: 1,
+      suppressed: 1,
+      notApplicable: 1,
+    })
+    expect(report.analytics.crossSink.brokerToLifecycle).toMatchObject({
+      expected: 2,
+      present: 1,
+      missing: 1,
+      suppressed: 1,
+      notApplicable: 1,
+    })
   })
 
   it('reports missing provider events and strict assistant text divergence', async () => {
@@ -611,7 +827,7 @@ function fakeStore(events: ReturnType<typeof brokerEvent>[]): CaptureVerificatio
         Array<{ hrcSeq: number; eventKind: string; payload: unknown }>
       > = {}
       for (const event of events) {
-        if (event.hrcEventSeq !== undefined) {
+        if (event.hrcEventSeq !== undefined && !event.__omitRawMirror) {
           rawMirrors[event.hrcEventSeq] = rawMirror(event)
         }
         const lifecycleKind =
@@ -657,6 +873,18 @@ function brokerEvent(
     projectionStatus?: string
     mirrorPayload?: unknown
     skipMirror?: boolean
+    omitRawMirror?: boolean
+    rawSource?: string
+    rawEventKind?: string
+    rawInvocationId?: string
+    rawBrokerSeq?: number
+    rawBrokerType?: string
+    rawEventJson?: unknown
+    rawPayloadMissing?: boolean
+    runtimeId?: string
+    runId?: string
+    harnessGeneration?: number
+    turnAttempt?: number
   } = {}
 ) {
   return {
@@ -664,31 +892,51 @@ function brokerEvent(
     seq,
     time: ts(seq),
     type,
-    runId: RUN_ID,
-    runtimeId: RUNTIME_ID,
-    harnessGeneration: 1,
-    turnAttempt: 1,
+    runId: options.runId ?? RUN_ID,
+    runtimeId: options.runtimeId ?? RUNTIME_ID,
+    harnessGeneration: options.harnessGeneration ?? 1,
+    turnAttempt: options.turnAttempt ?? 1,
     payload,
     payloadJsonText: JSON.stringify(payload),
     ...(options.skipMirror ? {} : { hrcEventSeq: seq + 10 }),
     projectionStatus: options.projectionStatus ?? 'applied',
     createdAt: ts(seq),
     __mirrorPayload: options.mirrorPayload,
+    __omitRawMirror: options.omitRawMirror,
+    __rawSource: options.rawSource,
+    __rawEventKind: options.rawEventKind,
+    __rawInvocationId: options.rawInvocationId,
+    __rawBrokerSeq: options.rawBrokerSeq,
+    __rawBrokerType: options.rawBrokerType,
+    __rawEventJson: options.rawEventJson,
+    __rawPayloadMissing: options.rawPayloadMissing,
   }
 }
 
 function rawMirror(event: ReturnType<typeof brokerEvent>) {
+  if (event.__rawEventJson !== undefined) {
+    return {
+      seq: event.hrcEventSeq ?? 0,
+      source: event.__rawSource ?? 'broker',
+      eventKind: event.__rawEventKind ?? `broker.${event.type}`,
+      eventJson: event.__rawEventJson,
+      eventJsonText: '{}',
+    }
+  }
+  const eventJson: Record<string, unknown> = {
+    invocationId: event.__rawInvocationId ?? event.invocationId,
+    seq: event.__rawBrokerSeq ?? event.seq,
+    type: event.__rawBrokerType ?? event.type,
+    time: event.time,
+  }
+  if (!event.__rawPayloadMissing) {
+    eventJson.payload = event.__mirrorPayload ?? event.payload
+  }
   return {
     seq: event.hrcEventSeq ?? 0,
-    source: 'broker',
-    eventKind: `broker.${event.type}`,
-    eventJson: {
-      invocationId: event.invocationId,
-      seq: event.seq,
-      type: event.type,
-      time: event.time,
-      payload: event.__mirrorPayload ?? event.payload,
-    },
+    source: event.__rawSource ?? 'broker',
+    eventKind: event.__rawEventKind ?? `broker.${event.type}`,
+    eventJson,
     eventJsonText: '{}',
   }
 }
@@ -702,8 +950,33 @@ function transcriptFixture(
     provider: 'codex',
     warnings: [],
     lineCount: observations.length,
+    totalLines: observations.length,
+    parsedRecords: observations.length,
+    invalidJsonRecords: 0,
+    applicableObservations: observations.length,
+    ignoredRecords: 0,
+    unsupportedRecords: 0,
+    unknownRecords: 0,
+    warningCount: 0,
+    observationsByType: observationCounts(observations),
     observations,
   }
+}
+
+function observationCounts(
+  observations: ParsedProviderTranscript['observations']
+): Record<CaptureObservationType, number> {
+  const counts: Record<CaptureObservationType, number> = {
+    'user.message': 0,
+    'assistant.message.completed': 0,
+    'tool.call.started': 0,
+    'tool.call.completed': 0,
+    'tool.call.failed': 0,
+  }
+  for (const observation of observations) {
+    counts[observation.type] += 1
+  }
+  return counts
 }
 
 function ts(offsetSeconds = 0): string {

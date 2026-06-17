@@ -1,4 +1,8 @@
-import { lifecycleKindForBrokerEvent } from 'hrc-core'
+import {
+  BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
+  BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
+  lifecycleKindForBrokerEvent,
+} from 'hrc-core'
 
 import {
   canonicalJson,
@@ -14,12 +18,16 @@ import {
   type BrokerInvocationCapture,
   CAPTURE_VERIFIER_SCHEMA,
   type CaptureObservation,
+  type CaptureVerificationAnalytics,
   type CaptureVerificationFinding,
   type CaptureVerificationReport,
   type CaptureVerificationStore,
   type InvocationCaptureSnapshot,
   type LifecycleCheck,
+  type LifecycleProjectionAnalytics,
+  type ProviderJsonlAnalytics,
   type ProviderObservationMatch,
+  type RawEventsAnalytics,
   type RawMirrorEvent,
   type VerificationCandidate,
   type VerifyInvocationInput,
@@ -32,6 +40,16 @@ type ComparableBrokerEvent = {
   normalizedPayload: unknown
   payloadHash: string
   text?: string | undefined
+}
+
+type LedgerCheckResult = {
+  ledger: CaptureVerificationReport['ledger']
+  analytics: CaptureVerificationAnalytics['brokerLedger']
+}
+
+type RawMirrorCheckResult = {
+  rawMirror: CaptureVerificationReport['rawMirror']
+  analytics: RawEventsAnalytics
 }
 
 export async function listVerificationCandidates(input: {
@@ -63,8 +81,8 @@ export async function verifyInvocation(
       : undefined)
 
   const findings: CaptureVerificationFinding[] = []
-  const ledger = checkLedger(snapshot.invocation, snapshot.brokerEvents, findings)
-  const rawMirror = checkRawMirrors(snapshot, findings)
+  const ledgerCheck = checkLedger(snapshot.invocation, snapshot.brokerEvents, findings)
+  const rawMirrorCheck = checkRawMirrors(snapshot, findings)
   const providerMatches =
     transcript === undefined
       ? []
@@ -75,6 +93,7 @@ export async function verifyInvocation(
           findings
         )
   const lifecycle = checkLifecycle(snapshot, findings)
+  const lifecycleAnalytics = buildLifecycleAnalytics(lifecycle, ledgerCheck.analytics.eventCount)
   if (transcript !== undefined) {
     for (const warning of transcript.warnings) {
       findings.push({
@@ -86,6 +105,13 @@ export async function verifyInvocation(
       })
     }
   }
+  const analytics = buildAnalytics({
+    transcript,
+    brokerLedger: ledgerCheck.analytics,
+    rawEvents: rawMirrorCheck.analytics,
+    lifecycleProjection: lifecycleAnalytics,
+    providerMatches,
+  })
 
   const hasErrors = findings.some((finding) => finding.severity === 'error')
   const hasInconclusive = lifecycle.some((item) => item.status === 'missing')
@@ -99,11 +125,12 @@ export async function verifyInvocation(
     runtimeId: snapshot.invocation.runtimeId,
     ...(snapshot.invocation.runId !== undefined ? { runId: snapshot.invocation.runId } : {}),
     ...(transcript !== undefined ? { transcriptPath: transcript.path, transcript } : {}),
-    ledger,
-    rawMirror,
+    ledger: ledgerCheck.ledger,
+    rawMirror: rawMirrorCheck.rawMirror,
     providerMatches,
     lifecycle,
     findings,
+    analytics,
   }
 }
 
@@ -129,6 +156,23 @@ function missingInvocationReport(invocationId: string): CaptureVerificationRepor
         message: `broker invocation not found: ${invocationId}`,
       },
     ],
+    analytics: buildAnalytics({
+      brokerLedger: {
+        invocationId,
+        eventCount: 0,
+        seqHoleCount: 0,
+        duplicateSeqCount: 0,
+        statuses: {},
+        eventsByType: {},
+        runtimeIdentityMismatchCount: 0,
+        runDivergenceWarningCount: 0,
+        staleGenerationCount: 0,
+        staleAttemptCount: 0,
+      },
+      rawEvents: emptyRawEventsAnalytics(),
+      lifecycleProjection: buildLifecycleAnalytics([], 0),
+      providerMatches: [],
+    }),
   }
 }
 
@@ -136,14 +180,23 @@ function checkLedger(
   invocation: BrokerInvocationCapture,
   events: BrokerCaptureEvent[],
   findings: CaptureVerificationFinding[]
-): CaptureVerificationReport['ledger'] {
+): LedgerCheckResult {
   const statuses: Record<string, number> = {}
+  const eventsByType: Record<string, number> = {}
   let previousSeq: number | undefined
   const seen = new Set<number>()
+  let seqHoleCount = 0
+  let duplicateSeqCount = 0
+  let runtimeIdentityMismatchCount = 0
+  let runDivergenceWarningCount = 0
+  let staleGenerationCount = 0
+  let staleAttemptCount = 0
 
   for (const row of events) {
     statuses[row.projectionStatus] = (statuses[row.projectionStatus] ?? 0) + 1
+    eventsByType[row.type] = (eventsByType[row.type] ?? 0) + 1
     if (row.runtimeId !== invocation.runtimeId) {
+      runtimeIdentityMismatchCount += 1
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
         severity: 'error',
@@ -159,6 +212,7 @@ function checkLedger(
       row.runId !== undefined &&
       row.runId !== invocation.runId
     ) {
+      runDivergenceWarningCount += 1
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
         severity: 'warning',
@@ -181,6 +235,7 @@ function checkLedger(
       })
     }
     if (seen.has(row.seq)) {
+      duplicateSeqCount += 1
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
         severity: 'error',
@@ -192,7 +247,8 @@ function checkLedger(
       })
     }
     seen.add(row.seq)
-    if (previousSeq !== undefined && row.seq !== previousSeq + 1) {
+    if (previousSeq !== undefined && row.seq > previousSeq + 1) {
+      seqHoleCount += 1
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
         severity: 'error',
@@ -203,24 +259,60 @@ function checkLedger(
         type: row.type,
       })
     }
+    if (
+      invocation.currentHarnessGeneration !== undefined &&
+      row.harnessGeneration !== undefined &&
+      row.harnessGeneration !== invocation.currentHarnessGeneration
+    ) {
+      staleGenerationCount += 1
+    }
+    if (
+      invocation.currentTurnAttempt !== undefined &&
+      row.turnAttempt !== undefined &&
+      row.turnAttempt !== invocation.currentTurnAttempt
+    ) {
+      staleAttemptCount += 1
+    }
     previousSeq = row.seq
   }
 
   const last = events.at(-1)
-  return {
+  const ledger = {
     eventCount: events.length,
     ...(events[0] !== undefined ? { firstSeq: events[0].seq } : {}),
     ...(last !== undefined ? { lastSeq: last.seq } : {}),
     statuses,
+  }
+  return {
+    ledger,
+    analytics: {
+      invocationId: invocation.invocationId,
+      eventCount: events.length,
+      ...(events[0] !== undefined ? { firstSeq: events[0].seq } : {}),
+      ...(last !== undefined ? { lastSeq: last.seq } : {}),
+      seqHoleCount,
+      duplicateSeqCount,
+      statuses,
+      eventsByType,
+      runtimeIdentityMismatchCount,
+      runDivergenceWarningCount,
+      staleGenerationCount,
+      staleAttemptCount,
+    },
   }
 }
 
 function checkRawMirrors(
   snapshot: InvocationCaptureSnapshot,
   findings: CaptureVerificationFinding[]
-): CaptureVerificationReport['rawMirror'] {
+): RawMirrorCheckResult {
+  const analytics = emptyRawEventsAnalytics()
+  analytics.expectedFromBroker = snapshot.brokerEvents.length
   let matched = 0
   for (const row of snapshot.brokerEvents) {
+    if (row.projectionStatus === 'applied') {
+      analytics.appliedBrokerRows += 1
+    }
     if (row.hrcEventSeq === undefined) {
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
@@ -233,6 +325,7 @@ function checkRawMirrors(
       })
       continue
     }
+    analytics.linkedByHrcEventSeq += 1
     const raw = snapshot.rawMirrors[row.hrcEventSeq]
     if (raw === undefined) {
       findings.push({
@@ -247,12 +340,15 @@ function checkRawMirrors(
       })
       continue
     }
-    const errors = rawMirrorErrors(row, raw)
-    if (errors.length === 0) {
+    analytics.found += 1
+    const check = rawMirrorCheck(row, raw)
+    addRawMirrorFieldCounts(analytics, check)
+    if (check.messages.length === 0) {
       matched += 1
       continue
     }
-    for (const message of errors) {
+    analytics.mismatched += 1
+    for (const message of check.messages) {
       findings.push({
         schema: CAPTURE_VERIFIER_SCHEMA,
         severity: 'error',
@@ -265,34 +361,83 @@ function checkRawMirrors(
       })
     }
   }
-  return { checked: snapshot.brokerEvents.length, matched }
+  analytics.matched = matched
+  analytics.missing = analytics.expectedFromBroker - analytics.found
+  return { rawMirror: { checked: snapshot.brokerEvents.length, matched }, analytics }
 }
 
-function rawMirrorErrors(row: BrokerCaptureEvent, raw: RawMirrorEvent): string[] {
-  const errors: string[] = []
+type RawMirrorFieldCheck = {
+  messages: string[]
+  wrongSource: number
+  wrongEventKind: number
+  wrongInvocation: number
+  wrongSeq: number
+  wrongType: number
+  payloadMismatch: number
+  malformedEventJson: number
+  malformedPayload: number
+}
+
+function rawMirrorCheck(row: BrokerCaptureEvent, raw: RawMirrorEvent): RawMirrorFieldCheck {
+  const check: RawMirrorFieldCheck = {
+    messages: [],
+    wrongSource: 0,
+    wrongEventKind: 0,
+    wrongInvocation: 0,
+    wrongSeq: 0,
+    wrongType: 0,
+    payloadMismatch: 0,
+    malformedEventJson: 0,
+    malformedPayload: 0,
+  }
   if (raw.source !== 'broker') {
-    errors.push(`events.seq ${raw.seq} source is ${raw.source}, expected broker`)
+    check.wrongSource += 1
+    check.messages.push(`events.seq ${raw.seq} source is ${raw.source}, expected broker`)
   }
   if (raw.eventKind !== `broker.${row.type}`) {
-    errors.push(`events.seq ${raw.seq} event_kind is ${raw.eventKind}, expected broker.${row.type}`)
+    check.wrongEventKind += 1
+    check.messages.push(
+      `events.seq ${raw.seq} event_kind is ${raw.eventKind}, expected broker.${row.type}`
+    )
   }
   if (!isRecord(raw.eventJson)) {
-    errors.push(`events.seq ${raw.seq} event_json is not an object`)
-    return errors
+    check.malformedEventJson += 1
+    check.messages.push(`events.seq ${raw.seq} event_json is not an object`)
+    return check
   }
   if (raw.eventJson['invocationId'] !== row.invocationId) {
-    errors.push(`events.seq ${raw.seq} invocationId mismatch`)
+    check.wrongInvocation += 1
+    check.messages.push(`events.seq ${raw.seq} invocationId mismatch`)
   }
   if (raw.eventJson['seq'] !== row.seq) {
-    errors.push(`events.seq ${raw.seq} broker seq mismatch`)
+    check.wrongSeq += 1
+    check.messages.push(`events.seq ${raw.seq} broker seq mismatch`)
   }
   if (raw.eventJson['type'] !== row.type) {
-    errors.push(`events.seq ${raw.seq} broker type mismatch`)
+    check.wrongType += 1
+    check.messages.push(`events.seq ${raw.seq} broker type mismatch`)
+  }
+  if (!Object.hasOwn(raw.eventJson, 'payload')) {
+    check.malformedPayload += 1
+    check.messages.push(`events.seq ${raw.seq} payload is missing`)
+    return check
   }
   if (canonicalJson(raw.eventJson['payload']) !== canonicalJson(row.payload)) {
-    errors.push(`events.seq ${raw.seq} payload mismatch`)
+    check.payloadMismatch += 1
+    check.messages.push(`events.seq ${raw.seq} payload mismatch`)
   }
-  return errors
+  return check
+}
+
+function addRawMirrorFieldCounts(analytics: RawEventsAnalytics, check: RawMirrorFieldCheck): void {
+  analytics.wrongSource += check.wrongSource
+  analytics.wrongEventKind += check.wrongEventKind
+  analytics.wrongInvocation += check.wrongInvocation
+  analytics.wrongSeq += check.wrongSeq
+  analytics.wrongType += check.wrongType
+  analytics.payloadMismatch += check.payloadMismatch
+  analytics.malformedEventJson += check.malformedEventJson
+  analytics.malformedPayload += check.malformedPayload
 }
 
 function compareTranscript(
@@ -445,6 +590,15 @@ function checkLifecycle(
       out.push({ brokerSeq: row.seq, brokerType: row.type, status: 'not_applicable' })
       continue
     }
+    if (isSuppressedLifecycleProjection(snapshot.invocation, row)) {
+      out.push({
+        brokerSeq: row.seq,
+        brokerType: row.type,
+        lifecycleKind,
+        status: 'suppressed',
+      })
+      continue
+    }
     const lifecycle = snapshot.lifecycleProjections[lifecycleKey(row, lifecycleKind)]?.[0]
     if (lifecycle === undefined) {
       out.push({
@@ -473,6 +627,201 @@ function checkLifecycle(
     })
   }
   return out
+}
+
+function isSuppressedLifecycleProjection(
+  invocation: BrokerInvocationCapture,
+  row: BrokerCaptureEvent
+): boolean {
+  return (
+    (invocation.currentHarnessGeneration !== undefined &&
+      row.harnessGeneration !== undefined &&
+      row.harnessGeneration !== invocation.currentHarnessGeneration) ||
+    (invocation.currentTurnAttempt !== undefined &&
+      row.turnAttempt !== undefined &&
+      row.turnAttempt !== invocation.currentTurnAttempt)
+  )
+}
+
+function buildAnalytics(input: {
+  transcript?: VerifyInvocationInput['transcript'] | undefined
+  brokerLedger: CaptureVerificationAnalytics['brokerLedger']
+  rawEvents: RawEventsAnalytics
+  lifecycleProjection: LifecycleProjectionAnalytics
+  providerMatches: ProviderObservationMatch[]
+}): CaptureVerificationAnalytics {
+  return {
+    schema: CAPTURE_VERIFIER_SCHEMA,
+    ...(input.transcript !== undefined
+      ? { providerJsonl: providerJsonlAnalytics(input.transcript) }
+      : {}),
+    brokerLedger: input.brokerLedger,
+    rawEvents: input.rawEvents,
+    lifecycleProjection: input.lifecycleProjection,
+    crossSink: {
+      ...(input.transcript !== undefined
+        ? { providerToBroker: providerToBrokerAnalytics(input.providerMatches) }
+        : {}),
+      brokerToRaw: {
+        expected: input.rawEvents.expectedFromBroker,
+        matched: input.rawEvents.matched,
+        missing: input.rawEvents.missing,
+        mismatched: input.rawEvents.mismatched,
+      },
+      brokerToLifecycle: {
+        expected: input.lifecycleProjection.expected,
+        present: input.lifecycleProjection.present,
+        missing: input.lifecycleProjection.missing,
+        suppressed: input.lifecycleProjection.suppressed,
+        notApplicable: input.lifecycleProjection.notApplicable,
+      },
+    },
+  }
+}
+
+function providerJsonlAnalytics(
+  transcript: NonNullable<VerifyInvocationInput['transcript']>
+): ProviderJsonlAnalytics {
+  return {
+    path: transcript.path,
+    provider: transcript.provider,
+    totalLines: transcript.totalLines,
+    parsedRecords: transcript.parsedRecords,
+    invalidJsonRecords: transcript.invalidJsonRecords,
+    applicableObservations: transcript.applicableObservations,
+    ignoredRecords: transcript.ignoredRecords,
+    unsupportedRecords: transcript.unsupportedRecords,
+    unknownRecords: transcript.unknownRecords,
+    warningCount: transcript.warningCount,
+    observationsByType: transcript.observationsByType,
+  }
+}
+
+function providerToBrokerAnalytics(
+  matches: ProviderObservationMatch[]
+): NonNullable<CaptureVerificationAnalytics['crossSink']['providerToBroker']> {
+  const out = {
+    expected: matches.length,
+    matched: 0,
+    missing: 0,
+    divergent: 0,
+    textMismatchTolerated: 0,
+  }
+  for (const match of matches) {
+    switch (match.status) {
+      case 'matched':
+        out.matched += 1
+        break
+      case 'missing':
+        out.missing += 1
+        break
+      case 'divergent':
+        out.divergent += 1
+        break
+      case 'text-mismatch-tolerated':
+        out.textMismatchTolerated += 1
+        break
+    }
+  }
+  return out
+}
+
+function buildLifecycleAnalytics(
+  lifecycle: LifecycleCheck[],
+  checkedBrokerEvents: number
+): LifecycleProjectionAnalytics {
+  const out: LifecycleProjectionAnalytics = {
+    policyId: BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
+    policyVersion: 'v1',
+    policyHash: BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
+    checkedBrokerEvents,
+    policyMapped: 0,
+    expected: 0,
+    present: 0,
+    missing: 0,
+    suppressed: 0,
+    notApplicable: 0,
+    byBrokerType: {},
+    byLifecycleKind: {},
+  }
+
+  for (const item of lifecycle) {
+    let brokerBucket = out.byBrokerType[item.brokerType]
+    if (brokerBucket === undefined) {
+      brokerBucket = {
+        policyMapped: 0,
+        expected: 0,
+        present: 0,
+        missing: 0,
+        suppressed: 0,
+        notApplicable: 0,
+      }
+      out.byBrokerType[item.brokerType] = brokerBucket
+    }
+    if (item.status === 'not_applicable') {
+      out.notApplicable += 1
+      brokerBucket.notApplicable += 1
+      continue
+    }
+
+    out.policyMapped += 1
+    brokerBucket.policyMapped += 1
+
+    const lifecycleKind = item.lifecycleKind ?? 'unknown'
+    let kindBucket = out.byLifecycleKind[lifecycleKind]
+    if (kindBucket === undefined) {
+      kindBucket = {
+        expected: 0,
+        present: 0,
+        missing: 0,
+        suppressed: 0,
+      }
+      out.byLifecycleKind[lifecycleKind] = kindBucket
+    }
+
+    if (item.status === 'suppressed') {
+      out.suppressed += 1
+      brokerBucket.suppressed += 1
+      kindBucket.suppressed += 1
+      continue
+    }
+
+    out.expected += 1
+    brokerBucket.expected += 1
+    kindBucket.expected += 1
+
+    if (item.status === 'present') {
+      out.present += 1
+      brokerBucket.present += 1
+      kindBucket.present += 1
+    } else {
+      out.missing += 1
+      brokerBucket.missing += 1
+      kindBucket.missing += 1
+    }
+  }
+
+  return out
+}
+
+function emptyRawEventsAnalytics(): RawEventsAnalytics {
+  return {
+    expectedFromBroker: 0,
+    appliedBrokerRows: 0,
+    linkedByHrcEventSeq: 0,
+    found: 0,
+    matched: 0,
+    missing: 0,
+    mismatched: 0,
+    wrongSource: 0,
+    wrongEventKind: 0,
+    wrongInvocation: 0,
+    wrongSeq: 0,
+    wrongType: 0,
+    payloadMismatch: 0,
+    malformedEventJson: 0,
+    malformedPayload: 0,
+  }
 }
 
 export function lifecycleKey(row: BrokerCaptureEvent, lifecycleKind: string): string {

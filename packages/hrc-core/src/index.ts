@@ -61,7 +61,11 @@ export {
   resolveTmuxSocketPath,
 } from './paths.js'
 export {
+  BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
+  BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
   BROKER_TO_HRC_LIFECYCLE_KIND,
+  BROKER_TO_HRC_LIFECYCLE_POLICY_VERSION,
+  brokerToHrcLifecyclePolicyHash,
   lifecycleKindForBrokerEvent,
 } from './broker-lifecycle-policy.js'
 
