@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRunRecord,
+  HrcRuntimeSnapshot,
   ReconcileActiveRunResult,
   ReconcileActiveRunsResponse,
   ReconcileActiveRunsSummary,
@@ -395,6 +396,11 @@ export async function reconcileActiveRunsOnce(
         continue
       }
 
+      if (plan.action === 'finalize') {
+        results.push(finalizeActiveRun(ctx, candidate, plan))
+        continue
+      }
+
       results.push(reapActiveRun(ctx, candidate, plan, input.thresholdSeconds))
     } catch (error) {
       results.push({
@@ -425,6 +431,7 @@ export async function reconcileActiveRunsOnce(
     type: 'summary',
     matched: results.filter((result) => result.status === 'matched').length,
     reaped: results.filter((result) => result.status === 'reaped').length,
+    repaired: results.filter((result) => result.status === 'repaired').length,
     suspect: results.filter((result) => result.status === 'suspect').length,
     skipped: results.filter((result) => result.status === 'skipped').length,
     errors: results.filter((result) => result.status === 'error').length,
@@ -558,6 +565,17 @@ async function planActiveRunReconcile(
       reason: 'runtime_awaiting_user_input',
     }
   }
+
+  // T-04240 (daedalus DM #8234, option C): a fossilized runtime-owned run whose
+  // turn actually FINISHED leaves an ORPHAN terminal in the broker ledger (the
+  // run_id-less turn.completed/failed/interrupted that escaped attribution). The
+  // candidate is already runtime-owned (listActiveRunReconcileCandidates gates
+  // on runtime.activeRunId === run.runId). Finalize from terminal evidence
+  // INSTEAD of reaping as a failure — but ONLY when no competing active run
+  // could own that terminal. Body/tool/assistant evidence alone is never a
+  // terminal, so it falls through to the status-based reap branches below.
+  const finalizePlan = planFinalizeFromOrphanTerminal(ctx, candidate, runtime)
+  if (finalizePlan) return finalizePlan
 
   if (runtime.transport === 'headless' && launch?.status === 'orphaned') {
     return {
@@ -715,6 +733,179 @@ async function planActiveRunReconcile(
   return {
     action: 'suspect',
     reason: 'runtime_may_still_be_live',
+  }
+}
+
+// ── T-04240: evidence-ranked finalize from an orphan broker terminal ─────────
+const ORPHAN_TERMINAL_RUN_STATUS: Record<string, 'completed' | 'failed' | 'cancelled'> = {
+  'turn.completed': 'completed',
+  'turn.failed': 'failed',
+  'turn.interrupted': 'cancelled',
+}
+
+/**
+ * Plan a `finalize` repair when the broker ledger proves the candidate's turn
+ * actually reached a terminal but the run was never finalized (the orphan
+ * terminal carries no run_id). Returns undefined when there is no terminal
+ * evidence (body-only is never a terminal — daedalus) or when a competing
+ * active nonterminal run could own that terminal (ambiguous — never infer).
+ */
+function planFinalizeFromOrphanTerminal(
+  ctx: ServerContext,
+  candidate: ActiveRunReconcileCandidate,
+  runtime: HrcRuntimeSnapshot
+): ActiveRunReconcilePlan | undefined {
+  const invocationId = runtime.activeInvocationId
+  // candidate.run is projected via HRC_SERVER_RUN_COLUMNS, which omits
+  // dispatched_input_id — read the full run record for the input linkage.
+  const inputId = ctx.db.runs.getByRunId(candidate.run.runId)?.dispatchedInputId
+  if (invocationId === undefined || inputId === undefined) return undefined
+
+  // No other active nonterminal run may exist for this runtime — otherwise the
+  // orphan terminal could belong to a different turn (T-04238 ambiguity).
+  const competing = ctx.db.runs
+    .listByRuntimeId(runtime.runtimeId)
+    .some(
+      (run) =>
+        run.runId !== candidate.run.runId &&
+        (run.status === 'accepted' || run.status === 'started' || run.status === 'running')
+    )
+  if (competing) return undefined
+
+  // Locate the candidate's input.accepted seq, then the FIRST orphan terminal
+  // (run_id NULL) after it on the same invocation.
+  const acceptedRow = ctx.db.sqlite
+    .query<{ seq: number }, [string, string]>(
+      `SELECT seq FROM broker_invocation_events
+        WHERE invocation_id = ? AND type = 'input.accepted'
+          AND json_extract(broker_event_json, '$.inputId') = ?
+        ORDER BY seq DESC LIMIT 1`
+    )
+    .get(invocationId, inputId)
+  if (!acceptedRow) return undefined
+
+  const terminalRow = ctx.db.sqlite
+    .query<{ type: string }, [string, number]>(
+      `SELECT type FROM broker_invocation_events
+        WHERE invocation_id = ?
+          AND type IN ('turn.completed', 'turn.failed', 'turn.interrupted')
+          AND (run_id IS NULL OR run_id = '')
+          AND seq > ?
+        ORDER BY seq ASC LIMIT 1`
+    )
+    .get(invocationId, acceptedRow.seq)
+  if (!terminalRow) return undefined
+
+  const finalizeStatus = ORPHAN_TERMINAL_RUN_STATUS[terminalRow.type]
+  if (!finalizeStatus) return undefined
+
+  return {
+    action: 'finalize',
+    reason: 'runtime_active_run_reconciled_from_terminal',
+    finalizeStatus,
+    nextRuntimeStatus: 'ready',
+  }
+}
+
+/**
+ * Execute a `finalize` repair: mark the run with the evidence-derived terminal
+ * status, clear runtime ownership, and emit the matching lifecycle terminal
+ * event (source `active-run-reconcile`) — NOT a `turn.reaped` failure.
+ */
+function finalizeActiveRun(
+  ctx: ServerContext,
+  candidate: ActiveRunReconcileCandidate,
+  plan: ActiveRunReconcilePlan
+): ReconcileActiveRunResult {
+  const now = timestamp()
+  const finalizeStatus = plan.finalizeStatus ?? 'completed'
+  const claim = ctx.db.sqlite
+    .query(
+      `
+          UPDATE runs
+          SET status = ?, completed_at = ?, updated_at = ?
+          WHERE run_id = ?
+            AND runtime_id = ?
+            AND status IN ('accepted', 'started', 'running')
+            AND completed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM runtimes
+              WHERE runtime_id = ? AND active_run_id = ?
+            )
+        `
+    )
+    .run(
+      finalizeStatus,
+      now,
+      now,
+      candidate.run.runId,
+      candidate.runtime.runtimeId,
+      candidate.runtime.runtimeId,
+      candidate.run.runId
+    ) as { changes?: number }
+
+  if ((claim.changes ?? 0) === 0) {
+    return activeRunReconcileResult(candidate, plan, 'skipped', false)
+  }
+
+  const runtimeUpdate = ctx.db.sqlite
+    .query(
+      `
+          UPDATE runtimes
+          SET active_run_id = NULL, status = ?, updated_at = ?, last_activity_at = ?
+          WHERE runtime_id = ? AND active_run_id = ?
+        `
+    )
+    .run(
+      plan.nextRuntimeStatus ?? 'ready',
+      now,
+      now,
+      candidate.runtime.runtimeId,
+      candidate.run.runId
+    ) as { changes?: number }
+  const runtimeOwnershipCleared = (runtimeUpdate.changes ?? 0) > 0
+
+  const eventKind =
+    finalizeStatus === 'completed'
+      ? 'turn.completed'
+      : finalizeStatus === 'failed'
+        ? 'turn.failed'
+        : 'turn.interrupted'
+  const event = appendHrcEvent(ctx.db, eventKind, {
+    ts: now,
+    hostSessionId: candidate.run.hostSessionId,
+    scopeRef: candidate.run.scopeRef,
+    laneRef: candidate.run.laneRef,
+    generation: candidate.run.generation,
+    runId: candidate.run.runId,
+    runtimeId: candidate.runtime.runtimeId,
+    ...(candidate.run.transport === 'sdk' ||
+    candidate.run.transport === 'tmux' ||
+    candidate.run.transport === 'headless' ||
+    candidate.run.transport === 'ghostty'
+      ? { transport: candidate.run.transport }
+      : {}),
+    payload: {
+      success: finalizeStatus === 'completed',
+      source: 'active-run-reconcile',
+      reason: plan.reason,
+      finalizedRunStatus: finalizeStatus,
+      runId: candidate.run.runId,
+      runtimeId: candidate.runtime.runtimeId,
+    },
+  })
+  ctx.notifyEvent(event)
+
+  writeServerLog('INFO', 'active_run_reconcile.repaired_from_terminal', {
+    runId: candidate.run.runId,
+    runtimeId: candidate.runtime.runtimeId,
+    finalizedRunStatus: finalizeStatus,
+    runtimeOwnershipCleared,
+  })
+
+  return {
+    ...activeRunReconcileResult(candidate, plan, 'repaired', runtimeOwnershipCleared),
+    finalizedRunStatus: finalizeStatus,
   }
 }
 

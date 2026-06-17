@@ -158,9 +158,12 @@ export type ActiveRunReconcileCandidate = {
 
 export type ActiveRunReconcilePlan = {
   reason: ReconcileActiveRunReason
-  action: 'reap' | 'suspect'
+  action: 'reap' | 'suspect' | 'finalize'
   errorCode?: HrcErrorCode | undefined
   nextRuntimeStatus?: string | undefined
+  // T-04240: on a `finalize` action, the terminal run status derived from the
+  // orphan broker terminal (turn.completed => completed, etc.).
+  finalizeStatus?: 'completed' | 'failed' | 'cancelled' | undefined
 }
 
 export type LatestRunEventRow = {

@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
 
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
+import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
 import { cmdCapture, cmdInterrupt, cmdRuntimeEnsure, cmdTerminate } from './handlers-control.js'
 import {
   cmdAdopt,
@@ -28,6 +29,36 @@ export function registerRuntimeCommands(program: Command): void {
         booleans: ['probe', 'json'],
       })
       await cmdBrokerInspect(args)
+    })
+
+  const brokerVerify = broker.command('verify').description('verify broker capture and projection')
+
+  brokerVerify
+    .command('candidates')
+    .description('list broker invocation verification candidates for an exact scope ref')
+    .argument('<scope-ref>', 'exact scope_ref')
+    .option('--json', 'output as JSON')
+    .action(async (scopeRef, _opts, cmd: Command) => {
+      const args = toLegacyArgv([scopeRef], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdBrokerVerifyCandidates(args)
+    })
+
+  brokerVerify
+    .command('run')
+    .description('verify one broker invocation against its ledger, raw mirror, and optional provider JSONL')
+    .requiredOption('--invocation <id>', 'broker invocation id')
+    .option('--jsonl <path>', 'provider transcript JSONL path')
+    .option('--strict-text', 'fail assistant text mismatches instead of warning')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['invocation', 'jsonl'],
+        booleans: ['strict-text', 'json'],
+      })
+      await cmdBrokerVerifyRun(args)
     })
 
   const runtime = program.command('runtime').description('ensure, inspect, and control runtimes')

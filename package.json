@@ -5,6 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "sync:asp": "bun scripts/sync-asp-from-verdaccio.ts",
+    "sync:wrkq": "bun scripts/sync-wrkq-from-verdaccio.ts",
     "build": "bun run build:ordered",
     "build:ordered": "bun run --filter 'agent-action-render' build && bun run --filter 'hrc-core' build && bun run --filter 'hrc-events' build && bun run --filter 'hrc-store-sqlite' build && bun run --filter 'hrc-sdk' build && bun run --filter 'hrc-frame-render' build && bun run --filter 'hrc-server' build && bun run --filter 'hrc-cli' build && bun run --filter 'hrcchat-cli' build",
     "build:parallel": "bun run --filter '*' build",

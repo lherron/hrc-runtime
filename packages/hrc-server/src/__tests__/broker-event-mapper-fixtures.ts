@@ -307,6 +307,113 @@ export const Q_INPUT_B_ID = 'input_queued_B' as InputId
 export const Q_RUN_C_ID = 'run_queued_C'
 export const Q_INPUT_C_ID = 'input_queued_C' as InputId
 
+// ── No-start-bracket ownership fixture identifiers (T-04845) ────────────────
+// Single runtime-owned active run, no other in-flight inputs — the shape the
+// broker leaves when it dispatches to an IDLE runtime but omits turn.started
+// (live incident smokey@agent-spaces:T-04829 / rt-4f40d76c / run-1fd136bc).
+export const O_HOST_SESSION_ID = 'hsid_owned_nobracket'
+export const O_SCOPE_REF = 'agent:smokey:project:hrc-runtime:task:T-04845'
+export const O_OPERATION_ID = 'op_owned_nobracket'
+export const O_RUNTIME_ID = 'rt_owned_nobracket'
+export const O_INVOCATION_ID = 'inv_owned_nobracket' as InvocationId
+export const O_RUN_ID = 'run_owned_owner'
+export const O_INPUT_ID = 'input_owned_owner' as InputId
+// A second, NON-owner queued input used by the ambiguity guards.
+export const O_RUN_OTHER_ID = 'run_owned_other'
+export const O_INPUT_OTHER_ID = 'input_owned_other' as InputId
+
+/**
+ * Open a tmux-interactive runtime with a SINGLE runtime-owned active run
+ * (runtime.activeRunId === O_RUN_ID, status busy). The broker invocation has no
+ * runId (tmux shape); run linkage flows through input.accepted.inputId ->
+ * runs.dispatched_input_id. No turn.started will be applied by the no-bracket
+ * tests — exercising the daedalus runtime-ownership predicate (T-04845).
+ */
+export async function makeOwnedNoBracketFixture(): Promise<SeededFixture> {
+  const dir = await mkdtemp(join(tmpdir(), 'hrc-broker-owned-'))
+  const dbPath = join(dir, 'test.sqlite')
+  const db = openHrcDatabase(dbPath)
+  const now = ts()
+
+  db.sessions.insert({
+    hostSessionId: O_HOST_SESSION_ID,
+    scopeRef: O_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+    ancestorScopeRefs: [],
+  })
+
+  db.runtimes.insert({
+    runtimeId: O_RUNTIME_ID,
+    hostSessionId: O_HOST_SESSION_ID,
+    scopeRef: O_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    harness: 'claude-code',
+    provider: 'anthropic',
+    status: 'starting',
+    supportsInflightInput: true,
+    adopted: false,
+    controllerKind: 'harness-broker',
+    activeOperationId: O_OPERATION_ID,
+    activeInvocationId: O_INVOCATION_ID,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  // Runtime owns run A (dispatch to an idle runtime sets activeRunId + busy).
+  db.runtimes.update(O_RUNTIME_ID, {
+    status: 'busy',
+    activeRunId: O_RUN_ID,
+    runtimeStateJson: { status: 'busy', activeRunId: O_RUN_ID },
+    updatedAt: ts(1),
+  })
+
+  db.runs.insert({
+    runId: O_RUN_ID,
+    hostSessionId: O_HOST_SESSION_ID,
+    runtimeId: O_RUNTIME_ID,
+    scopeRef: O_SCOPE_REF,
+    laneRef: LANE_REF,
+    generation: GENERATION,
+    transport: 'tmux',
+    status: 'accepted',
+    acceptedAt: now,
+    updatedAt: now,
+    operationId: O_OPERATION_ID,
+    dispatchedInputId: O_INPUT_ID,
+  })
+
+  db.brokerInvocations.insert({
+    invocationId: O_INVOCATION_ID,
+    operationId: O_OPERATION_ID,
+    runtimeId: O_RUNTIME_ID,
+    // runId intentionally absent — tmux-interactive shape.
+    brokerProtocol: 'harness-broker/0.1',
+    brokerDriver: 'claude-code-tmux',
+    invocationState: 'turn_active',
+    capabilitiesJson: JSON.stringify({ turns: 'multi', 'input.queue': true }),
+    specHash: 'sha256:spec-owned',
+    startRequestHash: 'sha256:req-owned',
+    selectedProfileHash: 'sha256:prof-owned',
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return {
+    db,
+    dbPath,
+    cleanup: async () => {
+      db.close()
+      await rm(dir, { recursive: true, force: true })
+    },
+  }
+}
+
 /**
  * The canonical ordered headless codex-app-server lifecycle used by the
  * projection-mapping and replay tests:

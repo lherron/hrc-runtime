@@ -629,6 +629,9 @@ export type ReconcileActiveRunReason =
   | 'runtime_unavailable_with_active_run'
   | 'runtime_busy_timeout_with_active_run'
   | 'runtime_may_still_be_live'
+  // T-04240: a fossilized runtime-owned run finalized from an orphan broker
+  // terminal (turn.completed/failed/interrupted) — a repair, NOT a failure reap.
+  | 'runtime_active_run_reconciled_from_terminal'
   // T-01946: a turn parked on a user prompt (open ask bracket) is never reapable.
   | 'runtime_awaiting_user_input'
   // T-01946 gate 6: `awaiting_input` status with no active run — corrupt, surfaced.
@@ -640,13 +643,17 @@ export type ReconcileActiveRunResult = {
   hostSessionId: string
   runtimeId: string
   transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
-  status: 'reaped' | 'matched' | 'suspect' | 'skipped' | 'error'
+  // `repaired` (T-04240): the run was finalized from durable broker terminal
+  // evidence (completed/failed/cancelled), distinct from a `reaped` failure.
+  status: 'reaped' | 'repaired' | 'matched' | 'suspect' | 'skipped' | 'error'
   reason: ReconcileActiveRunReason
   observedAt: string
   observedSource: 'event' | 'started_at' | 'accepted_at' | 'updated_at'
   runtimeStatus: string
   nextRuntimeStatus?: string | undefined
   runtimeOwnershipCleared: boolean
+  // T-04240: the terminal status the run was finalized to on a `repaired` result.
+  finalizedRunStatus?: 'completed' | 'failed' | 'cancelled' | undefined
   launchId?: string | undefined
   launchStatus?: string | undefined
   errorCode?: string | undefined
@@ -657,6 +664,7 @@ export type ReconcileActiveRunsSummary = {
   type: 'summary'
   matched: number
   reaped: number
+  repaired: number
   suspect: number
   skipped: number
   errors: number

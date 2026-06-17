@@ -25,7 +25,12 @@
  * launches/execs anything. It is inert unless invoked by the W3B controller,
  * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
  */
-import type { HrcContinuationRef, HrcProvider } from 'hrc-core'
+import type {
+  HrcBrokerInvocationRecord,
+  HrcContinuationRef,
+  HrcProvider,
+  HrcRuntimeSnapshot,
+} from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
   AssistantMessageCompletedPayload,
@@ -48,7 +53,7 @@ import type {
   TurnRetryPayload,
 } from 'spaces-harness-broker-protocol'
 
-import { hasOpenAskBracket, isAskUserTool } from '../ask-bracket'
+import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
 import {
   type BrokerEventMapperDeps,
   type BrokerProjectionResult,
@@ -115,7 +120,7 @@ export class BrokerEventMapper {
     // when the run wasn't dispatched through the broker-input path (e.g. the
     // initial start-turn input on a fresh invocation, where the start path
     // pre-sets invocation.runId correctly).
-    const resolvedRunId = this.resolveRunIdForEvent(envelope, invocation.runId)
+    const resolvedRunId = this.resolveRunIdForEvent(envelope, invocation, runtime)
 
     const ctx: ProjectionContext = {
       runtimeId: runtime.runtimeId,
@@ -199,8 +204,10 @@ export class BrokerEventMapper {
    */
   private resolveRunIdForEvent(
     envelope: InvocationEventEnvelope,
-    fallbackRunId: string | undefined
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot
   ): string | undefined {
+    const fallbackRunId = invocation.runId
     // Prefer envelope.inputId when the broker sets it: input.accepted /
     // input.queued / input.rejected always carry it (contract), and
     // input.queued specifically refers to the QUEUED input.
@@ -221,8 +228,88 @@ export class BrokerEventMapper {
       return fallbackRunId
     }
 
-    if (this.findPriorInputAccepted(envelope.invocationId, envelope.seq)) return undefined
+    // No open turn.started bracket. The broker can omit turn.started entirely
+    // for a delivered input (T-04845: claude-code-tmux dispatched to an idle
+    // runtime emitted input.accepted -> body -> turn.completed with no start),
+    // which would otherwise orphan the whole turn to an empty run_id. Attribute
+    // to the prior input.accepted's run ONLY when durable broker order proves it
+    // is ALREADY the runtime owner (daedalus DM #8234, option B). Any ambiguity
+    // keeps the conservative undefined default that protects T-04238.
+    const priorInput = this.findPriorInputAccepted(envelope.invocationId, envelope.seq)
+    if (priorInput) {
+      return this.resolveNoBracketOwner(envelope, priorInput, invocation, runtime)
+    }
     return fallbackRunId
+  }
+
+  /**
+   * No-`turn.started`-bracket attribution, gated on the full runtime-ownership
+   * predicate (daedalus DM #8234 invariant). Returns the candidate runId iff
+   * ALL clauses hold; otherwise undefined (never infer ownership from "nearest
+   * prior input.accepted" alone — that would reintroduce T-04238):
+   *   1. an input.accepted(candidate.dispatchedInputId) exists at seq <= event;
+   *   2. candidate is the current runtime owner (runtime.activeRunId === runId,
+   *      or invocation.runId for initial-start equivalence) on this runtime;
+   *   3. candidate accept seq is AFTER the most recent terminal turn before the
+   *      event (post-terminal queued stray events stay orphaned);
+   *   4. no open turn bracket (already true here) AND no open ask bracket;
+   *   5. no OTHER active nonterminal run for this invocation/runtime.
+   */
+  private resolveNoBracketOwner(
+    envelope: InvocationEventEnvelope,
+    priorInput: { inputId: string; seq: number },
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot
+  ): string | undefined {
+    // (1) candidate run for the prior input.accepted.
+    const candidate = this.db.runs.getByDispatchedInputId(priorInput.inputId)
+    if (!candidate?.runId) return undefined
+    // candidate must live on this runtime/invocation.
+    if (candidate.runtimeId !== runtime.runtimeId) return undefined
+
+    // (2) candidate must be the current runtime owner.
+    const ownerRunId = runtime.activeRunId ?? invocation.runId
+    if (ownerRunId === undefined || ownerRunId !== candidate.runId) return undefined
+
+    // (3) candidate accept must be after the most recent terminal turn before
+    // this event — otherwise the candidate's turn already closed and this is a
+    // post-terminal stray event.
+    const priorTerminalSeq = this.findPriorTerminalTurnSeq(envelope.invocationId, envelope.seq)
+    if (priorTerminalSeq !== undefined && priorInput.seq <= priorTerminalSeq) return undefined
+
+    // (4) no open ask bracket on the runtime (no open turn bracket is implied by
+    // reaching this branch).
+    if (runtimeHasAnyOpenAskBracket(this.db, runtime)) return undefined
+
+    // (5) no OTHER active nonterminal run for this invocation/runtime.
+    if (this.hasOtherActiveNonterminalRun(runtime.runtimeId, candidate.runId)) return undefined
+
+    return candidate.runId
+  }
+
+  private static readonly NONTERMINAL_RUN_STATUSES = new Set(['accepted', 'started', 'running'])
+
+  private hasOtherActiveNonterminalRun(runtimeId: string, candidateRunId: string): boolean {
+    return this.db.runs
+      .listByRuntimeId(runtimeId)
+      .some(
+        (run) =>
+          run.runId !== candidateRunId && BrokerEventMapper.NONTERMINAL_RUN_STATUSES.has(run.status)
+      )
+  }
+
+  private findPriorTerminalTurnSeq(invocationId: string, beforeSeq: number): number | undefined {
+    const row = this.db.sqlite
+      .query<{ seq: number }, [string, number]>(
+        `SELECT seq FROM broker_invocation_events
+          WHERE invocation_id = ?
+            AND type IN (${TERMINAL_TURN_EVENT_TYPE_SQL})
+            AND seq < ?
+          ORDER BY seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, beforeSeq)
+    return row?.seq
   }
 
   private extractInputIdFromPayload(payload: unknown): string | undefined {

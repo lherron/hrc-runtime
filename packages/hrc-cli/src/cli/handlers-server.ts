@@ -21,6 +21,7 @@ import {
   writeServerProcessLog,
   writeShutdownIntent,
 } from '../cli-runtime.js'
+import { agentHarnessGuardMessage } from '../harness-guard.js'
 import { printJson } from '../print.js'
 import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { resolveSessionArg } from '../selector-resolve.js'
@@ -189,6 +190,15 @@ export async function cmdServerStatus(args: string[]): Promise<void> {
 }
 
 async function serverForeground(): Promise<void> {
+  // Refuse to boot as a child of a coding-agent harness: the server would leak
+  // the harness's recursion-guard env into every child harness it launches,
+  // silently killing every dispatched run. The launchd-delegating start/restart
+  // paths return before reaching here, so the supported flows are unaffected.
+  const harnessGuard = agentHarnessGuardMessage(process.env)
+  if (harnessGuard) {
+    fatal(harnessGuard)
+  }
+
   const { createHrcServer } = await import('hrc-server')
 
   const paths = resolveServerPaths()

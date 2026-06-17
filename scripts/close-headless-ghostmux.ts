@@ -217,15 +217,104 @@ function eventKindColor(eventKind: string): string {
 // makes `finalizeRuntimeTermination` fail the live run. The transport/controller
 // guards keep us off true headless/sdk runtimes (where `/v1/terminate` only
 // finalizes HRC state without a broker dispose) and off non-broker tmux panes.
+//
+// `skipReasons` is the single source of truth: it returns one human-readable
+// line per failed guard (empty array == eligible). `isQuitEligible` is just
+// "no reasons". Add new scenarios here over time; keep each reason actionable
+// (say what state we saw AND why it disqualifies / what to do instead).
+function skipReasons(status: PaneStatus): string[] {
+  // Root causes that make every downstream field 'unknown'/'' — report just the
+  // root so the operator isn't buried in cascading noise.
+  if (status.runtimeId === '') {
+    return ['no HRC runtime resolved from this pane (orphaned viewer, or stale title/metadata)']
+  }
+  if (status.runtimeStatus === 'unknown') {
+    return [
+      `runtime ${shortRuntime(status.runtimeId)} not found in the HRC DB ` +
+        '(already pruned, or wrong HRC_DB_PATH)',
+    ]
+  }
+
+  const reasons: string[] = []
+
+  if (status.controllerKind !== 'harness-broker') {
+    reasons.push(
+      status.controllerKind === ''
+        ? 'controllerKind unknown — not a recognized broker runtime'
+        : `controllerKind=${status.controllerKind}, not harness-broker — true headless/sdk ` +
+            'runtimes finalize via HRC state only, not a broker reap'
+    )
+  }
+
+  if (status.transport !== 'tmux') {
+    reasons.push(
+      status.transport === ''
+        ? 'transport unknown — not a tmux-backed broker'
+        : `transport=${status.transport}, not tmux — only broker-tmux panes are reaped here`
+    )
+  }
+
+  if (status.runtimeStatus !== 'ready') {
+    switch (status.runtimeStatus) {
+      case 'terminated':
+        reasons.push(
+          'runtime already terminated — nothing live to reap (leftover viewer pane only; ' +
+            'close it directly with ghostmux)'
+        )
+        break
+      case 'stale':
+        reasons.push('runtime is stale — no live broker left to terminate')
+        break
+      case 'busy':
+      case 'started':
+      case 'accepted':
+        reasons.push(
+          `runtime is ${status.runtimeStatus} — wait until it returns to ready/idle, then re-run`
+        )
+        break
+      case 'failed':
+      case 'dead':
+      case 'crashed':
+        reasons.push(
+          `runtime is ${status.runtimeStatus} — not a clean live broker (investigate; do not reap)`
+        )
+        break
+      default:
+        reasons.push(`runtime status is ${status.runtimeStatus}, not ready`)
+    }
+  }
+
+  // HIGH-severity guard: reaping a runtime with an active run would fail that run.
+  if (status.activeRunId !== '') {
+    reasons.push(
+      `has an active run (${shortRun(status.activeRunId)}) — reaping would fail the live run`
+    )
+  }
+
+  if (status.turnStatus !== 'completed') {
+    switch (status.turnStatus) {
+      case 'none':
+        reasons.push('no turn recorded yet — nothing has run on this runtime')
+        break
+      case 'failed':
+        reasons.push('latest turn failed/reaped, not completed — may be mid-recovery')
+        break
+      case 'started':
+      case 'running':
+      case 'accepted':
+      case 'busy':
+        reasons.push(`latest turn is ${status.turnStatus} (still in progress)`)
+        break
+      default:
+        reasons.push(`latest turn is ${status.turnStatus}, not completed`)
+    }
+  }
+
+  return reasons
+}
+
 function isQuitEligible(status: PaneStatus): boolean {
-  return (
-    status.runtimeId !== '' &&
-    status.controllerKind === 'harness-broker' &&
-    status.transport === 'tmux' &&
-    status.runtimeStatus === 'ready' &&
-    status.activeRunId === '' &&
-    status.turnStatus === 'completed'
-  )
+  return skipReasons(status).length === 0
 }
 
 function simPanes(): Pane[] {
@@ -462,6 +551,7 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
   console.log(color.bold(`Matched panes (${statuses.length})`))
   statuses.forEach((status, index) => {
     const duration = formatDurationAgo(status.lastEventUtc)
+    const reasons = skipReasons(status)
     const heading = [
       color.dim(`${String(index + 1).padStart(2)}.`),
       color.cyan(status.id),
@@ -470,7 +560,7 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
       color.dim('/'),
       statusColor(status.turnStatus),
       color.bold(color.cyan(duration)),
-      isQuitEligible(status) ? color.green('eligible') : color.yellow('skipped'),
+      reasons.length === 0 ? color.green('eligible') : color.yellow('skipped'),
     ].join(' ')
 
     console.log(heading)
@@ -482,6 +572,12 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
     )
     console.log(`    ${color.dim('last event')} ${eventKindColor(status.lastEventKind)}`)
     console.log(`    ${color.dim('title')}      ${color.dim(status.title)}`)
+    // Explain exactly why a skipped pane is ineligible — one line per failed
+    // guard, so the operator never has to reverse-engineer the predicate.
+    reasons.forEach((reason, reasonIndex) => {
+      const label = reasonIndex === 0 ? 'skipped' : ''
+      console.log(`    ${color.yellow(label.padEnd(10))} ${color.yellow(reason)}`)
+    })
   })
 }
 
@@ -618,5 +714,5 @@ if (import.meta.main) {
   })
 }
 
-export { isQuitEligible }
+export { isQuitEligible, skipReasons }
 export type { PaneStatus }

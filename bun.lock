@@ -27,17 +27,17 @@
         "hrc": "./src/cli.ts",
       },
       "dependencies": {
-        "agent-scope": "0.1.1-dev.20260616001930",
+        "agent-scope": "0.1.1-dev.20260616093451",
         "chalk": "^5.6.2",
-        "cli-kit": "0.1.1-dev.20260616001930",
+        "cli-kit": "0.1.1-dev.20260616093451",
         "commander": "^14.0.0",
         "hrc-core": "*",
         "hrc-events": "*",
         "hrc-sdk": "*",
         "hrc-server": "*",
         "hrc-store-sqlite": "*",
-        "spaces-config": "0.1.1-dev.20260616001930",
-        "spaces-execution": "0.1.1-dev.20260616001930",
+        "spaces-config": "0.1.1-dev.20260616093451",
+        "spaces-execution": "0.1.1-dev.20260616093451",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -48,9 +48,9 @@
       "name": "hrc-core",
       "version": "0.1.0",
       "dependencies": {
-        "agent-scope": "0.1.1-dev.20260616001930",
-        "spaces-config": "0.1.1-dev.20260616001930",
-        "spaces-runtime": "0.1.1-dev.20260616001930",
+        "agent-scope": "0.1.1-dev.20260616093451",
+        "spaces-config": "0.1.1-dev.20260616093451",
+        "spaces-runtime": "0.1.1-dev.20260616093451",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -75,8 +75,8 @@
       "version": "0.1.0",
       "dependencies": {
         "agent-action-render": "*",
-        "agent-scope": "0.1.1-dev.20260616001930",
-        "spaces-runtime": "0.1.1-dev.20260616001930",
+        "agent-scope": "0.1.1-dev.20260616093451",
+        "spaces-runtime": "0.1.1-dev.20260616093451",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -100,20 +100,20 @@
       "version": "0.1.0",
       "dependencies": {
         "@iarna/toml": "^2.2.5",
-        "agent-scope": "0.1.1-dev.20260616001930",
-        "agent-spaces": "0.1.1-dev.20260616001930",
+        "agent-scope": "0.1.1-dev.20260616093451",
+        "agent-spaces": "0.1.1-dev.20260616093451",
         "hrc-core": "*",
         "hrc-events": "*",
         "hrc-store-sqlite": "*",
-        "spaces-aspc": "0.1.1-dev.20260616001930",
-        "spaces-aspc-protocol": "0.1.1-dev.20260616001930",
-        "spaces-config": "0.1.1-dev.20260616001930",
-        "spaces-execution": "0.1.1-dev.20260616001930",
-        "spaces-harness-broker-client": "0.1.1-dev.20260616001930",
-        "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930",
-        "spaces-harness-codex": "0.1.1-dev.20260616001930",
-        "spaces-runtime": "0.1.1-dev.20260616001930",
-        "spaces-runtime-contracts": "0.1.1-dev.20260616001930",
+        "spaces-aspc": "0.1.1-dev.20260616093451",
+        "spaces-aspc-protocol": "0.1.1-dev.20260616093451",
+        "spaces-config": "0.1.1-dev.20260616093451",
+        "spaces-execution": "0.1.1-dev.20260616093451",
+        "spaces-harness-broker-client": "0.1.1-dev.20260616093451",
+        "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451",
+        "spaces-harness-codex": "0.1.1-dev.20260616093451",
+        "spaces-runtime": "0.1.1-dev.20260616093451",
+        "spaces-runtime-contracts": "0.1.1-dev.20260616093451",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -140,14 +140,14 @@
       "dependencies": {
         "@anthropic-ai/sdk": "^0.73.0",
         "agent-action-render": "*",
-        "agent-scope": "0.1.1-dev.20260616001930",
+        "agent-scope": "0.1.1-dev.20260616093451",
         "chalk": "^5.3.0",
-        "cli-kit": "0.1.1-dev.20260616001930",
+        "cli-kit": "0.1.1-dev.20260616093451",
         "commander": "^14.0.0",
         "hrc-core": "*",
         "hrc-frame-render": "*",
         "hrc-sdk": "*",
-        "spaces-config": "0.1.1-dev.20260616001930",
+        "spaces-config": "0.1.1-dev.20260616093451",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -364,9 +364,9 @@
 
     "agent-base": ["agent-base@7.1.4", "http://127.0.0.1:4873/agent-base/-/agent-base-7.1.4.tgz", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 
-    "agent-scope": ["agent-scope@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/agent-scope/-/agent-scope-0.1.1-dev.20260616001930.tgz", {}, "sha512-cKBwwf+zKLN/XNizrIzEbfXF/B/hOcBW9k1a4wpDC1q16RnEjFECeTtZctcH3tprGkyy/qGhXVg/LifYzR59lg=="],
+    "agent-scope": ["agent-scope@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/agent-scope/-/agent-scope-0.1.1-dev.20260616093451.tgz", {}, "sha512-vB7h6fFYpVAr3Rv071nXb2eglcUuyYWabtGczpWRzQFHSHKdtjBr7x6sbOW8JW90Ca6cTHyOjLfd1CZEWW8Rqg=="],
 
-    "agent-spaces": ["agent-spaces@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/agent-spaces/-/agent-spaces-0.1.1-dev.20260616001930.tgz", { "dependencies": { "agent-scope": "0.1.1-dev.20260616001930", "spaces-config": "0.1.1-dev.20260616001930", "spaces-execution": "0.1.1-dev.20260616001930", "spaces-harness-broker-client": "0.1.1-dev.20260616001930", "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930", "spaces-harness-codex": "0.1.1-dev.20260616001930", "spaces-harness-pi-sdk": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930", "spaces-runtime-contracts": "0.1.1-dev.20260616001930" } }, "sha512-oNWYbRhHxUGxhM6pS+66LfGHJ+JGINWYBJZPYSLRb9SmVVEK1eK3/0yIwAbG49R2T1MBb66lN70aByJ4DHc/ug=="],
+    "agent-spaces": ["agent-spaces@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/agent-spaces/-/agent-spaces-0.1.1-dev.20260616093451.tgz", { "dependencies": { "agent-scope": "0.1.1-dev.20260616093451", "spaces-config": "0.1.1-dev.20260616093451", "spaces-execution": "0.1.1-dev.20260616093451", "spaces-harness-broker-client": "0.1.1-dev.20260616093451", "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451", "spaces-harness-codex": "0.1.1-dev.20260616093451", "spaces-harness-pi-sdk": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451", "spaces-runtime-contracts": "0.1.1-dev.20260616093451" } }, "sha512-PcRFrPcUfk9Ap9sEpFWIKke4A01eFDzVm1koNCTB9N/Ft4bFuGb0IOSmmrsvRv13Ox4OxSzj4W+XVYEOryQ8Pg=="],
 
     "ajv": ["ajv@8.20.0", "http://127.0.0.1:4873/ajv/-/ajv-8.20.0.tgz", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 
@@ -402,7 +402,7 @@
 
     "cli-highlight": ["cli-highlight@2.1.11", "http://127.0.0.1:4873/cli-highlight/-/cli-highlight-2.1.11.tgz", { "dependencies": { "chalk": "^4.0.0", "highlight.js": "^10.7.1", "mz": "^2.4.0", "parse5": "^5.1.1", "parse5-htmlparser2-tree-adapter": "^6.0.0", "yargs": "^16.0.0" }, "bin": { "highlight": "bin/highlight" } }, "sha512-9KDcoEVwyUXrjcJNvHD0NFc/hiwe/WPVYIleQh2O1N2Zro5gWJZ/K+3DGn8w8P/F6FxOgzyC5bxDyHIgCSPhGg=="],
 
-    "cli-kit": ["cli-kit@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/cli-kit/-/cli-kit-0.1.1-dev.20260616001930.tgz", { "dependencies": { "commander": "^14.0.0" } }, "sha512-u3bEm1O3ZhVkf4BuXDhAfjzLfSPbGytUi5CDBNE8Jy7hV4k2FSzQ52rndVW1Mcy1NIkJ0vhKrXE5h4g1dc2r4A=="],
+    "cli-kit": ["cli-kit@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/cli-kit/-/cli-kit-0.1.1-dev.20260616093451.tgz", { "dependencies": { "commander": "^14.0.0" } }, "sha512-x+YboJBGZL1jbnSMsrGVisv1SSjF9djKm56A9ECMFLrUh3rnnCQVFFHuE9w2y0ByUpJ2sH1Rj9Z7Cp6t+vE9Gw=="],
 
     "cliui": ["cliui@7.0.4", "http://127.0.0.1:4873/cliui/-/cliui-7.0.4.tgz", { "dependencies": { "string-width": "^4.2.0", "strip-ansi": "^6.0.0", "wrap-ansi": "^7.0.0" } }, "sha512-OcRE68cOsVMXp1Yvonl/fzkQOyjLSu/8bhPDfQt0e0/Eb283TKP20Fs2MqoPsr9SwA595rRCA+QMzYc9nBP+JQ=="],
 
@@ -624,31 +624,31 @@
 
     "source-map": ["source-map@0.6.1", "http://127.0.0.1:4873/source-map/-/source-map-0.6.1.tgz", {}, "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="],
 
-    "spaces-aspc": ["spaces-aspc@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-aspc/-/spaces-aspc-0.1.1-dev.20260616001930.tgz", { "dependencies": { "agent-spaces": "0.1.1-dev.20260616001930", "spaces-aspc-protocol": "0.1.1-dev.20260616001930", "spaces-harness-broker": "0.1.1-dev.20260616001930", "spaces-harness-broker-client": "0.1.1-dev.20260616001930", "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930", "spaces-runtime-contracts": "0.1.1-dev.20260616001930" }, "bin": { "aspc-facade": "bin/aspc-facade.js" } }, "sha512-wazaEr4SGDUHrhMctie0Ux0FdY1L03GnJHU8UX3S4Awgdi3LiY3+dbmQIMaIehbzjWwzmWArUm2NdERDM9olWA=="],
+    "spaces-aspc": ["spaces-aspc@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-aspc/-/spaces-aspc-0.1.1-dev.20260616093451.tgz", { "dependencies": { "agent-spaces": "0.1.1-dev.20260616093451", "spaces-aspc-protocol": "0.1.1-dev.20260616093451", "spaces-harness-broker": "0.1.1-dev.20260616093451", "spaces-harness-broker-client": "0.1.1-dev.20260616093451", "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451", "spaces-runtime-contracts": "0.1.1-dev.20260616093451" }, "bin": { "aspc-facade": "bin/aspc-facade.js" } }, "sha512-IXO10rYlsFMq5qhIfX8xuwLtySv/z4LcRV3Pfsk19jEOpNBbZxOdANqGPs/1t0kB8lowRL0MbnNHUrx1iF34Sg=="],
 
-    "spaces-aspc-protocol": ["spaces-aspc-protocol@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-aspc-protocol/-/spaces-aspc-protocol-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930", "spaces-runtime-contracts": "0.1.1-dev.20260616001930" } }, "sha512-ldr0CUE/d264fx06WANzPEcVkqOHD62QeRZun+PXvyy1uQQCiAL5cDALDfl2VAwC0lJZ5acljeES3Y6ZCB3gqA=="],
+    "spaces-aspc-protocol": ["spaces-aspc-protocol@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-aspc-protocol/-/spaces-aspc-protocol-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451", "spaces-runtime-contracts": "0.1.1-dev.20260616093451" } }, "sha512-0mWAYaH1apkJwTYSRZHozNY/fCxraT4zKiOgI5awPIIoZA7AKfDaoBA0+8jsyFJ7nWG+b4ZnhQ7dgZJ+A/+jFQ=="],
 
-    "spaces-config": ["spaces-config@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-config/-/spaces-config-0.1.1-dev.20260616001930.tgz", { "dependencies": { "@iarna/toml": "^2.2.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "proper-lockfile": "^4.1.2", "semver": "^7.7.2" } }, "sha512-H6sphDpPo8l/mSMcOJOF32ozIWoKJmKcss2NzDn5Y96MH2tT4a31hPVN9/PAhcYRWIWvL0sDXMA9U7rW/54KLA=="],
+    "spaces-config": ["spaces-config@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-config/-/spaces-config-0.1.1-dev.20260616093451.tgz", { "dependencies": { "@iarna/toml": "^2.2.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "proper-lockfile": "^4.1.2", "semver": "^7.7.2" } }, "sha512-cJYXpXBMPESlV1yG26a/bUYx/z8EwVeZ2u3aTg6kNPH1ziSdYWNXSQwg1RcBnu6af/qPQ+H6ZJ7dxpj7wRaOSg=="],
 
-    "spaces-execution": ["spaces-execution@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-execution/-/spaces-execution-0.1.1-dev.20260616001930.tgz", { "dependencies": { "chalk": "^5.3.0", "spaces-config": "0.1.1-dev.20260616001930", "spaces-harness-claude": "0.1.1-dev.20260616001930", "spaces-harness-codex": "0.1.1-dev.20260616001930", "spaces-harness-pi": "0.1.1-dev.20260616001930", "spaces-harness-pi-sdk": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930" } }, "sha512-fGUUN1jAEBE2lQmEMqNTT/tgE8VsQigud6hSRcuhU/jjZwlvFOvPFEbSKUNnXrCWeYEl5w62eWgBtIIU6dz9fQ=="],
+    "spaces-execution": ["spaces-execution@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-execution/-/spaces-execution-0.1.1-dev.20260616093451.tgz", { "dependencies": { "chalk": "^5.3.0", "spaces-config": "0.1.1-dev.20260616093451", "spaces-harness-claude": "0.1.1-dev.20260616093451", "spaces-harness-codex": "0.1.1-dev.20260616093451", "spaces-harness-pi": "0.1.1-dev.20260616093451", "spaces-harness-pi-sdk": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451" } }, "sha512-eEDoEzyrEGsPK9oFGW6bYYDwSVpoeGxVPI0TSOmPqCKNCLrFcpCcnrwGN4aiY3ZjD9iZB0qloP0pNFFJR4ksMg=="],
 
-    "spaces-harness-broker": ["spaces-harness-broker@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-broker/-/spaces-harness-broker-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930" }, "bin": { "harness-broker": "bin/harness-broker.js" } }, "sha512-64xiy0oOFhbpAK0ugwrZz9IZAC+tDw5azxPYeAKVI3uGUEE8P8eA4nd+F6p/kmx+98YNBGjmG019SqvwpZfgsg=="],
+    "spaces-harness-broker": ["spaces-harness-broker@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-broker/-/spaces-harness-broker-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451" }, "bin": { "harness-broker": "bin/harness-broker.js" } }, "sha512-ajqBjXF819c5N/4Yk0zxKlzsS12lRe2KbGtdLTHyCEegcSsEVNrJ70tp4kHhdZ0vkPQ/lcuuVWPRqonP3k0wqQ=="],
 
-    "spaces-harness-broker-client": ["spaces-harness-broker-client@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-broker-client/-/spaces-harness-broker-client-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930" } }, "sha512-ji5H3oTJ11pXw77612M46686i10q2+oeOT2bBDQF5qo+H3YsPkAi65CV2XlKmAiDYjpLTLgR6lMQ1lTFdCuUcQ=="],
+    "spaces-harness-broker-client": ["spaces-harness-broker-client@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-broker-client/-/spaces-harness-broker-client-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451" } }, "sha512-LEMtWoBCwrZNq4Tq/VorUsl3VQqv/EvEJ3cMrftgg+/PdDUo+BKwb3BmftMISIIHQrGQt9fwtTqkx4st8zQ9dw=="],
 
-    "spaces-harness-broker-protocol": ["spaces-harness-broker-protocol@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-broker-protocol/-/spaces-harness-broker-protocol-0.1.1-dev.20260616001930.tgz", {}, "sha512-tC2DOv2Aqm15sOMfuWdjDmJAMHGJmYDR3LV1SttVAiUaJrH1fqBy0e1kE07NiPjrreNQvSzbgswovBr+9nJuXQ=="],
+    "spaces-harness-broker-protocol": ["spaces-harness-broker-protocol@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-broker-protocol/-/spaces-harness-broker-protocol-0.1.1-dev.20260616093451.tgz", {}, "sha512-icoZkhUBgT2Nos1AQzb/N3+GTlxSBm/uzUhFBj58qe7gGq0uxA3hAFb4BHTAf7bXH33QRCdtvnEBd+sJeM8lAQ=="],
 
-    "spaces-harness-claude": ["spaces-harness-claude@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-claude/-/spaces-harness-claude-0.1.1-dev.20260616001930.tgz", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "^0.1.72", "spaces-config": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930" } }, "sha512-R7Eo+kgnmo7RbLlyJadyiSkdUIujMxCgOMyYLqMT/pMDmKmUp3n0W/OV1cKx01qfJ3AHtyUCf/KjsjNw0bbqnQ=="],
+    "spaces-harness-claude": ["spaces-harness-claude@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-claude/-/spaces-harness-claude-0.1.1-dev.20260616093451.tgz", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "^0.1.72", "spaces-config": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451" } }, "sha512-q0ovco6o/tkeyqUQvcyAxyfKjCxiUik44+P+XHS6WBP9QnsSmGjsVX61J7Bxmg1YoaHTOgo5I6LXAxHwbizllQ=="],
 
-    "spaces-harness-codex": ["spaces-harness-codex@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-codex/-/spaces-harness-codex-0.1.1-dev.20260616001930.tgz", { "dependencies": { "@iarna/toml": "^2.2.5", "spaces-config": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930" } }, "sha512-JHimuYmAbTr8sybSWY9Sihhw2rWPKYqohGhYoolcjqdiYB9QNKa/VOyIxJxbiRZMWF3a6dHcG0tpvcsBDXPNKA=="],
+    "spaces-harness-codex": ["spaces-harness-codex@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-codex/-/spaces-harness-codex-0.1.1-dev.20260616093451.tgz", { "dependencies": { "@iarna/toml": "^2.2.5", "spaces-config": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451" } }, "sha512-XgNTUHq7vWzzc0pJplJS4XzjNGNFaGILRuagTawzHq/KOW1jpH6h1+jqeTbjtchAUtxrvnjuTyaG2wZx93DkyA=="],
 
-    "spaces-harness-pi": ["spaces-harness-pi@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-pi/-/spaces-harness-pi-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-config": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930" } }, "sha512-lCBajxZDLsQn3Fs4sBKrm2ogzybL1+iKE/FnNoyCGNhukeVttALhkM5OGKKySxj+ls6WgMJbO92/zCU99FKcBA=="],
+    "spaces-harness-pi": ["spaces-harness-pi@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-pi/-/spaces-harness-pi-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-config": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451" } }, "sha512-iTToqLr5usZIYe33iE4QgKupqCjcd8RyyX34W7zyenmSVO2p/4kAXPy+4FOsl2uMXvPu1xU5g0EnFWPNNGhEFA=="],
 
-    "spaces-harness-pi-sdk": ["spaces-harness-pi-sdk@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-harness-pi-sdk/-/spaces-harness-pi-sdk-0.1.1-dev.20260616001930.tgz", { "dependencies": { "@mariozechner/pi-coding-agent": "^0.70.2", "spaces-config": "0.1.1-dev.20260616001930", "spaces-runtime": "0.1.1-dev.20260616001930" } }, "sha512-643gIwPmXqBQ850XnAB3grA801wr46gAssmSYnaCn45kWbKRhqOI7VfWdnm2zDNO5a7MjF3Up1md8PqA7ZIOCQ=="],
+    "spaces-harness-pi-sdk": ["spaces-harness-pi-sdk@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-harness-pi-sdk/-/spaces-harness-pi-sdk-0.1.1-dev.20260616093451.tgz", { "dependencies": { "@mariozechner/pi-coding-agent": "^0.70.2", "spaces-config": "0.1.1-dev.20260616093451", "spaces-runtime": "0.1.1-dev.20260616093451" } }, "sha512-LzbYmYp+NE9/GSyGvA0LfqiqRh8bUfP2vigs4sLObACsmCMcej5CEomWusY6V2+Imwv1PF9YJXQUwlAdwzQTrw=="],
 
-    "spaces-runtime": ["spaces-runtime@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-runtime/-/spaces-runtime-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-config": "0.1.1-dev.20260616001930" } }, "sha512-8tUUx1nKtierYJdiUusDReotc8I8iz4AEo/xOJ9I3i2IseEk0S291WrSjR24Btzr7cqHmbEn3YP287wviTg/bw=="],
+    "spaces-runtime": ["spaces-runtime@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-runtime/-/spaces-runtime-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-config": "0.1.1-dev.20260616093451" } }, "sha512-F9z+AgRRTeRTr7j0ba6Re3BxFuvsnpRJvlAOtTNHnUl8IPAq5XM6ND1ZjP8GhokJNMNDIUEKrn+IRatls1w5cg=="],
 
-    "spaces-runtime-contracts": ["spaces-runtime-contracts@0.1.1-dev.20260616001930", "http://127.0.0.1:4873/spaces-runtime-contracts/-/spaces-runtime-contracts-0.1.1-dev.20260616001930.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616001930" } }, "sha512-fja818B2523BXFtmWihTFcfEV4UL2Ah/VgnUYOfQc2f1hmWAEECKQY7orSKgQPazbYqzvY+O6N3shjrqV50xvA=="],
+    "spaces-runtime-contracts": ["spaces-runtime-contracts@0.1.1-dev.20260616093451", "http://127.0.0.1:4873/spaces-runtime-contracts/-/spaces-runtime-contracts-0.1.1-dev.20260616093451.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20260616093451" } }, "sha512-zIEVAUyvU1WNfr7lllcMeigKzd/QiIAFlTHnYoFFQz5YzNUziLj3TTjwJO43Fnvls8Vi0Hq1/H5GrUisif9ZpA=="],
 
     "std-env": ["std-env@3.10.0", "http://127.0.0.1:4873/std-env/-/std-env-3.10.0.tgz", {}, "sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg=="],
 
