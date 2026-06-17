@@ -15,6 +15,7 @@ export async function readProviderJsonl(path: string): Promise<ProviderTranscrip
   let provider: ProviderTranscript['provider'] = 'unknown'
   const lines = raw.split(/\r?\n/)
   let lineCount = 0
+  const ignoredCodexCallIds = new Set<string>()
 
   for (let idx = 0; idx < lines.length; idx += 1) {
     const line = lines[idx]
@@ -27,7 +28,7 @@ export async function readProviderJsonl(path: string): Promise<ProviderTranscrip
       continue
     }
 
-    const codex = adaptCodexRecord(parsed, lineNo)
+    const codex = adaptCodexRecord(parsed, lineNo, ignoredCodexCallIds)
     if (codex.event || codex.warning) {
       provider = provider === 'claude' ? 'unknown' : 'codex'
       if (codex.event) observed.push(codex.event)
@@ -65,7 +66,11 @@ function makeObserved(input: {
   }
 }
 
-function adaptCodexRecord(record: Record<string, unknown>, line: number): AdapterResult {
+function adaptCodexRecord(
+  record: Record<string, unknown>,
+  line: number,
+  ignoredCallIds: Set<string>
+): AdapterResult {
   if (record['type'] !== 'response_item') return {}
   const payload = record['payload']
   if (!isRecord(payload)) {
@@ -99,6 +104,7 @@ function adaptCodexRecord(record: Record<string, unknown>, line: number): Adapte
     const callId = stringField(payload, 'call_id') ?? stringField(payload, 'id')
     const rawName = stringField(payload, 'name') ?? 'unknown'
     if (rawName !== 'exec_command') {
+      if (callId !== undefined) ignoredCallIds.add(callId)
       return { warning: `line ${line}: Codex function_call ${rawName} is outside broker JSONL v1 scope` }
     }
     const input = parseMaybeJson(payload['arguments'])
@@ -116,6 +122,9 @@ function adaptCodexRecord(record: Record<string, unknown>, line: number): Adapte
 
   if (payload['type'] === 'function_call_output') {
     const callId = stringField(payload, 'call_id') ?? stringField(payload, 'id')
+    if (callId !== undefined && ignoredCallIds.has(callId)) {
+      return {}
+    }
     const output = typeof payload['output'] === 'string' ? payload['output'] : ''
     const failed = /Process exited with code (?!0\b)\d+/.test(output)
     return {
@@ -219,7 +228,7 @@ function normalizeToolResult(value: unknown): unknown {
   if (isRecord(value) && Array.isArray(value['content'])) {
     return value
   }
-  return { output: value === undefined ? '' : value }
+  return { output: normalizeCommandOutputText(value === undefined ? '' : String(value)) }
 }
 
 function normalizeCodexToolStart(
@@ -246,6 +255,10 @@ function extractCodexCommandOutput(output: string): string {
   const marker = '\nOutput:\n'
   const idx = output.indexOf(marker)
   return idx === -1 ? output : output.slice(idx + marker.length)
+}
+
+function normalizeCommandOutputText(output: string): string {
+  return output.replace(/^Total output lines: \d+\n\n/, '')
 }
 
 function firstContentBlock(value: unknown, type: string): Record<string, unknown> | undefined {

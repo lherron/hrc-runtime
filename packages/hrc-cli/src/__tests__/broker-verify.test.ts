@@ -57,6 +57,14 @@ describe('broker verify provider adapters', () => {
           type: 'response_item',
           payload: { type: 'function_call_output', call_id: 'call-1', output: 'Tue' },
         }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'function_call', call_id: 'call-2', name: 'write_stdin', arguments: '{}' },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'function_call_output', call_id: 'call-2', output: 'ignored' },
+        }),
       ].join('\n')
     )
 
@@ -68,6 +76,9 @@ describe('broker verify provider adapters', () => {
         [2, 'tool.call.started', 'call-1'],
         [3, 'tool.call.completed', 'call-1'],
       ])
+      expect(transcript.warnings).toContain(
+        'line 4: Codex function_call write_stdin is outside broker JSONL v1 scope'
+      )
       expect(transcript.observed[1]?.normalizedPayload).toEqual({
         toolCallId: 'call-1',
         name: 'command',

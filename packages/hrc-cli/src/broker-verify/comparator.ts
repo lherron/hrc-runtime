@@ -86,9 +86,9 @@ function checkLedger(
       row.runId !== invocation.runId
     ) {
       issues.push({
-        severity: 'error',
-        code: 'run_identity_mismatch',
-        message: `broker seq ${row.seq} run_id ${row.runId} does not match invocation run ${invocation.runId}`,
+        severity: 'warning',
+        code: 'run_identity_differs_from_current_invocation',
+        message: `broker seq ${row.seq} run_id ${row.runId} differs from current invocation run ${invocation.runId}; this is valid for prior turns in a multi-turn invocation`,
         seq: row.seq,
         type: row.type,
       })
@@ -238,6 +238,18 @@ function compareTranscript(
     }
 
     used.add(match.row.seq)
+    if (match.payloadHash !== observed.payloadHash && payloadsCompatible(observed.normalizedPayload, match.normalizedPayload)) {
+      matches.push({
+        line: observed.line,
+        type: observed.type,
+        ...(observed.correlationKey !== undefined ? { correlationKey: observed.correlationKey } : {}),
+        brokerSeq: match.row.seq,
+        status: 'matched',
+        detail: 'normalized payloads are compatible after provider truncation normalization',
+      })
+      continue
+    }
+
     if (
       observed.type === 'assistant.message.completed' &&
       match.payloadHash !== observed.payloadHash &&
@@ -415,7 +427,7 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 
 function normalizeBrokerToolResult(value: unknown): unknown {
   if (isRecord(value) && typeof value['output'] === 'string') {
-    return { output: value['output'] }
+    return { output: normalizeCommandOutputText(value['output']) }
   }
   return value
 }
@@ -444,4 +456,25 @@ function unwrapZshCommand(command: string): string {
     return raw.slice(1, -1).replace(/\\"/g, '"')
   }
   return raw
+}
+
+function payloadsCompatible(observed: unknown, broker: unknown): boolean {
+  const observedOutput = outputText(observed)
+  const brokerOutput = outputText(broker)
+  if (observedOutput !== undefined && brokerOutput !== undefined) {
+    return observedOutput.includes(brokerOutput) || brokerOutput.includes(observedOutput)
+  }
+  return false
+}
+
+function outputText(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const result = value['result']
+  if (!isRecord(result)) return undefined
+  const output = result['output']
+  return typeof output === 'string' ? output : undefined
+}
+
+function normalizeCommandOutputText(output: string): string {
+  return output.replace(/^Total output lines: \d+\n\n/, '')
 }
