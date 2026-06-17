@@ -1,0 +1,36 @@
+{
+  "name": "hrc-capture-verifier",
+  "version": "0.1.0",
+  "description": "Provider transcript capture verification against the HRC broker ledger",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./sqlite": {
+      "bun": "./src/sqlite.ts",
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hrc-core": "*",
+    "hrc-store-sqlite": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

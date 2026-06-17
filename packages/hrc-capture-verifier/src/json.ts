@@ -46,7 +46,10 @@ export function textFromContent(value: unknown): string | undefined {
     if (!isRecord(item)) continue
     const type = item['type']
     const text = item['text']
-    if ((type === 'text' || type === 'input_text' || type === 'output_text') && typeof text === 'string') {
+    if (
+      (type === 'text' || type === 'input_text' || type === 'output_text') &&
+      typeof text === 'string'
+    ) {
       parts.push(text)
     }
   }

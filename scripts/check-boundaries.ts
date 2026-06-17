@@ -33,6 +33,7 @@ const hrcPackages = [
   'hrc-core',
   'hrc-events',
   'hrc-store-sqlite',
+  'hrc-capture-verifier',
   'hrc-server',
   'hrc-sdk',
   'hrc-cli',

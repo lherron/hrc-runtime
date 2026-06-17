@@ -20,6 +20,7 @@
     "chalk": "^5.6.2",
     "cli-kit": "0.1.1-dev.20260616093451",
     "commander": "^14.0.0",
+    "hrc-capture-verifier": "*",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-sdk": "*",

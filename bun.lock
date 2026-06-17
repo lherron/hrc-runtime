@@ -20,6 +20,18 @@
         "typescript": "^5.8.3",
       },
     },
+    "packages/hrc-capture-verifier": {
+      "name": "hrc-capture-verifier",
+      "version": "0.1.0",
+      "dependencies": {
+        "hrc-core": "*",
+        "hrc-store-sqlite": "*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+    },
     "packages/hrc-cli": {
       "name": "hrc-cli",
       "version": "0.1.0",
@@ -31,6 +43,7 @@
         "chalk": "^5.6.2",
         "cli-kit": "0.1.1-dev.20260616093451",
         "commander": "^14.0.0",
+        "hrc-capture-verifier": "*",
         "hrc-core": "*",
         "hrc-events": "*",
         "hrc-sdk": "*",
@@ -481,6 +494,8 @@
     "highlight.js": ["highlight.js@10.7.3", "http://127.0.0.1:4873/highlight.js/-/highlight.js-10.7.3.tgz", {}, "sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A=="],
 
     "hosted-git-info": ["hosted-git-info@9.0.3", "http://127.0.0.1:4873/hosted-git-info/-/hosted-git-info-9.0.3.tgz", { "dependencies": { "lru-cache": "^11.1.0" } }, "sha512-Hc+ghLoSt6QaYZUv0WBiIvmMDZuZZ7oaDvdH8MbfOO4lOsxdXLEvuC6ePoGs9H1X9oCLyq6+NVN0MKqD+ydxyg=="],
+
+    "hrc-capture-verifier": ["hrc-capture-verifier@workspace:packages/hrc-capture-verifier"],
 
     "hrc-cli": ["hrc-cli@workspace:packages/hrc-cli"],
 

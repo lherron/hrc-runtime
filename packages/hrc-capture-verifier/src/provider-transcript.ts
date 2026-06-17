@@ -1,18 +1,27 @@
 import { readFile } from 'node:fs/promises'
 
 import { compactText, hashPayload, isRecord, safeJsonParse, textFromContent } from './json.js'
-import type { ObservedProviderEvent, ProviderTranscript } from './types.js'
+import {
+  CAPTURE_OBSERVATION_SCHEMA,
+  CAPTURE_VERIFIER_SCHEMA,
+  type CaptureObservation,
+  type CaptureProvider,
+  type ParseProviderTranscriptInput,
+  type ParsedProviderTranscript,
+} from './types.js'
 
 type AdapterResult = {
-  event?: ObservedProviderEvent | undefined
+  event?: CaptureObservation | undefined
   warning?: string | undefined
 }
 
-export async function readProviderJsonl(path: string): Promise<ProviderTranscript> {
-  const raw = await readFile(path, 'utf8')
+export async function parseProviderTranscript(
+  input: ParseProviderTranscriptInput
+): Promise<ParsedProviderTranscript> {
+  const raw = await readFile(input.path, 'utf8')
   const warnings: string[] = []
-  const observed: ObservedProviderEvent[] = []
-  let provider: ProviderTranscript['provider'] = 'unknown'
+  const observations: CaptureObservation[] = []
+  let provider: CaptureProvider = 'unknown'
   const lines = raw.split(/\r?\n/)
   let lineCount = 0
   const ignoredCodexCallIds = new Set<string>()
@@ -30,32 +39,45 @@ export async function readProviderJsonl(path: string): Promise<ProviderTranscrip
 
     const codex = adaptCodexRecord(parsed, lineNo, ignoredCodexCallIds)
     if (codex.event || codex.warning) {
-      provider = provider === 'claude' ? 'unknown' : 'codex'
-      if (codex.event) observed.push(codex.event)
+      provider = provider === 'claude-code' ? 'unknown' : 'codex'
+      if (codex.event) observations.push(codex.event)
       if (codex.warning) warnings.push(codex.warning)
       continue
     }
 
     const claude = adaptClaudeRecord(parsed, lineNo)
     if (claude.event || claude.warning) {
-      provider = provider === 'codex' ? 'unknown' : 'claude'
-      if (claude.event) observed.push(claude.event)
+      provider = provider === 'codex' ? 'unknown' : 'claude-code'
+      if (claude.event) observations.push(claude.event)
       if (claude.warning) warnings.push(claude.warning)
+      continue
+    }
+
+    if (recordLooksProviderRelevant(parsed)) {
+      warnings.push(`line ${lineNo}: provider JSONL record is not capture-relevant in verifier v1`)
     }
   }
 
-  return { path, provider, observed, warnings, lineCount }
+  return {
+    schema: CAPTURE_VERIFIER_SCHEMA,
+    path: input.path,
+    provider,
+    observations,
+    warnings,
+    lineCount,
+  }
 }
 
 function makeObserved(input: {
   line: number
-  provider: ObservedProviderEvent['provider']
-  type: ObservedProviderEvent['type']
+  provider: CaptureProvider
+  type: CaptureObservation['type']
   correlationKey?: string | undefined
   normalizedPayload: unknown
   text?: string | undefined
-}): ObservedProviderEvent {
+}): CaptureObservation {
   return {
+    schema: CAPTURE_OBSERVATION_SCHEMA,
     line: input.line,
     provider: input.provider,
     type: input.type,
@@ -81,9 +103,6 @@ function adaptCodexRecord(
     const role = payload['role']
     const text = compactText(textFromContent(payload['content']))
     if (role === 'user') {
-      // Codex JSONL replays prompt/context records as user messages. In broker
-      // headless runs those are represented by input.accepted, not user.message,
-      // so they are not transcript-observable broker message obligations.
       return {}
     }
     if (role === 'assistant' && text !== undefined) {
@@ -105,17 +124,18 @@ function adaptCodexRecord(
     const rawName = stringField(payload, 'name') ?? 'unknown'
     if (rawName !== 'exec_command') {
       if (callId !== undefined) ignoredCallIds.add(callId)
-      return { warning: `line ${line}: Codex function_call ${rawName} is outside broker JSONL v1 scope` }
+      return {
+        warning: `line ${line}: Codex function_call ${rawName} is outside broker JSONL v1 scope`,
+      }
     }
-    const input = parseMaybeJson(payload['arguments'])
-    const normalized = normalizeCodexToolStart(callId, rawName, input)
+    const parsedInput = parseMaybeJson(payload['arguments'])
     return {
       event: makeObserved({
         line,
         provider: 'codex',
         type: 'tool.call.started',
         correlationKey: callId,
-        normalizedPayload: normalized,
+        normalizedPayload: normalizeCodexToolStart(callId, rawName, parsedInput),
       }),
     }
   }
@@ -126,7 +146,11 @@ function adaptCodexRecord(
       return {}
     }
     const output = typeof payload['output'] === 'string' ? payload['output'] : ''
-    const failed = /Process exited with code (?!0\b)\d+/.test(output)
+    if (isCodexPendingCommandOutput(output)) {
+      return {}
+    }
+    const result = extractCodexCommandResult(output)
+    const failed = result.exitCode !== undefined ? result.exitCode !== 0 : false
     return {
       event: makeObserved({
         line,
@@ -135,7 +159,7 @@ function adaptCodexRecord(
         correlationKey: callId,
         normalizedPayload: {
           toolCallId: callId,
-          result: normalizeToolResult(extractCodexCommandOutput(output)),
+          result: normalizeToolResult(result.output, result.exitCode),
         },
       }),
     }
@@ -154,11 +178,12 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
     const toolResult = firstContentBlock(content, 'tool_result')
     if (toolResult !== undefined) {
       const toolUseId = stringField(toolResult, 'tool_use_id') ?? stringField(toolResult, 'id')
+      const isError = toolResult['is_error'] === true || toolResult['isError'] === true
       return {
         event: makeObserved({
           line,
-          provider: 'claude',
-          type: 'tool.call.completed',
+          provider: 'claude-code',
+          type: isError ? 'tool.call.failed' : 'tool.call.completed',
           correlationKey: toolUseId,
           normalizedPayload: {
             toolCallId: toolUseId,
@@ -172,7 +197,7 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
       return {
         event: makeObserved({
           line,
-          provider: 'claude',
+          provider: 'claude-code',
           type: 'user.message',
           normalizedPayload: { content: text },
           text,
@@ -189,7 +214,7 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
       return {
         event: makeObserved({
           line,
-          provider: 'claude',
+          provider: 'claude-code',
           type: 'tool.call.started',
           correlationKey: toolUseId,
           normalizedPayload: { toolCallId: toolUseId, name, input: toolUse['input'] ?? {} },
@@ -201,7 +226,7 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
       return {
         event: makeObserved({
           line,
-          provider: 'claude',
+          provider: 'claude-code',
           type: 'assistant.message.completed',
           normalizedPayload: { content: text },
           text,
@@ -211,6 +236,14 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
   }
 
   return {}
+}
+
+function recordLooksProviderRelevant(record: Record<string, unknown>): boolean {
+  return (
+    typeof record['type'] === 'string' ||
+    typeof record['sessionId'] === 'string' ||
+    typeof record['parentUuid'] === 'string'
+  )
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -224,11 +257,83 @@ function parseMaybeJson(value: unknown): unknown {
   return parsed === undefined ? value : parsed
 }
 
-function normalizeToolResult(value: unknown): unknown {
-  if (isRecord(value) && Array.isArray(value['content'])) {
-    return value
+function normalizeToolResult(value: unknown, exitCode?: number | undefined): unknown {
+  if (Array.isArray(value)) {
+    return normalizeContentResult(value)
   }
-  return { output: normalizeCommandOutputText(value === undefined ? '' : String(value)) }
+  if (isRecord(value) && Array.isArray(value['content'])) {
+    return normalizeContentResult(value['content'])
+  }
+  const output = normalizeCommandOutputText(value === undefined ? '' : String(value))
+  if (output.length === 0 && exitCode !== undefined) {
+    return { exitCode }
+  }
+  return { output }
+}
+
+function normalizeContentResult(value: unknown[]): unknown {
+  const content = normalizeContentBlocks(value)
+  if (
+    content.length === 1 &&
+    isRecord(content[0]) &&
+    content[0]['type'] === 'text' &&
+    typeof content[0]['text'] === 'string'
+  ) {
+    return { output: content[0]['text'] }
+  }
+  return { content }
+}
+
+function normalizeContentBlocks(value: unknown[]): unknown[] {
+  return value.map((item) => normalizeContentBlock(item))
+}
+
+function normalizeContentBlock(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  if (value['type'] === 'text' && typeof value['text'] === 'string') {
+    const parsed = safeJsonParse(value['text'])
+    if (isRecord(parsed) && parsed['type'] === 'image') {
+      return normalizeContentBlock(parsed)
+    }
+    if (isRecord(parsed) && parsed['type'] === 'text') {
+      const file = isRecord(parsed['file']) ? parsed['file'] : undefined
+      if (typeof file?.['content'] === 'string') {
+        return {
+          type: 'text',
+          text: formatFileContent(file['content'], file['startLine']),
+        }
+      }
+    }
+    return { type: 'text', text: normalizeCommandOutputText(value['text']) }
+  }
+  if (value['type'] === 'image') {
+    const source = isRecord(value['source']) ? value['source'] : undefined
+    const file = isRecord(value['file']) ? value['file'] : undefined
+    const mediaType =
+      (typeof source?.['media_type'] === 'string' ? source['media_type'] : undefined) ??
+      (typeof source?.['mediaType'] === 'string' ? source['mediaType'] : undefined) ??
+      (typeof file?.['type'] === 'string' ? file['type'] : undefined) ??
+      (typeof file?.['media_type'] === 'string' ? file['media_type'] : undefined)
+    const base64 =
+      (typeof source?.['data'] === 'string' ? source['data'] : undefined) ??
+      (typeof file?.['base64'] === 'string' ? file['base64'] : undefined)
+    return {
+      type: 'image',
+      ...(mediaType !== undefined ? { mediaType } : {}),
+      ...(base64 !== undefined ? { base64 } : {}),
+    }
+  }
+  return value
+}
+
+function formatFileContent(content: string, startLine: unknown): string {
+  if (typeof startLine !== 'number' || !Number.isFinite(startLine)) {
+    return content
+  }
+  return content
+    .split('\n')
+    .map((line, index) => `${startLine + index}\t${line}`)
+    .join('\n')
 }
 
 function normalizeCodexToolStart(
@@ -251,10 +356,25 @@ function normalizeCodexToolStart(
   return { toolCallId, name, input: input ?? {} }
 }
 
-function extractCodexCommandOutput(output: string): string {
+function extractCodexCommandResult(output: string): {
+  exitCode?: number | undefined
+  output: string
+} {
+  const exitMatch = output.match(/Process exited with code (\d+)/)
   const marker = '\nOutput:\n'
   const idx = output.indexOf(marker)
-  return idx === -1 ? output : output.slice(idx + marker.length)
+  return {
+    ...(exitMatch?.[1] !== undefined ? { exitCode: Number(exitMatch[1]) } : {}),
+    output: idx === -1 ? output : output.slice(idx + marker.length),
+  }
+}
+
+function isCodexPendingCommandOutput(output: string): boolean {
+  return (
+    /Process running with session ID \d+/.test(output) &&
+    /\nOutput:\n?$/.test(output) &&
+    !/Process exited with code \d+/.test(output)
+  )
 }
 
 function normalizeCommandOutputText(output: string): string {

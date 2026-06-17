@@ -5,7 +5,12 @@
  * module-private utilities (coercion, identity keys, broker->hrc kind table) and
  * the projection-context / result types the mapper threads through its methods.
  */
-import type { HrcEventEnvelope, HrcLifecycleEvent, HrcLifecycleTransport } from 'hrc-core'
+import {
+  BROKER_TO_HRC_LIFECYCLE_KIND,
+  type HrcEventEnvelope,
+  type HrcLifecycleEvent,
+  type HrcLifecycleTransport,
+} from 'hrc-core'
 import type { ContentBlock, ToolResult } from 'hrc-events'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -86,25 +91,7 @@ export function safeStringify(value: unknown): string {
  * provenance-only (no lifecycle row) (T-01711). Mapped kinds MUST exist in
  * `hrc-event-helper`'s KIND_CATEGORIES or `appendHrcEvent` throws.
  */
-export const BROKER_TO_HRC_KIND: Partial<Record<string, string>> = {
-  'input.accepted': 'turn.accepted',
-  'turn.started': 'turn.started',
-  // Interactive TUI prompts (claude-code-tmux / codex-cli-tmux) surface the
-  // operator's typed text as a broker user.message, emitted right after
-  // turn.started. Map it to the canonical turn.user_prompt so the prompt rides
-  // the same lifecycle stream as agent messages and tool calls (T-02026).
-  'user.message': 'turn.user_prompt',
-  'assistant.message.completed': 'turn.message',
-  'tool.call.started': 'turn.tool_call',
-  'tool.call.completed': 'turn.tool_result',
-  'tool.call.failed': 'turn.tool_result',
-  'turn.completed': 'turn.completed',
-  // Failed/interrupted have no registered lifecycle kind; surface them as a
-  // terminal turn.completed (payload carries success:false) so client waiters
-  // unblock — run state already records failed/cancelled via projectState.
-  'turn.failed': 'turn.completed',
-  'turn.interrupted': 'turn.completed',
-}
+export const BROKER_TO_HRC_KIND = BROKER_TO_HRC_LIFECYCLE_KIND
 
 export const TERMINAL_TURN_EVENT_TYPES = [
   'turn.completed',

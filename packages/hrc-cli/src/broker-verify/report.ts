@@ -1,6 +1,9 @@
-import type { BrokerVerifyCandidate, BrokerVerifyReport } from './types.js'
+import type { CaptureVerificationReport, VerificationCandidate } from 'hrc-capture-verifier'
 
-export function renderCandidatesHuman(scopeRef: string, candidates: BrokerVerifyCandidate[]): string {
+export function renderCandidatesHuman(
+  scopeRef: string,
+  candidates: VerificationCandidate[]
+): string {
   if (candidates.length === 0) {
     return `broker verify candidates ${scopeRef}\n\nNo broker invocations found for exact scope.\n`
   }
@@ -10,11 +13,13 @@ export function renderCandidatesHuman(scopeRef: string, candidates: BrokerVerify
       [
         candidate.invocationId,
         candidate.brokerDriver,
-        candidate.invocationState,
+        candidate.state,
         `events=${candidate.eventCount}`,
+        `raw=${candidate.rawMirrorCount}`,
+        `lifecycle=${candidate.lifecycleProjectionCount}`,
         `seq=${candidate.firstSeq ?? '-'}..${candidate.lastSeq ?? '-'}`,
         `runtime=${candidate.runtimeId}`,
-        `confidence=${candidate.confidence}`,
+        `transcript=${candidate.transcriptGuess?.confidence ?? 'unknown'}`,
       ].join('  ')
     )
   }
@@ -22,38 +27,38 @@ export function renderCandidatesHuman(scopeRef: string, candidates: BrokerVerify
   return `${lines.join('\n')}\n`
 }
 
-export function renderReportHuman(report: BrokerVerifyReport): string {
+export function renderReportHuman(report: CaptureVerificationReport): string {
   const lines = [
     `broker verify run ${report.invocationId}`,
     '',
-    `status: ${report.ok ? 'ok' : 'failed'}`,
+    `status: ${report.status}`,
     `driver: ${report.brokerDriver}`,
     `runtime: ${report.runtimeId}`,
     `ledger: ${report.ledger.eventCount} event(s), seq ${report.ledger.firstSeq ?? '-'}..${report.ledger.lastSeq ?? '-'}`,
     `raw mirrors: ${report.rawMirror.matched}/${report.rawMirror.checked}`,
   ]
-  if (report.jsonlPath !== undefined) {
+  if (report.transcriptPath !== undefined) {
     lines.push(
-      `jsonl: ${report.jsonlPath}`,
-      `provider events: ${report.transcript?.observed.length ?? 0}`
+      `jsonl: ${report.transcriptPath}`,
+      `provider events: ${report.transcript?.observations.length ?? 0}`
     )
   }
-  const errors = report.issues.filter((issue) => issue.severity === 'error')
-  const warnings = report.issues.filter((issue) => issue.severity === 'warning')
+  const errors = report.findings.filter((issue) => issue.severity === 'error')
+  const warnings = report.findings.filter((issue) => issue.severity === 'warning')
   lines.push(`issues: ${errors.length} error(s), ${warnings.length} warning(s)`, '')
 
-  for (const issue of report.issues) {
+  for (const issue of report.findings) {
     const loc =
       issue.line !== undefined
         ? `line ${issue.line}`
-        : issue.seq !== undefined
-          ? `seq ${issue.seq}`
+        : issue.brokerSeq !== undefined
+          ? `seq ${issue.brokerSeq}`
           : undefined
     lines.push(
       `${issue.severity.toUpperCase()} ${issue.code}${loc !== undefined ? ` (${loc})` : ''}: ${issue.message}`
     )
   }
-  if (report.issues.length === 0) {
+  if (report.findings.length === 0) {
     lines.push('No broker capture or projection integrity issues found.')
   }
   lines.push('')

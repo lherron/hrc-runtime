@@ -60,6 +60,10 @@ export {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from './paths.js'
+export {
+  BROKER_TO_HRC_LIFECYCLE_KIND,
+  lifecycleKindForBrokerEvent,
+} from './broker-lifecycle-policy.js'
 
 export type {
   HrcAppCommandSessionSpec,
