@@ -10,6 +10,7 @@ import { resolveHarnessFrontendForProvider } from 'spaces-config'
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
 import type { BrokerExecutionProfile, RuntimeContinuationRef } from 'spaces-runtime-contracts'
 
+import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_GHOSTTY_ENV,
@@ -746,6 +747,11 @@ export function getBrokerRuntimeTmuxSocketPath(runtime: HrcRuntimeSnapshot): str
     return tmuxSocketPath
   }
 
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux') {
+    return hosting.substrate.tmuxSocketPath
+  }
+
   const stateTmux = runtime.runtimeStateJson?.['tmux']
   if (isRecord(stateTmux)) {
     const stateSocketPath = stateTmux['socketPath']
@@ -761,6 +767,11 @@ export function getBrokerRuntimeTmuxSessionName(runtime: HrcRuntimeSnapshot): st
   const sessionName = runtime.tmuxJson?.['sessionName']
   if (typeof sessionName === 'string' && sessionName.length > 0) {
     return sessionName
+  }
+
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux') {
+    return hosting.substrate.sessionName
   }
 
   return `hrc-${runtime.hostSessionId.slice(0, 12)}`
@@ -781,6 +792,11 @@ export function getBrokerRuntimeTmuxAttachTarget(runtime: HrcRuntimeSnapshot): s
   const windowName = runtime.tmuxJson?.['windowName']
   if (typeof windowName === 'string' && windowName.length > 0) {
     return `${sessionName}:${windowName}`
+  }
+
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux') {
+    return `${hosting.substrate.sessionName}:tui`
   }
 
   return sessionName
