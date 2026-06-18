@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
@@ -2271,6 +2271,45 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.socket.path).toBe(socketPath)
       expect(body.socket.responsive).toBe(false)
       expect(body.apiHealth).toEqual({ ok: false, error: 'daemon not running' })
+    })
+
+    it('does not hang on a btmux socket that accepts but is not a tmux server', async () => {
+      const btmuxDir = join(runtimeRoot, 'btmux')
+      await mkdir(btmuxDir, { recursive: true })
+      const badLeaseSocket = join(btmuxDir, 'codex-app-server-renderer-control.test.sock')
+      const acceptedSockets = new Set<Socket>()
+      const fakeLease = createServer((socket) => {
+        acceptedSockets.add(socket)
+        socket.once('close', () => acceptedSockets.delete(socket))
+      })
+      await new Promise<void>((resolve, reject) => {
+        fakeLease.once('error', reject)
+        fakeLease.listen(badLeaseSocket, resolve)
+      })
+
+      try {
+        const startedAt = performance.now()
+        const result = await runCli(['server', 'status', '--json'], cliEnv())
+        const elapsedMs = performance.now() - startedAt
+
+        expect(elapsedMs).toBeLessThan(3_000)
+        expect(result.exitCode).toBe(1)
+        const body = JSON.parse(result.stdout.trim())
+        expect(body.status).toBe('not-running')
+        const lease = body.tmux.leases.find(
+          (item: { socketPath: string }) => item.socketPath === badLeaseSocket
+        )
+        expect(lease).toMatchObject({
+          socketPath: badLeaseSocket,
+          running: false,
+          sessions: [],
+          error: expect.stringContaining('unresponsive'),
+        })
+      } finally {
+        for (const socket of acceptedSockets) socket.destroy()
+        await new Promise<void>((resolve) => fakeLease.close(() => resolve()))
+        await rm(badLeaseSocket, { force: true })
+      }
     })
 
     it('exits 2 for usage errors before probing daemon state', async () => {

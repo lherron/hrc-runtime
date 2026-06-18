@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite'
+import { execFile } from 'node:child_process'
 import { existsSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
-import { connect } from 'node:net'
+import { Socket } from 'node:net'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -66,6 +67,7 @@ export type TmuxLeaseStatus = {
   socketPath: string
   running: boolean
   sessions: string[]
+  error?: string | undefined
   /**
    * T-01814 (T-01801 Phase 5) — per-lease control state + both named panes so an
    * operator can tell the broker control pane from the operator TUI pane and see
@@ -221,7 +223,7 @@ function isLiveProcess(pid: number): boolean {
 
 async function isUnixSocketResponsive(socketPath: string, timeoutMs = 200): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
-    const socket = connect(socketPath)
+    const socket = new Socket()
     let settled = false
 
     const finish = (value: boolean): void => {
@@ -235,6 +237,11 @@ async function isUnixSocketResponsive(socketPath: string, timeoutMs = 200): Prom
     const timer = setTimeout(() => finish(false), timeoutMs)
     socket.once('connect', () => finish(true))
     socket.once('error', () => finish(false))
+    try {
+      socket.connect(socketPath)
+    } catch {
+      finish(false)
+    }
   })
 }
 
@@ -253,25 +260,57 @@ async function waitForCondition(
   return await check()
 }
 
-export async function execProcess(argv: string[]): Promise<{
+export async function execProcess(
+  argv: string[],
+  options: { timeoutMs?: number | undefined } = {}
+): Promise<{
   stdout: string
   stderr: string
   exitCode: number
+  timedOut?: boolean | undefined
 }> {
-  const proc = Bun.spawn(argv, {
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-    env: { ...process.env },
+  const [command, ...args] = argv
+  if (!command) {
+    return { stdout: '', stderr: 'missing command', exitCode: 127 }
+  }
+
+  return await new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      {
+        encoding: 'utf8',
+        env: { ...process.env },
+        killSignal: 'SIGKILL',
+        maxBuffer: 10 * 1024 * 1024,
+        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+      },
+      (error, stdout, stderr) => {
+        const timedOut =
+          options.timeoutMs !== undefined &&
+          typeof error === 'object' &&
+          error !== null &&
+          'killed' in error &&
+          error.killed === true &&
+          'signal' in error &&
+          error.signal === 'SIGKILL'
+        const code =
+          error && typeof error === 'object' && 'code' in error && typeof error.code === 'number'
+            ? error.code
+            : timedOut
+              ? 124
+              : error
+                ? 1
+                : 0
+        resolve({
+          stdout,
+          stderr,
+          exitCode: code,
+          ...(timedOut ? { timedOut } : {}),
+        })
+      }
+    )
   })
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
-
-  return { stdout, stderr, exitCode }
 }
 
 const DEFAULT_LAUNCHD_LABEL = 'com.praesidium.hrc-server'
@@ -315,7 +354,9 @@ export async function launchctlKickstart(
   }
 }
 
-export async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus> {
+export async function collectServerRuntimeStatus(
+  options: { includeTmux?: boolean | undefined } = {}
+): Promise<ServerRuntimeStatus> {
   try {
     const paths = resolveServerPaths()
     validateDiagnosticRoot(paths.runtimeRoot, 'runtime root')
@@ -325,7 +366,10 @@ export async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus>
     const pid = readPidFile(paths.pidPath)
     const pidAlive = pid !== undefined ? isLiveProcess(pid) : false
     const socketResponsive = await isUnixSocketResponsive(paths.socketPath)
-    const tmux = await collectTmuxStatus()
+    const tmux =
+      options.includeTmux === false
+        ? skippedTmuxStatus(paths.tmuxSocketPath)
+        : await collectTmuxStatus()
     let apiHealth: ServerRuntimeStatus['apiHealth'] = { ok: false, error: 'daemon not running' }
     let api: ServerRuntimeStatus['api']
     let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
@@ -432,6 +476,17 @@ export async function collectServerRuntimeStatus(): Promise<ServerRuntimeStatus>
       },
       error: message,
     }
+  }
+}
+
+function skippedTmuxStatus(socketPath: string): TmuxStatus {
+  return {
+    available: false,
+    socketPath,
+    running: false,
+    sessionCount: 0,
+    sessions: [],
+    error: 'tmux diagnostics not probed',
   }
 }
 
@@ -716,16 +771,36 @@ export async function stopServerProcess(options?: {
   } catch {}
 }
 
-/** List the sessions on a single tmux server socket, or null if no server. */
-async function listTmuxSessionsOnSocket(socketPath: string): Promise<string[] | null> {
-  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'])
-  if (listResult.exitCode !== 0) {
-    return null
+const TMUX_DIAGNOSTIC_TIMEOUT_MS = 750
+
+type TmuxSessionProbe = {
+  running: boolean
+  sessions: string[]
+  error?: string | undefined
+}
+
+/** List the sessions on a single tmux server socket without letting diagnostics wedge. */
+async function listTmuxSessionsOnSocket(socketPath: string): Promise<TmuxSessionProbe> {
+  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'], {
+    timeoutMs: TMUX_DIAGNOSTIC_TIMEOUT_MS,
+  })
+  if (listResult.timedOut) {
+    return {
+      running: false,
+      sessions: [],
+      error: `unresponsive after ${TMUX_DIAGNOSTIC_TIMEOUT_MS}ms`,
+    }
   }
-  return listResult.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+  if (listResult.exitCode !== 0) {
+    return { running: false, sessions: [] }
+  }
+  return {
+    running: true,
+    sessions: listResult.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  }
 }
 
 /**
@@ -744,11 +819,12 @@ export async function collectBrokerTmuxLeases(): Promise<TmuxLeaseStatus[]> {
   const leases: TmuxLeaseStatus[] = []
   for (const entry of entries.sort()) {
     const socketPath = join(dir, entry)
-    const sessions = await listTmuxSessionsOnSocket(socketPath)
+    const probe = await listTmuxSessionsOnSocket(socketPath)
     leases.push({
       socketPath,
-      running: sessions !== null,
-      sessions: sessions ?? [],
+      running: probe.running,
+      sessions: probe.sessions,
+      ...(probe.error ? { error: probe.error } : {}),
     })
   }
   return leases
@@ -756,24 +832,43 @@ export async function collectBrokerTmuxLeases(): Promise<TmuxLeaseStatus[]> {
 
 export async function collectTmuxStatus(): Promise<TmuxStatus> {
   const socketPath = resolveTmuxSocketPath()
-  const versionResult = await execProcess(['tmux', '-V'])
+  const versionResult = await execProcess(['tmux', '-V'], {
+    timeoutMs: TMUX_DIAGNOSTIC_TIMEOUT_MS,
+  })
   const versionOutput = `${versionResult.stdout}\n${versionResult.stderr}`.trim()
-  const version = versionResult.exitCode === 0 ? versionOutput : undefined
-  if (versionResult.exitCode !== 0) {
+  const version =
+    versionResult.exitCode === 0 && !versionResult.timedOut ? versionOutput : undefined
+  if (versionResult.exitCode !== 0 || versionResult.timedOut) {
     return {
       available: false,
       socketPath,
       running: false,
       sessionCount: 0,
       sessions: [],
-      error: versionOutput || 'tmux unavailable',
+      error: versionResult.timedOut
+        ? `tmux -V unresponsive after ${TMUX_DIAGNOSTIC_TIMEOUT_MS}ms`
+        : versionOutput || 'tmux unavailable',
     }
   }
 
   const leases = await collectBrokerTmuxLeases()
 
-  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'])
+  const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'], {
+    timeoutMs: TMUX_DIAGNOSTIC_TIMEOUT_MS,
+  })
   if (listResult.exitCode !== 0) {
+    if (listResult.timedOut) {
+      return {
+        available: true,
+        version,
+        socketPath,
+        running: false,
+        sessionCount: 0,
+        sessions: [],
+        leases,
+        error: `tmux list-sessions unresponsive after ${TMUX_DIAGNOSTIC_TIMEOUT_MS}ms`,
+      }
+    }
     const output = `${listResult.stderr}\n${listResult.stdout}`.trim().toLowerCase()
     const noServer =
       output.includes('no server running') ||
@@ -829,7 +924,9 @@ export function formatTmuxStatus(status: TmuxStatus): string {
       ? lease.sessions.length > 0
         ? lease.sessions.join(', ')
         : '(running, no sessions)'
-      : '(dead socket)'
+      : lease.error
+        ? `(${lease.error})`
+        : '(dead socket)'
     lines.push(`    - ${lease.socketPath}: ${state}`)
     if (lease.controlMode !== undefined || lease.brokerAttached !== undefined) {
       const attached = lease.brokerAttached ? 'yes' : 'no'

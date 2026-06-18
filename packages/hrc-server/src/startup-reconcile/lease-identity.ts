@@ -12,7 +12,12 @@ import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireSession } from '../require-helpers.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
-import { type TmuxManager, type TmuxPaneState, createTmuxManager } from '../tmux.js'
+import {
+  type TmuxManager,
+  type TmuxPaneState,
+  createTmuxManager,
+  isTmuxCommandTimeoutError,
+} from '../tmux.js'
 import { logStartupIssue, markRuntimeStale } from './runtime-mutations.js'
 import type {
   BrokerReattachOutcome,
@@ -20,6 +25,11 @@ import type {
   BrokerTmuxLeaseSweepResult,
   BrokerWindowObservation,
 } from './types.js'
+
+const LEASE_SOCKET_INSPECT_TIMEOUT_MS = 750
+// The btmux directory also contains Codex app renderer-control Unix sockets.
+// They are not tmux servers, so the orphan lease sweeper must not probe them.
+const NON_LEASE_BTMUX_SOCKET_PREFIXES = ['codex-app-server-renderer-control.']
 
 /**
  * Sweep leaked broker-tmux lease sockets under `<runtimeRoot>/btmux/`. A socket
@@ -43,7 +53,7 @@ export async function sweepOrphanedBrokerTmuxLeases(
   const dir = join(runtimeRoot, 'btmux')
   let entries: string[]
   try {
-    entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
+    entries = (await readdir(dir)).filter(isBrokerTmuxLeaseSocketEntry)
   } catch {
     // No btmux directory yet -> nothing to sweep.
     return result
@@ -126,6 +136,18 @@ export async function sweepOrphanedBrokerTmuxLeases(
             graceMs: options.graceMs,
           })
           continue
+        case 'unresponsive':
+          result.errors += 1
+          logStartupIssue(
+            'broker orphan lease socket unresponsive',
+            {
+              socketPath,
+              ageMs: classified.ageMs,
+              timeoutMs: LEASE_SOCKET_INSPECT_TIMEOUT_MS,
+            },
+            new Error(classified.error)
+          )
+          continue
       }
     } catch (error) {
       result.errors += 1
@@ -135,12 +157,20 @@ export async function sweepOrphanedBrokerTmuxLeases(
   return result
 }
 
+function isBrokerTmuxLeaseSocketEntry(entry: string): boolean {
+  if (!entry.endsWith('.sock')) {
+    return false
+  }
+  return !NON_LEASE_BTMUX_SOCKET_PREFIXES.some((prefix) => entry.startsWith(prefix))
+}
+
 /** Outcome of inspecting one unclaimed lease socket during the orphan sweep. */
 type LeaseSocketClassification =
   | { kind: 'vanished' }
   | { kind: 'within-grace' }
   | { kind: 'dead'; ageMs: number }
   | { kind: 'live-orphan'; ageMs: number; sessions: string[]; leaseTmux: TmuxManager }
+  | { kind: 'unresponsive'; ageMs: number; error: string }
 
 /**
  * Classify one unclaimed `.sock` lease for the orphan sweep WITHOUT mutating the
@@ -167,7 +197,15 @@ async function classifyLeaseSocket(
   }
 
   const leaseTmux = createTmuxManager({ socketPath })
-  const sessions = await leaseTmux.listSessionNames()
+  let sessions: string[]
+  try {
+    sessions = await leaseTmux.listSessionNames({ timeoutMs: LEASE_SOCKET_INSPECT_TIMEOUT_MS })
+  } catch (error) {
+    if (isTmuxCommandTimeoutError(error)) {
+      return { kind: 'unresponsive', ageMs, error: error.message }
+    }
+    throw error
+  }
   const orphanLeaseSessions = sessions.filter((name) => name.startsWith('hrc-'))
   if (orphanLeaseSessions.length === 0) {
     return { kind: 'dead', ageMs }

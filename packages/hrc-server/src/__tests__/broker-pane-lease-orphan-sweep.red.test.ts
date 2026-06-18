@@ -20,7 +20,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -193,6 +194,54 @@ describe('RED (GAP 1): broker-tmux orphan-session sweep on restart', () => {
     servers.push(server)
 
     expect(existsSync(socketPath)).toBe(false)
+  })
+
+  it('does NOT hang on codex-app-server renderer-control sockets in btmux', async () => {
+    const tmpRoot = await mkdtemp('/tmp/hbo-')
+    const runtimeRoot = join(tmpRoot, 'r')
+    const stateRoot = join(tmpRoot, 's')
+    const spoolDir = join(runtimeRoot, 'spool')
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    const socketPath = join(btmuxDir, 'codex-app-server-renderer-control.test.sock')
+    let server: HrcServer | undefined
+    await mkdir(btmuxDir, { recursive: true })
+    await mkdir(stateRoot, { recursive: true })
+    await mkdir(spoolDir, { recursive: true })
+    const acceptedSockets = new Set<Socket>()
+    const rendererControl = createServer((socket) => {
+      acceptedSockets.add(socket)
+      socket.once('close', () => acceptedSockets.delete(socket))
+    })
+    await new Promise<void>((resolve, reject) => {
+      rendererControl.once('error', reject)
+      rendererControl.listen(socketPath, resolve)
+    })
+
+    process.env[GRACE_ENV] = '0'
+
+    try {
+      const startedAt = performance.now()
+      server = await createHrcServer(
+        fixture.serverOpts({
+          runtimeRoot,
+          stateRoot,
+          socketPath: join(runtimeRoot, 'hrc.sock'),
+          lockPath: join(runtimeRoot, 'server.lock'),
+          spoolDir,
+          dbPath: join(stateRoot, 'state.sqlite'),
+          tmuxSocketPath: join(runtimeRoot, 'tmux.sock'),
+        })
+      )
+      const elapsedMs = performance.now() - startedAt
+
+      expect(elapsedMs).toBeLessThan(3_000)
+      expect(existsSync(socketPath)).toBe(true)
+    } finally {
+      await server?.stop()
+      for (const socket of acceptedSockets) socket.destroy()
+      await new Promise<void>((resolve) => rendererControl.close(() => resolve()))
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
   })
 
   it('operator reap RPC does NOT remove a dead lease socket file claimed by a non-terminal runtime', async () => {

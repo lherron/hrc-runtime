@@ -1,5 +1,5 @@
 import { mkdir, open, readFile } from 'node:fs/promises'
-import { connect } from 'node:net'
+import { Socket } from 'node:net'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { HrcServerOptions } from './server-types.js'
@@ -275,30 +275,29 @@ function createServerAlreadyRunningError(lockPath: string, owner: ServerLockOwne
 async function isUnixSocketResponsive(socketPath: string): Promise<boolean> {
   return await new Promise((resolve) => {
     let settled = false
-    const finish = (responsive: boolean, socket?: ReturnType<typeof connect>): void => {
+    const socket = new Socket()
+    const finish = (responsive: boolean): void => {
       if (settled) {
         return
       }
 
       settled = true
-      socket?.destroy()
+      socket.destroy()
       resolve(responsive)
     }
 
-    let socket: ReturnType<typeof connect>
-    try {
-      socket = connect(socketPath)
-    } catch {
-      resolve(true)
-      return
-    }
-
-    socket.once('connect', () => finish(true, socket))
+    socket.once('connect', () => finish(true))
     socket.once('error', (error) => {
       const code = getErrorCode(error)
-      finish(code !== 'ENOENT' && code !== 'ECONNREFUSED' && code !== 'ENOTSOCK', socket)
+      finish(code !== 'ENOENT' && code !== 'ECONNREFUSED' && code !== 'ENOTSOCK')
     })
-    socket.setTimeout(SOCKET_PROBE_TIMEOUT_MS, () => finish(true, socket))
+    socket.setTimeout(SOCKET_PROBE_TIMEOUT_MS, () => finish(true))
+    try {
+      socket.connect(socketPath)
+    } catch (error) {
+      const code = getErrorCode(error)
+      finish(code !== 'ENOENT' && code !== 'ECONNREFUSED' && code !== 'ENOTSOCK')
+    }
   })
 }
 

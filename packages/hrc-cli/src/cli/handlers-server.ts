@@ -23,8 +23,8 @@ import {
 } from '../cli-runtime.js'
 import { agentHarnessGuardMessage } from '../harness-guard.js'
 import { printJson } from '../print.js'
-import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { resolveSessionArg } from '../selector-resolve.js'
+import { parseSinceMs, renderPorcelain, renderSessions } from '../session-render.js'
 import { hasFlag, parseFlag, parseIntegerFlag, requireArg } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
@@ -34,7 +34,7 @@ import { CliStatusExit, createClient, fatal } from './shared.js'
  * `hrc server start` delegates to launchctl when a Launch Agent is loaded.
  */
 export async function cmdServerServe(_args: string[]): Promise<void> {
-  const status = await collectServerRuntimeStatus()
+  const status = await collectServerRuntimeStatus({ includeTmux: false })
   if (status.running) {
     fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
   }
@@ -47,7 +47,7 @@ export async function cmdServerStart(
 ): Promise<void> {
   const mode = resolveServerMode(args, defaultMode)
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
-  const status = await collectServerRuntimeStatus()
+  const status = await collectServerRuntimeStatus({ includeTmux: false })
 
   if (status.running) {
     fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
@@ -128,7 +128,7 @@ async function gateOnInFlightWork(args: string[], action: 'stop' | 'restart'): P
 export async function cmdServerStop(args: string[]): Promise<void> {
   const timeoutMs = parseIntegerFlag(args, '--timeout-ms', { defaultValue: 5_000, min: 1 })
   const force = hasFlag(args, '--force')
-  const before = await collectServerRuntimeStatus()
+  const before = await collectServerRuntimeStatus({ includeTmux: false })
 
   if (!before.running && before.pid === undefined) {
     process.stderr.write('hrc: daemon is not running\n')

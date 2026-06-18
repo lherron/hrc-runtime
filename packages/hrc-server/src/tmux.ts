@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -40,6 +41,20 @@ export type TmuxPaneLiveness = {
 type TmuxExecResult = {
   stdout: string
   stderr: string
+}
+
+export class TmuxCommandTimeoutError extends Error {
+  constructor(
+    readonly command: string,
+    readonly timeoutMs: number
+  ) {
+    super(`tmux command timed out after ${timeoutMs}ms: ${command}`)
+    this.name = 'TmuxCommandTimeoutError'
+  }
+}
+
+export function isTmuxCommandTimeoutError(error: unknown): error is TmuxCommandTimeoutError {
+  return error instanceof TmuxCommandTimeoutError
 }
 
 const MIN_SUPPORTED_TMUX_VERSION = {
@@ -596,14 +611,21 @@ export class TmuxManager {
    * the server/socket is gone (treated as "no sessions"). Used by the startup
    * orphan-lease sweep to detect leaked `hrc-`-named lease sessions.
    */
-  async listSessionNames(): Promise<string[]> {
+  async listSessionNames(options: { timeoutMs?: number | undefined } = {}): Promise<string[]> {
     try {
-      const result = await this.exec(['list-sessions', '-F', '#{session_name}'])
+      const args = ['list-sessions', '-F', '#{session_name}']
+      const result =
+        options.timeoutMs === undefined
+          ? await this.exec(args)
+          : await this.execWithTimeout(args, options.timeoutMs)
       return result.stdout
         .split('\n')
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0)
     } catch (error) {
+      if (isTmuxCommandTimeoutError(error)) {
+        throw error
+      }
       const message = error instanceof Error ? error.message : String(error)
       if (isMissingTargetError(message) || isServerGoneError(message)) {
         return []
@@ -665,6 +687,48 @@ export class TmuxManager {
 
   private async exec(args: string[]): Promise<TmuxExecResult> {
     return this.execRaw(['-S', this.socketPath, ...args])
+  }
+
+  private async execWithTimeout(args: string[], timeoutMs: number): Promise<TmuxExecResult> {
+    return this.execRawWithTimeout(['-S', this.socketPath, ...args], timeoutMs)
+  }
+
+  private async execRawWithTimeout(args: string[], timeoutMs: number): Promise<TmuxExecResult> {
+    return await new Promise((resolve, reject) => {
+      execFile(
+        this.tmuxBinary,
+        args,
+        {
+          encoding: 'utf8',
+          env: sanitizeTmuxClientEnv(process.env),
+          killSignal: 'SIGKILL',
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: timeoutMs,
+        },
+        (error, stdout, stderr) => {
+          const command = [this.tmuxBinary, ...args].join(' ')
+          const timedOut =
+            typeof error === 'object' &&
+            error !== null &&
+            'killed' in error &&
+            error.killed === true &&
+            'signal' in error &&
+            error.signal === 'SIGKILL'
+          if (timedOut) {
+            reject(new TmuxCommandTimeoutError(command, timeoutMs))
+            return
+          }
+
+          if (error) {
+            const rendered = stderr.trim() || stdout.trim() || error.message
+            reject(new Error(rendered))
+            return
+          }
+
+          resolve({ stdout, stderr })
+        }
+      )
+    })
   }
 
   private async execRaw(args: string[]): Promise<TmuxExecResult> {
