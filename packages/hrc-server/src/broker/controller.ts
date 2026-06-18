@@ -144,6 +144,7 @@ export class HarnessBrokerController {
   private readonly agentchat: BrokerAgentchatLifecycle | undefined
   private readonly tmuxAllocator: BrokerTmuxAllocator | undefined
   private readonly headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
+  private readonly headlessViewerAllocator: BrokerTmuxAllocator | undefined
   private readonly waitForAttachedTerminal:
     | ((input: { runtime: HrcRuntimeSnapshot; allocation: BrokerTmuxAllocation }) => Promise<void>)
     | undefined
@@ -187,6 +188,7 @@ export class HarnessBrokerController {
     this.agentchat = deps.agentchat
     this.tmuxAllocator = deps.tmuxAllocator
     this.headlessSubstrateAllocator = deps.headlessSubstrateAllocator
+    this.headlessViewerAllocator = deps.headlessViewerAllocator
     this.waitForAttachedTerminal = deps.waitForAttachedTerminal
     this.reapBrokerTmuxLease = deps.reapBrokerTmuxLease
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
@@ -207,6 +209,7 @@ export class HarnessBrokerController {
     return {
       tmuxAllocator: this.tmuxAllocator,
       headlessSubstrateAllocator: this.headlessSubstrateAllocator,
+      headlessViewerAllocator: this.headlessViewerAllocator,
       env: this.env,
       now: this.now,
     }

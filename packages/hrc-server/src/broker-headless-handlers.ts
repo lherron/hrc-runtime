@@ -18,7 +18,9 @@ import { appendHrcEvent } from './hrc-event-helper.js'
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
+  decideCodexAppServerPresentation,
   filterBrokerDispatchEnvForLockedEnv,
+  isTruthyFeatureFlag,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
@@ -30,7 +32,11 @@ import {
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
 } from './require-helpers.js'
-import { HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV } from './server-constants.js'
+import {
+  HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
+  HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV,
+  HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+} from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
@@ -95,6 +101,18 @@ export async function startHeadlessBrokerRuntime(
 
     const controller = this.getHarnessBrokerController()
     handedOffToController = true
+    // T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy for the
+    // codex-app-server dual-tmux viewer route. The DEFAULT policy is sourced from
+    // an env var (unset → ordinary headless, behaviour-preserving); the decision
+    // gates on driver applicability (codex-app-server only) and honours an env
+    // kill switch. The trigger is the POLICY, never the driver name alone.
+    const operatorPresentation = decideCodexAppServerPresentation({
+      operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
+      brokerDriver: compiled.profile.brokerDriver,
+      killSwitchEnabled: isTruthyFeatureFlag(
+        process.env[HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV]
+      ),
+    })
     const result = await controller.start({
       plan: compiled.plan,
       profile: compiled.profile,
@@ -109,6 +127,9 @@ export async function startHeadlessBrokerRuntime(
         selectedBy: 'decideHeadlessExecutionRoute',
         headlessRoute: 'durable-leased',
         brokerTransport: 'unix-jsonrpc-ndjson',
+        // The presenter policy the controller routes on: 'tmux-tui' selects the
+        // headless-viewer allocator + observer socket; 'none' is ordinary headless.
+        operatorPresentation,
       },
       lifecyclePolicy: resolveLifecyclePolicyOverlay({
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,

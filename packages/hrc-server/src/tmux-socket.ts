@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { assertSocketPathWithinBudget } from 'spaces-harness-broker-client'
@@ -47,6 +47,25 @@ export function getBrokerIpcSocketPath(
     .digest('hex')
     .slice(0, 12)
   return join(options.runtimeRoot, 'bipc', hash, 'b.sock')
+}
+
+/**
+ * T-04921 (T-04905 Phase A) — allocate the per-runtime broker OBSERVER socket
+ * path for the codex-app-server headless-viewer route. The read-only observer
+ * socket is HRC-owned and lives UNDER THE SAME owner-only `bipc/<hash>/` leaf as
+ * the broker IPC socket (`b.sock`), so HRC selects ONE path it passes to BOTH the
+ * durable Unix broker launch (`--experimental-observer-socket <path>`) and the
+ * renderer dispatch env (`HARNESS_BROKER_OBSERVER_SOCKET`) — never two independent
+ * derivations that could diverge. Derived from {@link getBrokerIpcSocketPath} so
+ * the two paths share a directory by construction.
+ */
+export function getBrokerObserverSocketPath(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  brokerDriver: string,
+  runtimeId: string
+): string {
+  const ipcSocketPath = getBrokerIpcSocketPath(options, brokerDriver, runtimeId)
+  return join(dirname(ipcSocketPath), 'observer.sock')
 }
 
 /**

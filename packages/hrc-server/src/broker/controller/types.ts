@@ -234,6 +234,14 @@ export type BrokerTmuxAllocation = {
   brokerPid?: number | undefined
   brokerWindow?: BrokerWindowIdentity | undefined
   tuiWindow?: BrokerWindowIdentity | undefined
+  /**
+   * T-04921 (T-04905 Phase A) — the HRC-owned read-only observer socket path the
+   * broker SERVES for the codex-app-server headless-viewer route (present only
+   * for that route). The controller injects it onto the dispatch env as
+   * HARNESS_BROKER_OBSERVER_SOCKET and persists it on the runtime's broker
+   * endpoint so the renderer connects to the SAME path the broker launch carries.
+   */
+  observerSocketPath?: string | undefined
 }
 
 export type BrokerTmuxAllocator = {
@@ -287,6 +295,16 @@ export type HarnessBrokerControllerDeps = {
    * production wires `createBrokerDurableHeadlessAllocator`.
    */
   headlessSubstrateAllocator?: BrokerTmuxAllocator | undefined
+  /**
+   * T-04921 (T-04905 Phase A) — durable HEADLESS-VIEWER substrate allocator
+   * (presentation='tmux-tui' substrate + observer socket) for the codex-app-server
+   * dual-tmux viewer route. Selected by the controller ONLY when
+   * `routeDecision.operatorPresentation === 'tmux-tui'` for a headless profile;
+   * ordinary headless keeps {@link headlessSubstrateAllocator} (presentation=none).
+   * Kept SEPARATE so an ordinary headless runtime can never carve a TUI pane.
+   * Production wires `createBrokerHeadlessViewerAllocator`.
+   */
+  headlessViewerAllocator?: BrokerTmuxAllocator | undefined
   waitForAttachedTerminal?:
     | ((input: {
         runtime: HrcRuntimeSnapshot

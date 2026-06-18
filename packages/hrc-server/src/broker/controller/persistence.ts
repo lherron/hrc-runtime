@@ -227,6 +227,12 @@ export function buildRuntimeStateJson(
                 },
               }
             : {}),
+          // T-04921 (T-04905 Phase A) — record the HRC-owned observer socket path
+          // alongside the main IPC socket so the renderer + reconcile read ONE
+          // authoritative path (the same one the broker launch command serves).
+          ...(tmuxAllocation.observerSocketPath
+            ? { observerSocketPath: tmuxAllocation.observerSocketPath }
+            : {}),
         },
         generation: tmuxAllocation.generation ?? identity.generation,
         ...(tmuxAllocation.brokerCommand ? { brokerCommand: tmuxAllocation.brokerCommand } : {}),

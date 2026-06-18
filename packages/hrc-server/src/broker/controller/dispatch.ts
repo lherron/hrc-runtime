@@ -32,7 +32,12 @@ import {
   runtimeStatusFromInvocationState,
   toDispatchRuntime,
 } from '../runtime-state'
-import { allocateHeadlessSubstrate, allocateTmuxIfRequired } from './allocation'
+import {
+  allocateHeadlessSubstrate,
+  allocateHeadlessViewerSubstrate,
+  allocateTmuxIfRequired,
+  isHeadlessViewerRoute,
+} from './allocation'
 import type { AllocationContext } from './allocation'
 import { BrokerControllerError } from './errors'
 import { compactEnv, rehydrateInspectionCapabilities, toControllerError } from './internal'
@@ -159,7 +164,15 @@ export async function startController(
       // with presentation='none' (broker window + Unix IPC + token + ledger, NO
       // TUI, NO operator attach) and DIAL it over Unix v0.2 instead of spawning
       // a stdio daemon-child. Public/API identity stays transport='headless'.
-      tmuxAllocation = await allocateHeadlessSubstrate(ctx.allocationContext(), input)
+      //
+      // T-04921 (T-04905 Phase A): when the route decision selected the
+      // codex-app-server headless-viewer presentation, allocate the dual-tmux
+      // VIEWER substrate instead (presentation='tmux-tui' + observer socket). The
+      // profile is still headless and public transport stays 'headless'; only the
+      // operator-attachable TUI pane + observer socket are added.
+      tmuxAllocation = isHeadlessViewerRoute(input)
+        ? await allocateHeadlessViewerSubstrate(ctx.allocationContext(), input)
+        : await allocateHeadlessSubstrate(ctx.allocationContext(), input)
       markPhase('broker-headless-substrate-alloc')
     }
 
@@ -254,10 +267,38 @@ export async function startController(
     // operator pane, so it dispatches NO runtime.terminalSurface (and no tmux
     // shim): the broker-window pane must never become a terminalSurface. Only
     // the interactive tmux-tui route carries the operator pane lease.
-    const dispatchRuntime =
-      tmuxAllocation !== undefined && input.profile.interactionMode === 'headless'
-        ? undefined
-        : toDispatchRuntime(tmuxAllocation)
+    //
+    // T-04921 (T-04905 Phase A) — the EXCEPTION is a headless-viewer runtime: it
+    // is headless BUT carries the operator-attachable TUI pane lease, so it
+    // dispatches `runtime.terminalSurface` = the TUI pane (NEVER the broker pane,
+    // which has no lease) and `terminalSurfaceRequired=true` so the codex driver
+    // hard-requires the presentation pane.
+    const headlessViewerRoute =
+      input.profile.interactionMode === 'headless' &&
+      isHeadlessViewerRoute(input) &&
+      tmuxAllocation?.lease !== undefined
+    let dispatchRuntime
+    if (
+      tmuxAllocation !== undefined &&
+      input.profile.interactionMode === 'headless' &&
+      !headlessViewerRoute
+    ) {
+      dispatchRuntime = undefined
+    } else if (headlessViewerRoute) {
+      const base = toDispatchRuntime(tmuxAllocation)
+      dispatchRuntime = base ? { ...base, terminalSurfaceRequired: true as const } : undefined
+    } else {
+      dispatchRuntime = toDispatchRuntime(tmuxAllocation)
+    }
+
+    // T-04921 — for the headless-viewer route HRC injects the SAME observer socket
+    // path the broker launch command carries onto the renderer dispatch env
+    // (HARNESS_BROKER_OBSERVER_SOCKET), so the renderer connects to the socket the
+    // broker actually serves. ONE path, never two independent derivations.
+    const dispatchEnv =
+      headlessViewerRoute && tmuxAllocation?.observerSocketPath
+        ? { ...(input.dispatchEnv ?? {}), HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath }
+        : input.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
     if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
       await ctx.pauseForAttachedInvocationStart({
@@ -271,15 +312,11 @@ export async function startController(
     // never on input.startRequest (INV-14.4 compiler closure).
     const startResult = input.lifecyclePolicy
       ? await client.startInvocationFromRequest(input.startRequest, {
-          dispatchEnv: input.dispatchEnv,
+          dispatchEnv,
           runtime: dispatchRuntime,
           lifecyclePolicy: input.lifecyclePolicy,
         })
-      : await client.startInvocationFromRequest(
-          input.startRequest,
-          input.dispatchEnv,
-          dispatchRuntime
-        )
+      : await client.startInvocationFromRequest(input.startRequest, dispatchEnv, dispatchRuntime)
     // Encompasses the driver's start() (e.g. codex's load-bearing paste-readiness
     // sleep + launch-command paste), so this is usually the largest broker phase.
     markPhase('broker-invocation-start')

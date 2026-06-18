@@ -162,6 +162,42 @@ export function decideBrokerDurableInteractiveRoute(input: {
   return 'legacy'
 }
 
+/**
+ * T-04921 (T-04905 Phase A) — the HRC-owned operator-presentation policy for a
+ * headless broker runtime. `tmux-tui` requests the dual-tmux viewer route (a
+ * broker window + an operator-attachable TUI pane); `none` is ordinary headless.
+ */
+export type OperatorPresentation = 'tmux-tui' | 'none'
+
+/**
+ * T-04921 (T-04905 Phase A) — pure route decision for the codex-app-server
+ * headless-viewer route. The SEMANTIC TRIGGER is the POLICY
+ * (`operatorPresentation`), never the driver name: a codex-app-server profile
+ * with NO policy stays ordinary headless (`none`). Driver identity is only the
+ * APPLICABILITY gate — the policy can request a viewer ONLY for a driver that can
+ * present one (codex-app-server). An env-set kill switch disables the viewer
+ * regardless of policy. HARD CONSTRAINT (daedalus DM #8645): must NOT key off
+ * hardcoded agent names, and must NOT treat `brokerDriver === 'codex-app-server'`
+ * alone as sufficient.
+ */
+export function decideCodexAppServerPresentation(input: {
+  operatorPresentation: string | undefined
+  brokerDriver: string
+  killSwitchEnabled: boolean
+}): OperatorPresentation {
+  // Applicability gate: only the codex-app-server driver can host a viewer. A
+  // policy aimed at any other driver is inert (the policy is not APPLICABLE).
+  if (input.brokerDriver !== 'codex-app-server') {
+    return 'none'
+  }
+  // Kill switch wins over any policy.
+  if (input.killSwitchEnabled) {
+    return 'none'
+  }
+  // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.
+  return input.operatorPresentation === 'tmux-tui' ? 'tmux-tui' : 'none'
+}
+
 export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
 
 export type LatestRuntimeAdmissionView = {

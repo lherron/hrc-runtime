@@ -14,8 +14,25 @@ import type { BrokerControllerStartInput, BrokerTmuxAllocation, BrokerTmuxAlloca
 export type AllocationContext = {
   tmuxAllocator: BrokerTmuxAllocator | undefined
   headlessSubstrateAllocator: BrokerTmuxAllocator | undefined
+  headlessViewerAllocator: BrokerTmuxAllocator | undefined
   env: Record<string, string | undefined> | undefined
   now: () => string
+}
+
+/**
+ * T-04921 (T-04905 Phase A) — read the HRC-owned operator-presentation policy off
+ * the dispatch `routeDecision`. The handler layer computes it via
+ * `decideCodexAppServerPresentation` (policy is the trigger, driver applicability
+ * is the gate) and stamps `operatorPresentation` here. Returns `'tmux-tui'` ONLY
+ * when the route explicitly selected the headless viewer; anything else (no route
+ * decision, no field, or `'none'`) is ordinary headless.
+ */
+export function isHeadlessViewerRoute(input: BrokerControllerStartInput): boolean {
+  const routeDecision = input.routeDecision
+  if (typeof routeDecision !== 'object' || routeDecision === null) {
+    return false
+  }
+  return (routeDecision as { operatorPresentation?: unknown }).operatorPresentation === 'tmux-tui'
 }
 
 export async function allocateTmuxIfRequired(
@@ -84,6 +101,31 @@ export async function allocateHeadlessSubstrate(
   }
 }
 
+/**
+ * T-04921 (T-04905 Phase A) — allocate the durable HEADLESS-VIEWER substrate
+ * (presentation='tmux-tui' + observer socket) for the codex-app-server dual-tmux
+ * viewer route. Requires the injected viewer allocator (production wires
+ * `createBrokerHeadlessViewerAllocator`); unlike the ordinary headless path there
+ * is NO in-process synthesis fallback — a viewer runtime without an allocator is
+ * a wiring error, not a route we silently degrade.
+ */
+export async function allocateHeadlessViewerSubstrate(
+  ctx: AllocationContext,
+  input: BrokerControllerStartInput
+): Promise<BrokerTmuxAllocation> {
+  if (!ctx.headlessViewerAllocator) {
+    throw new BrokerControllerError(
+      'broker_headless_viewer_allocator_unavailable',
+      'codex-app-server headless-viewer route requires an HRC headless-viewer allocator',
+      {
+        runtimeId: String(input.identity.runtimeId),
+        brokerDriver: input.profile.brokerDriver,
+      }
+    )
+  }
+  return allocateSubstrateVia(ctx, ctx.headlessViewerAllocator, input)
+}
+
 export async function allocateSubstrateVia(
   ctx: AllocationContext,
   allocator: BrokerTmuxAllocator,
@@ -127,6 +169,9 @@ export async function allocateSubstrateVia(
       ? { attachTokenRef: allocation.attachTokenRef }
       : {}),
     ...(allocation.brokerCommand !== undefined ? { brokerCommand: allocation.brokerCommand } : {}),
+    ...(allocation.observerSocketPath !== undefined
+      ? { observerSocketPath: allocation.observerSocketPath }
+      : {}),
     ...(allocation.brokerPid !== undefined ? { brokerPid: allocation.brokerPid } : {}),
     ...(allocation.brokerWindow !== undefined ? { brokerWindow: allocation.brokerWindow } : {}),
     ...(allocation.tuiWindow !== undefined ? { tuiWindow: allocation.tuiWindow } : {}),

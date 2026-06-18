@@ -25,6 +25,7 @@ import { createTmuxManager } from '../tmux.js'
 import {
   createBrokerDurableHeadlessAllocator,
   createBrokerDurableTmuxAllocator,
+  createBrokerHeadlessViewerAllocator,
 } from './substrate-allocator.js'
 
 export function getHarnessBrokerController(
@@ -105,6 +106,17 @@ export function getHarnessBrokerController(
       generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
     }
   )
+  // T-04921 (T-04905 Phase A) — the durable HEADLESS-VIEWER substrate allocator
+  // (presentation='tmux-tui' + observer socket). Selected by the controller ONLY
+  // when the route decision sets operatorPresentation='tmux-tui' for the
+  // codex-app-server driver; ordinary headless keeps headlessSubstrateAllocator.
+  const headlessViewerAllocator: BrokerTmuxAllocator = createBrokerHeadlessViewerAllocator(
+    this.options,
+    {
+      tmuxManagerFactory,
+      generateAttachToken: this.generateBrokerAttachToken ?? randomUUID,
+    }
+  )
   this.harnessBrokerController = new HarnessBrokerController({
     db: this.db,
     mapper: {
@@ -122,6 +134,7 @@ export function getHarnessBrokerController(
     },
     tmuxAllocator,
     headlessSubstrateAllocator,
+    headlessViewerAllocator,
     waitForAttachedTerminal: async ({ allocation }) => {
       const sessionName = allocation.lease?.sessionName ?? allocation.sessionName
       const windowName = allocation.lease?.windowName ?? allocation.windowName

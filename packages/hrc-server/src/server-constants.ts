@@ -29,6 +29,17 @@ export const HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV = 'HRC_PI_TUI_TMUX_BROKER_ENABLE
 // T-01810 (T-01801 Phase 1) — durable Unix-IPC broker route. OFF by default
 // (truthy-only), unlike the default-ON broker cutover flags above.
 export const HRC_BROKER_DURABLE_IPC_ENABLED_ENV = 'HRC_BROKER_DURABLE_IPC_ENABLED'
+// T-04921 (T-04905 Phase A) — HRC-owned operator-presentation policy DEFAULT for
+// the codex-app-server headless-viewer route. Set to 'tmux-tui' to request the
+// dual-tmux viewer for codex-app-server headless runtimes; unset / any other
+// value keeps ordinary headless (presentation='none'). The DEFAULT lives here as
+// an env policy source; the route decision still gates on driver applicability.
+export const HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV =
+  'HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION'
+// T-04921 — kill switch for the codex-app-server headless-viewer route. Truthy
+// disables the viewer regardless of the presentation policy.
+export const HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV =
+  'HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH'
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15

@@ -17,6 +17,7 @@ import type { HrcServerOptions } from '../server-types.js'
 import { timestamp } from '../server-util.js'
 import {
   getBrokerIpcSocketPath,
+  getBrokerObserverSocketPath,
   getBrokerTmuxSocketPath,
   preflightBrokerIpcSocketPath,
 } from '../tmux-socket.js'
@@ -86,6 +87,14 @@ export type AllocateBrokerSubstrateInput = {
   driverKind: string
   endpoint: 'unix-jsonrpc-ndjson'
   presentation: BrokerSubstratePresentationKind
+  /**
+   * T-04921 (T-04905 Phase A) — when set, the broker is launched with
+   * `--experimental-observer-socket <path>` so it SERVES a read-only observer
+   * socket at this HRC-selected path, and the path is echoed back on the
+   * allocation for the dispatch env (HARNESS_BROKER_OBSERVER_SOCKET). HRC owns
+   * ONE path for both, never two independent derivations.
+   */
+  observerSocketPath?: string | undefined
 }
 
 export type BrokerSubstrateAllocation = {
@@ -98,6 +107,13 @@ export type BrokerSubstrateAllocation = {
   /** Raw attach-token secret — used in-process only, NEVER persisted. */
   attachToken: string
   brokerCommand: string
+  /**
+   * T-04921 — the HRC-owned read-only observer socket path the broker SERVES
+   * (present only when `observerSocketPath` was requested). Echoed onto the
+   * dispatch env (HARNESS_BROKER_OBSERVER_SOCKET) so the renderer connects to the
+   * SAME path the broker launch command carries.
+   */
+  observerSocketPath?: string | undefined
   brokerPid?: number | undefined
   /** Full broker-window identity (incl. socket/session/window names). */
   brokerWindow: BrokerWindowIdentity
@@ -151,13 +167,19 @@ export async function allocateBrokerSubstrate(
   // + token file) arm the broker's latest-valid-attach-wins gate so it validates
   // the controller's attach token instead of accepting any peer.
   const eventLedgerPath = join(ipcDir, 'events.ndjson')
+  // T-04921 — when an observer socket path is requested, the broker is launched
+  // with `--experimental-observer-socket <path>` so it actually SERVES the
+  // read-only observer socket (an env var alone is insufficient — the broker
+  // must be told to serve it). HRC passes ONE path here and on the dispatch env.
+  const observerSocketPath = input.observerSocketPath
   const brokerCommand =
     `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}` +
     ` --event-ledger ${eventLedgerPath}` +
     ` --runtime-id ${runtimeId}` +
     ` --host-session-id ${hostSessionId}` +
     ` --generation ${generation}` +
-    ` --attach-token-file ${attachTokenPath}`
+    ` --attach-token-file ${attachTokenPath}` +
+    (observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : '')
   const brokerWindow = await tmux.createWindowWithCommand({
     sessionName,
     windowName: 'broker',
@@ -207,6 +229,7 @@ export async function allocateBrokerSubstrate(
     allocatedAt: now(),
     attachToken,
     brokerCommand,
+    ...(observerSocketPath !== undefined ? { observerSocketPath } : {}),
     ...(brokerPid !== undefined ? { brokerPid } : {}),
     brokerWindow,
   }
@@ -355,6 +378,7 @@ function projectBaseAllocation(sub: BrokerSubstrateAllocation): BrokerTmuxAlloca
       ? { attachTokenRef: sub.endpoint.attachTokenRef }
       : {}),
     brokerCommand: sub.brokerCommand,
+    ...(sub.observerSocketPath !== undefined ? { observerSocketPath: sub.observerSocketPath } : {}),
     ...(sub.brokerPid !== undefined ? { brokerPid: sub.brokerPid } : {}),
     brokerWindow: sub.brokerWindow,
   }
@@ -441,6 +465,70 @@ export function createBrokerDurableHeadlessAllocator(
       })
       // No lease / tuiWindow: presentation='none' has no operator pane.
       return projectBaseAllocation(sub)
+    },
+  }
+}
+
+/**
+ * T-04921 (T-04905 Phase A) — durable HEADLESS-VIEWER broker allocator for the
+ * codex-app-server dual-tmux viewer route. A thin adapter over
+ * {@link allocateBrokerSubstrate} with presentation='tmux-tui' — so it carves the
+ * SAME two-window leased substrate (broker window over Unix IPC + an
+ * operator-attachable TUI pane lease) as {@link createBrokerDurableTmuxAllocator}
+ * — but it ADDITIONALLY:
+ *   - selects ONE HRC-owned observer socket path under the broker's `bipc/<hash>/`
+ *     dir and launches the broker with `--experimental-observer-socket <path>` so
+ *     the broker SERVES the read-only observer socket, echoing the path back on
+ *     the allocation for the dispatch env (HARNESS_BROKER_OBSERVER_SOCKET), and
+ *   - is consumed for a HEADLESS profile, so its PUBLIC identity stays
+ *     transport='headless' (persistStartGraph keys transport off the profile, not
+ *     the substrate — an interactive tmux-tui profile is 'tmux', this is not).
+ * The hashed CodexAppServerDriverSpec / startRequest are UNCHANGED: the viewer is
+ * a runtime-side routing decision, never a profile mutation.
+ */
+export function createBrokerHeadlessViewerAllocator(
+  options: Pick<HrcServerOptions, 'runtimeRoot'>,
+  deps: BrokerDurableTmuxAllocatorDeps
+): BrokerTmuxAllocator {
+  return {
+    allocate: async ({
+      runtimeId,
+      hostSessionId,
+      brokerDriver,
+      generation,
+    }): Promise<BrokerTmuxAllocation> => {
+      // HRC selects ONE observer socket path (same bipc/<hash>/ leaf as b.sock) so
+      // the broker launch command and the renderer dispatch env never derive it
+      // independently.
+      const observerSocketPath = getBrokerObserverSocketPath(options, brokerDriver, runtimeId)
+      const sub = await allocateBrokerSubstrate(options, deps, {
+        runtimeId,
+        hostSessionId,
+        generation,
+        driverKind: brokerDriver,
+        endpoint: 'unix-jsonrpc-ndjson',
+        presentation: 'tmux-tui',
+        observerSocketPath,
+      })
+      // tmux-tui always yields a COMPLETE TUI window + lease; validate-and-narrow
+      // the optional fields (fail-fast on a latent partial) rather than trusting
+      // an unchecked `as` cast (T-04755).
+      const tuiWindow = sub.tuiWindow
+      const lease = sub.tuiLease
+      assertCompleteBrokerWindowIdentity(tuiWindow, 'headless-viewer allocation tuiWindow')
+      assertCompleteBrokerTmuxLease(lease, 'headless-viewer allocation tuiLease')
+      return {
+        ...projectBaseAllocation(sub),
+        lease,
+        tuiWindow,
+        // Legacy single-pane fields mirror the TUI pane for restart reconcile /
+        // teardown that still reads the flat shape.
+        sessionId: tuiWindow.sessionId,
+        windowId: tuiWindow.windowId,
+        paneId: tuiWindow.paneId,
+        sessionName: tuiWindow.sessionName,
+        windowName: tuiWindow.windowName,
+      }
     },
   }
 }
