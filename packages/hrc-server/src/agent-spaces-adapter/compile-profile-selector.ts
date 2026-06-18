@@ -96,7 +96,9 @@ function isInteractiveTmuxBrokerProfile(
     profile.interactionMode === 'interactive' &&
     isAdmissibleBrokerProtocol(profile.brokerProtocol) &&
     typeof profile.brokerDriver === 'string' &&
-    (profile.brokerDriver === 'claude-code-tmux' || profile.brokerDriver === 'codex-cli-tmux') &&
+    (profile.brokerDriver === 'claude-code-tmux' ||
+      profile.brokerDriver === 'codex-cli-tmux' ||
+      profile.brokerDriver === 'pi-tui-tmux') &&
     profile.brokerTerminal?.host === 'tmux'
   )
 }

@@ -387,6 +387,7 @@ export async function dispatchTurnForSession(
     {
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
       codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
+      piTuiTmuxBrokerEnabled: this.piTuiTmuxBrokerEnabled,
     }
   )
 
@@ -424,7 +425,10 @@ export async function dispatchTurnForSession(
       runId,
       {
         waitForCompletion:
-          admission.allowedBrokerDriver === 'codex-cli-tmux' ? false : options.waitForCompletion,
+          admission.allowedBrokerDriver === 'codex-cli-tmux' ||
+          admission.allowedBrokerDriver === 'pi-tui-tmux'
+            ? false
+            : options.waitForCompletion,
       }
     )
   }
@@ -453,7 +457,10 @@ export async function dispatchTurnForSession(
           : {}),
         spawnHeadlessViewer: isHeadlessClaudeRedirect,
         waitForCompletion:
-          admission.allowedBrokerDriver === 'codex-cli-tmux' ? false : options.waitForCompletion,
+          admission.allowedBrokerDriver === 'codex-cli-tmux' ||
+          admission.allowedBrokerDriver === 'pi-tui-tmux'
+            ? false
+            : options.waitForCompletion,
       }),
   })
 }

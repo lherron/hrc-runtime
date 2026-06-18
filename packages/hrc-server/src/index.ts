@@ -51,6 +51,7 @@ import {
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
+  resolvePiTuiTmuxBrokerEnabled,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
 } from './option-resolvers.js'
@@ -244,6 +245,7 @@ class HrcServerInstance implements HrcServer {
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
+  readonly piTuiTmuxBrokerEnabled: boolean
   harnessBrokerController: HarnessBrokerController | undefined
   /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
   brokerWarmupComplete?: Promise<void> | undefined
@@ -378,6 +380,7 @@ class HrcServerInstance implements HrcServer {
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
+    this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
     this.ctx = {
       db: this.db,
       tmux: this.tmux,

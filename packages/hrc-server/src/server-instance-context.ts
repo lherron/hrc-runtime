@@ -130,6 +130,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
+  readonly piTuiTmuxBrokerEnabled: boolean
   harnessBrokerController: HarnessBrokerController | undefined
   /**
    * Resolves once the post-construction durable-broker warmup has finished (or

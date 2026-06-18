@@ -39,8 +39,8 @@ const color = new Chalk({
 
 function usage(): never {
   console.log(`Usage:
-  scripts/close-headless-ghostmux.sh [--dry-run] [--simulate] [--yes]
-  bun scripts/close-headless-ghostmux.ts [--dry-run] [--simulate] [--yes]
+  scripts/reap-headless-ghostmux.sh [--dry-run] [--simulate] [--yes]
+  bun scripts/reap-headless-ghostmux.ts [--dry-run] [--simulate] [--yes]
 
 Find Ghostty panes whose titles match TITLE_REGEX, print HRC status, ask for
 confirmation, then reap each eligible broker-tmux runtime over the broker RPC
@@ -317,6 +317,21 @@ function isQuitEligible(status: PaneStatus): boolean {
   return skipReasons(status).length === 0
 }
 
+// A leftover viewer is a pane whose HRC runtime is already gone (terminated or
+// stale) — there is nothing live to reap, but the Ghostty terminal is often
+// still parked on the harness "Press enter to exit" close prompt. Such panes are
+// NOT reap-eligible (no live broker), yet we still want to send Enter to close
+// the dead terminal. The actual keystroke stays gated by the close-prompt regex
+// at send time, so a runtime-gone pane that is NOT showing the prompt is left
+// untouched. A pane with an active run is never a leftover viewer.
+function isLeftoverViewer(status: PaneStatus): boolean {
+  return (
+    status.runtimeId !== '' &&
+    status.activeRunId === '' &&
+    (status.runtimeStatus === 'terminated' || status.runtimeStatus === 'stale')
+  )
+}
+
 function simPanes(): Pane[] {
   return [
     {
@@ -326,6 +341,12 @@ function simPanes(): Pane[] {
     {
       id: 'EB834507',
       title: 'hrc headless agent:curly:project:agent-control-plane:task:T-02864',
+    },
+    {
+      // Already-terminated leftover viewer: no live runtime to reap, but parked
+      // on the close prompt — exercises the leftover-viewer close path.
+      id: 'C10D0144',
+      title: 'hrc headless agent:clod:project:agent-spaces:task:primary',
     },
   ]
 }
@@ -347,10 +368,14 @@ function listPanes(options: Options): Pane[] {
 
 function metadataForPane(pane: Pane, options: Options): Record<string, unknown> {
   if (options.simulate) {
-    const runtimeId = pane.id === '7BF21FAF' ? 'rt-smokey-sim' : 'rt-curly-sim'
+    const simRuntimeIds: Record<string, string> = {
+      '7BF21FAF': 'rt-smokey-sim',
+      EB834507: 'rt-curly-sim',
+      C10D0144: 'rt-clod-leftover-sim',
+    }
     return {
       hrc_role: 'hrc-headless-viewer',
-      hrc_runtime_id: runtimeId,
+      hrc_runtime_id: simRuntimeIds[pane.id] ?? 'rt-unknown-sim',
       hrc_scope_ref: scopeFromTitle(pane.title),
     }
   }
@@ -371,12 +396,15 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
   const agent = agentFromScope(scopeRef)
 
   if (options.simulate) {
+    // C10D0144 simulates an already-terminated leftover viewer (no live runtime
+    // to reap, but still parked on the close prompt).
+    const leftover = pane.id === 'C10D0144'
     return {
       ...pane,
       agent,
       scopeRef,
       runtimeId,
-      runtimeStatus: 'ready',
+      runtimeStatus: leftover ? 'terminated' : 'ready',
       transport: 'tmux',
       controllerKind: 'harness-broker',
       activeRunId: '',
@@ -384,7 +412,7 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
       runId: `run-sim-${pane.id}`,
       lastEventUtc: '2026-06-09T14:00:00.000Z',
       lastEventLocal: '2026-06-09 09:00:00',
-      lastEventKind: 'turn.completed',
+      lastEventKind: leftover ? 'runtime.terminated' : 'turn.completed',
     }
   }
 
@@ -502,13 +530,30 @@ Press enter to exit`
   return tryRun(['ghostmux', 'capture-pane', '-t', pane.id])
 }
 
+type ReapResult =
+  | { kind: 'sent' }
+  | { kind: 'dry-run' }
+  | { kind: 'already-terminated'; message: string }
+  | { kind: 'error'; message: string }
+
+// A reap whose target runtime is already gone (terminated/pruned between the
+// status snapshot and the terminate call) is benign — the desired end state is
+// already true. Recognize it so the loop logs a warning instead of aborting.
+function isAlreadyTerminatedError(message: string): boolean {
+  return /runtime_unavailable|is terminated|already terminated|not found/i.test(message)
+}
+
 // Broker-backed operator reap (T-04423): instead of typing `/quit` into the
 // live TUI prompt (timing-fragile keystroke injection), tear the broker-tmux
 // runtime down deterministically over the broker RPC channel via the existing
 // `hrc runtime terminate`. `--no-drop-continuation` preserves the session so the
 // next turn resumes; `--reason operator_reap --source` stamps durable operator
 // intent + attribution onto the `runtime.terminated` audit event.
-function sendReap(status: PaneStatus, options: Options): void {
+//
+// Returns a result instead of throwing: one runtime that fails to reap (already
+// terminated, transient RPC error, etc.) must NOT abort the whole sweep — the
+// caller warns and continues to the remaining eligible panes.
+function sendReap(status: PaneStatus, options: Options): ReapResult {
   const argv = [
     'hrc',
     'runtime',
@@ -522,9 +567,17 @@ function sendReap(status: PaneStatus, options: Options): void {
   ]
   if (options.dryRun) {
     console.log(color.dim(`  dry-run: ${argv.join(' ')}`))
-    return
+    return { kind: 'dry-run' }
   }
-  run(argv)
+  try {
+    run(argv)
+    return { kind: 'sent' }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return isAlreadyTerminatedError(message)
+      ? { kind: 'already-terminated', message }
+      : { kind: 'error', message }
+  }
 }
 
 function sendEnter(pane: Pane, options: Options): void {
@@ -581,8 +634,12 @@ function printStatus(statuses: PaneStatus[], options: Options): void {
   })
 }
 
-async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promise<void> {
-  if (eligibleStatuses.length === 0) return
+async function confirm(
+  eligibleStatuses: PaneStatus[],
+  leftoverStatuses: PaneStatus[],
+  options: Options
+): Promise<void> {
+  if (eligibleStatuses.length === 0 && leftoverStatuses.length === 0) return
   if (options.dryRun) {
     console.log()
     console.log(color.dim('Confirmation skipped for dry-run.'))
@@ -600,20 +657,30 @@ async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promis
     )
   }
 
+  // Word the prompt for exactly the work pending: reaping live runtimes,
+  // closing already-dead leftover viewer panes, or both.
+  const actions: string[] = []
+  if (eligibleStatuses.length > 0) {
+    actions.push(`reap ${eligibleStatuses.length} runtime(s) via hrc runtime terminate`)
+  }
+  if (leftoverStatuses.length > 0) {
+    actions.push(`close ${leftoverStatuses.length} leftover viewer pane(s)`)
+  }
+
   console.log()
   const readline = createInterface({ input: process.stdin, output: process.stdout })
   const answer = (
-    await readline.question(
-      color.yellow(
-        `Reap ${eligibleStatuses.length} eligible runtime(s) via hrc runtime terminate? Press Enter to continue: `
-      )
-    )
+    await readline.question(color.yellow(`${capitalize(actions.join(' and '))}? Press Enter to continue: `))
   ).trim()
   readline.close()
   if (answer !== '') {
     throw Object.assign(new Error('aborted before reaping'), { exitCode: 130 })
   }
   console.log(color.green('Confirmation accepted.'))
+}
+
+function capitalize(text: string): string {
+  return text.length === 0 ? text : text[0].toUpperCase() + text.slice(1)
 }
 
 function sleep(seconds: number): Promise<void> {
@@ -644,6 +711,12 @@ async function main(): Promise<void> {
   const panes = listPanes(options)
   const statuses = panes.map((pane) => queryStatus(pane, options))
   const eligibleStatuses = statuses.filter(isQuitEligible)
+  // Already-dead viewer panes: no live runtime to reap, but still parked on the
+  // harness close prompt — close their Ghostty terminals in the same sweep.
+  const leftoverStatuses = statuses.filter(isLeftoverViewer)
+  // The close-prompt phase Enters BOTH the runtimes we just reaped and the
+  // already-dead leftover viewers.
+  const closeTargets = [...eligibleStatuses, ...leftoverStatuses]
   printStatus(statuses, options)
   if (statuses.length > 0) {
     const skipped = statuses.length - eligibleStatuses.length
@@ -653,36 +726,65 @@ async function main(): Promise<void> {
         `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, transport=tmux, runtime=ready, no active run, latest turn=completed).`
       )
     )
+    if (leftoverStatuses.length > 0) {
+      console.log(
+        color.dim(
+          `Leftover viewers: ${leftoverStatuses.length} already-terminated pane(s) will be closed if parked on the exit prompt.`
+        )
+      )
+    }
   }
-  await confirm(eligibleStatuses, options)
+  await confirm(eligibleStatuses, leftoverStatuses, options)
 
-  if (eligibleStatuses.length === 0) {
-    console.log(color.yellow('No eligible panes; reap not sent.'))
+  if (closeTargets.length === 0) {
+    console.log(color.yellow('No eligible runtimes and no leftover viewers; nothing to do.'))
     printRemaining(options)
     return
   }
 
-  console.log()
-  console.log(color.bold('Reaping (hrc runtime terminate --reason operator_reap)'))
-  for (const status of eligibleStatuses) {
-    sendReap(status, options)
-    console.log(
-      `  ${color.cyan(status.id)} ${color.green('reap sent')} ${color.dim(status.agent)} ${color.dim(
-        shortRuntime(status.runtimeId)
-      )}`
-    )
+  if (eligibleStatuses.length === 0) {
+    console.log()
+    console.log(color.dim('No runtimes to reap; closing leftover viewer panes only.'))
   }
 
-  console.log()
-  console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
-  await sleep(options.waitSeconds)
+  if (eligibleStatuses.length > 0) {
+    console.log()
+    console.log(color.bold('Reaping (hrc runtime terminate --reason operator_reap)'))
+    // A failure on any single runtime warns and continues — never aborts the
+    // sweep, so the remaining eligible panes still get reaped and the
+    // close-prompt phase still runs.
+    let reapSent = 0
+    let reapWarned = 0
+    for (const status of eligibleStatuses) {
+      const result = sendReap(status, options)
+      const suffix = `${color.dim(status.agent)} ${color.dim(shortRuntime(status.runtimeId))}`
+      if (result.kind === 'already-terminated') {
+        reapWarned += 1
+        console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)
+      } else if (result.kind === 'error') {
+        reapWarned += 1
+        console.log(`  ${color.cyan(status.id)} ${color.red('reap failed')} ${suffix}`)
+        console.log(`    ${color.red(result.message)}`)
+      } else {
+        reapSent += 1
+        console.log(`  ${color.cyan(status.id)} ${color.green('reap sent')} ${suffix}`)
+      }
+    }
+    if (reapWarned > 0) {
+      console.log(color.dim(`Reap summary: sent=${reapSent}, warned=${reapWarned}`))
+    }
+
+    console.log()
+    console.log(color.dim(`Waiting ${options.waitSeconds}s before close-prompt validation...`))
+    await sleep(options.waitSeconds)
+  }
 
   console.log()
   console.log(color.bold('Closing viewer summaries'))
   const closePrompt = new RegExp(options.closePromptRegex)
   let closed = 0
   let skipped = 0
-  for (const status of eligibleStatuses) {
+  for (const status of closeTargets) {
     const capture = capturePane(status, options)
     if (closePrompt.test(capture)) {
       console.log()
@@ -714,5 +816,5 @@ if (import.meta.main) {
   })
 }
 
-export { isQuitEligible, skipReasons }
+export { isAlreadyTerminatedError, isLeftoverViewer, isQuitEligible, skipReasons }
 export type { PaneStatus }

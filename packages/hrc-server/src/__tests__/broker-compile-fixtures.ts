@@ -140,6 +140,7 @@ export function makeBrokerProfile(
 
 /** Options for shaping the interactive tmux fixture's launch / initialInput shape. */
 export type InteractiveTmuxFixtureOpts = {
+  brokerDriver?: 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
   /**
    * When set, attach `spec.launch.initialPrompt` (the launch-argv priming shape).
    * Included in spec hashing, so the priming is hash-bound and invocationId-bound.
@@ -165,19 +166,39 @@ export function makeInteractiveTmuxProfile(
   opts: InteractiveTmuxFixtureOpts = {}
 ): { profile: BrokerExecutionProfile; startRequest: InvocationStartRequest } {
   const withInitialInput = opts.withInitialInput ?? identity.initialInputId !== undefined
+  const brokerDriver = opts.brokerDriver ?? 'claude-code-tmux'
+  const frontend =
+    brokerDriver === 'claude-code-tmux'
+      ? 'claude'
+      : brokerDriver === 'codex-cli-tmux'
+        ? 'codex-cli'
+        : 'pi-cli'
+  const provider = brokerDriver === 'claude-code-tmux' ? 'anthropic' : 'openai'
+  const command =
+    brokerDriver === 'claude-code-tmux'
+      ? 'claude'
+      : brokerDriver === 'codex-cli-tmux'
+        ? 'codex'
+        : 'pi'
+  const lockedEnv =
+    brokerDriver === 'claude-code-tmux'
+      ? { CLAUDE_CONFIG_DIR: '/tmp/work/.claude' }
+      : brokerDriver === 'codex-cli-tmux'
+        ? { CODEX_HOME: '/tmp/work/.codex' }
+        : { PI_CODING_AGENT_DIR: '/tmp/work/.pi-agent' }
   const spec: HarnessInvocationSpec = {
     specVersion: 'harness-broker.invocation/v1',
     invocationId: identity.invocationId,
-    harness: { frontend: 'claude', provider: 'anthropic', driver: 'claude-code-tmux' },
+    harness: { frontend, provider, driver: brokerDriver },
     process: {
-      command: 'claude',
+      command,
       args: ['--dangerously-skip-permissions'],
       cwd: '/tmp/work',
-      lockedEnv: { CLAUDE_CONFIG_DIR: '/tmp/work/.claude' },
+      lockedEnv,
       harnessTransport: { kind: 'pty' },
     },
     interaction: { mode: 'interactive', turnConcurrency: 'single', inputQueue: 'fifo' },
-    driver: { kind: 'claude-code-tmux' },
+    driver: { kind: brokerDriver },
     ...(opts.launchInitialPrompt !== undefined
       ? { launch: { initialPrompt: opts.launchInitialPrompt } }
       : {}),
@@ -195,7 +216,7 @@ export function makeInteractiveTmuxProfile(
           initialInput: {
             inputId: (opts.initialInputId ?? identity.initialInputId) as string,
             kind: 'user',
-            content: [{ type: 'text', text: 'hello claude tmux' }],
+          content: [{ type: 'text', text: `hello ${brokerDriver}` }],
           },
         }
       : {}),
@@ -207,14 +228,14 @@ export function makeInteractiveTmuxProfile(
   return {
     profile: {
       schemaVersion: 'agent-runtime-profile/v1',
-      profileId: 'profile_claude_tmux',
-      profileHash: 'profilehash_claude_tmux',
-      compatibilityHash: 'compat_claude_tmux',
+      profileId: `profile_${brokerDriver}`,
+      profileHash: `profilehash_${brokerDriver}`,
+      compatibilityHash: `compat_${brokerDriver}`,
       kind: 'harness-broker',
       interactionMode: 'interactive',
       // T-01866 — v0.2 is the only active broker protocol (v0.1 decommissioned).
       brokerProtocol: 'harness-broker/0.2',
-      brokerDriver: 'claude-code-tmux',
+      brokerDriver,
       brokerOwnership: 'hrc-owned-process',
       brokerTerminal: { host: 'tmux' },
       expectedCapabilities: {},

@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T-04901 - HRC JSON-RPC stdio control plane alternative</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f6f7f2;
+        --ink: #171a16;
+        --muted: #5c6258;
+        --quiet: #858b81;
+        --panel: #ffffff;
+        --panel-alt: #eef1e9;
+        --line: #cfd5c7;
+        --hard-line: #222820;
+        --green: #2f7a4f;
+        --red: #b73a31;
+        --amber: #b87b16;
+        --cyan: #167887;
+        --violet: #5a4f86;
+        --shadow: 0 18px 44px rgba(23, 26, 22, 0.12);
+        --mono:
+          ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono",
+          monospace;
+        --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+        --sans: "Avenir Next", "Segoe UI", Helvetica, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+        min-width: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.5;
+        background:
+          linear-gradient(90deg, rgba(23, 26, 22, 0.045) 1px, transparent 1px) 0 0 / 36px 36px,
+          linear-gradient(rgba(23, 26, 22, 0.035) 1px, transparent 1px) 0 0 / 36px 36px,
+          linear-gradient(135deg, rgba(22, 120, 135, 0.08), transparent 36%),
+          linear-gradient(315deg, rgba(183, 58, 49, 0.08), transparent 38%),
+          var(--paper);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .mast {
+        min-height: 72vh;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 390px;
+        gap: 42px;
+        align-items: center;
+        padding: 46px 0 34px;
+      }
+
+      .kicker,
+      .label,
+      .mini-label,
+      .axis {
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 780px;
+        margin-bottom: 20px;
+        font-family: var(--serif);
+        font-size: 4.8rem;
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      h1 .mark {
+        color: var(--red);
+      }
+
+      .lead {
+        max-width: 760px;
+        margin-bottom: 24px;
+        color: #33382f;
+        font-size: 1.12rem;
+      }
+
+      .status-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 28px;
+      }
+
+      .pill {
+        display: inline-flex;
+        min-height: 32px;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--hard-line);
+        background: var(--panel);
+        box-shadow: 4px 4px 0 var(--hard-line);
+        font-size: 0.82rem;
+        font-weight: 800;
+      }
+
+      .pill .dot {
+        width: 9px;
+        height: 9px;
+        border: 1px solid var(--hard-line);
+        background: var(--green);
+      }
+
+      .pill.warn .dot {
+        background: var(--amber);
+      }
+
+      .control-stack {
+        border: 2px solid var(--hard-line);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .stack-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 14px 16px;
+        border-bottom: 2px solid var(--hard-line);
+        background: #dfe6dc;
+      }
+
+      .stack-body {
+        padding: 16px;
+      }
+
+      .transport-tile {
+        position: relative;
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel-alt);
+      }
+
+      .transport-tile + .transport-tile {
+        margin-top: 12px;
+      }
+
+      .transport-tile h2 {
+        margin: 0 0 8px;
+        font-size: 0.95rem;
+        letter-spacing: 0;
+      }
+
+      .transport-tile p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .transport-tile.good {
+        border-left: 9px solid var(--green);
+      }
+
+      .transport-tile.caution {
+        border-left: 9px solid var(--amber);
+      }
+
+      .transport-tile.reject {
+        border-left: 9px solid var(--red);
+      }
+
+      code,
+      pre,
+      .mono {
+        font-family: var(--mono);
+      }
+
+      code {
+        overflow-wrap: anywhere;
+      }
+
+      section {
+        padding: 54px 0;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+        gap: 28px;
+        align-items: start;
+        margin-bottom: 24px;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-family: var(--serif);
+        font-size: 2.9rem;
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .section-head p {
+        max-width: 820px;
+        color: var(--muted);
+      }
+
+      .thesis-band {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        gap: 18px;
+      }
+
+      .statement {
+        padding: 24px;
+        border: 2px solid var(--hard-line);
+        background: var(--panel);
+        box-shadow: 7px 7px 0 var(--hard-line);
+      }
+
+      .statement h3,
+      .card h3,
+      .rail h3 {
+        margin: 0 0 10px;
+        font-size: 0.95rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .statement p,
+      .card p,
+      .rail p,
+      .matrix td,
+      .check li,
+      .phase li {
+        color: var(--muted);
+      }
+
+      .statement strong {
+        color: var(--ink);
+      }
+
+      .command-box {
+        padding: 18px;
+        border: 1px solid var(--line);
+        background: #11160f;
+        color: #f4f8ef;
+      }
+
+      .command-box pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 0.88rem;
+      }
+
+      .diagram {
+        display: grid;
+        gap: 14px;
+      }
+
+      .lane {
+        display: grid;
+        grid-template-columns: 170px minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+
+      .lane .axis {
+        display: grid;
+        place-items: center;
+        min-height: 112px;
+        border: 2px solid var(--hard-line);
+        background: var(--panel);
+        text-align: center;
+      }
+
+      .lane .cells {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .cell {
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .cell.owner {
+        border-top: 8px solid var(--green);
+      }
+
+      .cell.adapter {
+        border-top: 8px solid var(--cyan);
+      }
+
+      .cell.private {
+        border-top: 8px solid var(--violet);
+      }
+
+      .cell.blocked {
+        border-top: 8px solid var(--red);
+      }
+
+      .cell h3 {
+        margin: 0 0 8px;
+        font-size: 0.92rem;
+      }
+
+      .cell p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.91rem;
+      }
+
+      .grid-3,
+      .grid-2 {
+        display: grid;
+        gap: 16px;
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        padding: 20px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .card.must {
+        border-top: 8px solid var(--green);
+      }
+
+      .card.must-not {
+        border-top: 8px solid var(--red);
+      }
+
+      .card.watch {
+        border-top: 8px solid var(--cyan);
+      }
+
+      .card.proxy {
+        border-top: 8px solid var(--amber);
+      }
+
+      .card ul,
+      .rail ul,
+      .phase ul,
+      .check {
+        margin: 12px 0 0;
+        padding-left: 18px;
+      }
+
+      .card li + li,
+      .rail li + li,
+      .phase li + li,
+      .check li + li {
+        margin-top: 7px;
+      }
+
+      .split-table {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--ink);
+        background: #dfe6dc;
+        font-size: 0.76rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 2px 7px;
+        border: 1px solid currentColor;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        font-weight: 800;
+      }
+
+      .tag.green {
+        color: var(--green);
+      }
+
+      .tag.red {
+        color: var(--red);
+      }
+
+      .tag.amber {
+        color: var(--amber);
+      }
+
+      .tag.cyan {
+        color: var(--cyan);
+      }
+
+      .contract {
+        border: 2px solid var(--hard-line);
+        background: #10150e;
+        color: #f3f7ee;
+        box-shadow: var(--shadow);
+      }
+
+      .contract-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+        color: #cbd8c6;
+      }
+
+      .contract-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(280px, 0.58fr);
+      }
+
+      .code-lines,
+      .defs {
+        margin: 0;
+        padding: 18px;
+        font-family: var(--mono);
+        font-size: 0.86rem;
+        line-height: 1.62;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .defs {
+        border-left: 1px solid rgba(255, 255, 255, 0.2);
+        color: #bed5b6;
+        background: rgba(47, 122, 79, 0.14);
+      }
+
+      .phase-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        counter-reset: phase;
+      }
+
+      .phase {
+        position: relative;
+        padding: 18px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .phase::before {
+        counter-increment: phase;
+        content: counter(phase);
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 12px;
+        border: 2px solid var(--hard-line);
+        background: #dfe6dc;
+        font-weight: 900;
+      }
+
+      .phase h3 {
+        margin: 0 0 8px;
+      }
+
+      .test-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        counter-reset: test;
+      }
+
+      .test {
+        display: grid;
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .test::before {
+        counter-increment: test;
+        content: counter(test, decimal-leading-zero);
+        color: var(--red);
+        font-family: var(--mono);
+        font-weight: 900;
+      }
+
+      .test h3 {
+        margin: 0 0 4px;
+        font-size: 0.95rem;
+      }
+
+      .test p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .risk-panel {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        border: 2px solid var(--hard-line);
+        background: var(--panel);
+      }
+
+      .risk-panel .stamp {
+        display: grid;
+        place-items: center;
+        padding: 18px;
+        border-right: 2px solid var(--hard-line);
+        background: #f3dedb;
+        color: var(--red);
+        text-align: center;
+        font-family: var(--serif);
+        font-size: 2rem;
+        line-height: 1;
+      }
+
+      .risk-panel .risk-copy {
+        padding: 18px 22px;
+      }
+
+      footer {
+        padding: 34px 0 60px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 930px) {
+        .mast,
+        .section-head,
+        .thesis-band,
+        .grid-2,
+        .risk-panel,
+        .lane {
+          grid-template-columns: 1fr;
+        }
+
+        h1 {
+          font-size: 3.5rem;
+        }
+
+        .control-stack {
+          max-width: 620px;
+        }
+
+        .lane .cells,
+        .grid-3,
+        .phase-list,
+        .test-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .risk-panel .stamp {
+          border-right: 0;
+          border-bottom: 2px solid var(--hard-line);
+        }
+
+        .contract-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .defs {
+          border-left: 0;
+          border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+      }
+
+      @media (max-width: 560px) {
+        .page {
+          width: min(100% - 24px, 1180px);
+        }
+
+        .mast {
+          min-height: 0;
+          padding-top: 28px;
+        }
+
+        h1 {
+          font-size: 2.7rem;
+        }
+
+        .section-head h2 {
+          font-size: 2.2rem;
+        }
+
+        .pill {
+          box-shadow: 3px 3px 0 var(--hard-line);
+        }
+
+        .statement {
+          box-shadow: 4px 4px 0 var(--hard-line);
+        }
+
+        th,
+        td {
+          padding: 11px 10px;
+        }
+
+        .split-table {
+          overflow-x: visible;
+        }
+
+        .split-table table,
+        .split-table thead,
+        .split-table tbody,
+        .split-table tr,
+        .split-table th,
+        .split-table td {
+          display: block;
+          width: 100%;
+        }
+
+        .split-table thead {
+          display: none;
+        }
+
+        .split-table tr {
+          padding: 10px 12px;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .split-table tr:last-child {
+          border-bottom: 0;
+        }
+
+        .split-table td {
+          padding: 8px 0;
+          border-bottom: 0;
+        }
+
+        .split-table td::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 3px;
+          color: var(--quiet);
+          font-size: 0.68rem;
+          font-weight: 900;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+        }
+
+        .test {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="mast">
+        <div>
+          <div class="kicker">T-04901 / Daedalus conditional approval incorporated</div>
+          <h1>HRC JSON-RPC stdio <span class="mark">control plane</span></h1>
+          <p class="lead">
+            Add a process-oriented JSON-RPC surface beside the launchd daemon, but keep a
+            single state owner. The approved architecture is not an HTTP wrapper; it is a
+            shared runtime-control kernel with HTTP and stdio adapters.
+          </p>
+          <div class="status-strip" aria-label="review status">
+            <span class="pill"><span class="dot"></span>Approved with constraints</span>
+            <span class="pill warn"><span class="dot"></span>State-owning mode first</span>
+            <span class="pill warn"><span class="dot"></span>No implicit proxy fallback</span>
+          </div>
+        </div>
+
+        <aside class="control-stack" aria-label="transport model">
+          <div class="stack-head">
+            <span class="label">Transport Choice</span>
+            <span class="mono">rpc.initialize</span>
+          </div>
+          <div class="stack-body">
+            <div class="transport-tile good">
+              <h2>HTTP Unix Socket</h2>
+              <p>Existing launchd `hrc-server` path remains the default operator host.</p>
+            </div>
+            <div class="transport-tile good">
+              <h2>JSON-RPC Stdio</h2>
+              <p>Peer state-owning process over the same control service, usually with alternate roots.</p>
+            </div>
+            <div class="transport-tile caution">
+              <h2>Private Callback Socket</h2>
+              <p>Runtime children still call back to a service-owned Unix socket.</p>
+            </div>
+            <div class="transport-tile reject">
+              <h2>Implicit Proxy Fallback</h2>
+              <p>Rejected. Proxy mode, if present, is explicit and secondary.</p>
+            </div>
+          </div>
+        </aside>
+      </header>
+
+      <main>
+        <section id="decision">
+          <div class="section-head">
+            <div class="label">Decision</div>
+            <div>
+              <h2>Same API, different host.</h2>
+              <p>
+                The client-facing decision is simple: `hrc-sdk` gets a transport seam. The
+                implementation decision is harder: HRC must first separate domain control
+                from HTTP request handling.
+              </p>
+            </div>
+          </div>
+
+          <div class="thesis-band">
+            <div class="statement">
+              <h3>Approved thesis</h3>
+              <p>
+                Implement JSON-RPC stdio as a peer transport over a single state-owning
+                `HrcControlService`, while preserving the existing HTTP Unix-socket daemon as
+                the default operator path.
+              </p>
+              <p>
+                <strong>Full parity is the default claim.</strong> If v1 maps less than the
+                current public SDK, the catalog must mark omissions as preview out-of-scope.
+              </p>
+            </div>
+            <div class="command-box" aria-label="target client calls">
+              <pre>createHrcClient({ transport: "http", socketPath })
+
+createHrcClient({
+  transport: "jsonrpc-stdio",
+  command: "hrc",
+  args: ["rpc", "--stdio"]
+})</pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="invariant">
+          <div class="section-head">
+            <div class="label">Invariant</div>
+            <div>
+              <h2>One state owner per root tuple.</h2>
+              <p>
+                For any `{ stateRoot, runtimeRoot, dbPath, tmuxSocketPath }`, only one HRC
+                process may mutate state, own controllers, run reconcilers, fan out
+                subscribers, or accept runtime child callbacks.
+              </p>
+            </div>
+          </div>
+
+          <div class="diagram">
+            <div class="lane">
+              <div class="axis">Allowed ownership</div>
+              <div class="cells">
+                <div class="cell owner">
+                  <h3>HrcControlService</h3>
+                  <p>DB, lock, tmux, ghostmux, broker controller, sweepers, subscribers.</p>
+                </div>
+                <div class="cell adapter">
+                  <h3>HTTP adapter</h3>
+                  <p>Parses `Request`, calls DTO methods, formats JSON or NDJSON responses.</p>
+                </div>
+                <div class="cell adapter">
+                  <h3>JSON-RPC adapter</h3>
+                  <p>Owns frames, ids, notifications, stdout purity, and process lifecycle.</p>
+                </div>
+              </div>
+            </div>
+            <div class="lane">
+              <div class="axis">Rejected ownership</div>
+              <div class="cells">
+                <div class="cell blocked">
+                  <h3>Two state owners</h3>
+                  <p>Daemon plus stdio both mutating the same roots creates split brain.</p>
+                </div>
+                <div class="cell blocked">
+                  <h3>HTTP-shaped service</h3>
+                  <p>Domain methods must not take `Request` or return `Response`.</p>
+                </div>
+                <div class="cell blocked">
+                  <h3>Client callback channel</h3>
+                  <p>Runtime children must not depend on the external JSON-RPC connection.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="boundary">
+          <div class="section-head">
+            <div class="label">Boundary</div>
+            <div>
+              <h2>Kernel versus adapters.</h2>
+              <p>
+                Daedalus approved `HrcControlService` only if it means the runtime-control
+                kernel. Transport mechanics belong outside it.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <article class="card must">
+              <h3>Service owns</h3>
+              <ul>
+                <li>DB handle and server lock</li>
+                <li>tmux and ghostmux managers</li>
+                <li>Harness broker controller</li>
+                <li>Startup replay and reconciliation</li>
+                <li>Zombie and active-run sweepers</li>
+                <li>Event and message subscribers</li>
+                <li>Launch callback ingestion</li>
+                <li>Runtime, session, run, and message domain methods</li>
+              </ul>
+            </article>
+            <article class="card must-not">
+              <h3>Service must not own</h3>
+              <ul>
+                <li>Bun `Request` or `Response`</li>
+                <li>JSON-RPC frame handling</li>
+                <li>stdout and stderr policy</li>
+                <li>Public socket discovery</li>
+                <li>HTTP route parsing and formatting</li>
+                <li>CLI presentation behavior</li>
+                <li>Implicit HTTP proxy behavior</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="modes">
+          <div class="section-head">
+            <div class="label">Modes</div>
+            <div>
+              <h2>Initialize must tell the truth.</h2>
+              <p>
+                `rpc.initialize` is the negotiation point. It must identify whether the process
+                owns HRC state or is merely proxying to an existing daemon.
+              </p>
+            </div>
+          </div>
+
+          <div class="split-table">
+            <table class="matrix">
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th>State owner</th>
+                  <th>Lock behavior</th>
+                  <th>Launch callbacks</th>
+                  <th>Use</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Mode"><span class="tag green">state-owning</span></td>
+                  <td data-label="State owner">true</td>
+                  <td data-label="Lock behavior">Acquire lock. Fail clearly if owned.</td>
+                  <td data-label="Launch callbacks">Private service Unix socket.</td>
+                  <td data-label="Use">Primary stdio architecture and parity evidence.</td>
+                </tr>
+                <tr>
+                  <td data-label="Mode"><span class="tag amber">http-proxy</span></td>
+                  <td data-label="State owner">false</td>
+                  <td data-label="Lock behavior">Does not acquire state lock.</td>
+                  <td data-label="Launch callbacks">Proxied daemon behavior.</td>
+                  <td data-label="Use">Explicit secondary/internal compatibility only.</td>
+                </tr>
+                <tr>
+                  <td data-label="Mode"><span class="tag red">auto-fallback</span></td>
+                  <td data-label="State owner">ambiguous</td>
+                  <td data-label="Lock behavior">Rejected after lock conflict.</td>
+                  <td data-label="Launch callbacks">Misleading.</td>
+                  <td data-label="Use">Not allowed.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="registry">
+          <div class="section-head">
+            <div class="label">Registry</div>
+            <div>
+              <h2>Expose by catalog, not by route table.</h2>
+              <p>
+                The current HTTP table mixes public API, compatibility endpoints, and internal
+                launch/hook callbacks. The RPC catalog must classify each method and exclude
+                internal callback endpoints from public JSON-RPC.
+              </p>
+            </div>
+          </div>
+
+          <div class="contract" aria-label="method registry contract">
+            <div class="contract-head">
+              <span class="label">DTO Contract</span>
+              <span class="mono">HrcRpcMethodEntry</span>
+            </div>
+            <div class="contract-grid">
+              <pre class="code-lines">type HrcRpcMethodEntry = {
+  method: string
+  namespace: "rpc" | "hrc" | "hrcchat"
+  facet: "public" | "compat" | "internal"
+  sdkParity:
+    | "mapped"
+    | "preview-out-of-scope"
+    | "internal-only"
+  requestType: string
+  responseType: string
+  streaming?: "none" | "subscription"
+  owner: "HrcControlService"
+}</pre>
+              <pre class="defs">// JSON-RPC method name.
+// Public namespace owner.
+// Exposure class for contract generation.
+// SDK reconciliation status.
+// Method is available in full parity.
+// Omission is explicit preview scope.
+// Not public JSON-RPC.
+// Request DTO or schema id.
+// Response DTO or schema id.
+// Streams are subscriptions only.
+// Domain owner, never a transport host.</pre>
+            </div>
+          </div>
+
+          <div class="grid-3" style="margin-top: 16px">
+            <article class="card must">
+              <h3>Public catalog</h3>
+              <p>`rpc.*`, `hrc.*`, and `hrcchat.*` methods intended for clients.</p>
+            </article>
+            <article class="card proxy">
+              <h3>Compatibility catalog</h3>
+              <p>Legacy or bridge methods that remain mapped but are not the strategic surface.</p>
+            </article>
+            <article class="card must-not">
+              <h3>Internal endpoints</h3>
+              <p>`/v1/internal/...` launch and hook callbacks stay service-private.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="catalog">
+          <div class="section-head">
+            <div class="label">Parity</div>
+            <div>
+              <h2>Map the actual SDK inventory.</h2>
+              <p>
+                The initial method sketch is representative only. The real v1 catalog must be
+                checked against the current `HrcClient` surface or explicitly marked preview.
+              </p>
+            </div>
+          </div>
+
+          <div class="split-table">
+            <table class="matrix">
+              <thead>
+                <tr>
+                  <th>Area</th>
+                  <th>RPC namespace</th>
+                  <th>Parity rule</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Area">Sessions, runtimes, runs, launches</td>
+                  <td data-label="RPC namespace"><span class="tag cyan">hrc.*</span></td>
+                  <td data-label="Parity rule">Map or mark preview out-of-scope.</td>
+                </tr>
+                <tr>
+                  <td data-label="Area">Attach, capture, turns, in-flight input</td>
+                  <td data-label="RPC namespace"><span class="tag cyan">hrc.*</span></td>
+                  <td data-label="Parity rule">Preserve DTO and error equivalence.</td>
+                </tr>
+                <tr>
+                  <td data-label="Area">Surfaces, bridges, sweeps, reconcile</td>
+                  <td data-label="RPC namespace"><span class="tag amber">hrc.*</span></td>
+                  <td data-label="Parity rule">Classify public versus compat before exposing.</td>
+                </tr>
+                <tr>
+                  <td data-label="Area">Targets, messages, waits, watches, DM</td>
+                  <td data-label="RPC namespace"><span class="tag green">hrcchat.*</span></td>
+                  <td data-label="Parity rule">Same catalog; no separate state owner.</td>
+                </tr>
+                <tr>
+                  <td data-label="Area">App-sessions</td>
+                  <td data-label="RPC namespace"><span class="tag cyan">hrc.*</span></td>
+                  <td data-label="Parity rule">Map current SDK behavior or declare preview omission.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="subscriptions">
+          <div class="section-head">
+            <div class="label">Streams</div>
+            <div>
+              <h2>Subscriptions, not hanging requests.</h2>
+              <p>
+                Event and message watches become explicit subscriptions over JSON-RPC
+                notifications. The SDK keeps async-iterator ergonomics.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <article class="card watch">
+              <h3>Event flow</h3>
+              <ul>
+                <li>`hrc.event.subscribe` returns `subscriptionId` and high-water mark.</li>
+                <li>`hrc.event` notifications carry event payloads.</li>
+                <li>`hrc.event.unsubscribe` closes the feed.</li>
+              </ul>
+            </article>
+            <article class="card watch">
+              <h3>Message flow</h3>
+              <ul>
+                <li>`hrcchat.message.subscribe` replays matching durable messages.</li>
+                <li>`hrcchat.message` notifications carry new messages.</li>
+                <li>Cleanup runs on unsubscribe, cancel, close, and process exit.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="initialize">
+          <div class="section-head">
+            <div class="label">Handshake</div>
+            <div>
+              <h2>`rpc.initialize` is the contract seal.</h2>
+              <p>
+                Clients must be able to tell whether they are connected to a true state-owning
+                HRC process or an explicit proxy.
+              </p>
+            </div>
+          </div>
+
+          <div class="contract" aria-label="initialize result contract">
+            <div class="contract-head">
+              <span class="label">DTO Contract</span>
+              <span class="mono">HrcRpcInitializeResult</span>
+            </div>
+            <div class="contract-grid">
+              <pre class="code-lines">type HrcRpcInitializeResult = {
+  protocolVersion: "2026-06-18"
+  protocolSchemaHash: `sha256:${string}`
+  server: {
+    name: "hrc-rpc"
+    version: string
+    pid: number
+    transport: "jsonrpc-stdio" | "http-unix"
+    mode: "state-owning" | "http-proxy"
+    stateOwner: boolean
+  }
+  hrc: {
+    apiVersion: string
+    dbPath: string
+    runtimeRoot: string
+    stateRoot: string
+    tmuxSocketPath: string
+    callbackSocketPath?: string
+    launchCallbacks:
+      | "private-unix-socket"
+      | "proxied-daemon"
+      | "unavailable"
+  }
+  capabilities: {
+    cancel: "best-effort"
+    subscriptions: true
+    brokerController: boolean
+    hrcchat: true
+  }
+  methods: HrcRpcMethodEntry[]
+}</pre>
+              <pre class="defs">// Protocol selected by server.
+// Hash of public method and DTO schema.
+// Process and transport facts.
+// Package/runtime version.
+// Current process id.
+// Client-visible transport.
+// Owns state or proxies daemon.
+// True only for lock holder.
+// HRC runtime diagnostics.
+// API version from hrc-core.
+// Backing state DB path.
+// Runtime root in use.
+// State root in use.
+// tmux socket controlled by service.
+// Private diagnostic callback socket.
+// Runtime child callback mode.
+// Owned private Unix socket.
+// Existing daemon owns callbacks.
+// No callback listener available.
+// Feature negotiation.
+// Wait/stream cancellation only.
+// Notification subscriptions.
+// True for state-owning service.
+// Directed messaging in same catalog.
+// Public registry entries.</pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="phases">
+          <div class="section-head">
+            <div class="label">Plan</div>
+            <div>
+              <h2>Build the seam before the transport.</h2>
+              <p>
+                The work should move in phases that first prove existing HTTP behavior survives
+                service extraction, then add stdio and SDK transport selection.
+              </p>
+            </div>
+          </div>
+
+          <div class="phase-list">
+            <article class="phase">
+              <h3>Contract and registry</h3>
+              <ul>
+                <li>Define RPC DTOs in `hrc-core`.</li>
+                <li>Add facet and SDK parity accounting.</li>
+              </ul>
+            </article>
+            <article class="phase">
+              <h3>Service extraction</h3>
+              <ul>
+                <li>Create `HrcControlService`.</li>
+                <li>Move parsing and formatting to adapters.</li>
+              </ul>
+            </article>
+            <article class="phase">
+              <h3>Stdio host</h3>
+              <ul>
+                <li>Add `hrc rpc --stdio`.</li>
+                <li>Bind private callback socket.</li>
+              </ul>
+            </article>
+            <article class="phase">
+              <h3>SDK seam</h3>
+              <ul>
+                <li>Add HTTP and JSON-RPC transports.</li>
+                <li>Keep compatibility constructor.</li>
+              </ul>
+            </article>
+            <article class="phase">
+              <h3>Explicit proxy</h3>
+              <ul>
+                <li>Optional secondary mode only.</li>
+                <li>Report `stateOwner:false`.</li>
+              </ul>
+            </article>
+            <article class="phase">
+              <h3>Parity and e2e</h3>
+              <ul>
+                <li>Install before claiming done.</li>
+                <li>Smoke real launch callbacks.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="tests">
+          <div class="section-head">
+            <div class="label">Validation</div>
+            <div>
+              <h2>Evidence gates.</h2>
+              <p>
+                Daedalus required ten tests. The launch callback e2e is the highest-value smoke
+                because it proves stdio mode is not merely a client facade.
+              </p>
+            </div>
+          </div>
+
+          <div class="test-grid">
+            <article class="test">
+              <div>
+                <h3>Registry parity</h3>
+                <p>Every public SDK method is mapped or marked preview out-of-scope.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Service extraction</h3>
+                <p>HTTP adapters delegate to transport-neutral service methods.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Lock conflict</h3>
+                <p>Default-root stdio fails clearly while launchd owns the lock.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Alternate-root stdio</h3>
+                <p>Initialize, status, resolve/list, inspect/control, and shutdown work.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>hrcchat parity</h3>
+                <p>Targets, messages, waits, subscriptions, DM, and handoff match HTTP.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Subscriptions</h3>
+                <p>High-water marks, replay, cleanup, cancellation, and backpressure.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Error mapping</h3>
+                <p>Domain errors stay distinct from parse, protocol, and process failures.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Stdout purity</h3>
+                <p>Only JSON-RPC frames on stdout under logs, warnings, malformed input.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Launch callback e2e</h3>
+                <p>Installed `hrc` proves private callback socket and spool replay.</p>
+              </div>
+            </article>
+            <article class="test">
+              <div>
+                <h3>Proxy mode</h3>
+                <p>If implemented, it is explicit, internal, non-owning, and not parity evidence.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="risk">
+          <div class="risk-panel">
+            <div class="stamp">Highest Risk</div>
+            <div class="risk-copy">
+              <p>
+                A shallow extraction could keep HTTP-shaped business logic and create immediate
+                RPC drift. The first implementation milestone should prove that domain methods
+                are DTO methods behind both adapters, with no `Request` or `Response` crossing
+                into the control kernel.
+              </p>
+              <p>
+                The second major risk is a hidden proxy fallback after lock conflict. That would
+                make tests pass against the daemon while failing to prove the state-owning stdio
+                architecture.
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        Source: wrkq task T-04901, "HRC JSON-RPC stdio control plane alternative".
+        Daedalus review incorporated from hrcchat response #8517 on 2026-06-18.
+      </footer>
+    </div>
+  </body>
+</html>

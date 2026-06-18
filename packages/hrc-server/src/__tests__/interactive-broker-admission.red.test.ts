@@ -100,7 +100,7 @@ import type { HrcRuntimeIntent } from 'hrc-core'
 import * as hrc from '../index'
 
 type Harness = HrcRuntimeIntent['harness']
-type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux'
+type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
 
 type LatestRuntimeAdmissionView = {
   controllerKind: string | undefined
@@ -126,11 +126,13 @@ type InteractiveBrokerAdmissionDecision =
 
 const HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED = 'HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED'
 const HRC_CODEX_CLI_TMUX_BROKER_ENABLED = 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED'
+const HRC_PI_TUI_TMUX_BROKER_ENABLED = 'HRC_PI_TUI_TMUX_BROKER_ENABLED'
 const HRC_CLAUDE_GHOSTTY = 'HRC_CLAUDE_GHOSTTY'
 
 const BOTH_FLAGS_ON = {
   claudeCodeTmuxBrokerEnabled: true,
   codexCliTmuxBrokerEnabled: true,
+  piTuiTmuxBrokerEnabled: true,
 }
 
 // Minimal valid intent factory — only the fields the admission decision reads.
@@ -164,13 +166,18 @@ const decideInteractiveBrokerAdmission = (
     decideInteractiveBrokerAdmission?: (
       intent: HrcRuntimeIntent,
       latestRuntime: LatestRuntimeAdmissionView,
-      options: { claudeCodeTmuxBrokerEnabled: boolean; codexCliTmuxBrokerEnabled: boolean }
+      options: {
+        claudeCodeTmuxBrokerEnabled: boolean
+        codexCliTmuxBrokerEnabled: boolean
+        piTuiTmuxBrokerEnabled: boolean
+      }
     ) => InteractiveBrokerAdmissionDecision
   }
 ).decideInteractiveBrokerAdmission
 
 const claudeInteractive = intent({ provider: 'anthropic', interactive: true, id: 'claude-code' })
 const codexInteractive = intent({ provider: 'openai', interactive: true, id: 'codex-cli' })
+const piInteractive = intent({ provider: 'openai', interactive: true, id: 'pi' })
 
 describe('Wave B admission seam — export exists', () => {
   it('exports decideInteractiveBrokerAdmission', () => {
@@ -192,6 +199,28 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
       decision: 'broker-start',
       flagEnvName: HRC_CODEX_CLI_TMUX_BROKER_ENABLED,
       allowedBrokerDriver: 'codex-cli-tmux',
+    })
+  })
+
+  it('interactive pi → broker-start (pi-tui-tmux)', () => {
+    expect(decideInteractiveBrokerAdmission!(piInteractive, null, BOTH_FLAGS_ON)).toEqual({
+      decision: 'broker-start',
+      flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED,
+      allowedBrokerDriver: 'pi-tui-tmux',
+    })
+  })
+
+  it('interactive pi-cli → broker-start (pi-tui-tmux)', () => {
+    expect(
+      decideInteractiveBrokerAdmission!(
+        intent({ provider: 'openai', interactive: true, id: 'pi-cli' }),
+        null,
+        BOTH_FLAGS_ON,
+      ),
+    ).toEqual({
+      decision: 'broker-start',
+      flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED,
+      allowedBrokerDriver: 'pi-tui-tmux',
     })
   })
 
@@ -217,16 +246,8 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
 describe('decideInteractiveBrokerAdmission — unsupported ids → runtime-unavailable (NEVER normalize, NEVER legacy)', () => {
   const unsupported: { name: string; harness: Harness }[] = [
     {
-      name: 'openai pi (interactive)',
-      harness: { provider: 'openai', interactive: true, id: 'pi' },
-    },
-    {
       name: 'anthropic pi (interactive)',
       harness: { provider: 'anthropic', interactive: true, id: 'pi' },
-    },
-    {
-      name: 'openai pi-cli (interactive)',
-      harness: { provider: 'openai', interactive: true, id: 'pi-cli' },
     },
     {
       name: 'unknown openai id (must NOT normalize to codex-cli)',

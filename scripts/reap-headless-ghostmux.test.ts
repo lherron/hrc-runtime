@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 
-import { type PaneStatus, isQuitEligible, skipReasons } from './close-headless-ghostmux'
+import {
+  type PaneStatus,
+  isAlreadyTerminatedError,
+  isLeftoverViewer,
+  isQuitEligible,
+  skipReasons,
+} from './reap-headless-ghostmux'
 
 // Operator idle-viewer reap predicate (T-04423). Eligible iff the surface
 // resolves to exactly one broker-tmux runtime that is idle-and-complete with NO
@@ -126,5 +132,58 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(reasons.some((r) => /not tmux/i.test(r))).toBe(true)
     expect(reasons.some((r) => /active run/i.test(r))).toBe(true)
     expect(reasons.some((r) => /nothing has run/i.test(r))).toBe(true)
+  })
+})
+
+describe('isLeftoverViewer (already-dead pane to close)', () => {
+  it('is true for a resolved, already-terminated runtime', () => {
+    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated' }))).toBe(true)
+  })
+
+  it('is true for a stale runtime (no live broker left)', () => {
+    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'stale' }))).toBe(true)
+  })
+
+  it('is false for a live, reap-eligible runtime (that path reaps first)', () => {
+    expect(isLeftoverViewer(eligibleStatus())).toBe(false)
+  })
+
+  it('is false when no runtime resolved (orphaned viewer, not a known dead one)', () => {
+    expect(isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated', runtimeId: '' }))).toBe(
+      false
+    )
+  })
+
+  it('is false when a run is still active (never key-close an in-flight pane)', () => {
+    expect(
+      isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated', activeRunId: 'run-live' }))
+    ).toBe(false)
+  })
+
+  it('is disjoint from reap-eligibility (a pane is never both)', () => {
+    const terminated = eligibleStatus({ runtimeStatus: 'terminated' })
+    expect(isLeftoverViewer(terminated) && isQuitEligible(terminated)).toBe(false)
+    const ready = eligibleStatus()
+    expect(isLeftoverViewer(ready) && isQuitEligible(ready)).toBe(false)
+  })
+})
+
+describe('isAlreadyTerminatedError (benign reap-failure classifier)', () => {
+  it('classifies an already-terminated runtime as benign', () => {
+    // The exact message that aborted the whole sweep before the fix.
+    expect(
+      isAlreadyTerminatedError(
+        'hrc runtime terminate rt-71190f3f --no-drop-continuation failed (1): ' +
+          'hrc: [runtime_unavailable] runtime "rt-71190f3f" is terminated'
+      )
+    ).toBe(true)
+  })
+
+  it('classifies a missing/pruned runtime as benign', () => {
+    expect(isAlreadyTerminatedError('runtime "rt-ghost" not found')).toBe(true)
+  })
+
+  it('does NOT swallow a genuine RPC/transport failure', () => {
+    expect(isAlreadyTerminatedError('connection refused: broker socket unavailable')).toBe(false)
   })
 })

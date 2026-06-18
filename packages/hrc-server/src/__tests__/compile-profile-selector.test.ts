@@ -83,6 +83,21 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect((selection.startRequest as unknown as { runtime?: unknown }).runtime).toBeUndefined()
   })
 
+  it('admits an interactive pi-tui-tmux broker profile by broker driver and terminal', () => {
+    const identity = makeIdentity()
+    const { profile, startRequest } = makeInteractiveTmuxProfile(identity, {
+      brokerDriver: 'pi-tui-tmux',
+    })
+    const response = makeCompileResponse(identity, [profile])
+    const selection = selectBrokerExecutionProfile(response, identity)
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.profile.brokerDriver).toBe('pi-tui-tmux')
+    expect(selection.profile.brokerTerminal).toEqual({ host: 'tmux' })
+    expect(selection.startRequest).toBe(startRequest)
+  })
+
   it('REJECTS a non-codex broker driver (does not admit other drivers)', () => {
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity, { brokerDriver: 'claude-code-tmux' })

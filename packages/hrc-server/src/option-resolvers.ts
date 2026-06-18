@@ -11,6 +11,7 @@ import {
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+  HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
 
@@ -84,6 +85,14 @@ export function resolveCodexCliTmuxBrokerEnabled(options: HrcServerOptions): boo
   return resolveBooleanFlag(
     options.codexCliTmuxBrokerEnabled,
     process.env[HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV],
+    { defaultOn: true }
+  )
+}
+
+export function resolvePiTuiTmuxBrokerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.piTuiTmuxBrokerEnabled,
+    process.env[HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV],
     { defaultOn: true }
   )
 }
