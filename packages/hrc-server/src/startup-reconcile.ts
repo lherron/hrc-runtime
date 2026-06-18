@@ -141,8 +141,12 @@ export async function reconcileStartupState(
   }
 
   for (const runtime of db.runtimes.listAll()) {
+    const brokerTmuxLeaseRuntime =
+      runtime.controllerKind === 'harness-broker' && hasLeasedBrokerSubstrate(runtime)
     if (
-      (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') ||
+      (runtime.transport !== 'tmux' &&
+        runtime.transport !== 'ghostty' &&
+        !brokerTmuxLeaseRuntime) ||
       runtime.status === 'terminated' ||
       runtime.status === 'dead'
     ) {
@@ -153,7 +157,10 @@ export async function reconcileStartupState(
     // the default `tmux` server this generic block inspects. They are reconciled
     // by the dedicated broker pass below (lease-socket inspect + id-match
     // re-associate), so skip them here to avoid a false "session missing" death.
-    if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
+    if (
+      runtime.controllerKind === 'harness-broker' &&
+      (runtime.transport === 'tmux' || brokerTmuxLeaseRuntime)
+    ) {
       continue
     }
 

@@ -13,6 +13,7 @@ import {
 } from '../broker-decisions.js'
 import { type BrokerTmuxAllocator, HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
+import { canOperatorAttach, hasLeasedBrokerSubstrate } from '../broker/runtime-hosting.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { renderStatusBar, viewerTerminalBg } from '../headless-viewer-status.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
@@ -164,7 +165,11 @@ export function getHarnessBrokerController(
       // path), in which case reconcile is a no-op. Mirrors terminateTmuxRuntime's
       // broker teardown minus the controller dispose the terminal paths own.
       const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-      if (!runtime || runtime.controllerKind !== 'harness-broker' || runtime.transport !== 'tmux') {
+      if (
+        !runtime ||
+        runtime.controllerKind !== 'harness-broker' ||
+        (runtime.transport !== 'tmux' && !hasLeasedBrokerSubstrate(runtime))
+      ) {
         return
       }
       const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime)
@@ -199,21 +204,28 @@ export function getHarnessBrokerController(
 
 /**
  * Best-effort: open a ghostmux viewer window attached to a freshly-started
- * headless claude broker runtime's TUI. Sends the same `tmux -S <socket>
+ * headless broker runtime's TUI. Sends the same `tmux -S <socket>
  * attach-session -t <session>:tui` argv an operator attach uses (the `:tui`
  * target is the 7530bd4 fix — NOT the headless broker window). We send the tmux
  * argv directly rather than `hrc attach <id>`, which only prints the descriptor
  * JSON to a non-interactive invocation instead of attaching. Never throws — the
  * viewer is purely observational and must not gate the dispatch.
  */
-export async function spawnHeadlessClaudeViewer(
+export async function spawnBrokerHeadlessViewer(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<void> {
   try {
     const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
     if (!socketPath) {
-      writeServerLog('INFO', 'headless_claude_viewer.skipped_no_socket', {
+      writeServerLog('INFO', 'broker_headless_viewer.skipped_no_socket', {
+        runtimeId: runtime.runtimeId,
+        scopeRef: runtime.scopeRef,
+      })
+      return
+    }
+    if (!canOperatorAttach(runtime)) {
+      writeServerLog('INFO', 'broker_headless_viewer.skipped_no_presentation', {
         runtimeId: runtime.runtimeId,
         scopeRef: runtime.scopeRef,
       })
@@ -255,23 +267,25 @@ export async function spawnHeadlessClaudeViewer(
           boundAt: timestamp(),
         })
       } catch (bindError) {
-        writeServerLog('WARN', 'headless_claude_viewer.bind_failed', {
+        writeServerLog('WARN', 'broker_headless_viewer.bind_failed', {
           runtimeId: runtime.runtimeId,
           scopeRef: runtime.scopeRef,
           error: bindError instanceof Error ? bindError.message : String(bindError),
         })
       }
     }
-    writeServerLog('INFO', `headless_claude_viewer.${result.status}`, {
+    writeServerLog('INFO', `broker_headless_viewer.${result.status}`, {
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
       ...(result.status === 'failed' ? { error: result.error } : { surfaceId: result.surfaceId }),
     })
   } catch (error) {
-    writeServerLog('WARN', 'headless_claude_viewer.unexpected_error', {
+    writeServerLog('WARN', 'broker_headless_viewer.unexpected_error', {
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
       error: error instanceof Error ? error.message : String(error),
     })
   }
 }
+
+export const spawnHeadlessClaudeViewer = spawnBrokerHeadlessViewer

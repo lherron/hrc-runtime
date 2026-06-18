@@ -54,6 +54,7 @@ import { createTmuxManager } from './tmux.js'
 // (export-list at end of file) so the public surface is preserved.
 import {
   getHarnessBrokerController,
+  spawnBrokerHeadlessViewer,
   spawnHeadlessClaudeViewer,
 } from './broker-interactive-handlers/controller-factory.js'
 
@@ -71,7 +72,7 @@ export {
   createBrokerDurableTmuxAllocator,
   type DurableTmuxManagerLike,
 } from './broker-interactive-handlers/substrate-allocator.js'
-export { getHarnessBrokerController, spawnHeadlessClaudeViewer }
+export { getHarnessBrokerController, spawnBrokerHeadlessViewer, spawnHeadlessClaudeViewer }
 
 export async function handleHeadlessDispatchTurn(
   this: HrcServerInstanceForHandlers,
@@ -349,7 +350,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     flagOptions.spawnHeadlessViewer === true &&
     flagOptions.allowedBrokerDriver === 'claude-code-tmux'
   ) {
-    await this.spawnHeadlessClaudeViewer(runtime)
+    await this.spawnBrokerHeadlessViewer(runtime)
   }
 
   // T-01770 Phase C: block the synchronous caller on the first broker turn
@@ -872,6 +873,7 @@ export const brokerInteractiveHandlersMethods = {
   executeInteractiveBrokerInputTurn,
   deliverReassociatedBrokerTmuxInput,
   startInteractiveTmuxBrokerRuntime,
+  spawnBrokerHeadlessViewer,
   spawnHeadlessClaudeViewer,
   getHarnessBrokerController,
 }

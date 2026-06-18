@@ -12,7 +12,7 @@ import type {
   HrcRuntimeSnapshot,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
+import { canOperatorAttach, parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   isRecord,
@@ -80,7 +80,7 @@ async function handleAdoptRuntime(
   if (!runtime) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_RUNTIME, `unknown runtime: ${runtimeId}`)
   }
-  if (runtime.transport !== 'tmux') {
+  if (runtime.transport !== 'tmux' && !canOperatorAttach(runtime)) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'cannot adopt a non-tmux runtime: no attachable pane/process exists',
@@ -107,7 +107,7 @@ async function handleAdoptRuntime(
   // server. Adopting one whose lease is dead (or whose live ids no longer
   // match the persisted pane) would mark it `adopted` while pointing a later
   // turn at a pane that does not exist. Verify lease liveness first.
-  if (runtime.controllerKind === 'harness-broker') {
+  if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
     // T-01873: read the leased-tmux substrate socket from the runtime-hosting
     // choke point (decorative — surfaced only in the not-adoptable error).
     const hosting = parseBrokerRuntimeHostingState(runtime)

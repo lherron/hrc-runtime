@@ -10,7 +10,7 @@ import type {
   TargetCapabilityView,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
+import { canOperatorAttach, parseBrokerRuntimeHostingState } from './broker/runtime-hosting.js'
 import {
   formatSessionRef,
   normalizeTargetLane,
@@ -152,8 +152,8 @@ export function toTargetCapabilities(
     modesSupported: supported,
     defaultMode: supported[0] ?? 'none',
     dmReady: supported.length > 0 || session.lastAppliedIntentJson !== undefined,
-    sendReady: runtime?.transport === 'tmux' || runtime?.transport === 'ghostty',
-    peekReady: runtime !== undefined && runtime.transport !== 'headless',
+    sendReady: runtime?.supportsLiteralSend ?? false,
+    peekReady: runtime?.supportsCapture ?? false,
   }
 }
 
@@ -190,13 +190,15 @@ export function toTargetRuntimeView(
   // presentation (WHETHER a human can attach a TUI).
   const brokerEndpoint = hosting?.endpoint.kind
   const presentation = hosting?.presentation.kind
+  const operatorAttachable = canOperatorAttach(runtime)
 
   return {
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
     status: runtime.status,
-    supportsLiteralSend: runtime.transport === 'tmux' || runtime.transport === 'ghostty',
-    supportsCapture: runtime.transport !== 'headless',
+    supportsLiteralSend:
+      runtime.transport === 'tmux' || runtime.transport === 'ghostty' || operatorAttachable,
+    supportsCapture: runtime.transport !== 'headless' || operatorAttachable,
     activeRunId: runtime.activeRunId,
     lastActivityAt: runtime.lastActivityAt,
     ...(brokerSubstrate !== undefined ? { brokerSubstrate } : {}),

@@ -1,7 +1,7 @@
 import { HrcErrorCode, HrcNotFoundError } from 'hrc-core'
 import type { BrokerInspectResponse, InspectRuntimeResponse } from 'hrc-core'
 
-import { projectBrokerHostingState } from './broker/runtime-hosting.js'
+import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
 import { requireSession } from './require-helpers.js'
@@ -82,7 +82,9 @@ export async function handleInspectRuntime(
       this.staleGenerationThresholdSec > 0 &&
       continuationAgeSec > this.staleGenerationThresholdSec,
     ...(control ? { control } : {}),
-    ...(runtime.transport === 'tmux' ? { tmux: toStatusTmuxView(runtime.tmuxJson) } : {}),
+    ...(runtime.transport === 'tmux' || canOperatorAttach(runtime)
+      ? { tmux: toStatusTmuxView(runtime.tmuxJson) }
+      : {}),
     ...(brokerHosting ? brokerHosting : {}),
   } satisfies InspectRuntimeResponse)
 }

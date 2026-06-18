@@ -24,6 +24,7 @@ import {
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
+import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
   classifyBrokerInputFailure,
@@ -167,6 +168,9 @@ export async function executeHeadlessBrokerStartTurn(
   }
 ): Promise<Response> {
   const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId)
+  if (canOperatorAttach(runtime)) {
+    await this.spawnBrokerHeadlessViewer(runtime)
+  }
 
   if (options.waitForCompletion === false) {
     return json({

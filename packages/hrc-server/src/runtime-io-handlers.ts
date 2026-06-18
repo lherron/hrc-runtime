@@ -24,6 +24,11 @@ import {
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import {
+  canOperatorAttach,
+  canUseDirectPaneFallback,
+  hasLeasedBrokerSubstrate,
+} from './broker/runtime-hosting.js'
+import {
   requireGhosttySurface,
   requireKnownRuntime,
   requireRuntime,
@@ -49,7 +54,8 @@ export async function captureRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
 ): Promise<Response> {
-  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
+  const directPaneCapture = canUseDirectPaneFallback(runtime)
+  if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty' && !directPaneCapture) {
     throw new HrcBadRequestError(
       HrcErrorCode.MALFORMED_REQUEST,
       'cannot capture a non-interactive runtime; use the runtime event stream instead',
@@ -82,7 +88,7 @@ export async function reconcileTmuxRuntimeLiveness(
 ): Promise<HrcRuntimeSnapshot> {
   if (
     runtime.controllerKind === 'harness-broker' &&
-    runtime.transport === 'tmux' &&
+    (runtime.transport === 'tmux' || hasLeasedBrokerSubstrate(runtime)) &&
     !isRuntimeUnavailableStatus(runtime.status)
   ) {
     // Precedence (T-01783 WS-D): a broker terminal event (harness.exited /
@@ -472,7 +478,10 @@ export function attachRuntime(
     } satisfies AttachDescriptorResponse)
   }
 
-  if (runtime.controllerKind === 'harness-broker' && runtime.transport === 'tmux') {
+  if (
+    runtime.controllerKind === 'harness-broker' &&
+    (runtime.transport === 'tmux' || canOperatorAttach(runtime))
+  ) {
     const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
     if (!socketPath) {
       throw new HrcRuntimeUnavailableError(
