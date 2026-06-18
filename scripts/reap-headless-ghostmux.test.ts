@@ -168,6 +168,176 @@ describe('isLeftoverViewer (already-dead pane to close)', () => {
   })
 })
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase C: presentation-aware eligibility matrix (T-04923, daedalus test 7)
+//
+// After Phase C green, skipReasons() replaces the raw transport gate (lines 249-254)
+// with a presentation-aware check: a runtime is eligible IFF ALL hold:
+//   controllerKind=harness-broker  +  substrateKind=leased-tmux
+//   +  presentationKind=tmux-tui   +  ready/idle  +  no active run  +  latest turn completed
+// This unlocks transport='headless' runtimes that have a real tmux TUI window
+// (the codex app-server viewer pane), while rejecting true headless runs
+// (presentation.kind=none) and daemon-child substrates.
+//
+// How the script should source presentationKind / substrateKind:
+//   Add two json_extract columns to the WITH latest_runtime AS (...) query in
+//   queryStatus() — reading from the runtime_state_json column of the runtimes
+//   table.  Two serialisation shapes must be handled (G2 compatibility):
+//     presentationKind:
+//       COALESCE(
+//         json_extract(runtime_state_json, '$.broker.presentation.kind'),   -- normalized
+//         CASE WHEN json_extract(runtime_state_json, '$.broker.tuiWindow')
+//                   IS NOT NULL THEN 'tmux-tui' ELSE 'none' END,           -- flat fallback
+//         ''
+//       )
+//     substrateKind:
+//       COALESCE(
+//         json_extract(runtime_state_json, '$.broker.substrate.kind'),      -- normalized
+//         CASE WHEN json_extract(runtime_state_json, '$.broker.brokerWindow')
+//                   IS NOT NULL THEN 'leased-tmux' ELSE 'daemon-child' END, -- flat fallback
+//         ''
+//       )
+//   Then add both to the SELECT list and to PaneStatus, and wire them into
+//   skipReasons() in place of the transport check.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Phase C: reap eligibility matrix — presentation-aware predicate (T-04923)', () => {
+  // PaneStatus will gain presentationKind + substrateKind in Phase C green.
+  // We define a local extension and use an explicit cast so the file compiles
+  // today.  Reds fail at RUNTIME (the transport gate at lines 249-254 wrongly
+  // rejects headless+tmux-tui), not at compile time.
+  type ViewerPaneStatus = PaneStatus & {
+    presentationKind: string
+    substrateKind: string
+  }
+
+  function viewerStatus(overrides: Partial<ViewerPaneStatus> = {}): ViewerPaneStatus {
+    return {
+      ...eligibleStatus(),
+      // Codex app-server viewer pane: the HRC transport is 'headless' (the
+      // broker channel to the daemon), but the runtime has a dedicated tmux
+      // TUI window visible to the operator.
+      transport: 'headless',
+      presentationKind: 'tmux-tui',
+      substrateKind: 'leased-tmux',
+      ...overrides,
+    }
+  }
+
+  // Explicit cast: current skipReasons/isQuitEligible take PaneStatus.
+  // The extra fields (presentationKind, substrateKind) are silently ignored by
+  // the current predicate — the tests expose exactly what happens when they
+  // are NOT ignored after Phase C green.
+  function ps(s: ViewerPaneStatus): PaneStatus {
+    return s as unknown as PaneStatus
+  }
+
+  // ── ELIGIBLE — core Phase C green target ────────────────────────────────────
+
+  it('is eligible: harness-broker + leased-tmux substrate + tmux-tui presentation + headless transport + ready + no active run + completed turn', () => {
+    // RED: transport='headless' is caught at lines 249-254 before presentationKind
+    // is consulted, so isQuitEligible returns false today.  Phase C green replaces
+    // the transport gate with a presentation-aware check and this becomes GREEN.
+    expect(isQuitEligible(ps(viewerStatus()))).toBe(true)
+    expect(skipReasons(ps(viewerStatus()))).toEqual([])
+  })
+
+  // ── REJECT: presentation is not tmux-tui ─────────────────────────────────────
+
+  it('rejects headless + presentation.kind=none (pure headless runtime, no viewer pane)', () => {
+    // A true headless codex runtime — broker lives in a leased tmux session but
+    // there is no TUI window for the operator.  Must be rejected and the reason
+    // must reference presentation, not just the raw transport value.
+    // RED today: skipReasons returns "transport=headless, not tmux" — the
+    // /presentation|tmux-tui/ assertion fails because no reason mentions presentation.
+    const reasons = skipReasons(ps(viewerStatus({ presentationKind: 'none' })))
+    expect(reasons.length).toBeGreaterThan(0)
+    expect(reasons.some((r) => /presentation|tmux-tui/i.test(r))).toBe(true)
+  })
+
+  it('rejects headless + presentation.kind="" (missing / malformed hosting state)', () => {
+    // presentationKind='' means the DB json_extract returned NULL — runtimeStateJson
+    // has no parseable broker.presentation block.  Must reject for that reason.
+    // RED today: reason says "transport=headless", not "hosting state" / "presentation".
+    const reasons = skipReasons(ps(viewerStatus({ presentationKind: '' })))
+    expect(reasons.length).toBeGreaterThan(0)
+    expect(reasons.some((r) => /presentation|hosting state|malformed/i.test(r))).toBe(true)
+  })
+
+  // ── REJECT: substrate not leased-tmux ───────────────────────────────────────
+
+  it('rejects harness-broker + daemon-child substrate (no tmux pane to close)', () => {
+    // Even if presentation claims tmux-tui, a daemon-child substrate has no real
+    // tmux session — reject and surface the substrate mismatch in the reason.
+    // RED today: no substrate check exists; reason says "transport=headless" with
+    // no mention of daemon-child/substrate/leased-tmux.
+    const reasons = skipReasons(ps(viewerStatus({ substrateKind: 'daemon-child' })))
+    expect(reasons.length).toBeGreaterThan(0)
+    expect(reasons.some((r) => /daemon-child|substrate|leased-tmux/i.test(r))).toBe(true)
+  })
+
+  // ── REJECT: controllerKind not harness-broker (regression guard) ─────────────
+
+  it('rejects a non-broker runtime even with tmux-tui presentation (regression guard)', () => {
+    // Already rejects today via the controllerKind check — included to guard
+    // against Phase C accidentally removing that gate.
+    const reasons = skipReasons(ps(viewerStatus({ controllerKind: 'sdk' })))
+    expect(reasons.some((r) => /not harness-broker/i.test(r))).toBe(true)
+  })
+
+  // ── REJECT: runtime lifecycle (regression guards) ────────────────────────────
+
+  it('rejects an already-terminated viewer pane — leftover-viewer path handles it (regression guard)', () => {
+    expect(isQuitEligible(ps(viewerStatus({ runtimeStatus: 'terminated' })))).toBe(false)
+    expect(isLeftoverViewer(ps(viewerStatus({ runtimeStatus: 'terminated' })))).toBe(true)
+  })
+
+  it('rejects a stale viewer pane (regression guard)', () => {
+    expect(isQuitEligible(ps(viewerStatus({ runtimeStatus: 'stale' })))).toBe(false)
+  })
+
+  it('rejects a busy/started viewer pane — wait-and-retry (regression guard)', () => {
+    expect(isQuitEligible(ps(viewerStatus({ runtimeStatus: 'busy' })))).toBe(false)
+    expect(isQuitEligible(ps(viewerStatus({ runtimeStatus: 'started' })))).toBe(false)
+  })
+
+  // ── REJECT: orphaned viewer (regression guard) ───────────────────────────────
+
+  it('handles an orphaned viewer pane safely — no runtime to reap or close (regression guard)', () => {
+    expect(isQuitEligible(ps(viewerStatus({ runtimeId: '' })))).toBe(false)
+    expect(isLeftoverViewer(ps(viewerStatus({ runtimeId: '' })))).toBe(false)
+  })
+
+  // ── REJECT: active run / incomplete turn (regression guards) ─────────────────
+
+  it('rejects a viewer pane with an active run — HIGH-severity guard (regression guard)', () => {
+    const reasons = skipReasons(ps(viewerStatus({ activeRunId: 'run-viewer-live' })))
+    expect(reasons.some((r) => /active run/i.test(r))).toBe(true)
+    expect(reasons.some((r) => /would fail the live run/i.test(r))).toBe(true)
+  })
+
+  it('rejects a viewer pane with an incomplete latest turn (regression guard)', () => {
+    expect(isQuitEligible(ps(viewerStatus({ turnStatus: 'running' })))).toBe(false)
+    expect(isQuitEligible(ps(viewerStatus({ turnStatus: 'failed' })))).toBe(false)
+    expect(isQuitEligible(ps(viewerStatus({ turnStatus: 'none' })))).toBe(false)
+  })
+
+  // ── FULL MATRIX: multiple simultaneous failures ───────────────────────────────
+
+  it('reports all failed guards when presentation=none + active run + incomplete turn', () => {
+    // RED: skipReasons returns "transport=headless", "active run", "in progress" —
+    // three reasons exist but none mentions presentation.  The /presentation|tmux-tui/
+    // assertion fails.  After Phase C green all three map to their real guards.
+    const reasons = skipReasons(
+      ps(viewerStatus({ presentationKind: 'none', activeRunId: 'run-x', turnStatus: 'running' }))
+    )
+    expect(reasons.length).toBeGreaterThanOrEqual(3)
+    expect(reasons.some((r) => /presentation|tmux-tui/i.test(r))).toBe(true)
+    expect(reasons.some((r) => /active run/i.test(r))).toBe(true)
+    expect(reasons.some((r) => /in progress/i.test(r))).toBe(true)
+  })
+})
+
 describe('isAlreadyTerminatedError (benign reap-failure classifier)', () => {
   it('classifies an already-terminated runtime as benign', () => {
     // The exact message that aborted the whole sweep before the fix.
