@@ -31,6 +31,14 @@ type PaneStatus = Pane & {
   lastEventUtc: string
   lastEventLocal: string
   lastEventKind: string
+  // Presentation-aware reap fields (T-04923, Phase C of T-04905). Sourced from
+  // the persisted broker hosting state (runtime_state_json). OPTIONAL because the
+  // legacy metadata path (and the original eligibleStatus fixtures) never set
+  // them — `undefined` means "no hosting-state info, fall back to the raw
+  // transport gate"; `''` means "json_extract returned NULL → malformed/absent
+  // broker.presentation block".
+  presentationKind?: string
+  substrateKind?: string
 }
 
 const color = new Chalk({
@@ -49,7 +57,9 @@ channel via 'hrc runtime terminate --no-drop-continuation --reason operator_reap
 contents match CLOSE_PROMPT_REGEX.
 
 Eligible = surface resolves to one runtime with controllerKind=harness-broker,
-transport=tmux, status=ready, NO active run, latest turn=completed.
+a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
+substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
+status=ready, NO active run, latest turn=completed.
 
 Environment:
   TITLE_REGEX          Default: ^hrc headless agent:
@@ -246,12 +256,45 @@ function skipReasons(status: PaneStatus): string[] {
     )
   }
 
+  // Presentation-aware surface gate (T-04923). Two shapes are reapable:
+  //   (a) legacy broker-tmux:  transport === 'tmux'           — accepted as-is.
+  //   (b) codex app-server viewer:  transport === 'headless'  with a real tmux
+  //       TUI window, i.e. presentation.kind === 'tmux-tui' over a leased-tmux
+  //       substrate. The HRC transport is the broker channel to the daemon
+  //       ('headless'), but the runtime still owns an operator-visible tmux pane.
+  // The raw transport value alone is NOT sufficient — for headless runtimes the
+  // persisted hosting state (presentationKind / substrateKind) decides.
   if (status.transport !== 'tmux') {
-    reasons.push(
-      status.transport === ''
-        ? 'transport unknown — not a tmux-backed broker'
-        : `transport=${status.transport}, not tmux — only broker-tmux panes are reaped here`
-    )
+    if (status.presentationKind === undefined) {
+      // No hosting-state presentation info (legacy metadata path): there is no
+      // way to confirm a tmux TUI window, so fall back to the raw transport gate.
+      reasons.push(
+        status.transport === ''
+          ? 'transport unknown — not a tmux-backed broker'
+          : `transport=${status.transport}, not tmux — only broker-tmux panes are reaped here`
+      )
+    } else if (status.presentationKind === '') {
+      // json_extract returned NULL: runtimeStateJson has no parseable
+      // broker.presentation block — we cannot confirm a tmux-tui viewer window.
+      reasons.push(
+        'hosting state missing/malformed — no parseable broker.presentation; ' +
+          'cannot confirm a tmux-tui viewer window for this headless runtime'
+      )
+    } else if (status.presentationKind !== 'tmux-tui') {
+      // A true headless run: broker lives in a leased tmux session but exposes no
+      // operator TUI window to reap/close.
+      reasons.push(
+        `presentation.kind=${status.presentationKind}, not tmux-tui — ` +
+          'true headless runtime with no operator viewer pane to reap'
+      )
+    } else if (status.substrateKind !== 'leased-tmux') {
+      // presentation claims a TUI window, but the broker is daemon-child hosted —
+      // there is no leased tmux session/pane to terminate or key-close.
+      reasons.push(
+        `substrate.kind=${status.substrateKind || 'unknown'}, not leased-tmux — ` +
+          'broker is daemon-child hosted; no leased tmux session/pane to close'
+      )
+    }
   }
 
   if (status.runtimeStatus !== 'ready') {
@@ -446,7 +489,7 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
         VALUES ('${escapedScope}', '${escapedRuntime}')
       ),
       latest_runtime AS (
-        SELECT runtime_id, status, active_run_id, transport, controller_kind, updated_at
+        SELECT runtime_id, status, active_run_id, transport, controller_kind, runtime_state_json, updated_at
         FROM runtimes
         WHERE (runtime_id = (SELECT runtime_id FROM target) AND (SELECT runtime_id FROM target) <> '')
            OR (scope_ref = (SELECT scope_ref FROM target) AND (SELECT scope_ref FROM target) <> '')
@@ -485,7 +528,27 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
         COALESCE((SELECT run_id FROM latest_run), ''),
         COALESCE((SELECT ts FROM latest_event), ''),
         COALESCE(datetime((SELECT ts FROM latest_event), 'localtime'), ''),
-        COALESCE((SELECT event_kind FROM latest_event), '');
+        COALESCE((SELECT event_kind FROM latest_event), ''),
+        -- Presentation-aware reap (T-04923). Two serialisation shapes (G2 compat):
+        -- normalized broker.presentation.kind, or flat-fallback from broker.tuiWindow.
+        COALESCE(
+          json_extract((SELECT runtime_state_json FROM latest_runtime), '$.broker.presentation.kind'),
+          CASE
+            WHEN json_extract((SELECT runtime_state_json FROM latest_runtime), '$.broker.tuiWindow')
+              IS NOT NULL THEN 'tmux-tui'
+            ELSE 'none'
+          END,
+          ''
+        ),
+        COALESCE(
+          json_extract((SELECT runtime_state_json FROM latest_runtime), '$.broker.substrate.kind'),
+          CASE
+            WHEN json_extract((SELECT runtime_state_json FROM latest_runtime), '$.broker.brokerWindow')
+              IS NOT NULL THEN 'leased-tmux'
+            ELSE 'daemon-child'
+          END,
+          ''
+        );
     `,
   ])
   const [
@@ -499,6 +562,8 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
     lastEventUtc,
     lastEventLocal,
     lastEventKind,
+    presentationKind,
+    substrateKind,
   ] = output.trimEnd().split('\t')
 
   return {
@@ -515,6 +580,11 @@ function queryStatus(pane: Pane, options: Options): PaneStatus {
     lastEventUtc: lastEventUtc || '',
     lastEventLocal: lastEventLocal || '',
     lastEventKind: lastEventKind || '',
+    // '' here means json_extract returned NULL (no parseable broker hosting
+    // state) — skipReasons() treats that as malformed, distinct from `undefined`
+    // (legacy metadata path with no hosting-state column at all).
+    presentationKind: presentationKind ?? '',
+    substrateKind: substrateKind ?? '',
   }
 }
 
@@ -723,7 +793,7 @@ async function main(): Promise<void> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, transport=tmux, runtime=ready, no active run, latest turn=completed).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed).`
       )
     )
     if (leftoverStatuses.length > 0) {
