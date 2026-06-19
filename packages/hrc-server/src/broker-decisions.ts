@@ -802,6 +802,30 @@ export function getBrokerRuntimeTmuxAttachTarget(runtime: HrcRuntimeSnapshot): s
   return sessionName
 }
 
+// The leased tmux pane id used to PROBE a durable broker runtime's liveness
+// (reconcileBrokerTmuxRuntimeLiveness). For legacy/normal durable runtimes the
+// pane is recorded in `tmuxJson.paneId` (it mirrors the tui pane). For the
+// codex-app-server viewer FLAT shape (T-04905) `tmuxJson` is empty — the lease
+// lives in `runtimeStateJson.broker.{brokerWindow,tuiWindow}` — so without this
+// fallback the reconcile read undefined, treated the live session as "missing",
+// and killed the lease server out from under the running broker (SIGHUP),
+// crashing it ~40ms into a turn (T-04928). The broker WINDOW (where the durable
+// harness-broker process always runs for the runtime's lifetime) is the robust
+// liveness signal: it avoids the renderer-startup race the tui pane would have.
+export function getBrokerRuntimeTmuxLeasedPaneId(runtime: HrcRuntimeSnapshot): string | undefined {
+  const paneId = runtime.tmuxJson?.['paneId']
+  if (typeof paneId === 'string' && paneId.length > 0) {
+    return paneId
+  }
+
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  if (hosting?.substrate.kind === 'leased-tmux') {
+    return hosting.substrate.brokerWindow.paneId
+  }
+
+  return undefined
+}
+
 export function isInteractiveTmuxBrokerIntent(intent: HrcRuntimeIntent): boolean {
   return (
     intent.harness.interactive === true &&

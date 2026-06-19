@@ -14,6 +14,7 @@ import {
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerStartRoute,
   getBrokerRuntimeTmuxAttachTarget,
+  getBrokerRuntimeTmuxLeasedPaneId,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   isMatchingInteractiveTmuxBrokerRuntime,
@@ -143,7 +144,12 @@ export async function reconcileTmuxRuntimeLiveness(
     // the running broker (SIGHUP) on every routine `hrc runtime list`. Probe the
     // runtime's RECORDED leased pane by id instead — it mirrors the tui pane for
     // durable runtimes and the main pane for legacy ones, so it is topology-agnostic.
-    const leasedPaneId = runtime.tmuxJson?.['paneId']
+    // T-04928: the codex-app-server viewer FLAT shape records NO tmuxJson (the lease
+    // lives in runtimeStateJson.broker), so a bare `runtime.tmuxJson?.paneId` read
+    // here was undefined → "session missing" → killServer → SIGHUP killed the live
+    // viewer broker mid-turn. The presentation-aware resolver falls back to the
+    // broker pane for that shape.
+    const leasedPaneId = getBrokerRuntimeTmuxLeasedPaneId(runtime)
     const inspected =
       typeof leasedPaneId === 'string' &&
       (await brokerTmux.inspectPaneLiveness(leasedPaneId)) !== null

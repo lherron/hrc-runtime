@@ -172,6 +172,12 @@ export async function allocateBrokerSubstrate(
   // read-only observer socket (an env var alone is insufficient — the broker
   // must be told to serve it). HRC passes ONE path here and on the dispatch env.
   const observerSocketPath = input.observerSocketPath
+  // T-04928 — capture the broker child's stderr to a per-runtime log. The broker
+  // otherwise runs in a tmux pane whose output is lost when the process exits, so
+  // a broker crash (e.g. "Broker socket closed unexpectedly") leaves no diagnosable
+  // trace. Redirecting fd2 BEFORE the shell `exec`s into the broker preserves the
+  // crash/panic output across the exec into this file.
+  const brokerStderrPath = join(ipcDir, 'broker.err')
   const brokerCommand =
     `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}` +
     ` --event-ledger ${eventLedgerPath}` +
@@ -179,7 +185,8 @@ export async function allocateBrokerSubstrate(
     ` --host-session-id ${hostSessionId}` +
     ` --generation ${generation}` +
     ` --attach-token-file ${attachTokenPath}` +
-    (observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : '')
+    (observerSocketPath ? ` --experimental-observer-socket ${observerSocketPath}` : '') +
+    ` 2>${brokerStderrPath}`
   const brokerWindow = await tmux.createWindowWithCommand({
     sessionName,
     windowName: 'broker',
