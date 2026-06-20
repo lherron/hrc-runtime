@@ -3,6 +3,7 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
+import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireGhosttySurface, requireSession, requireTmuxPane } from '../require-helpers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -25,6 +26,57 @@ import { sessionEventBase } from './session-event-base.js'
  */
 function headlessAuditTransport(runtime: HrcRuntimeSnapshot): 'headless' | 'sdk' {
   return runtime.transport === 'headless' ? 'headless' : 'sdk'
+}
+
+/**
+ * A broker runtime whose HRC transport is `headless` (the broker channel is the
+ * Unix IPC socket, not a tmux pane) but which nonetheless owns a LEASED tmux
+ * session hosting the broker + renderer windows — the codex-app-server dual-tmux
+ * viewer (T-04905/T-04923). Identified by the persisted broker hosting state:
+ * presentation.kind === 'tmux-tui' over a leased-tmux substrate.
+ *
+ * These runtimes look "headless" to the transport switch, so a naive terminate
+ * routes them through {@link terminateHeadlessRuntime} which only finalizes HRC
+ * state — leaving the live broker + renderer process and the operator viewer
+ * pane orphaned (the reaper marks the runtime `terminated` but the Ghostty window
+ * never exits). Such a runtime needs the SAME broker dispose + leased-tmux server
+ * teardown that {@link terminateTmuxRuntime} performs for the interactive
+ * broker-tmux profile.
+ */
+function isBrokerLeasedTmuxViewer(runtime: HrcRuntimeSnapshot): boolean {
+  if (runtime.controllerKind !== 'harness-broker') return false
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  return hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux'
+}
+
+/**
+ * Tear down a broker-backed leased-tmux runtime: dispose the broker over the RPC
+ * channel (graceful stop of the app-server child + terminal events), then kill
+ * the per-runtime leased tmux SERVER (both the `broker` and `tui` windows),
+ * which is what actually kills the renderer process and detaches/closes the
+ * operator viewer pane. The lease teardown is idempotent — `inspectSession` and
+ * `killServer` both tolerate an already-gone server/socket. Mirrors the broker
+ * branch of {@link terminateTmuxRuntime}.
+ */
+async function disposeBrokerLeasedTmux(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  opts: { reason?: string | undefined }
+): Promise<void> {
+  await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
+    ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+    logMessage: 'broker runtime dispose failed during headless viewer terminate',
+  })
+
+  const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime)
+  if (leaseSocket === undefined) return
+  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+  const leaseTmux = createTmuxManager({ socketPath: leaseSocket })
+  const inspected = await leaseTmux.inspectSession(sessionName)
+  if (inspected) {
+    await leaseTmux.terminate(sessionName)
+  }
+  await leaseTmux.killServer()
 }
 
 export async function interruptRuntime(
@@ -182,7 +234,12 @@ export async function terminateRuntime(
   }
 
   const dropContinuation = opts.dropContinuation ?? runtime.activeRunId != null
-  return await this.terminateHeadlessRuntime(runtime, { dropContinuation })
+  return await this.terminateHeadlessRuntime(runtime, {
+    dropContinuation,
+    ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+    ...(opts.source !== undefined ? { source: opts.source } : {}),
+    ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
+  })
 }
 
 export async function terminateTmuxRuntime(
@@ -301,13 +358,30 @@ export async function terminateGhosttyRuntime(
 export async function terminateHeadlessRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
-  opts: { dropContinuation: boolean }
+  opts: {
+    dropContinuation: boolean
+    reason?: string | undefined
+    source?: string | undefined
+    actor?: string | undefined
+  }
 ): Promise<Response> {
   const session = requireSession(this.db, runtime.hostSessionId)
   const now = timestamp()
 
   if (opts.dropContinuation) {
     this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+  }
+
+  // Codex app-server dual-tmux viewer: a headless-transport broker runtime can
+  // still own a leased tmux session hosting the broker + renderer windows.
+  // Without this, terminate only finalizes HRC state and the renderer process +
+  // viewer pane are orphaned (the reaper reports `terminated` but the Ghostty
+  // window never exits). True daemon-child headless / SDK runtimes have no
+  // leased tmux, so the predicate skips them and behavior is unchanged.
+  if (isBrokerLeasedTmuxViewer(runtime)) {
+    await disposeBrokerLeasedTmux.call(this, runtime, {
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+    })
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
@@ -319,6 +393,12 @@ export async function terminateHeadlessRuntime(
     payload: {
       transport,
       droppedContinuation: opts.dropContinuation,
+      // Operator intent + attribution (mirrors terminateTmuxRuntime): the
+      // AUTHORITATIVE reap audit record lives on this HRC event, since the
+      // broker `stop` reason delivery can race/vanish during dispose.
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      ...(opts.source !== undefined ? { source: opts.source } : {}),
+      ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
     },
   })
   this.notifyEvent(event)
