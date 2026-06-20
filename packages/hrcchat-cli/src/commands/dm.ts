@@ -1,10 +1,11 @@
-import { CliUsageError, consumeBody } from 'cli-kit'
+import { CliUsageError, consumeBody, parseDuration } from 'cli-kit'
 import { HrcDomainError } from 'hrc-core'
-import type { HrcMessageAddress, SemanticDmResponse } from 'hrc-core'
+import type { HrcMessageAddress, SemanticDmResponse, WaitMessageResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
+import { buildDmWaitResult } from '../wait-final.js'
 
 export type DmOptions = {
   respondTo?: string
@@ -14,7 +15,19 @@ export type DmOptions = {
   file?: string
   json?: boolean | undefined
   project?: string | undefined
+  /**
+   * Final-only Codex wait mode. `response` blocks quietly for the correlated
+   * reply, then emits one compact JSON object. Distinct from `--follow`, which
+   * streams progress (handled upstream in main.ts and never reaches cmdDm).
+   */
+  wait?: string | undefined
+  /** Wait budget for `--wait response`. Default 20m. */
+  timeout?: string | undefined
+  /** Suppress all non-terminal stdout/stderr while waiting (default in wait mode). */
+  quiet?: boolean | undefined
 }
+
+const DM_WAIT_DEFAULT_TIMEOUT = '20m'
 
 export async function cmdDm(
   client: HrcClient,
@@ -32,6 +45,23 @@ export async function cmdDm(
     throw new CliUsageError('dm requires a message body (positional, -, or --file)')
   }
 
+  // ── Final-only Codex wait mode ──
+  // `--wait response` blocks quietly for the correlated reply, then emits one
+  // compact JSON object. The server performs the blocking wait (thread-scoped,
+  // phase=response, afterSeq cursor); the CLI stays silent until the terminal
+  // result. This is additive: --follow is intercepted in main.ts and never
+  // reaches cmdDm, so streaming semantics are untouched.
+  const waitMode = opts.wait
+  if (waitMode !== undefined && waitMode !== 'response') {
+    throw new CliUsageError(`unsupported --wait mode for dm: "${waitMode}" (expected: response)`)
+  }
+  const quiet = waitMode !== undefined ? opts.quiet !== false : opts.quiet === true
+  const waitTimeoutMs =
+    waitMode !== undefined ? parseDuration(opts.timeout ?? DM_WAIT_DEFAULT_TIMEOUT) : undefined
+  if (waitTimeoutMs !== undefined && waitTimeoutMs <= 0) {
+    throw new CliUsageError(`invalid duration: ${opts.timeout} (must be > 0)`)
+  }
+
   const callerSessionRef = process.env['HRC_SESSION_REF']
   const from = resolveCallerAddress()
   const to = resolveAddress(targetInput, callerSessionRef)
@@ -42,6 +72,11 @@ export async function cmdDm(
   const runtimeIntent =
     to.kind === 'session' ? resolveRuntimeIntentForTarget(targetInput) : undefined
 
+  // Final-only wait does NOT use the server's coupled `wait` option: that
+  // blocks on turn completion, so its timeoutMs only bounds the post-completion
+  // message wait and a slow turn would blow past `--timeout`. Instead we
+  // dispatch fast (detached turn) and run a client-side bounded waitMessage
+  // below — giving `--timeout` as a true hard ceiling.
   const sendWith = (replyToMessageId: string | undefined): Promise<SemanticDmResponse> =>
     client.semanticDm({
       from,
@@ -60,18 +95,55 @@ export async function cmdDm(
   // rejects an unknown anchor with malformed_request{field:'replyToMessageId'};
   // when that happens, self-heal by resending unthreaded (the documented
   // workaround) and warn, instead of failing the send outright.
+  const startedAt = Date.now()
   let result: SemanticDmResponse
   try {
     result = await sendWith(opts.replyTo)
   } catch (err) {
     if (opts.replyTo !== undefined && isUnknownReplyAnchorError(err)) {
-      process.stderr.write(
-        `hrcchat: --reply-to anchor "${opts.replyTo}" is unknown; sending without threading\n`
-      )
+      // In quiet wait mode the stream must carry no progress/warning output
+      // before the terminal JSON; the unthreaded resend is reflected by the
+      // result's correlation mode instead.
+      if (!quiet) {
+        process.stderr.write(
+          `hrcchat: --reply-to anchor "${opts.replyTo}" is unknown; sending without threading\n`
+        )
+      }
       result = await sendWith(undefined)
     } else {
       throw err
     }
+  }
+
+  // Final-only wait: block quietly (client-side, hard `--timeout` ceiling) for
+  // the correlated response, then emit exactly one compact result object. Exit
+  // codes are set silently (no stderr) so scripts can branch on $? while the
+  // quiet contract holds; the `status` field is the primary signal.
+  if (waitMode === 'response' && waitTimeoutMs !== undefined) {
+    const request = result.request
+    // A dispatch that already failed (e.g. busy headless runtime) will never
+    // produce a response — skip the wait and report the error immediately.
+    const waited: WaitMessageResponse | undefined = request.execution.errorCode
+      ? undefined
+      : await client.waitMessage({
+          thread: { rootMessageId: request.rootMessageId },
+          phases: ['response'],
+          afterSeq: request.messageSeq,
+          timeoutMs: waitTimeoutMs,
+        })
+    const waitResult = buildDmWaitResult({
+      request,
+      waited,
+      target: to,
+      elapsedMs: Date.now() - startedAt,
+    })
+    printJsonLine(waitResult)
+    if (waitResult.status === 'timeout') {
+      process.exitCode = 1
+    } else if (waitResult.status === 'error') {
+      process.exitCode = 4
+    }
+    return
   }
 
   if (opts.json) {

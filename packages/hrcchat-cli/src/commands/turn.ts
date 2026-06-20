@@ -6,8 +6,13 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
-import { resolveCallerAddress, resolveScope, resolveTargetToSessionRef } from '../normalize.js'
-import { printJson } from '../print.js'
+import {
+  formatAddress,
+  resolveCallerAddress,
+  resolveScope,
+  resolveTargetToSessionRef,
+} from '../normalize.js'
+import { printJson, printJsonLine } from '../print.js'
 import {
   type RenderFrameFormatInput,
   createTerminalFrameRenderer,
@@ -19,6 +24,7 @@ import { type StackedAggregator, createStackedAggregator } from '../stacked-aggr
 import { isRecord } from '../stacked-shared.js'
 import { createStackedSummarizer } from '../stacked-summary.js'
 import { FlushReason, Phase, Result } from '../stacked-types.js'
+import type { WaitFinalResult } from '../wait-final.js'
 
 export type TurnOptions = {
   new?: boolean | undefined
@@ -31,7 +37,20 @@ export type TurnOptions = {
   follow?: string | undefined
   replyTo?: string | undefined
   crossScopeReply?: boolean | undefined
+  /**
+   * Final-only Codex wait mode. `final` blocks quietly until the turn reaches a
+   * terminal state, then emits one compact JSON object. Mutually exclusive with
+   * the streaming options (`--follow`/`--stacked`/`--format tree|compact`/
+   * `--pretty`), whose progress-stream semantics are unchanged.
+   */
+  wait?: string | undefined
+  /** Wait budget for `--wait final`. Default 45m. */
+  timeout?: string | undefined
+  /** Suppress all progress output while `--wait` blocks (default in wait mode). */
+  quiet?: boolean | undefined
 }
+
+const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
 
 /**
  * Typed exit error for the turn command.
@@ -182,6 +201,31 @@ export async function cmdTurn(
   }
 
   const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
+
+  // ── Final-only Codex wait mode (mutex with all streaming options) ──
+  const waitMode = opts.wait
+  if (waitMode !== undefined && waitMode !== 'final') {
+    throw new CliUsageError(`unsupported --wait mode for turn: "${waitMode}" (expected: final)`)
+  }
+  if (waitMode !== undefined) {
+    if (opts.follow !== undefined || opts.stacked !== undefined) {
+      throw new CliUsageError(
+        '--wait (final-only) and --follow/--stacked (streaming) are mutually exclusive; pass one'
+      )
+    }
+    if (opts.pretty) {
+      throw new CliUsageError('--wait cannot be combined with --pretty')
+    }
+    if (opts.format === 'tree' || opts.format === 'compact') {
+      throw new CliUsageError('--wait cannot be combined with --format tree or compact')
+    }
+  }
+  const waitTimeoutMs =
+    waitMode !== undefined ? parseDuration(opts.timeout ?? TURN_WAIT_DEFAULT_TIMEOUT) : undefined
+  if (waitTimeoutMs !== undefined && waitTimeoutMs <= 0) {
+    throw new CliUsageError(`invalid duration: ${opts.timeout} (must be > 0)`)
+  }
+
   if (opts.stacked !== undefined && opts.follow !== undefined) {
     throw new CliUsageError('--follow is an alias for --stacked; pass one, not both')
   }
@@ -287,6 +331,20 @@ export async function cmdTurn(
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
   })
+
+  // ── Final-only Codex wait mode ──
+  // Watch quietly until the turn reaches a terminal state, then emit exactly
+  // one compact JSON object. No frames are rendered while blocking. The
+  // streaming path below is left entirely untouched (AC7).
+  if (waitMode === 'final' && waitTimeoutMs !== undefined) {
+    await runTurnFinalWait({
+      client,
+      handoff,
+      projectId: resolved.parsed.projectId ?? '',
+      timeoutMs: waitTimeoutMs,
+    })
+    return
+  }
 
   // ── Resolve sink format ──
   // --pretty forces terminal/tree format regardless of TTY detection, so
@@ -446,6 +504,138 @@ export async function cmdTurn(
   }
 
   // exit 0 — success (implicit return)
+}
+
+/**
+ * Final-only Codex wait for a dispatched turn. Blocks QUIETLY on the lifecycle
+ * watch stream (no frames rendered), then emits exactly one compact JSON object
+ * describing the terminal outcome. Non-zero process exit codes are set silently
+ * (no stderr) so scripts can branch on `$?` without breaking the quiet contract;
+ * the `status` field is the primary machine-actionable signal.
+ *
+ * This is a separate path from the streaming watch loop in cmdTurn — the two do
+ * not share state, so `--follow`/`--stacked` semantics are entirely unaffected.
+ */
+async function runTurnFinalWait(args: {
+  client: HrcClient
+  handoff: SemanticTurnHandoffResponse
+  projectId: string
+  timeoutMs: number
+}): Promise<void> {
+  const { client, handoff, timeoutMs } = args
+  const target = formatAddress({ kind: 'session', sessionRef: handoff.sessionRef })
+  const sentMessageId = handoff.messageId
+  const afterSeq = handoff.fromSeq
+  const startedAt = Date.now()
+
+  // Quiet the per-event projection logger so nothing interleaves on stderr
+  // before the terminal JSON object.
+  if (process.env['LOG_LEVEL'] === undefined) {
+    process.env['LOG_LEVEL'] = 'warn'
+  }
+
+  const abortController = new AbortController()
+  let timedOut = false
+  let interrupted = false
+  let outcome: 'completed' | 'runtimeDead' | 'error' | undefined
+
+  const sigintHandler = () => {
+    interrupted = true
+    abortController.abort()
+  }
+  process.on('SIGINT', sigintHandler)
+
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    abortController.abort()
+  }, timeoutMs)
+
+  try {
+    for await (const event of client.watch({
+      scopeRef: handoff.scopeRef,
+      laneRef: handoff.laneRef,
+      runId: handoff.runId,
+      generation: handoff.generation,
+      fromSeq: handoff.fromSeq,
+      follow: true,
+      signal: abortController.signal,
+    })) {
+      if (isWatchLoopTurnTerminal(event)) {
+        outcome = 'completed'
+        abortController.abort()
+        break
+      }
+      if (isRuntimeDead(event)) {
+        outcome = 'runtimeDead'
+        abortController.abort()
+        break
+      }
+      if (
+        event.eventKind === 'permission_request' ||
+        event.eventKind === 'run_failed' ||
+        event.eventKind === 'turn.error'
+      ) {
+        outcome = 'error'
+      }
+    }
+  } catch (err) {
+    // An abort (timeout, SIGINT, or intentional terminal close) surfaces as an
+    // AbortError here; fall through to classify by the flags set above. Any
+    // other error is a real failure and must propagate.
+    if (!abortController.signal.aborted) {
+      throw err
+    }
+  } finally {
+    clearTimeout(timeoutTimer)
+    process.removeListener('SIGINT', sigintHandler)
+  }
+
+  const elapsedMs = Date.now() - startedAt
+  let result: WaitFinalResult
+
+  if (outcome === 'completed') {
+    const reply = await findDurableReply(client, handoff.messageId)
+    result = {
+      status: 'responded',
+      sentMessageId,
+      target,
+      elapsedMs,
+      correlation: { mode: 'reply_to', afterSeq },
+      ...(reply
+        ? {
+            response: {
+              messageId: reply.messageId,
+              from: formatAddress(reply.from),
+              text: reply.body,
+            },
+          }
+        : {}),
+    }
+  } else if (interrupted) {
+    result = { status: 'cancelled', sentMessageId, target, elapsedMs, lastSeq: afterSeq }
+  } else if (timedOut) {
+    result = { status: 'timeout', sentMessageId, target, elapsedMs, lastSeq: afterSeq }
+  } else {
+    result = {
+      status: 'error',
+      sentMessageId,
+      target,
+      elapsedMs,
+      lastSeq: afterSeq,
+      errorCode: outcome === 'runtimeDead' ? 'runtime_dead' : 'turn_error',
+    }
+  }
+
+  printJsonLine(result)
+
+  // Silent exit-code mapping (no stderr) — mirrors the streaming path's codes.
+  if (result.status === 'timeout') {
+    process.exitCode = TURN_EXIT_STALL
+  } else if (result.status === 'cancelled') {
+    process.exitCode = TURN_EXIT_SIGINT
+  } else if (result.status === 'error') {
+    process.exitCode = TURN_EXIT_RUNTIME_DEAD
+  }
 }
 
 /**

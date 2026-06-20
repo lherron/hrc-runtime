@@ -235,11 +235,22 @@ const dmCmd = program
   .option('--file <path>', 'read body from file')
   .option(
     '--follow <duration>',
-    'dispatch as a tracked turn and stream turn_stacked ndjson progress at this interval'
+    'STREAMING (human/debug): dispatch as a tracked turn and stream turn_stacked ndjson progress at this interval'
   )
+  .option(
+    '--wait <mode>',
+    'FINAL-ONLY (Codex): block quietly for the correlated reply, then emit one compact JSON object (mode: response)'
+  )
+  .option('--timeout <duration>', 'wait budget for --wait response (default 20m)')
+  .option('--quiet', 'suppress all progress/heartbeat output while --wait blocks (default in wait mode)')
   .action(async (target, message, opts) => {
     const client = createClient()
     const g = globalOpts()
+    if (opts.follow !== undefined && opts.wait !== undefined) {
+      throw new CliUsageError(
+        '--follow (streaming) and --wait (final-only) are mutually exclusive; pass one'
+      )
+    }
     if (opts.follow !== undefined) {
       await cmdTurn(
         client,
@@ -260,7 +271,7 @@ const dmCmd = program
 
 dmCmd.addHelpText(
   'before',
-  "Send a durable DM/status note. Add --follow <duration> to dispatch as a tracked turn and stream\nturn_stacked ndjson progress on that interval (suitable for Claude Code's Monitor tool).\n"
+  "Send a durable DM/status note.\n\nSTREAMING (human/debug): --follow <duration> dispatches as a tracked turn and streams turn_stacked\nndjson progress on that interval (suitable for Claude Code's Monitor tool).\n\nFINAL-ONLY (Codex token-efficient): --wait response [--timeout 20m] [--quiet] blocks quietly with no\nprogress output, then emits ONE compact JSON object {status, sentMessageId, target, elapsedMs,\ncorrelation, response|lastSeq}. status is responded|timeout|error|cancelled.\n"
 )
 
 // -- send ---------------------------------------------------------------------
@@ -345,6 +356,15 @@ const turnCmd = program
     'emit bounded turn_stacked ndjson progress (interval lines plus phase/stall/final/error/permission force-flushes; implies ndjson)'
   )
   .option('--follow <duration>', 'alias for --stacked')
+  .option(
+    '--wait <mode>',
+    'FINAL-ONLY (Codex): block quietly until terminal, then emit one compact JSON object (mode: final)'
+  )
+  .option('--timeout <duration>', 'wait budget for --wait final (default 45m)')
+  .option(
+    '--quiet',
+    'suppress all progress output while --wait blocks (default in wait mode)'
+  )
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option(
     '--cross-scope-reply',
@@ -358,7 +378,7 @@ const turnCmd = program
 
 turnCmd.addHelpText(
   'before',
-  'Dispatch work to an agent. For tracked dispatch with bounded mid-flight progress, use\n--follow <duration> (alias --stacked); the stream is one turn_stacked ndjson line per interval\nplus force-flush lines on phase/stall/final/error/permission. Terminal frames (phase:final|error)\nalso carry "taskState": the live wrkq state of the scoped task (e.g. "completed"|"in_progress"),\nor null for a non-task-scoped handle (:primary) or when wrkq is unavailable. Mutex against\n--format tree|compact and --pretty.\n'
+  'Dispatch work to an agent.\n\nSTREAMING (human/debug): --follow <duration> (alias --stacked) emits one turn_stacked ndjson line\nper interval plus force-flush lines on phase/stall/final/error/permission. Terminal frames\n(phase:final|error) also carry "taskState": the live wrkq state of the scoped task\n(e.g. "completed"|"in_progress"), or null for a non-task-scoped handle (:primary) or when wrkq is\nunavailable. Mutex against --format tree|compact and --pretty.\n\nFINAL-ONLY (Codex token-efficient): --wait final [--timeout 45m] [--quiet] blocks quietly with no\nprogress output, then emits ONE compact JSON object {status, sentMessageId, target, elapsedMs,\ncorrelation, response|lastSeq}. status is responded|timeout|error|cancelled. Mutex against\n--follow/--stacked/--format tree|compact/--pretty.\n'
 )
 
 // -- doctor -------------------------------------------------------------------

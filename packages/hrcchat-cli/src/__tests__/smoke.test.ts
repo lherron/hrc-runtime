@@ -288,13 +288,24 @@ describe('hrcchat CLI smoke fixture', () => {
     expect(result.stderr).toContain('<target>')
   })
 
-  it('legacy dm wait flag exits 2 after removal', async () => {
+  it('dm --wait now takes a <mode> argument (T-04961 final-only wait)', async () => {
+    // The legacy boolean `--wait` was removed in a2e6ecd; T-04961 reintroduces
+    // it as the Codex-friendly final-only mode flag `--wait <mode>`. A bare
+    // `--wait` is therefore a missing-argument usage error, not unknown-option.
     const result = await runMain(['dm', 'human', 'hello', '--wait'])
 
     expect(result.exitCode).toBe(2)
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('unknown option')
+    expect(result.stderr).toContain('argument missing')
     expect(result.stderr).toContain('--wait')
+  })
+
+  it('dm --wait with an unsupported mode exits 2 with a clear message', async () => {
+    const result = await runMain(['dm', 'human', 'hello', '--wait', 'bogus'])
+
+    expect(result.exitCode).toBe(2)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('unsupported --wait mode')
   })
 
   it('hrcchat <unknown-verb> exits 2 (usage error) and mentions the command', async () => {
