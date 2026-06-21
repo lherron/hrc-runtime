@@ -93,7 +93,7 @@ describe('runSdkTurn agent tool env', () => {
     // agent (target) name, so the per-agent project namespace must be passed.
     const projectId = getProjectStorageId(projectRoot, agentName)
 
-    expect(captured.env).toMatchObject({
+    expect(captured.lockedEnv).toMatchObject({
       ASP_AGENT_ROOT: agentRoot,
       ASP_AGENT_NAME: agentName,
       ASP_AGENT_TOOLS_DIR: join(agentRoot, 'tools'),
@@ -113,7 +113,7 @@ describe('runSdkTurn agent tool env', () => {
       HRC_SESSION_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test/lane:main',
       CUSTOM_SDK_ENV: 'from-launch',
     })
-    expect(captured.env?.['PATH']?.split(delimiter).slice(0, 2)).toEqual([
+    expect(captured.lockedEnv?.['PATH']?.split(delimiter).slice(0, 2)).toEqual([
       toolsBinDir,
       '/custom/bin',
     ])

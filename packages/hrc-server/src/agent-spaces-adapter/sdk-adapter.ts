@@ -363,7 +363,7 @@ export async function runSdkTurn(options: SdkTurnOptions): Promise<SdkTurnResult
     placement: options.intent.placement,
     frontend,
     model: options.intent.harness.model,
-    env,
+    lockedEnv: env,
     prompt: options.prompt,
     ...optional('attachments', options.intent.attachments),
     runId: options.runId,
