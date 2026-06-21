@@ -215,8 +215,8 @@ describe('decideInteractiveBrokerAdmission — supported happy paths → broker-
       decideInteractiveBrokerAdmission!(
         intent({ provider: 'openai', interactive: true, id: 'pi-cli' }),
         null,
-        BOTH_FLAGS_ON,
-      ),
+        BOTH_FLAGS_ON
+      )
     ).toEqual({
       decision: 'broker-start',
       flagEnvName: HRC_PI_TUI_TMUX_BROKER_ENABLED,

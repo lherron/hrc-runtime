@@ -271,9 +271,7 @@ describe('characterization: markRuntimeDead', () => {
     markRuntimeDead(db, session, runtime, 'hrc', {})
 
     const run = getRun('run-dead-msg')
-    expect(run?.errorMessage).toBe(
-      'runtime rt-dead-msg is dead after startup reconciliation'
-    )
+    expect(run?.errorMessage).toBe('runtime rt-dead-msg is dead after startup reconciliation')
   })
 
   it('appends event to db.events (raw EventRepository) with eventKind=runtime.dead', () => {
@@ -291,9 +289,7 @@ describe('characterization: markRuntimeDead', () => {
     expect(rawEvents[0]?.eventJson).toMatchObject(eventJson)
 
     // NOT in db.hrcEvents
-    const hrcEvents = db.hrcEvents
-      .listFromHrcSeq(1)
-      .filter((e) => e.eventKind === 'runtime.dead')
+    const hrcEvents = db.hrcEvents.listFromHrcSeq(1).filter((e) => e.eventKind === 'runtime.dead')
     expect(hrcEvents).toHaveLength(0)
   })
 
@@ -312,9 +308,7 @@ describe('characterization: markRuntimeDead', () => {
     expect(rt?.runtimeStateJson).toMatchObject(initialStateJson)
     expect((rt?.runtimeStateJson as Record<string, unknown>)?.['status']).toBeUndefined()
     expect((rt?.runtimeStateJson as Record<string, unknown>)?.['staleReason']).toBeUndefined()
-    expect(
-      (rt?.runtimeStateJson as Record<string, unknown>)?.['terminationReason']
-    ).toBeUndefined()
+    expect((rt?.runtimeStateJson as Record<string, unknown>)?.['terminationReason']).toBeUndefined()
   })
 
   it('does NOT settle broker invocation (no settleInvocation step, diverges from markRuntimeStale)', () => {
@@ -385,9 +379,7 @@ describe('characterization: markRuntimeStale', () => {
     markRuntimeStale(db, session, runtime, {})
 
     const run = getRun('run-stale-msg')
-    expect(run?.errorMessage).toBe(
-      'runtime rt-stale-msg is stale after startup reconciliation'
-    )
+    expect(run?.errorMessage).toBe('runtime rt-stale-msg is stale after startup reconciliation')
   })
 
   it('sets runtimeStateJson with staleReason and stalePayload from eventJson', () => {
@@ -450,10 +442,7 @@ describe('characterization: markRuntimeStale', () => {
 
     markRuntimeStale(db, session, runtime, { reason: 'with-inv' })
 
-    const stateJson = getRuntime('rt-stale-term-inv')?.runtimeStateJson as Record<
-      string,
-      unknown
-    >
+    const stateJson = getRuntime('rt-stale-term-inv')?.runtimeStateJson as Record<string, unknown>
     expect(stateJson?.['terminalInvocation']).toMatchObject({
       invocationId,
       // diverges from markRuntimeTerminatedAfterUserExit which writes 'hrc.runtime.terminated'
@@ -520,9 +509,7 @@ describe('characterization: markRuntimeStale', () => {
     markRuntimeStale(db, session, runtime, eventJson)
 
     // in hrcEvents
-    const hrcEvents = db.hrcEvents
-      .listFromHrcSeq(1)
-      .filter((e) => e.eventKind === 'runtime.stale')
+    const hrcEvents = db.hrcEvents.listFromHrcSeq(1).filter((e) => e.eventKind === 'runtime.stale')
     expect(hrcEvents).toHaveLength(1)
     expect(hrcEvents[0]?.runtimeId).toBe('rt-stale-evt')
     expect(hrcEvents[0]?.payload).toMatchObject(eventJson)
@@ -539,9 +526,7 @@ describe('characterization: markRuntimeStale', () => {
 
     markRuntimeStale(db, session, runtime, eventJson)
 
-    const evt = db.hrcEvents
-      .listFromHrcSeq(1)
-      .find((e) => e.eventKind === 'runtime.stale')
+    const evt = db.hrcEvents.listFromHrcSeq(1).find((e) => e.eventKind === 'runtime.stale')
     expect(evt?.payload).toMatchObject({ reason: 'idle_ttl', customField: 'value' })
     // payload must NOT have 'user_initiated_session_end' injected (that's only markRuntimeTerminated)
     expect((evt?.payload as Record<string, unknown>)?.['terminationReason']).toBeUndefined()
@@ -745,9 +730,7 @@ describe('characterization: markRuntimeTerminatedAfterUserExit', () => {
     expect(hrcEvents[0]?.runtimeId).toBe('rt-term-evt')
 
     // NOT in raw db.events
-    const rawEvents = db.events
-      .listFromSeq(1)
-      .filter((e) => e.eventKind === 'runtime.terminated')
+    const rawEvents = db.events.listFromSeq(1).filter((e) => e.eventKind === 'runtime.terminated')
     expect(rawEvents).toHaveLength(0)
   })
 
@@ -758,9 +741,7 @@ describe('characterization: markRuntimeTerminatedAfterUserExit', () => {
 
     markRuntimeTerminatedAfterUserExit(db, session, runtime, eventJson)
 
-    const evt = db.hrcEvents
-      .listFromHrcSeq(1)
-      .find((e) => e.eventKind === 'runtime.terminated')
+    const evt = db.hrcEvents.listFromHrcSeq(1).find((e) => e.eventKind === 'runtime.terminated')
     const payload = evt?.payload as Record<string, unknown>
 
     // reason IS merged into the payload (unlike markRuntimeStale which passes eventJson as-is)
@@ -859,10 +840,7 @@ describe('characterization: cross-function divergence guard', () => {
       | undefined
     expect(deadStateJson?.['status']).toBeUndefined()
 
-    const staleStateJson = getRuntime('rt-div-stale')?.runtimeStateJson as Record<
-      string,
-      unknown
-    >
+    const staleStateJson = getRuntime('rt-div-stale')?.runtimeStateJson as Record<string, unknown>
     expect(staleStateJson?.['status']).toBe('stale')
     expect(staleStateJson?.['staleReason']).toBe('div-test')
 
@@ -871,11 +849,11 @@ describe('characterization: cross-function divergence guard', () => {
     expect(termStateJson?.['terminationReason']).toBe('user_initiated_session_end')
 
     // terminalInvocation.eventType divergence
-    expect(
-      (staleStateJson?.['terminalInvocation'] as Record<string, unknown>)?.['eventType']
-    ).toBe('hrc.runtime.stale')
-    expect(
-      (termStateJson?.['terminalInvocation'] as Record<string, unknown>)?.['eventType']
-    ).toBe('hrc.runtime.terminated')
+    expect((staleStateJson?.['terminalInvocation'] as Record<string, unknown>)?.['eventType']).toBe(
+      'hrc.runtime.stale'
+    )
+    expect((termStateJson?.['terminalInvocation'] as Record<string, unknown>)?.['eventType']).toBe(
+      'hrc.runtime.terminated'
+    )
   })
 })

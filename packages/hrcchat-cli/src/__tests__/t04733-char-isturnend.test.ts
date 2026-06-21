@@ -155,9 +155,7 @@ function makeWlHandoff(
   }
 }
 
-function wlEvent(
-  overrides: Partial<HrcLifecycleEvent> & { eventKind: string }
-): HrcLifecycleEvent {
+function wlEvent(overrides: Partial<HrcLifecycleEvent> & { eventKind: string }): HrcLifecycleEvent {
   return {
     hrcSeq: 1,
     streamSeq: 1,
@@ -395,11 +393,10 @@ describe('T-04733 char: watch-loop isTurnEnd = turn_end || turn.completed', () =
     // the watch-loop break + success arm that triggered it.
     const client = makeWlClient([wlEvent({ eventKind: 'turn_end', hrcSeq: 10 })])
 
-    const result = await runTurn(
-      client,
-      { stacked: '1s' } as TurnOptions,
-      ['cody@agent-spaces', 'hello']
-    )
+    const result = await runTurn(client, { stacked: '1s' } as TurnOptions, [
+      'cody@agent-spaces',
+      'hello',
+    ])
 
     expect(result.exitCode).toBe(0)
     const lines = parseStackedLines(result.stdout)
@@ -439,11 +436,10 @@ describe('T-04733 char: watch-loop isTurnEnd = turn_end || turn.completed', () =
       wlEvent({ eventKind: 'turn_end', hrcSeq: 11 }),
     ])
 
-    const result = await runTurn(
-      client,
-      { stacked: '1s' } as TurnOptions,
-      ['cody@agent-spaces', 'hello']
-    )
+    const result = await runTurn(client, { stacked: '1s' } as TurnOptions, [
+      'cody@agent-spaces',
+      'hello',
+    ])
 
     expect(result.exitCode).toBe(5)
 

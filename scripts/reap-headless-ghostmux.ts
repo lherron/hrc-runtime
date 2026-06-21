@@ -240,8 +240,7 @@ function skipReasons(status: PaneStatus): string[] {
   }
   if (status.runtimeStatus === 'unknown') {
     return [
-      `runtime ${shortRuntime(status.runtimeId)} not found in the HRC DB ` +
-        '(already pruned, or wrong HRC_DB_PATH)',
+      `runtime ${shortRuntime(status.runtimeId)} not found in the HRC DB (already pruned, or wrong HRC_DB_PATH)`,
     ]
   }
 
@@ -251,8 +250,7 @@ function skipReasons(status: PaneStatus): string[] {
     reasons.push(
       status.controllerKind === ''
         ? 'controllerKind unknown — not a recognized broker runtime'
-        : `controllerKind=${status.controllerKind}, not harness-broker — true headless/sdk ` +
-            'runtimes finalize via HRC state only, not a broker reap'
+        : `controllerKind=${status.controllerKind}, not harness-broker — true headless/sdk runtimes finalize via HRC state only, not a broker reap`
     )
   }
 
@@ -284,15 +282,13 @@ function skipReasons(status: PaneStatus): string[] {
       // A true headless run: broker lives in a leased tmux session but exposes no
       // operator TUI window to reap/close.
       reasons.push(
-        `presentation.kind=${status.presentationKind}, not tmux-tui — ` +
-          'true headless runtime with no operator viewer pane to reap'
+        `presentation.kind=${status.presentationKind}, not tmux-tui — true headless runtime with no operator viewer pane to reap`
       )
     } else if (status.substrateKind !== 'leased-tmux') {
       // presentation claims a TUI window, but the broker is daemon-child hosted —
       // there is no leased tmux session/pane to terminate or key-close.
       reasons.push(
-        `substrate.kind=${status.substrateKind || 'unknown'}, not leased-tmux — ` +
-          'broker is daemon-child hosted; no leased tmux session/pane to close'
+        `substrate.kind=${status.substrateKind || 'unknown'}, not leased-tmux — broker is daemon-child hosted; no leased tmux session/pane to close`
       )
     }
   }
@@ -740,7 +736,9 @@ async function confirm(
   console.log()
   const readline = createInterface({ input: process.stdin, output: process.stdout })
   const answer = (
-    await readline.question(color.yellow(`${capitalize(actions.join(' and '))}? Press Enter to continue: `))
+    await readline.question(
+      color.yellow(`${capitalize(actions.join(' and '))}? Press Enter to continue: `)
+    )
   ).trim()
   readline.close()
   if (answer !== '') {

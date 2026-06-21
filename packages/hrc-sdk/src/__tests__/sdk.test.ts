@@ -1009,12 +1009,7 @@ describe('Step 4 red-gate: SDK contract fixes (T-00981)', () => {
 
     expect(capturedBody).toBeDefined()
     expect(capturedBody.input).toBeUndefined()
-    expect(Object.keys(capturedBody).sort()).toEqual([
-      'inputType',
-      'prompt',
-      'runId',
-      'runtimeId',
-    ])
+    expect(Object.keys(capturedBody).sort()).toEqual(['inputType', 'prompt', 'runId', 'runtimeId'])
   })
 
   it('semanticTurnHandoff posts to the handoff endpoint and returns watch filters', async () => {

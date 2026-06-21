@@ -194,10 +194,7 @@ describe('T-04761 char: enrichTurnPromptForBrain — empty-prompt arm', () => {
 describe('T-04761 char: invariants across all reachable arms', () => {
   const cases: Array<[string, BrainEnricherInput]> = [
     ['disabled (agent scope, non-empty)', agentInput()],
-    [
-      'non-agent-scope',
-      agentInput({ session: { scopeRef: 'entity:human', hostSessionId: 'h' } }),
-    ],
+    ['non-agent-scope', agentInput({ session: { scopeRef: 'entity:human', hostSessionId: 'h' } })],
     ['empty-prompt (agent scope)', agentInput({ prompt: '' })],
   ]
 

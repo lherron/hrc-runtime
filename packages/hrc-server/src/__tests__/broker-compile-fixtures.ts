@@ -216,7 +216,7 @@ export function makeInteractiveTmuxProfile(
           initialInput: {
             inputId: (opts.initialInputId ?? identity.initialInputId) as string,
             kind: 'user',
-          content: [{ type: 'text', text: `hello ${brokerDriver}` }],
+            content: [{ type: 'text', text: `hello ${brokerDriver}` }],
           },
         }
       : {}),

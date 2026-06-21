@@ -34,10 +34,7 @@ function terminateWith(extra: Record<string, unknown>) {
   return parseTerminateRuntimeRequest({ ...BASE, ...extra })
 }
 
-function expectStringFieldThrows(
-  field: 'reason' | 'source' | 'actor',
-  value: unknown
-) {
+function expectStringFieldThrows(field: 'reason' | 'source' | 'actor', value: unknown) {
   let thrown: unknown
   try {
     terminateWith({ [field]: value })

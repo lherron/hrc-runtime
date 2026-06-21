@@ -81,16 +81,14 @@ const HOST_SESSION_ID = 'hsid-4925-viewer-test'
 // parseBrokerRuntimeHostingState / parseFlatPresentation already parse this into
 // presentation.kind='tmux-tui'; the resolvers must consult that authority.
 
-function makeViewerRuntime(
-  overrides: Partial<HrcRuntimeSnapshot> = {}
-): HrcRuntimeSnapshot {
+function makeViewerRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSnapshot {
   return {
     runtimeId: 'rt-4925-viewer',
     hostSessionId: HOST_SESSION_ID,
     scopeRef: 'agent:smokey:project:hrc-runtime:task:T-04925:tui',
     laneRef: 'main',
     generation: 1,
-    transport: 'headless',   // NOT 'tmux' — this is the headless+tmux-tui viewer shape
+    transport: 'headless', // NOT 'tmux' — this is the headless+tmux-tui viewer shape
     harness: 'claude-code',
     provider: 'anthropic',
     status: 'ready',
@@ -145,9 +143,7 @@ const TMUX_BTMUX_SOCKET = '/tmp/hrc-t4925/btmux/claude-code-tmux-rt-4925.sock'
 const TMUX_SESSION_NAME = 'hrc-claude-code-tmux-rt-4925'
 const TMUX_WINDOW_NAME = 'main'
 
-function makeTmuxRuntime(
-  overrides: Partial<HrcRuntimeSnapshot> = {}
-): HrcRuntimeSnapshot {
+function makeTmuxRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSnapshot {
   return {
     runtimeId: 'rt-4925-tmux',
     hostSessionId: 'hsid-4925-tmux',
@@ -176,67 +172,55 @@ function makeTmuxRuntime(
 // ── Test 1: getBrokerRuntimeTmuxSocketPath ─────────────────────────────────────
 
 describe('getBrokerRuntimeTmuxSocketPath', () => {
-  it(
-    '(RED) viewer (headless+tmux-tui, flat shape) returns tuiWindow.socketPath — ' +
-    'today returns undefined because resolver only reads tmuxJson + runtimeStateJson.tmux',
-    () => {
-      const runtime = makeViewerRuntime()
-      const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
-      // MUST be the btmux socket from tuiWindow (NOT undefined).
-      // Today: tmuxJson is undefined → tmuxJson?.socketPath = undefined; runtimeStateJson.tmux
-      // is undefined → falls through → returns undefined. RED.
-      expect(socketPath).toBe(BTMUX_SOCKET)
-    }
-  )
+  it('(RED) viewer (headless+tmux-tui, flat shape) returns tuiWindow.socketPath — ' +
+    'today returns undefined because resolver only reads tmuxJson + runtimeStateJson.tmux', () => {
+    const runtime = makeViewerRuntime()
+    const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
+    // MUST be the btmux socket from tuiWindow (NOT undefined).
+    // Today: tmuxJson is undefined → tmuxJson?.socketPath = undefined; runtimeStateJson.tmux
+    // is undefined → falls through → returns undefined. RED.
+    expect(socketPath).toBe(BTMUX_SOCKET)
+  })
 })
 
 // ── Test 2a: getBrokerRuntimeTmuxSessionName ──────────────────────────────────
 
 describe('getBrokerRuntimeTmuxSessionName', () => {
-  it(
-    '(RED) viewer (headless+tmux-tui, flat shape) returns tuiWindow.sessionName — ' +
-    'today returns the hrc-<hostSessionId> default because tmuxJson.sessionName is absent',
-    () => {
-      const runtime = makeViewerRuntime()
-      const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
-      // MUST be the session name from tuiWindow.sessionName.
-      // Today: tmuxJson is undefined → tmuxJson?.sessionName = undefined;
-      // falls through to default: `hrc-${runtime.hostSessionId.slice(0, 12)}`
-      // = `hrc-${HOST_SESSION_ID.slice(0, 12)}` = 'hrc-hsid-4925-vi'. RED.
-      expect(sessionName).toBe(SESSION_NAME)
-      // Ensure it is NOT the default fallback (belt-and-suspenders assertion).
-      expect(sessionName).not.toBe(`hrc-${HOST_SESSION_ID.slice(0, 12)}`)
-    }
-  )
+  it('(RED) viewer (headless+tmux-tui, flat shape) returns tuiWindow.sessionName — ' +
+    'today returns the hrc-<hostSessionId> default because tmuxJson.sessionName is absent', () => {
+    const runtime = makeViewerRuntime()
+    const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
+    // MUST be the session name from tuiWindow.sessionName.
+    // Today: tmuxJson is undefined → tmuxJson?.sessionName = undefined;
+    // falls through to default: `hrc-${runtime.hostSessionId.slice(0, 12)}`
+    // = `hrc-${HOST_SESSION_ID.slice(0, 12)}` = 'hrc-hsid-4925-vi'. RED.
+    expect(sessionName).toBe(SESSION_NAME)
+    // Ensure it is NOT the default fallback (belt-and-suspenders assertion).
+    expect(sessionName).not.toBe(`hrc-${HOST_SESSION_ID.slice(0, 12)}`)
+  })
 })
 
 // ── Test 2b: getBrokerRuntimeTmuxAttachTarget ─────────────────────────────────
 
 describe('getBrokerRuntimeTmuxAttachTarget', () => {
-  it(
-    "(RED) viewer (headless+tmux-tui, flat shape) returns '<sessionName>:tui' — " +
-    'today returns the wrong default session name with no :tui window qualifier',
-    () => {
-      const runtime = makeViewerRuntime()
-      const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
-      // MUST be '<SESSION_NAME>:tui' — the TUI window (7530bd4 invariant).
-      // Today: getBrokerRuntimeTmuxSessionName returns the hrc-<hostSessionId> default;
-      // tmuxJson?.windowName is undefined → falls back to bare sessionName.
-      // So result = 'hrc-hsid-4925-vi' (no session name, no :tui). RED.
-      expect(attachTarget).toBe(`${SESSION_NAME}:tui`)
-    }
-  )
+  it("(RED) viewer (headless+tmux-tui, flat shape) returns '<sessionName>:tui' — " +
+    'today returns the wrong default session name with no :tui window qualifier', () => {
+    const runtime = makeViewerRuntime()
+    const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
+    // MUST be '<SESSION_NAME>:tui' — the TUI window (7530bd4 invariant).
+    // Today: getBrokerRuntimeTmuxSessionName returns the hrc-<hostSessionId> default;
+    // tmuxJson?.windowName is undefined → falls back to bare sessionName.
+    // So result = 'hrc-hsid-4925-vi' (no session name, no :tui). RED.
+    expect(attachTarget).toBe(`${SESSION_NAME}:tui`)
+  })
 
-  it(
-    "(RED) viewer attach target ends with ':tui' window — must NEVER be the broker window",
-    () => {
-      const runtime = makeViewerRuntime()
-      const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
-      // daedalus DM #8645 hard constraint: attach target for viewer is always the TUI
-      // window, never the broker (headless exec) window.
-      expect(attachTarget.endsWith(':tui')).toBe(true)
-    }
-  )
+  it("(RED) viewer attach target ends with ':tui' window — must NEVER be the broker window", () => {
+    const runtime = makeViewerRuntime()
+    const attachTarget = getBrokerRuntimeTmuxAttachTarget(runtime)
+    // daedalus DM #8645 hard constraint: attach target for viewer is always the TUI
+    // window, never the broker (headless exec) window.
+    expect(attachTarget.endsWith(':tui')).toBe(true)
+  })
 })
 
 // ── Test 3: behavior-preserving — transport='tmux' runtimes unchanged ─────────
@@ -252,85 +236,82 @@ describe('transport=tmux runtimes: existing tmuxJson-based resolution (GREEN —
     expect(getBrokerRuntimeTmuxSessionName(runtime)).toBe(TMUX_SESSION_NAME)
   })
 
-  it(
-    "getBrokerRuntimeTmuxAttachTarget returns '<sessionName>:<windowName>' for tmux runtime",
-    () => {
-      const runtime = makeTmuxRuntime()
-      expect(getBrokerRuntimeTmuxAttachTarget(runtime)).toBe(
-        `${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}`
-      )
-    }
-  )
+  it("getBrokerRuntimeTmuxAttachTarget returns '<sessionName>:<windowName>' for tmux runtime", () => {
+    const runtime = makeTmuxRuntime()
+    expect(getBrokerRuntimeTmuxAttachTarget(runtime)).toBe(
+      `${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}`
+    )
+  })
 })
 
 // ── Test 4: integration — spawnBrokerHeadlessViewer reaches ensureHeadlessViewer ──
 
 describe('spawnBrokerHeadlessViewer integration', () => {
-  it(
-    '(RED) viewer runtime (headless+tmux-tui) does NOT bail at skipped_no_socket — ' +
-    'reaches ghostmux.ensureHeadlessViewer instead',
-    async () => {
-      const runtime = makeViewerRuntime()
+  it('(RED) viewer runtime (headless+tmux-tui) does NOT bail at skipped_no_socket — ' +
+    'reaches ghostmux.ensureHeadlessViewer instead', async () => {
+    const runtime = makeViewerRuntime()
 
-      // Track ensureHeadlessViewer calls. After the resolver fix, this MUST be called.
-      // TODAY: getBrokerRuntimeTmuxSocketPath returns undefined → early return → never called.
-      const ensureHeadlessViewerCalls: Array<Record<string, unknown>> = []
+    // Track ensureHeadlessViewer calls. After the resolver fix, this MUST be called.
+    // TODAY: getBrokerRuntimeTmuxSocketPath returns undefined → early return → never called.
+    const ensureHeadlessViewerCalls: Array<Record<string, unknown>> = []
 
-      const mockThis = {
-        ghostmux: {
-          ensureHeadlessViewer: async (opts: Record<string, unknown>) => {
-            ensureHeadlessViewerCalls.push(opts)
-            return { status: 'created', surfaceId: 'surface-t4925-test' }
-          },
+    const mockThis = {
+      ghostmux: {
+        ensureHeadlessViewer: async (opts: Record<string, unknown>) => {
+          ensureHeadlessViewerCalls.push(opts)
+          return { status: 'created', surfaceId: 'surface-t4925-test' }
         },
-        db: {
-          surfaceBindings: {
-            bind: (_opts: unknown) => {},
-          },
+      },
+      db: {
+        surfaceBindings: {
+          bind: (_opts: unknown) => {},
         },
-      }
-
-      // Call with mock `this` context — no live daemon required.
-      await spawnBrokerHeadlessViewer.call(mockThis as Parameters<typeof spawnBrokerHeadlessViewer.call>[0], runtime)
-
-      // After fix: ensureHeadlessViewer must have been called exactly once.
-      // Today: ensureHeadlessViewerCalls.length === 0 (early return at skipped_no_socket). RED.
-      expect(ensureHeadlessViewerCalls.length).toBe(1)
+      },
     }
-  )
 
-  it(
-    '(RED) ensureHeadlessViewer receives correct attachCommand containing <sessionName>:tui',
-    async () => {
-      const runtime = makeViewerRuntime()
+    // Call with mock `this` context — no live daemon required.
+    await spawnBrokerHeadlessViewer.call(
+      mockThis as Parameters<typeof spawnBrokerHeadlessViewer.call>[0],
+      runtime
+    )
 
-      const ensureHeadlessViewerCalls: Array<Record<string, unknown>> = []
+    // After fix: ensureHeadlessViewer must have been called exactly once.
+    // Today: ensureHeadlessViewerCalls.length === 0 (early return at skipped_no_socket). RED.
+    expect(ensureHeadlessViewerCalls.length).toBe(1)
+  })
 
-      const mockThis = {
-        ghostmux: {
-          ensureHeadlessViewer: async (opts: Record<string, unknown>) => {
-            ensureHeadlessViewerCalls.push(opts)
-            return { status: 'created', surfaceId: 'surface-t4925-test' }
-          },
+  it('(RED) ensureHeadlessViewer receives correct attachCommand containing <sessionName>:tui', async () => {
+    const runtime = makeViewerRuntime()
+
+    const ensureHeadlessViewerCalls: Array<Record<string, unknown>> = []
+
+    const mockThis = {
+      ghostmux: {
+        ensureHeadlessViewer: async (opts: Record<string, unknown>) => {
+          ensureHeadlessViewerCalls.push(opts)
+          return { status: 'created', surfaceId: 'surface-t4925-test' }
         },
-        db: {
-          surfaceBindings: {
-            bind: (_opts: unknown) => {},
-          },
+      },
+      db: {
+        surfaceBindings: {
+          bind: (_opts: unknown) => {},
         },
-      }
-
-      await spawnBrokerHeadlessViewer.call(mockThis as Parameters<typeof spawnBrokerHeadlessViewer.call>[0], runtime)
-
-      // After fix: the attachCommand must reference <sessionName>:tui (TUI window, not broker window).
-      // Today: never reached — ensureHeadlessViewerCalls is empty. RED.
-      expect(ensureHeadlessViewerCalls.length).toBeGreaterThan(0)
-      const opts = ensureHeadlessViewerCalls[0]
-      const attachCommand = opts?.['attachCommand']
-      expect(typeof attachCommand).toBe('string')
-      // Must contain the btmux socket path and the :tui window target.
-      expect(attachCommand as string).toContain(BTMUX_SOCKET)
-      expect(attachCommand as string).toContain(`${SESSION_NAME}:tui`)
+      },
     }
-  )
+
+    await spawnBrokerHeadlessViewer.call(
+      mockThis as Parameters<typeof spawnBrokerHeadlessViewer.call>[0],
+      runtime
+    )
+
+    // After fix: the attachCommand must reference <sessionName>:tui (TUI window, not broker window).
+    // Today: never reached — ensureHeadlessViewerCalls is empty. RED.
+    expect(ensureHeadlessViewerCalls.length).toBeGreaterThan(0)
+    const opts = ensureHeadlessViewerCalls[0]
+    const attachCommand = opts?.['attachCommand']
+    expect(typeof attachCommand).toBe('string')
+    // Must contain the btmux socket path and the :tui window target.
+    expect(attachCommand as string).toContain(BTMUX_SOCKET)
+    expect(attachCommand as string).toContain(`${SESSION_NAME}:tui`)
+  })
 })

@@ -17,8 +17,8 @@ import {
   type Summarizer,
   type TurnStackedEvent,
 } from './stacked-types.js'
-import { taskIdFromScope } from './taskId.js'
 import { readTaskState } from './task-state.js'
+import { taskIdFromScope } from './taskId.js'
 
 type TimerHandle = unknown
 

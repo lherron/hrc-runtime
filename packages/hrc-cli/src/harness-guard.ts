@@ -14,11 +14,7 @@
  */
 
 /** Env vars whose presence means we are running inside a coding-agent harness. */
-const HARNESS_GUARD_VARS = [
-  'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CODEX_SANDBOX',
-] as const
+const HARNESS_GUARD_VARS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX'] as const
 
 /** The harness guard vars that are set (non-empty) in `env`, in stable order. */
 export function detectAgentHarnessEnv(
@@ -44,17 +40,15 @@ export function agentHarnessGuardMessage(
     return null
   }
 
-  return (
-    `hrc server: refusing to boot in the foreground — this process is running inside a\n` +
-    `coding-agent harness (detected: ${detected.join(', ')}).\n` +
-    `\n` +
-    `A server started here inherits the harness's recursion-guard variables and leaks\n` +
-    `them into every child agent it launches. Those children hit the harness's\n` +
-    `"no nested agent" guard and fail to start — so every run you dispatch dies silently.\n` +
-    `\n` +
-    `Do NOT start hrc-server as a child of a coding-agent harness. Instead:\n` +
-    `  • Already managed by launchd?  ->  hrc server restart   (the supported path; runs clean under launchd)\n` +
-    `  • Need a fresh foreground boot?  ->  launch it in a real terminal outside this session\n` +
-    `                                       (e.g. drive a clean Ghostty pane with ghostmux)`
-  )
+  return `hrc server: refusing to boot in the foreground — this process is running inside a
+coding-agent harness (detected: ${detected.join(', ')}).
+
+A server started here inherits the harness's recursion-guard variables and leaks
+them into every child agent it launches. Those children hit the harness's
+"no nested agent" guard and fail to start — so every run you dispatch dies silently.
+
+Do NOT start hrc-server as a child of a coding-agent harness. Instead:
+  • Already managed by launchd?  ->  hrc server restart   (the supported path; runs clean under launchd)
+  • Need a fresh foreground boot?  ->  launch it in a real terminal outside this session
+                                       (e.g. drive a clean Ghostty pane with ghostmux)`
 }

@@ -133,7 +133,12 @@ export function markRuntimeDead(
   eventJson: Record<string, unknown>
 ): void {
   const now = timestamp()
-  finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} is dead after startup reconciliation`)
+  finalizeActiveRun(
+    db,
+    runtime,
+    now,
+    `runtime ${runtime.runtimeId} is dead after startup reconciliation`
+  )
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'dead',
@@ -162,7 +167,12 @@ export function markRuntimeStale(
   const now = timestamp()
   const invocationId = runtime.activeInvocationId
   settleInvocation(db, runtime, invocationId, now, 'disposed')
-  finalizeActiveRun(db, runtime, now, `runtime ${runtime.runtimeId} is stale after startup reconciliation`)
+  finalizeActiveRun(
+    db,
+    runtime,
+    now,
+    `runtime ${runtime.runtimeId} is stale after startup reconciliation`
+  )
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',

@@ -14,6 +14,7 @@ import type { StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import type {
   InvocationEventEnvelope,
   InvocationId,
+  InvocationRuntimeContext,
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
@@ -277,7 +278,7 @@ export async function startController(
       input.profile.interactionMode === 'headless' &&
       isHeadlessViewerRoute(input) &&
       tmuxAllocation?.lease !== undefined
-    let dispatchRuntime
+    let dispatchRuntime: InvocationRuntimeContext | undefined
     if (
       tmuxAllocation !== undefined &&
       input.profile.interactionMode === 'headless' &&
@@ -297,7 +298,10 @@ export async function startController(
     // broker actually serves. ONE path, never two independent derivations.
     const dispatchEnv =
       headlessViewerRoute && tmuxAllocation?.observerSocketPath
-        ? { ...(input.dispatchEnv ?? {}), HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath }
+        ? {
+            ...(input.dispatchEnv ?? {}),
+            HARNESS_BROKER_OBSERVER_SOCKET: tmuxAllocation.observerSocketPath,
+          }
         : input.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
     if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {

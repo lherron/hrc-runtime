@@ -1,7 +1,7 @@
 import type { Command } from 'commander'
 
-import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
+import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { cmdCapture, cmdInterrupt, cmdRuntimeEnsure, cmdTerminate } from './handlers-control.js'
 import {
   cmdAdopt,
@@ -48,7 +48,9 @@ export function registerRuntimeCommands(program: Command): void {
 
   brokerVerify
     .command('run')
-    .description('verify one broker invocation against its ledger, raw mirror, and optional provider JSONL')
+    .description(
+      'verify one broker invocation against its ledger, raw mirror, and optional provider JSONL'
+    )
     .requiredOption('--invocation <id>', 'broker invocation id')
     .option('--jsonl <path>', 'provider transcript JSONL path')
     .option('--strict-text', 'fail assistant text mismatches instead of warning')

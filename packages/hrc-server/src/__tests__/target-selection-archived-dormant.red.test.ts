@@ -113,7 +113,9 @@ async function getTargetByRef(sessionRef: string): Promise<{ status: number; bod
   return { status: res.status, body: await res.json() }
 }
 
-async function postCreateSuccessor(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+async function postCreateSuccessor(
+  body: Record<string, unknown>
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await fixture.postJson('/v1/sessions/create-successor', body)
   const text = await res.text()
   let parsed: Record<string, unknown>

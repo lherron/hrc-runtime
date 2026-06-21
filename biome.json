@@ -65,6 +65,13 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "*.json", "asp-lock.json"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      "*.json",
+      "asp-lock.json",
+      "refactor-analysis/.workflow.js",
+      "refactor-analysis/.apply-workflow.js"
+    ]
   }
 }

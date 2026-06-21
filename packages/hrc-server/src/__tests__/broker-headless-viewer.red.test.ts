@@ -35,9 +35,9 @@
  *   - Observer socket flag in brokerCommand + HARNESS_BROKER_OBSERVER_SOCKET in dispatchEnv
  */
 
-import { connect } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -52,13 +52,13 @@ import type {
 import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import * as brokerDecisions from '../broker-decisions'
-import type { BrokerClientLike, HarnessBrokerController as HarnessBrokerControllerType } from '../broker/controller'
+import * as substrateAllocator from '../broker-interactive-handlers/substrate-allocator'
+import type { BrokerClientLike } from '../broker/controller'
 import { HarnessBrokerController } from '../broker/controller'
 import { canOperatorAttach, parseBrokerRuntimeHostingState } from '../broker/runtime-hosting'
-import * as substrateAllocator from '../broker-interactive-handlers/substrate-allocator'
 import * as tmuxSocket from '../tmux-socket'
 
-import { makeCompileResponse, makeIdentity, makeBrokerProfile } from './broker-compile-fixtures'
+import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
 
 const NOW = '2026-06-18T10:00:00.000Z'
 
@@ -173,8 +173,12 @@ class FakeUnixBrokerClient {
 
   onPermissionRequest(): void {}
   onClose(): void {}
-  async hello(): Promise<BrokerHelloResponse> { return this.helloResponse }
-  async health() { return { status: 'ok' as const, activeInvocations: 0, drivers: [] } }
+  async hello(): Promise<BrokerHelloResponse> {
+    return this.helloResponse
+  }
+  async health() {
+    return { status: 'ok' as const, activeInvocations: 0, drivers: [] }
+  }
   async startInvocationFromRequest(
     request: InvocationStartRequest,
     dispatchEnvOrOptions?: unknown,
@@ -187,30 +191,56 @@ class FakeUnixBrokerClient {
       events: this.events,
     }
   }
-  async input() { return { inputId: 'i', accepted: true, disposition: 'started' as const } }
-  async interrupt() { return { accepted: true, effect: 'turn_interrupted' as const } }
-  async stop() { return { accepted: true, state: 'stopping' as const } }
-  async status() { return this.startResponse }
+  async input() {
+    return { inputId: 'i', accepted: true, disposition: 'started' as const }
+  }
+  async interrupt() {
+    return { accepted: true, effect: 'turn_interrupted' as const }
+  }
+  async stop() {
+    return { accepted: true, state: 'stopping' as const }
+  }
+  async status() {
+    return this.startResponse
+  }
   async dispose() {}
   async close() {}
-  async attach() { return {} }
-  async snapshot() { return {} }
-  async eventsSince() { return { events: [] } }
-  async ackEvents() { return {} }
-  async permissionRespond() { return {} }
+  async attach() {
+    return {}
+  }
+  async snapshot() {
+    return {}
+  }
+  async eventsSince() {
+    return { events: [] }
+  }
+  async ackEvents() {
+    return {}
+  }
+  async permissionRespond() {
+    return {}
+  }
 }
 
 function minimalCapabilities(): InvocationStartResponse['capabilities'] {
   return {
     input: {
-      user: true, steer: false, appendContext: false, localImages: false,
-      fileRefs: false, queue: false,
+      user: true,
+      steer: false,
+      appendContext: false,
+      localImages: false,
+      fileRefs: false,
+      queue: false,
     },
     turns: { concurrency: 'single', interrupt: 'protocol' },
     continuation: { supported: false, provider: 'openai', keyKind: 'session' },
     events: {
-      assistantDeltas: true, toolCalls: true, usage: false,
-      diagnostics: false, replay: false, ack: false,
+      assistantDeltas: true,
+      toolCalls: true,
+      usage: false,
+      diagnostics: false,
+      replay: false,
+      ack: false,
     },
     control: { stop: true, dispose: true, status: true, attach: false },
     permissions: { brokerToClientRequests: true, eventAudit: false },
@@ -251,7 +281,7 @@ async function makeFixture(): Promise<Fixture> {
 // - observerSocketPath same as in dispatch env
 
 function viewerAllocationStub(runtimeRoot: string, runtimeId: string): Record<string, unknown> {
-  const ipcHash = '0b2ef1c4d7a3'  // synthetic hash for test
+  const ipcHash = '0b2ef1c4d7a3' // synthetic hash for test
   const ipcDir = `${runtimeRoot}/bipc/${ipcHash}`
   const brokerIpcSocketPath = `${ipcDir}/b.sock`
   const observerSocketPath = `${ipcDir}/observer.sock`
@@ -298,8 +328,12 @@ function viewerAllocationStub(runtimeRoot: string, runtimeId: string): Record<st
       ` --experimental-observer-socket ${observerSocketPath}`,
     brokerPid: 7777,
     brokerWindow: {
-      socketPath: btmuxSocketPath, sessionId: '$1', windowId: '@1', paneId: '%1',
-      sessionName, windowName: 'broker',
+      socketPath: btmuxSocketPath,
+      sessionId: '$1',
+      windowId: '@1',
+      paneId: '%1',
+      sessionName,
+      windowName: 'broker',
     },
     tuiWindow: tuiPane,
     lease: tuiLease,
@@ -365,13 +399,21 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     // are computed the same way (this checks the invariant is testable via the symbol).
     expect(typeof decideCodexAppServerPresentation).toBe('function')
 
-    const identity = makeIdentity({ hostSessionId: 'hostSession_viewer' as unknown as ReturnType<typeof makeIdentity>['hostSessionId'] })
-    const { profile: ordinaryProfile } = makeBrokerProfile(identity, { brokerDriver: 'codex-app-server' })
+    const identity = makeIdentity({
+      hostSessionId: 'hostSession_viewer' as unknown as ReturnType<
+        typeof makeIdentity
+      >['hostSessionId'],
+    })
+    const { profile: ordinaryProfile } = makeBrokerProfile(identity, {
+      brokerDriver: 'codex-app-server',
+    })
     const { profile: viewerProfile } = makeViewerProfile(identity)
 
     // Same profile: identical specHash, startRequestHash.
     // The viewer route decision does NOT touch these hashes.
-    expect(viewerProfile.harnessInvocation.specHash).toBe(ordinaryProfile.harnessInvocation.specHash)
+    expect(viewerProfile.harnessInvocation.specHash).toBe(
+      ordinaryProfile.harnessInvocation.specHash
+    )
     expect(viewerProfile.harnessInvocation.startRequestHash).toBe(
       ordinaryProfile.harnessInvocation.startRequestHash
     )
@@ -383,8 +425,12 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
 describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RED)', () => {
   let fixture: Fixture
 
-  beforeEach(async () => { fixture = await makeFixture() })
-  afterEach(async () => { await fixture.cleanup() })
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
 
   it('createBrokerHeadlessViewerAllocator is exported from substrate-allocator (RED — does not exist)', () => {
     expect(typeof createBrokerHeadlessViewerAllocator).toBe('function')
@@ -513,8 +559,12 @@ describe('T-04921 Test 2 — controller allocation/dispatch for viewer route (RE
 describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)', () => {
   let fixture: Fixture
 
-  beforeEach(async () => { fixture = await makeFixture() })
-  afterEach(async () => { await fixture.cleanup() })
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
 
   it('decideCodexAppServerPresentation must exist to test the negative gate (RED — undefined at HEAD)', () => {
     // This makes the ENTIRE describe block RED: the negative gate cannot be
@@ -544,7 +594,9 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
       runId: 'run_ordinary' as ReturnType<typeof makeIdentity>['runId'],
       hostSessionId: 'hostSession_viewer' as ReturnType<typeof makeIdentity>['hostSessionId'],
     })
-    const { profile, startRequest } = makeBrokerProfile(identity, { brokerDriver: 'codex-app-server' })
+    const { profile, startRequest } = makeBrokerProfile(identity, {
+      brokerDriver: 'codex-app-server',
+    })
     const response = makeCompileResponse(identity, [profile])
     if (!response.ok) throw new Error('fixture compile response failed')
 
@@ -572,11 +624,19 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
             brokerCommand: `exec harness-broker run --transport unix --socket ${brokerIpcSocketPath}`,
             brokerPid: 4444,
             brokerWindow: {
-              socketPath: btmuxSocketPath, sessionId: '$3', windowId: '@3', paneId: '%3',
-              sessionName, windowName: 'broker',
+              socketPath: btmuxSocketPath,
+              sessionId: '$3',
+              windowId: '@3',
+              paneId: '%3',
+              sessionName,
+              windowName: 'broker',
             },
             // NO tuiWindow, NO lease: presentation='none'
-            sessionId: '$3', windowId: '@3', paneId: '%3', sessionName, windowName: 'broker',
+            sessionId: '$3',
+            windowId: '@3',
+            paneId: '%3',
+            sessionName,
+            windowName: 'broker',
           }
         },
       },
@@ -621,8 +681,12 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
 describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)', () => {
   let fixture: Fixture
 
-  beforeEach(async () => { fixture = await makeFixture() })
-  afterEach(async () => { await fixture.cleanup() })
+  beforeEach(async () => {
+    fixture = await makeFixture()
+  })
+  afterEach(async () => {
+    await fixture.cleanup()
+  })
 
   it('getBrokerObserverSocketPath is exported from tmux-socket (RED — does not exist)', () => {
     // At HEAD this is undefined; after implementation it is a function that returns
@@ -660,16 +724,37 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
 
     class FakeTmux {
       initialized = false
-      windowWithCommandCalls: Array<{ sessionName: string; windowName: string; command: string }> = []
+      windowWithCommandCalls: Array<{ sessionName: string; windowName: string; command: string }> =
+        []
       orInspectCalls: Array<{ sessionName: string; windowName: string }> = []
-      async initialize() { this.initialized = true }
-      async createWindowWithCommand(input: { sessionName: string; windowName: string; command: string }) {
+      async initialize() {
+        this.initialized = true
+      }
+      async createWindowWithCommand(input: {
+        sessionName: string
+        windowName: string
+        command: string
+      }) {
         this.windowWithCommandCalls.push(input)
-        return { socketPath: '/tmp/btmux/viewer-test.sock', sessionId: '$1', windowId: '@1', paneId: '%1', sessionName: input.sessionName, windowName: input.windowName }
+        return {
+          socketPath: '/tmp/btmux/viewer-test.sock',
+          sessionId: '$1',
+          windowId: '@1',
+          paneId: '%1',
+          sessionName: input.sessionName,
+          windowName: input.windowName,
+        }
       }
       async createOrInspectWindow(input: { sessionName: string; windowName: string }) {
         this.orInspectCalls.push(input)
-        return { socketPath: '/tmp/btmux/viewer-test.sock', sessionId: '$1', windowId: '@2', paneId: '%2', sessionName: input.sessionName, windowName: input.windowName }
+        return {
+          socketPath: '/tmp/btmux/viewer-test.sock',
+          sessionId: '$1',
+          windowId: '@2',
+          paneId: '%2',
+          sessionName: input.sessionName,
+          windowName: input.windowName,
+        }
       }
     }
 
@@ -752,13 +837,12 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
     const startCall = unixClient.startCalls[0]
     expect(startCall).toBeDefined()
 
-    const sentDispatchEnv = (
-      startCall?.dispatchEnvOrOptions as Record<string, string> | undefined
-    ) ?? {}
+    const sentDispatchEnv =
+      (startCall?.dispatchEnvOrOptions as Record<string, string> | undefined) ?? {}
 
     const envObserverPath = sentDispatchEnv['HARNESS_BROKER_OBSERVER_SOCKET']
     expect(typeof envObserverPath).toBe('string') // ← RED today (undefined)
-    expect(envObserverPath).toBe(observerSocketPath)  // ← RED today (path mismatch or undefined)
+    expect(envObserverPath).toBe(observerSocketPath) // ← RED today (path mismatch or undefined)
 
     // Belt-and-suspenders: the brokerCommand in the stub already carries the flag.
     // The persisted state must also reflect the observer socket path.
@@ -815,11 +899,29 @@ describe('T-04921 Test 4 — observer integration: observer socket wiring (RED)'
 
     class FakeTmux2 {
       async initialize() {}
-      async createWindowWithCommand(input: { sessionName: string; windowName: string; command: string }) {
-        return { socketPath: '/tmp/btmux/viewer-single.sock', sessionId: '$1', windowId: '@1', paneId: '%1', sessionName: input.sessionName, windowName: input.windowName }
+      async createWindowWithCommand(input: {
+        sessionName: string
+        windowName: string
+        command: string
+      }) {
+        return {
+          socketPath: '/tmp/btmux/viewer-single.sock',
+          sessionId: '$1',
+          windowId: '@1',
+          paneId: '%1',
+          sessionName: input.sessionName,
+          windowName: input.windowName,
+        }
       }
       async createOrInspectWindow(input: { sessionName: string; windowName: string }) {
-        return { socketPath: '/tmp/btmux/viewer-single.sock', sessionId: '$1', windowId: '@2', paneId: '%2', sessionName: input.sessionName, windowName: input.windowName }
+        return {
+          socketPath: '/tmp/btmux/viewer-single.sock',
+          sessionId: '$1',
+          windowId: '@2',
+          paneId: '%2',
+          sessionName: input.sessionName,
+          windowName: input.windowName,
+        }
       }
     }
 

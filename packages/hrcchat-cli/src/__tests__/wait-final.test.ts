@@ -16,7 +16,7 @@ import type { HrcClient, WatchOptions } from 'hrc-sdk'
 
 import { type DmOptions, cmdDm } from '../commands/dm.js'
 import { type TurnOptions, cmdTurn } from '../commands/turn.js'
-import { buildDmWaitResult, type WaitFinalResult } from '../wait-final.js'
+import { type WaitFinalResult, buildDmWaitResult } from '../wait-final.js'
 
 // -- Env scaffolding ----------------------------------------------------------
 

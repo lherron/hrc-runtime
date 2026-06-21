@@ -242,7 +242,10 @@ const dmCmd = program
     'FINAL-ONLY (Codex): block quietly for the correlated reply, then emit one compact JSON object (mode: response)'
   )
   .option('--timeout <duration>', 'wait budget for --wait response (default 20m)')
-  .option('--quiet', 'suppress all progress/heartbeat output while --wait blocks (default in wait mode)')
+  .option(
+    '--quiet',
+    'suppress all progress/heartbeat output while --wait blocks (default in wait mode)'
+  )
   .action(async (target, message, opts) => {
     const client = createClient()
     const g = globalOpts()
@@ -361,10 +364,7 @@ const turnCmd = program
     'FINAL-ONLY (Codex): block quietly until terminal, then emit one compact JSON object (mode: final)'
   )
   .option('--timeout <duration>', 'wait budget for --wait final (default 45m)')
-  .option(
-    '--quiet',
-    'suppress all progress output while --wait blocks (default in wait mode)'
-  )
+  .option('--quiet', 'suppress all progress output while --wait blocks (default in wait mode)')
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option(
     '--cross-scope-reply',

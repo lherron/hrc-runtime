@@ -13,11 +13,7 @@
  *   error     — the send/turn ended in an error before any response
  *   cancelled — the wait was interrupted (e.g. SIGINT)
  */
-import type {
-  HrcMessageAddress,
-  HrcMessageRecord,
-  WaitMessageResponse,
-} from 'hrc-core'
+import type { HrcMessageAddress, HrcMessageRecord, WaitMessageResponse } from 'hrc-core'
 
 import { formatAddress } from './normalize.js'
 
@@ -100,7 +96,7 @@ export function buildDmWaitResult(args: {
   const sentMessageId = request.messageId
   const afterSeq = request.messageSeq
 
-  const reply = waited && waited.matched ? waited.record : undefined
+  const reply = waited?.matched ? waited.record : undefined
   if (reply) {
     return {
       status: 'responded',

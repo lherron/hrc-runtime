@@ -59,7 +59,8 @@ const FAKE_SESSION_ID = '$1'
 
 class FakeTmuxManager implements DurableTmuxManagerLike {
   initialized = false
-  readonly withCommandCalls: Array<{ sessionName: string; windowName: string; command: string }> = []
+  readonly withCommandCalls: Array<{ sessionName: string; windowName: string; command: string }> =
+    []
   readonly orInspectCalls: Array<{ sessionName: string; windowName: string }> = []
 
   async initialize(): Promise<void> {
@@ -318,11 +319,6 @@ describe('[CHARACTERIZATION B] allocateBrokerSubstrate(presentation=none) — tu
 
   it('presentation=none: createOrInspectWindow was NOT called (no TUI window created)', () => {
     // The allocator only creates the broker window; the TUI window creation branch is skipped.
-    // FakeTmuxManager tracks these calls.
-    const manager = new FakeTmuxManager()
-    // Verify via a fresh allocation that orInspectCalls is empty after presentation='none'.
-    // (The sub already allocated above, but we need the manager instance.)
-    // Use a closure-scoped check here instead.
     expect(sub.tuiWindow).toBeUndefined() // already asserted; belt-and-suspenders
   })
 })

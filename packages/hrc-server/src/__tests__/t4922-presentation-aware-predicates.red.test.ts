@@ -47,8 +47,8 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -59,11 +59,7 @@ import { getHarnessBrokerController } from '../broker-interactive-handlers'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context'
-import {
-  toTargetCapabilities,
-  toTargetRuntimeView,
-  toTargetState,
-} from '../target-view'
+import { toTargetCapabilities, toTargetRuntimeView, toTargetState } from '../target-view'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -90,9 +86,7 @@ const TUI_WINDOW = { sessionId: '$10', windowId: '@11', paneId: '%11' }
  * Normalized hosting-state shape (substrate + presentation keys, not flat brokerWindow/tuiWindow).
  * This is the codex-app-server viewer shape produced by T-04921.
  */
-function makeHeadlessTuiRuntime(
-  overrides: Partial<HrcRuntimeSnapshot> = {}
-): HrcRuntimeSnapshot {
+function makeHeadlessTuiRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSnapshot {
   return {
     runtimeId: 'rt-4922-tui',
     hostSessionId: 'hsid-4922-tui',
@@ -161,9 +155,7 @@ function makeHeadlessTuiRuntime(
  * Standard headless runtime with presentation.kind='none' (no TUI window).
  * These runtimes must NOT gain attach/capture/send capabilities after fix.
  */
-function makeHeadlessNoneRuntime(
-  overrides: Partial<HrcRuntimeSnapshot> = {}
-): HrcRuntimeSnapshot {
+function makeHeadlessNoneRuntime(overrides: Partial<HrcRuntimeSnapshot> = {}): HrcRuntimeSnapshot {
   return {
     runtimeId: 'rt-4922-none',
     hostSessionId: 'hsid-4922-none',
@@ -759,9 +751,7 @@ describe('RED test 6a: /quit lifecycle — USER-INITIATED classification missing
     //
     // RED assertions (both fail today — runtime stays 'ready')
     expect(runtimeAfter?.status).toBe('terminated')
-    expect(runtimeAfter?.runtimeStateJson?.['terminationReason']).toBe(
-      'user_initiated_session_end'
-    )
+    expect(runtimeAfter?.runtimeStateJson?.['terminationReason']).toBe('user_initiated_session_end')
   })
 })
 
