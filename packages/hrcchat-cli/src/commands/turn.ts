@@ -52,6 +52,19 @@ export type TurnOptions = {
 
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
 
+type TurnBodyInput = {
+  targetInput: string
+  body: string
+  bodyFromFile: boolean
+  bodyFromStdin: boolean
+}
+
+type TurnOutputOptions = {
+  waitMode: string | undefined
+  waitTimeoutMs: number | undefined
+  stackedWindowMs: number | undefined
+}
+
 /**
  * Typed exit error for the turn command.
  * Thrown instead of calling process.exit() directly so that main.ts
@@ -163,17 +176,12 @@ async function finalizeTurn(
   }
 }
 
-export async function cmdTurn(
-  client: HrcClient,
-  opts: TurnOptions,
-  positionals: string[]
-): Promise<void> {
+function readTurnBodyInput(opts: TurnOptions, positionals: string[]): TurnBodyInput {
   const targetInput = positionals[0]
   if (!targetInput) {
     throw new CliUsageError('missing required argument: <target>')
   }
 
-  // ── Body mutex: exactly one source allowed ──
   const bodyPositional = positionals[1]
   const bodyFromStdin = bodyPositional === '-'
   const bodyFromFile = opts.file !== undefined
@@ -200,9 +208,10 @@ export async function cmdTurn(
     throw new CliUsageError('turn requires a prompt (positional, -, or --file)')
   }
 
-  const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
+  return { targetInput, body, bodyFromFile, bodyFromStdin }
+}
 
-  // ── Final-only Codex wait mode (mutex with all streaming options) ──
+function resolveTurnOutputOptions(opts: TurnOptions): TurnOutputOptions {
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'final') {
     throw new CliUsageError(`unsupported --wait mode for turn: "${waitMode}" (expected: final)`)
@@ -220,6 +229,7 @@ export async function cmdTurn(
       throw new CliUsageError('--wait cannot be combined with --format tree or compact')
     }
   }
+
   const waitTimeoutMs =
     waitMode !== undefined ? parseDuration(opts.timeout ?? TURN_WAIT_DEFAULT_TIMEOUT) : undefined
   if (waitTimeoutMs !== undefined && waitTimeoutMs <= 0) {
@@ -242,6 +252,67 @@ export async function cmdTurn(
       throw new CliUsageError('--follow/--stacked cannot be combined with --format tree or compact')
     }
   }
+
+  return { waitMode, waitTimeoutMs, stackedWindowMs }
+}
+
+function assertProjectResolved(
+  targetInput: string,
+  resolved: ReturnType<typeof resolveScope>
+): void {
+  if (resolved.parsed.projectId) {
+    return
+  }
+
+  throw new CliUsageError(
+    [
+      `cannot resolve a project for target "${targetInput}".`,
+      'A turn must target an agent within a project, but none was found: the',
+      'target has no @<project> qualifier, ASP_PROJECT is unset, and the current',
+      'directory maps to no known project. Fix one of:',
+      `  • qualify the target:  hrcchat turn ${targetInput}@<project> "…"`,
+      `  • set the env:         ASP_PROJECT=<project> hrcchat turn ${targetInput} "…"`,
+      `  • run from a project:  cd ~/praesidium/<project> && hrcchat turn ${targetInput} "…"`,
+    ].join('\n')
+  )
+}
+
+async function maybeClearContextForNewTurn(
+  client: HrcClient,
+  opts: TurnOptions,
+  sessionRef: string
+): Promise<void> {
+  if (!opts.new) {
+    return
+  }
+
+  try {
+    const target = await client.getTarget(sessionRef)
+    if (target.activeHostSessionId) {
+      await client.clearContext({
+        hostSessionId: target.activeHostSessionId,
+        dropContinuation: true,
+      })
+    }
+  } catch (err) {
+    // Target doesn't exist yet — skip clearContext, let handoff create it
+    if (!(err instanceof HrcDomainError && err.code === HrcErrorCode.UNKNOWN_SESSION)) {
+      throw err
+    }
+  }
+}
+
+export async function cmdTurn(
+  client: HrcClient,
+  opts: TurnOptions,
+  positionals: string[]
+): Promise<void> {
+  const { targetInput, body, bodyFromFile, bodyFromStdin } = readTurnBodyInput(opts, positionals)
+
+  const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
+
+  // ── Final-only Codex wait mode (mutex with all streaming options) ──
+  const { waitMode, waitTimeoutMs, stackedWindowMs } = resolveTurnOutputOptions(opts)
 
   // ── Resolve scope ──
   const resolved = resolveScope(targetInput)
@@ -284,37 +355,10 @@ export async function cmdTurn(
   // operator is left with no reply, no confirmation, and — worst of all — no
   // error. Fail loud with actionable guidance instead. (--dry-run is exempt
   // above: it intentionally prints the degenerate plan so the gap is visible.)
-  if (!resolved.parsed.projectId) {
-    throw new CliUsageError(
-      [
-        `cannot resolve a project for target "${targetInput}".`,
-        'A turn must target an agent within a project, but none was found: the',
-        'target has no @<project> qualifier, ASP_PROJECT is unset, and the current',
-        'directory maps to no known project. Fix one of:',
-        `  • qualify the target:  hrcchat turn ${targetInput}@<project> "…"`,
-        `  • set the env:         ASP_PROJECT=<project> hrcchat turn ${targetInput} "…"`,
-        `  • run from a project:  cd ~/praesidium/<project> && hrcchat turn ${targetInput} "…"`,
-      ].join('\n')
-    )
-  }
+  assertProjectResolved(targetInput, resolved)
 
   // ── --new: clearContext if host exists ──
-  if (opts.new) {
-    try {
-      const target = await client.getTarget(sessionRef)
-      if (target.activeHostSessionId) {
-        await client.clearContext({
-          hostSessionId: target.activeHostSessionId,
-          dropContinuation: true,
-        })
-      }
-    } catch (err) {
-      // Target doesn't exist yet — skip clearContext, let handoff create it
-      if (!(err instanceof HrcDomainError && err.code === HrcErrorCode.UNKNOWN_SESSION)) {
-        throw err
-      }
-    }
-  }
+  await maybeClearContextForNewTurn(client, opts, sessionRef)
 
   // ── Dispatch turn via semanticTurnHandoff ──
   // CRITICAL: watch filters come from handoff result (post-clearContext),
