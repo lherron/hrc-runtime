@@ -17,11 +17,7 @@ import {
   HrcUnprocessableEntityError,
 } from 'hrc-core'
 import { resolveHarnessFrontendForProvider, resolveHarnessProvider } from 'spaces-config'
-import {
-  detectAgentLocalComponents,
-  prepareAgentBrainRuntime,
-  prepareAgentToolRuntime,
-} from 'spaces-execution'
+import { detectAgentLocalComponents, prepareAgentToolRuntime } from 'spaces-execution'
 
 import { UnsupportedHarnessError, buildHrcCorrelationEnv, mergeEnv } from './cli-adapter.js'
 import { optional } from './optional.js'
@@ -247,17 +243,6 @@ function inferHarnessSessionJson(
 async function buildSdkRequestEnv(intent: HrcRuntimeIntent): Promise<Record<string, string>> {
   let env = mergeEnv(buildHrcCorrelationEnv(intent), intent.launch)
   const components = await detectAgentLocalComponents(intent.placement.agentRoot)
-
-  if (intent.placement.dryRun !== true) {
-    const brainEnv = await prepareAgentBrainRuntime(
-      {
-        agentRoot: intent.placement.agentRoot,
-        ...(components ? { components } : {}),
-      },
-      env
-    )
-    env = { ...env, ...brainEnv }
-  }
 
   if (components?.hasTools) {
     const toolRuntime = await prepareAgentToolRuntime(

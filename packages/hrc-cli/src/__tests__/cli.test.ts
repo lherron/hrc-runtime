@@ -305,7 +305,7 @@ async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   await mkdir(join(projectsRoot, projectId), { recursive: true })
   await writeFile(
     join(agentsRoot, agentId, 'agent-profile.toml'),
-    'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+    'schemaVersion = 2\n',
     'utf8'
   )
   // Write a marker so the project dir is recognized by the walk-up resolver.
@@ -557,7 +557,7 @@ exit 0
 async function writeCodexAgentProfile(agentId: string): Promise<void> {
   await writeFile(
     join(agentsRoot, agentId, 'agent-profile.toml'),
-    'schemaVersion = 2\n\n[identity]\ndisplay = "Codex Agent"\nrole = "worker"\nharness = "codex"\n\n[brain]\nenabled = false\n',
+    'schemaVersion = 2\n\n[identity]\ndisplay = "Codex Agent"\nrole = "worker"\nharness = "codex"\n',
     'utf8'
   )
 }
@@ -1378,7 +1378,7 @@ describe('hrc start', () => {
     )
     await writeFile(
       join(localAgentRoot, 'agent-profile.toml'),
-      'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+      'schemaVersion = 2\n',
       'utf8'
     )
 

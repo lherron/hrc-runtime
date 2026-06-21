@@ -50,7 +50,7 @@ describe('resolveRuntimeIntentForTarget', () => {
     )
     await writeFile(
       join(localAgentRoot, 'agent-profile.toml'),
-      'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+      'schemaVersion = 2\n',
       'utf8'
     )
 

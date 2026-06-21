@@ -10,7 +10,6 @@ import type {
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
-import { enrichTurnPromptForBrain } from './brain-enricher.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -36,7 +35,6 @@ import {
 } from './require-helpers.js'
 import { findDispatchInteractiveRuntime } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { writeServerLog } from './server-log.js'
 import {
   parseDispatchTurnRequest,
   parseEnsureRuntimeRequest,
@@ -268,7 +266,6 @@ export async function dispatchTurnForSession(
     runId?: string | undefined
     ensureInteractiveRuntime?: boolean | undefined
     waitForCompletion?: boolean | undefined
-    skipBrainEnrichment?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
   } = {}
 ): Promise<Response> {
@@ -293,20 +290,6 @@ export async function dispatchTurnForSession(
     shouldRedirectClaudeToInteractiveBroker(inputIntent) &&
     (inputIntent.execution?.preferredMode === 'headless' ||
       inputIntent.execution?.preferredMode === 'nonInteractive')
-  let dispatchPrompt = prompt
-  if (options.skipBrainEnrichment !== true) {
-    const originalPromptLength = prompt.length
-    const enriched = await enrichTurnPromptForBrain({ session, intent, prompt, runId })
-    dispatchPrompt = enriched.prompt
-    writeServerLog('INFO', `brain.enricher.${enriched.reason}`, {
-      hostSessionId: session.hostSessionId,
-      runId,
-      applied: enriched.applied,
-      sourceCount: enriched.sources?.length ?? 0,
-      promptLengthDelta: dispatchPrompt.length - originalPromptLength,
-    })
-  }
-
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
   // T-01873: route the durable-tmux liveness gate through the runtime-hosting
   // choke point. hasLeasedBrokerSubstrate replaces the `transport==='tmux' &&
@@ -343,12 +326,12 @@ export async function dispatchTurnForSession(
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
     })
     if (route === 'broker') {
-      return await this.handleHeadlessBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
+      return await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
         waitForCompletion: options.waitForCompletion,
       })
     }
     if (route === 'sdk') {
-      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, dispatchPrompt, runId, {
+      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
         waitForCompletion: options.waitForCompletion,
       })
     }
@@ -374,7 +357,7 @@ export async function dispatchTurnForSession(
       !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
       liveInteractiveRuntime.activeRunId === undefined
     if (!interactiveAvailableAndIdle) {
-      return await this.handleSdkDispatchTurn(session, intent, dispatchPrompt, runId, {
+      return await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
         waitForCompletion: options.waitForCompletion,
       })
     }
@@ -421,7 +404,7 @@ export async function dispatchTurnForSession(
     return await this.executeInteractiveBrokerInputTurn(
       session,
       latestRuntime,
-      dispatchPrompt,
+      prompt,
       runId,
       {
         waitForCompletion:
@@ -449,7 +432,7 @@ export async function dispatchTurnForSession(
 
   return await runInteractiveTmuxRoute('broker', {
     broker: async () =>
-      this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, dispatchPrompt, runId, {
+      this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, prompt, runId, {
         flagEnvName: admission.flagEnvName,
         allowedBrokerDriver: admission.allowedBrokerDriver,
         ...(options.attachBeforeInvocationStart

@@ -21,7 +21,6 @@ import type {
   SemanticTurnHandoffResponse,
   WaitMessageResponse,
 } from 'hrc-core'
-import { enrichTurnPromptForBrain } from './brain-enricher.js'
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
@@ -47,7 +46,6 @@ import {
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
-import type { PreparedSemanticDmPayload } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import {
@@ -619,49 +617,6 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
   return undefined
 }
 
-export async function prepareSemanticDmPayload(
-  this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
-  body: {
-    runtimeIntent?: HrcRuntimeIntent | undefined
-    body: string
-    from: HrcMessageAddress
-    to: HrcMessageAddress
-  },
-  record: HrcMessageRecord
-): Promise<PreparedSemanticDmPayload> {
-  const basePayload = formatDmPayload(
-    body.from,
-    body.to,
-    body.body,
-    record.messageSeq,
-    record.messageId
-  )
-  const baseIntent = body.runtimeIntent ?? session.lastAppliedIntentJson
-  if (!baseIntent) {
-    return { payload: basePayload }
-  }
-
-  const runId = `run-${randomUUID()}`
-  const normalizedIntent = normalizeDispatchIntent(baseIntent, session, runId)
-  const originalPromptLength = basePayload.length
-  const enriched = await enrichTurnPromptForBrain({
-    session,
-    intent: normalizedIntent,
-    prompt: basePayload,
-    runId,
-  })
-  writeServerLog('INFO', `brain.enricher.${enriched.reason}`, {
-    hostSessionId: session.hostSessionId,
-    runId,
-    applied: enriched.applied,
-    sourceCount: enriched.sources?.length ?? 0,
-    promptLengthDelta: enriched.prompt.length - originalPromptLength,
-    transport: 'semantic-dm',
-  })
-  return { payload: enriched.prompt, runId, normalizedIntent }
-}
-
 export async function handleSemanticDm(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -751,13 +706,6 @@ export async function handleSemanticDm(
         this.rejectBusyHeadlessSemanticDm(session, record, busyHeadlessRuntime)
         rejected = true
       } else {
-        // Prepare the DM payload once before transport selection so brain
-        // enrichment fires uniformly across tmux-literal and SDK/headless
-        // fallback paths. Without this, the tmux-literal branch bypasses
-        // dispatchTurnForSession (and its enricher), leaving live-pane DMs
-        // unenriched while only fallback DMs got brain context.
-        const prepared = await this.prepareSemanticDmPayload(session, body, record)
-
         // Semantic DMs are harness input. During broker cutover they must not
         // literal-deliver into legacy tmux/ghostty runtimes; dispatch below
         // will reuse only matching broker runtimes or reprovision.
@@ -778,7 +726,6 @@ export async function handleSemanticDm(
 
         const result = await this.executeSemanticTurn(session, body, record, respondTo, {
           waitForCompletion: body.wait?.enabled === true,
-          prepared,
         })
         execution = result.execution
         reply = result.reply
@@ -880,7 +827,6 @@ export async function executeSemanticTurn(
   respondTo: HrcMessageAddress,
   options: {
     waitForCompletion?: boolean | undefined
-    prepared?: PreparedSemanticDmPayload | undefined
   } = {}
 ): Promise<{
   execution?: DispatchTurnBySelectorResponse
@@ -890,17 +836,18 @@ export async function executeSemanticTurn(
   if (!baseIntent) return {}
 
   try {
-    const prepared = options.prepared
-    const runId = prepared?.runId ?? `run-${randomUUID()}`
-    const normalizedIntent =
-      prepared?.normalizedIntent ?? normalizeDispatchIntent(baseIntent, session, runId)
-    const payload =
-      prepared?.payload ??
-      formatDmPayload(body.from, body.to, body.body, record.messageSeq, record.messageId)
+    const runId = `run-${randomUUID()}`
+    const normalizedIntent = normalizeDispatchIntent(baseIntent, session, runId)
+    const payload = formatDmPayload(
+      body.from,
+      body.to,
+      body.body,
+      record.messageSeq,
+      record.messageId
+    )
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,
       waitForCompletion: options.waitForCompletion,
-      skipBrainEnrichment: prepared !== undefined,
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -988,7 +935,6 @@ export const targetMessageHandlersMethods = {
   handleQueryMessages,
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
-  prepareSemanticDmPayload,
   handleSemanticDm,
   rejectBusyHeadlessSemanticDm,
   executeSemanticTurn,

@@ -282,7 +282,7 @@ async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   await mkdir(join(projectsRoot, projectId), { recursive: true })
   await writeFile(
     join(agentsRoot, agentId, 'agent-profile.toml'),
-    'schemaVersion = 2\n\n[brain]\nenabled = false\n',
+    'schemaVersion = 2\n',
     'utf8'
   )
   await writeFile(join(projectsRoot, projectId, 'asp-targets.toml'), 'schema = 1\n', 'utf8')

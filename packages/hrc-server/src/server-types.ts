@@ -7,7 +7,6 @@ import type {
   HrcMessageRecord,
   HrcProvider,
   HrcRunRecord,
-  HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   ReconcileActiveRunReason,
   SweepZombieRunResult,
@@ -40,12 +39,6 @@ export type AttachDescriptorResponse = {
     paneId?: string | undefined
     surfaceId?: string | undefined
   }
-}
-
-export type PreparedSemanticDmPayload = {
-  payload: string
-  runId?: string | undefined
-  normalizedIntent?: HrcRuntimeIntent | undefined
 }
 
 export type FollowSubscriber = (event: HrcEventEnvelope | HrcLifecycleEvent) => void
