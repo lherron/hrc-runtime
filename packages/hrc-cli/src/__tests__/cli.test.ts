@@ -303,11 +303,7 @@ afterEach(async () => {
 async function seedRunRoots(agentId: string, projectId: string): Promise<void> {
   await mkdir(join(agentsRoot, agentId), { recursive: true })
   await mkdir(join(projectsRoot, projectId), { recursive: true })
-  await writeFile(
-    join(agentsRoot, agentId, 'agent-profile.toml'),
-    'schemaVersion = 2\n',
-    'utf8'
-  )
+  await writeFile(join(agentsRoot, agentId, 'agent-profile.toml'), 'schemaVersion = 2\n', 'utf8')
   // Write a marker so the project dir is recognized by the walk-up resolver.
   await writeFile(join(projectsRoot, projectId, 'asp-targets.toml'), 'schema = 1\n', 'utf8')
 }
@@ -1376,11 +1372,7 @@ describe('hrc start', () => {
       'schema = 1\nagents-root = "agents"\n',
       'utf8'
     )
-    await writeFile(
-      join(localAgentRoot, 'agent-profile.toml'),
-      'schemaVersion = 2\n',
-      'utf8'
-    )
+    await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n', 'utf8')
 
     const result = await runCli(
       ['start', 'rex@agent-spaces', '--dry-run'],

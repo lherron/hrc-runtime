@@ -56,9 +56,13 @@ export type ListRuntimesFilter = {
 }
 
 export type ListRunsFilter = {
+  runId?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   runtimeId?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  status?: string[] | undefined
   limit?: number | undefined
 }
 
@@ -99,10 +103,20 @@ export function parseListRunsFilter(url: URL): ListRunsFilter {
   )
   const limit = parseOptionalNonNegativeIntegerQuery(url.searchParams.get('limit'), 'limit')
 
+  const statusRaw = normalizeOptionalQuery(url.searchParams.get('status'))
+  const status = statusRaw
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
   return {
+    ...pickOptionalQuery(url, 'runId'),
     ...pickOptionalQuery(url, 'hostSessionId'),
     ...(generation !== undefined ? { generation } : {}),
     ...pickOptionalQuery(url, 'runtimeId'),
+    ...pickOptionalQuery(url, 'scopeRef'),
+    ...pickOptionalQuery(url, 'laneRef'),
+    ...(status !== undefined && status.length > 0 ? { status } : {}),
     ...(limit !== undefined ? { limit } : {}),
   }
 }

@@ -48,11 +48,7 @@ describe('resolveRuntimeIntentForTarget', () => {
       'schema = 1\nagents-root = "agents"\n',
       'utf8'
     )
-    await writeFile(
-      join(localAgentRoot, 'agent-profile.toml'),
-      'schemaVersion = 2\n',
-      'utf8'
-    )
+    await writeFile(join(localAgentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n', 'utf8')
 
     const intent = resolveRuntimeIntentForTarget('localbot@project')
 

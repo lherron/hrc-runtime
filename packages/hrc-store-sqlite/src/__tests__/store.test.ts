@@ -771,6 +771,137 @@ describe('RunRepository', () => {
     }
   })
 
+  it('applies the run enrichment-filter index migration (T-05010)', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      expect(db.migrations.applied).toContain('0015_run_enrichment_filter_indexes')
+      const indexes = db.sqlite
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs'"
+        )
+        .all()
+        .map((row) => row.name)
+      expect(indexes).toContain('idx_runs_scope_lane_updated')
+      expect(indexes).toContain('idx_runs_status_updated')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('filters listRuns by runId, scopeRef, laneRef, status, and composed filters (T-05010)', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      // Single host session satisfies the runs FK; scopeRef/laneRef/status are
+      // free columns we vary across the seeded runs.
+      const session = insertRunSession(db, {
+        hostSessionId: 'hsid-enrich',
+        scopeKey: 'enrich-host',
+      })
+      insertRunRuntime(db, session, { runtimeId: 'rt-enrich-a', status: 'busy' })
+      insertRunRuntime(db, session, { runtimeId: 'rt-enrich-b', status: 'busy' })
+
+      const scopeA = 'agent:clod:project:hrc-runtime:task:T-05010'
+      const scopeB = 'agent:cody:project:taskboard:task:T-09999'
+
+      function seedRun(input: {
+        runId: string
+        runtimeId?: string | undefined
+        scopeRef: string
+        laneRef: string
+        status: HrcRunRecord['status']
+        updatedAt: string
+      }): void {
+        db.runs.insert({
+          runId: input.runId,
+          hostSessionId: session.hostSessionId,
+          ...(input.runtimeId ? { runtimeId: input.runtimeId } : {}),
+          scopeRef: input.scopeRef,
+          laneRef: input.laneRef,
+          generation: session.generation,
+          transport: 'tmux',
+          status: input.status,
+          acceptedAt: input.updatedAt,
+          updatedAt: input.updatedAt,
+        })
+      }
+
+      seedRun({
+        runId: 'run-a-main-running',
+        runtimeId: 'rt-enrich-a',
+        scopeRef: scopeA,
+        laneRef: 'main',
+        status: 'running',
+        updatedAt: '2026-06-21T10:00:00.000Z',
+      })
+      seedRun({
+        runId: 'run-a-main-completed',
+        runtimeId: 'rt-enrich-a',
+        scopeRef: scopeA,
+        laneRef: 'main',
+        status: 'completed',
+        updatedAt: '2026-06-21T10:01:00.000Z',
+      })
+      seedRun({
+        runId: 'run-a-repair-running',
+        runtimeId: 'rt-enrich-a',
+        scopeRef: scopeA,
+        laneRef: 'repair',
+        status: 'running',
+        updatedAt: '2026-06-21T10:02:00.000Z',
+      })
+      seedRun({
+        runId: 'run-b-main-failed',
+        runtimeId: 'rt-enrich-b',
+        scopeRef: scopeB,
+        laneRef: 'main',
+        status: 'failed',
+        updatedAt: '2026-06-21T10:03:00.000Z',
+      })
+
+      // runId is exact-match: exactly the one run or empty.
+      expect(db.runs.listRuns({ runId: 'run-a-main-completed' }).map((r) => r.runId)).toEqual([
+        'run-a-main-completed',
+      ])
+      expect(db.runs.listRuns({ runId: 'does-not-exist' })).toEqual([])
+
+      // scopeRef exact-match (no prefix matching) returns both lanes under scopeA,
+      // newest-first.
+      expect(db.runs.listRuns({ scopeRef: scopeA }).map((r) => r.runId)).toEqual([
+        'run-a-repair-running',
+        'run-a-main-completed',
+        'run-a-main-running',
+      ])
+
+      // scopeRef + laneRef composed.
+      expect(db.runs.listRuns({ scopeRef: scopeA, laneRef: 'main' }).map((r) => r.runId)).toEqual([
+        'run-a-main-completed',
+        'run-a-main-running',
+      ])
+
+      // status set filter (one or more values).
+      expect(new Set(db.runs.listRuns({ status: ['running'] }).map((r) => r.runId))).toEqual(
+        new Set(['run-a-main-running', 'run-a-repair-running'])
+      )
+      expect(
+        new Set(db.runs.listRuns({ status: ['completed', 'failed'] }).map((r) => r.runId))
+      ).toEqual(new Set(['run-a-main-completed', 'run-b-main-failed']))
+
+      // Composed scopeRef + laneRef + status.
+      expect(
+        db.runs
+          .listRuns({ scopeRef: scopeA, laneRef: 'main', status: ['running'] })
+          .map((r) => r.runId)
+      ).toEqual(['run-a-main-running'])
+
+      // Existing runtimeId filter still composes with the new filters.
+      expect(new Set(db.runs.listRuns({ runtimeId: 'rt-enrich-a' }).map((r) => r.runId))).toEqual(
+        new Set(['run-a-main-running', 'run-a-main-completed', 'run-a-repair-running'])
+      )
+    } finally {
+      db.close()
+    }
+  })
+
   it('returns the latest run for the C-02541 session/runtime/run lifecycle matrix', () => {
     const db = openHrcDatabase(dbPath)
     try {

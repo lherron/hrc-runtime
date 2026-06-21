@@ -269,6 +269,93 @@ describe('runtime lifecycle client methods', () => {
     expect(result[0].updatedAt).toBe('2026-05-18T12:00:02.000Z')
   })
 
+  it('listRuns serializes the T-05010 enrichment filters to /v1/runs', async () => {
+    let capturedPath = ''
+    let capturedParams: URLSearchParams | undefined
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedPath = url.pathname
+        capturedParams = url.searchParams
+        return Response.json([
+          {
+            runId: 'run-enrich-1',
+            hostSessionId: 'hsid-enrich-1',
+            runtimeId: 'rt-enrich-1',
+            scopeRef: 'agent:clod:project:hrc-runtime:task:T-05010',
+            laneRef: 'main',
+            generation: 1,
+            transport: 'tmux',
+            status: 'running',
+            updatedAt: '2026-06-21T10:00:00.000Z',
+          },
+        ])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const result = await client.listRuns({
+      runId: 'run-enrich-1',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-05010',
+      laneRef: 'main',
+      status: ['running', 'completed'],
+      limit: 5,
+    })
+
+    expect(capturedPath).toBe('/v1/runs')
+    expect(capturedParams?.get('runId')).toBe('run-enrich-1')
+    expect(capturedParams?.get('scopeRef')).toBe('agent:clod:project:hrc-runtime:task:T-05010')
+    expect(capturedParams?.get('laneRef')).toBe('main')
+    // status arrays serialize as a single comma-joined param.
+    expect(capturedParams?.get('status')).toBe('running,completed')
+    expect(capturedParams?.get('limit')).toBe('5')
+    expect(result[0].runId).toBe('run-enrich-1')
+    expect(result[0].laneRef).toBe('main')
+  })
+
+  it('getRun wraps listRuns({ runId, limit: 1 }) and returns the single run or null', async () => {
+    let capturedPath = ''
+    let capturedParams: URLSearchParams | undefined
+    let respondEmpty = false
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch(req) {
+        const url = new URL(req.url)
+        capturedPath = url.pathname
+        capturedParams = url.searchParams
+        if (respondEmpty) {
+          return Response.json([])
+        }
+        return Response.json([
+          {
+            runId: 'run-getrun-1',
+            hostSessionId: 'hsid-getrun-1',
+            scopeRef: 'agent:clod:project:hrc-runtime',
+            laneRef: 'main',
+            generation: 1,
+            transport: 'tmux',
+            status: 'completed',
+            updatedAt: '2026-06-21T10:00:00.000Z',
+          },
+        ])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const found = await client.getRun('run-getrun-1')
+
+    expect(capturedPath).toBe('/v1/runs')
+    expect(capturedParams?.get('runId')).toBe('run-getrun-1')
+    expect(capturedParams?.get('limit')).toBe('1')
+    expect(found?.runId).toBe('run-getrun-1')
+
+    respondEmpty = true
+    expect(await client.getRun('missing-run')).toBeNull()
+  })
+
   it('getStatus preserves includeArchived as a true-or-absent query flag', async () => {
     const capturedQueries: string[] = []
 

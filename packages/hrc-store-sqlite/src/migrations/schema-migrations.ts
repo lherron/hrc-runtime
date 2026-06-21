@@ -705,6 +705,22 @@ const runSessionLookupIndexesMigration: HrcMigration = {
   },
 }
 
+// T-05010: indexes backing the public /v1/runs enrichment filters
+// (scopeRef/laneRef and status). runId filtering already hits the runs
+// primary key, so no run_id index is added.
+const runEnrichmentFilterIndexesMigration: HrcMigration = {
+  id: '0015_run_enrichment_filter_indexes',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_scope_lane_updated
+        ON runs(scope_ref, lane_ref, updated_at, run_id);
+
+      CREATE INDEX IF NOT EXISTS idx_runs_status_updated
+        ON runs(status, updated_at, run_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -721,4 +737,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   zombieRunSweepIndexesMigration,
   hrcEventsCanonicalReaderIndexesMigration,
   runSessionLookupIndexesMigration,
+  runEnrichmentFilterIndexesMigration,
 ]

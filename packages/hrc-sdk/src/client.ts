@@ -451,12 +451,31 @@ export class HrcClient {
 
   async listRuns(filter?: RunListFilter): Promise<RunRecord[]> {
     const path = buildPath('/v1/runs', {
+      runId: emptyToUndefined(filter?.runId),
       hostSessionId: emptyToUndefined(filter?.hostSessionId),
       generation: filter?.generation,
       runtimeId: emptyToUndefined(filter?.runtimeId),
+      scopeRef: emptyToUndefined(filter?.scopeRef),
+      laneRef: emptyToUndefined(filter?.laneRef),
+      status: filter?.status,
       limit: filter?.limit,
     })
     return this.getJson<RunRecord[]>(path)
+  }
+
+  /**
+   * Exact run lookup by bare HRC `runId`. Convenience wrapper over
+   * {@link listRuns}; returns the single matching run or `null`.
+   *
+   * Enrichment flow for wrkf action display:
+   *   wrkf action externalRunRef "hrc:<runId>"
+   *     -> strip "hrc:" prefix at the consumer boundary
+   *     -> getRun(runId) or listRuns({ runId, limit: 1 })
+   *     -> watch({ runId, fromSeq, follow }) for lifecycle events when needed
+   */
+  async getRun(runId: string): Promise<RunRecord | null> {
+    const runs = await this.listRuns({ runId, limit: 1 })
+    return runs[0] ?? null
   }
 
   async getLatestRunForSession(input: {

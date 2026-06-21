@@ -365,3 +365,141 @@ describe('GET /v1/runtimes list filters', () => {
     ])
   })
 })
+
+type SeedRunOptions = {
+  runId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  status: string
+  runtimeId?: string | undefined
+  updatedAt?: string | undefined
+}
+
+type RunListRow = {
+  runId: string
+  scopeRef: string
+  laneRef: string
+  status: string
+}
+
+function seedRun(options: SeedRunOptions): void {
+  // Session satisfies the runs FK on host_session_id; the run carries its own
+  // scope/lane/status columns independent of the session.
+  fixture.seedSession(options.hostSessionId, options.scopeRef)
+
+  const db = openHrcDatabase(fixture.dbPath)
+  const now = fixture.now()
+  try {
+    db.runs.insert({
+      runId: options.runId,
+      hostSessionId: options.hostSessionId,
+      scopeRef: options.scopeRef,
+      laneRef: options.laneRef,
+      generation: 1,
+      transport: 'tmux',
+      status: options.status,
+      acceptedAt: options.updatedAt ?? now,
+      updatedAt: options.updatedAt ?? now,
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function listRuns(query = ''): Promise<RunListRow[]> {
+  const path = query ? `/v1/runs?${query}` : '/v1/runs'
+  const res = await fixture.fetchSocket(path)
+  expect(res.status).toBe(200)
+  return (await res.json()) as RunListRow[]
+}
+
+function runIds(rows: RunListRow[]): string[] {
+  return rows.map((row) => row.runId)
+}
+
+describe('GET /v1/runs enrichment filters (T-05010)', () => {
+  const scopeA = 'agent:clod:project:hrc-runtime:task:T-05010'
+  const scopeB = 'agent:cody:project:taskboard:task:T-09999'
+
+  function seedMatrix(): void {
+    seedRun({
+      runId: 'srv-a-main-running',
+      hostSessionId: 'hsid-srv-a1',
+      scopeRef: scopeA,
+      laneRef: 'main',
+      status: 'running',
+      updatedAt: '2026-06-21T10:00:00.000Z',
+    })
+    seedRun({
+      runId: 'srv-a-main-completed',
+      hostSessionId: 'hsid-srv-a2',
+      scopeRef: scopeA,
+      laneRef: 'main',
+      status: 'completed',
+      updatedAt: '2026-06-21T10:01:00.000Z',
+    })
+    seedRun({
+      runId: 'srv-a-repair-running',
+      hostSessionId: 'hsid-srv-a3',
+      scopeRef: scopeA,
+      laneRef: 'repair',
+      status: 'running',
+      updatedAt: '2026-06-21T10:02:00.000Z',
+    })
+    seedRun({
+      runId: 'srv-b-main-failed',
+      hostSessionId: 'hsid-srv-b1',
+      scopeRef: scopeB,
+      laneRef: 'main',
+      status: 'failed',
+      updatedAt: '2026-06-21T10:03:00.000Z',
+    })
+  }
+
+  it('returns exactly the matching run for runId, or [] when absent', async () => {
+    seedMatrix()
+    const rows = await listRuns('runId=srv-a-main-completed')
+    expect(runIds(rows)).toEqual(['srv-a-main-completed'])
+    expect(rows[0].scopeRef).toBe(scopeA)
+    expect(rows[0].status).toBe('completed')
+
+    expect(await listRuns('runId=no-such-run')).toEqual([])
+  })
+
+  it('filters by scopeRef + laneRef (exact match, both fields)', async () => {
+    seedMatrix()
+    expect(runIds(await listRuns(`scopeRef=${encodeURIComponent(scopeA)}`))).toEqual([
+      'srv-a-repair-running',
+      'srv-a-main-completed',
+      'srv-a-main-running',
+    ])
+    expect(runIds(await listRuns(`scopeRef=${encodeURIComponent(scopeA)}&laneRef=main`))).toEqual([
+      'srv-a-main-completed',
+      'srv-a-main-running',
+    ])
+  })
+
+  it('filters by a comma-separated status union', async () => {
+    seedMatrix()
+    expect(new Set(runIds(await listRuns('status=running')))).toEqual(
+      new Set(['srv-a-main-running', 'srv-a-repair-running'])
+    )
+    expect(new Set(runIds(await listRuns('status=completed,failed')))).toEqual(
+      new Set(['srv-a-main-completed', 'srv-b-main-failed'])
+    )
+  })
+
+  it('composes scopeRef, laneRef, and status filters', async () => {
+    seedMatrix()
+    expect(
+      runIds(await listRuns(`scopeRef=${encodeURIComponent(scopeA)}&laneRef=main&status=running`))
+    ).toEqual(['srv-a-main-running'])
+  })
+
+  it('keeps existing hostSessionId and limit filters working', async () => {
+    seedMatrix()
+    expect(runIds(await listRuns('hostSessionId=hsid-srv-a3'))).toEqual(['srv-a-repair-running'])
+    expect((await listRuns('limit=2')).length).toBe(2)
+  })
+})

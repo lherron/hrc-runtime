@@ -61,6 +61,36 @@ describe('renderStatusBar', () => {
     expect(spec.left).toBe('◆ UNKNOWN')
     expect(spec.right).toBe('▶ running')
   })
+
+  it('appends the wrkq slug to the center field when provided (T-04977)', () => {
+    const spec = renderStatusBar(
+      'agent:clod:project:hrc-runtime:task:T-04977',
+      'running',
+      'add-task-slug-to-ghostmux-status-bar'
+    )
+    expect(spec.center).toBe('hrc-runtime · T-04977 · add-task-slug-to-ghostmux-status-bar')
+  })
+
+  it('falls back to project · T-id when no slug is provided', () => {
+    expect(renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running').center).toBe(
+      'hrc-runtime · T-04977'
+    )
+    expect(
+      renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', null).center
+    ).toBe('hrc-runtime · T-04977')
+    expect(
+      renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', '   ').center
+    ).toBe('hrc-runtime · T-04977')
+  })
+
+  it('never appends a slug to a primary (taskless) scope', () => {
+    const spec = renderStatusBar(
+      'agent:daedalus:project:agent-spaces:task:primary',
+      'idle',
+      'should-not-appear'
+    )
+    expect(spec.center).toBe('agent-spaces')
+  })
 })
 
 describe('viewerTerminalBg', () => {
@@ -77,14 +107,20 @@ describe('viewerTerminalBg', () => {
 
 type Applied = { surfaceId: string; spec: GhostmuxStatusBarSpec }
 
-function makeHarness(resolveSurfaceId: (runtimeId: string) => string | null = () => 'surf-1') {
+function makeHarness(
+  resolveSurfaceId: (runtimeId: string) => string | null = () => 'surf-1',
+  resolveSlug?: (scopeRef: string) => Promise<string | null>
+) {
   const applied: Applied[] = []
   const scheduled: Array<() => void> = []
+  const errors: unknown[] = []
   const projector = new HeadlessViewerStatusProjector({
     resolveSurfaceId,
     applyStatusBar: async (surfaceId, spec) => {
       applied.push({ surfaceId, spec })
     },
+    resolveSlug,
+    onError: (error) => errors.push(error),
     schedule: (fn) => {
       scheduled.push(fn)
       return scheduled.length as unknown as ReturnType<typeof setTimeout>
@@ -98,7 +134,7 @@ function makeHarness(resolveSurfaceId: (runtimeId: string) => string | null = ()
     await Promise.resolve()
     await Promise.resolve()
   }
-  return { projector, applied, flushAll }
+  return { projector, applied, errors, flushAll }
 }
 
 const ev = (
@@ -172,6 +208,50 @@ describe('HeadlessViewerStatusProjector', () => {
     projector.observe(ev('turn.tool_call'))
     await flushAll()
     expect(applied).toHaveLength(0)
+  })
+
+  it('enriches the center field with a resolved slug (T-04977)', async () => {
+    const { projector, applied, flushAll } = makeHarness(
+      () => 'surf-1',
+      async () => 'add-task-slug-to-ghostmux-status-bar'
+    )
+    projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
+    await flushAll()
+    expect(applied).toHaveLength(1)
+    expect(applied[0]?.spec.center).toBe(
+      'hrc-runtime · T-04977 · add-task-slug-to-ghostmux-status-bar'
+    )
+  })
+
+  it('falls back to project · T-id when the slug resolver returns null', async () => {
+    const { projector, applied, flushAll } = makeHarness(
+      () => 'surf-1',
+      async () => null
+    )
+    projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
+    await flushAll()
+    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
+  })
+
+  it('still writes the bar when the slug resolver throws (best-effort)', async () => {
+    const { projector, applied, errors, flushAll } = makeHarness(
+      () => 'surf-1',
+      async () => {
+        throw new Error('wrkq exploded')
+      }
+    )
+    projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
+    await flushAll()
+    expect(applied).toHaveLength(1)
+    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
+    expect(errors).toHaveLength(1)
+  })
+
+  it('writes the bar normally when no slug resolver is configured', async () => {
+    const { projector, applied, flushAll } = makeHarness()
+    projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
+    await flushAll()
+    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
   })
 
   it('never repaints terminal color — the projector only writes the status bar', async () => {

@@ -16,6 +16,7 @@ import { parseScopeRef } from 'agent-scope'
 
 import { agentTheme } from './agent-theme.js'
 import type { GhostmuxStatusBarSpec } from './ghostmux.js'
+import type { TaskSlugResolver } from './wrkq-task-label.js'
 
 export type ViewerState = 'running' | 'awaiting' | 'idle' | 'exited'
 
@@ -51,14 +52,24 @@ export function viewerStateForEventKind(eventKind: string): ViewerState | null {
   }
 }
 
-/** Build the full status-bar triplet for a scope + state. Pure. */
-export function renderStatusBar(scopeRef: string, state: ViewerState): GhostmuxStatusBarSpec {
+/**
+ * Build the full status-bar triplet for a scope + state. Pure.
+ *
+ * `slug` is the optional best-effort wrkq task slug (T-04977). When present (and
+ * the scope carries a real task), it is appended to the center field; when
+ * null/undefined the center falls back to today's `project · T-id` rendering.
+ */
+export function renderStatusBar(
+  scopeRef: string,
+  state: ViewerState,
+  slug?: string | null
+): GhostmuxStatusBarSpec {
   const parsed = safeParseScopeRef(scopeRef)
   const agentId = parsed?.agentId ?? 'unknown'
   const theme = agentTheme(agentId)
   return {
     left: `◆ ${agentId.toUpperCase()}`,
-    center: renderCenter(parsed),
+    center: renderCenter(parsed, slug),
     right: STATE_RIGHT[state],
     fg: theme.fg,
     bg: theme.bg,
@@ -71,12 +82,16 @@ export function viewerTerminalBg(scopeRef: string): string {
   return agentTheme(parsed?.agentId ?? 'unknown').terminalBg
 }
 
-function renderCenter(parsed: ReturnType<typeof safeParseScopeRef>): string {
+function renderCenter(parsed: ReturnType<typeof safeParseScopeRef>, slug?: string | null): string {
   if (!parsed) return ''
   const project = parsed.projectId ?? ''
   // `primary` is the default task scope and carries no information — drop it.
   const task = parsed.taskId && parsed.taskId !== 'primary' ? parsed.taskId : ''
-  if (project && task) return `${project} · ${task}`
+  // The slug labels a real task; only meaningful alongside a task id.
+  const label = typeof slug === 'string' && slug.trim().length > 0 ? slug.trim() : ''
+  if (project && task) {
+    return label ? `${project} · ${task} · ${label}` : `${project} · ${task}`
+  }
   return project || task || ''
 }
 
@@ -93,6 +108,13 @@ export type HeadlessViewerStatusProjectorDeps = {
   resolveSurfaceId: (runtimeId: string) => Promise<string | null> | string | null
   /** Apply a full status-bar triplet. Best-effort — must never throw. */
   applyStatusBar: (surfaceId: string, spec: GhostmuxStatusBarSpec) => Promise<void>
+  /**
+   * Optional best-effort wrkq task-slug resolver (T-04977). When present, the
+   * center field is enriched with the task slug. Slug resolution is cosmetic:
+   * it must never block or fail the status-bar write, so a missing resolver, a
+   * null result, or a throw all fall back to the `project · T-id` rendering.
+   */
+  resolveSlug?: TaskSlugResolver | undefined
   /** Coalescing window per runtime. Defaults to 150ms. */
   debounceMs?: number
   /** Injectable timer for tests. Defaults to setTimeout/clearTimeout. */
@@ -173,7 +195,8 @@ export class HeadlessViewerStatusProjector {
     try {
       const surfaceId = await this.deps.resolveSurfaceId(runtimeId)
       if (surfaceId) {
-        await this.deps.applyStatusBar(surfaceId, renderStatusBar(scopeRef, state))
+        const slug = await this.resolveSlugBestEffort(scopeRef)
+        await this.deps.applyStatusBar(surfaceId, renderStatusBar(scopeRef, state, slug))
       }
     } catch (error) {
       this.deps.onError?.(error)
@@ -181,6 +204,21 @@ export class HeadlessViewerStatusProjector {
       // After the final exited write, drop the entry so a reused window for a
       // future runtime starts clean.
       if (exited) this.entries.delete(runtimeId)
+    }
+  }
+
+  /**
+   * Resolve the task slug for a scope without ever blocking the status-bar
+   * write. The resolver is already best-effort, but we defensively swallow any
+   * throw here too so a misbehaving resolver can never skip the repaint.
+   */
+  private async resolveSlugBestEffort(scopeRef: string): Promise<string | null> {
+    if (!this.deps.resolveSlug) return null
+    try {
+      return await this.deps.resolveSlug(scopeRef)
+    } catch (error) {
+      this.deps.onError?.(error)
+      return null
     }
   }
 

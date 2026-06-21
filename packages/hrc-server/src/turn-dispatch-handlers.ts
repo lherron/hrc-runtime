@@ -401,19 +401,13 @@ export async function dispatchTurnForSession(
     if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
       assertRuntimeNotBusy(this.db, latestRuntime)
     }
-    return await this.executeInteractiveBrokerInputTurn(
-      session,
-      latestRuntime,
-      prompt,
-      runId,
-      {
-        waitForCompletion:
-          admission.allowedBrokerDriver === 'codex-cli-tmux' ||
-          admission.allowedBrokerDriver === 'pi-tui-tmux'
-            ? false
-            : options.waitForCompletion,
-      }
-    )
+    return await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
+      waitForCompletion:
+        admission.allowedBrokerDriver === 'codex-cli-tmux' ||
+        admission.allowedBrokerDriver === 'pi-tui-tmux'
+          ? false
+          : options.waitForCompletion,
+    })
   }
 
   if (admission.decision === 'stale-and-reprovision' && latestRuntime) {

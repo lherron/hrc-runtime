@@ -140,9 +140,13 @@ export type RuntimeListFilter = {
 }
 
 export type RunListFilter = {
+  runId?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   runtimeId?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  status?: string[] | undefined
   limit?: number | undefined
 }
 

@@ -22,6 +22,7 @@ import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
 import { getBrokerTmuxSocketPath } from '../tmux-socket.js'
 import { createTmuxManager } from '../tmux.js'
+import { defaultTaskSlugResolver } from '../wrkq-task-label.js'
 
 import {
   createBrokerDurableHeadlessAllocator,
@@ -243,6 +244,15 @@ export async function spawnBrokerHeadlessViewer(
     // `session-report` is best-effort and always reaches the keypress gate, so a
     // missing/slow summary never closes the window early or hangs it silently.
     const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; exit`
+    // Best-effort wrkq task-slug enrichment for the status-bar center field
+    // (T-04977). Cosmetic only: a missing/slow/broken wrkq read resolves to null
+    // and must never delay or fail viewer creation or dispatch.
+    let slug: string | null = null
+    try {
+      slug = await defaultTaskSlugResolver()(runtime.scopeRef)
+    } catch {
+      slug = null
+    }
     // A turn is being dispatched into this viewer, so the bar opens at `running`;
     // the lifecycle projector takes over the right field from here (T-04439).
     const result = await this.ghostmux.ensureHeadlessViewer({
@@ -250,7 +260,7 @@ export async function spawnBrokerHeadlessViewer(
       runtimeId: runtime.runtimeId,
       attachCommand,
       title: `hrc headless ${runtime.scopeRef}`,
-      statusBar: renderStatusBar(runtime.scopeRef, 'running'),
+      statusBar: renderStatusBar(runtime.scopeRef, 'running', slug),
       terminalBg: viewerTerminalBg(runtime.scopeRef),
     })
     // Bind the viewer surface to the CURRENT runtime as the projector's primary

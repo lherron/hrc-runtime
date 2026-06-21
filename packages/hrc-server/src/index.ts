@@ -144,6 +144,7 @@ import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
+import { defaultTaskSlugResolver } from './wrkq-task-label.js'
 
 export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
@@ -399,6 +400,7 @@ class HrcServerInstance implements HrcServer {
         return this.ghostmux.findHeadlessViewerSurfaceByRuntimeId(runtimeId)
       },
       applyStatusBar: (surfaceId, spec) => this.ghostmux.setStatusBar(surfaceId, spec),
+      resolveSlug: defaultTaskSlugResolver(),
       onError: (error) =>
         writeServerLog('WARN', 'headless_viewer_statusbar.project_failed', {
           error: error instanceof Error ? error.message : String(error),

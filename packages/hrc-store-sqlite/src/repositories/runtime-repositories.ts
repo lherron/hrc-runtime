@@ -10,7 +10,7 @@ import {
   type RunListFilters,
   type RunUpdatePatch,
   type RuntimeUpdatePatch,
-  buildEventWhere,
+  buildRunWhere,
   buildSetClause,
   collectPatchEntries,
   execute,
@@ -381,7 +381,7 @@ export class RunRepository {
     const predicates: string[] = []
     const values: Array<string | number> = []
 
-    buildEventWhere(filters, predicates, values)
+    buildRunWhere(filters, predicates, values)
 
     const limit = filters.limit ?? 100
     const where = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''

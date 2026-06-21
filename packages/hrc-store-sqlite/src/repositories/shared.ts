@@ -122,9 +122,13 @@ export type EventQueryFilters = {
 }
 
 export type RunListFilters = {
+  runId?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   runtimeId?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  status?: string[] | undefined
   limit?: number | undefined
 }
 
@@ -513,6 +517,54 @@ export function buildEventWhere(
   if (filters.runId !== undefined) {
     where.push('run_id = ?')
     values.push(filters.runId)
+  }
+}
+
+/**
+ * Append the `runs` filter predicates to the provided `where`/`values`
+ * accumulators in canonical order. Owns the run-table column set
+ * (run_id, host_session_id, generation, runtime_id, scope_ref, lane_ref,
+ * status) so it stays decoupled from {@link buildEventWhere}, which is named
+ * and documented for `events`/`hrc_events` fields.
+ *
+ * `runId`, `scopeRef`, and `laneRef` are exact-match equality predicates.
+ * `status` is a one-or-more set filter (`status IN (?,...)`), matching the
+ * `/v1/runtimes?status=ready,busy` convention; an empty array contributes no
+ * predicate. The seq/limit clauses remain owned by the caller.
+ */
+export function buildRunWhere(
+  filters: RunListFilters,
+  where: string[],
+  values: Array<string | number>
+): void {
+  if (filters.runId !== undefined) {
+    where.push('run_id = ?')
+    values.push(filters.runId)
+  }
+  if (filters.hostSessionId !== undefined) {
+    where.push('host_session_id = ?')
+    values.push(filters.hostSessionId)
+  }
+  if (filters.generation !== undefined) {
+    where.push('generation = ?')
+    values.push(filters.generation)
+  }
+  if (filters.runtimeId !== undefined) {
+    where.push('runtime_id = ?')
+    values.push(filters.runtimeId)
+  }
+  if (filters.scopeRef !== undefined) {
+    where.push('scope_ref = ?')
+    values.push(filters.scopeRef)
+  }
+  if (filters.laneRef !== undefined) {
+    where.push('lane_ref = ?')
+    values.push(filters.laneRef)
+  }
+  if (filters.status !== undefined && filters.status.length > 0) {
+    const placeholders = filters.status.map(() => '?').join(', ')
+    where.push(`status IN (${placeholders})`)
+    values.push(...filters.status)
   }
 }
 
