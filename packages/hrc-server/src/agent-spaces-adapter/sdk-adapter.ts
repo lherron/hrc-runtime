@@ -221,14 +221,13 @@ function toEventKind(event: AgentEvent): string {
  * Extract the event payload for HRC eventJson.
  *
  * Strips envelope-level fields (ts, seq, hostSessionId, runId) that the HRC
- * event envelope already carries, then conditionally re-includes domain-relevant
- * optional fields (cpSessionId, continuation) only when present.
+ * event envelope already carries, then conditionally re-includes the
+ * domain-relevant optional `continuation` field only when present.
  */
 function toEventJson(event: AgentEvent): Record<string, unknown> {
-  const { ts, seq, hostSessionId, cpSessionId, runId, continuation, ...rest } = event
+  const { ts, seq, hostSessionId, runId, continuation, ...rest } = event
   return {
     ...rest,
-    ...(cpSessionId ? { cpSessionId } : {}),
     ...(continuation ? { continuation } : {}),
   }
 }

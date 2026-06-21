@@ -62,7 +62,6 @@ describe('agent-spaces consumer contracts', () => {
             type: 'state',
             state: 'running',
             continuation,
-            cpSessionId: 'legacy-cp',
           },
           {
             ...makeBase(2),
@@ -122,9 +121,9 @@ describe('agent-spaces consumer contracts', () => {
     expect(events[0].eventJson).toEqual({
       type: 'state',
       state: 'running',
-      cpSessionId: 'legacy-cp',
       continuation: { provider: 'anthropic', key: 'sdk-continuation' },
     })
+    expect(events[0].eventJson).not.toHaveProperty('cpSessionId')
     expect(events[0].eventJson).not.toHaveProperty('ts')
     expect(events[0].eventJson).not.toHaveProperty('seq')
     expect(events[0].eventJson).not.toHaveProperty('hostSessionId')
