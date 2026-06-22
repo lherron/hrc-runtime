@@ -21,6 +21,8 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { writeServerLog } from '../server-log.js'
 import { json, timestamp } from '../server-util.js'
 
+type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+
 /**
  * Provisions the SDK runtime/run rows and emits the runtime.created/turn.accepted/
  * turn.user_prompt/turn.started lifecycle events for an SDK dispatch turn.
@@ -284,7 +286,7 @@ export async function handleSdkDispatchTurn(
       transport: 'sdk',
       status: 'completed',
       supportsInFlightInput: runtime.supportsInflightInput,
-    } satisfies DispatchTurnResponse)
+    } satisfies DispatchTurnResponseBase)
   }
 
   if (options.waitForCompletion === false) {
@@ -309,7 +311,7 @@ export async function handleSdkDispatchTurn(
       transport: 'sdk',
       status: 'started',
       supportsInFlightInput: runtime.supportsInflightInput,
-    } satisfies DispatchTurnResponse)
+    } satisfies DispatchTurnResponseBase)
   }
 
   return await execute()

@@ -9,11 +9,10 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
-import { appendHrcEvent } from './hrc-event-helper.js'
+import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -42,6 +41,8 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
+
+type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
 
 export async function startHeadlessBrokerRuntime(
   this: HrcServerInstanceForHandlers,
@@ -184,8 +185,8 @@ export async function executeHeadlessBrokerStartTurn(
       runtimeId: runtime.runtimeId,
       transport: 'headless',
       status: 'started',
-      supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
+      supportsInFlightInput: false,
+    } satisfies DispatchTurnResponseBase)
   }
 
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
@@ -196,8 +197,8 @@ export async function executeHeadlessBrokerStartTurn(
     runtimeId: runtime.runtimeId,
     transport: 'headless',
     status: 'completed',
-    supportsInFlightInput: true,
-  } satisfies DispatchTurnResponse)
+    supportsInFlightInput: false,
+  } satisfies DispatchTurnResponseBase)
 }
 
 export async function executeHeadlessBrokerInputTurn(
@@ -260,6 +261,18 @@ export async function executeHeadlessBrokerInputTurn(
     })
     this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
   }
+  const userPromptEvent = appendHrcEvent(this.db, 'turn.user_prompt', {
+    ts: now,
+    hostSessionId: session.hostSessionId,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    runId,
+    runtimeId: runtime.runtimeId,
+    transport: 'headless',
+    payload: createUserPromptPayload(prompt),
+  })
+  this.notifyEvent(userPromptEvent)
 
   const input: InvocationInput = {
     inputId,
@@ -389,8 +402,8 @@ export async function executeHeadlessBrokerInputTurn(
       runtimeId: runtime.runtimeId,
       transport: 'headless',
       status: 'started',
-      supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
+      supportsInFlightInput: false,
+    } satisfies DispatchTurnResponseBase)
   }
 
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
@@ -401,8 +414,8 @@ export async function executeHeadlessBrokerInputTurn(
     runtimeId: runtime.runtimeId,
     transport: 'headless',
     status: 'completed',
-    supportsInFlightInput: true,
-  } satisfies DispatchTurnResponse)
+    supportsInFlightInput: false,
+  } satisfies DispatchTurnResponseBase)
 }
 
 export async function waitForInteractiveBrokerRunCompletion(

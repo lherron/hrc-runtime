@@ -7,7 +7,6 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
 } from 'hrc-core'
-
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
@@ -57,6 +56,8 @@ import {
   spawnBrokerHeadlessViewer,
   spawnHeadlessClaudeViewer,
 } from './broker-interactive-handlers/controller-factory.js'
+
+type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
 
 // Re-exported so the public surface of this module is preserved after the
 // substrate-allocator + controller-factory split (no downstream import changes
@@ -209,7 +210,7 @@ export async function handleHeadlessDispatchTurn(
       transport: 'headless',
       status: 'started',
       supportsInFlightInput: false,
-    } satisfies DispatchTurnResponse)
+    } satisfies DispatchTurnResponseBase)
   }
 
   return await execute()
@@ -365,7 +366,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
+    } satisfies DispatchTurnResponseBase)
   }
 
   await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
@@ -377,7 +378,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     transport: 'tmux',
     status: 'completed',
     supportsInFlightInput: true,
-  } satisfies DispatchTurnResponse)
+  } satisfies DispatchTurnResponseBase)
 }
 
 export async function executeInteractiveBrokerInputTurn(
@@ -493,7 +494,7 @@ export async function executeInteractiveBrokerInputTurn(
         transport: 'tmux',
         status: 'started',
         supportsInFlightInput: true,
-      } satisfies DispatchTurnResponse)
+      } satisfies DispatchTurnResponseBase)
     }
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
     const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
@@ -568,7 +569,7 @@ export async function executeInteractiveBrokerInputTurn(
       transport: 'tmux',
       status: 'started',
       supportsInFlightInput: true,
-    } satisfies DispatchTurnResponse)
+    } satisfies DispatchTurnResponseBase)
   }
 
   await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
@@ -580,7 +581,7 @@ export async function executeInteractiveBrokerInputTurn(
     transport: 'tmux',
     status: 'completed',
     supportsInFlightInput: true,
-  } satisfies DispatchTurnResponse)
+  } satisfies DispatchTurnResponseBase)
 }
 
 export async function deliverReassociatedBrokerTmuxInput(

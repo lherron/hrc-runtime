@@ -605,6 +605,16 @@ export class BrokerInvocationEventRepository {
     return rows.map(mapBrokerInvocationEventRow)
   }
 
+  maxBrokerSeq(invocationId: string): number {
+    const row = this.db
+      .query<{ max_seq: number | null }, [string]>(
+        'SELECT MAX(seq) AS max_seq FROM broker_invocation_events WHERE invocation_id = ?'
+      )
+      .get(invocationId)
+
+    return row?.max_seq ?? 0
+  }
+
   listFromAfterSeq(
     selector: BrokerInvocationEventAfterSeqSelector
   ): HrcBrokerInvocationEventRecord[] {

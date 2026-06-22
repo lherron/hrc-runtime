@@ -128,15 +128,7 @@ export async function handleDispatchTurn(
 type AttachedRunResult = StartRuntimeResponse | DispatchTurnResponse
 
 async function dispatchTurnResponseJson(response: Response) {
-  return (await response.json()) as {
-    runId: string
-    hostSessionId: string
-    generation: number
-    runtimeId: string
-    transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
-    status: 'completed' | 'started'
-    supportsInFlightInput: boolean
-  }
+  return (await response.json()) as DispatchTurnResponse
 }
 
 function runtimeIdFromAttachedRunResult(result: AttachedRunResult): string {
@@ -148,6 +140,75 @@ async function attachDescriptorBody(
   runtime: HrcRuntimeSnapshot
 ) {
   return (await server.attachRuntime(runtime).json()) as PrepareAttachedRunResponse['attach']
+}
+
+type DispatchTurnObservationContext = {
+  lifecycleFromSeq: number
+  brokerAfterSeqByInvocation: Map<string, number>
+}
+
+function captureBrokerAfterSeqByInvocation(
+  server: HrcServerInstanceForHandlers,
+  hostSessionId: string
+): Map<string, number> {
+  const cursors = new Map<string, number>()
+  for (const runtime of server.db.runtimes.listByHostSessionId(hostSessionId)) {
+    if (runtime.controllerKind !== 'harness-broker' || runtime.activeInvocationId === undefined) {
+      continue
+    }
+    cursors.set(
+      runtime.activeInvocationId,
+      server.db.brokerInvocationEvents.maxBrokerSeq(runtime.activeInvocationId)
+    )
+  }
+  return cursors
+}
+
+async function enrichDispatchTurnResponse(
+  server: HrcServerInstanceForHandlers,
+  response: Response,
+  context: DispatchTurnObservationContext
+): Promise<Response> {
+  const body = (await response.json()) as Omit<
+    DispatchTurnResponse,
+    'startIdentity' | 'observation'
+  > &
+    Partial<Pick<DispatchTurnResponse, 'startIdentity' | 'observation'>>
+  const run = server.db.runs.getByRunId(body.runId)
+  const invocationId = run?.invocationId
+
+  const enriched = {
+    ...body,
+    startIdentity:
+      invocationId !== undefined
+        ? ({ kind: 'broker', invocationId } as const)
+        : ({ kind: 'sdk' } as const),
+    observation: {
+      lifecycle: {
+        selector: {
+          runId: body.runId,
+          runtimeId: body.runtimeId,
+          generation: body.generation,
+        },
+        fromSeq: context.lifecycleFromSeq,
+      },
+      ...(invocationId !== undefined
+        ? {
+            broker: {
+              selector: {
+                invocationId,
+                runId: body.runId,
+                runtimeId: body.runtimeId,
+                generation: body.generation,
+              },
+              afterSeq: context.brokerAfterSeqByInvocation.get(invocationId) ?? 0,
+            },
+          }
+        : {}),
+    },
+  } satisfies DispatchTurnResponse
+
+  return json(enriched, response.status)
 }
 
 export async function handlePrepareAttachedRun(
@@ -270,6 +331,13 @@ export async function dispatchTurnForSession(
   } = {}
 ): Promise<Response> {
   const runId = options.runId ?? `run-${randomUUID()}`
+  const observationContext: DispatchTurnObservationContext = {
+    lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,
+    brokerAfterSeqByInvocation: captureBrokerAfterSeqByInvocation(this, session.hostSessionId),
+  }
+  const withObservation = async (response: Response): Promise<Response> =>
+    enrichDispatchTurnResponse(this, response, observationContext)
+
   // T-01770 Phase B: admit ariadne-class (explicit id:claude-code dispatched
   // headless) and SDK-shaped Claude intents into the claude-code-tmux broker
   // path BEFORE the headless/SDK branches. Without this they fall onto legacy
@@ -326,14 +394,18 @@ export async function dispatchTurnForSession(
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
     })
     if (route === 'broker') {
-      return await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
-        waitForCompletion: options.waitForCompletion,
-      })
+      return await withObservation(
+        await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
+          waitForCompletion: options.waitForCompletion,
+        })
+      )
     }
     if (route === 'sdk') {
-      return await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
-        waitForCompletion: options.waitForCompletion,
-      })
+      return await withObservation(
+        await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
+          waitForCompletion: options.waitForCompletion,
+        })
+      )
     }
 
     throw new HrcRuntimeUnavailableError('headless legacy execution is unavailable', {
@@ -357,9 +429,11 @@ export async function dispatchTurnForSession(
       !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
       liveInteractiveRuntime.activeRunId === undefined
     if (!interactiveAvailableAndIdle) {
-      return await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
-        waitForCompletion: options.waitForCompletion,
-      })
+      return await withObservation(
+        await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
+          waitForCompletion: options.waitForCompletion,
+        })
+      )
     }
     // Fall through to tmux/headless path with the idle runtime
   }
@@ -401,13 +475,15 @@ export async function dispatchTurnForSession(
     if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
       assertRuntimeNotBusy(this.db, latestRuntime)
     }
-    return await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
-      waitForCompletion:
-        admission.allowedBrokerDriver === 'codex-cli-tmux' ||
-        admission.allowedBrokerDriver === 'pi-tui-tmux'
-          ? false
-          : options.waitForCompletion,
-    })
+    return await withObservation(
+      await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
+        waitForCompletion:
+          admission.allowedBrokerDriver === 'codex-cli-tmux' ||
+          admission.allowedBrokerDriver === 'pi-tui-tmux'
+            ? false
+            : options.waitForCompletion,
+      })
+    )
   }
 
   if (admission.decision === 'stale-and-reprovision' && latestRuntime) {
@@ -424,22 +500,24 @@ export async function dispatchTurnForSession(
     }
   }
 
-  return await runInteractiveTmuxRoute('broker', {
-    broker: async () =>
-      this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, prompt, runId, {
-        flagEnvName: admission.flagEnvName,
-        allowedBrokerDriver: admission.allowedBrokerDriver,
-        ...(options.attachBeforeInvocationStart
-          ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
-          : {}),
-        spawnHeadlessViewer: isHeadlessClaudeRedirect,
-        waitForCompletion:
-          admission.allowedBrokerDriver === 'codex-cli-tmux' ||
-          admission.allowedBrokerDriver === 'pi-tui-tmux'
-            ? false
-            : options.waitForCompletion,
-      }),
-  })
+  return await withObservation(
+    await runInteractiveTmuxRoute('broker', {
+      broker: async () =>
+        this.handleInteractiveTmuxBrokerDispatchTurn(session, intent, prompt, runId, {
+          flagEnvName: admission.flagEnvName,
+          allowedBrokerDriver: admission.allowedBrokerDriver,
+          ...(options.attachBeforeInvocationStart
+            ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
+            : {}),
+          spawnHeadlessViewer: isHeadlessClaudeRedirect,
+          waitForCompletion:
+            admission.allowedBrokerDriver === 'codex-cli-tmux' ||
+            admission.allowedBrokerDriver === 'pi-tui-tmux'
+              ? false
+              : options.waitForCompletion,
+        }),
+    })
+  )
 }
 
 function isProviderOnlyInteractiveIntent(intent: HrcRuntimeIntent): boolean {

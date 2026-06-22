@@ -159,6 +159,26 @@ export type DispatchTurnResponse = {
   transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
   status: 'completed' | 'started'
   supportsInFlightInput: boolean
+  startIdentity: { kind: 'broker'; invocationId: string } | { kind: 'sdk' }
+  observation: {
+    lifecycle: {
+      selector: {
+        runId: string
+        runtimeId: string
+        generation: number
+      }
+      fromSeq: number
+    }
+    broker?: {
+      selector: {
+        invocationId: string
+        runId: string
+        runtimeId: string
+        generation: number
+      }
+      afterSeq: number
+    }
+  }
 }
 
 export type OperatorAttachDescriptor = {

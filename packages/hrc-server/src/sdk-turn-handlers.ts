@@ -35,6 +35,8 @@ import {
 import type { InFlightInputResponse } from './server-types.js'
 import { json, timestamp } from './server-util.js'
 
+type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+
 export function failSdkHarnessPath(
   this: HrcServerInstanceForHandlers,
   caller: string,
@@ -202,7 +204,7 @@ export async function executeHeadlessSdkTurn(
     transport: 'headless',
     status: 'completed',
     supportsInFlightInput: false,
-  } satisfies DispatchTurnResponse)
+  } satisfies DispatchTurnResponseBase)
 }
 
 export async function handleActiveRunContribution(
