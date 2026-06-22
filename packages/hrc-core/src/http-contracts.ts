@@ -144,6 +144,14 @@ export type DispatchTurnRequest = {
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   waitForCompletion?: boolean | undefined
+  repair?:
+    | {
+        kind: 'json_validation' | 'json_repair'
+        sourceRunId: string
+        failedValidationRunId?: string | undefined
+        reason?: string | undefined
+      }
+    | undefined
   /**
    * Opt out of the server's stale-generation auto-rotation policy.
    * See {@link EnsureRuntimeRequest.allowStaleGeneration}.

@@ -331,6 +331,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const fences = input['fences']
   const waitForCompletion = readOptionalBooleanField(input, 'waitForCompletion')
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
+  const repair = parseOptionalDispatchTurnRepair(input['repair'])
 
   return {
     hostSessionId: hostSessionId.trim(),
@@ -342,6 +343,37 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
     ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
+    ...(repair !== undefined ? { repair } : {}),
+  }
+}
+
+function parseOptionalDispatchTurnRepair(
+  input: unknown
+): DispatchTurnRequest['repair'] | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'repair must be an object', {
+      field: 'repair',
+    })
+  }
+
+  const kind = requireOneOf(
+    requireTrimmedStringField(input, 'kind'),
+    ['json_validation', 'json_repair'],
+    'repair.kind must be "json_validation" or "json_repair"',
+    { field: 'repair.kind' }
+  )
+  const sourceRunId = requireTrimmedStringField(input, 'sourceRunId')
+  const failedValidationRunId = readOptionalNonEmptyStringField(input, 'failedValidationRunId')
+  const reason = readOptionalNonEmptyStringField(input, 'reason')
+
+  return {
+    kind,
+    sourceRunId,
+    ...(failedValidationRunId !== undefined ? { failedValidationRunId } : {}),
+    ...(reason !== undefined ? { reason } : {}),
   }
 }
 

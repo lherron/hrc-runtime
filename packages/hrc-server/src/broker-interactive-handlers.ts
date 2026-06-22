@@ -59,6 +59,13 @@ import {
 
 type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
 
+type JsonRepairRunCorrelation = {
+  kind: 'json_repair'
+  sourceRunId: string
+  failedValidationRunId: string
+  repairRunId: string
+}
+
 function assertBrokerPermissionPolicyAdmitted(input: {
   mode: unknown
   hostSessionId: string
@@ -265,6 +272,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   runId: string,
   options: {
     waitForCompletion?: boolean | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
   } = {}
 ): Promise<Response> {
   const reusableRuntime = getReusableHeadlessRuntimeForSession(
@@ -444,7 +452,10 @@ export async function executeInteractiveBrokerInputTurn(
   runtime: HrcRuntimeSnapshot,
   prompt: string,
   runId: string,
-  options: { waitForCompletion?: boolean | undefined } = {}
+  options: {
+    waitForCompletion?: boolean | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
+  } = {}
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
@@ -481,6 +492,9 @@ export async function executeInteractiveBrokerInputTurn(
     operationId: runtime.activeOperationId,
     dispatchedInputId: inputId,
   })
+  if (options.repairCorrelation !== undefined) {
+    this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
+  }
 
   if (!queuedMode) {
     this.db.runtimes.update(runtime.runtimeId, {
@@ -496,7 +510,12 @@ export async function executeInteractiveBrokerInputTurn(
     inputId,
     kind: 'user',
     content: [{ type: 'text', text: prompt }],
-    metadata: { runId },
+    metadata: {
+      runId,
+      ...(options.repairCorrelation !== undefined
+        ? { repairCorrelationJson: JSON.stringify(options.repairCorrelation) }
+        : {}),
+    },
   }
 
   const dispatchToBroker = () =>

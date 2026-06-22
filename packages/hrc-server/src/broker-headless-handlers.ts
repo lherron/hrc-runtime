@@ -44,6 +44,13 @@ import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 
 type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
 
+type JsonRepairRunCorrelation = {
+  kind: 'json_repair'
+  sourceRunId: string
+  failedValidationRunId: string
+  repairRunId: string
+}
+
 function assertBrokerPermissionPolicyAdmitted(input: {
   mode: unknown
   hostSessionId: string
@@ -197,6 +204,7 @@ export async function executeHeadlessBrokerStartTurn(
   runId: string,
   options: {
     waitForCompletion?: boolean | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
   }
 ): Promise<Response> {
   const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId)
@@ -236,6 +244,7 @@ export async function executeHeadlessBrokerInputTurn(
   runId: string,
   options: {
     waitForCompletion?: boolean | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
   }
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
@@ -283,6 +292,9 @@ export async function executeHeadlessBrokerInputTurn(
     // (immediate and queued) for uniform reasoning; a no-op flip is harmless.
     dispatchedInputId: inputId,
   })
+  if (options.repairCorrelation !== undefined) {
+    this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
+  }
   if (!queuedMode) {
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
@@ -309,7 +321,12 @@ export async function executeHeadlessBrokerInputTurn(
     inputId,
     kind: 'user',
     content: [{ type: 'text', text: prompt }],
-    metadata: { runId },
+    metadata: {
+      runId,
+      ...(options.repairCorrelation !== undefined
+        ? { repairCorrelationJson: JSON.stringify(options.repairCorrelation) }
+        : {}),
+    },
   }
 
   const dispatchToBroker = () =>

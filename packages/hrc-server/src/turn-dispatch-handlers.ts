@@ -122,6 +122,9 @@ export async function handleDispatchTurn(
   return await this.dispatchTurnForSession(session, intent, body.prompt, {
     runId,
     waitForCompletion: body.waitForCompletion,
+    ...(body.repair !== undefined
+      ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
+      : {}),
   })
 }
 
@@ -145,6 +148,25 @@ async function attachDescriptorBody(
 type DispatchTurnObservationContext = {
   lifecycleFromSeq: number
   brokerAfterSeqByInvocation: Map<string, number>
+}
+
+type JsonRepairRunCorrelation = {
+  kind: 'json_repair'
+  sourceRunId: string
+  failedValidationRunId: string
+  repairRunId: string
+}
+
+function normalizeJsonRepairCorrelation(
+  repair: NonNullable<ReturnType<typeof parseDispatchTurnRequest>['repair']>,
+  repairRunId: string
+): JsonRepairRunCorrelation {
+  return {
+    kind: 'json_repair',
+    sourceRunId: repair.sourceRunId,
+    failedValidationRunId: repair.failedValidationRunId ?? repair.sourceRunId,
+    repairRunId,
+  }
 }
 
 function captureBrokerAfterSeqByInvocation(
@@ -328,6 +350,7 @@ export async function dispatchTurnForSession(
     ensureInteractiveRuntime?: boolean | undefined
     waitForCompletion?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
   } = {}
 ): Promise<Response> {
   const runId = options.runId ?? `run-${randomUUID()}`
@@ -397,6 +420,7 @@ export async function dispatchTurnForSession(
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
+          repairCorrelation: options.repairCorrelation,
         })
       )
     }
@@ -482,6 +506,7 @@ export async function dispatchTurnForSession(
           admission.allowedBrokerDriver === 'pi-tui-tmux'
             ? false
             : options.waitForCompletion,
+        repairCorrelation: options.repairCorrelation,
       })
     )
   }
