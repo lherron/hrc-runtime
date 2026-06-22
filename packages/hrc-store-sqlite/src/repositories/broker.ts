@@ -361,9 +361,7 @@ export function mapBrokerInvocationEventRow(
     ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
     ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
     brokerEventJson: row.broker_event_json,
-    ...(row.broker_envelope_json !== null
-      ? { brokerEnvelopeJson: row.broker_envelope_json }
-      : {}),
+    ...(row.broker_envelope_json !== null ? { brokerEnvelopeJson: row.broker_envelope_json } : {}),
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),

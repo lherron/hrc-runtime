@@ -35,14 +35,7 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 
-import {
-  GENERATION,
-  INVOCATION_ID,
-  RUNTIME_ID,
-  RUN_ID,
-  makeSeededFixture,
-  ts,
-} from './broker-event-mapper-fixtures'
+import { GENERATION, INVOCATION_ID, RUNTIME_ID, RUN_ID, ts } from './broker-event-mapper-fixtures'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
@@ -70,14 +63,16 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Build the /v1/broker-events query string from standard fixture constants. */
-function rawObserverQS(overrides: {
-  invocationId?: string
-  runId?: string
-  runtimeId?: string
-  generation?: number
-  afterSeq?: number
-  follow?: boolean
-} = {}): string {
+function rawObserverQS(
+  overrides: {
+    invocationId?: string
+    runId?: string
+    runtimeId?: string
+    generation?: number
+    afterSeq?: number
+    follow?: boolean
+  } = {}
+): string {
   const params = new URLSearchParams({
     invocationId: overrides.invocationId ?? INVOCATION_ID,
     runId: overrides.runId ?? RUN_ID,
@@ -634,7 +629,9 @@ describe('T-05083/20 GET /v1/broker-events — observer close does not affect ru
       .fetchSocket(`/v1/broker-events?${rawObserverQS({ follow: true, afterSeq: 0 })}`, {
         signal: ac.signal,
       })
-      .catch(() => { /* absorb AbortError */ })
+      .catch(() => {
+        /* absorb AbortError */
+      })
     ac.abort()
     await new Promise((resolve) => setTimeout(resolve, 50))
 

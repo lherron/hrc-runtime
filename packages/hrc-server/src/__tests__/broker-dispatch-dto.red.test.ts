@@ -287,27 +287,17 @@ describe('T-05078/13 dispatch DTO shape — broker transport', () => {
     // lifecycle cursor — always present for broker transport.
     expect((body as any).observation?.lifecycle).toBeDefined() // RED
     expect((body as any).observation?.lifecycle?.selector).toBeDefined() // RED
-    expect((body as any).observation?.lifecycle?.selector?.runId).toEqual(
-      expect.any(String)
-    ) // RED
-    expect((body as any).observation?.lifecycle?.selector?.runtimeId).toEqual(
-      expect.any(String)
-    ) // RED
-    expect((body as any).observation?.lifecycle?.selector?.generation).toEqual(
-      expect.any(Number)
-    ) // RED
+    expect((body as any).observation?.lifecycle?.selector?.runId).toEqual(expect.any(String)) // RED
+    expect((body as any).observation?.lifecycle?.selector?.runtimeId).toEqual(expect.any(String)) // RED
+    expect((body as any).observation?.lifecycle?.selector?.generation).toEqual(expect.any(Number)) // RED
     expect((body as any).observation?.lifecycle?.fromSeq).toEqual(expect.any(Number)) // RED
 
     // broker cursor — present for broker transport; absent for sdk.
     expect((body as any).observation?.broker).toBeDefined() // RED
     expect((body as any).observation?.broker?.selector?.invocationId).toBe(INVOCATION_ID) // RED
     expect((body as any).observation?.broker?.selector?.runId).toEqual(expect.any(String)) // RED
-    expect((body as any).observation?.broker?.selector?.runtimeId).toEqual(
-      expect.any(String)
-    ) // RED
-    expect((body as any).observation?.broker?.selector?.generation).toEqual(
-      expect.any(Number)
-    ) // RED
+    expect((body as any).observation?.broker?.selector?.runtimeId).toEqual(expect.any(String)) // RED
+    expect((body as any).observation?.broker?.selector?.generation).toEqual(expect.any(Number)) // RED
     expect((body as any).observation?.broker?.afterSeq).toEqual(expect.any(Number)) // RED
   }, 15_000)
 
