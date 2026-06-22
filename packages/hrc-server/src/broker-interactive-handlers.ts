@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRuntimeIntent,
@@ -58,6 +58,47 @@ import {
 } from './broker-interactive-handlers/controller-factory.js'
 
 type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+
+function assertBrokerPermissionPolicyAdmitted(input: {
+  mode: unknown
+  hostSessionId: string
+  runId: string
+  route: string
+}): void {
+  if (input.mode === 'ask-client') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.ASK_CLIENT_UNSUPPORTED,
+      'ask-client permission mode is unsupported for HRC-owned broker dispatch',
+      {
+        hostSessionId: input.hostSessionId,
+        runId: input.runId,
+        route: input.route,
+        permissionMode: 'ask-client',
+      }
+    )
+  }
+}
+
+function findBrokerRuntimeMissingDescriptor(input: {
+  runtimes: HrcRuntimeSnapshot[]
+  provider: HrcRuntimeIntent['harness']['provider']
+  harnessId?: HrcRuntimeIntent['harness']['id'] | undefined
+}): HrcRuntimeSnapshot | undefined {
+  return input.runtimes
+    .filter((runtime) => {
+      if (
+        runtime.transport !== 'headless' ||
+        runtime.provider !== input.provider ||
+        runtime.controllerKind !== 'harness-broker' ||
+        runtime.activeInvocationId !== undefined ||
+        isRuntimeUnavailableStatus(runtime.status)
+      ) {
+        return false
+      }
+      return input.harnessId === undefined || runtime.harness === input.harnessId
+    })
+    .at(-1)
+}
 
 // Re-exported so the public surface of this module is preserved after the
 // substrate-allocator + controller-factory split (no downstream import changes
@@ -232,6 +273,22 @@ export async function handleHeadlessBrokerDispatchTurn(
     intent.harness.provider,
     intent.harness.id
   )
+  const missingDescriptorRuntime = findBrokerRuntimeMissingDescriptor({
+    runtimes: this.db.runtimes.listByHostSessionId(session.hostSessionId),
+    provider: intent.harness.provider,
+    harnessId: intent.harness.id,
+  })
+  if (missingDescriptorRuntime) {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.BROKER_DESCRIPTOR_ABSENT,
+      'headless broker runtime has no active invocation descriptor',
+      {
+        runtimeId: missingDescriptorRuntime.runtimeId,
+        runId,
+        route: 'broker',
+      }
+    )
+  }
   if (reusableRuntime) {
     if (
       reusableRuntime.controllerKind === 'harness-broker' &&
@@ -391,11 +448,15 @@ export async function executeInteractiveBrokerInputTurn(
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
-    throw new HrcRuntimeUnavailableError('interactive broker runtime has no active invocation', {
-      runtimeId: runtime.runtimeId,
-      runId,
-      route: 'interactive-broker',
-    })
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.BROKER_DESCRIPTOR_ABSENT,
+      'interactive broker runtime has no active invocation descriptor',
+      {
+        runtimeId: runtime.runtimeId,
+        runId,
+        route: 'interactive-broker',
+      }
+    )
   }
 
   const activeRun =
@@ -788,6 +849,13 @@ export async function startInteractiveTmuxBrokerRuntime(
         flag: flagOptions.flagEnvName,
       })
     }
+
+    assertBrokerPermissionPolicyAdmitted({
+      mode: compiled.profile.policy.permissionPolicy.mode,
+      hostSessionId: session.hostSessionId,
+      runId: diagnosticRunId,
+      route: 'interactive-broker',
+    })
 
     const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
       brokerFlagEnabled: true,

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError } from 'hrc-core'
+import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRunRecord,
@@ -43,6 +43,26 @@ import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 
 type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+
+function assertBrokerPermissionPolicyAdmitted(input: {
+  mode: unknown
+  hostSessionId: string
+  runId: string
+  route: string
+}): void {
+  if (input.mode === 'ask-client') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.ASK_CLIENT_UNSUPPORTED,
+      'ask-client permission mode is unsupported for HRC-owned broker dispatch',
+      {
+        hostSessionId: input.hostSessionId,
+        runId: input.runId,
+        route: input.route,
+        permissionMode: 'ask-client',
+      }
+    )
+  }
+}
 
 export async function startHeadlessBrokerRuntime(
   this: HrcServerInstanceForHandlers,
@@ -91,6 +111,13 @@ export async function startHeadlessBrokerRuntime(
         route: 'broker',
       })
     }
+
+    assertBrokerPermissionPolicyAdmitted({
+      mode: compiled.profile.policy.permissionPolicy.mode,
+      hostSessionId: session.hostSessionId,
+      runId,
+      route: 'broker',
+    })
 
     // T-01866 — headless durable cutover is UNCONDITIONAL. Every headless broker
     // runtime goes through the controller's leased-tmux + Unix-IPC allocation, so
@@ -213,11 +240,15 @@ export async function executeHeadlessBrokerInputTurn(
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
   if (invocationId === undefined) {
-    throw new HrcRuntimeUnavailableError('headless broker runtime has no active invocation', {
-      runtimeId: runtime.runtimeId,
-      runId,
-      route: 'broker',
-    })
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.BROKER_DESCRIPTOR_ABSENT,
+      'headless broker runtime has no active invocation descriptor',
+      {
+        runtimeId: runtime.runtimeId,
+        runId,
+        route: 'broker',
+      }
+    )
   }
 
   // Queued-mode detection: a runtime is "busy" iff it has an active run still

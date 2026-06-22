@@ -146,6 +146,27 @@ type ActiveBrokerRuntime = {
   inspection?: BrokerInspectionCapabilities | undefined
 }
 
+type BrokerPermissionPolicy =
+  | { mode: 'deny'; [key: string]: unknown }
+  | { mode: 'allow'; [key: string]: unknown }
+  | { mode: 'ask-client'; [key: string]: unknown }
+
+function resolveBrokerPermissionPolicy(runtime: HrcRuntimeSnapshot | null): BrokerPermissionPolicy {
+  const permission = runtime?.runtimeStateJson?.['permission']
+  if (typeof permission !== 'object' || permission === null) {
+    return { mode: 'deny', reason: 'no HRC permission policy configured' }
+  }
+  const policy = (permission as Record<string, unknown>)['policy']
+  if (typeof policy !== 'object' || policy === null) {
+    return { mode: 'deny', reason: 'no HRC permission policy configured' }
+  }
+  const mode = (policy as Record<string, unknown>)['mode']
+  if (mode === 'allow' || mode === 'deny' || mode === 'ask-client') {
+    return policy as BrokerPermissionPolicy
+  }
+  return { mode: 'deny', reason: 'unsupported HRC permission policy mode', policy }
+}
+
 export class HarnessBrokerController {
   readonly kind = 'harness-broker' as const
 
@@ -642,6 +663,9 @@ export class HarnessBrokerController {
 
     const now = this.now()
     const invocation = this.db.brokerInvocations.getByInvocationId(request.invocationId)
+    const runtime = invocation ? this.db.runtimes.getByRuntimeId(invocation.runtimeId) : null
+    const policy = resolveBrokerPermissionPolicy(runtime)
+    const decision = policy.mode === 'allow' ? 'allow' : 'deny'
     if (invocation) {
       this.insertPermissionDecisionIfAbsent({
         permissionRequestId: request.permissionRequestId,
@@ -651,21 +675,20 @@ export class HarnessBrokerController {
         kind: request.kind,
         subjectDisplayJson: JSON.stringify(request.subject ?? null),
         defaultDecision: request.defaultDecision ?? 'deny',
-        decision: 'deny',
+        decision,
         decidedBy: 'policy',
-        policyJson: JSON.stringify({
-          mode: 'deny',
-          reason: 'no HRC permission request channel configured',
-        }),
+        policyJson: JSON.stringify(policy),
         requestedAt: now,
         decidedAt: now,
       })
     }
 
-    return {
-      decision: 'deny',
-      message: 'Denied by HRC policy: no permission request channel is configured.',
-    }
+    return policy.mode === 'allow'
+      ? { decision: 'allow', message: 'Allowed by HRC policy.' }
+      : {
+          decision: 'deny',
+          message: 'Denied by HRC policy: no permission request channel is configured.',
+        }
   }
 
   private insertPermissionDecisionIfAbsent(record: HrcPermissionDecisionRecord): void {
