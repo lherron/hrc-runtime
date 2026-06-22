@@ -1,11 +1,23 @@
-import type { HrcRuntimeSnapshot, RuntimeActionResponse, TerminateRuntimeResponse } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  type HrcRuntimeSnapshot,
+  HrcRuntimeUnavailableError,
+  type RuntimeActionResponse,
+  type TerminateRuntimeResponse,
+} from 'hrc-core'
 import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
-import { requireGhosttySurface, requireSession, requireTmuxPane } from '../require-helpers.js'
+import {
+  isTerminalBrokerInvocationState,
+  requireGhosttySurface,
+  requireSession,
+  requireTmuxPane,
+} from '../require-helpers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { json, timestamp } from '../server-util.js'
@@ -17,6 +29,16 @@ import {
 } from '../tmux.js'
 import { disposeBrokerRuntime } from './broker-dispose.js'
 import { sessionEventBase } from './session-event-base.js'
+
+interface BrokerInterrupter {
+  interrupt(
+    runtimeId: string,
+    opts: { scope: 'turn'; runId: string; generation: number }
+  ): Promise<{
+    ok: boolean
+    error?: { message: string; code?: string | undefined } | undefined
+  }>
+}
 
 /**
  * Normalize a runtime's transport into the `'headless' | 'sdk'` discriminant used
@@ -47,6 +69,48 @@ function isBrokerLeasedTmuxViewer(runtime: HrcRuntimeSnapshot): boolean {
   if (runtime.controllerKind !== 'harness-broker') return false
   const hosting = parseBrokerRuntimeHostingState(runtime)
   return hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux'
+}
+
+function assertFreshRuntimeSnapshot(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): void {
+  const latest = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+  if (!latest) return
+  if (latest.generation === runtime.generation && latest.activeRunId === runtime.activeRunId) {
+    return
+  }
+
+  throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'runtime control snapshot is stale', {
+    runtimeId: runtime.runtimeId,
+    snapshotGeneration: runtime.generation,
+    currentGeneration: latest.generation,
+    snapshotRunId: runtime.activeRunId ?? null,
+    currentRunId: latest.activeRunId ?? null,
+  })
+}
+
+function settleBrokerRuntimeDisposed(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  now: string
+): void {
+  if (runtime.controllerKind !== 'harness-broker') return
+  const invocationId = runtime.activeInvocationId
+  if (invocationId !== undefined) {
+    const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+    if (invocation && !isTerminalBrokerInvocationState(invocation.invocationState)) {
+      this.db.brokerInvocations.update(invocationId, {
+        invocationState: 'disposed',
+        updatedAt: now,
+      })
+    }
+  }
+  this.db.runtimes.update(runtime.runtimeId, {
+    activeInvocationId: null as unknown as HrcRuntimeSnapshot['activeInvocationId'],
+    updatedAt: now,
+    lastActivityAt: now,
+  })
 }
 
 /**
@@ -165,12 +229,14 @@ export async function interruptTmuxRuntime(
   } satisfies RuntimeActionResponse)
 }
 
-export function interruptHeadlessRuntime(
+export async function interruptHeadlessRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
-): Response {
+): Promise<Response> {
   const session = requireSession(this.db, runtime.hostSessionId)
   const transport = headlessAuditTransport(runtime)
+
+  assertFreshRuntimeSnapshot.call(this, runtime)
 
   if (runtime.activeRunId === undefined) {
     return json({
@@ -178,6 +244,48 @@ export function interruptHeadlessRuntime(
       hostSessionId: session.hostSessionId,
       runtimeId: runtime.runtimeId,
       warning: 'no active run to interrupt',
+    } satisfies RuntimeActionResponse)
+  }
+
+  if (runtime.controllerKind === 'harness-broker') {
+    const result = await (
+      this.getHarnessBrokerController() as unknown as BrokerInterrupter
+    ).interrupt(runtime.runtimeId, {
+      scope: 'turn',
+      runId: runtime.activeRunId,
+      generation: runtime.generation,
+    })
+    if (!result.ok) {
+      throw new HrcRuntimeUnavailableError(
+        result.error?.message ?? `broker runtime ${runtime.runtimeId} interrupt failed`,
+        {
+          runtimeId: runtime.runtimeId,
+          runId: runtime.activeRunId,
+          generation: runtime.generation,
+          brokerErrorCode: result.error?.code ?? null,
+        }
+      )
+    }
+
+    const now = timestamp()
+    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    const event = appendHrcEvent(this.db, 'runtime.interrupted', {
+      ...sessionEventBase(session, now),
+      runtimeId: runtime.runtimeId,
+      runId: runtime.activeRunId,
+      transport,
+      payload: {
+        transport,
+        runId: runtime.activeRunId,
+        controllerKind: 'harness-broker',
+      },
+    })
+    this.notifyEvent(event)
+
+    return json({
+      ok: true,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
     } satisfies RuntimeActionResponse)
   }
 
@@ -382,9 +490,18 @@ export async function terminateHeadlessRuntime(
     await disposeBrokerLeasedTmux.call(this, runtime, {
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
     })
+  } else if (
+    runtime.controllerKind === 'harness-broker' &&
+    runtime.activeInvocationId !== undefined
+  ) {
+    await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      logMessage: 'broker runtime dispose failed during headless terminate',
+    })
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
+  settleBrokerRuntimeDisposed.call(this, runtime, now)
   const transport = headlessAuditTransport(runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),
