@@ -495,6 +495,27 @@ const brokerEventIdentityMigration: HrcMigration = {
   },
 }
 
+// T-05078: persist the FULL broker envelope JSON (not just envelope.payload) so
+// the read-only raw observer (`GET /v1/broker-events`) can reconstruct a true
+// `InvocationEventEnvelope` — including the optional envelope-level fields
+// (`turnId`, `inputId`, `itemId`, `correlation`, `driver`) that `broker_event_json`
+// (payload-only) and the discrete identity columns do not carry. Full envelope
+// JSON is the wire authority; the discrete columns remain the query/fence keys.
+const brokerFullEnvelopeMigration: HrcMigration = {
+  id: '0023_broker_full_envelope',
+  apply(db) {
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(broker_invocation_events)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!columns.has('broker_envelope_json')) {
+      db.exec('ALTER TABLE broker_invocation_events ADD COLUMN broker_envelope_json TEXT')
+    }
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -503,4 +524,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   runtimeLifecycleStateMigration,
   permissionIdentityMigration,
   brokerEventIdentityMigration,
+  brokerFullEnvelopeMigration,
 ]

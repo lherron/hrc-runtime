@@ -97,6 +97,7 @@ export type BrokerInvocationEventRow = {
   harness_generation: number | null
   turn_attempt: number | null
   broker_event_json: string
+  broker_envelope_json: string | null
   hrc_event_seq: number | null
   projection_status: string
   projection_error: string | null
@@ -212,6 +213,7 @@ export const BROKER_INVOCATION_EVENT_COLUMNS = `
   harness_generation,
   turn_attempt,
   broker_event_json,
+  broker_envelope_json,
   hrc_event_seq,
   projection_status,
   projection_error,
@@ -359,6 +361,9 @@ export function mapBrokerInvocationEventRow(
     ...(row.harness_generation !== null ? { harnessGeneration: row.harness_generation } : {}),
     ...(row.turn_attempt !== null ? { turnAttempt: row.turn_attempt } : {}),
     brokerEventJson: row.broker_event_json,
+    ...(row.broker_envelope_json !== null
+      ? { brokerEnvelopeJson: row.broker_envelope_json }
+      : {}),
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),

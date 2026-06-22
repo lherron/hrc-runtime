@@ -399,6 +399,48 @@ describe('BrokerInvocationEventRepository.appendEvent idempotency', () => {
       db.close()
     }
   })
+
+  // T-05078: the raw observer (`GET /v1/broker-events`) must reconstruct a TRUE
+  // InvocationEventEnvelope, including optional envelope-level fields the
+  // payload-only `brokerEventJson` drops. Persist + reload the full envelope JSON.
+  it('persists and round-trips the full broker envelope JSON (turnId/inputId/itemId/correlation/driver)', () => {
+    const db = openHrcDatabase(dbPath)
+    try {
+      const envelope = {
+        invocationId: 'inv-env',
+        seq: 7,
+        time: ts(),
+        type: 'assistant.message.delta',
+        turnId: 'turn-9',
+        inputId: 'input-3',
+        itemId: 'item-42',
+        correlation: { actionRunRef: 'wrkf:a-1' },
+        driver: { kind: 'codex-app-server', rawType: 'item/text/delta' },
+        payload: { delta: 'hello' },
+      }
+
+      db.brokerInvocationEvents.appendEvent({
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        time: envelope.time,
+        type: envelope.type,
+        runtimeId: 'rt-env',
+        runId: 'run-env',
+        payload: envelope.payload,
+        envelopeJson: JSON.stringify(envelope),
+      })
+
+      const [row] = db.brokerInvocationEvents.listByInvocationId('inv-env')
+      expect(row).toBeDefined()
+      // payload-only column stays payload-only (unchanged behavior)...
+      expect(JSON.parse(row!.brokerEventJson)).toEqual(envelope.payload)
+      // ...and the full envelope round-trips verbatim, optional fields intact.
+      expect(row!.brokerEnvelopeJson).toBeDefined()
+      expect(JSON.parse(row!.brokerEnvelopeJson!)).toEqual(envelope)
+    } finally {
+      db.close()
+    }
+  })
 })
 
 describe('broker record repositories round-trip', () => {

@@ -152,6 +152,11 @@ export class BrokerEventMapper {
         : {}),
       ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
       payload: envelope.payload,
+      // T-05078: persist the FULL envelope verbatim as the wire authority for the
+      // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
+      // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
+      // that agent-loop's projector reconstructs.
+      envelopeJson: JSON.stringify(envelope),
     })
 
     if (appended.idempotent) {

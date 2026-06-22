@@ -437,6 +437,13 @@ export type BrokerInvocationEventAppendInput = {
    * a different payload throws.
    */
   payload: unknown
+  /**
+   * Full serialized broker `InvocationEventEnvelope` (T-05078). Persisted verbatim
+   * as the wire authority for the raw observer so it can reconstruct a true
+   * envelope incl. optional `turnId`/`inputId`/`itemId`/`correlation`/`driver`.
+   * Optional for back-compat; the broker event mapper always supplies it.
+   */
+  envelopeJson?: string | undefined
   hrcEventSeq?: number | undefined
   projectionStatus?: HrcBrokerInvocationEventRecord['projectionStatus'] | undefined
   projectionError?: string | undefined
@@ -524,11 +531,12 @@ export class BrokerInvocationEventRepository {
               harness_generation,
               turn_attempt,
               broker_event_json,
+              broker_envelope_json,
               hrc_event_seq,
               projection_status,
               projection_error,
               created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           input.invocationId,
           input.seq,
@@ -539,6 +547,7 @@ export class BrokerInvocationEventRepository {
           input.harnessGeneration ?? null,
           input.turnAttempt ?? null,
           brokerEventJson,
+          input.envelopeJson ?? null,
           input.hrcEventSeq ?? null,
           input.projectionStatus ?? 'pending',
           input.projectionError ?? null,

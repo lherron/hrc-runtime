@@ -554,6 +554,15 @@ export type HrcBrokerInvocationEventRecord = {
   turnAttempt?: number | undefined
   /** Canonical serialized broker event used for idempotent re-append comparison. */
   brokerEventJson: string
+  /**
+   * Full serialized broker `InvocationEventEnvelope` (T-05078) — the wire
+   * authority for the read-only raw observer (`GET /v1/broker-events`). Carries
+   * the optional envelope-level fields (`turnId`, `inputId`, `itemId`,
+   * `correlation`, `driver`) that `brokerEventJson` (payload-only) and the
+   * discrete identity columns do not. Undefined for rows appended before the
+   * `0023_broker_full_envelope` migration.
+   */
+  brokerEnvelopeJson?: string | undefined
   hrcEventSeq?: number | undefined
   projectionStatus: HrcBrokerEventProjectionStatus
   projectionError?: string | undefined
