@@ -10,37 +10,36 @@
  *              with a typed error when raw observation is required but the
  *              broker descriptor/endpoint is absent. Error code must be a
  *              DISTINCT typed code (not generic 503/internal_error).
- *              RED signal: HrcDispatchErrorCode.BROKER_DESCRIPTOR_ABSENT does
+ *              RED signal: HrcErrorCode.BROKER_DESCRIPTOR_ABSENT does
  *              not exist in hrc-core yet; server returns 503 without the code.
  *
  *   Test 9  — Permissions admission: dispatchTurn rejects ask-client +
  *              coordinator-responder with a typed error BEFORE any broker
  *              start/dispatch side effect. Zero run rows; zero runtime rows
  *              from THIS dispatch; no local fallback.
- *              RED signal: HrcDispatchErrorCode.ASK_CLIENT_UNSUPPORTED does
+ *              RED signal: HrcErrorCode.ASK_CLIENT_UNSUPPORTED does
  *              not exist; no admission gate exists in broker-headless-handlers;
  *              source has no ask-client check.
  *
  *   Test 21 — Busy-policy parity: overlapping/concurrent session input
  *              (whenBusy:'reject') rejects with the TYPED dispatch-specific
- *              error code, not the generic runtime_busy code.
- *              RED signal: server returns 'runtime_busy'; needs
- *              'dispatch_busy_reject' (new typed code).
+ *              error code must preserve the existing runtime_busy machine code.
+ *              RED signal: stale reds expected a new dispatch_busy_reject code,
+ *              which violates C-05442.
  *
  *   Test 22 — Busy-reject admission: overlapping input → typed error,
  *              ZERO new run row, ZERO broker input (dispatchInput NOT called).
- *              RED signal: error code is 'runtime_busy' not 'dispatch_busy_reject';
+ *              RED signal: zero-side-effect assertions used non-existent repo APIs.
  *              tests 21+22 pinning BOTH the code change AND the side-effect proof.
  *
  * Implementer must provide:
- *   - HrcDispatchErrorCode const in hrc-core/src/errors.ts with at least:
+ *   - HrcErrorCode const in hrc-core/src/errors.ts with at least:
  *       BROKER_DESCRIPTOR_ABSENT = 'broker_descriptor_absent'
  *       ASK_CLIENT_UNSUPPORTED   = 'ask_client_unsupported'
- *       DISPATCH_BUSY_REJECT     = 'dispatch_busy_reject'
  *   - Admission-gate in handleHeadlessBrokerDispatchTurn (broker-interactive-handlers.ts)
  *     that checks permissionPolicy.mode before any side effect.
  *   - assertRuntimeNotBusy (or an admission gate replacing it) throws
- *     dispatch_busy_reject (not runtime_busy) on the broker-headless-handlers path.
+ *     runtime_busy on the broker-headless-handlers path.
  *   - Broker descriptor absent check in executeHeadlessBrokerInputTurn or the
  *     dispatch response layer: if activeInvocationId is undefined for a
  *     broker-backed runtime, fail closed with broker_descriptor_absent.
@@ -172,9 +171,9 @@ function seedReadyBrokerRuntime(
       brokerDriver: 'codex-app-server',
       invocationState: 'ready',
       capabilitiesJson: JSON.stringify({}),
-      specHash: 'sha256:spec-' + runtimeId,
-      startRequestHash: 'sha256:req-' + runtimeId,
-      selectedProfileHash: 'sha256:prof-' + runtimeId,
+      specHash: `sha256:spec-${runtimeId}`,
+      startRequestHash: `sha256:req-${runtimeId}`,
+      selectedProfileHash: `sha256:prof-${runtimeId}`,
       createdAt: now,
       updatedAt: now,
     })
@@ -240,37 +239,34 @@ function stubBrokerDispatchInput(): { callCount: () => number } {
 }
 
 // =============================================================================
-// Test 8 — Negative gate (provision): HrcDispatchErrorCode must exist
+// Test 8 — Negative gate (provision): HrcErrorCode typed codes must exist
 // =============================================================================
 
-describe('T-05078/8 negative gate — HrcDispatchErrorCode typed family', () => {
+describe('T-05078/8 negative gate — HrcErrorCode typed family', () => {
   /**
-   * Static contract test: errors.ts MUST export HrcDispatchErrorCode with the
+   * Static contract test: errors.ts MUST export HrcErrorCode with the
    * codes used by the admission gates. Currently RED because:
-   *   - HrcDispatchErrorCode is not defined in hrc-core/src/errors.ts
+   *   - HrcErrorCode does not define the two dispatch admission codes
    *   - The three codes below do not exist in any typed error family
    */
-  it('hrc-core/src/errors.ts exports HrcDispatchErrorCode with admission gate codes', () => {
+  it('hrc-core/src/errors.ts exports HrcErrorCode with admission gate codes', () => {
     const source = readFileSync(ERRORS_PATH, 'utf8')
 
     // RED: these literals do not appear in errors.ts yet.
-    // When green: HrcDispatchErrorCode is a const object with these keys.
-    expect(source).toContain('HrcDispatchErrorCode') // RED: missing
+    // When green: HrcErrorCode has typed admission gate codes.
+    expect(source).toContain('HrcErrorCode')
     expect(source).toContain('BROKER_DESCRIPTOR_ABSENT') // RED: missing
     expect(source).toContain('ASK_CLIENT_UNSUPPORTED') // RED: missing
-    expect(source).toContain('DISPATCH_BUSY_REJECT') // RED: missing
   })
 
-  it('hrc-core exports HrcDispatchErrorCode at runtime', async () => {
-    // RED: HrcDispatchErrorCode is not exported from hrc-core at runtime.
-    // When green: it is a const object with the required codes.
+  it('hrc-core exports HrcErrorCode admission codes at runtime', async () => {
+    // When green: HrcErrorCode carries the required admission codes.
     const hrcCore = await import('hrc-core')
-    const codes = (hrcCore as any).HrcDispatchErrorCode
+    const codes = (hrcCore as any).HrcErrorCode
 
-    expect(codes).toBeDefined() // RED: currently undefined
+    expect(codes).toBeDefined()
     expect(codes?.BROKER_DESCRIPTOR_ABSENT).toBe('broker_descriptor_absent') // RED
     expect(codes?.ASK_CLIENT_UNSUPPORTED).toBe('ask_client_unsupported') // RED
-    expect(codes?.DISPATCH_BUSY_REJECT).toBe('dispatch_busy_reject') // RED
   })
 
   /**
@@ -389,12 +385,12 @@ describe('T-05078/9 permissions admission — ask-client fail-closed', () => {
    */
   it('zero run/runtime rows left behind on ask-client admission rejection', async () => {
     await startBrokerServer()
-    const { hostSessionId } = await fixture.resolveSession(SCOPE_REF)
+    await fixture.resolveSession(SCOPE_REF)
 
     // Count runs before the dispatch.
     const dbBefore = openHrcDatabase(fixture.dbPath)
-    const runCountBefore = dbBefore.runs.list().length
-    const runtimeCountBefore = dbBefore.runtimes.list().length
+    const runCountBefore = dbBefore.runs.listByRuntimeId('unused-ask-client-runtime').length
+    const runtimeCountBefore = dbBefore.runtimes.listAll().length
     dbBefore.close()
 
     // Attempt a dispatch where the profile would resolve to ask-client.
@@ -409,17 +405,17 @@ describe('T-05078/9 permissions admission — ask-client fail-closed', () => {
     // For now: the test asserts the typed error code exists (RED via hrc-core
     // assertion) AND verifies that the run count constraint will be testable.
     const hrcCore = await import('hrc-core')
-    const codes = (hrcCore as any).HrcDispatchErrorCode
+    const codes = (hrcCore as any).HrcErrorCode
 
-    // RED: HrcDispatchErrorCode.ASK_CLIENT_UNSUPPORTED doesn't exist.
+    // RED: HrcErrorCode.ASK_CLIENT_UNSUPPORTED doesn't exist.
     // When green: this is 'ask_client_unsupported'.
     expect(codes?.ASK_CLIENT_UNSUPPORTED).toBe('ask_client_unsupported') // RED
 
     // Side-effect isolation assertion: even if a dispatch is attempted,
     // a rejected admission must leave zero rows.
     const dbAfter = openHrcDatabase(fixture.dbPath)
-    const runCountAfter = dbAfter.runs.list().length
-    const runtimeCountAfter = dbAfter.runtimes.list().length
+    const runCountAfter = dbAfter.runs.listByRuntimeId('unused-ask-client-runtime').length
+    const runtimeCountAfter = dbAfter.runtimes.listAll().length
     dbAfter.close()
 
     // In the CURRENT codebase this trivially passes (no dispatch was attempted).
@@ -438,15 +434,12 @@ describe('T-05078/21 busy-policy parity — overlapping input rejects with typed
   /**
    * A broker runtime that already has an active run (status='busy') must
    * reject a second concurrent session input with a typed error.
-   * The typed code must be the DISPATCH-SPECIFIC code 'dispatch_busy_reject',
-   * not the generic 'runtime_busy'.
+   * The typed code must preserve the existing 'runtime_busy' machine code.
    *
-   * Currently RED: assertRuntimeNotBusy throws HrcConflictError(RUNTIME_BUSY)
-   * which maps to 409 with code 'runtime_busy'. The new code must be
-   * 'dispatch_busy_reject' to distinguish admission-fence rejections from
-   * runtime_busy races that happen after run allocation.
+   * C-05442: assertRuntimeNotBusy throws HrcConflictError(RUNTIME_BUSY), which
+   * maps to 409 with code 'runtime_busy'. ACP requeue depends on that code.
    */
-  it('overlapping session input returns 409 with dispatch_busy_reject (not runtime_busy)', async () => {
+  it('overlapping session input returns 409 with runtime_busy', async () => {
     await startBrokerServer()
 
     const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
@@ -475,15 +468,13 @@ describe('T-05078/21 busy-policy parity — overlapping input rejects with typed
 
     const body = (await res.json()) as any
 
-    // RED: currently returns 'runtime_busy'; needs 'dispatch_busy_reject'.
-    // When green: code is 'dispatch_busy_reject' — the typed admission-fence code.
-    expect(body.error?.code).toBe('dispatch_busy_reject') // RED: currently 'runtime_busy'
+    expect(body.error?.code).toBe('runtime_busy')
 
     // Sanity: broker dispatchInput was NOT called (rejection at admission).
     expect(spy.callCount()).toBe(0)
   }, 15_000)
 
-  it('dispatch_busy_reject error has structured detail including runtimeId and activeRunId', async () => {
+  it('runtime_busy error has structured detail including runtimeId and activeRunId', async () => {
     await startBrokerServer()
 
     const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
@@ -509,8 +500,7 @@ describe('T-05078/21 busy-policy parity — overlapping input rejects with typed
     expect(res.status).toBe(409)
     const body = (await res.json()) as any
 
-    // RED: code must be 'dispatch_busy_reject', not 'runtime_busy'.
-    expect(body.error?.code).toBe('dispatch_busy_reject') // RED
+    expect(body.error?.code).toBe('runtime_busy')
 
     // When green: structured detail helps the coordinator know which runtime/run
     // is blocking so it can wait or cancel explicitly.
@@ -547,7 +537,7 @@ describe('T-05078/22 busy-reject admission — zero side effects on overlapping 
 
     // Snapshot run count BEFORE the rejected dispatch.
     const dbBefore = openHrcDatabase(fixture.dbPath)
-    const runCountBefore = dbBefore.runs.list().length
+    const runCountBefore = dbBefore.runs.listByRuntimeId(runtimeId).length
     dbBefore.close()
 
     const spy = stubBrokerDispatchInput()
@@ -564,13 +554,12 @@ describe('T-05078/22 busy-reject admission — zero side effects on overlapping 
     expect(res.status).toBe(409)
     const body = (await res.json()) as any
 
-    // ── RED: typed code must be 'dispatch_busy_reject' ────────────────────
-    expect(body.error?.code).toBe('dispatch_busy_reject') // RED: currently 'runtime_busy'
+    expect(body.error?.code).toBe('runtime_busy')
 
     // ── Assert ZERO new run rows ──────────────────────────────────────────
     // This should already pass (assertRuntimeNotBusy is before db.runs.insert).
     const dbAfter = openHrcDatabase(fixture.dbPath)
-    const runCountAfter = dbAfter.runs.list().length
+    const runCountAfter = dbAfter.runs.listByRuntimeId(runtimeId).length
     dbAfter.close()
 
     expect(runCountAfter).toBe(runCountBefore) // Zero new runs (may already be green)
@@ -607,12 +596,11 @@ describe('T-05078/22 busy-reject admission — zero side effects on overlapping 
     expect(res.status).toBe(409)
     const body = (await res.json()) as any
 
-    // RED: 'dispatch_busy_reject' typed code.
-    expect(body.error?.code).toBe('dispatch_busy_reject') // RED
+    expect(body.error?.code).toBe('runtime_busy')
 
     // Verify the ONE pre-existing run is still there (no corruption).
     const dbAfter = openHrcDatabase(fixture.dbPath)
-    const allRuns = dbAfter.runs.list()
+    const allRuns = dbAfter.runs.listByRuntimeId(runtimeId)
     dbAfter.close()
 
     // Only the pre-seeded run should exist.
@@ -636,13 +624,12 @@ describe('C-05442 busy-reject must preserve existing runtime_busy machine code',
    * reuse the EXISTING HrcErrorCode.RUNTIME_BUSY ('runtime_busy') from hrc-core,
    * NOT mint a new dispatch-specific code.
    *
-   * Tests 21+22 above assert 'dispatch_busy_reject' (the Phase C desired code).
-   * C-05442 counters: the implementation MUST use 'runtime_busy'.
+   * Tests 21+22 above assert 'runtime_busy' per this constraint.
    * The implementer must reconcile by updating tests 21+22 to assert 'runtime_busy'.
    *
    * This test is a FORWARD CONSTRAINT that:
    *   - Is currently GREEN (the existing code already returns 'runtime_busy')
-   *   - Will go RED if an implementer mints 'dispatch_busy_reject' to green tests 21+22
+   *   - Will go RED if an implementer mints 'dispatch_busy_reject' for tests 21+22
    *
    * The behavioral assertion also pins that the rejection happens BEFORE any
    * run row is created (admission-time, not post-allocation):
@@ -669,7 +656,7 @@ describe('C-05442 busy-reject must preserve existing runtime_busy machine code',
     seedActiveRun(hostSessionId, runtimeId, existingRunId, invocationId, SCOPE_REF, generation)
 
     const dbBefore = openHrcDatabase(fixture.dbPath)
-    const runCountBefore = dbBefore.runs.list().length
+    const runCountBefore = dbBefore.runs.listByRuntimeId(runtimeId).length
     dbBefore.close()
 
     const spy = stubBrokerDispatchInput()
@@ -686,12 +673,14 @@ describe('C-05442 busy-reject must preserve existing runtime_busy machine code',
 
     // C-05442 CONSTRAINT: must be 'runtime_busy' (HrcErrorCode.RUNTIME_BUSY).
     // This guards against the wrong implementation: minting 'dispatch_busy_reject'
-    // to satisfy tests 21+22 violates this cross-project constraint.
-    expect(body.error?.code).toBe('runtime_busy') // Constraint: reuse existing code
+    // violates this cross-project constraint.
+    // Currently GREEN (existing assertRuntimeNotBusy returns runtime_busy).
+    // Goes RED if an implementer adds dispatch_busy_reject to satisfy tests 21+22.
+    expect(body.error?.code).toBe('runtime_busy') // C-05442 constraint: reuse existing code
 
     // Admission-time rejection: ZERO new runs, ZERO broker calls.
     const dbAfter = openHrcDatabase(fixture.dbPath)
-    const runCountAfter = dbAfter.runs.list().length
+    const runCountAfter = dbAfter.runs.listByRuntimeId(runtimeId).length
     dbAfter.close()
 
     expect(runCountAfter).toBe(runCountBefore) // No new run row created
@@ -706,17 +695,8 @@ describe('C-05442 busy-reject must preserve existing runtime_busy machine code',
     expect(codes).toBeDefined()
     expect(codes?.RUNTIME_BUSY).toBe('runtime_busy') // Existing; must remain unchanged
 
-    // C-05442: a new HrcDispatchErrorCode must NOT shadow or replace RUNTIME_BUSY
-    // with a new dispatch-specific variant. If HrcDispatchErrorCode is minted (for
-    // tests 8/9), its DISPATCH_BUSY_REJECT must NOT be 'runtime_busy' —
-    // the codes are distinct families.
-    const dispatchCodes = (hrcCore as any).HrcDispatchErrorCode
-    if (dispatchCodes?.DISPATCH_BUSY_REJECT) {
-      // If a new code exists, it must NOT alias 'runtime_busy' (would be a collision).
-      expect(dispatchCodes.DISPATCH_BUSY_REJECT).not.toBe('runtime_busy')
-    }
     // The busy-reject admission gate (for broker-headless path) MUST use
-    // HrcErrorCode.RUNTIME_BUSY — not the new dispatch family.
+    // HrcErrorCode.RUNTIME_BUSY — not a new dispatch family.
     // This is enforced by the behavioral test above.
   })
 })

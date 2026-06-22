@@ -52,7 +52,7 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
-import type { BrokerExecutionProfile, CompiledRuntimePlan } from 'spaces-runtime-contracts'
+import type { BrokerExecutionProfile } from 'spaces-runtime-contracts'
 
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
 
@@ -319,18 +319,22 @@ class FakeBrokerClient implements BrokerClientLike {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makePermStartInput(permissionPolicy: {
-  mode: 'deny'
-  audit: true
-} | {
-  mode: 'allow'
-  audit: true
-  provenance: {
-    source: 'test'
-    requestId: string
-    createdAt: string
-  }
-}) {
+function makePermStartInput(
+  permissionPolicy:
+    | {
+        mode: 'deny'
+        audit: true
+      }
+    | {
+        mode: 'allow'
+        audit: true
+        provenance: {
+          source: 'test'
+          requestId: string
+          createdAt: string
+        }
+      }
+) {
   const identity = makeIdentity({
     runtimeId: RUNTIME_ID as ReturnType<typeof makeIdentity>['runtimeId'],
     runId: RUN_ID as ReturnType<typeof makeIdentity>['runId'],
