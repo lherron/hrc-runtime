@@ -182,27 +182,44 @@ export function buildHrcCorrelationEnv(intent: HrcRuntimeIntent): Record<string,
     const { scopeRef, laneRef } = correlation.sessionRef
     const normalizedLaneRef = normalizeCorrelationLaneRef(laneRef)
     const laneId = normalizedLaneRef === 'main' ? 'main' : normalizedLaneRef.slice('lane:'.length)
-    env['HRC_SESSION_REF'] = `${scopeRef}/lane:${laneId}`
+    const sessionRef = `${scopeRef}/lane:${laneId}`
+    env['AGENT_SCOPE_REF'] = scopeRef
+    env['AGENT_LANE_REF'] = normalizedLaneRef
+    env['AGENT_LANE'] = laneId
+    env['AGENT_SESSION_REF'] = sessionRef
+    env['HRC_SESSION_REF'] = sessionRef
     env['ASP_SCOPE_REF'] = scopeRef
     const parsed = parseScopeRef(scopeRef)
     if (parsed.agentId) {
+      env['AGENT_ID'] = parsed.agentId
+      env['AGENT_ACTOR'] = parsed.agentId
+      env['WRKQ_ACTOR'] = parsed.agentId
       env['ASP_AGENT_ID'] = parsed.agentId
     }
     if (parsed.projectId) {
+      env['AGENT_PROJECT'] = parsed.projectId
       env['ASP_PROJECT'] = parsed.projectId
     }
     if (parsed.taskId) {
+      env['AGENT_TASK'] = parsed.taskId
       env['ASP_TASK_ID'] = parsed.taskId
     }
     env['ASP_HANDLE'] = formatSessionHandle({ scopeRef, laneRef: normalizedLaneRef })
   }
 
   if (correlation?.hostSessionId) {
+    env['AGENT_HOST_SESSION_ID'] = correlation.hostSessionId
     env['HRC_HOST_SESSION_ID'] = correlation.hostSessionId
   }
 
   if (correlation?.runId) {
+    env['AGENT_RUN_ID'] = correlation.runId
     env['HRC_RUN_ID'] = correlation.runId
+  }
+
+  if (intent.placement?.projectRoot) {
+    env['AGENT_PROJECT_ROOT'] = intent.placement.projectRoot
+    env['ASP_PROJECT_ROOT'] = intent.placement.projectRoot
   }
 
   if (taskContext?.taskId) {

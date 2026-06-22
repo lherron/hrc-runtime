@@ -103,14 +103,35 @@ function isInteractiveTmuxBrokerProfile(
   )
 }
 
+function hashNeutralInvocationSpec(
+  spec: InvocationStartRequest['spec']
+): InvocationStartRequest['spec'] {
+  const {
+    invocationId: _invocationId,
+    correlation: _correlation,
+    ...hashSpec
+  } = spec as InvocationStartRequest['spec'] & { correlation?: unknown }
+  return hashSpec
+}
+
+function hashNeutralStartRequest(startRequest: InvocationStartRequest): InvocationStartRequest {
+  const { initialInput: _initialInput, ...hashStartRequest } = startRequest
+  return {
+    ...hashStartRequest,
+    spec: hashNeutralInvocationSpec(startRequest.spec),
+  }
+}
+
 /** Recompute the spec hash via the exported contracts projection helper. */
-function recomputeSpecHash(spec: unknown): string {
-  return (project(spec, 'spec') as { specHash: string }).specHash
+function recomputeSpecHash(spec: InvocationStartRequest['spec']): string {
+  return (project(hashNeutralInvocationSpec(spec), 'spec') as { specHash: string }).specHash
 }
 
 /** Recompute the start-request hash via the exported contracts projection helper. */
-function recomputeStartRequestHash(startRequest: unknown): string {
-  return (project(startRequest, 'start-request') as { startRequestHash: string }).startRequestHash
+function recomputeStartRequestHash(startRequest: InvocationStartRequest): string {
+  return (project(hashNeutralStartRequest(startRequest), 'start-request') as {
+    startRequestHash: string
+  }).startRequestHash
 }
 
 /** Deep-freeze so the verified start request can never be mutated downstream. */

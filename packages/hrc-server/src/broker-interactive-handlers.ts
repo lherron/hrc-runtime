@@ -720,6 +720,7 @@ export async function startInteractiveTmuxBrokerRuntime(
         intent: turnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
+        dispatchEnv: hrcDispatchEnv,
         // T-01770 Phase D: arriving here means there is no live TUI to reuse
         // (the reuse predicates return an already-live runtime first). A fresh
         // first launch must NOT attempt continuation — passing session.continuation
@@ -824,7 +825,10 @@ export async function startInteractiveTmuxBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
+        mergeEnv(compiled.dispatchEnv ?? {}, hrcDispatchEnv),
+        compiled.startRequest
+      ),
       ...(brokerClient ? { brokerClient } : {}),
       ...(flagOptions.attachBeforeInvocationStart
         ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }

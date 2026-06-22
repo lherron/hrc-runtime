@@ -349,7 +349,9 @@ export async function compileBrokerRuntimePlan(
     startRequestHash: selection.startRequestHash,
     plan: response.plan,
     identity,
-    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
+    ...(response.dispatchRequest.dispatchEnv
+      ? { dispatchEnv: response.dispatchRequest.dispatchEnv }
+      : {}),
     diagnostics: response.diagnostics,
   }
 }

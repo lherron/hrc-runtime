@@ -39,11 +39,15 @@
 
 import { describe, expect, it } from 'bun:test'
 import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
 import type { BrokerExecutionProfile, RuntimeIdentityAllocation } from 'spaces-runtime-contracts'
 
 import { selectBrokerExecutionProfile } from '../agent-spaces-adapter/compile-profile-selector'
-import { makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeCompileResponse,
+  makeIdentity,
+  neutralSpecHash,
+  neutralStartRequestHash,
+} from './broker-compile-fixtures'
 
 // ── v0.2 headless profile fixture ──────────────────────────────────────────────
 // Mirrors makeBrokerProfile from broker-compile-fixtures but with
@@ -91,9 +95,8 @@ function makeV02BrokerProfile(identity: RuntimeIdentityAllocation): {
       : {}),
   } as unknown as InvocationStartRequest
 
-  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
-  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
-    .startRequestHash
+  const specHash = neutralSpecHash(spec)
+  const startRequestHash = neutralStartRequestHash(startRequest)
 
   // brokerProtocol is 'harness-broker/0.2' — the sole structural difference from
   // the v0.1 fixture. Cast via unknown because BrokerExecutionProfile.brokerProtocol

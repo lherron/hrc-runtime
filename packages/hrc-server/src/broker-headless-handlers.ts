@@ -64,6 +64,7 @@ export async function startHeadlessBrokerRuntime(
         intent: turnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
+        dispatchEnv: hrcDispatchEnv,
         continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
       },
       {
@@ -121,7 +122,10 @@ export async function startHeadlessBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
-      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(hrcDispatchEnv, compiled.startRequest),
+      dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
+        mergeEnv(compiled.dispatchEnv ?? {}, hrcDispatchEnv),
+        compiled.startRequest
+      ),
       routeDecision: {
         route: 'broker',
         flag: HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,

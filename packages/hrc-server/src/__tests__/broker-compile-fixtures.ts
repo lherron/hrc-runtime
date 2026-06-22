@@ -20,6 +20,33 @@ import type {
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 
+function hashNeutralInvocationSpec(spec: HarnessInvocationSpec): HarnessInvocationSpec {
+  const {
+    invocationId: _invocationId,
+    correlation: _correlation,
+    ...hashSpec
+  } = spec as HarnessInvocationSpec & { correlation?: unknown }
+  return hashSpec
+}
+
+function hashNeutralStartRequest(startRequest: InvocationStartRequest): InvocationStartRequest {
+  const { initialInput: _initialInput, ...hashStartRequest } = startRequest
+  return {
+    ...hashStartRequest,
+    spec: hashNeutralInvocationSpec(startRequest.spec),
+  }
+}
+
+export function neutralSpecHash(spec: HarnessInvocationSpec): string {
+  return (project(hashNeutralInvocationSpec(spec), 'spec') as { specHash: string }).specHash
+}
+
+export function neutralStartRequestHash(startRequest: InvocationStartRequest): string {
+  return (project(hashNeutralStartRequest(startRequest), 'start-request') as {
+    startRequestHash: string
+  }).startRequestHash
+}
+
 /**
  * A deterministic identity allocation matching the headless-codex shape: an
  * initial user turn exists (initialInputId set) and the operation has a
@@ -63,7 +90,8 @@ export type FixtureOpts = {
 
 /**
  * Build a single valid headless codex-app-server BrokerExecutionProfile whose
- * specHash + startRequestHash are computed honestly via `project()`.
+ * specHash + startRequestHash are computed honestly via the selector's
+ * hash-neutral projection.
  */
 export function makeBrokerProfile(
   identity: RuntimeIdentityAllocation,
@@ -108,9 +136,8 @@ export function makeBrokerProfile(
       : {}),
   } as InvocationStartRequest
 
-  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
-  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
-    .startRequestHash
+  const specHash = neutralSpecHash(spec)
+  const startRequestHash = neutralStartRequestHash(startRequest)
 
   const profile = {
     schemaVersion: 'agent-runtime-profile/v1',
@@ -221,9 +248,8 @@ export function makeInteractiveTmuxProfile(
         }
       : {}),
   } as InvocationStartRequest
-  const specHash = (project(spec, 'spec') as { specHash: string }).specHash
-  const startRequestHash = (project(startRequest, 'start-request') as { startRequestHash: string })
-    .startRequestHash
+  const specHash = neutralSpecHash(spec)
+  const startRequestHash = neutralStartRequestHash(startRequest)
 
   return {
     profile: {

@@ -13,8 +13,6 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { project } from 'spaces-runtime-contracts'
-
 import { selectBrokerExecutionProfile } from '../agent-spaces-adapter/compile-profile-selector'
 
 import {
@@ -23,6 +21,8 @@ import {
   makeFailedCompileResponse,
   makeIdentity,
   makeInteractiveTmuxProfile,
+  neutralSpecHash,
+  neutralStartRequestHash,
 } from './broker-compile-fixtures'
 
 describe('selectBrokerExecutionProfile (W2 admission)', () => {
@@ -256,11 +256,8 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     // Guards the fixtures themselves: an unmutated profile must hash-verify.
     const identity = makeIdentity()
     const { profile } = makeBrokerProfile(identity)
-    const recomputedSpec = project(profile.harnessInvocation.startRequest.spec, 'spec').specHash
-    const recomputedStart = project(
-      profile.harnessInvocation.startRequest,
-      'start-request'
-    ).startRequestHash
+    const recomputedSpec = neutralSpecHash(profile.harnessInvocation.startRequest.spec)
+    const recomputedStart = neutralStartRequestHash(profile.harnessInvocation.startRequest)
     expect(recomputedSpec).toBe(profile.harnessInvocation.specHash)
     expect(recomputedStart).toBe(profile.harnessInvocation.startRequestHash)
   })
