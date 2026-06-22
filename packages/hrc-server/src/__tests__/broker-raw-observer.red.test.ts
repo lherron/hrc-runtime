@@ -622,26 +622,31 @@ describe('T-05083/20 GET /v1/broker-events — observer close does not affect ru
     expect(healthRes.status).toBe(200)
   })
 
-  it('GET /v1/broker-events (RED primary signal) returns 404 before implementation', async () => {
+  it('GET /v1/broker-events returns 200 + NDJSON after observer close (not 404)', async () => {
     await seedBrokerInvocationInFixture()
     appendRawEvents(2)
 
     server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
 
-    // This is the canonical RED signal for this test suite.
-    // The route is not registered yet → 404.
-    // When green: 200 + NDJSON of 2 events.
+    // Open and close a raw observer first (the point of test 20)
+    const ac = new AbortController()
+    fixture
+      .fetchSocket(`/v1/broker-events?${rawObserverQS({ follow: true, afterSeq: 0 })}`, {
+        signal: ac.signal,
+      })
+      .catch(() => { /* absorb AbortError */ })
+    ac.abort()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // After closing the observer, a new follow=false snapshot request must still work.
+    // RED: route returns 404 (route not registered yet)
+    // When green: returns 200 with 2 events
     const res = await fixture.fetchSocket(
       `/v1/broker-events?${rawObserverQS({ afterSeq: 0, follow: false })}`
     )
 
-    // RED assertion: we expect 404 NOW (test passes when implementation is absent)
-    // but the test will FAIL once implementation lands (it'll return 200 instead).
-    // The other tests above assert the positive contract and are the true red gate.
-    //
-    // NOTE: Flip this expectation to `expect(res.status).toBe(200)` if you want
-    // this specific test to be the primary RED gate. As written, this sub-test is
-    // DOCUMENTATION of the current state, while the tests above are the true reds.
-    expect(res.status).toBe(404) // ← will fail once implementation returns 200
+    expect(res.status).toBe(200) // RED: will be 404 until implementation lands
+    const events = parseNdjson(await res.text())
+    expect(events).toHaveLength(2)
   })
 })
