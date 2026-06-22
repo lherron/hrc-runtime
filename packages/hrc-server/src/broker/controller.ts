@@ -119,6 +119,19 @@ export type {
   HarnessBrokerControllerDeps,
 } from './controller/types'
 
+function parseRawBrokerEnvelope(
+  record: HrcBrokerInvocationEventRecord
+): InvocationEventEnvelope | undefined {
+  if (!record.brokerEnvelopeJson) {
+    return undefined
+  }
+  try {
+    return JSON.parse(record.brokerEnvelopeJson) as InvocationEventEnvelope
+  } catch {
+    return undefined
+  }
+}
+
 type ActiveBrokerRuntime = {
   runtimeId: string
   invocationId: string
@@ -158,6 +171,12 @@ export class HarnessBrokerController {
   private readonly now: () => string
   private readonly serverInstanceId: string
   private readonly logger: BrokerControllerLogger
+  private readonly notifyRawBrokerEvent:
+    | ((notification: {
+        envelope: InvocationEventEnvelope
+        record: HrcBrokerInvocationEventRecord
+      }) => void)
+    | undefined
   private readonly active = new Map<string, ActiveBrokerRuntime>()
   private readonly intentionalClosingRuntimeIds = new Map<string, string>()
   // Lever 2 graceful exit: runtimes whose broker-tmux lease reap has been fired,
@@ -199,6 +218,7 @@ export class HarnessBrokerController {
     this.now = deps.now ?? (() => new Date().toISOString())
     this.serverInstanceId = deps.serverInstanceId ?? 'hrc-server'
     this.logger = deps.logger ?? {}
+    this.notifyRawBrokerEvent = deps.notifyRawBrokerEvent
   }
 
   private persistenceContext(): PersistenceContext {
@@ -718,6 +738,10 @@ export class HarnessBrokerController {
         lastEventSeq: envelope.seq,
         updatedAt: this.now(),
       })
+      const rawEnvelope = parseRawBrokerEnvelope(result.brokerEvent)
+      if (rawEnvelope) {
+        this.notifyRawBrokerEvent?.({ envelope: rawEnvelope, record: result.brokerEvent })
+      }
     }
 
     // Record the broker-pushed graceful-exit summary durably on the runtime so the

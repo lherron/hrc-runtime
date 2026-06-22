@@ -117,6 +117,7 @@ import type {
   HrcServerOptions,
   MessageSubscriber,
   PendingBrokerLiteralInput,
+  RawBrokerSubscriber,
   TurnResponseFinalizer,
 } from './server-types.js'
 import {
@@ -222,6 +223,7 @@ interface HrcServerInstance
 
 class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
+  readonly rawBrokerSubscribers = new Set<RawBrokerSubscriber>()
   readonly messageSubscribers = new Set<MessageSubscriber>()
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
@@ -261,6 +263,8 @@ class HrcServerInstance implements HrcServer {
       this.handleApplyAppSessions(request),
     [exactRouteKey('GET', '/v1/sessions/app')]: (_request, url) => this.handleListAppSessions(url),
     [exactRouteKey('GET', '/v1/events')]: (request, url) => this.handleEvents(url, request),
+    [exactRouteKey('GET', '/v1/broker-events')]: (request, url) =>
+      this.handleBrokerEvents(url, request),
     [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
       this.handleEventsLatestBySession(url),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
@@ -511,6 +515,7 @@ class HrcServerInstance implements HrcServer {
       }
     }
     this.followSubscribers.clear()
+    this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
     // Stop in-flight broker event consumers from projecting before the backing

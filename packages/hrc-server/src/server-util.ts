@@ -8,10 +8,10 @@ import {
   createHrcError,
   httpStatusForErrorCode,
 } from 'hrc-core'
-import type { HrcHttpError, HrcLifecycleEvent, HrcMessageRecord } from 'hrc-core'
+import type { HrcHttpError, HrcLifecycleEvent } from 'hrc-core'
 
-export function encodeNdjson(event: HrcLifecycleEvent | HrcMessageRecord): Uint8Array {
-  return new TextEncoder().encode(`${JSON.stringify(event)}\n`)
+export function encodeNdjson(value: unknown): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(value)}\n`)
 }
 
 export function serializeEvent(event: HrcLifecycleEvent): string {

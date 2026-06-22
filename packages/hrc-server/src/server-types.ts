@@ -1,4 +1,5 @@
 import type {
+  HrcBrokerInvocationEventRecord,
   HrcErrorCode,
   HrcEventEnvelope,
   HrcLaunchRecord,
@@ -12,6 +13,7 @@ import type {
   SweepZombieRunResult,
 } from 'hrc-core'
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
+import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
 import type { GhostmuxManagerOptions } from './ghostmux.js'
 
@@ -42,6 +44,13 @@ export type AttachDescriptorResponse = {
 }
 
 export type FollowSubscriber = (event: HrcEventEnvelope | HrcLifecycleEvent) => void
+
+export type RawBrokerEventNotification = {
+  envelope: InvocationEventEnvelope
+  record: HrcBrokerInvocationEventRecord
+}
+
+export type RawBrokerSubscriber = (notification: RawBrokerEventNotification) => void
 
 export type MessageSubscriber = (record: HrcMessageRecord) => void
 

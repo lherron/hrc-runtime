@@ -160,7 +160,7 @@ export class BrokerEventMapper {
     })
 
     if (appended.idempotent) {
-      return { idempotent: true, events: [], lifecycleEvents: [] }
+      return { idempotent: true, brokerEvent: appended.record, events: [], lifecycleEvents: [] }
     }
 
     // (b) Project state into HRC, then emit the raw provenance mirror plus the
@@ -190,6 +190,7 @@ export class BrokerEventMapper {
 
     return {
       idempotent: false,
+      brokerEvent: appended.record,
       events: [emitted],
       lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
     }

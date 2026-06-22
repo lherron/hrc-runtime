@@ -37,6 +37,8 @@ export type {
   StatusResponse,
   SurfaceListFilter,
   UnbindSurfaceRequest,
+  InvocationEventEnvelope,
+  WatchBrokerEventsOptions,
   WatchOptions,
   TargetListFilter,
   WatchMessagesOptions,

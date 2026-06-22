@@ -7,6 +7,7 @@
  */
 import {
   BROKER_TO_HRC_LIFECYCLE_KIND,
+  type HrcBrokerInvocationEventRecord,
   type HrcEventEnvelope,
   type HrcLifecycleEvent,
   type HrcLifecycleTransport,
@@ -110,6 +111,8 @@ export type BrokerEventMapperDeps = {
 export type BrokerProjectionResult = {
   /** True when the (invocationId, seq) was already applied with the same payload. */
   idempotent: boolean
+  /** Durable raw broker row appended or idempotently found for this envelope. */
+  brokerEvent: HrcBrokerInvocationEventRecord
   /** Raw `events`-table mirror appended this call (each `source:'broker'`); empty on idempotent re-apply. */
   events: HrcEventEnvelope[]
   /**

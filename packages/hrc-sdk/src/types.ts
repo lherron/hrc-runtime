@@ -75,6 +75,31 @@ export type WatchOptions = {
   signal?: AbortSignal | undefined
 }
 
+export type InvocationEventEnvelope = {
+  invocationId: string
+  seq: number
+  time: string
+  type: string
+  payload: unknown
+  turnId?: string | undefined
+  inputId?: string | undefined
+  itemId?: string | undefined
+  correlation?: unknown
+  driver?: unknown
+  harnessGeneration?: number | undefined
+  turnAttempt?: number | undefined
+}
+
+export type WatchBrokerEventsOptions = {
+  invocationId: string
+  runId: string
+  runtimeId: string
+  generation: number
+  afterSeq?: number | undefined
+  follow?: boolean | undefined
+  signal?: AbortSignal | undefined
+}
+
 /**
  * Filter options for `HrcClient.listLatestEventBySession()`.
  *

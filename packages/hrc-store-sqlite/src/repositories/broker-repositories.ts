@@ -456,6 +456,13 @@ export type BrokerInvocationEventAppendResult = {
   idempotent: boolean
 }
 
+export type BrokerInvocationEventAfterSeqSelector = {
+  invocationId: string
+  runId: string
+  runtimeId: string
+  afterSeq: number
+}
+
 export class BrokerInvocationEventConflictError extends Error {
   constructor(
     readonly invocationId: string,
@@ -594,6 +601,23 @@ export class BrokerInvocationEventRepository {
           ORDER BY seq ASC`
       )
       .all(invocationId)
+
+    return rows.map(mapBrokerInvocationEventRow)
+  }
+
+  listFromAfterSeq(
+    selector: BrokerInvocationEventAfterSeqSelector
+  ): HrcBrokerInvocationEventRecord[] {
+    const rows = this.db
+      .query<BrokerInvocationEventRow, [string, string, string, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE invocation_id = ?
+            AND run_id = ?
+            AND runtime_id = ?
+            AND seq > ?
+          ORDER BY seq ASC`
+      )
+      .all(selector.invocationId, selector.runId, selector.runtimeId, selector.afterSeq)
 
     return rows.map(mapBrokerInvocationEventRow)
   }

@@ -50,6 +50,7 @@ import type {
   HrcBridgeTargetResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
+  InvocationEventEnvelope,
   KillBrokerTmuxLeasesResponse,
   LatestEventBySessionFilter,
   LaunchListFilter,
@@ -88,6 +89,7 @@ import type {
   UnbindSurfaceRequest,
   WaitMessageRequest,
   WaitMessageResponse,
+  WatchBrokerEventsOptions,
   WatchMessagesOptions,
   WatchOptions,
 } from './types.js'
@@ -182,8 +184,8 @@ function matchesWatchOptions(event: HrcLifecycleEvent, options: WatchOptions | u
 export class HrcClient {
   private readonly socketPath: string
 
-  constructor(socketPath: string) {
-    this.socketPath = socketPath
+  constructor(socketPath: string | { socketPath: string }) {
+    this.socketPath = typeof socketPath === 'string' ? socketPath : socketPath.socketPath
   }
 
   // -- HTTP primitives -------------------------------------------------------
@@ -616,6 +618,28 @@ export class HrcClient {
       },
       options?.signal,
       (event) => matchesWatchOptions(event, options)
+    )
+  }
+
+  async *watchBrokerEvents(
+    options: WatchBrokerEventsOptions
+  ): AsyncIterable<InvocationEventEnvelope> {
+    const path = buildPath('/v1/broker-events', {
+      invocationId: options.invocationId,
+      runId: options.runId,
+      runtimeId: options.runtimeId,
+      generation: options.generation,
+      afterSeq: options.afterSeq ?? 0,
+      follow: boolField(options.follow),
+    })
+
+    yield* this.streamNdjson<InvocationEventEnvelope>(
+      path,
+      {
+        method: 'GET',
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+      options.signal
     )
   }
 

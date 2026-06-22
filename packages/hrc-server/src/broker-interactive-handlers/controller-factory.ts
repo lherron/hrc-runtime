@@ -134,6 +134,11 @@ export function getHarnessBrokerController(
         return result
       },
     },
+    notifyRawBrokerEvent: (event) => {
+      for (const subscriber of this.rawBrokerSubscribers) {
+        subscriber(event)
+      }
+    },
     tmuxAllocator,
     headlessSubstrateAllocator,
     headlessViewerAllocator,

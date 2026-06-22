@@ -5,7 +5,12 @@
  * here is re-exported from controller.ts so no external import changes.
  */
 
-import type { HrcBrokerInvocationRecord, HrcRunRecord, HrcRuntimeSnapshot } from 'hrc-core'
+import type {
+  HrcBrokerInvocationEventRecord,
+  HrcBrokerInvocationRecord,
+  HrcRunRecord,
+  HrcRuntimeSnapshot,
+} from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerClient } from 'spaces-harness-broker-client'
 import type { CloseHandler, StdioTransportStartOptions } from 'spaces-harness-broker-client'
@@ -335,6 +340,12 @@ export type HarnessBrokerControllerDeps = {
   now?: () => string
   serverInstanceId?: string
   logger?: BrokerControllerLogger
+  notifyRawBrokerEvent?:
+    | ((notification: {
+        envelope: InvocationEventEnvelope
+        record: HrcBrokerInvocationEventRecord
+      }) => void)
+    | undefined
 }
 
 export type BrokerControllerStartInput = {

@@ -34,6 +34,7 @@ import type { ServerContext } from './server-context.js'
 import type {
   HrcServerOptions,
   PendingBrokerLiteralInput,
+  RawBrokerSubscriber,
   TurnResponseFinalizer,
 } from './server-types.js'
 import type { SweepHandlersMethods } from './sweep-handlers.js'
@@ -145,5 +146,6 @@ type HrcServerInstanceDataForHandlers = {
   brokerClientFactory?: BrokerClientFactory | undefined
   brokerUnixClientFactory?: BrokerUnixClientFactory | undefined
   readonly followSubscribers: Set<(event: HrcEventEnvelope | HrcLifecycleEvent) => void>
+  readonly rawBrokerSubscribers: Set<RawBrokerSubscriber>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
 }
