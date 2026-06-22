@@ -272,6 +272,7 @@ export async function handleHeadlessBrokerDispatchTurn(
   runId: string,
   options: {
     waitForCompletion?: boolean | undefined
+    whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
   } = {}
 ): Promise<Response> {
@@ -309,7 +310,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       // that case; the queued path inside executeHeadlessBrokerInputTurn keeps
       // the active run's pointers intact and relies on the event-mapper to
       // flip invocation.runId on input.accepted for the drained input.
-      if (!isBrokerRuntimeQueueCapable(this.db, reusableRuntime)) {
+      if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(this.db, reusableRuntime)) {
         assertRuntimeNotBusy(this.db, reusableRuntime)
       }
       return await this.executeHeadlessBrokerInputTurn(
@@ -356,7 +357,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         hostSessionId: session.hostSessionId,
         runtimeId: recovered.runtimeId,
       })
-      if (!isBrokerRuntimeQueueCapable(this.db, recovered)) {
+      if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(this.db, recovered)) {
         assertRuntimeNotBusy(this.db, recovered)
       }
       return await this.executeHeadlessBrokerInputTurn(session, recovered, prompt, runId, options)

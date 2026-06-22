@@ -330,6 +330,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
   const waitForCompletion = readOptionalBooleanField(input, 'waitForCompletion')
+  const whenBusy = parseOptionalDispatchTurnWhenBusy(input['whenBusy'])
   const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
   const repair = parseOptionalDispatchTurnRepair(input['repair'])
 
@@ -342,9 +343,29 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
       : {}),
     ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
     ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
+    ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(repair !== undefined ? { repair } : {}),
   }
+}
+
+function parseOptionalDispatchTurnWhenBusy(
+  input: unknown
+): DispatchTurnRequest['whenBusy'] | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (input === 'reject') {
+    return 'reject'
+  }
+
+  const error = new HrcBadRequestError(
+    HrcErrorCode.MALFORMED_REQUEST,
+    'whenBusy must be "reject"',
+    { field: 'whenBusy', value: input }
+  )
+  Object.defineProperty(error, 'status', { value: 422 })
+  throw error
 }
 
 function parseOptionalDispatchTurnRepair(

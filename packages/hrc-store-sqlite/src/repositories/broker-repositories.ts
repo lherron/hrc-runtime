@@ -463,6 +463,12 @@ export type BrokerInvocationEventAfterSeqSelector = {
   afterSeq: number
 }
 
+function isTerminalRunStatus(status: string): boolean {
+  return (
+    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'reaped'
+  )
+}
+
 export class BrokerInvocationEventConflictError extends Error {
   constructor(
     readonly invocationId: string,
@@ -498,6 +504,10 @@ export class BrokerInvocationEventRepository {
     this.appendInTransaction = db.transaction(
       (input: BrokerInvocationEventAppendInput): BrokerInvocationEventAppendResult => {
         const brokerEventJson = JSON.stringify(input.payload ?? null)
+        const brokerEnvelopeJson = this.enrichEnvelopeJsonWithRepairCorrelation(
+          input.envelopeJson,
+          input.runId
+        )
 
         const existing = this.db
           .query<BrokerInvocationEventRow, [string, number]>(
@@ -554,7 +564,7 @@ export class BrokerInvocationEventRepository {
           input.harnessGeneration ?? null,
           input.turnAttempt ?? null,
           brokerEventJson,
-          input.envelopeJson ?? null,
+          brokerEnvelopeJson ?? null,
           input.hrcEventSeq ?? null,
           input.projectionStatus ?? 'pending',
           input.projectionError ?? null,
@@ -568,6 +578,43 @@ export class BrokerInvocationEventRepository {
         return { record: stored, idempotent: false }
       }
     )
+  }
+
+  private enrichEnvelopeJsonWithRepairCorrelation(
+    envelopeJson: string | undefined,
+    runId: string | undefined
+  ): string | undefined {
+    if (envelopeJson === undefined || runId === undefined) {
+      return envelopeJson
+    }
+
+    const run = this.db
+      .query<{ status: string; correlation_json: string | null }, [string]>(
+        'SELECT status, correlation_json FROM runs WHERE run_id = ?'
+      )
+      .get(runId)
+    if (!run?.correlation_json || isTerminalRunStatus(run.status)) {
+      return envelopeJson
+    }
+
+    try {
+      const envelope = JSON.parse(envelopeJson) as { correlation?: unknown }
+      if (envelope.correlation !== undefined) {
+        return envelopeJson
+      }
+
+      const correlation = JSON.parse(run.correlation_json) as {
+        kind?: unknown
+        repairRunId?: unknown
+      }
+      if (correlation.kind !== 'json_repair' || correlation.repairRunId !== runId) {
+        return envelopeJson
+      }
+
+      return JSON.stringify({ ...envelope, correlation })
+    } catch {
+      return envelopeJson
+    }
   }
 
   /**

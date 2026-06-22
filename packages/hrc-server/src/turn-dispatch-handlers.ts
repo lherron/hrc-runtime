@@ -122,6 +122,7 @@ export async function handleDispatchTurn(
   return await this.dispatchTurnForSession(session, intent, body.prompt, {
     runId,
     waitForCompletion: body.waitForCompletion,
+    whenBusy: body.whenBusy,
     ...(body.repair !== undefined
       ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
       : {}),
@@ -349,6 +350,7 @@ export async function dispatchTurnForSession(
     runId?: string | undefined
     ensureInteractiveRuntime?: boolean | undefined
     waitForCompletion?: boolean | undefined
+    whenBusy?: 'reject' | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
   } = {}
@@ -420,6 +422,7 @@ export async function dispatchTurnForSession(
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
+          whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
         })
       )

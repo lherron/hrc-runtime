@@ -144,6 +144,7 @@ export type DispatchTurnRequest = {
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   waitForCompletion?: boolean | undefined
+  whenBusy?: 'reject' | undefined
   repair?:
     | {
         kind: 'json_validation' | 'json_repair'

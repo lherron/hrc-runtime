@@ -82,10 +82,7 @@ function matchesBrokerEventsSelector(
   )
 }
 
-function parseBrokerEnvelopeRow(
-  server: HrcServerInstanceForHandlers,
-  row: HrcBrokerInvocationEventRecord
-): InvocationEventEnvelope {
+function parseBrokerEnvelopeRow(row: HrcBrokerInvocationEventRecord): InvocationEventEnvelope {
   if (!row.brokerEnvelopeJson) {
     throw new HrcBadRequestError(
       HrcErrorCode.INVALID_SELECTOR,
@@ -93,19 +90,7 @@ function parseBrokerEnvelopeRow(
       { invocationId: row.invocationId, seq: row.seq }
     )
   }
-  const envelope = JSON.parse(row.brokerEnvelopeJson) as InvocationEventEnvelope
-  if (envelope.correlation !== undefined || row.runId === undefined) {
-    return envelope
-  }
-  const correlationJson = server.db.runs.getCorrelationJson(row.runId)
-  if (!correlationJson) {
-    return envelope
-  }
-  try {
-    return { ...envelope, correlation: JSON.parse(correlationJson) }
-  } catch {
-    return envelope
-  }
+  return JSON.parse(row.brokerEnvelopeJson) as InvocationEventEnvelope
 }
 
 function listBrokerEventsFromAfterSeq(
@@ -119,7 +104,7 @@ function listBrokerEventsFromAfterSeq(
       runtimeId: selector.runtimeId,
       afterSeq: selector.afterSeq,
     })
-    .map((row) => parseBrokerEnvelopeRow(server, row))
+    .map((row) => parseBrokerEnvelopeRow(row))
 }
 
 export function parseEventsRouteFilters(
@@ -275,7 +260,7 @@ export function handleBrokerEvents(
     if (!matchesBrokerEventsSelector(notification.record, selector)) {
       return
     }
-    const envelope = parseBrokerEnvelopeRow(this, notification.record)
+    const envelope = parseBrokerEnvelopeRow(notification.record)
 
     if (controllerRef) {
       if (envelope.seq > replayHighWater) {

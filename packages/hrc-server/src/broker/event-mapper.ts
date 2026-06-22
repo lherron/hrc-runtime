@@ -132,6 +132,7 @@ export class BrokerEventMapper {
       operationId: invocation.operationId,
       runId: resolvedRunId,
     }
+    const persistedEnvelope = this.envelopeWithWriteTimeRepairCorrelation(envelope, ctx.runId)
 
     // (a) Idempotent append keyed by (invocationId, seq). A duplicate with the
     // same payload short-circuits with no projection; a divergent payload throws
@@ -147,16 +148,18 @@ export class BrokerEventMapper {
       // identity is (invocationId, runId, harnessGeneration, turnAttempt,
       // toolCallId), but broker_event_json holds only envelope.payload, so these
       // two envelope fields must be persisted explicitly to survive restart.
-      ...(envelope.harnessGeneration !== undefined
-        ? { harnessGeneration: envelope.harnessGeneration }
+      ...(persistedEnvelope.harnessGeneration !== undefined
+        ? { harnessGeneration: persistedEnvelope.harnessGeneration }
         : {}),
-      ...(envelope.turnAttempt !== undefined ? { turnAttempt: envelope.turnAttempt } : {}),
-      payload: envelope.payload,
+      ...(persistedEnvelope.turnAttempt !== undefined
+        ? { turnAttempt: persistedEnvelope.turnAttempt }
+        : {}),
+      payload: persistedEnvelope.payload,
       // T-05078: persist the FULL envelope verbatim as the wire authority for the
       // read-only raw observer (`GET /v1/broker-events`). payload alone drops the
       // optional envelope-level fields (turnId/inputId/itemId/correlation/driver)
       // that agent-loop's projector reconstructs.
-      envelopeJson: JSON.stringify(envelope),
+      envelopeJson: JSON.stringify(persistedEnvelope),
     })
 
     if (appended.idempotent) {
@@ -171,12 +174,12 @@ export class BrokerEventMapper {
     // — keeping the returned `lifecycleEvents` order identical to replay-by-hrcSeq
     // (and semantically the tool_call precedes the awaiting_input it triggers).
     const derivedDescriptors: DerivedTurnDescriptor[] = []
-    const stale = this.isStaleLifecycleEnvelope(envelope, invocation, runtime)
-    this.projectState(envelope, ctx, now, stale, derivedDescriptors)
-    const emitted = emitBrokerEvent(db, envelope, ctx, now)
-    const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, envelope, ctx, now)
+    const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
+    this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
+    const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
+    const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
     const derived = derivedDescriptors.map((descriptor) =>
-      emitDerivedTurnEvent(db, descriptor.eventKind, envelope, ctx, now, {
+      emitDerivedTurnEvent(db, descriptor.eventKind, persistedEnvelope, ctx, now, {
         toolUseId: descriptor.toolUseId,
         toolName: descriptor.toolName,
       })
@@ -193,6 +196,28 @@ export class BrokerEventMapper {
       brokerEvent: appended.record,
       events: [emitted],
       lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
+    }
+  }
+
+  private envelopeWithWriteTimeRepairCorrelation(
+    envelope: InvocationEventEnvelope,
+    runId: string | undefined
+  ): InvocationEventEnvelope {
+    if (envelope.correlation !== undefined || runId === undefined) {
+      return envelope
+    }
+    const correlationJson = this.db.runs.getCorrelationJson(runId)
+    if (!correlationJson) {
+      return envelope
+    }
+    try {
+      const correlation = JSON.parse(correlationJson) as Record<string, string>
+      if (correlation['kind'] !== 'json_repair' || correlation['repairRunId'] !== runId) {
+        return envelope
+      }
+      return { ...envelope, correlation }
+    } catch {
+      return envelope
     }
   }
 

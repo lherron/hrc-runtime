@@ -26,6 +26,7 @@ import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
+  assertRuntimeNotBusy,
   classifyBrokerInputFailure,
   isBrokerRuntimeQueueCapable,
   isRunActive,
@@ -244,6 +245,7 @@ export async function executeHeadlessBrokerInputTurn(
   runId: string,
   options: {
     waitForCompletion?: boolean | undefined
+    whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
   }
 ): Promise<Response> {
@@ -269,6 +271,9 @@ export async function executeHeadlessBrokerInputTurn(
   const activeRun =
     runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
   const queuedMode = activeRun !== null && isRunActive(activeRun) && activeRun.runId !== runId
+  if (options.whenBusy === 'reject' && queuedMode) {
+    assertRuntimeNotBusy(this.db, runtime)
+  }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
 
   const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
