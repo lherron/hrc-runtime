@@ -23,7 +23,8 @@
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
-    "hrc-core": "*"
+    "hrc-core": "*",
+    "spaces-config": "0.1.1-dev.20260623072726"
   },
   "devDependencies": {
     "@types/bun": "latest",

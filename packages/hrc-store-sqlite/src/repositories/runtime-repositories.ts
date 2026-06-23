@@ -343,6 +343,26 @@ export class RunRepository {
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
   }
 
+  // H-00104 Node C (C-0004): raw opaque correlation metadata stamped on a run by
+  // `hrc run annotate`. Stored and echoed verbatim — HRC never interprets it, so
+  // these accessors deliberately do not parse or validate the JSON shape. They
+  // live off the run record proper (`HrcRunRecord`) to keep the run projection
+  // free of operator-convenience metadata. `getCorrelationJson` returns null
+  // both when the run is missing and when no correlation was annotated; callers
+  // that must distinguish use `getByRunId` first.
+  getCorrelationJson(runId: string): string | null {
+    const row = this.db
+      .query<{ correlation_json: string | null }, [string]>(
+        'SELECT correlation_json FROM runs WHERE run_id = ?'
+      )
+      .get(runId)
+    return row?.correlation_json ?? null
+  }
+
+  setCorrelationJson(runId: string, json: string | null): void {
+    execute(this.db, 'UPDATE runs SET correlation_json = ? WHERE run_id = ?', json, runId)
+  }
+
   getByRunId(runId: string): HrcRunRecord | null {
     const row = this.db
       .query<RunRow, [string]>(`SELECT ${RUN_COLUMNS} FROM runs WHERE run_id = ?`)

@@ -91,6 +91,7 @@ export type BrokerCompileAdapterInput = {
   dispatchEnv?: Record<string, string> | undefined
   continuation?: RuntimeCompileRequest['continuation']
   policy?: RuntimeCompileRequest['hrcPolicy'] | undefined
+  allowCompilerInitialInputWithoutIdentity?: boolean | undefined
 }
 
 /**
@@ -121,7 +122,7 @@ export type BrokerCompileAdapterResult =
 /** True when the intent carries an initial user turn (prompt and/or attachments). */
 function hasInitialUserTurn(intent: HrcRuntimeIntent): boolean {
   return (
-    intent.initialPrompt !== undefined ||
+    (typeof intent.initialPrompt === 'string' && intent.initialPrompt.length > 0) ||
     (intent.attachments?.length ?? 0) > 0 ||
     hasManagedInteractiveStartupPrompt(intent)
   )
@@ -321,7 +322,9 @@ export async function compileBrokerRuntimePlan(
     }
   }
 
-  const selection = selectBrokerExecutionProfile(response.compileResponse, identity)
+  const selection = selectBrokerExecutionProfile(response.compileResponse, identity, {
+    allowCompilerInitialInputWithoutIdentity: input.allowCompilerInitialInputWithoutIdentity,
+  })
 
   if (!selection.admitted) {
     return {

@@ -458,7 +458,7 @@ export type BrokerInvocationEventAppendResult = {
 
 export type BrokerInvocationEventAfterSeqSelector = {
   invocationId: string
-  runId: string
+  runId?: string | undefined
   runtimeId: string
   afterSeq: number
 }
@@ -665,16 +665,27 @@ export class BrokerInvocationEventRepository {
   listFromAfterSeq(
     selector: BrokerInvocationEventAfterSeqSelector
   ): HrcBrokerInvocationEventRecord[] {
-    const rows = this.db
-      .query<BrokerInvocationEventRow, [string, string, string, number]>(
-        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
-          WHERE invocation_id = ?
-            AND run_id = ?
-            AND runtime_id = ?
-            AND seq > ?
-          ORDER BY seq ASC`
-      )
-      .all(selector.invocationId, selector.runId, selector.runtimeId, selector.afterSeq)
+    const rows =
+      selector.runId !== undefined
+        ? this.db
+            .query<BrokerInvocationEventRow, [string, string, string, number]>(
+              `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+                WHERE invocation_id = ?
+                  AND run_id = ?
+                  AND runtime_id = ?
+                  AND seq > ?
+                ORDER BY seq ASC`
+            )
+            .all(selector.invocationId, selector.runId, selector.runtimeId, selector.afterSeq)
+        : this.db
+            .query<BrokerInvocationEventRow, [string, string, number]>(
+              `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+                WHERE invocation_id = ?
+                  AND runtime_id = ?
+                  AND seq > ?
+                ORDER BY seq ASC`
+            )
+            .all(selector.invocationId, selector.runtimeId, selector.afterSeq)
 
     return rows.map(mapBrokerInvocationEventRow)
   }

@@ -16,6 +16,7 @@ export type HrcMonitorCondition =
   | 'response'
   | 'response-or-idle'
   | 'runtime-dead'
+  | 'terminal'
 
 export type HrcMonitorConditionResult =
   | 'turn_succeeded'
@@ -279,6 +280,23 @@ const CONDITION_STRATEGIES = {
     start: () => null,
     event: (context, event) => evaluateResponseOrIdle(context, event),
   },
+  // `terminal` resolves when the run/runtime reaches ANY terminal state — turn
+  // finished (success or failure), or runtime death/crash. Unlike `turn-finished`
+  // / `runtime-dead`, reaching terminal IS the satisfied condition, so every
+  // terminal outcome exits 0; only timeout/stall yields a non-zero code. This is
+  // the wait the Invocation-DAG coordinator uses to close out one attempt.
+  terminal: {
+    start: (context, snapshot) => {
+      if (isDeadRuntimeStatus(snapshot.runtime?.status)) {
+        return { result: 'already_dead', exitCode: EXIT_CODE.ok }
+      }
+      if (context.capture.activeTurnId === null) {
+        return { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
+      }
+      return null
+    },
+    event: (context, event) => evaluateTerminal(context, event),
+  },
 } satisfies Record<HrcMonitorCondition, ConditionStrategy>
 
 function evaluateStartSnapshot(
@@ -298,8 +316,9 @@ function evaluateEvent(
   if (contextChanged) return contextChanged
 
   // The dedicated 'runtime-dead' arm below handles runtime death explicitly;
-  // for every other condition, surface a runtime death/crash as the outcome.
-  if (context.condition !== 'runtime-dead') {
+  // 'terminal' handles it inside its own strategy (exit 0, not a failure code).
+  // For every other condition, surface a runtime death/crash as the outcome.
+  if (context.condition !== 'runtime-dead' && context.condition !== 'terminal') {
     const runtimeFailure = runtimeDeathOutcome(context, event)
     if (runtimeFailure) return runtimeFailure
   }
@@ -320,6 +339,29 @@ function evaluateTurnFinished(
     return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
   }
   return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
+}
+
+function evaluateTerminal(
+  context: EvaluationContext,
+  event: MonitorOutputEvent
+): HrcMonitorConditionOutcome | null {
+  if (eventKind(event) === 'turn.finished' && sameCapturedTurn(context, event)) {
+    const result = resultValue(event, 'turn_succeeded')
+    return result === 'turn_failed'
+      ? { result, exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
+      : { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
+  }
+  if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
+    return { result: 'runtime_dead', exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
+  }
+  if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
+    return {
+      result: 'runtime_crashed',
+      exitCode: EXIT_CODE.ok,
+      failureKind: failureKindValue(event),
+    }
+  }
+  return null
 }
 
 function evaluateResponse(

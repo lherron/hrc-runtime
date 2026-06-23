@@ -10,7 +10,7 @@ import { encodeNdjson, json, serializeEvent } from './server-util.js'
 
 export type BrokerEventsRouteSelector = {
   invocationId: string
-  runId: string
+  runId?: string | undefined
   runtimeId: string
   generation: number
   afterSeq: number
@@ -44,7 +44,9 @@ export function parseBrokerEventsRouteSelector(
 
   return {
     invocationId: requireQuery(searchParams, 'invocationId'),
-    runId: requireQuery(searchParams, 'runId'),
+    ...(normalizeOptionalQuery(searchParams.get('runId')) !== undefined
+      ? { runId: normalizeOptionalQuery(searchParams.get('runId')) }
+      : {}),
     runtimeId: requireQuery(searchParams, 'runtimeId'),
     generation,
     afterSeq,
@@ -76,7 +78,7 @@ function matchesBrokerEventsSelector(
 ): boolean {
   return (
     record.invocationId === selector.invocationId &&
-    record.runId === selector.runId &&
+    (selector.runId === undefined || record.runId === selector.runId) &&
     record.runtimeId === selector.runtimeId &&
     record.seq > selector.afterSeq
   )
@@ -100,7 +102,7 @@ function listBrokerEventsFromAfterSeq(
   return server.db.brokerInvocationEvents
     .listFromAfterSeq({
       invocationId: selector.invocationId,
-      runId: selector.runId,
+      ...(selector.runId !== undefined ? { runId: selector.runId } : {}),
       runtimeId: selector.runtimeId,
       afterSeq: selector.afterSeq,
     })

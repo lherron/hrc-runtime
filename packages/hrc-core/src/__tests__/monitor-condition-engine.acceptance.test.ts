@@ -9,6 +9,7 @@ type MonitorCondition =
   | 'response'
   | 'response-or-idle'
   | 'runtime-dead'
+  | 'terminal'
 
 type MonitorOutcome = {
   result: string
@@ -220,6 +221,76 @@ async function waitForCondition(
     timeoutMs: 25,
   })
 }
+
+// H-00104 Node C (C-0004): `--until terminal` — the wait the Invocation-DAG
+// coordinator uses to close out one attempt. ANY terminal state satisfies it
+// (exit 0); only timeout/stall is non-zero.
+describe('terminal condition (C-0004)', () => {
+  test('resolves on turn.finished success with exit 0', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: 'turn-captured' }),
+        event(101, 'turn.finished', { turnId: 'turn-captured', result: 'turn_succeeded' }),
+      ],
+    })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'turn_succeeded',
+      exitCode: 0,
+    })
+  })
+
+  test('resolves on a FAILED turn with exit 0 (reaching terminal is the success)', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: 'turn-captured' }),
+        event(101, 'turn.finished', {
+          turnId: 'turn-captured',
+          result: 'turn_failed',
+          failureKind: 'tool',
+        }),
+      ],
+    })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'turn_failed',
+      exitCode: 0,
+    })
+  })
+
+  test('resolves on runtime death with exit 0 (not a failure code)', async () => {
+    const state = createFixtureState({
+      events: [
+        event(100, 'turn.started', { turnId: 'turn-captured' }),
+        event(101, 'runtime.dead', {
+          turnId: 'turn-captured',
+          result: 'runtime_dead',
+          failureKind: 'process',
+        }),
+      ],
+    })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'runtime_dead',
+      exitCode: 0,
+    })
+  })
+
+  test('resolves immediately when there is no active turn', async () => {
+    const state = createFixtureState({ activeTurnId: null, runtimeStatus: 'idle' })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'no_active_turn',
+      exitCode: 0,
+    })
+  })
+
+  test('times out (exit 1) while a turn is still in flight', async () => {
+    const state = createFixtureState({
+      events: [event(100, 'turn.started', { turnId: 'turn-captured' })],
+    })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'timeout',
+      exitCode: 1,
+    })
+  })
+})
 
 describe('monitor condition engine acceptance (T-01288 / docs/monitor-spec.md section 6)', () => {
   test.each([

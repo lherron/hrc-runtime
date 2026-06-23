@@ -21,6 +21,7 @@ export {
   parseInspectRuntimeRequest,
   parseListRunsFilter,
   parseListRuntimesFilter,
+  parseOpenBrokerSessionRequest,
   parsePrepareAttachedRunRequest,
   parseResumeAttachedRunRequest,
   parseRuntimeActionBody,

@@ -77,7 +77,10 @@ export async function startHeadlessBrokerRuntime(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   prompt: string,
-  runId: string
+  runId: string,
+  options: {
+    allowCompilerInitialInputWithoutIdentity?: boolean | undefined
+  } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const turnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
@@ -95,6 +98,7 @@ export async function startHeadlessBrokerRuntime(
         generation: session.generation,
         dispatchEnv: hrcDispatchEnv,
         continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
+        allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),

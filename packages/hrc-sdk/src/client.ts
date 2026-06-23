@@ -55,6 +55,8 @@ import type {
   LatestEventBySessionFilter,
   LaunchListFilter,
   ListMessagesResponse,
+  OpenBrokerSessionRequest,
+  OpenBrokerSessionResponse,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
   ReconcileActiveRunsRequest,
@@ -276,6 +278,10 @@ export class HrcClient {
 
   async startRuntime(request: StartRuntimeRequest): Promise<StartRuntimeResponse> {
     return this.postJson<StartRuntimeResponse>('/v1/runtimes/start', request)
+  }
+
+  async openBrokerSession(request: OpenBrokerSessionRequest): Promise<OpenBrokerSessionResponse> {
+    return this.postJson<OpenBrokerSessionResponse>('/v1/broker-sessions/open', request)
   }
 
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {

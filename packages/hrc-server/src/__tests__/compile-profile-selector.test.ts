@@ -203,6 +203,45 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('initial-input-id-mismatch')
   })
 
+  it('REJECTS compiler-derived initialInput when HRC allocated no initial input identity by default', () => {
+    const identity = makeIdentity()
+    identity.initialInputId = undefined
+    identity.runId = undefined
+    const { profile } = makeBrokerProfile(identity, {
+      withInitialInput: true,
+      initialInputId: 'input_profile_priming',
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity
+    )
+
+    expect(selection.admitted).toBe(false)
+    if (selection.admitted) return
+    expect(selection.code).toBe('initial-input-id-mismatch')
+  })
+
+  it('ADMITS compiler-derived initialInput without HRC identity when session-open opts in', () => {
+    const identity = makeIdentity()
+    identity.initialInputId = undefined
+    identity.runId = undefined
+    const { profile } = makeBrokerProfile(identity, {
+      withInitialInput: true,
+      initialInputId: 'input_profile_priming',
+    })
+    const selection = selectBrokerExecutionProfile(
+      makeCompileResponse(identity, [profile]),
+      identity,
+      { allowCompilerInitialInputWithoutIdentity: true }
+    )
+
+    expect(selection.admitted).toBe(true)
+    if (!selection.admitted) return
+    expect(selection.startRequest.initialInput?.inputId).toBe('input_profile_priming')
+    expect(identity.initialInputId).toBeUndefined()
+    expect(identity.runId).toBeUndefined()
+  })
+
   it('ADMITS an interactive tmux profile primed via launch argv (no broker initialInput)', () => {
     // The launch-primed contract: an initial turn exists, so the caller still
     // allocates identity.initialInputId, but the compiler delivers the priming

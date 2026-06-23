@@ -48,6 +48,15 @@ export type BrokerProfileSelection =
     }
   | { admitted: false; code: BrokerProfileRejectionCode }
 
+export interface BrokerExecutionProfileSelectionOptions {
+  /**
+   * Session-open may allow ASPC bundle/profile priming to materialize as broker
+   * initialInput even though HRC intentionally allocated no run/initialInputId.
+   * Ordinary turn dispatch remains strict by default.
+   */
+  allowCompilerInitialInputWithoutIdentity?: boolean | undefined
+}
+
 /**
  * Admissible broker-protocol version for the static selector (T-01866).
  *
@@ -174,7 +183,8 @@ function deepFreeze<T>(value: T): T {
  */
 export function selectBrokerExecutionProfile(
   response: RuntimeCompileResponse,
-  identity: RuntimeIdentityAllocation
+  identity: RuntimeIdentityAllocation,
+  options: BrokerExecutionProfileSelectionOptions = {}
 ): BrokerProfileSelection {
   if (!response.ok) {
     return { admitted: false, code: 'compile-not-ok' }
@@ -219,10 +229,12 @@ export function selectBrokerExecutionProfile(
   const initialInput = startRequest.initialInput
   const primingViaLaunch = startRequest.spec.launch?.initialPrompt !== undefined
   if (!(primingViaLaunch && initialInput === undefined)) {
-    if (identity.initialInputId !== undefined || initialInput !== undefined) {
+    if (identity.initialInputId !== undefined) {
       if (initialInput?.inputId !== identity.initialInputId) {
         return { admitted: false, code: 'initial-input-id-mismatch' }
       }
+    } else if (initialInput !== undefined && !options.allowCompilerInitialInputWithoutIdentity) {
+      return { admitted: false, code: 'initial-input-id-mismatch' }
     }
   }
 

@@ -1,5 +1,14 @@
 export { discoverSocket } from './discover.js'
 export { HrcClient } from './client.js'
+export {
+  buildHrcRuntimeIntent,
+  harnessFrontendToHrcHarness,
+  resolveAgentHarness,
+} from './resolve-intent.js'
+export type {
+  BuildHrcRuntimeIntentInput,
+  ResolvedAgentHarness,
+} from './resolve-intent.js'
 export type {
   AdoptRuntimeRequest,
   AttachDescriptor,
@@ -54,6 +63,8 @@ export type {
   CreateMessageResponse,
   ListMessagesRequest,
   ListMessagesResponse,
+  OpenBrokerSessionRequest,
+  OpenBrokerSessionResponse,
   WatchMessagesRequest,
   WaitMessageRequest,
   WaitMessageResponse,

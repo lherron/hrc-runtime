@@ -721,6 +721,28 @@ const runEnrichmentFilterIndexesMigration: HrcMigration = {
   },
 }
 
+// H-00104 Node C (C-0004): opaque, best-effort correlation metadata an operator
+// can stamp on an HRC run via `hrc run annotate --correlation`. HRC stores and
+// echoes it verbatim and never interprets it; the DAG attempt edge is
+// authoritative. Nullable/additive — legacy runs leave it unset.
+const runCorrelationMigration: HrcMigration = {
+  id: '0016_run_correlation',
+  apply(db) {
+    const existing = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!existing.has('correlation_json')) {
+      db.exec(`
+        ALTER TABLE runs
+        ADD COLUMN correlation_json TEXT
+      `)
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -738,4 +760,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcEventsCanonicalReaderIndexesMigration,
   runSessionLookupIndexesMigration,
   runEnrichmentFilterIndexesMigration,
+  runCorrelationMigration,
 ]

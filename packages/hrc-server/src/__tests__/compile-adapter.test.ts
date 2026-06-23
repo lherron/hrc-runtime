@@ -204,6 +204,81 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(req?.identity.runId).toBeUndefined()
   })
 
+  it('rejects compiler-derived initialInput without identity by default', async () => {
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      expect(identity.initialInputId).toBeUndefined()
+      expect(identity.runId).toBeUndefined()
+      const { profile } = makeBrokerProfile(identity, {
+        withInitialInput: true,
+        initialInputId: 'input_profile_priming',
+      })
+      return makeAspcCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({ initialPrompt: undefined }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(result.admitted).toBe(false)
+    if (result.admitted) return
+    expect(result.code).toBe('initial-input-id-mismatch')
+    expect(result.identity.initialInputId).toBeUndefined()
+    expect(result.identity.runId).toBeUndefined()
+  })
+
+  it('admits compiler-derived profile priming without HRC run identity when explicitly allowed', async () => {
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      expect(identity.initialInputId).toBeUndefined()
+      expect(identity.runId).toBeUndefined()
+      const { profile } = makeBrokerProfile(identity, {
+        withInitialInput: true,
+        initialInputId: 'input_profile_priming',
+      })
+      return makeAspcCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        intent: makeIntent({ initialPrompt: undefined }),
+        hostSessionId: 'hostSession_T1',
+        generation: 1,
+        allowCompilerInitialInputWithoutIdentity: true,
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(result.admitted).toBe(true)
+    if (!result.admitted) return
+    expect(result.startRequest.initialInput?.inputId).toBe('input_profile_priming')
+    expect(result.identity.initialInputId).toBeUndefined()
+    expect(result.identity.runId).toBeUndefined()
+  })
+
+  it('treats an empty initialPrompt as no initial turn', async () => {
+    const { compileHarnessInvocation, captured } = makeCapturingCompile()
+    const input = {
+      intent: makeIntent({ initialPrompt: '' }),
+      hostSessionId: 'hostSession_T1',
+      generation: 1,
+    }
+    await compileBrokerRuntimePlan(input, { compileHarnessInvocation, ids: makeIdAllocator() })
+    const req = captured.request
+    expect(req?.identity.initialInputId).toBeUndefined()
+    expect(req?.identity.runId).toBeUndefined()
+    expect(req?.materialization.initialPrompt).toBe('')
+  })
+
   it('allocates initialInputId and runId for managed interactive starts without an explicit prompt', async () => {
     const captured: { request?: RuntimeCompileRequest } = {}
     const compileHarnessInvocation = async (request: {

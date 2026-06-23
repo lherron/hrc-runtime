@@ -43,6 +43,8 @@ export type {
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   KillBrokerTmuxLeasesResponse,
+  OpenBrokerSessionRequest,
+  OpenBrokerSessionResponse,
   RuntimeActionResponse,
   StatusResponse,
   SweepZombieRunsRequest,
@@ -92,7 +94,7 @@ export type InvocationEventEnvelope = {
 
 export type WatchBrokerEventsOptions = {
   invocationId: string
-  runId: string
+  runId?: string | undefined
   runtimeId: string
   generation: number
   afterSeq?: number | undefined

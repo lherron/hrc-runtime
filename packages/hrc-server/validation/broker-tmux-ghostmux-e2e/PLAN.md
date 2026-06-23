@@ -172,7 +172,35 @@ three transports, not just the interactive tmux broker:
    packages/hrc-server/validation/broker-tmux-ghostmux-e2e/bin/setup.sh --full --allow-restart --watch
    ```
 
-6. Open the generated run directory printed by setup. It contains:
+6. For daemon/SDK broker-session endpoint changes, smoke the installed daemon
+   surface directly. This covers endpoints that intentionally have no `hrc` CLI
+   command, such as `POST /v1/broker-sessions/open`.
+
+   Preconditions:
+
+   - The change has been installed with `just install`.
+   - The launchd daemon has been restarted and is healthy:
+
+     ```bash
+     launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
+     hrc server status
+     ```
+
+   Run from the repo root:
+
+   ```bash
+   bun packages/hrc-server/validation/broker-tmux-ghostmux-e2e/scripts/broker-session-open-smoke.ts
+   ```
+
+   Pass criteria:
+
+   - Output has `"ok": true`.
+   - `status` is `ready`.
+   - `selectorKeys` is exactly `["generation","invocationId","runtimeId"]`.
+   - `runCount` is `0`.
+   - `supportsInputQueue` is `true` for the codex app-server broker route.
+
+7. Open the generated run directory printed by setup. It contains:
 
    - `env.json`
    - `default-sock.baseline`
@@ -181,7 +209,7 @@ three transports, not just the interactive tmux broker:
    - ignored heavy evidence under `evidence/`
    - ignored event journals under `events/`
 
-7. For each matrix row, run the command manually against both targets, then snap
+8. For each matrix row, run the command manually against both targets, then snap
    evidence:
 
    ```bash
@@ -191,14 +219,14 @@ three transports, not just the interactive tmux broker:
 
    Fill the corresponding `findings.md` row inline as PASS, FAIL, or NOTE.
 
-8. Grade every row by this invariant:
+9. Grade every row by this invariant:
 
    - The operation hits the per-runtime lease socket under `var/run/hrc/btmux/`.
    - The default `var/run/hrc/tmux.sock` inode and mtime match the baseline.
    - No new headless runtime appears for the target.
    - The event journal shows the operation on the lease runtime.
 
-9. Validate `/quit` recovery for each target:
+10. Validate `/quit` recovery for each target:
 
    ```bash
    TARGET=clod@hrc-runtime:<run-task>
@@ -224,7 +252,7 @@ three transports, not just the interactive tmux broker:
    shows the normal priming prompt/startup content rather than a continuation
    picker.
 
-10. End the run:
+11. End the run:
 
    ```bash
    packages/hrc-server/validation/broker-tmux-ghostmux-e2e/bin/teardown.sh "$RUN_DIR"

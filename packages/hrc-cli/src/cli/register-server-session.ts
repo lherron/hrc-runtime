@@ -281,7 +281,10 @@ Exit codes:
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
     .option('--json', 'output JSON lines')
-    .option('--format <mode>', 'output mode: tree, compact, verbose, json, ndjson')
+    .option(
+      '--format <mode>',
+      'output mode: tree, compact, verbose, json, ndjson, invocation-events'
+    )
     .option('--pretty', 'alias for --format=tree')
     .option('--max-lines <n>', 'tree mode: truncate body blocks to n lines')
     .option('--scope-width <n>', 'tree mode: per-row scope badge width in chars')

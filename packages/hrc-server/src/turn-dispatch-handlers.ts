@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { HrcConflictError, HrcErrorCode, HrcRuntimeUnavailableError, validateFence } from 'hrc-core'
 import type {
@@ -6,10 +7,12 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  OpenBrokerSessionResponse,
   PrepareAttachedRunResponse,
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
+import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -23,28 +26,36 @@ import {
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
 } from './broker-decisions.js'
+import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   assertRuntimeNotBusy,
   isBrokerRuntimeQueueCapable,
+  isTerminalBrokerInvocationState,
   requireContinuity,
   requireKnownRuntime,
   requireSession,
 } from './require-helpers.js'
-import { findDispatchInteractiveRuntime } from './runtime-select.js'
+import {
+  findDispatchInteractiveRuntime,
+  getDurableHeadlessRuntimeForReattach,
+  getReusableHeadlessRuntimeForSession,
+} from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   parseDispatchTurnRequest,
   parseEnsureRuntimeRequest,
   parseJsonBody,
+  parseOpenBrokerSessionRequest,
   parsePrepareAttachedRunRequest,
   parseResumeAttachedRunRequest,
   parseStartRuntimeRequest,
 } from './server-parsers.js'
 import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
 
 export async function handleEnsureRuntime(
@@ -81,6 +92,85 @@ export async function handleStartRuntime(
     body.restartStyle ?? 'reuse_pty'
   )
   return json(toStartRuntimeResponse(runtime) satisfies StartRuntimeResponse)
+}
+
+export async function handleOpenBrokerSession(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parseOpenBrokerSessionRequest(await parseJsonBody(request))
+  const requestedSession = requireSession(this.db, body.hostSessionId)
+  const continuity = requireContinuity(this.db, requestedSession)
+  const activeSession = requireSession(this.db, continuity.activeHostSessionId)
+  const fence = validateFence(body.fences, {
+    activeHostSessionId: activeSession.hostSessionId,
+    generation: activeSession.generation,
+  })
+
+  if (!fence.ok) {
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, fence.message, fence.detail)
+  }
+
+  const resolved = requireSession(this.db, fence.resolvedHostSessionId)
+  const { session } = await this.maybeAutoRotateStaleSession(resolved, {
+    allowStaleGeneration: body.allowStaleGeneration,
+    trigger: 'broker-session-open',
+  })
+  const intent = normalizeBrokerSessionOpenIntent(
+    body.runtimeIntent ?? session.lastAppliedIntentJson,
+    session
+  )
+
+  if (!shouldUseHeadlessTransport(intent)) {
+    throw new HrcRuntimeUnavailableError('broker session open requires a headless runtime intent', {
+      hostSessionId: session.hostSessionId,
+      provider: intent.harness.provider,
+      harnessId: intent.harness.id,
+      route: 'broker-session-open',
+    })
+  }
+
+  const route = decideHeadlessExecutionRoute(intent, {
+    brokerFlagEnabled: this.headlessCodexBrokerEnabled,
+  })
+  if (route !== 'broker') {
+    throw new HrcRuntimeUnavailableError('broker session open requires the headless broker route', {
+      hostSessionId: session.hostSessionId,
+      provider: intent.harness.provider,
+      harnessId: intent.harness.id,
+      route,
+    })
+  }
+
+  const runtime = await this.openHeadlessBrokerSessionForSession(session, intent)
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined) {
+    throw new HrcRuntimeUnavailableError('broker session open produced no active invocation', {
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      route: 'broker-session-open',
+    })
+  }
+
+  return json({
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    transport: 'headless',
+    status: runtime.status,
+    startIdentity: { kind: 'broker', invocationId },
+    observation: {
+      broker: {
+        selector: {
+          invocationId,
+          runtimeId: runtime.runtimeId,
+          generation: runtime.generation,
+        },
+        afterSeq: this.db.brokerInvocationEvents.maxBrokerSeq(invocationId),
+      },
+    },
+    supportsInputQueue: isBrokerRuntimeQueueCapable(this.db, runtime),
+  } satisfies OpenBrokerSessionResponse)
 }
 
 export async function handleDispatchTurn(
@@ -127,6 +217,187 @@ export async function handleDispatchTurn(
       ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
       : {}),
   })
+}
+
+export async function openHeadlessBrokerSessionForSession(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  intent: HrcRuntimeIntent
+): Promise<HrcRuntimeSnapshot> {
+  const reusableRuntime = getReusableHeadlessRuntimeForSession(
+    this.db,
+    session.hostSessionId,
+    intent.harness.provider,
+    intent.harness.id
+  )
+  if (reusableRuntime) {
+    assertRuntimeNotBusy(this.db, reusableRuntime)
+    return reusableRuntime
+  }
+
+  const durableHeadless = getDurableHeadlessRuntimeForReattach(
+    this.db,
+    session.hostSessionId,
+    intent.harness.provider,
+    intent.harness.id
+  )
+  if (durableHeadless) {
+    const reattached = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
+      controller: this.getHarnessBrokerController(),
+      brokerUnixClientFactory:
+        this.brokerUnixClientFactory ??
+        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+    })
+    const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
+    if (recovered && recovered.activeInvocationId !== undefined) {
+      assertRuntimeNotBusy(this.db, recovered)
+      return recovered
+    }
+
+    await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
+      (error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        appendHrcEvent(this.db, 'runtime.stale', {
+          ts: timestamp(),
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runtimeId: durableHeadless.runtimeId,
+          transport: 'headless',
+          payload: {
+            reason: 'broker-session-open-reattach-cleanup-failed',
+            error: errorMessage,
+          },
+        })
+      }
+    )
+  }
+
+  const runtime = await this.startHeadlessBrokerRuntime(
+    session,
+    intent,
+    '',
+    `broker-session-open-${randomUUID()}`,
+    {
+      allowCompilerInitialInputWithoutIdentity: true,
+    }
+  )
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined) {
+    throw new HrcRuntimeUnavailableError('broker session open produced no active invocation', {
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      route: 'broker-session-open',
+    })
+  }
+  return await this.waitForBrokerSessionOpenReady(runtime.runtimeId, invocationId)
+}
+
+export async function waitForBrokerSessionOpenReady(
+  this: HrcServerInstanceForHandlers,
+  runtimeId: string,
+  invocationId: string
+): Promise<HrcRuntimeSnapshot> {
+  const deadline = Date.now() + 10 * 60 * 1000
+  while (Date.now() < deadline) {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
+    if (!runtime) {
+      throw new HrcRuntimeUnavailableError('broker session open runtime disappeared', {
+        runtimeId,
+        invocationId,
+        route: 'broker-session-open',
+      })
+    }
+    if (!invocation) {
+      throw new HrcRuntimeUnavailableError('broker session open invocation disappeared', {
+        runtimeId,
+        invocationId,
+        route: 'broker-session-open',
+      })
+    }
+    if (isTerminalBrokerInvocationState(invocation.invocationState)) {
+      throw new HrcRuntimeUnavailableError('broker session open invocation failed', {
+        runtimeId,
+        invocationId,
+        invocationState: invocation.invocationState,
+        route: 'broker-session-open',
+      })
+    }
+    if (isRuntimeUnavailableStatus(runtime.status) || runtime.status === 'failed') {
+      throw new HrcRuntimeUnavailableError('broker session open runtime unavailable', {
+        runtimeId,
+        invocationId,
+        status: runtime.status,
+        route: 'broker-session-open',
+      })
+    }
+    const invocationCanAcceptFollowup =
+      invocation.invocationState === 'ready' || isBrokerRuntimeQueueCapable(this.db, runtime)
+    if (
+      runtime.status === 'ready' &&
+      runtime.activeRunId === undefined &&
+      invocationCanAcceptFollowup
+    ) {
+      return runtime
+    }
+    await delay(100)
+  }
+
+  throw new HrcRuntimeUnavailableError('broker session open timed out waiting for readiness', {
+    runtimeId,
+    invocationId,
+    route: 'broker-session-open',
+  })
+}
+
+function normalizeBrokerSessionOpenIntent(
+  intent: HrcRuntimeIntent | undefined,
+  session: HrcSessionRecord
+): HrcRuntimeIntent {
+  if (!intent) {
+    throw new HrcRuntimeUnavailableError(
+      'runtimeIntent is required when the session has no prior intent',
+      {
+        hostSessionId: session.hostSessionId,
+        route: 'broker-session-open',
+      }
+    )
+  }
+
+  const cwd =
+    intent.placement?.cwd ??
+    intent.placement?.projectRoot ??
+    intent.placement?.agentRoot ??
+    process.cwd()
+  const projectRoot = intent.placement?.projectRoot ?? cwd
+  const agentRoot = intent.placement?.agentRoot ?? projectRoot
+
+  const normalized: HrcRuntimeIntent = {
+    ...intent,
+    placement: {
+      ...intent.placement,
+      agentRoot,
+      projectRoot,
+      cwd,
+      runMode: intent.placement?.runMode ?? 'task',
+      bundle: intent.placement?.bundle ?? { kind: 'compose', compose: [] },
+      dryRun: intent.placement?.dryRun ?? true,
+      correlation: {
+        sessionRef: {
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+        },
+        hostSessionId: session.hostSessionId,
+      },
+    },
+  }
+  // Session-open has no caller/user turn, but must allow ASPC bundle/profile
+  // priming fallback to initialize the broker invocation.
+  normalized.initialPrompt = undefined
+  normalized.attachments = undefined
+  return normalized
 }
 
 type AttachedRunResult = StartRuntimeResponse | DispatchTurnResponse
@@ -611,10 +882,13 @@ export function markRuntimeStaleForBrokerReprovision(
 export const turnDispatchHandlersMethods = {
   handleEnsureRuntime,
   handleStartRuntime,
+  handleOpenBrokerSession,
   handleDispatchTurn,
   handlePrepareAttachedRun,
   handleResumeAttachedRun,
   dispatchTurnForSession,
+  openHeadlessBrokerSessionForSession,
+  waitForBrokerSessionOpenReady,
   markRuntimeStaleForBrokerReprovision,
 }
 

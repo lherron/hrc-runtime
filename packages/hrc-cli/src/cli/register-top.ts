@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 
+import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
 import {
   cmdBridgeClose,
@@ -74,6 +75,18 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .action(async (_scope, _opts, cmd: Command) => {
       const positionals: string[] = cmd.args
+      if (positionals[0] === 'export') {
+        await cmdRunExport(
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+        )
+        return
+      }
+      if (positionals[0] === 'annotate') {
+        await cmdRunAnnotate(
+          rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
+        )
+        return
+      }
       if (positionals[0] === 'sweep-zombies') {
         await cmdRunSweepZombies(
           rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }),
@@ -96,6 +109,41 @@ export function registerTopLevelCommands(program: Command): void {
         negatedBooleans: ['attach', 'register'],
       })
       await cmdRun(args)
+    })
+
+  // -- run invocation exposure (H-00104 Node C, C-0004) -----------------------
+  run
+    .command('export')
+    .description('export a run as the stable HrcInvocationExposure DTO (invocation DAG surface)')
+    .argument('<runId-or-selector>', 'run id, or a runtime:/scope:/session:/host: selector')
+    .option('--format <mode>', 'projection format (invocation-exposure)', 'invocation-exposure')
+    .option('--json', 'output as JSON (the DTO is always JSON)')
+    .action(async (target, _opts, cmd: Command) => {
+      const args = toLegacyArgv([target], cmd.opts(), {
+        strings: ['format'],
+        booleans: ['json'],
+      })
+      await cmdRunExport(args)
+    })
+
+  run
+    .command('annotate')
+    .description(
+      'stamp opaque correlation metadata on a run (operator convenience; not graph truth)'
+    )
+    .argument('<runId>', 'run id, or a selector resolving to one run')
+    .option(
+      '--correlation <json>',
+      'JSON: {invocationNodeId?,attemptRef?,taskId?,workflowInstanceId?}'
+    )
+    .option('--replace', 'overwrite an existing, conflicting correlation')
+    .option('--json', 'output as JSON')
+    .action(async (target, _opts, cmd: Command) => {
+      const args = toLegacyArgv([target], cmd.opts(), {
+        strings: ['correlation'],
+        booleans: ['replace', 'json'],
+      })
+      await cmdRunAnnotate(args)
     })
 
   run

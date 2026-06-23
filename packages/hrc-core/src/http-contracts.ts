@@ -124,6 +124,34 @@ export type StartRuntimeResponse =
       supportsInFlightInput: boolean
     }
 
+export type OpenBrokerSessionRequest = {
+  hostSessionId: string
+  runtimeIntent?: HrcRuntimeIntent | undefined
+  fences?: HrcFence | undefined
+  allowStaleGeneration?: boolean | undefined
+  waitForReady?: boolean | undefined
+}
+
+export type OpenBrokerSessionResponse = {
+  hostSessionId: string
+  generation: number
+  runtimeId: string
+  transport: 'headless'
+  status: string
+  startIdentity: { kind: 'broker'; invocationId: string }
+  observation: {
+    broker: {
+      selector: {
+        invocationId: string
+        runtimeId: string
+        generation: number
+      }
+      afterSeq: number
+    }
+  }
+  supportsInputQueue: boolean
+}
+
 export type EnsureWindowRequest = {
   sessionRef: HrcSessionRef
   command: HrcCommandLaunchSpec

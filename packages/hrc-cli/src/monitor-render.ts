@@ -22,7 +22,13 @@ import {
   toolCallFromEvent,
 } from './monitor-render/tool-format.js'
 
-export type MonitorOutputFormat = 'tree' | 'compact' | 'verbose' | 'json' | 'ndjson'
+export type MonitorOutputFormat =
+  | 'tree'
+  | 'compact'
+  | 'verbose'
+  | 'json'
+  | 'ndjson'
+  | 'invocation-events'
 
 export type MonitorRenderableEvent = Record<string, unknown>
 
@@ -54,10 +60,11 @@ export function parseMonitorOutputFormat(raw: string): MonitorOutputFormat {
     case 'verbose':
     case 'json':
     case 'ndjson':
+    case 'invocation-events':
       return raw
     default:
       throw new Error(
-        `--format must be one of: tree, compact, verbose, json, ndjson (got "${raw}")`
+        `--format must be one of: tree, compact, verbose, json, ndjson, invocation-events (got "${raw}")`
       )
   }
 }
@@ -87,6 +94,8 @@ export function createMonitorRenderer(
     case 'json':
     case 'ndjson':
       return new JsonMonitorRenderer()
+    case 'invocation-events':
+      return new InvocationEventRenderer()
   }
 }
 
@@ -162,6 +171,43 @@ function isEmptyObject(value: unknown): boolean {
 class JsonMonitorRenderer implements MonitorRenderer {
   push(event: MonitorRenderableEvent): string {
     return `${JSON.stringify(event)}\n`
+  }
+
+  flush(): string {
+    return ''
+  }
+}
+
+/**
+ * `--format invocation-events` (H-00104 Node C, C-0004): a stable, compact
+ * machine projection of each monitor event for an Invocation-DAG coordinator to
+ * stream alongside an `HrcInvocationExposure` (matching `refs.events`). One JSON
+ * line per event. `runId` is the run/turn id (monitor events carry it as
+ * `turnId`). This is exposure only — HRC never reads these back as graph truth.
+ */
+class InvocationEventRenderer implements MonitorRenderer {
+  push(event: MonitorRenderableEvent): string {
+    const projection: Record<string, unknown> = {
+      kind: 'hrc.invocation_event.v1',
+    }
+    const seq = numberField(event, 'seq') ?? numberField(event, 'hrcSeq')
+    if (seq !== undefined) projection['seq'] = seq
+    const ts = stringField(event, 'ts')
+    if (ts !== undefined) projection['ts'] = ts
+    const eventName = stringField(event, 'event') ?? stringField(event, 'eventKind')
+    if (eventName !== undefined) projection['event'] = eventName
+
+    const runId = stringField(event, 'runId') ?? stringField(event, 'turnId')
+    if (runId !== undefined) projection['runId'] = runId
+    for (const key of ['runtimeId', 'scopeRef', 'laneRef', 'sessionRef', 'result', 'failureKind']) {
+      const value = stringField(event, key)
+      if (value !== undefined) projection[key] = value
+    }
+    const generation = numberField(event, 'generation')
+    if (generation !== undefined) projection['generation'] = generation
+    if (event['replayed'] === true) projection['replayed'] = true
+
+    return `${JSON.stringify(projection)}\n`
   }
 
   flush(): string {

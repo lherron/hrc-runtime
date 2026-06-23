@@ -10,6 +10,7 @@ import type {
   HrcProvider,
   HrcRuntimeIntent,
   InspectRuntimeRequest,
+  OpenBrokerSessionRequest,
   PrepareAttachedRunRequest,
   ResumeAttachedRunRequest,
   StartRuntimeRequest,
@@ -276,6 +277,34 @@ export function parseEnsureRuntimeRequest(input: unknown): EnsureRuntimeRequest 
 
 export function parseStartRuntimeRequest(input: unknown): StartRuntimeRequest {
   return parseEnsureRuntimeRequest(input)
+}
+
+export function parseOpenBrokerSessionRequest(input: unknown): OpenBrokerSessionRequest {
+  if (!isRecord(input)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const hostSessionId = input['hostSessionId']
+  if (typeof hostSessionId !== 'string' || hostSessionId.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'hostSessionId is required', {
+      field: 'hostSessionId',
+    })
+  }
+
+  const runtimeIntent = input['runtimeIntent']
+  const fences = input['fences']
+  const allowStaleGeneration = readOptionalBooleanField(input, 'allowStaleGeneration')
+  const waitForReady = readOptionalBooleanField(input, 'waitForReady')
+
+  return {
+    hostSessionId: hostSessionId.trim(),
+    ...(runtimeIntent && isRecord(runtimeIntent)
+      ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
+      : {}),
+    ...(fences !== undefined ? { fences: parseFenceInput(fences) } : {}),
+    ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
+    ...(waitForReady !== undefined ? { waitForReady } : {}),
+  }
 }
 
 export function parsePrepareAttachedRunRequest(input: unknown): PrepareAttachedRunRequest {

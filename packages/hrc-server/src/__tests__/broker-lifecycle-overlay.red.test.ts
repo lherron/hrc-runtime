@@ -58,7 +58,6 @@ import type {
   InvocationStopRequest,
   InvocationStopResponse,
 } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
 import type { BrokerExecutionProfile, CompiledRuntimePlan } from 'spaces-runtime-contracts'
 
 import { type BrokerClientLike, HarnessBrokerController } from '../broker/controller'
@@ -70,7 +69,12 @@ import {
   resolveLifecyclePolicyOverlay,
 } from '../broker/lifecycle-overlay'
 
-import { makeBrokerProfile, makeCompileResponse, makeIdentity } from './broker-compile-fixtures'
+import {
+  makeBrokerProfile,
+  makeCompileResponse,
+  makeIdentity,
+  neutralStartRequestHash,
+} from './broker-compile-fixtures'
 
 const NOW = '2026-06-01T12:34:56.000Z'
 
@@ -289,10 +293,8 @@ describe('T-01787 lifecycle overlay — hash-invariance boundary', () => {
     expect(JSON.stringify(reqWith)).toBe(JSON.stringify(reqWithout))
 
     // Identical recomputed startRequestHash, and equal to the compiled hash.
-    const hashWithout = (project(reqWithout, 'start-request') as { startRequestHash: string })
-      .startRequestHash
-    const hashWith = (project(reqWith, 'start-request') as { startRequestHash: string })
-      .startRequestHash
+    const hashWithout = neutralStartRequestHash(reqWithout)
+    const hashWith = neutralStartRequestHash(reqWith)
     expect(hashWith).toBe(hashWithout)
     expect(hashWith).toBe(makeStartInput().startRequestHash)
 

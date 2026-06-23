@@ -173,6 +173,8 @@ export type {
   InspectRuntimeResponse,
   KillBrokerTmuxLeasesResponse,
   ListAppSessionsRequest,
+  OpenBrokerSessionRequest,
+  OpenBrokerSessionResponse,
   RegisterBridgeTargetRequest,
   RegisterBridgeTargetResponse,
   RemoveAppSessionRequest,
@@ -252,6 +254,19 @@ export type {
   SemanticTurnHandoffResponse,
 } from './hrcchat-contracts.js'
 
+export {
+  buildHrcInvocationExposure,
+  canonicalCorrelationJson,
+  correlationConflicts,
+  normalizeCorrelation,
+  selectorFor,
+  sessionRefFor,
+} from './invocation-exposure.js'
+export type {
+  BuildHrcInvocationExposureInput,
+  HrcInvocationExposure,
+  HrcRunCorrelation,
+} from './invocation-exposure.js'
 export { createMonitorConditionEngine } from './monitor/condition-engine.js'
 export { createMonitorReader } from './monitor/index.js'
 export type {
