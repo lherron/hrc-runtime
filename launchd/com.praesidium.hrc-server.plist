@@ -34,6 +34,10 @@
     <string>1</string>
     <key>HRC_CODEX_CLI_TMUX_BROKER_ENABLED</key>
     <string>1</string>
+    <key>HRC_BROKER_DURABLE_IPC_ENABLED</key>
+    <string>1</string>
+    <key>HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION</key>
+    <string>tmux-tui</string>
   </dict>
 
   <key>WorkingDirectory</key>
