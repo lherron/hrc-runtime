@@ -529,7 +529,12 @@ export function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeInt
  *     headless → today lands on legacy exec.ts (no Claude continuation capture).
  *   - SDK-shaped: {harness.id agent-sdk|pi-sdk} or id-less provider:anthropic →
  *     today hits the SDK executor (hard-failed by T-01754).
- * Both must move to the interactive claude-code-tmux broker. We key on
+ *   - agent-spaces-native: {harness.id claude-code-cli} — run-compile.ts emits
+ *     preferredHarnessRuntime='claude-code-cli' for EVERY claude-code agent, so
+ *     a dispatch adapter passing it through (T-05077) lands on legacy-exec → 503
+ *     unless it remaps first. Accepting it here closes the silent trap at the
+ *     source (backstop to the adapter's 'claude-code-cli'→'claude-code' map).
+ * All must move to the interactive claude-code-tmux broker. We key on
  * deriveInteractiveHarness resolving to 'claude-code' (the normalize target) so
  * openai/codex intents (incl. openai pi-sdk → codex-cli) are NOT captured here —
  * those keep the headless-codex / codex-cli-tmux routes. The second clause
@@ -538,12 +543,19 @@ export function shouldConsiderClaudeCodeTmuxBrokerDispatch(intent: HrcRuntimeInt
  */
 export function shouldRedirectClaudeToInteractiveBroker(intent: HrcRuntimeIntent): boolean {
   const harness = intent.harness
+  // 'claude-code-cli' is NOT a member of HrcHarness — it is the agent-spaces
+  // preferredHarnessRuntime value that compile-adapter.ts maps to 'claude-code'.
+  // A raw-passthrough dispatch adapter can leak it as an out-of-type harness.id,
+  // so widen the local to match it defensively (deriveInteractiveHarness already
+  // resolves it to 'claude-code', and normalize rewrites the id to 'claude-code').
+  const id: string | undefined = harness.id
   return (
     deriveInteractiveHarness(harness) === 'claude-code' &&
-    (harness.id === undefined ||
-      harness.id === 'claude-code' ||
-      harness.id === 'agent-sdk' ||
-      harness.id === 'pi-sdk')
+    (id === undefined ||
+      id === 'claude-code' ||
+      id === 'claude-code-cli' ||
+      id === 'agent-sdk' ||
+      id === 'pi-sdk')
   )
 }
 

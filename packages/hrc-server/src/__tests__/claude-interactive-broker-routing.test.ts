@@ -97,6 +97,17 @@ describe('Phase B — shouldRedirectClaudeToInteractiveBroker admission', () => 
       expected: true,
     },
     {
+      name: 'agent-spaces-native claude-code-cli (anthropic, headless) => redirect',
+      // 'claude-code-cli' is an out-of-type agent-spaces runtime value a raw
+      // adapter can leak; cast to exercise the defensive clause.
+      harness: {
+        provider: 'anthropic',
+        interactive: false,
+        id: 'claude-code-cli',
+      } as unknown as Harness,
+      expected: true,
+    },
+    {
       name: 'openai codex-cli headless => NOT redirect (codex cutover owns it)',
       harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
       expected: false,
@@ -137,6 +148,14 @@ describe('Phase B — normalizeClaudeInteractiveBrokerIntent flips routing to cl
     {
       name: 'id-less anthropic',
       harness: { provider: 'anthropic', interactive: false },
+    },
+    {
+      name: 'agent-spaces-native claude-code-cli',
+      harness: {
+        provider: 'anthropic',
+        interactive: false,
+        id: 'claude-code-cli',
+      } as unknown as Harness,
     },
   ]
 
