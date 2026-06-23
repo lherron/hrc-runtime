@@ -29,11 +29,24 @@ function hashNeutralInvocationSpec(spec: HarnessInvocationSpec): HarnessInvocati
   return hashSpec
 }
 
-function hashNeutralStartRequest(startRequest: InvocationStartRequest): InvocationStartRequest {
-  const { initialInput: _initialInput, ...hashStartRequest } = startRequest
+// MUST mirror agent-spaces compile-runtime-plan.ts#hashNeutralStartRequest
+// (T-04133 / T-05109). This is the test oracle for ASPC's REAL producer: of
+// `initialInput` only the deterministic `inputId` is folded into the hash;
+// content is excluded (drift is caught by initialInputHash). Modelling the
+// oracle on the real producer is what makes the selector parity test meaningful
+// — the prior version stripped initialInput entirely, matching the stale
+// selector instead of ASPC, so it stayed green while production rejected every
+// headless dispatch with start-request-hash-mismatch.
+type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
+  initialInput?: { inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId'] }
+}
+
+function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
+  const { initialInput, ...rest } = startRequest
   return {
-    ...hashStartRequest,
+    ...rest,
     spec: hashNeutralInvocationSpec(startRequest.spec),
+    ...(initialInput !== undefined ? { initialInput: { inputId: initialInput.inputId } } : {}),
   }
 }
 
@@ -42,9 +55,11 @@ export function neutralSpecHash(spec: HarnessInvocationSpec): string {
 }
 
 export function neutralStartRequestHash(startRequest: InvocationStartRequest): string {
-  return (project(hashNeutralStartRequest(startRequest), 'start-request') as {
-    startRequestHash: string
-  }).startRequestHash
+  return (
+    project(hashNeutralStartRequest(startRequest), 'start-request') as {
+      startRequestHash: string
+    }
+  ).startRequestHash
 }
 
 /**

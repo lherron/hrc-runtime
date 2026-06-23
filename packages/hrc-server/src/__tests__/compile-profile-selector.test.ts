@@ -252,6 +252,59 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
     expect(selection.code).toBe('initial-input-id-mismatch')
   })
 
+  // T-05109 regression: the start-request hash MUST fold initialInput.inputId
+  // (deterministic, T-04133) while excluding initialInput.content. ASPC's
+  // producer was changed to this contract in c277993; HRC's recompute lagged,
+  // stripping initialInput entirely, so EVERY headless dispatch carrying an
+  // initialInput was rejected with start-request-hash-mismatch. These tests
+  // fail under the old strip-everything logic.
+  describe('start-request hash folds initialInput.inputId (T-05109)', () => {
+    it('admits a headless profile that carries a real initialInput (the production path)', () => {
+      const identity = makeIdentity()
+      // precondition: an initial user turn → initialInput is present
+      const { profile, startRequest } = makeBrokerProfile(identity)
+      expect(startRequest.initialInput).toBeDefined()
+      expect(startRequest.initialInput?.inputId).toBe(identity.initialInputId as string)
+
+      const selection = selectBrokerExecutionProfile(
+        makeCompileResponse(identity, [profile]),
+        identity
+      )
+
+      expect(selection.admitted).toBe(true)
+      if (!selection.admitted) return
+      // The selector's recompute matched the producer's inputId-folding hash.
+      expect(selection.startRequestHash).toBe(profile.harnessInvocation.startRequestHash)
+    })
+
+    it('the start-request hash CHANGES with initialInput.inputId', () => {
+      const identity = makeIdentity()
+      const { startRequest } = makeBrokerProfile(identity)
+      const base = neutralStartRequestHash(startRequest)
+      const idChanged = neutralStartRequestHash({
+        ...startRequest,
+        initialInput: { ...startRequest.initialInput!, inputId: 'input_different' },
+      })
+      // Under the old strip-everything logic these were equal (inputId excluded).
+      expect(idChanged).not.toBe(base)
+    })
+
+    it('the start-request hash is NEUTRAL to initialInput.content', () => {
+      const identity = makeIdentity()
+      const { startRequest } = makeBrokerProfile(identity)
+      const base = neutralStartRequestHash(startRequest)
+      const contentChanged = neutralStartRequestHash({
+        ...startRequest,
+        initialInput: {
+          ...startRequest.initialInput!,
+          content: [{ type: 'text', text: 'totally different content' }],
+        },
+      })
+      // Content drift is caught by initialInputHash, not the start-request hash.
+      expect(contentChanged).toBe(base)
+    })
+  })
+
   it('verifies hashes with the exported project() helper (sanity on fixtures)', () => {
     // Guards the fixtures themselves: an unmutated profile must hash-verify.
     const identity = makeIdentity()

@@ -114,11 +114,29 @@ function hashNeutralInvocationSpec(
   return hashSpec
 }
 
-function hashNeutralStartRequest(startRequest: InvocationStartRequest): InvocationStartRequest {
-  const { initialInput: _initialInput, ...hashStartRequest } = startRequest
+/**
+ * Hash material for a start request — MUST mirror agent-spaces
+ * `compile-runtime-plan.ts#hashNeutralStartRequest` exactly (T-04133 / T-05109).
+ * `spec.invocationId` / `correlation` stay neutralized (per-dispatch identity).
+ * Of `initialInput` only the deterministic `inputId` is retained: ASPC's
+ * `deriveInitialInputId` now folds generation + content into that id, so a
+ * changed generation moves the start-request hash while a pure correlation
+ * change does not. Content is deliberately NOT hashed here — post-compile
+ * content drift is caught by `initialInputHash`. This recompute is the runtime
+ * admission gate; if it diverges from ASPC's producer the compile is rejected
+ * with `start-request-hash-mismatch` for every headless dispatch that carries an
+ * `initialInput` (the divergence T-05109 fixed).
+ */
+type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
+  initialInput?: { inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId'] }
+}
+
+function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
+  const { initialInput, ...rest } = startRequest
   return {
-    ...hashStartRequest,
+    ...rest,
     spec: hashNeutralInvocationSpec(startRequest.spec),
+    ...(initialInput !== undefined ? { initialInput: { inputId: initialInput.inputId } } : {}),
   }
 }
 
@@ -129,9 +147,11 @@ function recomputeSpecHash(spec: InvocationStartRequest['spec']): string {
 
 /** Recompute the start-request hash via the exported contracts projection helper. */
 function recomputeStartRequestHash(startRequest: InvocationStartRequest): string {
-  return (project(hashNeutralStartRequest(startRequest), 'start-request') as {
-    startRequestHash: string
-  }).startRequestHash
+  return (
+    project(hashNeutralStartRequest(startRequest), 'start-request') as {
+      startRequestHash: string
+    }
+  ).startRequestHash
 }
 
 /** Deep-freeze so the verified start request can never be mutated downstream. */
