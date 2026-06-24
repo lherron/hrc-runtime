@@ -8,6 +8,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcTurnResponseFormat,
 } from 'hrc-core'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
@@ -42,6 +43,10 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
+import {
+  assertRuntimeSupportsResponseFormat,
+  toBrokerResponseFormat,
+} from './turn-response-format.js'
 
 type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
 
@@ -80,6 +85,7 @@ export async function startHeadlessBrokerRuntime(
   runId: string,
   options: {
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const turnIntent: HrcRuntimeIntent =
@@ -99,6 +105,7 @@ export async function startHeadlessBrokerRuntime(
         dispatchEnv: hrcDispatchEnv,
         continuation: toRuntimeContinuationRef(session.continuation ?? undefined),
         allowCompilerInitialInputWithoutIdentity: options.allowCompilerInitialInputWithoutIdentity,
+        responseFormat: options.responseFormat,
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
@@ -162,6 +169,7 @@ export async function startHeadlessBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
+      requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         mergeEnv(compiled.dispatchEnv ?? {}, hrcDispatchEnv),
         compiled.startRequest
@@ -183,6 +191,16 @@ export async function startHeadlessBrokerRuntime(
     })
 
     if (!result.ok) {
+      if (
+        result.error.code === 'unsupported_capability' &&
+        options.responseFormat?.kind === 'json_schema'
+      ) {
+        throw new HrcUnprocessableEntityError(
+          HrcErrorCode.UNSUPPORTED_CAPABILITY,
+          result.error.message,
+          result.error.detail
+        )
+      }
       throw new HrcRuntimeUnavailableError('headless broker start failed', {
         hostSessionId: session.hostSessionId,
         runId,
@@ -210,9 +228,12 @@ export async function executeHeadlessBrokerStartTurn(
   options: {
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
-  const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId)
+  const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
+    responseFormat: options.responseFormat,
+  })
   if (canOperatorAttach(runtime)) {
     await this.spawnBrokerHeadlessViewer(runtime)
   }
@@ -251,6 +272,7 @@ export async function executeHeadlessBrokerInputTurn(
     waitForCompletion?: boolean | undefined
     whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
@@ -265,6 +287,12 @@ export async function executeHeadlessBrokerInputTurn(
       }
     )
   }
+  assertRuntimeSupportsResponseFormat({
+    db: this.db,
+    runtime,
+    responseFormat: options.responseFormat,
+    route: 'broker',
+  })
 
   // Queued-mode detection: a runtime is "busy" iff it has an active run still
   // in a non-terminal state. In that case the active run keeps the runtime
@@ -330,6 +358,9 @@ export async function executeHeadlessBrokerInputTurn(
     inputId,
     kind: 'user',
     content: [{ type: 'text', text: prompt }],
+    ...(toBrokerResponseFormat(options.responseFormat) !== undefined
+      ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
+      : {}),
     metadata: {
       runId,
       ...(options.repairCorrelation !== undefined

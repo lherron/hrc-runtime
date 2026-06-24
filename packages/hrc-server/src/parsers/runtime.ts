@@ -9,6 +9,7 @@ import type {
   HrcHarness,
   HrcProvider,
   HrcRuntimeIntent,
+  HrcTurnResponseFormat,
   InspectRuntimeRequest,
   OpenBrokerSessionRequest,
   PrepareAttachedRunRequest,
@@ -356,6 +357,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   }
 
   const runtimeIntent = input['runtimeIntent']
+  const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
   const attachments = parseOptionalAttachmentRefs(input, 'attachments')
   const fences = input['fences']
   const waitForCompletion = readOptionalBooleanField(input, 'waitForCompletion')
@@ -366,6 +368,7 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
   return {
     hostSessionId: hostSessionId.trim(),
     prompt: prompt.trim(),
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
     ...(runtimeIntent && isRecord(runtimeIntent)
       ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) }
@@ -375,6 +378,96 @@ export function parseDispatchTurnRequest(input: unknown): DispatchTurnRequest {
     ...(whenBusy !== undefined ? { whenBusy } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(repair !== undefined ? { repair } : {}),
+  }
+}
+
+export function parseOptionalTurnResponseFormat(input: unknown): HrcTurnResponseFormat | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (!isPlainJsonObject(input)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'responseFormat must be an object',
+      { field: 'responseFormat' }
+    )
+  }
+
+  const kind = input['kind']
+  if (kind === 'text') {
+    if (Object.prototype.hasOwnProperty.call(input, 'schema')) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'text responseFormat must not include schema',
+        { field: 'responseFormat.schema' }
+      )
+    }
+    return { kind: 'text' }
+  }
+
+  if (kind === 'json_schema') {
+    const schema = input['schema']
+    if (!isPlainJsonObject(schema)) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'json_schema responseFormat schema must be an object',
+        { field: 'responseFormat.schema' }
+      )
+    }
+    const badPath = firstNonJsonCompatiblePath(schema, 'responseFormat.schema')
+    if (badPath !== undefined) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'responseFormat schema must be JSON-compatible',
+        { field: badPath }
+      )
+    }
+    return { kind: 'json_schema', schema }
+  }
+
+  throw new HrcBadRequestError(
+    HrcErrorCode.MALFORMED_REQUEST,
+    'responseFormat kind is unsupported',
+    { field: 'responseFormat.kind' }
+  )
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function firstNonJsonCompatiblePath(value: unknown, path: string): string | undefined {
+  if (value === null) {
+    return undefined
+  }
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return undefined
+    case 'number':
+      return Number.isFinite(value) ? undefined : path
+    case 'object':
+      if (Array.isArray(value)) {
+        for (let index = 0; index < value.length; index += 1) {
+          const child = firstNonJsonCompatiblePath(value[index], `${path}[${index}]`)
+          if (child !== undefined) return child
+        }
+        return undefined
+      }
+      if (!isPlainJsonObject(value)) {
+        return path
+      }
+      for (const [key, childValue] of Object.entries(value)) {
+        const child = firstNonJsonCompatiblePath(childValue, `${path}.${key}`)
+        if (child !== undefined) return child
+      }
+      return undefined
+    default:
+      return path
   }
 }
 

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 
+import { parseSemanticDmRequest } from '../messages.js'
 import { parseDispatchTurnRequest, parseEnsureRuntimeRequest } from '../server-parsers.js'
 
 function withAgentProfile(harness: string): { agentRoot: string; cleanup: () => void } {
@@ -114,6 +115,77 @@ describe('server-parsers runtime intent harness resolution', () => {
     })
 
     expect(parsed.waitForCompletion).toBe(false)
+  })
+
+  it('parseDispatchTurnRequest accepts json_schema responseFormat', () => {
+    const parsed = parseDispatchTurnRequest({
+      hostSessionId: 'hsid-test',
+      prompt: 'ship it',
+      responseFormat: {
+        kind: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: { ok: { type: 'boolean' } },
+          required: ['ok'],
+        },
+      },
+    })
+
+    expect(parsed.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema: {
+        type: 'object',
+        properties: { ok: { type: 'boolean' } },
+        required: ['ok'],
+      },
+    })
+  })
+
+  it('parseDispatchTurnRequest accepts text responseFormat as a no-op value', () => {
+    const parsed = parseDispatchTurnRequest({
+      hostSessionId: 'hsid-test',
+      prompt: 'ship it',
+      responseFormat: { kind: 'text' },
+    })
+
+    expect(parsed.responseFormat).toEqual({ kind: 'text' })
+  })
+
+  it.each([
+    ['primitive responseFormat', 42],
+    ['array responseFormat', []],
+    ['missing kind', {}],
+    ['unsupported kind', { kind: 'xml' }],
+    ['text with schema', { kind: 'text', schema: {} }],
+    ['missing json schema', { kind: 'json_schema' }],
+    ['array json schema', { kind: 'json_schema', schema: [] }],
+    ['undefined schema value', { kind: 'json_schema', schema: { bad: undefined } }],
+    ['non-finite schema value', { kind: 'json_schema', schema: { bad: Number.NaN } }],
+  ])('parseDispatchTurnRequest rejects malformed responseFormat: %s', (_name, responseFormat) => {
+    expect(() =>
+      parseDispatchTurnRequest({
+        hostSessionId: 'hsid-test',
+        prompt: 'ship it',
+        responseFormat,
+      })
+    ).toThrow('responseFormat')
+  })
+
+  it('parseSemanticDmRequest accepts responseFormat for session turn dispatch', () => {
+    const parsed = parseSemanticDmRequest({
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime/lane:main' },
+      body: 'ship it',
+      responseFormat: {
+        kind: 'json_schema',
+        schema: { type: 'object', properties: { done: { type: 'boolean' } } },
+      },
+    })
+
+    expect(parsed.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema: { type: 'object', properties: { done: { type: 'boolean' } } },
+    })
   })
 
   it('rejects omitted harness when placement.agentRoot cannot resolve a profile', () => {

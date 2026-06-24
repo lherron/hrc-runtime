@@ -31,14 +31,15 @@ function hashNeutralInvocationSpec(spec: HarnessInvocationSpec): HarnessInvocati
 
 // MUST mirror agent-spaces compile-runtime-plan.ts#hashNeutralStartRequest
 // (T-04133 / T-05109). This is the test oracle for ASPC's REAL producer: of
-// `initialInput` only the deterministic `inputId` is folded into the hash;
-// content is excluded (drift is caught by initialInputHash). Modelling the
-// oracle on the real producer is what makes the selector parity test meaningful
-// — the prior version stripped initialInput entirely, matching the stale
-// selector instead of ASPC, so it stayed green while production rejected every
-// headless dispatch with start-request-hash-mismatch.
+// `initialInput`, the deterministic `inputId` and per-turn `responseFormat` are
+// folded into the hash; prompt content is excluded (drift is caught by
+// initialInputHash). Modelling the oracle on the real producer is what makes the
+// selector parity test meaningful.
 type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
-  initialInput?: { inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId'] }
+  initialInput?: {
+    inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId']
+    responseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
+  }
 }
 
 function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
@@ -46,7 +47,16 @@ function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartReq
   return {
     ...rest,
     spec: hashNeutralInvocationSpec(startRequest.spec),
-    ...(initialInput !== undefined ? { initialInput: { inputId: initialInput.inputId } } : {}),
+    ...(initialInput !== undefined
+      ? {
+          initialInput: {
+            inputId: initialInput.inputId,
+            ...(initialInput.responseFormat !== undefined
+              ? { responseFormat: initialInput.responseFormat }
+              : {}),
+          },
+        }
+      : {}),
   }
 }
 

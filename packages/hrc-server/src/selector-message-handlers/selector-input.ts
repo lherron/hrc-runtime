@@ -21,7 +21,7 @@ import { normalizeTargetLane } from '../messages.js'
 import { requireGhosttySurface, requireTmuxPane } from '../require-helpers.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { isRecord, parseJsonBody } from '../server-parsers.js'
+import { isRecord, parseJsonBody, parseOptionalTurnResponseFormat } from '../server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import type { TmuxPaneState } from '../tmux.js'
@@ -351,6 +351,7 @@ export async function handleDispatchTurnBySelector(
       field: 'prompt',
     })
   }
+  const responseFormat = parseOptionalTurnResponseFormat(body['responseFormat'])
 
   let session = findTargetSession(this.db, sessionRef)
   if (!session && body['createIfMissing'] === true) {
@@ -398,7 +399,7 @@ export async function handleDispatchTurnBySelector(
     session,
     normalizedIntent,
     body['prompt'],
-    { runId }
+    { runId, responseFormat }
   )
   const turnBody = (await turnResponse.json()) as DispatchTurnResponse
   const transport = turnBody.transport

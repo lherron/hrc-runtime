@@ -725,7 +725,7 @@ export class BrokerEventMapper {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('')
-        this.appendBuffer(ctx, text, now)
+        this.appendCompletedMessageBuffer(ctx, text, now)
         break
       }
       case 'assistant.message.delta': {
@@ -940,5 +940,19 @@ export class BrokerEventMapper {
       text,
       createdAt: now,
     })
+  }
+
+  private appendCompletedMessageBuffer(ctx: ProjectionContext, text: string, now: string): void {
+    if (ctx.runId === undefined || text.length === 0) {
+      return
+    }
+    const existing = this.db.runtimeBuffers
+      .listByRunId(ctx.runId)
+      .map((chunk) => chunk.text)
+      .join('')
+    if (existing.endsWith(text)) {
+      return
+    }
+    this.appendBuffer(ctx, text, now)
   }
 }

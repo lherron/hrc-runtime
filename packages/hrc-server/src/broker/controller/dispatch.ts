@@ -20,6 +20,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
+import { preflightDriverSupportsResponseFormat } from '../../turn-response-format'
 import {
   type ExpectedBrokerNegotiation,
   admitBrokerHello,
@@ -249,6 +250,79 @@ export async function startController(
           'broker_admission_rejected',
           'broker hello/capability admission rejected the runtime',
           admission.detail
+        ),
+      }
+    }
+
+    // The requested per-turn response format. Prefer the explicitly-threaded
+    // value (survives even when compile drops `initialInput`) and fall back to
+    // the compiled start request for callers that do not thread it.
+    const requestedResponseFormat =
+      input.requestedResponseFormat ?? input.startRequest.initialInput?.responseFormat
+    const responseFormatRoute =
+      input.profile.interactionMode === 'interactive' ? 'interactive-broker' : 'broker'
+
+    // PRIMARY gate (fail-closed): the aspc/broker-DECLARED driver capability from
+    // the negotiated hello is authoritative. preflightDriverSupportsResponseFormat
+    // checks `hello.drivers[brokerDriver].capabilities.finalResponse.{jsonSchema,
+    // perTurn}` — only codex-app-server declares it; claude-code-tmux / pi-tui-tmux
+    // declare none, so a json_schema turn to those routes is rejected here with a
+    // capability-accurate detail (actual = declared finalResponse). Keyed off the
+    // REQUESTED format, not `startRequest.initialInput` (which compile drops for
+    // launch-argv-primed profiles, the original fail-open).
+    const responseFormatAdmission = preflightDriverSupportsResponseFormat({
+      profile: input.profile,
+      hello,
+      responseFormat: requestedResponseFormat,
+      route: responseFormatRoute,
+      runtimeId: String(input.identity.runtimeId),
+    })
+    if (!responseFormatAdmission.ok) {
+      ctx.logger.warn?.('harness broker response-format admission rejected', {
+        ...responseFormatAdmission.detail,
+      })
+      ctx.markBrokerClosing(String(identity.runtimeId), 'response-format-admission-rejected')
+      await client.close().catch(() => undefined)
+      return {
+        ok: false,
+        error: new BrokerControllerError(
+          'unsupported_capability',
+          'broker driver does not support per-turn JSON Schema final responses',
+          responseFormatAdmission.detail
+        ),
+      }
+    }
+
+    // BACKSTOP (fail-closed, defense-in-depth): a driver that DECLARES the
+    // capability but whose start path still cannot carry the format has no
+    // per-turn vehicle — launch-argv-primed profiles drop `startRequest.initialInput`
+    // entirely. Today no declared-capable driver is launch-primed (codex-app-server
+    // delivers via initialInput), so this is unreachable in practice; it exists so
+    // a future declared-capable-but-launch-primed driver fails closed instead of
+    // silently dropping the format (T-05142 invariant).
+    if (
+      requestedResponseFormat?.kind === 'json_schema' &&
+      input.startRequest.initialInput?.responseFormat === undefined
+    ) {
+      const detail = {
+        capability: 'finalResponse.jsonSchema',
+        route: responseFormatRoute,
+        responseFormat: { kind: 'json_schema' },
+        required: { jsonSchema: true, perTurn: true },
+        actual: null,
+        runtimeId: String(input.identity.runtimeId),
+        brokerDriver: input.profile.brokerDriver,
+        reason: 'initial-input-not-deliverable',
+      }
+      ctx.logger.warn?.('harness broker response-format undeliverable on start path', detail)
+      ctx.markBrokerClosing(String(identity.runtimeId), 'response-format-undeliverable')
+      await client.close().catch(() => undefined)
+      return {
+        ok: false,
+        error: new BrokerControllerError(
+          'unsupported_capability',
+          'response format json_schema cannot be delivered on this broker start path',
+          detail
         ),
       }
     }

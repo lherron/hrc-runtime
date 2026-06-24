@@ -31,6 +31,7 @@ import {
   makeCompileResponse,
   makeFailedCompileResponse,
   makeInteractiveTmuxProfile,
+  neutralStartRequestHash,
 } from './broker-compile-fixtures'
 
 // ---------------------------------------------------------------------------
@@ -336,6 +337,58 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     })
     expect(captured.request?.materialization.initialPrompt).toBe('do the thing')
     expect(captured.request?.requested.interactionMode).toBe('headless')
+  })
+
+  it('threads responseFormat through materialization and compiled broker initial input', async () => {
+    const schema = {
+      type: 'object',
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+    }
+    const captured: { request?: RuntimeCompileRequest } = {}
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      captured.request = request.compileRequest
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      const fixture = makeBrokerProfile(identity)
+      const responseFormat = request.compileRequest.materialization.responseFormat
+      const startRequest = {
+        ...fixture.startRequest,
+        initialInput: {
+          ...fixture.startRequest.initialInput,
+          responseFormat,
+        },
+      } as NonNullable<typeof fixture.startRequest>
+      const profile = {
+        ...fixture.profile,
+        harnessInvocation: {
+          ...fixture.profile.harnessInvocation,
+          startRequest,
+          startRequestHash: neutralStartRequestHash(startRequest),
+        },
+      }
+      return makeAspcCompileResponse(identity, [profile])
+    }
+
+    const result = await compileBrokerRuntimePlan(
+      {
+        ...STANDARD_INPUT(),
+        responseFormat: { kind: 'json_schema', schema },
+      },
+      { compileHarnessInvocation, ids: makeIdAllocator() }
+    )
+
+    expect(captured.request?.materialization.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema,
+    })
+    expect(result.admitted).toBe(true)
+    if (!result.admitted) return
+    expect(result.startRequest.initialInput?.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema,
+    })
   })
 
   it('translates interactive Claude tmux intent into explicit compiler route fields', async () => {

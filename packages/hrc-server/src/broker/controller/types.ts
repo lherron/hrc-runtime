@@ -356,6 +356,15 @@ export type BrokerControllerStartInput = {
   startRequestHash: string
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
+  /**
+   * The per-turn response format requested for this start, threaded independently
+   * of `startRequest.initialInput.responseFormat`. Launch-argv-primed profiles
+   * (e.g. interactive-tmux) drop `startRequest.initialInput` entirely during
+   * compile, which would also drop the format and blind the fail-closed gate.
+   * The controller uses this to enforce deliverability + driver capability even
+   * when the compiled start request carries no initial input (T-05142).
+   */
+  requestedResponseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
   routeDecision?: unknown
   brokerClient?: BrokerClientLike | undefined
   attachBeforeInvocationStart?: BrokerAttachedLaunchInput | undefined

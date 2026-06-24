@@ -5,8 +5,9 @@ import type {
   HrcMessageFilter,
   HrcMessageRecord,
   HrcRuntimeIntent,
+  HrcTurnResponseFormat,
 } from 'hrc-core'
-import { isRecord, parseSessionRef } from './server-parsers.js'
+import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
 
 /**
  * Format an HrcMessageAddress for display in DM delivery (e.g. "clod@agent-spaces" or "human").
@@ -277,6 +278,7 @@ export function parseSemanticDmRequest(input: unknown): {
   from: HrcMessageAddress
   to: HrcMessageAddress
   body: string
+  responseFormat?: HrcTurnResponseFormat | undefined
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   respondTo?: HrcMessageAddress | undefined
   replyToMessageId?: string | undefined
@@ -351,11 +353,13 @@ export function parseSemanticDmRequest(input: unknown): {
     typeof input['allowCrossScopeReply'] === 'boolean'
       ? (input['allowCrossScopeReply'] as boolean)
       : undefined
+  const responseFormat = parseOptionalTurnResponseFormat(input['responseFormat'])
 
   return {
     from: parseMessageAddress(input['from'], 'from'),
     to: parseMessageAddress(input['to'], 'to'),
     body: input['body'],
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
     ...(mode !== undefined ? { mode } : {}),
     ...(respondTo !== undefined ? { respondTo } : {}),
     ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),

@@ -6,6 +6,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcTurnResponseFormat,
 } from 'hrc-core'
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
@@ -48,6 +49,10 @@ import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { brokerLeaseIdsMatch, reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { createTmuxManager } from './tmux.js'
+import {
+  assertRuntimeSupportsResponseFormat,
+  toBrokerResponseFormat,
+} from './turn-response-format.js'
 
 // Imported for the brokerInteractiveHandlersMethods table below and re-exported
 // (export-list at end of file) so the public surface is preserved.
@@ -274,6 +279,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     waitForCompletion?: boolean | undefined
     whenBusy?: 'reject' | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
   const reusableRuntime = getReusableHeadlessRuntimeForSession(
@@ -396,6 +402,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     waitForCompletion?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     spawnHeadlessViewer?: boolean | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
@@ -406,6 +413,7 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     ...(flagOptions.attachBeforeInvocationStart
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
+    responseFormat: flagOptions.responseFormat,
   })
 
   // A headless claude turn is coerced into this interactive broker runtime
@@ -456,6 +464,7 @@ export async function executeInteractiveBrokerInputTurn(
   options: {
     waitForCompletion?: boolean | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
   const invocationId = runtime.activeInvocationId
@@ -470,6 +479,12 @@ export async function executeInteractiveBrokerInputTurn(
       }
     )
   }
+  assertRuntimeSupportsResponseFormat({
+    db: this.db,
+    runtime,
+    responseFormat: options.responseFormat,
+    route: 'interactive-broker',
+  })
 
   const activeRun =
     runtime.activeRunId !== undefined ? this.db.runs.getByRunId(runtime.activeRunId) : null
@@ -511,6 +526,9 @@ export async function executeInteractiveBrokerInputTurn(
     inputId,
     kind: 'user',
     content: [{ type: 'text', text: prompt }],
+    ...(toBrokerResponseFormat(options.responseFormat) !== undefined
+      ? { responseFormat: toBrokerResponseFormat(options.responseFormat) }
+      : {}),
     metadata: {
       runId,
       ...(options.repairCorrelation !== undefined
@@ -788,6 +806,7 @@ export async function startInteractiveTmuxBrokerRuntime(
     flagEnvName: string
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
   const now = timestamp()
@@ -818,6 +837,7 @@ export async function startInteractiveTmuxBrokerRuntime(
             sessionContinuation: session.continuation,
           })
         ),
+        responseFormat: flagOptions.responseFormat,
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
@@ -914,6 +934,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
+      requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         mergeEnv(compiled.dispatchEnv ?? {}, hrcDispatchEnv),
         compiled.startRequest
@@ -940,6 +961,16 @@ export async function startInteractiveTmuxBrokerRuntime(
     })
 
     if (!result.ok) {
+      if (
+        result.error.code === 'unsupported_capability' &&
+        flagOptions.responseFormat?.kind === 'json_schema'
+      ) {
+        throw new HrcUnprocessableEntityError(
+          HrcErrorCode.UNSUPPORTED_CAPABILITY,
+          result.error.message,
+          result.error.detail
+        )
+      }
       throw new HrcRuntimeUnavailableError('interactive broker start failed', {
         hostSessionId: session.hostSessionId,
         runId: diagnosticRunId,

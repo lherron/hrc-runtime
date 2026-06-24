@@ -127,17 +127,19 @@ function hashNeutralInvocationSpec(
  * Hash material for a start request — MUST mirror agent-spaces
  * `compile-runtime-plan.ts#hashNeutralStartRequest` exactly (T-04133 / T-05109).
  * `spec.invocationId` / `correlation` stay neutralized (per-dispatch identity).
- * Of `initialInput` only the deterministic `inputId` is retained: ASPC's
- * `deriveInitialInputId` now folds generation + content into that id, so a
- * changed generation moves the start-request hash while a pure correlation
- * change does not. Content is deliberately NOT hashed here — post-compile
- * content drift is caught by `initialInputHash`. This recompute is the runtime
- * admission gate; if it diverges from ASPC's producer the compile is rejected
- * with `start-request-hash-mismatch` for every headless dispatch that carries an
- * `initialInput` (the divergence T-05109 fixed).
+ * Of `initialInput`, retain the deterministic `inputId` plus per-turn
+ * `responseFormat`. ASPC's `deriveInitialInputId` folds generation + content
+ * into the id, so a changed generation moves the start-request hash while a pure
+ * correlation change does not. Prompt content is deliberately NOT hashed here —
+ * post-compile content drift is caught by `initialInputHash`. The response
+ * format is retained because callers may supply a fixed initialInputId while
+ * changing the per-turn output contract.
  */
 type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
-  initialInput?: { inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId'] }
+  initialInput?: {
+    inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId']
+    responseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
+  }
 }
 
 function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
@@ -145,7 +147,16 @@ function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartReq
   return {
     ...rest,
     spec: hashNeutralInvocationSpec(startRequest.spec),
-    ...(initialInput !== undefined ? { initialInput: { inputId: initialInput.inputId } } : {}),
+    ...(initialInput !== undefined
+      ? {
+          initialInput: {
+            inputId: initialInput.inputId,
+            ...(initialInput.responseFormat !== undefined
+              ? { responseFormat: initialInput.responseFormat }
+              : {}),
+          },
+        }
+      : {}),
   }
 }
 

@@ -1,4 +1,4 @@
-import type { HrcRuntimeIntent } from './contracts.js'
+import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
  *
@@ -167,6 +167,7 @@ export type GetTargetRequest = {
 export type DispatchTurnBySelectorRequest = {
   selector: { sessionRef: string }
   prompt: string
+  responseFormat?: HrcTurnResponseFormat | undefined
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
@@ -258,6 +259,7 @@ export type SemanticDmRequest = {
   from: HrcMessageAddress
   to: HrcMessageAddress
   body: string
+  responseFormat?: HrcTurnResponseFormat | undefined
   mode?: 'auto' | 'headless' | 'nonInteractive' | undefined
   respondTo?: HrcMessageAddress | undefined
   replyToMessageId?: string | undefined

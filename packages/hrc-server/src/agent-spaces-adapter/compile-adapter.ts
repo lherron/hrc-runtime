@@ -26,7 +26,7 @@
  * HRC_HEADLESS_CODEX_BROKER_ENABLED) invokes it.
  */
 
-import type { HrcRuntimeIntent } from 'hrc-core'
+import type { HrcRuntimeIntent, HrcTurnResponseFormat } from 'hrc-core'
 import type {
   AspcCompileHarnessInvocationRequest,
   AspcCompileHarnessInvocationResponse,
@@ -92,6 +92,7 @@ export type BrokerCompileAdapterInput = {
   continuation?: RuntimeCompileRequest['continuation']
   policy?: RuntimeCompileRequest['hrcPolicy'] | undefined
   allowCompilerInitialInputWithoutIdentity?: boolean | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
 }
 
 /**
@@ -297,6 +298,9 @@ export async function compileBrokerRuntimePlan(
       initialPrompt: intent.initialPrompt,
       attachments: toCompileAttachments(intent.attachments),
       taskContext: intent.taskContext,
+      ...(input.responseFormat?.kind === 'json_schema'
+        ? { responseFormat: input.responseFormat }
+        : {}),
     },
     hrcPolicy: input.policy ?? {},
     correlation,

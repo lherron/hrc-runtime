@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 
 import { CliUsageError, parseDuration } from 'cli-kit'
-import type { HrcLifecycleEvent, HrcMessageRecord, SemanticTurnHandoffResponse } from 'hrc-core'
+import type {
+  HrcLifecycleEvent,
+  HrcMessageRecord,
+  HrcTurnResponseFormat,
+  SemanticTurnHandoffResponse,
+} from 'hrc-core'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
@@ -37,6 +42,7 @@ export type TurnOptions = {
   follow?: string | undefined
   replyTo?: string | undefined
   crossScopeReply?: boolean | undefined
+  responseFormatJsonSchema?: string | undefined
   /**
    * Final-only Codex wait mode. `final` blocks quietly until the turn reaches a
    * terminal state, then emits one compact JSON object. Mutually exclusive with
@@ -63,6 +69,25 @@ type TurnOutputOptions = {
   waitMode: string | undefined
   waitTimeoutMs: number | undefined
   stackedWindowMs: number | undefined
+}
+
+function parseResponseFormatOption(opts: TurnOptions): HrcTurnResponseFormat | undefined {
+  const raw = opts.responseFormatJsonSchema
+  if (raw === undefined) {
+    return undefined
+  }
+  const jsonText = raw.trim().startsWith('{') ? raw : readFileSync(raw, 'utf8')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonText)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new CliUsageError(`invalid --response-format-json-schema JSON: ${message}`)
+  }
+  if (!isRecord(parsed)) {
+    throw new CliUsageError('--response-format-json-schema must be a JSON object')
+  }
+  return { kind: 'json_schema', schema: parsed }
 }
 
 /**
@@ -308,6 +333,7 @@ export async function cmdTurn(
   positionals: string[]
 ): Promise<void> {
   const { targetInput, body, bodyFromFile, bodyFromStdin } = readTurnBodyInput(opts, positionals)
+  const responseFormat = parseResponseFormatOption(opts)
 
   const stallAfterMs = parseDuration(opts.stallAfter ?? '1h')
 
@@ -336,6 +362,7 @@ export async function cmdTurn(
       bodyLength: body.length,
       clearContextFirst: opts.new === true,
       replyToMessageId: opts.replyTo ?? null,
+      responseFormat: responseFormat ?? null,
       output: {
         format: opts.format ?? null,
         pretty: opts.pretty === true,
@@ -374,6 +401,7 @@ export async function cmdTurn(
     createIfMissing: true,
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
+    responseFormat,
   })
 
   // ── Final-only Codex wait mode ──

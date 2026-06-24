@@ -569,6 +569,42 @@ describe('projection mapping (ordered sequence)', () => {
     }
   })
 
+  it('does not double-buffer completed assistant text already emitted as deltas', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+    const tid = 'turn_delta_completed' as TurnId
+    const messageId = 'msg_delta_completed'
+
+    mapper.apply(envelope('input.accepted', 3, { inputId: 'input_delta_completed' }))
+    mapper.apply(envelope('turn.started', 4, { turnId: tid }, { turnId: tid }))
+    mapper.apply(
+      envelope(
+        'assistant.message.delta',
+        5,
+        {
+          messageId,
+          text: ASSISTANT_TEXT,
+        },
+        { turnId: tid }
+      )
+    )
+    mapper.apply(
+      envelope(
+        'assistant.message.completed',
+        6,
+        {
+          messageId,
+          content: [{ type: 'text', text: ASSISTANT_TEXT }],
+          final: true,
+        },
+        { turnId: tid }
+      )
+    )
+
+    expect(bufferTextForRun(db, RUN_ID)).toBe(ASSISTANT_TEXT)
+    expect(db.runtimeBuffers.listByRunId(RUN_ID)).toHaveLength(1)
+  })
+
   it('continuation.cleared drops BOTH runtime AND session continuation', () => {
     const mapper = makeMapper()
     const db = fixture.db

@@ -215,6 +215,76 @@ if (cmd === 'app-server') {
     expect(listed.messages[0]?.body).toBe('ping from cody')
   })
 
+  it('rejects responseFormat on non-session semantic DMs before message persistence', async () => {
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'entity', entity: 'system' },
+      body: 'this is not a turn-capable target',
+      responseFormat: {
+        kind: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: { ok: { type: 'boolean' } },
+          required: ['ok'],
+          additionalProperties: false,
+        },
+      },
+    })
+
+    expect(dmRes.status).toBe(400)
+    const errorBody = (await dmRes.json()) as {
+      error?: { code?: string; message?: string; detail?: Record<string, unknown> }
+    }
+    expect(errorBody.error?.code).toBe('malformed_request')
+    expect(errorBody.error?.message).toContain('responseFormat requires a session turn target')
+    expect(errorBody.error?.detail).toMatchObject({
+      field: 'responseFormat',
+      route: 'semantic-dm',
+      reason: 'responseFormat requires a session turn target',
+    })
+
+    const listRes = await fixture.postJson('/v1/messages/query', {
+      participant: { kind: 'entity', entity: 'system' },
+    })
+    expect(listRes.status).toBe(200)
+
+    const listed = (await listRes.json()) as ListMessagesResponse
+    expect(listed.messages).toHaveLength(0)
+  })
+
+  it('threads responseFormat on session-target semantic DMs to semantic turn dispatch', async () => {
+    const scopeRef = 'agent:cody:project:agent-spaces:task:T-05142'
+    const sessionRef = `${scopeRef}/lane:main`
+    await fixture.resolveSession(scopeRef)
+
+    const schema = {
+      type: 'object',
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+      additionalProperties: false,
+    }
+    let capturedResponseFormat: unknown
+    const originalExecuteSemanticTurn = (server as any).executeSemanticTurn
+    ;(server as any).executeSemanticTurn = async (_session: unknown, body: any) => {
+      capturedResponseFormat = body.responseFormat
+      return {}
+    }
+
+    try {
+      const dmRes = await fixture.postJson('/v1/messages/dm', {
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef },
+        body: 'dispatch this as a structured turn',
+        responseFormat: { kind: 'json_schema', schema },
+      })
+      expect(dmRes.status).toBe(200)
+    } finally {
+      ;(server as any).executeSemanticTurn = originalExecuteSemanticTurn
+    }
+
+    expect(capturedResponseFormat).toEqual({ kind: 'json_schema', schema })
+  })
+
   it('persists message-to-session correlation for dm records before any runtime exists', async () => {
     const scopeRef = 'agent:cody:project:agent-spaces:task:T-01293'
     const sessionRef = `${scopeRef}/lane:main`

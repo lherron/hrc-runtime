@@ -311,6 +311,82 @@ describe('HarnessBrokerController', () => {
     expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
   })
 
+  it('PRIMARY gate: rejects json_schema via the DECLARED driver capability when the broker driver does not advertise finalResponse (T-05142)', async () => {
+    // The aspc/broker-declared driver capability (from the negotiated hello) is
+    // authoritative. The fake's codex-app-server driver advertises no
+    // finalResponse, mirroring claude-code-tmux / pi-tui-tmux. A json_schema turn
+    // must be rejected on that declared capability — keyed off the REQUESTED
+    // format, NOT startRequest.initialInput (which compile drops for launch-primed).
+    const fake = new FakeBrokerClient()
+    const input = makeStartInput()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const result = await controller.start({
+      ...input,
+      requestedResponseFormat: { kind: 'json_schema', schema: { type: 'object' } },
+      brokerClient: fake,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected fail-closed result')
+    expect(result.error.code).toBe('unsupported_capability')
+    // Capability-accurate rejection from the preflight (not the backstop):
+    // no `reason` field, and the declared finalResponse is surfaced as `actual`.
+    const detail = result.error.detail as { reason?: string; capability?: string; actual?: unknown }
+    expect(detail.reason).toBeUndefined()
+    expect(detail.capability).toBe('finalResponse.jsonSchema')
+    // No broker invocation side effect: the turn must never reach broker start.
+    expect(fake.callOrder).not.toContain('start')
+  })
+
+  it('BACKSTOP: rejects a declared-capable driver whose start path cannot deliver the format (initialInput dropped) (T-05142)', async () => {
+    // Defense-in-depth: a driver that DECLARES finalResponse but whose start
+    // request carries no initialInput (hypothetical launch-primed capable driver)
+    // has no per-turn vehicle, so it must fail closed rather than silently drop.
+    const fake = new FakeBrokerClient()
+    const input = makeStartInput()
+    // Make the declared driver capability advertise finalResponse so the PRIMARY
+    // preflight passes and execution reaches the deliverability backstop.
+    fake.helloResponse = {
+      ...fake.helloResponse,
+      drivers: [
+        {
+          kind: input.profile.brokerDriver,
+          version: '0.1.1-test',
+          available: true,
+          capabilities: {
+            ...invocationCapabilities(),
+            finalResponse: { jsonSchema: true, perTurn: true },
+          },
+        },
+      ],
+    }
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const result = await controller.start({
+      ...input,
+      startRequest: { ...input.startRequest, initialInput: undefined },
+      requestedResponseFormat: { kind: 'json_schema', schema: { type: 'object' } },
+      brokerClient: fake,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected fail-closed result')
+    expect(result.error.code).toBe('unsupported_capability')
+    expect((result.error.detail as { reason?: string }).reason).toBe('initial-input-not-deliverable')
+    expect(fake.callOrder).not.toContain('start')
+  })
+
   it('dispose forwards an operator_reap reason to broker stop (T-04423)', async () => {
     const fake = new FakeBrokerClient()
     const controller = new HarnessBrokerController({

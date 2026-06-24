@@ -342,6 +342,27 @@ describe('selectBrokerExecutionProfile (W2 admission)', () => {
       // Content drift is caught by initialInputHash, not the start-request hash.
       expect(contentChanged).toBe(base)
     })
+
+    it('the start-request hash CHANGES with initialInput.responseFormat', () => {
+      const identity = makeIdentity()
+      const { startRequest } = makeBrokerProfile(identity)
+      const base = neutralStartRequestHash(startRequest)
+      const responseFormatChanged = neutralStartRequestHash({
+        ...startRequest,
+        initialInput: {
+          ...startRequest.initialInput!,
+          responseFormat: {
+            kind: 'json_schema',
+            schema: {
+              type: 'object',
+              properties: { ok: { type: 'boolean' } },
+              required: ['ok'],
+            },
+          },
+        },
+      })
+      expect(responseFormatChanged).not.toBe(base)
+    })
   })
 
   it('verifies hashes with the exported project() helper (sanity on fixtures)', () => {

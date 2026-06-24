@@ -16,6 +16,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcTargetView,
+  HrcTurnResponseFormat,
   ListMessagesResponse,
   SemanticDmResponse,
   SemanticTurnHandoffResponse,
@@ -458,6 +459,7 @@ export async function handleSemanticTurnHandoff(
           runId,
           sessionRef,
           fromSeq,
+          responseFormat: body.responseFormat,
         })
         if (delivered) {
           return json(delivered satisfies SemanticTurnHandoffResponse)
@@ -482,6 +484,7 @@ export async function handleSemanticTurnHandoff(
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,
       waitForCompletion: false,
+      responseFormat: body.responseFormat,
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'
@@ -553,9 +556,10 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
     runId: string
     sessionRef: string
     fromSeq: number
+    responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<SemanticTurnHandoffResponse | undefined> {
-  const { session, runtime, request, payload, runId, sessionRef, fromSeq } = input
+  const { session, runtime, request, payload, runId, sessionRef, fromSeq, responseFormat } = input
   if (runtime.transport !== 'tmux' && runtime.transport !== 'ghostty') {
     return undefined
   }
@@ -573,7 +577,7 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
       runtime,
       payload,
       runId,
-      { waitForCompletion: false }
+      { waitForCompletion: false, responseFormat }
     )
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const brokerTransport = turnBody.transport as 'tmux'
@@ -639,6 +643,18 @@ export async function handleSemanticDm(
   }
 
   if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
+
+  if (body.responseFormat !== undefined && body.to.kind !== 'session') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'responseFormat requires a session turn target',
+      {
+        field: 'responseFormat',
+        route: 'semantic-dm',
+        reason: 'responseFormat requires a session turn target',
+      }
+    )
+  }
 
   const respondTo = body.respondTo ?? body.from
   const record = this.insertAndNotifyMessage({
@@ -822,6 +838,7 @@ export async function executeSemanticTurn(
     body: string
     from: HrcMessageAddress
     to: HrcMessageAddress
+    responseFormat?: HrcTurnResponseFormat | undefined
   },
   record: HrcMessageRecord,
   respondTo: HrcMessageAddress,
@@ -848,6 +865,7 @@ export async function executeSemanticTurn(
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,
       waitForCompletion: options.waitForCompletion,
+      responseFormat: body.responseFormat,
     })
     const turnBody = (await turnResponse.json()) as DispatchTurnResponse
     const transport = turnBody.transport as 'sdk' | 'tmux' | 'headless'

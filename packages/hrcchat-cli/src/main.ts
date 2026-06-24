@@ -371,6 +371,10 @@ const turnCmd = program
     'allow --reply-to to thread across conversation scopes (blocked by default)'
   )
   .option('--file <path>', 'read prompt from file')
+  .option(
+    '--response-format-json-schema <schema>',
+    'request JSON Schema constrained final response (inline JSON object or file path)'
+  )
   .action(async (target, prompt, opts) => {
     const client = createClient()
     await cmdTurn(client, { ...opts }, [target, ...(prompt !== undefined ? [prompt] : [])])

@@ -114,6 +114,7 @@ export type {
   HrcRunRecord,
   HrcSurfaceBindingRecord,
   HrcTaskContext,
+  HrcTurnResponseFormat,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,

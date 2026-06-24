@@ -18,6 +18,7 @@ import type {
   HrcSessionRecord,
   HrcStatusResponse,
   HrcStatusTmuxView,
+  HrcTurnResponseFormat,
 } from './contracts.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
@@ -168,6 +169,7 @@ export type EnsureWindowResponse = EnsureRuntimeResponse & {
 export type DispatchTurnRequest = {
   hostSessionId: string
   prompt: string
+  responseFormat?: HrcTurnResponseFormat | undefined
   attachments?: AttachmentRef[] | undefined
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined

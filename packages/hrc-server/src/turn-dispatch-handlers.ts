@@ -1,12 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { HrcConflictError, HrcErrorCode, HrcRuntimeUnavailableError, validateFence } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+  validateFence,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcTurnResponseFormat,
   OpenBrokerSessionResponse,
   PrepareAttachedRunResponse,
   ResumeAttachedRunResponse,
@@ -213,6 +220,7 @@ export async function handleDispatchTurn(
     runId,
     waitForCompletion: body.waitForCompletion,
     whenBusy: body.whenBusy,
+    responseFormat: body.responseFormat,
     ...(body.repair !== undefined
       ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
       : {}),
@@ -624,6 +632,7 @@ export async function dispatchTurnForSession(
     whenBusy?: 'reject' | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
   const runId = options.runId ?? `run-${randomUUID()}`
@@ -695,10 +704,16 @@ export async function dispatchTurnForSession(
           waitForCompletion: options.waitForCompletion,
           whenBusy: options.whenBusy,
           repairCorrelation: options.repairCorrelation,
+          responseFormat: options.responseFormat,
         })
       )
     }
     if (route === 'sdk') {
+      assertJsonSchemaResponseFormatSupported(options.responseFormat, {
+        route: 'sdk',
+        provider: intent.harness.provider,
+        harnessId: intent.harness.id,
+      })
       return await withObservation(
         await this.handleHeadlessDispatchTurn(session, dispatchIntent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
@@ -706,6 +721,11 @@ export async function dispatchTurnForSession(
       )
     }
 
+    assertJsonSchemaResponseFormatSupported(options.responseFormat, {
+      route,
+      provider: intent.harness.provider,
+      harnessId: intent.harness.id,
+    })
     throw new HrcRuntimeUnavailableError('headless legacy execution is unavailable', {
       hostSessionId: session.hostSessionId,
       provider: intent.harness.provider,
@@ -727,6 +747,11 @@ export async function dispatchTurnForSession(
       !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
       liveInteractiveRuntime.activeRunId === undefined
     if (!interactiveAvailableAndIdle) {
+      assertJsonSchemaResponseFormatSupported(options.responseFormat, {
+        route: 'sdk',
+        provider: intent.harness.provider,
+        harnessId: intent.harness.id,
+      })
       return await withObservation(
         await this.handleSdkDispatchTurn(session, intent, prompt, runId, {
           waitForCompletion: options.waitForCompletion,
@@ -781,6 +806,7 @@ export async function dispatchTurnForSession(
             ? false
             : options.waitForCompletion,
         repairCorrelation: options.repairCorrelation,
+        responseFormat: options.responseFormat,
       })
     )
   }
@@ -814,8 +840,29 @@ export async function dispatchTurnForSession(
             admission.allowedBrokerDriver === 'pi-tui-tmux'
               ? false
               : options.waitForCompletion,
+          responseFormat: options.responseFormat,
         }),
     })
+  )
+}
+
+function assertJsonSchemaResponseFormatSupported(
+  responseFormat: HrcTurnResponseFormat | undefined,
+  detail: Record<string, unknown>
+): void {
+  if (responseFormat?.kind !== 'json_schema') {
+    return
+  }
+  throw new HrcUnprocessableEntityError(
+    HrcErrorCode.UNSUPPORTED_CAPABILITY,
+    'responseFormat json_schema is unsupported for the selected route',
+    {
+      capability: 'finalResponse.jsonSchema',
+      responseFormat: { kind: responseFormat.kind },
+      required: { jsonSchema: true, perTurn: true },
+      actual: null,
+      ...detail,
+    }
   )
 }
 

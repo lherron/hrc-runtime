@@ -404,6 +404,27 @@ describe('hrcchat turn — handoff uses correct parameters', () => {
     expect(handoffCalls[0]!.createIfMissing).toBe(true)
   })
 
+  it('passes --response-format-json-schema to semanticTurnHandoff', async () => {
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    const client = createTurnClient({ handoffCalls })
+    const schema = {
+      type: 'object',
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+    }
+
+    await runTurnCommand(client, { responseFormatJsonSchema: JSON.stringify(schema) }, [
+      'cody@agent-spaces',
+      'my prompt',
+    ])
+
+    expect(handoffCalls).toHaveLength(1)
+    expect(handoffCalls[0]!.responseFormat).toEqual({
+      kind: 'json_schema',
+      schema,
+    })
+  })
+
   it('watch uses runId and generation from handoff response (load-bearing filters)', async () => {
     let capturedWatchOptions: WatchOptions | undefined
     const handoff = makeHandoff({

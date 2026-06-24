@@ -18,6 +18,10 @@ export type HrcEventSource =
 export type HrcExecutionMode = 'headless' | 'interactive' | 'nonInteractive'
 export type HrcIoMode = 'inherit' | 'pipes' | 'pty'
 
+export type HrcTurnResponseFormat =
+  | { kind: 'text' }
+  | { kind: 'json_schema'; schema: Record<string, unknown> }
+
 export type HrcContinuationRef = {
   provider: HrcProvider
   key?: string | undefined
