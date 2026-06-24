@@ -293,13 +293,20 @@ export async function startController(
       }
     }
 
-    // BACKSTOP (fail-closed, defense-in-depth): a driver that DECLARES the
-    // capability but whose start path still cannot carry the format has no
-    // per-turn vehicle — launch-argv-primed profiles drop `startRequest.initialInput`
-    // entirely. Today no declared-capable driver is launch-primed (codex-app-server
-    // delivers via initialInput), so this is unreachable in practice; it exists so
-    // a future declared-capable-but-launch-primed driver fails closed instead of
-    // silently dropping the format (T-05142 invariant).
+    // BACKSTOP (fail-closed, by design): a driver that DECLARES the capability
+    // but whose start path cannot carry the format on turn-1 has no per-turn
+    // vehicle — launch-argv-primed profiles bake turn-1 into launch argv and drop
+    // `startRequest.initialInput` entirely. This is REACHABLE in production and is
+    // a permanent operator contract, not a temporary placeholder: claude-code-tmux
+    // is both declared-capable (finalResponse.jsonSchema) AND launch-primed, so a
+    // COLD turn-1 json_schema turn is rejected here by design. Its per-turn schema
+    // vehicle is the driver's warm/in-flight applyInputNow directive, which only
+    // exists once the runtime is warm — so structured output on a launch-primed
+    // declared-capable driver is WARM-ONLY (decided warm-only over building cold
+    // launch-priming parity; ASP T-05156, validated hrc T-05154). codex-app-server
+    // differs: it delivers turn-1 via initialInput, so it is NOT launch-primed and
+    // never hits this backstop. Failing closed here beats silently dropping the
+    // requested format (T-05142 invariant).
     if (
       requestedResponseFormat?.kind === 'json_schema' &&
       input.startRequest.initialInput?.responseFormat === undefined
