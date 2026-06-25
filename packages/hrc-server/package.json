@@ -24,23 +24,24 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "agent-scope": "0.1.1-dev.20260623102104",
-    "agent-spaces": "0.1.1-dev.20260623102104",
+    "agent-scope": "0.1.1-dev.20260623212923",
+    "agent-spaces": "0.1.1-dev.20260623212923",
     "hrc-core": "*",
     "hrc-events": "*",
     "hrc-store-sqlite": "*",
-    "spaces-aspc": "0.1.1-dev.20260623102104",
-    "spaces-aspc-protocol": "0.1.1-dev.20260623102104",
-    "spaces-config": "0.1.1-dev.20260623102104",
-    "spaces-execution": "0.1.1-dev.20260623102104",
-    "spaces-harness-broker-client": "0.1.1-dev.20260623102104",
-    "spaces-harness-broker-protocol": "0.1.1-dev.20260623102104",
-    "spaces-harness-codex": "0.1.1-dev.20260623102104",
-    "spaces-runtime": "0.1.1-dev.20260623102104",
-    "spaces-runtime-contracts": "0.1.1-dev.20260623102104"
+    "spaces-aspc": "0.1.1-dev.20260623212923",
+    "spaces-aspc-protocol": "0.1.1-dev.20260623212923",
+    "spaces-config": "0.1.1-dev.20260623212923",
+    "spaces-execution": "0.1.1-dev.20260623212923",
+    "spaces-harness-broker-client": "0.1.1-dev.20260623212923",
+    "spaces-harness-broker-protocol": "0.1.1-dev.20260623212923",
+    "spaces-harness-codex": "0.1.1-dev.20260623212923",
+    "spaces-runtime": "0.1.1-dev.20260623212923",
+    "spaces-runtime-contracts": "0.1.1-dev.20260623212923"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "hrc-sdk": "*",
     "typescript": "^5.8.3"
   }
 }

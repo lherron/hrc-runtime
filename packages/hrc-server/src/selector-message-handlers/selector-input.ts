@@ -5,6 +5,7 @@ import {
   HrcErrorCode,
   HrcNotFoundError,
   HrcRuntimeUnavailableError,
+  isCodexAppOwnedScopeRef,
 } from 'hrc-core'
 import type {
   CaptureBySelectorResponse,
@@ -354,7 +355,12 @@ export async function handleDispatchTurnBySelector(
   const responseFormat = parseOptionalTurnResponseFormat(body['responseFormat'])
 
   let session = findTargetSession(this.db, sessionRef)
-  if (!session && body['createIfMissing'] === true) {
+  if (
+    !session &&
+    body['createIfMissing'] === true &&
+    // T-05161: never summon a local runtime for a Codex.app-owned address.
+    !isCodexAppOwnedScopeRef(sessionRef)
+  ) {
     const runtimeIntent = isRecord(body['runtimeIntent'])
       ? (body['runtimeIntent'] as HrcRuntimeIntent)
       : undefined

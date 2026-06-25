@@ -164,6 +164,25 @@ function sessionHandleFor(scopeRef: string, laneId: string): string {
   })
 }
 
+/**
+ * Codex.app drives agents under scope refs whose task segment is a
+ * `codex-<uuid7>` id (e.g. `agent:cody:project:agent-loop:task:codex-019efeb5-
+ * 2db3-7d62-8382-2bcb8ca9be1c`). These addresses are owned and processed by
+ * Codex.app itself — hrc must NOT summon a session or spawn a local runtime for
+ * them. Cody-in-codex.app live-polls the hrcchat DM list, so the message is
+ * still persisted; only the summon/spawn/deliver side is suppressed.
+ *
+ * The matcher is uuid-anchored (not a bare `codex-` prefix) so a human-named
+ * task can never be mistaken for a Codex.app address. Accepts both a raw
+ * scopeRef and a `<scopeRef>/lane:<laneRef>` sessionRef.
+ */
+const CODEX_APP_TASK_RE =
+  /:task:codex-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/|$)/
+
+export function isCodexAppOwnedScopeRef(scopeOrSessionRef: string): boolean {
+  return CODEX_APP_TASK_RE.test(scopeOrSessionRef)
+}
+
 export function splitSessionRef(sessionRef: string): SessionRefParts {
   const [scopeRef, laneSuffix, ...rest] = sessionRef.split('/')
   if (

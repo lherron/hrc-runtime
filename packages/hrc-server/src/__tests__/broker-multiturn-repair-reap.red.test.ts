@@ -357,8 +357,9 @@ describe('T-05078/16 and /23 JSON repair dispatch correlation', () => {
     // Projection/raw-plane guard: the repair raw events themselves must preserve
     // the same source linkage so a run-fenced observer can reconstruct why this
     // follow-up turn exists.
-    expect(repairEvents.every((event) => (event as any).correlation?.sourceRunId === source.runId))
-      .toBe(true)
+    expect(
+      repairEvents.every((event) => (event as any).correlation?.sourceRunId === source.runId)
+    ).toBe(true)
   }, 15_000)
 })
 
@@ -388,8 +389,12 @@ describe('T-05078/14 between-turn reap and reprovision', () => {
     } finally {
       db.close()
     }
-
-    ;(server as any).startHeadlessBrokerRuntime = async (session: any, _intent: any, _prompt: string, runId: string) => {
+    ;(server as any).startHeadlessBrokerRuntime = async (
+      session: any,
+      _intent: any,
+      _prompt: string,
+      runId: string
+    ) => {
       const db = openHrcDatabase(fixture.dbPath)
       const now = new Date().toISOString()
       const runtimeId = 'rt-t05087-reprovisioned'

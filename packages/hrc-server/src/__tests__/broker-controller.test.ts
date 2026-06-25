@@ -383,7 +383,9 @@ describe('HarnessBrokerController', () => {
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('expected fail-closed result')
     expect(result.error.code).toBe('unsupported_capability')
-    expect((result.error.detail as { reason?: string }).reason).toBe('initial-input-not-deliverable')
+    expect((result.error.detail as { reason?: string }).reason).toBe(
+      'initial-input-not-deliverable'
+    )
     expect(fake.callOrder).not.toContain('start')
   })
 

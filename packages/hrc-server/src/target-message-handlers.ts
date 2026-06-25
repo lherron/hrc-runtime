@@ -6,6 +6,7 @@ import {
   HrcDomainError,
   HrcErrorCode,
   HrcNotFoundError,
+  isCodexAppOwnedScopeRef,
 } from 'hrc-core'
 import type {
   DispatchTurnBySelectorResponse,
@@ -369,7 +370,13 @@ export async function handleSemanticTurnHandoff(
   })
 
   let session = findTargetSession(this.db, body.to.sessionRef)
-  if (!session && body.createIfMissing !== false && body.runtimeIntent) {
+  if (
+    !session &&
+    body.createIfMissing !== false &&
+    body.runtimeIntent &&
+    // T-05161: never summon a local runtime for a Codex.app-owned address.
+    !isCodexAppOwnedScopeRef(body.to.sessionRef)
+  ) {
     session = this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent, body.parsedScopeJson)
   }
 
@@ -677,7 +684,20 @@ export async function handleSemanticDm(
   let reply: HrcMessageRecord | undefined
   let rejected = false
 
-  if (body.to.kind === 'session') {
+  // T-05161: a DM to a Codex.app-owned address (task segment `codex-<uuid7>`)
+  // must be persisted (Cody-in-codex.app live-polls the DM list) but must NOT
+  // summon a session, spawn a local codex-cli runtime, or live-deliver. Skip
+  // the entire session/dispatch block; the message is returned as-is below.
+  const codexAppOwnedTarget =
+    body.to.kind === 'session' && isCodexAppOwnedScopeRef(body.to.sessionRef)
+  if (codexAppOwnedTarget && body.to.kind === 'session') {
+    writeServerLog('INFO', 'semantic_dm.codex_app_owned_no_dispatch', {
+      messageId: record.messageId,
+      sessionRef: body.to.sessionRef,
+    })
+  }
+
+  if (body.to.kind === 'session' && !codexAppOwnedTarget) {
     // Auto-summon if needed
     let session = findTargetSession(this.db, body.to.sessionRef)
     if (!session && body.createIfMissing !== false) {

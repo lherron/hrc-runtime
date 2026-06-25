@@ -61,7 +61,11 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
       interactive: false,
       preferredMode: 'headless',
     })
-    expect(intent.harness).toMatchObject({ provider: 'openai', id: 'codex-cli', interactive: false })
+    expect(intent.harness).toMatchObject({
+      provider: 'openai',
+      id: 'codex-cli',
+      interactive: false,
+    })
     expect(intent.execution).toEqual({ preferredMode: 'headless' })
     expect(intent.placement).toMatchObject({ agentRoot, cwd: '/repo', runMode: 'task' })
   })

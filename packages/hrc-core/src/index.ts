@@ -20,6 +20,7 @@ export {
   formatCanonicalScopeRef,
   formatCanonicalSessionRef,
   formatSelector,
+  isCodexAppOwnedScopeRef,
   isConcreteSelector,
   isStableSelector,
   normalizeSessionRef,

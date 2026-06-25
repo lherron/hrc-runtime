@@ -427,6 +427,76 @@ if (cmd === 'app-server') {
     expect(execLog).not.toContain('app-server:')
   })
 
+  it('T-05161: dm to a Codex.app-owned scope persists the message but never summons or spawns', async () => {
+    // Codex.app owns scope refs whose task segment is `codex-<uuid7>`. A DM to
+    // such an address must be persisted (Cody-in-codex.app live-polls the DM
+    // list) but must NOT create an hrc session or spawn a local codex-cli.
+    const codexScopeRef =
+      'agent:cody:project:agent-loop:task:codex-019efeb5-2db3-7d62-8382-2bcb8ca9be1c'
+    const codexSessionRef = `${codexScopeRef}/lane:main`
+
+    const dmRes = await fixture.postJson('/v1/messages/dm', {
+      from: { kind: 'entity', entity: 'human' },
+      to: { kind: 'session', sessionRef: codexSessionRef },
+      body: 'reply addressed to a codex.app session',
+      runtimeIntent: {
+        placement: {
+          agentRoot: '/tmp/agent',
+          projectRoot: '/tmp/project',
+          cwd: '/tmp/project',
+          runMode: 'task',
+          bundle: { kind: 'compose', compose: [] },
+          dryRun: true,
+        },
+        harness: { provider: 'openai', interactive: false },
+        execution: { preferredMode: 'nonInteractive' },
+      },
+    })
+    expect(dmRes.status).toBe(200)
+
+    const dm = (await dmRes.json()) as SemanticDmResponse
+    // Message kept, no dispatch, no error.
+    expect(dm.request.messageId).toBeDefined()
+    expect(dm.execution).toBeUndefined()
+    expect(dm.request.execution.state).toBe('not_applicable')
+    expect(dm.request.execution.hostSessionId).toBeUndefined()
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      // No session summoned for the codex.app scope.
+      expect(db.continuities.getByKey(codexScopeRef, 'main')).toBeNull()
+      // The message row is persisted and findable.
+      const persisted = db.messages.getById(dm.request.messageId)
+      expect(persisted?.body).toBe('reply addressed to a codex.app session')
+
+      // Control: an identical DM to a normal scope DOES summon a session row.
+      const normalScopeRef = 'agent:cody:project:agent-loop:task:T-05161'
+      const normalRes = await fixture.postJson('/v1/messages/dm', {
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: `${normalScopeRef}/lane:main` },
+        body: 'reply to a normal scope',
+        runtimeIntent: {
+          placement: {
+            agentRoot: '/tmp/agent',
+            projectRoot: '/tmp/project',
+            cwd: '/tmp/project',
+            runMode: 'task',
+            bundle: { kind: 'compose', compose: [] },
+            dryRun: true,
+          },
+          harness: { provider: 'openai', interactive: false },
+          execution: { preferredMode: 'nonInteractive' },
+        },
+      })
+      expect(normalRes.status).toBe(200)
+      // A normal scope gets a continuity/session (summoned) — dispatch may then
+      // fail downstream, but the summon itself is what differs from codex.app.
+      expect(db.continuities.getByKey(normalScopeRef, 'main')).not.toBeNull()
+    } finally {
+      db.close()
+    }
+  })
+
   it('semantic turn handoff fails closed when headless codex would use legacy exec', async () => {
     await restartServer({ headlessCodexBrokerEnabled: false })
     const fakeCodex = await installFakeCodex('fake-codex-turn-handoff')
