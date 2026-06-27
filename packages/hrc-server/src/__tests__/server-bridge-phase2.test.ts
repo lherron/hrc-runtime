@@ -302,8 +302,14 @@ describe('POST /v1/bridges/deliver-text', () => {
       expectedGeneration: generation,
     })
 
-    await Bun.sleep(200)
-    const captured = await tmux.capture(pane.paneId)
+    let captured = ''
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await Bun.sleep(100)
+      captured = await tmux.capture(pane.paneId)
+      if (captured.includes('PAYLOAD_OOB_MARKER')) {
+        break
+      }
+    }
     // The full injected text should be PAYLOAD + _OOB_MARKER concatenated
     expect(captured).toContain('PAYLOAD_OOB_MARKER')
   })
