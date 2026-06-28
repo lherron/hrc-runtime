@@ -429,6 +429,45 @@ describe('HarnessBrokerController', () => {
     expect(fake.stopReasons).toContain('dispose')
   })
 
+  it('dispose bounds a wedged broker RPC and drops the unresponsive binding (broker-resume-after-restart hang)', async () => {
+    // A broker that is alive but no longer acks stop/dispose — the failure mode
+    // of a durable broker-tmux runtime reattached after an hrc-server restart.
+    // Without the bound, `client.stop()` hangs forever and freezes the terminate
+    // path; with it, dispose fails fast and forgets the dead binding.
+    class HangingStopBrokerClient extends FakeBrokerClient {
+      override async stop(): Promise<never> {
+        this.callOrder.push('stop')
+        return new Promise<never>(() => {}) // never resolves
+      }
+    }
+    const fake = new HangingStopBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+      brokerDisposeTimeoutMs: 40,
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    // Returns (does not hang) and reports failure rather than success.
+    const result = await controller.dispose('runtime_w2', { reason: 'operator_reap' })
+    expect(result.ok).toBe(false)
+    // Surfaces the specific timeout code (toControllerError preserves it); still a
+    // non-`broker_runtime_not_active` failure, so disposeBrokerRuntime logs WARN
+    // and the terminate path proceeds to tear down the leased tmux + finalize.
+    if (!result.ok) expect(result.error.code).toBe('broker_dispose_timeout')
+    expect(fake.callOrder).toContain('stop')
+
+    // The unresponsive binding was dropped: a second dispose now fast-fails as
+    // not-active (so a retry/teardown is never re-blocked on the dead client).
+    const again = await controller.dispose('runtime_w2')
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.error.code).toBe('broker_runtime_not_active')
+  })
+
   it('allocates and persists an HRC-owned tmux socket on interactive broker-tmux dispatch', async () => {
     const fake = new FakeBrokerClient()
     const identity = makeIdentity({

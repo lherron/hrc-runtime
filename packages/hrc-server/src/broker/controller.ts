@@ -94,6 +94,59 @@ import type {
 
 const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 
+// Ceiling on the broker stop/dispose/close RPC sequence (see dispose()). Chosen
+// generous: a healthy broker acks in well under a second; this only fires for a
+// wedged/unresponsive broker (notably a durable broker-tmux runtime reattached
+// after an hrc-server restart that no longer answers control RPCs).
+const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
+
+/**
+ * Race a broker RPC against a timeout. If `ms <= 0`, the operation is awaited
+ * unbounded (legacy behavior). On timeout, `onTimeout()` is thrown; the abandoned
+ * operation gets a no-op catch so a late rejection cannot surface as an unhandled
+ * rejection. The timer is cancelled via AbortController when the op wins so it
+ * does not keep the event loop alive.
+ */
+async function withBrokerRpcTimeout<T>(
+  op: Promise<T>,
+  ms: number,
+  onTimeout: () => Error
+): Promise<T> {
+  if (!(ms > 0)) return op
+  const controller = new AbortController()
+  const timedOut = Symbol('broker-rpc-timeout')
+  const timer = delay(ms, timedOut, { signal: controller.signal })
+  try {
+    const result = await Promise.race([op, timer])
+    if (result === timedOut) {
+      void op.catch(() => undefined)
+      throw onTimeout()
+    }
+    return result as T
+  } finally {
+    // Cancel the pending timer when the op wins; swallow the AbortError that
+    // `delay` then rejects with so it never surfaces as an unhandled rejection.
+    controller.abort()
+    void timer.catch(() => undefined)
+  }
+}
+
+/**
+ * Resolve the broker dispose timeout: an explicit deps value (finite, >= 0) wins,
+ * else the `HRC_BROKER_DISPOSE_TIMEOUT_MS` env override (same validity rule), else
+ * the default. 0 is honored as "disabled" (unbounded).
+ */
+function resolveBrokerDisposeTimeoutMs(depsValue?: number, envValue?: string): number {
+  if (typeof depsValue === 'number' && Number.isFinite(depsValue) && depsValue >= 0) {
+    return depsValue
+  }
+  if (envValue !== undefined) {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  }
+  return DEFAULT_BROKER_DISPOSE_TIMEOUT_MS
+}
+
 export { BrokerControllerError } from './controller/errors'
 export { isDurableBrokerClient } from './controller/types'
 export type {
@@ -187,6 +240,7 @@ export class HarnessBrokerController {
     | undefined
   private readonly reapBrokerTmuxLease: ((runtimeId: string) => Promise<void>) | undefined
   private readonly brokerTmuxSummaryReapGraceMs: number
+  private readonly brokerDisposeTimeoutMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -245,6 +299,10 @@ export class HarnessBrokerController {
       deps.brokerTmuxSummaryReapGraceMs >= 0
         ? deps.brokerTmuxSummaryReapGraceMs
         : DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS
+    this.brokerDisposeTimeoutMs = resolveBrokerDisposeTimeoutMs(
+      deps.brokerDisposeTimeoutMs,
+      deps.env?.['HRC_BROKER_DISPOSE_TIMEOUT_MS']
+    )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
@@ -715,19 +773,35 @@ export class HarnessBrokerController {
     const reason = opts.reason ?? 'dispose'
     this.markBrokerClosing(runtimeId, reason)
     try {
-      await active.client.stop({
-        invocationId: active.invocationId as InvocationId,
-        reason,
-      })
-      await active.client
-        .dispose({ invocationId: active.invocationId as InvocationId })
-        .catch((error: unknown) => {
-          if (error instanceof Error && error.message === 'Broker transport is closed') {
-            return
-          }
-          throw error
-        })
-      await active.client.close()
+      // Bound the broker RPC sequence: stop/dispose/close await acks from the
+      // broker, and a wedged/unresponsive broker (e.g. a durable broker-tmux
+      // runtime reattached after an hrc-server restart) would otherwise hang
+      // here forever, freezing the whole terminate path. On timeout this rejects
+      // with broker_dispose_timeout (handled below).
+      await withBrokerRpcTimeout(
+        (async () => {
+          await active.client.stop({
+            invocationId: active.invocationId as InvocationId,
+            reason,
+          })
+          await active.client
+            .dispose({ invocationId: active.invocationId as InvocationId })
+            .catch((error: unknown) => {
+              if (error instanceof Error && error.message === 'Broker transport is closed') {
+                return
+              }
+              throw error
+            })
+          await active.client.close()
+        })(),
+        this.brokerDisposeTimeoutMs,
+        () =>
+          new BrokerControllerError(
+            'broker_dispose_timeout',
+            `broker dispose timed out after ${this.brokerDisposeTimeoutMs}ms for ${runtimeId}`,
+            { runtimeId, timeoutMs: this.brokerDisposeTimeoutMs }
+          )
+      )
       this.active.delete(runtimeId)
       const now = this.now()
       this.db.runtimes.update(runtimeId, { status: 'disposed', updatedAt: now })
@@ -738,6 +812,13 @@ export class HarnessBrokerController {
       })
       return { ok: true, response: { disposed: true } }
     } catch (error) {
+      // The dispose failed (timeout or RPC error). Drop the now-unresponsive
+      // binding so the controller stops treating this runtime as live and a
+      // retry/teardown isn't blocked on the same dead client; best-effort close
+      // its transport. The caller's terminate path tears down the leased tmux and
+      // finalizes the DB row, so forgetting the binding here is the right cleanup.
+      this.active.delete(runtimeId)
+      await active.client.close().catch(() => undefined)
       return { ok: false, error: toControllerError('broker_dispose_failed', error) }
     }
   }

@@ -336,6 +336,17 @@ export type HarnessBrokerControllerDeps = {
    */
   brokerTmuxSummaryReapGraceMs?: number | undefined
   /**
+   * Per-call ceiling on the broker stop/dispose/close RPC sequence in
+   * {@link HarnessBrokerController.dispose}. A broker that is alive but no longer
+   * acks (e.g. a durable broker-tmux runtime reattached after an hrc-server
+   * restart) would otherwise hang `client.stop()` forever, freezing the whole
+   * terminate path. On timeout, dispose rejects with `broker_dispose_timeout` and
+   * drops the unresponsive binding so the caller's terminate teardown proceeds.
+   * 0 disables the bound. Defaults to {@link DEFAULT_BROKER_DISPOSE_TIMEOUT_MS}
+   * (overridable via `HRC_BROKER_DISPOSE_TIMEOUT_MS`).
+   */
+  brokerDisposeTimeoutMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.
