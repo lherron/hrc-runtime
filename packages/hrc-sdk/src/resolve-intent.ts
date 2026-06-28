@@ -119,6 +119,12 @@ export interface BuildHrcRuntimeIntentInput {
   interactive?: boolean | undefined
   /** Caller's preferred execution mode (its own turn semantic, not harness knowledge). */
   preferredMode?: HrcExecutionMode | undefined
+  /**
+   * T-05177: pass `false` for an autonomous one-shot that must never be deferred
+   * into a live interactive broker surface for the same scope. Omitted ⇒ HRC's
+   * default reuse behavior (treated as `true`).
+   */
+  allowInteractiveSurfaceReuse?: boolean | undefined
   /** Optional initial prompt threaded onto the intent. */
   initialPrompt?: string | undefined
 }
@@ -155,7 +161,12 @@ export function buildHrcRuntimeIntent(input: BuildHrcRuntimeIntentInput): HrcRun
       interactive,
       ...(harnessId !== undefined ? { id: harnessId } : {}),
     },
-    execution: { preferredMode },
+    execution: {
+      preferredMode,
+      ...(input.allowInteractiveSurfaceReuse !== undefined
+        ? { allowInteractiveSurfaceReuse: input.allowInteractiveSurfaceReuse }
+        : {}),
+    },
     ...(input.initialPrompt !== undefined ? { initialPrompt: input.initialPrompt } : {}),
   }
 }

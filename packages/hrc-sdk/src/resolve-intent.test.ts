@@ -98,4 +98,28 @@ describe('buildHrcRuntimeIntent — single authority for scoperef → HrcRuntime
     expect(intent.execution).toEqual({ preferredMode: 'nonInteractive' })
     expect(intent.harness.interactive).toBe(false)
   })
+
+  test('T-05177: allowInteractiveSurfaceReuse threads into execution only when supplied', () => {
+    const { agentRoot, agentId } = makeAgentDir('claude-code')
+    const off = buildHrcRuntimeIntent({
+      agentId,
+      agentRoot,
+      interactive: false,
+      preferredMode: 'headless',
+      allowInteractiveSurfaceReuse: false,
+    })
+    expect(off.execution).toEqual({
+      preferredMode: 'headless',
+      allowInteractiveSurfaceReuse: false,
+    })
+
+    // Omitted ⇒ field absent (HRC treats absence as the default-allow reuse).
+    const omitted = buildHrcRuntimeIntent({
+      agentId,
+      agentRoot,
+      interactive: false,
+      preferredMode: 'headless',
+    })
+    expect(omitted.execution).toEqual({ preferredMode: 'headless' })
+  })
 })

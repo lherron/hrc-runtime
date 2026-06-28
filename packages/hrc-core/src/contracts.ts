@@ -90,6 +90,14 @@ export type HrcExecutionIntent = {
   preferredMode?: HrcExecutionMode | undefined
   autoLaunchInteractive?: boolean | undefined
   allowFallback?: boolean | undefined
+  /**
+   * T-05177: when explicitly `false`, this dispatch is an autonomous one-shot
+   * that must NOT be deferred into a live interactive broker surface for the
+   * same scope (the codex "DM lands in the operator's open TUI" reuse). HRC
+   * gives the turn its own runtime instead. Undefined ⇒ treated as `true`
+   * (preserves DM-into-open-TUI for every existing caller).
+   */
+  allowInteractiveSurfaceReuse?: boolean | undefined
 }
 
 export type HrcLaunchEnvConfig = {
