@@ -2,62 +2,56 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.praesidium.hrc-server</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/lherron/.bun/bin/hrc</string>
-    <string>server</string>
-    <string>serve</string>
-  </array>
-
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/Users/lherron/.local/bin:/Users/lherron/.bun/bin:/Users/lherron/.tooling/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>HOME</key>
-    <string>/Users/lherron</string>
-    <key>LANG</key>
-    <string>en_US.UTF-8</string>
-    <key>ASP_HOME</key>
-    <string>/Users/lherron/praesidium/var/spaces-repo</string>
-    <key>PI_PATH</key>
-    <string>/Users/lherron/.nvm/versions/node/v22.20.0/bin/pi</string>
-    <key>HRC_RUNTIME_DIR</key>
-    <string>/Users/lherron/praesidium/var/run/hrc</string>
-    <key>HRC_STATE_DIR</key>
-    <string>/Users/lherron/praesidium/var/state/hrc</string>
-    <key>HRC_HEADLESS_CODEX_BROKER_ENABLED</key>
-    <string>1</string>
-    <key>HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED</key>
-    <string>1</string>
-    <key>HRC_CODEX_CLI_TMUX_BROKER_ENABLED</key>
-    <string>1</string>
-    <key>HRC_BROKER_DURABLE_IPC_ENABLED</key>
-    <string>1</string>
-    <key>HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION</key>
-    <string>tmux-tui</string>
-  </dict>
-
-  <key>WorkingDirectory</key>
-  <string>/Users/lherron/praesidium</string>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <true/>
-
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
-
-  <key>ProcessType</key>
-  <string>Interactive</string>
-
-  <key>StandardOutPath</key>
-  <string>/Users/lherron/praesidium/var/logs/hrc-server.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/lherron/praesidium/var/logs/hrc-server.err.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>ASP_HOME</key>
+		<string>/Users/lherron/praesidium/var/spaces-repo</string>
+		<key>HOME</key>
+		<string>/Users/lherron</string>
+		<key>HRC_BROKER_DURABLE_IPC_ENABLED</key>
+		<string>1</string>
+		<key>HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED</key>
+		<string>1</string>
+		<key>HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION</key>
+		<string>tmux-tui</string>
+		<key>HRC_CODEX_CLI_TMUX_BROKER_ENABLED</key>
+		<string>1</string>
+		<key>HRC_COMMAND_RUN_TARGETS_FILE</key>
+		<string>/Users/lherron/praesidium/var/config/hrc-command-run-targets.json</string>
+		<key>HRC_HEADLESS_CODEX_BROKER_ENABLED</key>
+		<string>1</string>
+		<key>HRC_RUNTIME_DIR</key>
+		<string>/Users/lherron/praesidium/var/run/hrc</string>
+		<key>HRC_STATE_DIR</key>
+		<string>/Users/lherron/praesidium/var/state/hrc</string>
+		<key>LANG</key>
+		<string>en_US.UTF-8</string>
+		<key>PATH</key>
+		<string>/Users/lherron/.local/bin:/Users/lherron/.bun/bin:/Users/lherron/.tooling/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PI_PATH</key>
+		<string>/Users/lherron/.nvm/versions/node/v22.20.0/bin/pi</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.praesidium.hrc-server</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/lherron/.bun/bin/hrc</string>
+		<string>server</string>
+		<string>serve</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/lherron/praesidium/var/logs/hrc-server.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lherron/praesidium/var/logs/hrc-server.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/lherron/praesidium</string>
 </dict>
 </plist>
