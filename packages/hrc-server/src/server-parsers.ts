@@ -61,6 +61,7 @@ export {
   parseDeliverTextRequest,
   parseUnbindSurfaceRequest,
 } from './parsers/bridges.js'
+export { parseLaunchCommandScopedRunRequest } from './parsers/command-runs.js'
 export {
   parseReconcileActiveRunsRequest,
   parseSweepRuntimesRequest,

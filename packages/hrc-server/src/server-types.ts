@@ -1,5 +1,6 @@
 import type {
   HrcBrokerInvocationEventRecord,
+  HrcCommandLaunchSpec,
   HrcErrorCode,
   HrcEventEnvelope,
   HrcLaunchRecord,
@@ -247,6 +248,7 @@ export type HrcServerOptions = {
   sdkInflightInputClient?: SdkInflightInputClient | undefined
   sdkInflightInputRetryDelayMs?: number | undefined
   sdkInflightInputMissingActiveRunRetryMs?: number | undefined
+  commandRunTargets?: Record<string, HrcCommandLaunchSpec> | undefined
   ghostmuxOptions?: GhostmuxManagerOptions | undefined
 }
 

@@ -41,6 +41,8 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'launch.exited': 'launch',
   'launch.orphaned': 'launch',
   'launch.callback_rejected': 'launch',
+  'command_run.started': 'turn',
+  'command_run.exited': 'turn',
   'turn.accepted': 'turn',
   'turn.started': 'turn',
   'turn.completed': 'turn',

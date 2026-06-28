@@ -172,6 +172,11 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   }
 
   function serverOpts(overrides: Partial<HrcServerOptions> = {}): HrcServerOptions {
+    const commandRunExitFromStdin = [
+      process.execPath,
+      '-e',
+      "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const p=d.trim().length>0?JSON.parse(d):{};process.exit(Number.isInteger(p.expectedExit)?p.expectedExit:0)})",
+    ]
     return {
       runtimeRoot,
       stateRoot,
@@ -180,6 +185,16 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       spoolDir,
       dbPath,
       tmuxSocketPath,
+      commandRunTargets: {
+        'test-command-run-success': {
+          launchMode: 'exec',
+          argv: commandRunExitFromStdin,
+        },
+        'test-command-run-failure': {
+          launchMode: 'exec',
+          argv: commandRunExitFromStdin,
+        },
+      },
       ghostmuxOptions: { runner: runFakeGhostmux },
       ...overrides,
     }

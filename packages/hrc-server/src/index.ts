@@ -1,9 +1,20 @@
-import { HRC_API_VERSION, HrcErrorCode, HrcInternalError, HrcNotFoundError } from 'hrc-core'
+import { spawn } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
+
+import {
+  HRC_API_VERSION,
+  HrcBadRequestError,
+  HrcErrorCode,
+  HrcInternalError,
+  HrcNotFoundError,
+} from 'hrc-core'
 import type {
   DropContinuationResponse,
+  HrcCommandLaunchSpec,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcStatusResponse,
+  LaunchCommandScopedRunResponse,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
   RestartStyle,
@@ -90,6 +101,10 @@ import {
 } from './selector-wait-handlers.js'
 import type { ServerContext } from './server-context.js'
 import {
+  COMMAND_RUNTIME_COMPAT_HARNESS,
+  COMMAND_RUNTIME_COMPAT_PROVIDER,
+} from './server-instance-context.js'
+import {
   acquireServerLock,
   cleanupFailedStartup,
   prepareFilesystem,
@@ -104,6 +119,7 @@ import {
   parseClearContextRequest,
   parseDropContinuationRequest,
   parseJsonBody,
+  parseLaunchCommandScopedRunRequest,
   parseResolveSessionRequest,
   parseRuntimeActionBody,
   parseSessionRef,
@@ -193,6 +209,141 @@ export type { RestartStyle, TmuxManagerOptions }
 export type GhostmuxManager = ServerGhostmuxManager
 export { createGhostmuxManager }
 export type { GhostmuxManagerOptions }
+
+type CommandRunProcessResult = {
+  exitCode: number | null
+  signal: string | null
+  errorMessage?: string | undefined
+}
+
+function commandRunOperationId(idempotencyKey: string): string {
+  return `command-run:${idempotencyKey}`
+}
+
+function commandRunId(idempotencyKey: string): string {
+  return `run-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`
+}
+
+function validateConfiguredCommandRunTarget(
+  configuredTargetId: string,
+  command: HrcCommandLaunchSpec
+): void {
+  if (!command.argv || command.argv.length === 0) {
+    throw new HrcInternalError('configured command-run target has no argv', {
+      configuredTargetId,
+    })
+  }
+}
+
+function commandRunResponseFromRun(
+  run: {
+    runId: string
+    hostSessionId: string
+    runtimeId?: string | undefined
+    generation: number
+    transport: string
+  },
+  replayed: boolean
+): LaunchCommandScopedRunResponse {
+  if (!run.runtimeId) {
+    throw new HrcInternalError('command-run dispatch is missing runtime identity', {
+      runId: run.runId,
+    })
+  }
+  if (run.transport !== 'tmux' && run.transport !== 'headless' && run.transport !== 'sdk') {
+    throw new HrcInternalError('command-run dispatch has unsupported transport', {
+      runId: run.runId,
+      transport: run.transport,
+    })
+  }
+  return {
+    runId: run.runId,
+    hostSessionId: run.hostSessionId,
+    runtimeId: run.runtimeId,
+    generation: run.generation,
+    transport: run.transport,
+    replayed,
+  }
+}
+
+function parseCommandRunSessionRef(sessionRef: string): { scopeRef: string; laneRef: string } {
+  const normalized = sessionRef.trim()
+  const laneMarker = '/lane:'
+  const laneIndex = normalized.lastIndexOf(laneMarker)
+  if (laneIndex < 0) {
+    return parseSessionRef(normalized)
+  }
+
+  const scopeRef = normalized.slice(0, laneIndex).replaceAll('/', ':').trim()
+  const laneRef = normalized.slice(laneIndex + laneMarker.length).trim()
+  if (scopeRef.length === 0 || laneRef.length === 0) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'sessionRef must include scopeRef and laneRef',
+      { sessionRef }
+    )
+  }
+  return { scopeRef, laneRef }
+}
+
+async function runConfiguredCommand(
+  command: HrcCommandLaunchSpec,
+  binding: Record<string, string>,
+  stdinJson: unknown
+): Promise<CommandRunProcessResult> {
+  const argv = command.argv
+  if (!argv || argv.length === 0) {
+    throw new HrcInternalError('configured command-run target has no argv')
+  }
+
+  const env = { ...process.env } as Record<string, string | undefined>
+  for (const key of command.unsetEnv ?? []) {
+    delete env[key]
+  }
+  if (command.pathPrepend && command.pathPrepend.length > 0) {
+    env['PATH'] = `${command.pathPrepend.join(':')}:${env['PATH'] ?? ''}`
+  }
+  Object.assign(env, command.env ?? {}, binding)
+
+  const executable = argv[0]
+  if (!executable) {
+    throw new HrcInternalError('configured command-run target has no executable')
+  }
+
+  const child = spawn(executable, argv.slice(1), {
+    cwd: command.cwd,
+    env,
+    stdio: ['pipe', 'ignore', 'pipe'],
+  })
+
+  let stderr = ''
+  child.stderr?.setEncoding('utf8')
+  child.stderr?.on('data', (chunk) => {
+    stderr += String(chunk)
+    if (stderr.length > 4096) {
+      stderr = stderr.slice(-4096)
+    }
+  })
+
+  child.stdin?.end(stdinJson === undefined ? '' : `${JSON.stringify(stdinJson)}\n`)
+
+  return await new Promise<CommandRunProcessResult>((resolve) => {
+    child.once('error', (error) =>
+      resolve({
+        exitCode: 1,
+        signal: null,
+        errorMessage: error.message,
+      })
+    )
+    child.once('exit', (exitCode, signal) =>
+      resolve({
+        exitCode,
+        signal,
+        ...(stderr.trim().length > 0 ? { errorMessage: stderr.trim() } : {}),
+      })
+    )
+  })
+}
 
 // Re-export CLI invocation builder so hrc-cli can produce dry-run previews
 // without duplicating the intent → argv/env translation.
@@ -669,10 +820,167 @@ class HrcServerInstance implements HrcServer {
   }
 
   async handleLaunchCommandScopedRun(request: Request): Promise<Response> {
-    await parseJsonBody(request)
-    throw new HrcInternalError('command-run launch not implemented', {
-      endpoint: '/v1/command-runs/launch',
+    const body = parseLaunchCommandScopedRunRequest(await parseJsonBody(request))
+    const operationId = commandRunOperationId(body.idempotencyKey)
+    const runId = commandRunId(body.idempotencyKey)
+    const replay = this.db.runs.getByRunId(runId)
+    if (replay) {
+      return json(commandRunResponseFromRun(replay, true))
+    }
+
+    const command = this.options.commandRunTargets?.[body.configuredTargetId]
+    if (!command) {
+      throw new HrcNotFoundError(
+        HrcErrorCode.UNKNOWN_RUNTIME,
+        `unknown command-run target "${body.configuredTargetId}"`,
+        { configuredTargetId: body.configuredTargetId }
+      )
+    }
+    validateConfiguredCommandRunTarget(body.configuredTargetId, command)
+
+    const session = this.resolveOrCreateCommandRunSession(body.sessionRef)
+    const runtimeId = `rt-${randomUUID()}`
+    const now = timestamp()
+
+    this.db.runtimes.insert({
+      runtimeId,
+      runtimeKind: 'command',
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      harness: COMMAND_RUNTIME_COMPAT_HARNESS,
+      provider: COMMAND_RUNTIME_COMPAT_PROVIDER,
+      status: 'busy',
+      commandSpec: command,
+      supportsInflightInput: false,
+      adopted: false,
+      activeRunId: runId,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
     })
+
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'tmux',
+      status: 'running',
+      acceptedAt: now,
+      startedAt: now,
+      updatedAt: now,
+      operationId,
+      invocationId: body.idempotencyKey,
+    })
+
+    this.notifyEvent(
+      appendHrcEvent(this.db, 'command_run.started', {
+        ts: now,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId,
+        runId,
+        transport: 'tmux',
+        payload: {
+          configuredTargetId: body.configuredTargetId,
+          binding: body.binding,
+          idempotencyKey: body.idempotencyKey,
+        },
+      })
+    )
+
+    const result = await runConfiguredCommand(command, body.binding, body.stdinJson)
+    const completedAt = timestamp()
+    const exitCode = result.exitCode ?? (result.signal ? 128 : 1)
+    const status = exitCode === 0 ? 'completed' : 'failed'
+    this.db.runs.markCompleted(runId, {
+      status,
+      completedAt,
+      updatedAt: completedAt,
+      ...(status === 'failed'
+        ? {
+            errorCode: HrcErrorCode.INTERNAL_ERROR,
+            errorMessage:
+              result.errorMessage ?? `command-run exited with status ${String(result.exitCode)}`,
+          }
+        : {}),
+    })
+    this.db.runtimes.updateRunId(runtimeId, undefined, completedAt)
+    this.db.runtimes.updateStatus(runtimeId, 'terminated', completedAt)
+
+    this.notifyEvent(
+      appendHrcEvent(this.db, 'command_run.exited', {
+        ts: completedAt,
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        runtimeId,
+        runId,
+        transport: 'tmux',
+        payload: {
+          configuredTargetId: body.configuredTargetId,
+          binding: body.binding,
+          status,
+          exitCode,
+          signal: result.signal,
+        },
+      })
+    )
+
+    return json({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId,
+      generation: session.generation,
+      transport: 'tmux',
+      replayed: false,
+    } satisfies LaunchCommandScopedRunResponse)
+  }
+
+  resolveOrCreateCommandRunSession(sessionRef: string): HrcSessionRecord {
+    const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
+    const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
+    if (continuity) {
+      const existing = this.db.sessions.getByHostSessionId(continuity.activeHostSessionId)
+      if (existing) {
+        return existing
+      }
+    }
+
+    const now = timestamp()
+    const hostSessionId = createHostSessionId()
+    const session: HrcSessionRecord = {
+      hostSessionId,
+      scopeRef,
+      laneRef,
+      generation: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      ancestorScopeRefs: [],
+    }
+
+    const createdSession = this.db.sessions.insert(session)
+    this.db.continuities.upsert({
+      scopeRef,
+      laneRef,
+      activeHostSessionId: hostSessionId,
+      updatedAt: now,
+    })
+    const event = this.appendEvent(createdSession, 'session.created', {
+      created: true,
+      commandRun: true,
+    })
+    this.notifyEvent(event)
+    return createdSession
   }
 
   handleListSessions(url: URL): Response {
