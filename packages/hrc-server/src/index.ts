@@ -365,6 +365,8 @@ async function finalizeConfiguredCommandRun(
   const completedAt = timestamp()
   const exitCode = result.exitCode ?? (result.signal ? 128 : 1)
   const status = exitCode === 0 ? 'completed' : 'failed'
+  const errorMessage =
+    result.errorMessage ?? `command-run exited with status ${String(result.exitCode)}`
   server.db.runs.markCompleted(input.runId, {
     status,
     completedAt,
@@ -372,13 +374,27 @@ async function finalizeConfiguredCommandRun(
     ...(status === 'failed'
       ? {
           errorCode: HrcErrorCode.INTERNAL_ERROR,
-          errorMessage:
-            result.errorMessage ?? `command-run exited with status ${String(result.exitCode)}`,
+          errorMessage,
         }
       : {}),
   })
   server.db.runtimes.updateRunId(input.runtimeId, undefined, completedAt)
   server.db.runtimes.updateStatus(input.runtimeId, 'terminated', completedAt)
+
+  if (status === 'failed') {
+    writeServerLog('ERROR', 'command_run.failed', {
+      runId: input.runId,
+      runtimeId: input.runtimeId,
+      configuredTargetId: input.configuredTargetId,
+      hostSessionId: input.session.hostSessionId,
+      scopeRef: input.session.scopeRef,
+      laneRef: input.session.laneRef,
+      sessionRef: `${input.session.scopeRef}/lane:${input.session.laneRef}`,
+      errorMessage,
+      exitCode,
+      signal: result.signal,
+    })
+  }
 
   server.notifyEvent(
     appendHrcEvent(server.db, 'command_run.exited', {

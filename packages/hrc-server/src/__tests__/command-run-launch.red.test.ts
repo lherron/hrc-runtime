@@ -84,53 +84,86 @@ async function waitForRun(
 describe('POST /v1/command-runs/launch (T-05274 red)', () => {
   it('launches one configured command as a durable run attempt and records success vs failure lifecycle', async () => {
     const client = new HrcClient(fixture.socketPath)
+    const stderrWrites: string[] = []
+    const originalStderrWrite = process.stderr.write
+    process.stderr.write = ((chunk, encodingOrCallback, callback) => {
+      stderrWrites.push(String(chunk))
+      if (typeof encodingOrCallback === 'function') {
+        encodingOrCallback()
+      } else {
+        callback?.()
+      }
+      return true
+    }) as typeof process.stderr.write
 
     const success = await client.launchCommandScopedRun(requestFor('success', 'idem-success-1'))
-    const failure = await client.launchCommandScopedRun(requestFor('failure', 'idem-failure-1'))
-    const completedSuccess = await waitForRun(success.runId, (run) => run.status === 'completed')
-    const completedFailure = await waitForRun(failure.runId, (run) => run.status === 'failed')
+    let failure: Awaited<ReturnType<HrcClient['launchCommandScopedRun']>> | undefined
+    try {
+      failure = await client.launchCommandScopedRun(
+        requestFor('failure', 'idem-failure-1', {
+          expectedExit: 42,
+          stderr: 'command-run failure marker T-05288',
+        })
+      )
+      const completedSuccess = await waitForRun(success.runId, (run) => run.status === 'completed')
+      const completedFailure = await waitForRun(failure.runId, (run) => run.status === 'failed')
 
-    expect(success.runId).toMatch(/^run-/)
-    expect(success.runId).not.toBe(success.hostSessionId)
-    expect(success.runId).not.toBe(success.runtimeId)
-    expect(success.hostSessionId).toMatch(/^hsid-/)
-    expect(success.runtimeId).toMatch(/^rt-/)
-    expect(success.generation).toBeGreaterThanOrEqual(1)
-    expect(success.transport).toBe('tmux')
-    expect(success.replayed).toBe(false)
+      expect(success.runId).toMatch(/^run-/)
+      expect(success.runId).not.toBe(success.hostSessionId)
+      expect(success.runId).not.toBe(success.runtimeId)
+      expect(success.hostSessionId).toMatch(/^hsid-/)
+      expect(success.runtimeId).toMatch(/^rt-/)
+      expect(success.generation).toBeGreaterThanOrEqual(1)
+      expect(success.transport).toBe('tmux')
+      expect(success.replayed).toBe(false)
 
-    expect(failure.runId).toMatch(/^run-/)
-    expect(failure.runId).not.toBe(success.runId)
-    expect(failure.transport).toBe('tmux')
+      expect(failure.runId).toMatch(/^run-/)
+      expect(failure.runId).not.toBe(success.runId)
+      expect(failure.transport).toBe('tmux')
 
-    expect(completedSuccess).toMatchObject({
-      runId: success.runId,
-      hostSessionId: success.hostSessionId,
-      runtimeId: success.runtimeId,
-      generation: success.generation,
-      transport: success.transport,
-      status: 'completed',
-    })
-    expect(completedFailure).toMatchObject({
-      runId: failure.runId,
-      hostSessionId: failure.hostSessionId,
-      runtimeId: failure.runtimeId,
-      generation: failure.generation,
-      transport: failure.transport,
-      status: 'failed',
-    })
+      expect(completedSuccess).toMatchObject({
+        runId: success.runId,
+        hostSessionId: success.hostSessionId,
+        runtimeId: success.runtimeId,
+        generation: success.generation,
+        transport: success.transport,
+        status: 'completed',
+      })
+      expect(completedFailure).toMatchObject({
+        runId: failure.runId,
+        hostSessionId: failure.hostSessionId,
+        runtimeId: failure.runtimeId,
+        generation: failure.generation,
+        transport: failure.transport,
+        status: 'failed',
+        errorMessage: 'command-run failure marker T-05288',
+      })
 
-    expect(listEventsForRun(success.runId).map((event) => event.eventKind)).toEqual(
-      expect.arrayContaining(['command_run.started', 'command_run.exited'])
-    )
-    expect(listEventsForRun(success.runId).at(-1)).toMatchObject({
-      eventKind: 'command_run.exited',
-      payload: expect.objectContaining({ exitCode: 0 }),
-    })
-    expect(listEventsForRun(failure.runId).at(-1)).toMatchObject({
-      eventKind: 'command_run.exited',
-      payload: expect.objectContaining({ exitCode: 42 }),
-    })
+      expect(listEventsForRun(success.runId).map((event) => event.eventKind)).toEqual(
+        expect.arrayContaining(['command_run.started', 'command_run.exited'])
+      )
+      expect(listEventsForRun(success.runId).at(-1)).toMatchObject({
+        eventKind: 'command_run.exited',
+        payload: expect.objectContaining({ exitCode: 0 }),
+      })
+      expect(listEventsForRun(failure.runId).at(-1)).toMatchObject({
+        eventKind: 'command_run.exited',
+        payload: expect.objectContaining({ exitCode: 42 }),
+      })
+    } finally {
+      process.stderr.write = originalStderrWrite
+    }
+    if (!failure) {
+      throw new Error('expected command-run failure launch response')
+    }
+
+    const failureLog = stderrWrites.find((line) => line.includes('command_run.failed'))
+    expect(failureLog).toContain(`"runId":"${failure.runId}"`)
+    expect(failureLog).toContain(`"runtimeId":"${failure.runtimeId}"`)
+    expect(failureLog).toContain('"configuredTargetId":"test-command-run-failure"')
+    expect(failureLog).toContain('"scopeRef":"agent:smokey:project:hrc-runtime:task:T-05274"')
+    expect(failureLog).toContain('"laneRef":"failure"')
+    expect(failureLog).toContain('"errorMessage":"command-run failure marker T-05288"')
   })
 
   it('returns launch correlation before a long-running command process exits', async () => {
@@ -184,5 +217,6 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
       (event) => event.eventKind === 'command_run.started'
     )
     expect(startEvents).toHaveLength(1)
+    await waitForRun(first.runId, (run) => run.status === 'completed')
   })
 })

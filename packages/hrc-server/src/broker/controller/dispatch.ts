@@ -502,13 +502,25 @@ export async function startController(
     }
   } catch (error) {
     const controllerError = toControllerError('broker_start_failed', error)
+    const identity = input.identity
+    const hostSessionId = String(identity.hostSessionId)
+    const session = ctx.db.sessions.getByHostSessionId(hostSessionId)
     if (client) {
-      ctx.markBrokerClosing(String(input.identity.runtimeId), 'broker-start-failed')
+      ctx.markBrokerClosing(String(identity.runtimeId), 'broker-start-failed')
       await client.close().catch(() => undefined)
     }
     ctx.logger.error?.('harness broker start failed', {
       error: controllerError.message,
       code: controllerError.code,
+      runtimeId: String(identity.runtimeId),
+      runId: identity.runId !== undefined ? String(identity.runId) : undefined,
+      operationId: String(identity.operationId),
+      invocationId: String(identity.invocationId),
+      hostSessionId,
+      scopeRef: session?.scopeRef,
+      laneRef: session?.laneRef,
+      sessionRef: session ? `${session.scopeRef}/lane:${session.laneRef}` : undefined,
+      cwd: input.profile.harnessInvocation.startRequest.spec.process.cwd,
     })
     return { ok: false, error: controllerError }
   }

@@ -55,6 +55,18 @@ function requestFor(configuredTargetId: string, idempotencyKey = randomUUID()) {
   } as const
 }
 
+async function waitForCompletedRun(client: HrcClient, runId: string): Promise<void> {
+  const deadline = Date.now() + 1000
+  while (Date.now() < deadline) {
+    const run = await client.getRun(runId)
+    if (run?.status === 'completed') {
+      return
+    }
+    await Bun.sleep(10)
+  }
+  throw new Error(`timed out waiting for command-run ${runId}`)
+}
+
 async function startServerFromEnv(
   fixture: HrcServerTestFixture,
   configPath: string | undefined
@@ -89,6 +101,7 @@ describe('command-run target startup config', () => {
       expect(result.runtimeId).toMatch(/^rt-/)
       expect(result.transport).toBe('tmux')
       expect(result.replayed).toBe(false)
+      await waitForCompletedRun(client, result.runId)
     } finally {
       await server.stop()
       await fixture.cleanup()

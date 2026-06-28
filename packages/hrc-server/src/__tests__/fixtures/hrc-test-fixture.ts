@@ -175,7 +175,7 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
     const commandRunExitFromStdin = [
       process.execPath,
       '-e',
-      "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const p=d.trim().length>0?JSON.parse(d):{};process.exit(Number.isInteger(p.expectedExit)?p.expectedExit:0)})",
+      "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const p=d.trim().length>0?JSON.parse(d):{};if(typeof p.stderr==='string')process.stderr.write(p.stderr);process.exit(Number.isInteger(p.expectedExit)?p.expectedExit:0)})",
     ]
     const commandRunWaitForReleaseFile = [
       process.execPath,

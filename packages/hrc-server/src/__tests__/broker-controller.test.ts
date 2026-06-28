@@ -534,6 +534,7 @@ describe('HarnessBrokerController', () => {
 
   it('does NOT retry a non-socket-ready durable dial failure (fails closed once)', async () => {
     let attempts = 0
+    const errors: Array<{ message: string; fields?: Record<string, unknown> }> = []
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerUnixClientFactory: async () => {
@@ -546,15 +547,39 @@ describe('HarnessBrokerController', () => {
         )
       },
       now: () => NOW,
+      logger: {
+        error(message, fields) {
+          errors.push({ message, fields })
+        },
+      },
     })
 
-    const result = await controller.start(makeStartInput())
+    const input = makeStartInput()
+    const result = await controller.start(input)
 
     expect(result.ok).toBe(false)
     expect(attempts).toBe(1)
     if (!result.ok) {
       expect(result.error.code).toBe('broker_start_failed')
     }
+    expect(errors).toEqual([
+      {
+        message: 'harness broker start failed',
+        fields: expect.objectContaining({
+          error: 'Failed to connect to broker unix socket',
+          code: 'broker_start_failed',
+          runtimeId: 'runtime_w2',
+          runId: 'run_w2',
+          operationId: 'runtimeOperation_w2',
+          invocationId: 'invocation_w2',
+          hostSessionId: 'hostSession_w2',
+          scopeRef: 'agent:larry:project:hrc-runtime:task:T-01697',
+          laneRef: 'main',
+          sessionRef: 'agent:larry:project:hrc-runtime:task:T-01697/lane:main',
+          cwd: input.profile.harnessInvocation.startRequest.spec.process.cwd,
+        }),
+      },
+    ])
   })
 
   it('pauses attached broker-tmux launch before invocation.start until resumed', async () => {
