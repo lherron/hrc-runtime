@@ -199,7 +199,7 @@ async function serverForeground(): Promise<void> {
     fatal(harnessGuard)
   }
 
-  const { createHrcServer } = await import('hrc-server')
+  const { createHrcServer, loadCommandRunTargetsFromEnv } = await import('hrc-server')
 
   const paths = resolveServerPaths()
 
@@ -211,6 +211,7 @@ async function serverForeground(): Promise<void> {
     spoolDir: paths.spoolDir,
     dbPath: paths.dbPath,
     tmuxSocketPath: paths.tmuxSocketPath,
+    commandRunTargets: await loadCommandRunTargetsFromEnv(),
   })
 
   // Write PID file for foreground too (used by status/stop)

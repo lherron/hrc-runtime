@@ -41,6 +41,10 @@ import {
   brokerInteractiveHandlersMethods,
 } from './broker-interactive-handlers.js'
 import type { HarnessBrokerController } from './broker/controller.js'
+import {
+  resolveCommandRunTargets,
+  validateConfiguredCommandRunTarget,
+} from './command-run-targets-config.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
   type EventNotificationHandlersMethods,
@@ -222,17 +226,6 @@ function commandRunOperationId(idempotencyKey: string): string {
 
 function commandRunId(idempotencyKey: string): string {
   return `run-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`
-}
-
-function validateConfiguredCommandRunTarget(
-  configuredTargetId: string,
-  command: HrcCommandLaunchSpec
-): void {
-  if (!command.argv || command.argv.length === 0) {
-    throw new HrcInternalError('configured command-run target has no argv', {
-      configuredTargetId,
-    })
-  }
 }
 
 function commandRunResponseFromRun(
@@ -1203,46 +1196,56 @@ Object.assign(
 )
 
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
+  const resolvedOptions: HrcServerOptions = {
+    ...options,
+    commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
+  }
   const logCtx = {
-    runtimeRoot: options.runtimeRoot,
-    stateRoot: options.stateRoot,
-    socketPath: options.socketPath,
-    dbPath: options.dbPath,
-    tmuxSocketPath: getTmuxSocketPath(options),
+    runtimeRoot: resolvedOptions.runtimeRoot,
+    stateRoot: resolvedOptions.stateRoot,
+    socketPath: resolvedOptions.socketPath,
+    dbPath: resolvedOptions.dbPath,
+    tmuxSocketPath: getTmuxSocketPath(resolvedOptions),
   }
   writeServerLog('INFO', 'server.start.begin', logCtx)
-  await prepareFilesystem(options, getTmuxSocketPath(options))
-  const lockHandle = await acquireServerLock(options)
+  await prepareFilesystem(resolvedOptions, getTmuxSocketPath(resolvedOptions))
+  const lockHandle = await acquireServerLock(resolvedOptions)
   let shouldCleanupSocket = false
 
   try {
-    await prepareSocketForStartup(options.socketPath)
+    await prepareSocketForStartup(resolvedOptions.socketPath)
     shouldCleanupSocket = true
     const tmux = createTmuxManager({
-      socketPath: getTmuxSocketPath(options),
+      socketPath: getTmuxSocketPath(resolvedOptions),
     })
     await tmux.initialize()
-    const ghostmux = createGhostmuxManager(options.ghostmuxOptions)
+    const ghostmux = createGhostmuxManager(resolvedOptions.ghostmuxOptions)
     const claudeGhosttyEnabled = isClaudeGhosttyEnabled()
     if (claudeGhosttyEnabled) {
       await ghostmux.initialize().catch((error) => {
         writeServerLog('WARN', 'server.start.ghostmux_unavailable', { error })
       })
     }
-    const db = openHrcDatabase(options.dbPath)
-    await replaySpool(options, db)
+    const db = openHrcDatabase(resolvedOptions.dbPath)
+    await replaySpool(resolvedOptions, db)
     await reconcileStartupState(db, tmux, ghostmux, {
       reconcileGhostty: claudeGhosttyEnabled,
-      runtimeRoot: options.runtimeRoot,
+      runtimeRoot: resolvedOptions.runtimeRoot,
     })
     writeServerLog('INFO', 'server.start.ready', logCtx)
-    return new HrcServerInstance(options, db, tmux, ghostmux, lockHandle)
+    return new HrcServerInstance(resolvedOptions, db, tmux, ghostmux, lockHandle)
   } catch (error) {
     writeServerLog('ERROR', 'server.start.failed', {
       ...logCtx,
       error,
     })
-    await cleanupFailedStartup(options, lockHandle, shouldCleanupSocket)
+    await cleanupFailedStartup(resolvedOptions, lockHandle, shouldCleanupSocket)
     throw error
   }
 }
+export {
+  HRC_COMMAND_RUN_TARGETS_FILE_ENV,
+  loadCommandRunTargetsFromEnv,
+  resolveCommandRunTargets,
+  validateConfiguredCommandRunTarget,
+} from './command-run-targets-config.js'
