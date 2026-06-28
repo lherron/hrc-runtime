@@ -37,7 +37,7 @@ describe('renderStatusBar', () => {
   it('renders the full triplet from a scope ref', () => {
     const spec = renderStatusBar('agent:clod:project:hrc-runtime:task:T-04297', 'running')
     expect(spec.left).toBe('◆ CLOD')
-    expect(spec.center).toBe('hrc-runtime · T-04297')
+    expect(spec.center).toBe('hrc · T-04297')
     expect(spec.right).toBe('▶ running')
     expect(spec.bg).toBe('#6B4FB0')
     expect(spec.fg).toBe('#F2EEE6')
@@ -45,7 +45,7 @@ describe('renderStatusBar', () => {
 
   it('drops the primary task from the center field', () => {
     const spec = renderStatusBar('agent:daedalus:project:agent-spaces:task:primary', 'idle')
-    expect(spec.center).toBe('agent-spaces')
+    expect(spec.center).toBe('asp')
     expect(spec.right).toBe('✓ idle')
   })
 
@@ -68,19 +68,19 @@ describe('renderStatusBar', () => {
       'running',
       'add-task-slug-to-ghostmux-status-bar'
     )
-    expect(spec.center).toBe('hrc-runtime · T-04977 · add-task-slug-to-ghostmux-status-bar')
+    expect(spec.center).toBe('hrc · T-04977 · add-task-slug-to-ghostmux-status-bar')
   })
 
   it('falls back to project · T-id when no slug is provided', () => {
     expect(renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running').center).toBe(
-      'hrc-runtime · T-04977'
+      'hrc · T-04977'
     )
     expect(
       renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', null).center
-    ).toBe('hrc-runtime · T-04977')
+    ).toBe('hrc · T-04977')
     expect(
       renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', '   ').center
-    ).toBe('hrc-runtime · T-04977')
+    ).toBe('hrc · T-04977')
   })
 
   it('never appends a slug to a primary (taskless) scope', () => {
@@ -89,7 +89,7 @@ describe('renderStatusBar', () => {
       'idle',
       'should-not-appear'
     )
-    expect(spec.center).toBe('agent-spaces')
+    expect(spec.center).toBe('asp')
   })
 })
 
@@ -219,7 +219,7 @@ describe('HeadlessViewerStatusProjector', () => {
     await flushAll()
     expect(applied).toHaveLength(1)
     expect(applied[0]?.spec.center).toBe(
-      'hrc-runtime · T-04977 · add-task-slug-to-ghostmux-status-bar'
+      'hrc · T-04977 · add-task-slug-to-ghostmux-status-bar'
     )
   })
 
@@ -230,7 +230,7 @@ describe('HeadlessViewerStatusProjector', () => {
     )
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
-    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
   })
 
   it('still writes the bar when the slug resolver throws (best-effort)', async () => {
@@ -243,7 +243,7 @@ describe('HeadlessViewerStatusProjector', () => {
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
     expect(applied).toHaveLength(1)
-    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
     expect(errors).toHaveLength(1)
   })
 
@@ -251,7 +251,7 @@ describe('HeadlessViewerStatusProjector', () => {
     const { projector, applied, flushAll } = makeHarness()
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
-    expect(applied[0]?.spec.center).toBe('hrc-runtime · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
   })
 
   it('never repaints terminal color — the projector only writes the status bar', async () => {

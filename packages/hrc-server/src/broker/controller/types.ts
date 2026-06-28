@@ -329,6 +329,13 @@ export type HarnessBrokerControllerDeps = {
    */
   reapBrokerTmuxLease?: ((runtimeId: string) => Promise<void>) | undefined
   /**
+   * Bounded grace between a user-exit continuation clear and broker-tmux lease
+   * reap. The broker emits `invocation.summary` after `continuation.cleared` on
+   * the same ordered stream; this grace lets HRC record that summary before the
+   * lease is killed while still keeping `/quit` prompt.
+   */
+  brokerTmuxSummaryReapGraceMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.

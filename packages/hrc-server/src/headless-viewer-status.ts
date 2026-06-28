@@ -16,6 +16,7 @@ import { parseScopeRef } from 'agent-scope'
 
 import { agentTheme } from './agent-theme.js'
 import type { GhostmuxStatusBarSpec } from './ghostmux.js'
+import { shortenProjectId } from './project-prefix.js'
 import type { TaskSlugResolver } from './wrkq-task-label.js'
 
 export type ViewerState = 'running' | 'awaiting' | 'idle' | 'exited'
@@ -84,7 +85,8 @@ export function viewerTerminalBg(scopeRef: string): string {
 
 function renderCenter(parsed: ReturnType<typeof safeParseScopeRef>, slug?: string | null): string {
   if (!parsed) return ''
-  const project = parsed.projectId ?? ''
+  // Short project prefix to match the tab title (presentation only, T-05237).
+  const project = shortenProjectId(parsed.projectId)
   // `primary` is the default task scope and carries no information — drop it.
   const task = parsed.taskId && parsed.taskId !== 'primary' ? parsed.taskId : ''
   // The slug labels a real task; only meaningful alongside a task id.

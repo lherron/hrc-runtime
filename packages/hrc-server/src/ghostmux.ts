@@ -1,3 +1,7 @@
+import { parseScopeRef } from 'agent-scope'
+
+import { shortenProjectId } from './project-prefix.js'
+
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 
 export type GhostmuxManagerOptions = {
@@ -41,10 +45,104 @@ export type GhostmuxRuntimeSurfaceOptions = {
 const CLAUDE_TAB_TITLE = 'Claude Surfaces'
 const CLAUDE_TAB_ROLE = 'claude-surfaces'
 const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
-const HEADLESS_VIEWER_ROLE = 'hrc-headless-viewer'
 
-/** surface_bindings kind for the headless Claude viewer window (T-04439). */
+/**
+ * Consolidated headless-viewer presentation (T-05237). Replaces the old
+ * one-standalone-window-per-scope model (role `hrc-headless-viewer`): a single
+ * global "Headless Sessions" window holds one tab per canonical `hrc_tab_key`,
+ * and one agent pane per `(tabKey, agentId)`.
+ *
+ * INVARIANT (daedalus #10810): HRC owns this topology ONLY through Ghostty
+ * metadata — never via `list-surfaces` topology, window titles, tab labels, cwd,
+ * or focused state, which are presentation only.
+ */
+const HEADLESS_SESSIONS_WINDOW_TITLE = 'Headless Sessions'
+/** Window-level metadata role stamped on the global parent window. */
+const HEADLESS_SESSIONS_WINDOW_ROLE = 'headless-sessions-window'
+/** Surface-level role for the non-runtime-owned anchor pane (never reaped). */
+const HEADLESS_WINDOW_ANCHOR_ROLE = 'headless-window-anchor'
+/** Surface-level role for a runtime-owned agent viewer pane. */
+const HEADLESS_AGENT_PANE_ROLE = 'headless-agent-pane'
+
+/** surface_bindings kind for a headless agent viewer pane (T-04439, T-05237). */
 export const HEADLESS_VIEWER_SURFACE_KIND = 'ghostty-headless-viewer'
+
+/** Decomposition of a scope ref into the canonical headless tab grouping (T-05237). */
+export type HeadlessTabIdentity = {
+  /** Canonical grouping key — the ONLY value matching may key on. */
+  tabKey: string
+  agentId: string
+  taskId?: string | undefined
+  projectId?: string | undefined
+  /** Human display label for the tab/pane title (presentation only). */
+  label: string
+}
+
+function safeParseScopeRef(
+  scopeRef: string
+): { agentId?: string; projectId?: string; taskId?: string } | null {
+  try {
+    return parseScopeRef(scopeRef) as {
+      agentId?: string
+      projectId?: string
+      taskId?: string
+    }
+  } catch {
+    return null
+  }
+}
+
+/** A real wrkq task scope is `T-` followed by digits (e.g. `T-05237`). */
+function isRealTaskId(taskId: string | undefined): taskId is string {
+  return typeof taskId === 'string' && /^T-\d+/.test(taskId)
+}
+
+/** Keep a scope fragment safe inside a `:`-delimited metadata key. */
+function sanitizeKeyFragment(value: string): string {
+  return value.replace(/[\s:|]+/g, '-').trim() || 'unknown'
+}
+
+/**
+ * Canonical tab grouping for a headless viewer pane (T-05237, daedalus C1).
+ *
+ * - Real task scope (`T-XXXXX`):  `task:<T-XXXXX>`        label `<T-XXXXX>`
+ * - Non-task / `primary` scope:   `project:<proj>:primary` label `<proj> · primary`
+ *   where `<proj>` is the projectId, else an agent-root qualifier, so two
+ *   `primary` sessions from different projects NEVER collide.
+ * - Unparseable ref:              `unparsed:<sanitized>`  label `<raw>`
+ *
+ * Matching MUST use `tabKey`, never a bare `primary` or a human label.
+ */
+export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity {
+  const parsed = safeParseScopeRef(scopeRef)
+  if (!parsed?.agentId) {
+    const safe = sanitizeKeyFragment(scopeRef)
+    return { tabKey: `unparsed:${safe}`, agentId: 'unknown', label: scopeRef || safe }
+  }
+  const agentId = parsed.agentId
+  // Label uses the SHORT project prefix (presentation only); the tabKey keeps the
+  // full projectId so topology grouping stays canonical (daedalus C1/C2).
+  if (isRealTaskId(parsed.taskId)) {
+    const prefix = shortenProjectId(parsed.projectId)
+    return {
+      tabKey: `task:${parsed.taskId}`,
+      agentId,
+      taskId: parsed.taskId,
+      ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+      label: prefix ? `${prefix} · ${parsed.taskId}` : parsed.taskId,
+    }
+  }
+  const qualifier = parsed.projectId
+    ? sanitizeKeyFragment(parsed.projectId)
+    : `agent-root-${sanitizeKeyFragment(agentId)}`
+  const prefix = parsed.projectId ? shortenProjectId(parsed.projectId) : `~${agentId}`
+  return {
+    tabKey: `project:${qualifier}:primary`,
+    agentId,
+    ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+    label: `${prefix} · primary`,
+  }
+}
 
 /**
  * Full Ghostty status-bar triplet. ghostmux `statusbar set` sets all three text
@@ -59,8 +157,14 @@ export type GhostmuxStatusBarSpec = {
 }
 
 export type HeadlessViewerResult =
-  | { status: 'created'; surfaceId: string }
-  | { status: 'reused'; surfaceId: string }
+  | { status: 'created'; surfaceId: string; tabKey: string }
+  | { status: 'reused'; surfaceId: string; tabKey: string }
+  | { status: 'failed'; error: string }
+
+/** Outcome of a runtime-fenced agent-pane reap (T-05237, daedalus C4). */
+export type HeadlessReapResult =
+  | { status: 'reaped'; surfaceId: string; tabCollapsed: boolean }
+  | { status: 'skipped'; reason: string }
   | { status: 'failed'; error: string }
 
 /**
@@ -165,10 +269,19 @@ function metadataHasClaudeTabRole(metadata: unknown, projectId?: string | undefi
   return metadataProject === undefined || metadataProject === projectId
 }
 
-function metadataHasHeadlessViewerRole(metadata: unknown, scopeRef: string): boolean {
+function metadataIsWindowAnchor(metadata: unknown): boolean {
+  return isRecord(metadata) && metadata['hrc_role'] === HEADLESS_WINDOW_ANCHOR_ROLE
+}
+
+function metadataIsAgentPaneForTab(metadata: unknown, tabKey: string): boolean {
   if (!isRecord(metadata)) return false
-  if (metadata['hrc_role'] !== HEADLESS_VIEWER_ROLE) return false
-  return metadata['hrc_scope_ref'] === scopeRef
+  if (metadata['hrc_role'] !== HEADLESS_AGENT_PANE_ROLE) return false
+  return metadata['hrc_tab_key'] === tabKey
+}
+
+function metadataIsAgentPaneFor(metadata: unknown, tabKey: string, agentId: string): boolean {
+  if (!metadataIsAgentPaneForTab(metadata, tabKey)) return false
+  return (metadata as Record<string, unknown>)['hrc_agent_id'] === agentId
 }
 
 function unwrapGhostmuxMetadata(value: unknown): unknown {
@@ -197,6 +310,15 @@ export class GhostmuxManager {
   private statusBarUnsupported = false
   /** Separate memo: set once `set-bg` is seen to be unsupported (T-04439). */
   private setBgUnsupported = false
+  /**
+   * In-process keyed serialization for headless viewer find-or-create (T-05237,
+   * daedalus concurrency condition). Two concurrent dispatches for the same tab
+   * key (or the shared window) would otherwise both miss-then-create, producing a
+   * duplicate tab/window. Each create path re-checks live metadata AFTER it owns
+   * the lock. Sufficient for the launchd-singleton hrc-server; no cross-process
+   * lock is needed because metadata is reconciled on restart.
+   */
+  private readonly headlessLocks = new Map<string, Promise<void>>()
 
   constructor(
     private readonly ghostmuxBinary = 'ghostmux',
@@ -346,19 +468,24 @@ export class GhostmuxManager {
   }
 
   /**
-   * Best-effort: spawn a standalone, unfocused Ghostty window that attaches to a
-   * headless broker runtime's TUI, making an otherwise-invisible headless claude
-   * run watchable. Deduped per scope — if a live viewer window for this scope
-   * already exists, it is reused and NO new window is created (so subsequent turns
-   * into the same scope do not stack windows). Never throws: any ghostmux failure
-   * (transient surface-realize race, unavailable libghostty API, no Ghostty) is
-   * surfaced as { status: 'failed' } so the caller can log and continue headless.
+   * Best-effort: place a headless broker runtime's TUI viewer as a PANE inside the
+   * single global "Headless Sessions" window — one tab per canonical `hrc_tab_key`,
+   * one pane per `(tabKey, agentId)` (T-05237). Replaces the prior
+   * one-standalone-window-per-scope model that proliferated windows and exhausted
+   * the pty pool. Reuse rebinds the pane's `hrc_runtime_id` to the CURRENT runtime
+   * (daedalus C5) BEFORE the caller's lifecycle projection can target it. Never
+   * throws: any ghostmux failure is surfaced as { status: 'failed' } so the caller
+   * logs and continues headless.
+   *
+   * Topology authority is Ghostty metadata ONLY (daedalus invariant): titles, tab
+   * labels, cwd, and focus are presentation and are never read for decisions.
    */
   async ensureHeadlessViewer(options: {
     scopeRef: string
     runtimeId: string
     attachCommand: string
-    title: string
+    /** Optional explicit pane-title override; default is `<label> · <agent>`. */
+    title?: string | undefined
     /**
      * Optional initial status-bar triplet. Applied best-effort and OFF the
      * awaited critical path (fire-and-forget) so a slow/failed statusbar write
@@ -372,60 +499,122 @@ export class GhostmuxManager {
      */
     terminalBg?: string | undefined
   }): Promise<HeadlessViewerResult> {
-    try {
-      const existing = await this.findHeadlessViewer(options.scopeRef)
-      if (existing) {
-        // The same viewer window can be reused for a later runtime; refresh the
-        // recovery metadata so a post-restart resolve still finds the surface by
-        // the CURRENT runtime id, then repaint the bar. Both best-effort.
-        await this.setMetadata(
-          existing.surfaceId,
-          {
-            hrc_role: HEADLESS_VIEWER_ROLE,
-            hrc_scope_ref: options.scopeRef,
-            hrc_runtime_id: options.runtimeId,
-          },
-          true
-        ).catch(() => undefined)
-        this.applyStatusBarBestEffort(existing.surfaceId, options.statusBar)
-        this.applyTerminalBackgroundBestEffort(existing.surfaceId, options.terminalBg)
-        return { status: 'reused', surfaceId: existing.surfaceId }
-      }
+    const identity = deriveHeadlessTabIdentity(options.scopeRef)
+    const paneTitle = options.title ?? `${identity.label} · ${identity.agentId}`
+    // Serialize per tab key: concurrent same-task dispatches must not both
+    // miss-then-create a duplicate tab. The critical section re-checks live
+    // metadata AFTER acquiring the lock (daedalus concurrency condition).
+    return this.withHeadlessLock(`tab:${identity.tabKey}`, async () => {
+      try {
+        const existing = await this.findAgentPane(identity.tabKey, identity.agentId)
+        if (existing) {
+          // Reuse: rebind the pane to the CURRENT runtime (daedalus C5) so a stale
+          // terminal event for a prior runtime cannot reap this pane, then repaint.
+          await this.stampAgentPaneMetadata(existing.surfaceId, identity, {
+            scopeRef: options.scopeRef,
+            runtimeId: options.runtimeId,
+          }).catch(() => undefined)
+          // Refresh the title on reuse too, so a reused pane always reflects the
+          // current label (e.g. after a label-format change). Safe: the pane is
+          // blocked in `tmux attach`, so this set-title is not clobbered.
+          await this.exec(['set-title', '-t', existing.surfaceId, paneTitle]).catch(() => undefined)
+          this.applyStatusBarBestEffort(existing.surfaceId, options.statusBar)
+          this.applyTerminalBackgroundBestEffort(existing.surfaceId, options.terminalBg)
+          return { status: 'reused' as const, surfaceId: existing.surfaceId, tabKey: identity.tabKey }
+        }
 
-      // `ghostmux new` itself frequently hits the transient libghostty
-      // surface_not_realize race under load; ghostmux's own guidance is to retry
-      // with backoff (clears in 1-2 tries), so wrap both the window create and the
-      // attach send-keys in the same bounded retry.
-      const created = await this.withGhostmuxBackoff(async () =>
-        parseGhostmuxSurfaceState(
-          (await this.exec(['new', '--window', '--title', options.title, '--json'])).stdout
+        const anchor = await this.ensureHeadlessWindow()
+        // An existing pane for this tab key is a valid split target — any live
+        // pane in the tab puts the new pane in the same Ghostty tab.
+        const tabPane = await this.findTaskTab(identity.tabKey)
+
+        // `ghostmux new`/`new-pane` transiently hit the libghostty surface_not_realize
+        // race under load; ghostmux's guidance is bounded backoff (clears in 1-2 tries).
+        const created = await this.withGhostmuxBackoff(async () =>
+          parseGhostmuxSurfaceState(
+            tabPane
+              ? (
+                  await this.exec([
+                    'new-pane',
+                    '-t',
+                    tabPane.surfaceId,
+                    '-d',
+                    selectSplitDirection(tabPane),
+                    '--json',
+                  ])
+                ).stdout
+              : (
+                  await this.exec([
+                    'new',
+                    '--tab',
+                    '--parent',
+                    anchor.surfaceId,
+                    '--title',
+                    paneTitle,
+                    '--json',
+                  ])
+                ).stdout
+          )
         )
-      )
-      await this.setMetadata(
-        created.surfaceId,
-        {
-          hrc_role: HEADLESS_VIEWER_ROLE,
-          hrc_scope_ref: options.scopeRef,
-          hrc_runtime_id: options.runtimeId,
-        },
-        true
-      ).catch(() => undefined)
-      await this.withGhostmuxBackoff(() =>
-        this.exec(['send-keys', '-t', created.surfaceId, options.attachCommand])
-      )
-      this.applyStatusBarBestEffort(created.surfaceId, options.statusBar)
-      this.applyTerminalBackgroundBestEffort(created.surfaceId, options.terminalBg)
-      return { status: 'created', surfaceId: created.surfaceId }
-    } catch (error) {
-      return {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
+        await this.stampAgentPaneMetadata(created.surfaceId, identity, {
+          scopeRef: options.scopeRef,
+          runtimeId: options.runtimeId,
+        }).catch(() => undefined)
+        // Order matters (T-05237): send the (blocking) attach command FIRST, then
+        // set the title as the LAST write. The pane then stays blocked inside
+        // `tmux attach` so no shell precmd/OSC-7 fires to overwrite the label.
+        await this.withGhostmuxBackoff(() =>
+          this.exec(['send-keys', '-t', created.surfaceId, options.attachCommand])
+        )
+        await this.exec(['set-title', '-t', created.surfaceId, paneTitle]).catch(() => undefined)
+        await this.equalizePanes(created.surfaceId)
+        this.applyStatusBarBestEffort(created.surfaceId, options.statusBar)
+        this.applyTerminalBackgroundBestEffort(created.surfaceId, options.terminalBg)
+        return { status: 'created' as const, surfaceId: created.surfaceId, tabKey: identity.tabKey }
+      } catch (error) {
+        return {
+          status: 'failed' as const,
+          error: error instanceof Error ? error.message : String(error),
+        }
       }
+    })
+  }
+
+  /**
+   * Runtime-bound, fenced reap of a terminating runtime's agent viewer pane
+   * (T-05237, daedalus C4). Kills the surface ONLY if its live metadata still maps
+   * it to `runtimeId` AND the role is `headless-agent-pane` — never by tab/agent
+   * alone, so a stale terminal event cannot kill a pane already rebound to a newer
+   * runtime. Never kills the window anchor. If the killed pane was the tab's last
+   * live agent pane, the tab collapses with it (killing the last pane closes the
+   * Ghostty tab). Best-effort: never throws.
+   */
+  async reapHeadlessAgentPane(surfaceId: string, runtimeId: string): Promise<HeadlessReapResult> {
+    try {
+      const metadata = await this.getMetadata(surfaceId, false).catch(() => undefined)
+      if (!isRecord(metadata) || metadata['hrc_role'] !== HEADLESS_AGENT_PANE_ROLE) {
+        return { status: 'skipped', reason: 'not_agent_pane' }
+      }
+      if (metadata['hrc_runtime_id'] !== runtimeId) {
+        // Rebound to a newer runtime — the fence: do NOT reap.
+        return { status: 'skipped', reason: 'runtime_rebound' }
+      }
+      const tabKey = typeof metadata['hrc_tab_key'] === 'string' ? metadata['hrc_tab_key'] : undefined
+      await this.terminate(surfaceId)
+      // After the kill, did any sibling agent pane for this tab survive?
+      let tabCollapsed = false
+      if (tabKey) {
+        const sibling = await this.findTaskTab(tabKey).catch(() => null)
+        tabCollapsed = sibling === null
+      }
+      return { status: 'reaped', surfaceId, tabCollapsed }
+    } catch (error) {
+      return { status: 'failed', error: error instanceof Error ? error.message : String(error) }
     }
   }
 
   /**
-   * Find the headless viewer surface bound to a runtime by its stamped Ghostty
+   * Find the headless agent viewer pane bound to a runtime by its stamped Ghostty
    * metadata. The projector's recovery path when the durable surface_binding is
    * missing (e.g. after a DB-less restart) — DB binding is the primary cache.
    */
@@ -435,10 +624,10 @@ export class GhostmuxManager {
         (await this.exec(['list-surfaces', '--json'])).stdout
       )
       for (const surface of surfaces) {
-        const metadata = await this.getMetadata(surface.surfaceId, true).catch(() => undefined)
+        const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
         if (
           isRecord(metadata) &&
-          metadata['hrc_role'] === HEADLESS_VIEWER_ROLE &&
+          metadata['hrc_role'] === HEADLESS_AGENT_PANE_ROLE &&
           metadata['hrc_runtime_id'] === runtimeId
         ) {
           return surface.surfaceId
@@ -504,13 +693,113 @@ export class GhostmuxManager {
     void this.setTerminalBackground(surfaceId, hex)
   }
 
-  private async findHeadlessViewer(scopeRef: string): Promise<GhostmuxSurfaceState | null> {
+  /**
+   * Serialize an async critical section by key (T-05237). Tasks for the same key
+   * run strictly in submission order; distinct keys run concurrently. The chain
+   * never rejects (errors are isolated to each task's own returned promise), so a
+   * failed find-or-create cannot wedge later calls for the same key.
+   */
+  private withHeadlessLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.headlessLocks.get(key) ?? Promise.resolve()
+    const run = prev.then(fn, fn)
+    this.headlessLocks.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined
+      )
+    )
+    return run
+  }
+
+  /**
+   * Find-or-create the single global "Headless Sessions" window, returning its
+   * anchor surface (the stable `--parent` target for new task tabs). The anchor is
+   * non-runtime-owned and is never reaped. Serialized on a shared window lock so
+   * two concurrent first-dispatches cannot create two windows.
+   */
+  private ensureHeadlessWindow(): Promise<GhostmuxSurfaceState> {
+    return this.withHeadlessLock('headless-window', async () => {
+      const existing = await this.findWindowAnchor()
+      if (existing) return existing
+      const created = await this.withGhostmuxBackoff(async () =>
+        parseGhostmuxSurfaceState(
+          (
+            await this.exec([
+              'new',
+              '--window',
+              '--title',
+              HEADLESS_SESSIONS_WINDOW_TITLE,
+              '--json',
+            ])
+          ).stdout
+        )
+      )
+      // Surface-level role identifies the anchor pane; window-level role marks the
+      // whole window. Both best-effort.
+      await this.setMetadata(created.surfaceId, { hrc_role: HEADLESS_WINDOW_ANCHOR_ROLE }, false).catch(
+        () => undefined
+      )
+      await this.setMetadata(
+        created.surfaceId,
+        { hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE },
+        true
+      ).catch(() => undefined)
+      return created
+    })
+  }
+
+  private async findWindowAnchor(): Promise<GhostmuxSurfaceState | null> {
     const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
     for (const surface of surfaces) {
-      const metadata = await this.getMetadata(surface.surfaceId, true).catch(() => undefined)
-      if (metadataHasHeadlessViewerRole(metadata, scopeRef)) return surface
+      const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
+      if (metadataIsWindowAnchor(metadata)) return surface
     }
     return null
+  }
+
+  /** Any live agent pane sharing this tab key — a valid split target for the tab. */
+  private async findTaskTab(tabKey: string): Promise<GhostmuxSurfaceState | null> {
+    const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
+    for (const surface of surfaces) {
+      const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
+      if (metadataIsAgentPaneForTab(metadata, tabKey)) return surface
+    }
+    return null
+  }
+
+  /** The live agent pane for `(tabKey, agentId)`, if one exists. */
+  private async findAgentPane(
+    tabKey: string,
+    agentId: string
+  ): Promise<GhostmuxSurfaceState | null> {
+    const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
+    for (const surface of surfaces) {
+      const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
+      if (metadataIsAgentPaneFor(metadata, tabKey, agentId)) return surface
+    }
+    return null
+  }
+
+  /** Stamp/refresh the canonical agent-pane metadata (surface-level). */
+  private async stampAgentPaneMetadata(
+    surfaceId: string,
+    identity: HeadlessTabIdentity,
+    binding: { scopeRef: string; runtimeId: string }
+  ): Promise<void> {
+    await this.setMetadata(
+      surfaceId,
+      {
+        hrc_role: HEADLESS_AGENT_PANE_ROLE,
+        hrc_tab_key: identity.tabKey,
+        hrc_agent_id: identity.agentId,
+        ...(identity.projectId ? { hrc_project: identity.projectId } : {}),
+        ...(identity.taskId ? { hrc_task_id: identity.taskId } : {}),
+        hrc_scope_ref: binding.scopeRef,
+        hrc_runtime_id: binding.runtimeId,
+      },
+      false
+    )
   }
 
   // libghostty surface creation/realization races transiently under load; ghostmux

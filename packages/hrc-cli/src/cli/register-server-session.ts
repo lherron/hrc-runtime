@@ -225,9 +225,13 @@ Exit codes:
     .option('--runtime <runtimeId>', 'runtime ID')
     .option('--scope <scope>', 'scope label for the report header')
     .option('--wait-key', 'wait for a keypress before returning (viewer windows)')
+    .option(
+      '--wait-timeout <seconds>',
+      'bound --wait-key to N seconds, then auto-close (consolidated viewer panes; T-05237)'
+    )
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['runtime', 'scope'],
+        strings: ['runtime', 'scope', 'wait-timeout'],
         booleans: ['wait-key'],
       })
       await cmdSessionReport(args)

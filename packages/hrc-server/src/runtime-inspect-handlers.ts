@@ -1,5 +1,9 @@
 import { HrcErrorCode, HrcNotFoundError } from 'hrc-core'
-import type { BrokerInspectResponse, InspectRuntimeResponse } from 'hrc-core'
+import type {
+  BrokerInspectResponse,
+  FinalSummaryRecoveryResult,
+  InspectRuntimeResponse,
+} from 'hrc-core'
 
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
@@ -12,6 +16,8 @@ import {
   parseJsonBody,
 } from './server-parsers.js'
 import { json } from './server-util.js'
+import { resolvePersistedBrokerAttachToken } from './startup-reconcile/broker-probe.js'
+import { getPersistedDurableBrokerEndpoint } from './startup-reconcile/lease-identity.js'
 import { toStatusTmuxView } from './status-views.js'
 
 export async function handleInspectRuntime(
@@ -116,8 +122,38 @@ export async function handleBrokerInspect(
     )
   }
 
-  const finalSummary = (runtime.runtimeStateJson as { finalSummary?: unknown } | undefined)
+  let finalSummary = (runtime.runtimeStateJson as { finalSummary?: unknown } | undefined)
     ?.finalSummary
+  let finalSummaryRecovery: FinalSummaryRecoveryResult | undefined
+  if (body.recoverFinalSummary !== undefined) {
+    if (finalSummary !== undefined) {
+      finalSummaryRecovery = { state: 'not_needed' }
+    } else if (runtime.controllerKind !== 'harness-broker') {
+      finalSummaryRecovery = { state: 'not_broker' }
+    } else {
+      const endpoint = getPersistedDurableBrokerEndpoint(runtime)
+      const attachToken = endpoint ? await resolvePersistedBrokerAttachToken(runtime) : undefined
+      const controller = this.harnessBrokerController
+      if (!endpoint || !attachToken) {
+        finalSummaryRecovery = { state: 'not_durable' }
+      } else if (!controller) {
+        finalSummaryRecovery = { state: 'unavailable', message: 'broker controller unavailable' }
+      } else {
+        finalSummaryRecovery = await controller.recoverFinalSummary({
+          runtimeId: runtime.runtimeId,
+          socketPath: endpoint.socketPath,
+          attachToken,
+          ...(body.recoverFinalSummary.timeoutMs !== undefined
+            ? { timeoutMs: body.recoverFinalSummary.timeoutMs }
+            : {}),
+        })
+        const recoveredRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
+        finalSummary = (
+          recoveredRuntime?.runtimeStateJson as { finalSummary?: unknown } | undefined
+        )?.finalSummary
+      }
+    }
+  }
   const baseFacts = {
     runtimeId: runtime.runtimeId,
     transport: runtime.transport,
@@ -125,6 +161,7 @@ export async function handleBrokerInspect(
     status: runtime.status,
     lastActivityAt: runtime.lastActivityAt ?? null,
     ...(finalSummary !== undefined ? { finalSummary } : {}),
+    ...(finalSummaryRecovery !== undefined ? { finalSummaryRecovery } : {}),
   }
 
   // Broker-backed: delegate to the P2 controller read model. The summaries pass

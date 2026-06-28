@@ -39,6 +39,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { Database } from 'bun:sqlite'
+import type { FinalSummaryRecoveryResult } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   BrokerControllerRpcResult,
@@ -74,13 +75,22 @@ afterEach(async () => {
 
 type FakeListInvocationsCall = { runtimeId: string; opts?: { probeLiveness?: boolean } | undefined }
 type FakeSnapshotCall = { runtimeId: string; opts?: { probeLiveness?: boolean } | undefined }
+type FakeRecoverCall = {
+  runtimeId: string
+  socketPath: string
+  attachToken: string
+  timeoutMs?: number | undefined
+}
 
 class FakeBrokerController {
   listInvocationsCalls: FakeListInvocationsCall[] = []
   snapshotCalls: FakeSnapshotCall[] = []
+  recoverFinalSummaryCalls: FakeRecoverCall[] = []
 
   invocationsResult: InvocationInspectionSummary[] = []
   snapshotResult: BrokerControllerRpcResult<InvocationSnapshot> | null = null
+  recoverFinalSummaryResult: FinalSummaryRecoveryResult = { state: 'unavailable' }
+  recoverFinalSummaryHook: (() => Promise<void> | void) | undefined
 
   async listInvocations(
     runtimeId: string,
@@ -102,6 +112,12 @@ class FakeBrokerController {
         code: 'broker_not_active',
       }),
     } as unknown as BrokerControllerRpcResult<InvocationSnapshot>
+  }
+
+  async recoverFinalSummary(input: FakeRecoverCall): Promise<FinalSummaryRecoveryResult> {
+    this.recoverFinalSummaryCalls.push(input)
+    await this.recoverFinalSummaryHook?.()
+    return this.recoverFinalSummaryResult
   }
 }
 
@@ -760,5 +776,118 @@ describe('broker-inspect finalSummary passthrough (T-01893)', () => {
       reason: 'prompt_input_exit',
       summary: { driver: 'codex-cli-tmux', turnsCompleted: 3 },
     })
+  })
+
+  it('ordinary inspect stays read-only and does not run final-summary recovery', async () => {
+    const runtimeId = 'rt-final-summary-readonly'
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-final-summary-readonly',
+      scopeRef: 'agent:larry:project:agent-spaces:task:readonly-final-summary',
+      activeInvocationId: 'inv-final-summary-readonly',
+    })
+    const fake = new FakeBrokerController()
+    injectFakeController(fake)
+
+    const res = await postBrokerInspect(runtimeId)
+    expect(res.status).toBe(200)
+    expect(fake.recoverFinalSummaryCalls).toEqual([])
+  })
+
+  it('explicit final-summary recovery calls the bounded recovery path and returns recovered summary', async () => {
+    const runtimeId = 'rt-final-summary-recover'
+    const tokenPath = `${fixture.tmpDir}/recover-token`
+    await Bun.write(tokenPath, 'recover-token-secret')
+    seedBrokerTmuxRuntime({
+      runtimeId,
+      hostSessionId: 'hsid-final-summary-recover',
+      scopeRef: 'agent:larry:project:agent-spaces:task:recover-final-summary',
+      activeInvocationId: 'inv-final-summary-recover',
+    })
+    const finalSummary = {
+      reason: 'prompt_input_exit',
+      summary: {
+        invocationId: 'inv-final-summary-recover',
+        state: 'ready',
+        driver: 'codex-cli-tmux',
+        startedAt: fixture.now(),
+        lastActivityAt: fixture.now(),
+        turnsCompleted: 2,
+      },
+    }
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const runtime = db.runtimes.getByRuntimeId(runtimeId)
+      db.runtimes.update(runtimeId, {
+        status: 'terminated',
+        runtimeStateJson: {
+          ...(runtime?.runtimeStateJson ?? {}),
+          broker: {
+            ...((runtime?.runtimeStateJson?.['broker'] as Record<string, unknown>) ?? {}),
+            endpoint: {
+              kind: 'unix-jsonrpc-ndjson',
+              socketPath: '/tmp/final-summary-recover.sock',
+              attachTokenRef: { kind: 'file', path: tokenPath, redacted: true },
+            },
+          },
+        },
+        updatedAt: fixture.now(),
+      })
+    } finally {
+      db.close()
+    }
+
+    const fake = new FakeBrokerController()
+    fake.recoverFinalSummaryResult = { state: 'recovered' }
+    fake.recoverFinalSummaryHook = () => {
+      const hookDb = openHrcDatabase(fixture.dbPath)
+      try {
+        const runtime = hookDb.runtimes.getByRuntimeId(runtimeId)
+        hookDb.runtimes.update(runtimeId, {
+          runtimeStateJson: { ...(runtime?.runtimeStateJson ?? {}), finalSummary },
+          updatedAt: fixture.now(),
+        })
+      } finally {
+        hookDb.close()
+      }
+    }
+    injectFakeController(fake)
+
+    const res = await postBrokerInspect(runtimeId, {
+      recoverFinalSummary: { timeoutMs: 123 },
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      finalSummary?: typeof finalSummary
+      finalSummaryRecovery?: FinalSummaryRecoveryResult
+    }
+    expect(fake.recoverFinalSummaryCalls).toEqual([
+      {
+        runtimeId,
+        socketPath: '/tmp/final-summary-recover.sock',
+        attachToken: 'recover-token-secret',
+        timeoutMs: 123,
+      },
+    ])
+    expect(body.finalSummaryRecovery).toEqual({ state: 'recovered' })
+    expect(body.finalSummary).toMatchObject({
+      reason: 'prompt_input_exit',
+      summary: { driver: 'codex-cli-tmux', turnsCompleted: 2 },
+    })
+  })
+
+  it('explicit final-summary recovery on non-broker runtime returns a factual fallback state', async () => {
+    seedGhosttyRuntime({
+      runtimeId: 'rt-final-summary-nonbroker',
+      hostSessionId: 'hsid-final-summary-nonbroker',
+      scopeRef: 'agent:larry:project:agent-spaces:task:nonbroker-final-summary',
+    })
+
+    const res = await postBrokerInspect('rt-final-summary-nonbroker', {
+      recoverFinalSummary: { timeoutMs: 10 },
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { finalSummaryRecovery?: FinalSummaryRecoveryResult }
+    expect(body.finalSummaryRecovery).toEqual({ state: 'not_broker' })
   })
 })

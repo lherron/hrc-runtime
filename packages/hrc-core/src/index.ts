@@ -138,6 +138,8 @@ export type {
   BindSurfaceRequest,
   BrokerInspectRequest,
   BrokerInspectResponse,
+  FinalSummaryRecoveryResult,
+  FinalSummaryRecoveryState,
   OperatorInspectSource,
   CaptureResponse,
   ClearContextRequest,

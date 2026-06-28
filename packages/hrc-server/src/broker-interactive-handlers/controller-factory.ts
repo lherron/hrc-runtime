@@ -248,7 +248,11 @@ export async function spawnBrokerHeadlessViewer(
     // shell errors and the window closes (today's behaviour) — graceful fallback.
     // `session-report` is best-effort and always reaches the keypress gate, so a
     // missing/slow summary never closes the window early or hangs it silently.
-    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key; exit`
+    // `--wait-timeout 30` bounds the post-/quit keypress hold (T-05237, C3): a
+    // consolidated viewer pane self-closes after a 30s grace so it cannot keep a
+    // pty alive indefinitely. The runtime-fenced reaper (C4) also kills it on
+    // termination — belt and suspenders.
+    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout 30; exit`
     // Best-effort wrkq task-slug enrichment for the status-bar center field
     // (T-04977). Cosmetic only: a missing/slow/broken wrkq read resolves to null
     // and must never delay or fail viewer creation or dispatch.
@@ -260,11 +264,13 @@ export async function spawnBrokerHeadlessViewer(
     }
     // A turn is being dispatched into this viewer, so the bar opens at `running`;
     // the lifecycle projector takes over the right field from here (T-04439).
+    // Title is computed inside ensureHeadlessViewer as `<tab label> · <agent>`
+    // (e.g. `T-05177 · clod`) and set as the LAST write after the attach command
+    // (T-05237), so we no longer pass one here.
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
       runtimeId: runtime.runtimeId,
       attachCommand,
-      title: `hrc headless ${runtime.scopeRef}`,
       statusBar: renderStatusBar(runtime.scopeRef, 'running', slug),
       terminalBg: viewerTerminalBg(runtime.scopeRef),
     })

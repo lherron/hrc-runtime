@@ -11,6 +11,7 @@ import {
   getBrokerRuntimeTmuxSocketPath,
 } from '../broker-decisions.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
+import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
   isTerminalBrokerInvocationState,
@@ -19,6 +20,7 @@ import {
   requireTmuxPane,
 } from '../require-helpers.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
+import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { json, timestamp } from '../server-util.js'
 import { getTmuxSocketPath } from '../tmux-socket.js'
@@ -463,6 +465,51 @@ export async function terminateGhosttyRuntime(
   } satisfies TerminateRuntimeResponse)
 }
 
+/**
+ * Runtime-bound, fenced reap of a terminating runtime's consolidated headless
+ * viewer pane (T-05237, daedalus C4). Resolves the surface bound to THIS runtime
+ * via the active surface binding, then asks ghostmux to kill it only if the live
+ * pane metadata still maps it to this `runtimeId` and role `headless-agent-pane`
+ * (so a stale terminal event cannot kill a pane already rebound to a newer
+ * runtime). On a successful reap the binding is unbound. Never throws — purely
+ * observational teardown that must not affect the terminate result.
+ */
+async function reapHeadlessViewerPane(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  now: string
+): Promise<void> {
+  try {
+    const binding = this.db.surfaceBindings
+      .findByRuntime(runtime.runtimeId)
+      .find((record) => record.surfaceKind === HEADLESS_VIEWER_SURFACE_KIND)
+    if (!binding) return
+    const result = await this.ghostmux.reapHeadlessAgentPane(binding.surfaceId, runtime.runtimeId)
+    if (result.status === 'reaped') {
+      this.db.surfaceBindings.unbind(
+        HEADLESS_VIEWER_SURFACE_KIND,
+        binding.surfaceId,
+        now,
+        'runtime_terminated'
+      )
+    }
+    writeServerLog('INFO', `headless_viewer_reap.${result.status}`, {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      surfaceId: binding.surfaceId,
+      ...(result.status === 'reaped' ? { tabCollapsed: result.tabCollapsed } : {}),
+      ...(result.status === 'skipped' ? { reason: result.reason } : {}),
+      ...(result.status === 'failed' ? { error: result.error } : {}),
+    })
+  } catch (error) {
+    writeServerLog('WARN', 'headless_viewer_reap.unexpected_error', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 export async function terminateHeadlessRuntime(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
@@ -502,6 +549,9 @@ export async function terminateHeadlessRuntime(
 
   finalizeRuntimeTermination(this.db, runtime, now)
   settleBrokerRuntimeDisposed.call(this, runtime, now)
+  // Reap the consolidated headless viewer pane for THIS runtime (T-05237, C4).
+  // Runtime-fenced and best-effort; never affects the terminate result.
+  await reapHeadlessViewerPane.call(this, runtime, now)
   const transport = headlessAuditTransport(runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),

@@ -11,6 +11,7 @@
 
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
+  FinalSummaryRecoveryResult,
   HrcBrokerInvocationEventRecord,
   HrcBrokerInvocationRecord,
   HrcPermissionDecisionRecord,
@@ -90,6 +91,8 @@ import type {
   HarnessBrokerControllerDeps,
   PendingAttachedBrokerStart,
 } from './controller/types'
+
+const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 
 export { BrokerControllerError } from './controller/errors'
 export { isDurableBrokerClient } from './controller/types'
@@ -183,6 +186,7 @@ export class HarnessBrokerController {
     | ((input: { runtime: HrcRuntimeSnapshot; allocation: BrokerTmuxAllocation }) => Promise<void>)
     | undefined
   private readonly reapBrokerTmuxLease: ((runtimeId: string) => Promise<void>) | undefined
+  private readonly brokerTmuxSummaryReapGraceMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -204,6 +208,10 @@ export class HarnessBrokerController {
   // so the several user-exit signals that can arrive for one /quit (continuation
   // clear, then invocation.exited and/or broker close) reap exactly once.
   private readonly reapedBrokerTmuxRuntimeIds = new Set<string>()
+  private readonly pendingBrokerTmuxReaps = new Map<
+    string,
+    { reason: string; timer: ReturnType<typeof setTimeout> }
+  >()
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
   // Set by `shutdown()` when the owning server is stopping. Once true, in-flight
@@ -231,6 +239,12 @@ export class HarnessBrokerController {
     this.headlessViewerAllocator = deps.headlessViewerAllocator
     this.waitForAttachedTerminal = deps.waitForAttachedTerminal
     this.reapBrokerTmuxLease = deps.reapBrokerTmuxLease
+    this.brokerTmuxSummaryReapGraceMs =
+      typeof deps.brokerTmuxSummaryReapGraceMs === 'number' &&
+      Number.isFinite(deps.brokerTmuxSummaryReapGraceMs) &&
+      deps.brokerTmuxSummaryReapGraceMs >= 0
+        ? deps.brokerTmuxSummaryReapGraceMs
+        : DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
@@ -419,6 +433,124 @@ export class HarnessBrokerController {
 
   async attachAndReplay(input: BrokerControllerAttachInput): Promise<BrokerControllerAttachResult> {
     return attachAndReplayFlow(this.dispatchContext(), input)
+  }
+
+  async recoverFinalSummary(input: {
+    runtimeId: string
+    socketPath: string
+    attachToken: string
+    timeoutMs?: number | undefined
+  }): Promise<FinalSummaryRecoveryResult> {
+    const timeoutMs =
+      typeof input.timeoutMs === 'number' &&
+      Number.isFinite(input.timeoutMs) &&
+      input.timeoutMs >= 0
+        ? input.timeoutMs
+        : 750
+    return Promise.race([
+      this.recoverFinalSummaryOnce(input),
+      delay(timeoutMs).then(
+        () =>
+          ({
+            state: 'timeout',
+            message: `summary recovery exceeded ${timeoutMs}ms`,
+          }) satisfies FinalSummaryRecoveryResult
+      ),
+    ])
+  }
+
+  private async recoverFinalSummaryOnce(input: {
+    runtimeId: string
+    socketPath: string
+    attachToken: string
+  }): Promise<FinalSummaryRecoveryResult> {
+    const runtime = this.db.runtimes.getByRuntimeId(input.runtimeId)
+    const invocation = this.resolveAttachInvocation(runtime, input.runtimeId)
+    if (!runtime || !invocation) {
+      return { state: 'unavailable', message: 'runtime or broker invocation not found' }
+    }
+    if (this.runtimeHasFinalSummary(input.runtimeId)) {
+      return { state: 'not_needed' }
+    }
+    if (
+      runtime.status !== 'terminated' &&
+      runtime.status !== 'dead' &&
+      runtime.status !== 'stale'
+    ) {
+      return {
+        state: 'terminal_fenced',
+        message: `runtime is ${runtime.status}; report-only summary recovery skipped`,
+      }
+    }
+
+    const lastProjectedSeq = this.lastProjectedBrokerSeq(invocation.invocationId)
+    let client: DurableBrokerClientLike | undefined
+    try {
+      client = await this.brokerUnixClientFactory({ socketPath: input.socketPath })
+      const attach = await client.attach({
+        runtimeId: runtime.runtimeId,
+        hostSessionId: runtime.hostSessionId,
+        generation: runtime.generation,
+        invocationId: invocation.invocationId as InvocationId,
+        startRequestHash: invocation.startRequestHash,
+        selectedProfileHash: invocation.selectedProfileHash,
+        controllerInstanceId: this.serverInstanceId,
+        attachToken: input.attachToken,
+        lastProjectedSeq,
+      })
+      const snapshot = await client.snapshot({
+        invocationId: invocation.invocationId as InvocationId,
+      })
+      const retentionFloorSeq = Math.max(
+        attach.retentionFloorSeq,
+        attach.snapshot.retentionFloorSeq,
+        snapshot.retentionFloorSeq
+      )
+      if (retentionFloorSeq > lastProjectedSeq + 1) {
+        return {
+          state: 'retention_gap',
+          message: 'broker event retention floor is past HRC projected high-water',
+        }
+      }
+
+      const replay = await client.eventsSince({
+        invocationId: invocation.invocationId as InvocationId,
+        afterSeq: lastProjectedSeq,
+      })
+      let ackedThroughSeq = lastProjectedSeq
+      for (const envelope of replay.events) {
+        const result = this.mapper.apply(envelope)
+        this.afterMappedEvent(runtime.runtimeId, envelope, result)
+        const projected = this.db.brokerInvocationEvents.getByInvocationAndSeq(
+          String(envelope.invocationId),
+          envelope.seq
+        )
+        if (projected?.projectionStatus === 'applied') {
+          ackedThroughSeq = Math.max(ackedThroughSeq, envelope.seq)
+        }
+      }
+      if (ackedThroughSeq > lastProjectedSeq) {
+        await client.ackEvents({
+          invocationId: invocation.invocationId as InvocationId,
+          throughSeq: ackedThroughSeq,
+          controllerInstanceId: this.serverInstanceId,
+        })
+      }
+      return this.runtimeHasFinalSummary(input.runtimeId)
+        ? { state: 'recovered' }
+        : { state: 'unavailable', message: 'broker replay did not include final summary' }
+    } catch (error) {
+      return {
+        state: 'failed',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    } finally {
+      try {
+        await client?.close()
+      } catch {
+        // best-effort report-only recovery cleanup
+      }
+    }
   }
 
   async interrupt(
@@ -749,6 +881,10 @@ export class HarnessBrokerController {
    */
   shutdown(): void {
     this.shuttingDown = true
+    for (const pending of this.pendingBrokerTmuxReaps.values()) {
+      clearTimeout(pending.timer)
+    }
+    this.pendingBrokerTmuxReaps.clear()
   }
 
   private afterMappedEvent(
@@ -783,6 +919,7 @@ export class HarnessBrokerController {
           updatedAt: this.now(),
         })
       }
+      this.flushPendingBrokerTmuxLeaseReap(runtimeId, 'summary_recorded')
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
@@ -797,18 +934,19 @@ export class HarnessBrokerController {
       })
     }
 
-    // Lever 2 graceful exit — PRIMARY hook. On an interactive /quit a DURABLE
-    // broker stays alive (no `invocation.exited`, no socket close): the only live
-    // terminal signal is a `continuation.cleared` carrying a prompt-exit reason,
-    // delivered here through the event consumer. Tear the broker-tmux lease down
-    // now so the operator is detached promptly instead of being left on a live
-    // broker pane until the next on-demand reconcile. Gated to LEAVING reasons so
-    // a `/clear` (which keeps the session) never reaps a live runtime.
+    // Lever 2 graceful exit — PRIMARY hook. On interactive /quit the first live
+    // terminal signal is a user-exit continuation clear; the broker then emits
+    // invocation.summary on the same ordered stream. Delay lease reap until that
+    // summary is recorded, or until a short grace elapses.
     if (envelope.type === 'continuation.cleared') {
       const reason = (envelope.payload as { reason?: string } | undefined)?.reason
       if (reason !== undefined && BROKER_TMUX_PROMPT_EXIT_REASONS.has(reason)) {
-        this.logger.info?.('broker-tmux prompt exit; reaping lease', { runtimeId, reason })
-        this.fireBrokerTmuxLeaseReap(runtimeId, `prompt_exit:${reason}`)
+        this.logger.info?.('broker-tmux prompt exit; scheduling summary-aware lease reap', {
+          runtimeId,
+          reason,
+          graceMs: this.brokerTmuxSummaryReapGraceMs,
+        })
+        this.scheduleBrokerTmuxLeaseReapAfterSummary(runtimeId, `prompt_exit:${reason}`)
       }
     }
   }
@@ -833,6 +971,42 @@ export class HarnessBrokerController {
       .reduce((max, event) => Math.max(max, event.seq), 0)
   }
 
+  private runtimeHasFinalSummary(runtimeId: string): boolean {
+    const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+    return (
+      runtime?.runtimeStateJson !== undefined &&
+      Object.hasOwn(runtime.runtimeStateJson, 'finalSummary')
+    )
+  }
+
+  private scheduleBrokerTmuxLeaseReapAfterSummary(runtimeId: string, reason: string): void {
+    if (!this.reapBrokerTmuxLease || this.reapedBrokerTmuxRuntimeIds.has(runtimeId)) {
+      return
+    }
+    if (this.runtimeHasFinalSummary(runtimeId)) {
+      this.fireBrokerTmuxLeaseReap(runtimeId, reason)
+      return
+    }
+    if (this.pendingBrokerTmuxReaps.has(runtimeId)) {
+      return
+    }
+    const timer = setTimeout(() => {
+      this.pendingBrokerTmuxReaps.delete(runtimeId)
+      this.fireBrokerTmuxLeaseReap(runtimeId, `${reason}:summary_grace_elapsed`)
+    }, this.brokerTmuxSummaryReapGraceMs)
+    this.pendingBrokerTmuxReaps.set(runtimeId, { reason, timer })
+  }
+
+  private flushPendingBrokerTmuxLeaseReap(runtimeId: string, reason: string): void {
+    const pending = this.pendingBrokerTmuxReaps.get(runtimeId)
+    if (!pending) {
+      return
+    }
+    clearTimeout(pending.timer)
+    this.pendingBrokerTmuxReaps.delete(runtimeId)
+    this.fireBrokerTmuxLeaseReap(runtimeId, `${pending.reason}:${reason}`)
+  }
+
   /**
    * Fire the broker-tmux lease reap once per runtime. A single /quit surfaces as
    * up to three user-exit signals (continuation clear → invocation.exited and/or
@@ -843,6 +1017,11 @@ export class HarnessBrokerController {
   private fireBrokerTmuxLeaseReap(runtimeId: string, reason: string): void {
     if (!this.reapBrokerTmuxLease || this.reapedBrokerTmuxRuntimeIds.has(runtimeId)) {
       return
+    }
+    const pending = this.pendingBrokerTmuxReaps.get(runtimeId)
+    if (pending) {
+      clearTimeout(pending.timer)
+      this.pendingBrokerTmuxReaps.delete(runtimeId)
     }
     this.reapedBrokerTmuxRuntimeIds.add(runtimeId)
     void this.reapBrokerTmuxLease(runtimeId).catch((error) => {
@@ -912,7 +1091,7 @@ export class HarnessBrokerController {
           })
         })
       } else {
-        this.fireBrokerTmuxLeaseReap(runtimeId, 'broker_close')
+        this.scheduleBrokerTmuxLeaseReapAfterSummary(runtimeId, 'broker_close')
       }
       return
     }

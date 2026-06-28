@@ -525,6 +525,29 @@ export type BrokerInspectRequest = {
   probeLiveness?: boolean | undefined
   /** Include disposed invocations in the broker read model. */
   includeDisposed?: boolean | undefined
+  /**
+   * Explicitly opt into bounded recovery of a missing graceful-exit summary.
+   * Ordinary broker inspect remains read-only; when this is present the server may
+   * attach to a durable broker, replay missed events, ack them, and update HRC
+   * state only within the requested budget.
+   */
+  recoverFinalSummary?: { timeoutMs?: number | undefined } | undefined
+}
+
+export type FinalSummaryRecoveryState =
+  | 'not_needed'
+  | 'recovered'
+  | 'unavailable'
+  | 'timeout'
+  | 'failed'
+  | 'not_durable'
+  | 'not_broker'
+  | 'retention_gap'
+  | 'terminal_fenced'
+
+export type FinalSummaryRecoveryResult = {
+  state: FinalSummaryRecoveryState
+  message?: string | undefined
 }
 
 /**
@@ -560,6 +583,8 @@ export type BrokerInspectResponse = {
    * broker's InvocationSummaryPayload (`{ summary, reason }`).
    */
   finalSummary?: unknown | undefined
+  /** Present only when `recoverFinalSummary` was explicitly requested. */
+  finalSummaryRecovery?: FinalSummaryRecoveryResult | undefined
   /**
    * HRC-derived lifecycle view (non-broker fallback only). For ghostty/claude-code
    * runtimes `retention.mode:'hrc-idle-cleanup'` with the HRC-side idle TTL; for

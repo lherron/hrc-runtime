@@ -1,7 +1,7 @@
 import { readSync } from 'node:fs'
 
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
-import type { HrcRuntimeSnapshot } from 'hrc-core'
+import type { FinalSummaryRecoveryResult, HrcRuntimeSnapshot } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import type { AttachDescriptor } from 'hrc-sdk'
 
@@ -239,6 +239,35 @@ function formatSessionSummary(finalSummary: unknown, scopeLabel: string): string
   return `${lines.join('\n')}\n`
 }
 
+function formatSessionEndedFallback(
+  scopeLabel: string,
+  recovery: FinalSummaryRecoveryResult | undefined
+): string {
+  const suffix = (() => {
+    switch (recovery?.state) {
+      case 'timeout':
+        return 'summary recovery timed out'
+      case 'failed':
+        return 'summary recovery failed'
+      case 'not_durable':
+        return 'summary unavailable; no durable broker endpoint'
+      case 'not_broker':
+        return 'summary unavailable; non-broker runtime'
+      case 'retention_gap':
+        return 'summary unavailable; broker event retention gap'
+      case 'terminal_fenced':
+        return 'summary recovery skipped; runtime not terminal'
+      case 'unavailable':
+        return 'summary unavailable'
+      case 'not_needed':
+      case 'recovered':
+      case undefined:
+        return 'summary unavailable'
+    }
+  })()
+  return `\n\x1b[2m─ session ended ─ ${scopeLabel} (${suffix})\x1b[0m\n\n`
+}
+
 /**
  * After a clean `/quit` detach, render the broker-pushed session summary HRC
  * recorded at graceful exit. Best-effort: never throws and never blocks the
@@ -251,7 +280,10 @@ export async function renderSessionSummary(
   scopeLabel: string
 ): Promise<void> {
   try {
-    const inspect = await client.brokerInspect({ runtimeId })
+    const inspect = await client.brokerInspect({
+      runtimeId,
+      recoverFinalSummary: { timeoutMs: 750 },
+    })
     const block = formatSessionSummary(inspect.finalSummary, scopeLabel)
     if (block) {
       process.stdout.write(block)
@@ -262,20 +294,55 @@ export async function renderSessionSummary(
 }
 
 /**
- * Block until a single keypress (best-effort). Sets raw mode for a true any-key
- * read when stdin is a TTY, then restores it. Never throws — a failure here must
+ * Block until a single keypress OR a bounded grace period elapses (best-effort).
+ * Sets raw mode for a true any-key read when stdin is a TTY, then restores it.
+ *
+ * A positive `timeoutMs` caps the hold so a consolidated viewer pane can never
+ * keep a pty alive indefinitely (T-05237, daedalus C3) — it auto-closes after the
+ * grace. With no/zero timeout the wait is unbounded (legacy `hrc run` operator
+ * terminal, which owns its own foreground pty). Never throws — a failure here must
  * not stop the surface from closing, nor hang it silently.
  */
-function waitForKeypress(): void {
+async function waitForKeypress(timeoutMs?: number): Promise<void> {
   const stdin = process.stdin
+  // Without a TTY a raw any-key read is impossible; fall back to a timed sleep
+  // (bounded) or a single blocking byte read (unbounded legacy path).
+  if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') {
+    if (timeoutMs && timeoutMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, timeoutMs))
+      return
+    }
+    try {
+      readSync(0, Buffer.alloc(1), 0, 1, null)
+    } catch {
+      // ignore — best-effort
+    }
+    return
+  }
+
   let rawSet = false
   try {
-    if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
-      stdin.setRawMode(true)
-      rawSet = true
-    }
-    const buf = Buffer.alloc(1)
-    readSync(0, buf, 0, 1, null)
+    stdin.setRawMode(true)
+    rawSet = true
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        stdin.off('data', onData)
+        if (timer) clearTimeout(timer)
+        try {
+          stdin.pause()
+        } catch {
+          // ignore
+        }
+        resolve()
+      }
+      const onData = (): void => finish()
+      const timer = timeoutMs && timeoutMs > 0 ? setTimeout(finish, timeoutMs) : null
+      stdin.resume()
+      stdin.on('data', onData)
+    })
   } catch {
     // ignore — best-effort
   } finally {
@@ -303,23 +370,23 @@ export async function cmdSessionReport(args: string[]): Promise<void> {
   const runtimeArg = parseFlag(args, '--runtime') ?? requireArg(args, 0, '<runtimeId>')
   const scopeLabel = parseFlag(args, '--scope') ?? runtimeArg
   const waitKey = hasFlag(args, '--wait-key')
+  // Bounded grace (T-05237, C3): cap the keypress hold so a consolidated viewer
+  // pane cannot keep a pty alive forever. Non-positive/absent ⇒ unbounded (legacy).
+  const waitTimeoutRaw = Number(parseFlag(args, '--wait-timeout'))
+  const waitTimeoutMs =
+    Number.isFinite(waitTimeoutRaw) && waitTimeoutRaw > 0 ? waitTimeoutRaw * 1000 : undefined
 
   let block: string | null = null
+  let recovery: FinalSummaryRecoveryResult | undefined
   try {
     const client = createClient()
     const runtimeId = await resolveRuntimeArg(runtimeArg, client)
-    // The broker pushes invocation.summary BEFORE the lease reap, but the
-    // viewer's `tmux attach` can exit a beat ahead of HRC recording
-    // finalSummary — poll briefly so we don't miss it on the race.
-    const attempts = 6
-    for (let i = 0; i < attempts; i += 1) {
-      const inspect = await client.brokerInspect({ runtimeId })
-      block = formatSessionSummary(inspect.finalSummary, scopeLabel)
-      if (block) break
-      if (i < attempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 250))
-      }
-    }
+    const inspect = await client.brokerInspect({
+      runtimeId,
+      recoverFinalSummary: { timeoutMs: 750 },
+    })
+    recovery = inspect.finalSummaryRecovery
+    block = formatSessionSummary(inspect.finalSummary, scopeLabel)
   } catch {
     // swallow — fall through to the keypress gate regardless
   }
@@ -327,14 +394,16 @@ export async function cmdSessionReport(args: string[]): Promise<void> {
   if (block) {
     process.stdout.write(block)
   } else {
-    process.stdout.write(
-      `\n\x1b[2m─ session ended ─ ${scopeLabel} (no summary recorded)\x1b[0m\n\n`
-    )
+    process.stdout.write(formatSessionEndedFallback(scopeLabel, recovery))
   }
 
   if (waitKey) {
-    process.stdout.write('\x1b[2mPress any key to close…\x1b[0m')
-    waitForKeypress()
+    process.stdout.write(
+      waitTimeoutMs
+        ? `\x1b[2mPress any key to close (auto-closes in ${Math.round(waitTimeoutMs / 1000)}s)…\x1b[0m`
+        : '\x1b[2mPress any key to close…\x1b[0m'
+    )
+    await waitForKeypress(waitTimeoutMs)
     process.stdout.write('\n')
   }
 }

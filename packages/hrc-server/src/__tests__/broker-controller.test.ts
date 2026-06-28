@@ -753,6 +753,7 @@ describe('HarnessBrokerController', () => {
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 0,
       reapBrokerTmuxLease: async (runtimeId) => {
         reaped.push(runtimeId)
       },
@@ -803,6 +804,7 @@ describe('HarnessBrokerController', () => {
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 0,
       reapBrokerTmuxLease: async (runtimeId) => {
         reaped.push(runtimeId)
       },
@@ -847,6 +849,89 @@ describe('HarnessBrokerController', () => {
     expect(fake.callOrder).toContain('close')
     // Lever 2: a user-initiated /quit reaps the broker-tmux lease so the durable
     // broker process exits instead of stranding the operator on a live pane.
+    expect(reaped).toEqual(['runtime_w2'])
+  })
+
+  it('records invocation.summary before reaping a user-ended broker tmux lease', async () => {
+    const fake = new FakeBrokerClient()
+    const reapedWithSummary: Array<{ runtimeId: string; finalSummary: unknown }> = []
+    const finalSummary = {
+      reason: 'prompt_input_exit',
+      summary: {
+        invocationId: 'invocation_w2',
+        state: 'ready',
+        driver: 'codex-cli-tmux',
+        startedAt: NOW,
+        lastActivityAt: NOW,
+        turnsCompleted: 1,
+      },
+    }
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 50,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        const runtime = fixture.db.runtimes.getByRuntimeId(runtimeId)
+        reapedWithSummary.push({
+          runtimeId,
+          finalSummary: runtime?.runtimeStateJson?.['finalSummary'],
+        })
+      },
+      now: () => NOW,
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'continuation.cleared',
+        8,
+        { reason: 'prompt_input_exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    expect(reapedWithSummary).toEqual([])
+
+    fake.events.push(
+      envelope('invocation.summary', 9, finalSummary, {
+        invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'],
+      })
+    )
+    await tick()
+    await tick()
+
+    expect(reapedWithSummary).toEqual([{ runtimeId: 'runtime_w2', finalSummary }])
+  })
+
+  it('reaps after a short grace when no invocation.summary arrives', async () => {
+    const fake = new FakeBrokerClient()
+    const reaped: string[] = []
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 0,
+      reapBrokerTmuxLease: async (runtimeId) => {
+        reaped.push(runtimeId)
+      },
+      now: () => NOW,
+    })
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    fake.events.push(
+      envelope(
+        'continuation.cleared',
+        8,
+        { reason: 'prompt_input_exit' },
+        { invocationId: 'invocation_w2' as InvocationEventEnvelope['invocationId'] }
+      )
+    )
+    await tick()
+    await tick()
+
     expect(reaped).toEqual(['runtime_w2'])
   })
 
@@ -950,6 +1035,7 @@ describe('HarnessBrokerController', () => {
     const controller = new HarnessBrokerController({
       db: fixture.db,
       brokerClientFactory: async () => fake,
+      brokerTmuxSummaryReapGraceMs: 0,
       reapBrokerTmuxLease: async (runtimeId) => {
         reaped.push(runtimeId)
       },

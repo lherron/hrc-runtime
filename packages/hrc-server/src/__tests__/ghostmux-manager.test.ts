@@ -1,6 +1,92 @@
 import { describe, expect, it } from 'bun:test'
 
-import { GhostmuxManager, parseGhostmuxSurfaceState } from '../ghostmux'
+import {
+  GhostmuxManager,
+  deriveHeadlessTabIdentity,
+  parseGhostmuxSurfaceState,
+} from '../ghostmux'
+
+/**
+ * A metadata-modeling fake ghostmux (T-05237). Tracks live surfaces with both
+ * surface-level and window-level metadata so the topology the code derives FROM
+ * metadata (its only authority) is observable. `new`/`new-pane` allocate ids;
+ * `kill-surface` removes them; `metadata set/get` round-trips per scope.
+ */
+function makeFakeGhostmux() {
+  type Surf = {
+    surfaceMeta: Record<string, unknown>
+    windowMeta: Record<string, unknown>
+    title?: string | undefined
+    columns: number
+    rows: number
+  }
+  const surfaces = new Map<string, Surf>()
+  const calls: string[][] = []
+  let counter = 0
+  const alloc = (title?: string | undefined): string => {
+    const id = `surf-${(counter += 1)}`
+    surfaces.set(id, { surfaceMeta: {}, windowMeta: {}, title, columns: 120, rows: 40 })
+    return id
+  }
+  const runner = async (args: string[]) => {
+    calls.push(args)
+    const key = args.join(' ')
+    if (key === 'list-surfaces --json') {
+      return {
+        stdout: JSON.stringify({
+          terminals: [...surfaces.entries()].map(([id, s]) => ({
+            id,
+            title: s.title,
+            columns: s.columns,
+            rows: s.rows,
+          })),
+        }),
+        stderr: '',
+      }
+    }
+    if (args[0] === 'metadata' && args[1] === 'get') {
+      const s = surfaces.get(args[3] ?? '')
+      const meta = args.includes('--window') ? s?.windowMeta : s?.surfaceMeta
+      return { stdout: JSON.stringify({ data: meta ?? {} }), stderr: '' }
+    }
+    if (args[0] === 'metadata' && args[1] === 'set') {
+      const s = surfaces.get(args[3] ?? '')
+      if (s) {
+        const payload = JSON.parse(args[4] ?? '{}') as Record<string, unknown>
+        if (args.includes('--window')) s.windowMeta = { ...s.windowMeta, ...payload }
+        else s.surfaceMeta = { ...s.surfaceMeta, ...payload }
+      }
+      return { stdout: '{}', stderr: '' }
+    }
+    if (args[0] === 'new') {
+      const titleIdx = args.indexOf('--title')
+      return {
+        stdout: JSON.stringify({ id: alloc(titleIdx >= 0 ? args[titleIdx + 1] : undefined) }),
+        stderr: '',
+      }
+    }
+    if (args[0] === 'new-pane') {
+      return { stdout: JSON.stringify({ id: alloc() }), stderr: '' }
+    }
+    if (args[0] === 'set-title') {
+      const s = surfaces.get(args[2] ?? '')
+      if (s) s.title = args[3]
+      return { stdout: '{}', stderr: '' }
+    }
+    if (args[0] === 'kill-surface') {
+      surfaces.delete(args[2] ?? '')
+      return { stdout: '{}', stderr: '' }
+    }
+    return { stdout: '{}', stderr: '' }
+  }
+  const surfaceMeta = (id: string) => surfaces.get(id)?.surfaceMeta
+  const liveIds = () => [...surfaces.keys()]
+  const agentPanes = () =>
+    [...surfaces.entries()].filter(([, s]) => s.surfaceMeta['hrc_role'] === 'headless-agent-pane')
+  const anchors = () =>
+    [...surfaces.entries()].filter(([, s]) => s.surfaceMeta['hrc_role'] === 'headless-window-anchor')
+  return { runner, calls, surfaces, surfaceMeta, liveIds, agentPanes, anchors }
+}
 
 describe('parseGhostmuxSurfaceState', () => {
   it('parses list/new style terminal JSON', () => {
@@ -188,205 +274,268 @@ describe('GhostmuxManager', () => {
   })
 })
 
-describe('GhostmuxManager.ensureHeadlessViewer', () => {
-  const scopeRef = 'agent:clod:project:hrc-runtime:task:primary'
-
-  it('creates an unfocused window, tags it, and sends the attach command', async () => {
-    const calls: string[][] = []
-    const manager = new GhostmuxManager('ghostmux', async (args) => {
-      calls.push(args)
-      const key = args.join(' ')
-      if (key === 'list-surfaces --json')
-        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
-      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-1' }), stderr: '' }
-      return { stdout: '{}', stderr: '' }
+// ---------------------------------------------------------------------------
+// T-05237: canonical tab-key derivation (daedalus required test #1)
+// ---------------------------------------------------------------------------
+describe('deriveHeadlessTabIdentity', () => {
+  it('maps a real task scope to task:<T-XXXXX>', () => {
+    const id = deriveHeadlessTabIdentity('agent:clod:project:hrc-runtime:task:T-05237')
+    expect(id).toEqual({
+      tabKey: 'task:T-05237',
+      agentId: 'clod',
+      taskId: 'T-05237',
+      projectId: 'hrc-runtime',
+      label: 'hrc · T-05237',
     })
-
-    const result = await manager.ensureHeadlessViewer({
-      scopeRef,
-      runtimeId: 'rt-9',
-      attachCommand: 'hrc attach rt-9',
-      title: `hrc headless ${scopeRef}`,
-    })
-
-    expect(result).toEqual({ status: 'created', surfaceId: 'viewer-1' })
-    // new window must NOT request focus
-    expect(calls).toContainEqual([
-      'new',
-      '--window',
-      '--title',
-      `hrc headless ${scopeRef}`,
-      '--json',
-    ])
-    expect(calls.flat()).not.toContain('--focus')
-    expect(calls).toContainEqual([
-      'metadata',
-      'set',
-      '-t',
-      'viewer-1',
-      JSON.stringify({
-        hrc_role: 'hrc-headless-viewer',
-        hrc_scope_ref: scopeRef,
-        hrc_runtime_id: 'rt-9',
-      }),
-      '--window',
-      '--json',
-    ])
-    expect(calls).toContainEqual(['send-keys', '-t', 'viewer-1', 'hrc attach rt-9'])
   })
 
-  it('reuses an existing viewer for the same scope and does not create a new window', async () => {
-    const calls: string[][] = []
-    const manager = new GhostmuxManager('ghostmux', async (args) => {
-      calls.push(args)
-      const key = args.join(' ')
-      if (key === 'list-surfaces --json') {
-        return { stdout: JSON.stringify({ terminals: [{ id: 'existing-viewer' }] }), stderr: '' }
-      }
-      if (key === 'metadata get -t existing-viewer --window --json') {
-        return {
-          stdout: JSON.stringify({ hrc_role: 'hrc-headless-viewer', hrc_scope_ref: scopeRef }),
-          stderr: '',
-        }
-      }
-      return { stdout: '{}', stderr: '' }
-    })
+  it('maps a primary scope to a project-qualified key (never bare primary)', () => {
+    const id = deriveHeadlessTabIdentity('agent:clod:project:hrc-runtime:task:primary')
+    expect(id.tabKey).toBe('project:hrc-runtime:primary')
+    expect(id.agentId).toBe('clod')
+    expect(id.label).toBe('hrc · primary')
+  })
+
+  it('does NOT collide two primary scopes from different projects', () => {
+    const a = deriveHeadlessTabIdentity('agent:clod:project:hrc-runtime:task:primary')
+    const b = deriveHeadlessTabIdentity('agent:smokey:project:agent-control-plane:task:primary')
+    expect(a.tabKey).not.toBe(b.tabKey)
+  })
+
+  it('qualifies an agent-only ref by agent root when no project is present', () => {
+    const id = deriveHeadlessTabIdentity('agent:daedalus')
+    expect(id.tabKey).toBe('project:agent-root-daedalus:primary')
+    expect(id.agentId).toBe('daedalus')
+  })
+
+  it('falls back to an unparsed key for a malformed ref (never throws)', () => {
+    const id = deriveHeadlessTabIdentity('::::garbage::::')
+    expect(id.tabKey.startsWith('unparsed:')).toBe(true)
+    expect(id.agentId).toBe('unknown')
+  })
+})
+
+describe('GhostmuxManager.ensureHeadlessViewer (consolidated window/tab/pane)', () => {
+  const cloRef = 'agent:clod:project:hrc-runtime:task:T-05237'
+  const curlyRef = 'agent:curly:project:hrc-runtime:task:T-05237'
+
+  it('first agent: creates ONE window + a task tab pane, attach-then-title-last', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
 
     const result = await manager.ensureHeadlessViewer({
-      scopeRef,
-      runtimeId: 'rt-10',
-      attachCommand: 'hrc attach rt-10',
-      title: 'hrc headless',
+      scopeRef: cloRef,
+      runtimeId: 'rt-1',
+      attachCommand: 'tmux attach; hrc session-report --wait-key --wait-timeout 30; exit',
     })
 
-    expect(result).toEqual({ status: 'reused', surfaceId: 'existing-viewer' })
-    expect(calls.some((c) => c[0] === 'new')).toBe(false)
-    expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
+    expect(result.status).toBe('created')
+    expect(result).toMatchObject({ tabKey: 'task:T-05237' })
+    // Exactly one anchor window + one agent pane.
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.agentPanes()).toHaveLength(1)
+    // First tab created by parenting off the window anchor, NOT a second window.
+    const newCalls = fake.calls.filter((c) => c[0] === 'new')
+    expect(newCalls.some((c) => c.includes('--window'))).toBe(true)
+    expect(newCalls.some((c) => c.includes('--tab') && c.includes('--parent'))).toBe(true)
+    expect(fake.calls.flat()).not.toContain('--focus')
+    // Ordering: send-keys (attach) BEFORE set-title (last write).
+    const sendIdx = fake.calls.findIndex((c) => c[0] === 'send-keys')
+    const titleIdx = fake.calls.findIndex((c) => c[0] === 'set-title')
+    expect(sendIdx).toBeGreaterThanOrEqual(0)
+    expect(titleIdx).toBeGreaterThan(sendIdx)
+    // Pane title is "<task> · <agent>".
+    const paneId = fake.agentPanes()[0]?.[0]
+    expect(fake.surfaces.get(paneId ?? '')?.title).toBe('hrc · T-05237 · clod')
+  })
+
+  it('two agents on the same task share ONE window and ONE tab, two panes (no 2nd window)', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: cloRef,
+      runtimeId: 'rt-1',
+      attachCommand: 'attach-1',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: curlyRef,
+      runtimeId: 'rt-2',
+      attachCommand: 'attach-2',
+    })
+
+    expect(fake.anchors()).toHaveLength(1)
+    const panes = fake.agentPanes()
+    expect(panes).toHaveLength(2)
+    // Same tab key on both panes.
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key']))).toEqual(
+      new Set(['task:T-05237'])
+    )
+    // Distinct agents.
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_agent_id']))).toEqual(
+      new Set(['clod', 'curly'])
+    )
+    // Only ONE window was ever created.
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
+    // The second agent split an existing tab pane rather than opening a new tab.
+    expect(fake.calls.filter((c) => c[0] === 'new-pane')).toHaveLength(1)
+  })
+
+  it('two primary scopes from different projects open SEPARATE tabs in one window', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: 'agent:clod:project:hrc-runtime:task:primary',
+      runtimeId: 'rt-a',
+      attachCommand: 'a',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: 'agent:smokey:project:agent-control-plane:task:primary',
+      runtimeId: 'rt-b',
+      attachCommand: 'b',
+    })
+
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
+    // Two distinct tab keys ⇒ two tabs (two `new --tab` parented off the anchor).
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--tab'))).toHaveLength(2)
+    expect(fake.calls.filter((c) => c[0] === 'new-pane')).toHaveLength(0)
+  })
+
+  it('reuse rebinds the pane to the new runtime and creates no new surface (fence)', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a1' })
+    const before = fake.liveIds().length
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef: cloRef,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
+
+    expect(result.status).toBe('reused')
+    expect(fake.liveIds().length).toBe(before)
+    // Metadata rebound to the CURRENT runtime BEFORE returning (daedalus C5).
+    const paneId = fake.agentPanes()[0]?.[0]
+    expect(fake.surfaceMeta(paneId ?? '')?.['hrc_runtime_id']).toBe('rt-2')
+  })
+
+  it('serializes concurrent same-task creates into ONE tab (mutex + post-lock recheck)', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await Promise.all([
+      manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a1' }),
+      manager.ensureHeadlessViewer({ scopeRef: curlyRef, runtimeId: 'rt-2', attachCommand: 'a2' }),
+    ])
+
+    // No duplicate window, no duplicate tab for the shared key.
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--tab'))).toHaveLength(1)
+    expect(fake.agentPanes()).toHaveLength(2)
+  })
+
+  it('after a restart (fresh manager, surfaces persist) finds the window/pane from metadata', async () => {
+    const fake = makeFakeGhostmux()
+    const m1 = new GhostmuxManager('ghostmux', fake.runner)
+    await m1.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a1' })
+
+    // New manager instance = daemon restart; surfaces (metadata) persist in `fake`.
+    const m2 = new GhostmuxManager('ghostmux', fake.runner)
+    const result = await m2.ensureHeadlessViewer({
+      scopeRef: cloRef,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
+
+    expect(result.status).toBe('reused')
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
   })
 
   it('returns failed (never throws) when ghostmux is unavailable', async () => {
     const manager = new GhostmuxManager('ghostmux', async () => {
       throw new Error('libghostty API call failed [error code: surface_not_realized]')
     })
-
     const result = await manager.ensureHeadlessViewer({
-      scopeRef,
+      scopeRef: cloRef,
       runtimeId: 'rt-11',
-      attachCommand: 'hrc attach rt-11',
-      title: 'hrc headless',
+      attachCommand: 'a',
     })
-
     expect(result.status).toBe('failed')
   })
 
-  const statusBar = {
-    left: '◆ CLOD',
-    center: 'hrc-runtime',
-    right: '▶ running',
-    fg: '#F2EEE6',
-    bg: '#6B4FB0',
-  }
-
-  it('applies the status bar on the created path (off the critical path)', async () => {
-    const calls: string[][] = []
-    const manager = new GhostmuxManager('ghostmux', async (args) => {
-      calls.push(args)
-      if (args.join(' ') === 'list-surfaces --json')
-        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
-      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-x' }), stderr: '' }
-      return { stdout: '{}', stderr: '' }
-    })
-
-    const result = await manager.ensureHeadlessViewer({
-      scopeRef,
+  it('applies the status bar + tint on the created path', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+    await manager.ensureHeadlessViewer({
+      scopeRef: cloRef,
       runtimeId: 'rt-12',
-      attachCommand: 'hrc attach rt-12',
-      title: 'hrc headless',
-      statusBar,
+      attachCommand: 'a',
+      statusBar: { left: '◆ CLOD', center: 'hrc-runtime', right: '▶ running' },
       terminalBg: '#1e1631',
     })
     await Promise.resolve()
+    const paneId = fake.agentPanes()[0]?.[0]
+    expect(fake.calls).toContainEqual(['set-bg', '-t', paneId, '#1e1631', '--json'])
+    expect(fake.calls.some((c) => c[0] === 'statusbar')).toBe(true)
+  })
+})
 
-    expect(result.status).toBe('created')
-    expect(calls).toContainEqual([
-      'statusbar',
-      'set',
-      '-t',
-      'viewer-x',
-      '◆ CLOD|hrc-runtime|▶ running',
-      '--fg',
-      '#F2EEE6',
-      '--bg',
-      '#6B4FB0',
-    ])
-    // color identity comes from the terminal tint, applied on the created path
-    expect(calls).toContainEqual(['set-bg', '-t', 'viewer-x', '#1e1631', '--json'])
+describe('GhostmuxManager.reapHeadlessAgentPane (runtime-fenced, daedalus C4)', () => {
+  const cloRef = 'agent:clod:project:hrc-runtime:task:T-05237'
+  const curlyRef = 'agent:curly:project:hrc-runtime:task:T-05237'
+
+  it('reaps the pane bound to the terminating runtime and reports tab collapse', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a' })
+    const paneId = fake.agentPanes()[0]?.[0] ?? ''
+
+    const result = await manager.reapHeadlessAgentPane(paneId, 'rt-1')
+    expect(result).toEqual({ status: 'reaped', surfaceId: paneId, tabCollapsed: true })
+    expect(fake.liveIds()).not.toContain(paneId)
   })
 
-  it('refreshes metadata and repaints the bar on the reused path', async () => {
-    const calls: string[][] = []
-    const manager = new GhostmuxManager('ghostmux', async (args) => {
-      calls.push(args)
-      const key = args.join(' ')
-      if (key === 'list-surfaces --json')
-        return { stdout: JSON.stringify({ terminals: [{ id: 'existing-viewer' }] }), stderr: '' }
-      if (key === 'metadata get -t existing-viewer --window --json')
-        return {
-          stdout: JSON.stringify({ hrc_role: 'hrc-headless-viewer', hrc_scope_ref: scopeRef }),
-          stderr: '',
-        }
-      return { stdout: '{}', stderr: '' }
-    })
+  it('does NOT collapse the tab while a sibling agent pane survives', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a' })
+    await manager.ensureHeadlessViewer({ scopeRef: curlyRef, runtimeId: 'rt-2', attachCommand: 'b' })
+    const cloPane =
+      fake.agentPanes().find(([, s]) => s.surfaceMeta['hrc_agent_id'] === 'clod')?.[0] ?? ''
 
-    const result = await manager.ensureHeadlessViewer({
-      scopeRef,
-      runtimeId: 'rt-13',
-      attachCommand: 'hrc attach rt-13',
-      title: 'hrc headless',
-      statusBar,
-      terminalBg: '#1e1631',
-    })
-    await Promise.resolve()
-
-    expect(result).toEqual({ status: 'reused', surfaceId: 'existing-viewer' })
-    expect(calls.some((c) => c[0] === 'new')).toBe(false)
-    // tint reapplied on reuse too
-    expect(calls).toContainEqual(['set-bg', '-t', 'existing-viewer', '#1e1631', '--json'])
-    // metadata refreshed to the CURRENT runtime id
-    expect(calls).toContainEqual([
-      'metadata',
-      'set',
-      '-t',
-      'existing-viewer',
-      JSON.stringify({
-        hrc_role: 'hrc-headless-viewer',
-        hrc_scope_ref: scopeRef,
-        hrc_runtime_id: 'rt-13',
-      }),
-      '--window',
-      '--json',
-    ])
-    expect(calls.some((c) => c[0] === 'statusbar')).toBe(true)
+    const result = await manager.reapHeadlessAgentPane(cloPane, 'rt-1')
+    expect(result).toEqual({ status: 'reaped', surfaceId: cloPane, tabCollapsed: false })
+    expect(fake.agentPanes()).toHaveLength(1)
   })
 
-  it('does not fail or delay the viewer when the status bar write throws', async () => {
-    const manager = new GhostmuxManager('ghostmux', async (args) => {
-      if (args.join(' ') === 'list-surfaces --json')
-        return { stdout: JSON.stringify({ terminals: [] }), stderr: '' }
-      if (args[0] === 'new') return { stdout: JSON.stringify({ id: 'viewer-y' }), stderr: '' }
-      if (args[0] === 'statusbar') throw new Error('boom')
-      return { stdout: '{}', stderr: '' }
-    })
+  it('FENCE: refuses to reap a pane already rebound to a newer runtime', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a' })
+    const paneId = fake.agentPanes()[0]?.[0] ?? ''
+    // Reuse rebinds to rt-2.
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-2', attachCommand: 'a2' })
 
-    const result = await manager.ensureHeadlessViewer({
-      scopeRef,
-      runtimeId: 'rt-14',
-      attachCommand: 'hrc attach rt-14',
-      title: 'hrc headless',
-      statusBar,
-    })
+    // A stale terminal event for rt-1 must NOT kill the pane.
+    const result = await manager.reapHeadlessAgentPane(paneId, 'rt-1')
+    expect(result).toEqual({ status: 'skipped', reason: 'runtime_rebound' })
+    expect(fake.liveIds()).toContain(paneId)
+  })
 
-    expect(result).toEqual({ status: 'created', surfaceId: 'viewer-y' })
+  it('never kills the window anchor', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+    await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a' })
+    const anchorId = fake.anchors()[0]?.[0] ?? ''
+
+    const result = await manager.reapHeadlessAgentPane(anchorId, 'rt-1')
+    expect(result).toEqual({ status: 'skipped', reason: 'not_agent_pane' })
+    expect(fake.liveIds()).toContain(anchorId)
   })
 })
 

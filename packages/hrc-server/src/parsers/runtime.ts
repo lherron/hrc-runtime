@@ -632,11 +632,37 @@ export function parseBrokerInspectRequest(input: unknown): BrokerInspectRequest 
 
   const probeLiveness = readOptionalBooleanField(input, 'probeLiveness')
   const includeDisposed = readOptionalBooleanField(input, 'includeDisposed')
+  const recoverFinalSummaryRaw = input['recoverFinalSummary']
+  let recoverFinalSummary: BrokerInspectRequest['recoverFinalSummary']
+  if (recoverFinalSummaryRaw !== undefined) {
+    if (!isRecord(recoverFinalSummaryRaw)) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'recoverFinalSummary must be an object',
+        { field: 'recoverFinalSummary' }
+      )
+    }
+    const timeoutMs = recoverFinalSummaryRaw['timeoutMs']
+    if (
+      timeoutMs !== undefined &&
+      (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0)
+    ) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'recoverFinalSummary.timeoutMs must be a non-negative number',
+        { field: 'recoverFinalSummary.timeoutMs' }
+      )
+    }
+    recoverFinalSummary = {
+      ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+    }
+  }
 
   return {
     runtimeId: body.runtimeId,
     ...(typeof probeLiveness === 'boolean' ? { probeLiveness } : {}),
     ...(typeof includeDisposed === 'boolean' ? { includeDisposed } : {}),
+    ...(recoverFinalSummary !== undefined ? { recoverFinalSummary } : {}),
   }
 }
 
