@@ -338,6 +338,69 @@ async function runConfiguredCommand(
   })
 }
 
+async function finalizeConfiguredCommandRun(
+  server: HrcServerInstance,
+  input: {
+    command: HrcCommandLaunchSpec
+    binding: Record<string, string>
+    stdinJson: unknown
+    configuredTargetId: string
+    session: HrcSessionRecord
+    runtimeId: string
+    runId: string
+    transport: 'tmux'
+  }
+): Promise<void> {
+  let result: CommandRunProcessResult
+  try {
+    result = await runConfiguredCommand(input.command, input.binding, input.stdinJson)
+  } catch (error) {
+    result = {
+      exitCode: 1,
+      signal: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  const completedAt = timestamp()
+  const exitCode = result.exitCode ?? (result.signal ? 128 : 1)
+  const status = exitCode === 0 ? 'completed' : 'failed'
+  server.db.runs.markCompleted(input.runId, {
+    status,
+    completedAt,
+    updatedAt: completedAt,
+    ...(status === 'failed'
+      ? {
+          errorCode: HrcErrorCode.INTERNAL_ERROR,
+          errorMessage:
+            result.errorMessage ?? `command-run exited with status ${String(result.exitCode)}`,
+        }
+      : {}),
+  })
+  server.db.runtimes.updateRunId(input.runtimeId, undefined, completedAt)
+  server.db.runtimes.updateStatus(input.runtimeId, 'terminated', completedAt)
+
+  server.notifyEvent(
+    appendHrcEvent(server.db, 'command_run.exited', {
+      ts: completedAt,
+      hostSessionId: input.session.hostSessionId,
+      scopeRef: input.session.scopeRef,
+      laneRef: input.session.laneRef,
+      generation: input.session.generation,
+      runtimeId: input.runtimeId,
+      runId: input.runId,
+      transport: input.transport,
+      payload: {
+        configuredTargetId: input.configuredTargetId,
+        binding: input.binding,
+        status,
+        exitCode,
+        signal: result.signal,
+      },
+    })
+  )
+}
+
 // Re-export CLI invocation builder so hrc-cli can produce dry-run previews
 // without duplicating the intent → argv/env translation.
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
@@ -889,44 +952,16 @@ class HrcServerInstance implements HrcServer {
       })
     )
 
-    const result = await runConfiguredCommand(command, body.binding, body.stdinJson)
-    const completedAt = timestamp()
-    const exitCode = result.exitCode ?? (result.signal ? 128 : 1)
-    const status = exitCode === 0 ? 'completed' : 'failed'
-    this.db.runs.markCompleted(runId, {
-      status,
-      completedAt,
-      updatedAt: completedAt,
-      ...(status === 'failed'
-        ? {
-            errorCode: HrcErrorCode.INTERNAL_ERROR,
-            errorMessage:
-              result.errorMessage ?? `command-run exited with status ${String(result.exitCode)}`,
-          }
-        : {}),
+    void finalizeConfiguredCommandRun(this, {
+      command,
+      binding: body.binding,
+      stdinJson: body.stdinJson,
+      configuredTargetId: body.configuredTargetId,
+      session,
+      runtimeId,
+      runId,
+      transport: 'tmux',
     })
-    this.db.runtimes.updateRunId(runtimeId, undefined, completedAt)
-    this.db.runtimes.updateStatus(runtimeId, 'terminated', completedAt)
-
-    this.notifyEvent(
-      appendHrcEvent(this.db, 'command_run.exited', {
-        ts: completedAt,
-        hostSessionId: session.hostSessionId,
-        scopeRef: session.scopeRef,
-        laneRef: session.laneRef,
-        generation: session.generation,
-        runtimeId,
-        runId,
-        transport: 'tmux',
-        payload: {
-          configuredTargetId: body.configuredTargetId,
-          binding: body.binding,
-          status,
-          exitCode,
-          signal: result.signal,
-        },
-      })
-    )
 
     return json({
       runId,

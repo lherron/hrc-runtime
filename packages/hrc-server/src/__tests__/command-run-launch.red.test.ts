@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { HrcLifecycleEvent, HrcRunRecord } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
-import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
-import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.ts'
 
 let fixture: HrcServerTestFixture
 let server: HrcServer
@@ -39,7 +40,11 @@ function listEventsForRun(runId: string): HrcLifecycleEvent[] {
   }
 }
 
-function requestFor(kind: 'success' | 'failure', idempotencyKey: string) {
+function requestFor(
+  kind: 'success' | 'failure' | 'wait',
+  idempotencyKey: string,
+  stdinJson?: Record<string, unknown>
+) {
   return {
     // T-05274/daedalus invariant: this is a server-side configured target name,
     // not caller-supplied command/argv/cwd/env material.
@@ -56,8 +61,24 @@ function requestFor(kind: 'success' | 'failure', idempotencyKey: string) {
       HRC_SESSION_REF: `agent:smokey/project:hrc-runtime/task:T-05274/lane:${kind}`,
       HRC_LANE: kind,
     },
-    stdinJson: { expectedExit: kind === 'success' ? 0 : 42 },
+    stdinJson: stdinJson ?? { expectedExit: kind === 'success' ? 0 : 42 },
   } as const
+}
+
+async function waitForRun(
+  runId: string,
+  predicate: (run: HrcRunRecord) => boolean,
+  timeoutMs = 1000
+): Promise<HrcRunRecord> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const run = listRuns().find((candidate) => candidate.runId === runId)
+    if (run !== undefined && predicate(run)) {
+      return run
+    }
+    await Bun.sleep(10)
+  }
+  throw new Error(`timed out waiting for command-run ${runId}`)
 }
 
 describe('POST /v1/command-runs/launch (T-05274 red)', () => {
@@ -66,6 +87,8 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
 
     const success = await client.launchCommandScopedRun(requestFor('success', 'idem-success-1'))
     const failure = await client.launchCommandScopedRun(requestFor('failure', 'idem-failure-1'))
+    const completedSuccess = await waitForRun(success.runId, (run) => run.status === 'completed')
+    const completedFailure = await waitForRun(failure.runId, (run) => run.status === 'failed')
 
     expect(success.runId).toMatch(/^run-/)
     expect(success.runId).not.toBe(success.hostSessionId)
@@ -80,8 +103,7 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
     expect(failure.runId).not.toBe(success.runId)
     expect(failure.transport).toBe('tmux')
 
-    const runs = listRuns()
-    expect(runs.find((run) => run.runId === success.runId)).toMatchObject({
+    expect(completedSuccess).toMatchObject({
       runId: success.runId,
       hostSessionId: success.hostSessionId,
       runtimeId: success.runtimeId,
@@ -89,7 +111,7 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
       transport: success.transport,
       status: 'completed',
     })
-    expect(runs.find((run) => run.runId === failure.runId)).toMatchObject({
+    expect(completedFailure).toMatchObject({
       runId: failure.runId,
       hostSessionId: failure.hostSessionId,
       runtimeId: failure.runtimeId,
@@ -109,6 +131,32 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
       eventKind: 'command_run.exited',
       payload: expect.objectContaining({ exitCode: 42 }),
     })
+  })
+
+  it('returns launch correlation before a long-running command process exits', async () => {
+    const client = new HrcClient(fixture.socketPath)
+    const releasePath = join(fixture.tmpDir, 'release-command-run')
+
+    const launched = await client.launchCommandScopedRun(
+      requestFor('wait', 'idem-wait-1', { releasePath })
+    )
+
+    expect(launched.runId).toMatch(/^run-/)
+    expect(launched.hostSessionId).toMatch(/^hsid-/)
+    expect(launched.runtimeId).toMatch(/^rt-/)
+    expect(launched.transport).toBe('tmux')
+    expect(launched.replayed).toBe(false)
+    expect(listRuns().find((run) => run.runId === launched.runId)).toMatchObject({
+      status: 'running',
+      hostSessionId: launched.hostSessionId,
+      runtimeId: launched.runtimeId,
+    })
+
+    await writeFile(releasePath, 'ok')
+    await waitForRun(launched.runId, (run) => run.status === 'completed')
+    expect(listEventsForRun(launched.runId).map((event) => event.eventKind)).toEqual(
+      expect.arrayContaining(['command_run.started', 'command_run.exited'])
+    )
   })
 
   it('replays a lost response for the same idempotency key without creating a second live command process', async () => {

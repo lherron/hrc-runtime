@@ -177,6 +177,11 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       '-e',
       "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const p=d.trim().length>0?JSON.parse(d):{};process.exit(Number.isInteger(p.expectedExit)?p.expectedExit:0)})",
     ]
+    const commandRunWaitForReleaseFile = [
+      process.execPath,
+      '-e',
+      "const fs=require('node:fs');let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const p=d.trim().length>0?JSON.parse(d):{};const release=String(p.releasePath||'');const poll=()=>{if(release&&fs.existsSync(release))process.exit(0);setTimeout(poll,10)};poll()})",
+    ]
     return {
       runtimeRoot,
       stateRoot,
@@ -193,6 +198,10 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
         'test-command-run-failure': {
           launchMode: 'exec',
           argv: commandRunExitFromStdin,
+        },
+        'test-command-run-wait': {
+          launchMode: 'exec',
+          argv: commandRunWaitForReleaseFile,
         },
       },
       ghostmuxOptions: { runner: runFakeGhostmux },
