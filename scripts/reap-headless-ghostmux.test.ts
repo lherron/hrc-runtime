@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
+  HEADLESS_PANE_ROLE,
   type PaneStatus,
+  classifyReapExec,
   isAlreadyTerminatedError,
   isLeftoverViewer,
   isQuitEligible,
+  selectHeadlessPanes,
   skipReasons,
 } from './reap-headless-ghostmux'
 
@@ -335,6 +338,119 @@ describe('Phase C: reap eligibility matrix — presentation-aware predicate (T-0
     expect(reasons.some((r) => /presentation|tmux-tui/i.test(r))).toBe(true)
     expect(reasons.some((r) => /active run/i.test(r))).toBe(true)
     expect(reasons.some((r) => /in progress/i.test(r))).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discovery by durable metadata role, NOT title (T-05237 regression).
+//
+// The consolidated "Headless Sessions" window renamed pane titles from
+// `hrc headless agent:<scope>` to the compact `<proj> · <task> · <agent>` form,
+// which silently broke the old `^hrc headless agent:` title regex. Discovery now
+// keys off ghostmux metadata `hrc_role === HEADLESS_PANE_ROLE`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('selectHeadlessPanes (metadata-role discovery)', () => {
+  // Mirrors the live surface set: new-format headless panes, the window anchor,
+  // an interactive non-headless surface, and an old-format leftover with no
+  // metadata at all (the pre-rename pane that the title regex used to match).
+  const terminals = [
+    { short_id: '4EF80A10', title: 'hrc · T-05262 · clod' },
+    { short_id: '5B01A4E9', title: 'wrkq · T-05272 · clod' },
+    { short_id: '618CFC8D', title: 'Headless Sessions' },
+    { short_id: 'DD4C6CE6', title: '/Users/lherron/praesidium/hrc-runtime' },
+    { short_id: '3851935F', title: 'hrc headless agent:cody:project:acp:task:T-05190' },
+  ]
+  const metadataById: Record<string, Record<string, unknown>> = {
+    '4EF80A10': { hrc_role: HEADLESS_PANE_ROLE, hrc_runtime_id: 'rt-a', hrc_scope_ref: 'agent:clod' },
+    '5B01A4E9': { hrc_role: HEADLESS_PANE_ROLE, hrc_runtime_id: 'rt-b', hrc_scope_ref: 'agent:clod' },
+    '618CFC8D': { hrc_role: 'headless-window-anchor' },
+    DD4C6CE6: { hrc_role: 'interactive-tui' },
+    '3851935F': {}, // leftover: no metadata at all
+  }
+  const resolve = (id: string) => metadataById[id] ?? {}
+
+  it('selects only panes whose role is headless-agent-pane', () => {
+    const panes = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE)
+    expect(panes.map((p) => p.id)).toEqual(['4EF80A10', '5B01A4E9'])
+  })
+
+  it('excludes the window anchor and interactive/leftover surfaces', () => {
+    const ids = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE).map((p) => p.id)
+    expect(ids).not.toContain('618CFC8D') // headless-window-anchor
+    expect(ids).not.toContain('DD4C6CE6') // interactive tui
+    expect(ids).not.toContain('3851935F') // old-format leftover, no metadata
+  })
+
+  it('carries the resolved metadata forward so queryStatus need not re-fetch', () => {
+    const [first] = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE)
+    expect(first.metadata.hrc_runtime_id).toBe('rt-a')
+    expect(first.metadata.hrc_scope_ref).toBe('agent:clod')
+  })
+
+  it('applies an optional title regex as a secondary filter', () => {
+    const ids = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE, '^wrkq ').map((p) => p.id)
+    expect(ids).toEqual(['5B01A4E9'])
+  })
+
+  it('matches new-format compact titles (the post-rename shape) by role, not title', () => {
+    // The whole point: none of these titles start with the old `hrc headless`
+    // prefix, yet both are still discovered.
+    const panes = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE)
+    expect(panes.every((p) => !p.title.startsWith('hrc headless'))).toBe(true)
+    expect(panes).toHaveLength(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bounded reap exec (hang regression): `hrc runtime terminate` can hang forever
+// when a broker is wedged — neither the SDK fetch nor `hrc` has a timeout — and
+// the sequential sweep froze on it. The script now SIGTERMs the child at a
+// per-runtime ceiling and treats the timeout as a benign warn so the sweep
+// continues. classifyReapExec is the pure decision the spawn feeds into.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('classifyReapExec (bounded terminate outcome)', () => {
+  const argv = ['hrc', 'runtime', 'terminate', 'rt-x', '--no-drop-continuation']
+
+  it('classifies a timeout (wedged broker, SIGTERM at ceiling) as a benign warn, not an abort', () => {
+    const r = classifyReapExec(
+      { exitedDueToTimeout: true, exitCode: null, stdout: '', stderr: '' },
+      argv,
+      20_000
+    )
+    expect(r.kind).toBe('timed-out')
+    if (r.kind === 'timed-out') expect(r.seconds).toBe(20)
+  })
+
+  it('classifies exit 0 as sent', () => {
+    expect(classifyReapExec({ exitCode: 0, stdout: '', stderr: '' }, argv, 20_000).kind).toBe('sent')
+  })
+
+  it('classifies a non-zero already-terminated exit as benign', () => {
+    const r = classifyReapExec(
+      { exitCode: 1, stdout: '', stderr: 'hrc: [runtime_unavailable] runtime "rt-x" is terminated' },
+      argv,
+      20_000
+    )
+    expect(r.kind).toBe('already-terminated')
+  })
+
+  it('classifies a genuine non-zero failure as an error (still non-fatal to the sweep)', () => {
+    const r = classifyReapExec(
+      { exitCode: 1, stdout: '', stderr: 'connection refused: broker socket unavailable' },
+      argv,
+      20_000
+    )
+    expect(r.kind).toBe('error')
+  })
+
+  it('prefers the timeout verdict even if an exit code is also present', () => {
+    // exitedDueToTimeout wins: a SIGTERM'd child may still report exitCode/signal.
+    const r = classifyReapExec(
+      { exitedDueToTimeout: true, exitCode: 143, stdout: '', stderr: '' },
+      argv,
+      15_000
+    )
+    expect(r.kind).toBe('timed-out')
   })
 })
 

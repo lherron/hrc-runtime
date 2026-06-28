@@ -7,9 +7,11 @@ type Options = {
   dryRun: boolean
   simulate: boolean
   assumeYes: boolean
+  paneRole: string
   titleRegex: string
   closePromptRegex: string
   waitSeconds: number
+  reapTimeoutMs: number
   hrcDbPath: string
 }
 
@@ -17,6 +19,20 @@ type Pane = {
   id: string
   title: string
 }
+
+// Discovery now keys off the durable ghostmux metadata role rather than the
+// surface TITLE (T-05237 renamed headless titles from `hrc headless agent:...`
+// to the compact `<proj> · <task> · <agent>` form, which broke the old title
+// regex). A DiscoveredPane carries the resolved metadata forward so queryStatus
+// does not re-fetch it.
+type DiscoveredPane = Pane & {
+  metadata: Record<string, unknown>
+}
+
+// The role stamped on each per-agent headless pane inside the consolidated
+// "Headless Sessions" window (T-05237). The window anchor itself carries
+// `headless-window-anchor` and is intentionally excluded.
+const HEADLESS_PANE_ROLE = 'headless-agent-pane'
 
 type PaneStatus = Pane & {
   agent: string
@@ -50,11 +66,15 @@ function usage(): never {
   scripts/reap-headless-ghostmux.sh [--dry-run] [--simulate] [--yes]
   bun scripts/reap-headless-ghostmux.ts [--dry-run] [--simulate] [--yes]
 
-Find Ghostty panes whose titles match TITLE_REGEX, print HRC status, ask for
-confirmation, then reap each eligible broker-tmux runtime over the broker RPC
-channel via 'hrc runtime terminate --no-drop-continuation --reason operator_reap'
-(continuation preserved), wait, and send Enter only to panes whose captured
-contents match CLOSE_PROMPT_REGEX.
+Find Ghostty headless-agent panes by their durable metadata role (hrc_role ==
+PANE_ROLE), print HRC status, ask for confirmation, then reap each eligible
+broker-tmux runtime over the broker RPC channel via 'hrc runtime terminate
+--no-drop-continuation --reason operator_reap' (continuation preserved), wait,
+and send Enter only to panes whose captured contents match CLOSE_PROMPT_REGEX.
+
+Discovery is by metadata role, NOT title — the consolidated "Headless Sessions"
+window (T-05237) renamed pane titles to '<proj> · <task> · <agent>', so the old
+title regex no longer matched. TITLE_REGEX remains an OPTIONAL secondary filter.
 
 Eligible = surface resolves to one runtime with controllerKind=harness-broker,
 a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
@@ -62,7 +82,8 @@ substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
 status=ready, NO active run, latest turn=completed.
 
 Environment:
-  TITLE_REGEX          Default: ^hrc headless agent:
+  PANE_ROLE            Default: ${HEADLESS_PANE_ROLE} (ghostmux hrc_role metadata)
+  TITLE_REGEX          Optional extra title filter (default: none)
   CLOSE_PROMPT_REGEX   Default: Press (enter to exit|any key to close)
   WAIT_SECONDS         Default: 10
   HRC_DB_PATH          Default: /Users/lherron/praesidium/var/state/hrc/state.sqlite
@@ -80,9 +101,15 @@ function parseArgs(argv: string[]): Options {
     dryRun: false,
     simulate: false,
     assumeYes: false,
-    titleRegex: process.env.TITLE_REGEX ?? '^hrc headless agent:',
+    paneRole: process.env.PANE_ROLE ?? HEADLESS_PANE_ROLE,
+    titleRegex: process.env.TITLE_REGEX ?? '',
     closePromptRegex: process.env.CLOSE_PROMPT_REGEX ?? 'Press (enter to exit|any key to close)',
     waitSeconds: Number(process.env.WAIT_SECONDS ?? '10'),
+    // Per-runtime ceiling on `hrc runtime terminate`. A wedged broker never acks
+    // the dispose RPC, and neither the SDK fetch nor `hrc` itself has a timeout —
+    // so without this the whole SEQUENTIAL sweep freezes on one bad pane. 0
+    // disables the bound (legacy hang-forever behavior).
+    reapTimeoutMs: Math.round(Number(process.env.REAP_TIMEOUT_SECONDS ?? '20') * 1000),
     hrcDbPath: process.env.HRC_DB_PATH ?? '/Users/lherron/praesidium/var/state/hrc/state.sqlite',
   }
 
@@ -104,6 +131,9 @@ function parseArgs(argv: string[]): Options {
 
   if (!Number.isFinite(options.waitSeconds) || options.waitSeconds < 0) {
     throw new Error(`WAIT_SECONDS must be a non-negative number, got ${options.waitSeconds}`)
+  }
+  if (!Number.isFinite(options.reapTimeoutMs) || options.reapTimeoutMs < 0) {
+    throw new Error(`REAP_TIMEOUT_SECONDS must be a non-negative number`)
   }
   return options
 }
@@ -371,66 +401,100 @@ function isLeftoverViewer(status: PaneStatus): boolean {
   )
 }
 
-function simPanes(): Pane[] {
+function simPanes(): DiscoveredPane[] {
   return [
     {
       id: '7BF21FAF',
-      title: 'hrc headless agent:smokey:project:agent-control-plane:task:T-02864',
+      // Post-T-05237 compact title: '<proj> · <task> · <agent>'.
+      title: 'acp · T-02864 · smokey',
+      metadata: {
+        hrc_role: HEADLESS_PANE_ROLE,
+        hrc_runtime_id: 'rt-smokey-sim',
+        hrc_scope_ref: 'agent:smokey:project:agent-control-plane:task:T-02864',
+      },
     },
     {
       id: 'EB834507',
-      title: 'hrc headless agent:curly:project:agent-control-plane:task:T-02864',
+      title: 'acp · T-02864 · curly',
+      metadata: {
+        hrc_role: HEADLESS_PANE_ROLE,
+        hrc_runtime_id: 'rt-curly-sim',
+        hrc_scope_ref: 'agent:curly:project:agent-control-plane:task:T-02864',
+      },
     },
     {
       // Already-terminated leftover viewer: no live runtime to reap, but parked
       // on the close prompt — exercises the leftover-viewer close path.
       id: 'C10D0144',
-      title: 'hrc headless agent:clod:project:agent-spaces:task:primary',
+      title: 'spaces · primary · clod',
+      metadata: {
+        hrc_role: HEADLESS_PANE_ROLE,
+        hrc_runtime_id: 'rt-clod-leftover-sim',
+        hrc_scope_ref: 'agent:clod:project:agent-spaces:task:primary',
+      },
     },
   ]
 }
 
-function listPanes(options: Options): Pane[] {
+// Resolve a single surface's ghostmux metadata (the `--resolved` view merges
+// inherited window/tab metadata down onto the pane). Tolerant: a surface with
+// no metadata, or non-JSON output, yields {}.
+function metadataForSurface(id: string): Record<string, unknown> {
+  const raw = tryRun(['ghostmux', 'metadata', 'get', '-t', id, '--resolved', '--json'])
+  if (!raw.trim()) return {}
+  try {
+    const parsed = JSON.parse(raw) as { data?: Record<string, unknown> } | Record<string, unknown>
+    return 'data' in parsed && isRecord(parsed.data)
+      ? parsed.data
+      : (parsed as Record<string, unknown>)
+  } catch {
+    return {}
+  }
+}
+
+// Pure discovery core (unit-testable without ghostmux): keep surfaces whose
+// resolved metadata role equals paneRole, optionally further filtered by a title
+// regex. The metadata resolver is injected so tests can supply a fake.
+function selectHeadlessPanes(
+  terminals: Array<{ short_id?: string; id?: string; title?: string }>,
+  resolveMetadata: (id: string) => Record<string, unknown>,
+  paneRole: string,
+  titleRegex?: string
+): DiscoveredPane[] {
+  const titleFilter = titleRegex ? new RegExp(titleRegex) : null
+  const discovered: DiscoveredPane[] = []
+  for (const terminal of terminals) {
+    const id = terminal.short_id ?? terminal.id ?? ''
+    if (!id) continue
+    const title = terminal.title ?? ''
+    if (titleFilter && !titleFilter.test(title)) continue
+    const metadata = resolveMetadata(id)
+    const role = typeof metadata.hrc_role === 'string' ? metadata.hrc_role : ''
+    if (role !== paneRole) continue
+    discovered.push({ id, title, metadata })
+  }
+  return discovered
+}
+
+function listPanes(options: Options): DiscoveredPane[] {
   if (options.simulate) return simPanes()
   const parsed = JSON.parse(run(['ghostmux', 'list-surfaces', '--json'])) as {
     terminals?: Array<{ short_id?: string; id?: string; title?: string }>
   }
-  const re = new RegExp(options.titleRegex)
-  return (parsed.terminals ?? [])
-    .filter((terminal) => re.test(terminal.title ?? ''))
-    .map((terminal) => ({
-      id: terminal.short_id ?? terminal.id ?? '',
-      title: terminal.title ?? '',
-    }))
-    .filter((pane) => pane.id.length > 0)
+  return selectHeadlessPanes(
+    parsed.terminals ?? [],
+    metadataForSurface,
+    options.paneRole,
+    options.titleRegex
+  )
 }
 
-function metadataForPane(pane: Pane, options: Options): Record<string, unknown> {
-  if (options.simulate) {
-    const simRuntimeIds: Record<string, string> = {
-      '7BF21FAF': 'rt-smokey-sim',
-      EB834507: 'rt-curly-sim',
-      C10D0144: 'rt-clod-leftover-sim',
-    }
-    return {
-      hrc_role: 'hrc-headless-viewer',
-      hrc_runtime_id: simRuntimeIds[pane.id] ?? 'rt-unknown-sim',
-      hrc_scope_ref: scopeFromTitle(pane.title),
-    }
-  }
-
-  const raw = tryRun(['ghostmux', 'metadata', 'get', '-t', pane.id, '--resolved', '--json'])
-  if (!raw.trim()) return {}
-  const parsed = JSON.parse(raw) as { data?: Record<string, unknown> } | Record<string, unknown>
-  return 'data' in parsed && isRecord(parsed.data)
-    ? parsed.data
-    : (parsed as Record<string, unknown>)
-}
-
-function queryStatus(pane: Pane, options: Options): PaneStatus {
-  const metadata = metadataForPane(pane, options)
+function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus {
+  const metadata = pane.metadata
   const scopeRef =
-    typeof metadata.hrc_scope_ref === 'string' ? metadata.hrc_scope_ref : scopeFromTitle(pane.title)
+    typeof metadata.hrc_scope_ref === 'string' && metadata.hrc_scope_ref
+      ? metadata.hrc_scope_ref
+      : scopeFromTitle(pane.title)
   const runtimeId = typeof metadata.hrc_runtime_id === 'string' ? metadata.hrc_runtime_id : ''
   const agent = agentFromScope(scopeRef)
 
@@ -600,6 +664,7 @@ type ReapResult =
   | { kind: 'sent' }
   | { kind: 'dry-run' }
   | { kind: 'already-terminated'; message: string }
+  | { kind: 'timed-out'; seconds: number }
   | { kind: 'error'; message: string }
 
 // A reap whose target runtime is already gone (terminated/pruned between the
@@ -635,15 +700,50 @@ function sendReap(status: PaneStatus, options: Options): ReapResult {
     console.log(color.dim(`  dry-run: ${argv.join(' ')}`))
     return { kind: 'dry-run' }
   }
-  try {
-    run(argv)
-    return { kind: 'sent' }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return isAlreadyTerminatedError(message)
-      ? { kind: 'already-terminated', message }
-      : { kind: 'error', message }
+  // Bounded exec (NOT the shared `run()` helper, which is unbounded): a wedged
+  // broker never acks the dispose RPC, and neither `hrc` nor its SDK fetch has a
+  // timeout, so an unbounded spawnSync here freezes the entire sequential sweep.
+  // On timeout, SIGTERM the hung `hrc` child and treat it as a benign warn — the
+  // runtime stays `ready` with continuation intact, and the sweep moves on.
+  const proc = Bun.spawnSync(argv, {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    ...(options.reapTimeoutMs > 0 ? { timeout: options.reapTimeoutMs, killSignal: 'SIGTERM' } : {}),
+  })
+  return classifyReapExec(
+    {
+      exitedDueToTimeout: proc.exitedDueToTimeout,
+      exitCode: proc.exitCode,
+      stdout: new TextDecoder().decode(proc.stdout),
+      stderr: new TextDecoder().decode(proc.stderr),
+    },
+    argv,
+    options.reapTimeoutMs
+  )
+}
+
+type ReapExecOutcome = {
+  exitedDueToTimeout?: boolean
+  exitCode: number | null
+  stdout: string
+  stderr: string
+}
+
+// Pure classifier for a terminate exec result (unit-testable without spawning):
+// a timeout (wedged broker, SIGTERM'd at the ceiling) is a benign warn so the
+// sweep continues; exit 0 is success; a non-zero exit is already-terminated
+// (benign) or a genuine error.
+function classifyReapExec(outcome: ReapExecOutcome, argv: string[], timeoutMs: number): ReapResult {
+  if (outcome.exitedDueToTimeout) {
+    return { kind: 'timed-out', seconds: Math.round(timeoutMs / 1000) }
   }
+  if (outcome.exitCode === 0) return { kind: 'sent' }
+  const message = `${argv.join(' ')} failed (${outcome.exitCode}): ${
+    outcome.stderr || outcome.stdout
+  }`
+  return isAlreadyTerminatedError(message)
+    ? { kind: 'already-terminated', message }
+    : { kind: 'error', message }
 }
 
 function sendEnter(pane: Pane, options: Options): void {
@@ -656,8 +756,13 @@ function sendEnter(pane: Pane, options: Options): void {
 
 function printStatus(statuses: PaneStatus[], options: Options): void {
   console.log(color.bold('HRC Headless Ghostty Cleanup'))
+  const titleNote = options.titleRegex ? `  title=${options.titleRegex}` : ''
+  const reapTimeoutNote =
+    options.reapTimeoutMs > 0 ? `${Math.round(options.reapTimeoutMs / 1000)}s` : 'off'
   console.log(
-    color.dim(`title=${options.titleRegex}  wait=${options.waitSeconds}s  db=${options.hrcDbPath}`)
+    color.dim(
+      `role=${options.paneRole}${titleNote}  wait=${options.waitSeconds}s  reap-timeout=${reapTimeoutNote}  db=${options.hrcDbPath}`
+    )
   )
   if (options.dryRun) console.log(color.yellow('Mode: dry run, no keys will be sent'))
   console.log()
@@ -829,6 +934,18 @@ async function main(): Promise<void> {
       if (result.kind === 'already-terminated') {
         reapWarned += 1
         console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)
+      } else if (result.kind === 'timed-out') {
+        reapWarned += 1
+        console.log(
+          `  ${color.cyan(status.id)} ${color.yellow(
+            `reap timed out after ${result.seconds}s`
+          )} ${suffix}`
+        )
+        console.log(
+          `    ${color.dim(
+            'broker likely wedged — left ready, continuation intact; investigate or retry'
+          )}`
+        )
       } else if (result.kind === 'error') {
         reapWarned += 1
         console.log(`  ${color.cyan(status.id)} ${color.red('reap failed')} ${suffix}`)
@@ -884,5 +1001,13 @@ if (import.meta.main) {
   })
 }
 
-export { isAlreadyTerminatedError, isLeftoverViewer, isQuitEligible, skipReasons }
-export type { PaneStatus }
+export {
+  HEADLESS_PANE_ROLE,
+  classifyReapExec,
+  isAlreadyTerminatedError,
+  isLeftoverViewer,
+  isQuitEligible,
+  selectHeadlessPanes,
+  skipReasons,
+}
+export type { DiscoveredPane, PaneStatus }
