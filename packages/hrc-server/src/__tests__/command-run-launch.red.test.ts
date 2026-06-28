@@ -170,9 +170,12 @@ describe('POST /v1/command-runs/launch (T-05274 red)', () => {
     const client = new HrcClient(fixture.socketPath)
     const releasePath = join(fixture.tmpDir, 'release-command-run')
 
-    const launched = await client.launchCommandScopedRun(
-      requestFor('wait', 'idem-wait-1', { releasePath })
-    )
+    const launched = await Promise.race([
+      client.launchCommandScopedRun(requestFor('wait', 'idem-wait-1', { releasePath })),
+      Bun.sleep(250).then(() => {
+        throw new Error('command-run launch did not return before child process exit')
+      }),
+    ])
 
     expect(launched.runId).toMatch(/^run-/)
     expect(launched.hostSessionId).toMatch(/^hsid-/)
