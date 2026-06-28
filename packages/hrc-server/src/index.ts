@@ -1,4 +1,4 @@
-import { HRC_API_VERSION, HrcErrorCode, HrcNotFoundError } from 'hrc-core'
+import { HRC_API_VERSION, HrcErrorCode, HrcInternalError, HrcNotFoundError } from 'hrc-core'
 import type {
   DropContinuationResponse,
   HrcRuntimeSnapshot,
@@ -269,6 +269,8 @@ class HrcServerInstance implements HrcServer {
       this.handleEventsLatestBySession(url),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
+    [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>
+      this.handleLaunchCommandScopedRun(request),
     [exactRouteKey('POST', '/v1/broker-sessions/open')]: (request) =>
       this.handleOpenBrokerSession(request),
     [exactRouteKey('POST', '/v1/runtimes/attach')]: (request) => this.handleAttachRuntime(request),
@@ -664,6 +666,13 @@ class HrcServerInstance implements HrcServer {
       created: true,
       session: createdSession,
     } satisfies ResolveSessionResponse)
+  }
+
+  async handleLaunchCommandScopedRun(request: Request): Promise<Response> {
+    await parseJsonBody(request)
+    throw new HrcInternalError('command-run launch not implemented', {
+      endpoint: '/v1/command-runs/launch',
+    })
   }
 
   handleListSessions(url: URL): Response {

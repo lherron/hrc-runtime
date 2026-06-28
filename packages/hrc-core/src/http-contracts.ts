@@ -125,6 +125,40 @@ export type StartRuntimeResponse =
       supportsInFlightInput: boolean
     }
 
+export type LaunchCommandScopedRunBinding = {
+  WRKF_TASK_ID: string
+  WRKF_ACTION_RUN_ID: string
+  WRKF_RUN_ID: string
+  WRKF_ACTION: string
+  WRKF_ROLE: string
+  ASP_PROJECT: string
+  HRC_SESSION_REF: string
+  HRC_LANE: string
+}
+
+export type LaunchCommandScopedRunRequest = {
+  /**
+   * Server-side configured command target. Callers must not supply command
+   * material such as argv/cwd/env; the server resolves those from trusted config
+   * and only interpolates the structured binding below.
+   */
+  configuredTargetId: string
+  sessionRef: HrcSessionRef
+  idempotencyKey: string
+  binding: LaunchCommandScopedRunBinding
+  stdinJson?: unknown
+}
+
+export type LaunchCommandScopedRunResponse = {
+  runId: string
+  hostSessionId: string
+  runtimeId: string
+  generation: number
+  transport: 'tmux' | 'headless' | 'sdk'
+  launchId?: string | undefined
+  replayed: boolean
+}
+
 export type OpenBrokerSessionRequest = {
   hostSessionId: string
   runtimeIntent?: HrcRuntimeIntent | undefined

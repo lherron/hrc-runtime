@@ -53,6 +53,8 @@ import type {
   InvocationEventEnvelope,
   KillBrokerTmuxLeasesResponse,
   LatestEventBySessionFilter,
+  LaunchCommandScopedRunRequest,
+  LaunchCommandScopedRunResponse,
   LaunchListFilter,
   ListMessagesResponse,
   OpenBrokerSessionRequest,
@@ -278,6 +280,12 @@ export class HrcClient {
 
   async startRuntime(request: StartRuntimeRequest): Promise<StartRuntimeResponse> {
     return this.postJson<StartRuntimeResponse>('/v1/runtimes/start', request)
+  }
+
+  async launchCommandScopedRun(
+    request: LaunchCommandScopedRunRequest
+  ): Promise<LaunchCommandScopedRunResponse> {
+    return this.postJson<LaunchCommandScopedRunResponse>('/v1/command-runs/launch', request)
   }
 
   async openBrokerSession(request: OpenBrokerSessionRequest): Promise<OpenBrokerSessionResponse> {
