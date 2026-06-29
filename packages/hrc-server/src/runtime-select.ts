@@ -3,7 +3,11 @@ import type { HrcHarness, HrcProvider, HrcRunRecord, HrcRuntimeSnapshot } from '
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { hasDurableBrokerEndpoint, hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
-import { isRunActive, isTerminalBrokerInvocationState } from './require-helpers.js'
+import {
+  isRunActive,
+  isTerminalBrokerInvocationState,
+  isTransitionalBrokerInvocationState,
+} from './require-helpers.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 
 export type InteractiveRuntimeSelectionView = {
@@ -68,7 +72,16 @@ export function getReusableHeadlessRuntimeForSession(
           return false
         }
         const invocation = db.brokerInvocations.getByInvocationId(candidate.activeInvocationId)
-        if (!invocation || isTerminalBrokerInvocationState(invocation.invocationState)) {
+        // T-05358: exclude terminal (gone) AND control-transition (starting/
+        // stopping) invocations. A transitioning broker cannot accept a dispatch,
+        // and the row status can still read `ready` mid-race, so invocation-state
+        // filtering (not status alone) is required. `turn_active` is intentionally
+        // kept admissible here — busy detection runs downstream.
+        if (
+          !invocation ||
+          isTerminalBrokerInvocationState(invocation.invocationState) ||
+          isTransitionalBrokerInvocationState(invocation.invocationState)
+        ) {
           return false
         }
       }
@@ -119,6 +132,20 @@ export function getDurableHeadlessRuntimeForReattach(
         // rows (stale / broker-ipc-unavailable included on purpose).
         if (candidate.status === 'terminated' || candidate.status === 'dead') {
           return false
+        }
+        // T-05358: never reattach onto a control-transition runtime. The broker
+        // is spinning up or tearing down and cannot accept dispatch, so excluding
+        // it forces a fresh provision rather than a doomed reattach. Both the row
+        // status and the active invocation state must be checked — a `ready` row
+        // can still carry a `starting`/`stopping` active invocation.
+        if (candidate.status === 'starting' || candidate.status === 'stopping') {
+          return false
+        }
+        if (candidate.activeInvocationId !== undefined) {
+          const invocation = db.brokerInvocations.getByInvocationId(candidate.activeInvocationId)
+          if (invocation && isTransitionalBrokerInvocationState(invocation.invocationState)) {
+            return false
+          }
         }
         return hasDurableBrokerEndpoint(candidate) && hasLeasedBrokerSubstrate(candidate)
       })

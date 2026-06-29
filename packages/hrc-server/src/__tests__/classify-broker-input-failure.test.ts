@@ -8,7 +8,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'headless',
       errorMessage: 'no active broker client for runtime rt-abc',
       brokerBindingMissing: true,
-      terminalInputFailure: false,
+      reprovisionRequired: false,
     })
     // The raw "no active broker client" jargon is dropped from the headline (it
     // is still preserved on the error `cause`/`error` detail at the throw site).
@@ -22,7 +22,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'interactive',
       errorMessage: 'no active broker client for runtime rt-abc',
       brokerBindingMissing: true,
-      terminalInputFailure: false,
+      reprovisionRequired: false,
     })
     expect(headline).toBe('interactive broker connection was not live')
   })
@@ -32,7 +32,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'headless',
       errorMessage: 'Cannot accept input in state: exited',
       brokerBindingMissing: false,
-      terminalInputFailure: true,
+      reprovisionRequired: true,
     })
     expect(headline).toContain('headless broker input failed')
     expect(recommendation).toContain('marked the stale broker runtime unavailable')
@@ -43,7 +43,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'headless',
       errorMessage: 'Cannot accept input in state: disposed',
       brokerBindingMissing: true,
-      terminalInputFailure: true,
+      reprovisionRequired: true,
     })
     expect(recommendation).toContain('marked the stale broker runtime unavailable')
   })
@@ -53,7 +53,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'headless',
       errorMessage: 'no active broker client for runtime rt-abc',
       brokerBindingMissing: true,
-      terminalInputFailure: true,
+      reprovisionRequired: true,
     })
     expect(headline).toBe('headless broker process is gone (likely host reboot or broker crash)')
     expect(recommendation).toContain('provisions a fresh broker on the same session')
@@ -65,7 +65,7 @@ describe('classifyBrokerInputFailure', () => {
       label: 'headless',
       errorMessage: 'broker rejected invocation input',
       brokerBindingMissing: false,
-      terminalInputFailure: false,
+      reprovisionRequired: false,
     })
     expect(headline).toBe('headless broker input failed: broker rejected invocation input')
     expect(recommendation).toContain('inspect hrc server logs')

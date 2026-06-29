@@ -320,12 +320,39 @@ export function isTerminalBrokerInputFailure(message: string): boolean {
 }
 
 /**
+ * T-05358: `starting` and `stopping` are CONTROL-TRANSITION invocation states —
+ * the broker is spinning up or tearing down and cannot accept a dispatch. They
+ * are NOT terminal (the runtime may still settle to `ready` or reach a terminal
+ * state), so they are deliberately kept OUT of
+ * {@link isTerminalBrokerInvocationState}. But a dispatch/reuse/reattach path
+ * that will issue broker input must treat them as non-dispatchable: exclude them
+ * from selection, and reprovision on an actual rejection.
+ */
+export function isTransitionalBrokerInvocationState(state: string | undefined): boolean {
+  return state === 'starting' || state === 'stopping'
+}
+
+/**
+ * T-05358: a broker input rejection BECAUSE the invocation is in a transient
+ * non-dispatchable state (`starting`/`stopping`). Distinct from
+ * {@link isTerminalBrokerInputFailure} (truly terminal: exited/failed/disposed)
+ * — but equally reprovision-worthy: the runtime cannot serve the dispatch, so it
+ * must be marked stale and the next turn provisions/recovers a fresh runtime
+ * instead of re-selecting the same wedged one (which would loop the failure).
+ */
+export function isTransientBrokerInputStateFailure(message: string): boolean {
+  return /Cannot accept input in state: (starting|stopping)/.test(message)
+}
+
+/**
  * Build the user-facing headline + `next:` recommendation for a broker input
  * dispatch failure. Three cases, in priority order:
  *
- *  - terminalInputFailure: the broker invocation is in a terminal state
- *    (exited/failed/disposed). The runtime was marked stale; a retry provisions
- *    a fresh runtime.
+ *  - reprovisionRequired: the runtime cannot serve the dispatch and was marked
+ *    stale — either the broker invocation is in a terminal state
+ *    (exited/failed/disposed) OR it was rejected in a transient non-dispatchable
+ *    state (starting/stopping, T-05358). Either way a retry provisions/recovers
+ *    a fresh runtime rather than re-selecting the same wedged one.
  *  - brokerBindingMissing: the dispatch returned `broker_runtime_not_active`
  *    ("no active broker client …") AND the lazy durable reattach could not
  *    restore the binding within this call. This is almost always transient —
@@ -340,11 +367,11 @@ export function classifyBrokerInputFailure(opts: {
   label: 'headless' | 'interactive'
   errorMessage: string
   brokerBindingMissing: boolean
-  terminalInputFailure: boolean
+  reprovisionRequired: boolean
 }): { headline: string; recommendation: string } {
-  const { label, errorMessage, brokerBindingMissing, terminalInputFailure } = opts
-  if (terminalInputFailure) {
-    // T-04297: terminal + binding-missing means the broker process is provably
+  const { label, errorMessage, brokerBindingMissing, reprovisionRequired } = opts
+  if (reprovisionRequired) {
+    // T-04297: reprovision + binding-missing means the broker process is provably
     // gone (e.g. a host reboot killed it) and the reattach reaped the runtime —
     // say that instead of leaking the "no active broker client" jargon.
     if (brokerBindingMissing) {

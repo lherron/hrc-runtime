@@ -33,6 +33,8 @@ import {
   isRunActive,
   isTerminalBrokerInputFailure,
   isTerminalBrokerInvocationState,
+  isTransientBrokerInputStateFailure,
+  isTransitionalBrokerInvocationState,
 } from './require-helpers.js'
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
@@ -432,10 +434,15 @@ export async function executeHeadlessBrokerInputTurn(
     const currentRuntime = this.db.runtimes.getByRuntimeId(runtime.runtimeId)
     const runtimeReapedByReattach =
       currentRuntime != null && isRuntimeUnavailableStatus(currentRuntime.status)
-    const terminalInputFailure =
+    // T-05358: a rejection in a transient non-dispatchable state (starting/
+    // stopping) is reprovision-worthy too — keeping the runtime `ready` here
+    // re-arms it for the next reuse and loops the identical failure.
+    const reprovisionRequired =
       runtimeReapedByReattach ||
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
-      isTerminalBrokerInputFailure(errorMessage)
+      isTransitionalBrokerInvocationState(invocation?.invocationState) ||
+      isTerminalBrokerInputFailure(errorMessage) ||
+      isTransientBrokerInputStateFailure(errorMessage)
     this.db.runs.markCompleted(runId, {
       status: 'failed',
       completedAt,
@@ -445,10 +452,10 @@ export async function executeHeadlessBrokerInputTurn(
     })
     this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
     this.db.runtimes.update(runtime.runtimeId, {
-      status: terminalInputFailure ? 'stale' : 'ready',
+      status: reprovisionRequired ? 'stale' : 'ready',
       lastActivityAt: completedAt,
       updatedAt: completedAt,
-      ...(terminalInputFailure
+      ...(reprovisionRequired
         ? {
             runtimeStateJson: {
               // Spread the FRESH row state — the reattach may have just written
@@ -469,7 +476,7 @@ export async function executeHeadlessBrokerInputTurn(
       label: 'headless',
       errorMessage,
       brokerBindingMissing,
-      terminalInputFailure,
+      reprovisionRequired,
     })
     throw new HrcRuntimeUnavailableError(headline, {
       runtimeId: runtime.runtimeId,

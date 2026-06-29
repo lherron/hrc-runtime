@@ -100,6 +100,25 @@ const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 // after an hrc-server restart that no longer answers control RPCs).
 const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
 
+// T-05358: the broker socket can close mid-dispose. The durable unix/stdio
+// transport rejects the in-flight RPC with `Broker transport closed`, while a
+// call issued on an already-closed json-rpc channel rejects with `Broker
+// transport is closed`. Both mean the broker is already gone, so disposal is a
+// no-op — swallowing them lets dispose complete cleanly (and narrows the
+// `stopping` window) instead of surfacing a spurious `broker_dispose_failed`.
+// Guarded narrowly: ONLY a `BrokerTransportError` whose message is exactly one
+// of the two closed strings — any other transport error (timeout, protocol,
+// non-closed) still surfaces.
+const BENIGN_BROKER_TRANSPORT_CLOSED = /^Broker transport (is )?closed$/
+
+export function isBenignBrokerTransportClosed(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === 'BrokerTransportError' &&
+    BENIGN_BROKER_TRANSPORT_CLOSED.test(error.message)
+  )
+}
+
 /**
  * Race a broker RPC against a timeout. If `ms <= 0`, the operation is awaited
  * unbounded (legacy behavior). On timeout, `onTimeout()` is thrown; the abandoned
@@ -787,7 +806,7 @@ export class HarnessBrokerController {
           await active.client
             .dispose({ invocationId: active.invocationId as InvocationId })
             .catch((error: unknown) => {
-              if (error instanceof Error && error.message === 'Broker transport is closed') {
+              if (isBenignBrokerTransportClosed(error)) {
                 return
               }
               throw error
