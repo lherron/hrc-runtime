@@ -315,6 +315,32 @@ export function isTerminalBrokerInvocationState(state: string | undefined): bool
   return state === 'exited' || state === 'failed' || state === 'disposed'
 }
 
+/**
+ * T-05358: true iff a harness-broker runtime can currently ACCEPT broker input.
+ * A runtime whose active invocation is terminal (gone) or in a control-transition
+ * state (`starting`/`stopping`) cannot — selecting it for a turn would dispatch
+ * input the broker rejects (`Cannot accept input in state: …`), which is exactly
+ * the turn-boundary race this task fixes. The interactive (tmux/ghostty) dispatch
+ * gates select by runtime-row status (`isRuntimeUnavailableStatus`), which does
+ * NOT cover the transient invocation states, so they must layer this check on top
+ * — mirroring the headless reuse selector. Non-broker runtimes and broker runtimes
+ * with no/unknown active invocation are treated as dispatchable here; the caller's
+ * own status/transport/controllerKind gates handle those.
+ */
+export function isBrokerRuntimeInputDispatchable(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot
+): boolean {
+  if (runtime.controllerKind !== 'harness-broker') return true
+  if (runtime.activeInvocationId === undefined) return true
+  const inv = db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+  if (!inv) return true
+  return (
+    !isTerminalBrokerInvocationState(inv.invocationState) &&
+    !isTransitionalBrokerInvocationState(inv.invocationState)
+  )
+}
+
 export function isTerminalBrokerInputFailure(message: string): boolean {
   return /Cannot accept input in state: (exited|failed|disposed)/.test(message)
 }

@@ -27,6 +27,7 @@ import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from '../runtime-select'
+import { isBrokerRuntimeInputDispatchable } from '../require-helpers.js'
 
 const HOST_SESSION_ID = 'hsid_t05358'
 const SCOPE_REF = 'agent:curly:project:taskboard:task:T-05358'
@@ -220,5 +221,38 @@ describe('T-05358 stopping-state runtime reuse wedge', () => {
       getDurableHeadlessRuntimeForReattach(db, HOST_SESSION_ID, 'openai', 'codex-app-server')
         ?.runtimeId
     ).toBe('rt-durable-stale')
+  })
+})
+
+describe('T-05358 isBrokerRuntimeInputDispatchable (interactive-gate predicate)', () => {
+  const runtimeOf = (id: string) => {
+    const r = db.runtimes.getByRuntimeId(id)
+    if (!r) throw new Error(`missing ${id}`)
+    return r
+  }
+
+  it('is FALSE for an active invocation in `stopping`', () => {
+    seedRuntime({ runtimeId: 'rt-i-stopping', status: 'ready', invocationState: 'stopping' })
+    expect(isBrokerRuntimeInputDispatchable(db, runtimeOf('rt-i-stopping'))).toBe(false)
+  })
+
+  it('is FALSE for an active invocation in `starting`', () => {
+    seedRuntime({ runtimeId: 'rt-i-starting', status: 'ready', invocationState: 'starting' })
+    expect(isBrokerRuntimeInputDispatchable(db, runtimeOf('rt-i-starting'))).toBe(false)
+  })
+
+  it('is FALSE for a terminal active invocation', () => {
+    seedRuntime({ runtimeId: 'rt-i-exited', status: 'ready', invocationState: 'exited' })
+    expect(isBrokerRuntimeInputDispatchable(db, runtimeOf('rt-i-exited'))).toBe(false)
+  })
+
+  it('is TRUE for a `ready` active invocation', () => {
+    seedRuntime({ runtimeId: 'rt-i-ready', status: 'ready', invocationState: 'ready' })
+    expect(isBrokerRuntimeInputDispatchable(db, runtimeOf('rt-i-ready'))).toBe(true)
+  })
+
+  it('is TRUE for a `turn_active` active invocation (busy handled downstream)', () => {
+    seedRuntime({ runtimeId: 'rt-i-busy', status: 'busy', invocationState: 'turn_active' })
+    expect(isBrokerRuntimeInputDispatchable(db, runtimeOf('rt-i-busy'))).toBe(true)
   })
 })

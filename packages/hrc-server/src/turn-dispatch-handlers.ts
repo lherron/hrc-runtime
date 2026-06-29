@@ -39,6 +39,7 @@ import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   assertRuntimeNotBusy,
+  isBrokerRuntimeInputDispatchable,
   isBrokerRuntimeQueueCapable,
   isTerminalBrokerInvocationState,
   requireContinuity,
@@ -745,6 +746,9 @@ export async function dispatchTurnForSession(
       (liveInteractiveRuntime.tmuxJson !== undefined ||
         liveInteractiveRuntime.surfaceJson !== undefined) &&
       !isRuntimeUnavailableStatus(liveInteractiveRuntime.status) &&
+      // T-05358: never reuse an interactive runtime whose broker invocation is
+      // transitioning (starting/stopping) — row status alone admits `stopping`.
+      isBrokerRuntimeInputDispatchable(this.db, liveInteractiveRuntime) &&
       liveInteractiveRuntime.activeRunId === undefined
     if (!interactiveAvailableAndIdle) {
       assertJsonSchemaResponseFormatSupported(options.responseFormat, {

@@ -37,6 +37,7 @@ import {
 } from './messages.js'
 import {
   assertRuntimeNotBusy,
+  isBrokerRuntimeInputDispatchable,
   isBrokerRuntimeQueueCapable,
   requireSession,
 } from './require-helpers.js'
@@ -444,7 +445,11 @@ export async function handleSemanticTurnHandoff(
     if (
       liveTmuxRuntime &&
       (liveTmuxRuntime.transport === 'tmux' || liveTmuxRuntime.transport === 'ghostty') &&
-      !isRuntimeUnavailableStatus(liveTmuxRuntime.status)
+      !isRuntimeUnavailableStatus(liveTmuxRuntime.status) &&
+      // T-05358: row status `ready/stopping` are both non-unavailable, so add the
+      // invocation-state gate — never deliver input to a runtime whose broker
+      // invocation is transitioning (starting/stopping); fall through to reprovision.
+      isBrokerRuntimeInputDispatchable(this.db, liveTmuxRuntime)
     ) {
       const liveBrokerRuntime =
         liveTmuxRuntime.controllerKind === 'harness-broker' &&
