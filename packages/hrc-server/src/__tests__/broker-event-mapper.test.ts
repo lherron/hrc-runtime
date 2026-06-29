@@ -865,6 +865,38 @@ describe('replay (end-to-end idempotency)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// T-04836 — continuation kind must survive broker projection
+// ---------------------------------------------------------------------------
+describe('T-04836 continuation kind persistence', () => {
+  it('persists continuation.updated kind on both runtime and session continuation refs', () => {
+    const mapper = makeMapper()
+    const codexSessionUuid = '018fe9d5-992c-7cc8-a4bc-9c0c04c4f919'
+
+    mapper.apply(
+      envelope('continuation.updated', 8, {
+        provider: 'openai',
+        kind: 'session',
+        key: codexSessionUuid,
+      })
+    )
+
+    // T-04836: Codex tmux resume is safe only for explicit session UUID resume.
+    // Dropping `kind` makes HRC unable to distinguish session ids from other
+    // continuation keys, so both persisted refs must retain it.
+    expect(fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)!.continuation).toEqual({
+      provider: 'openai',
+      kind: 'session',
+      key: codexSessionUuid,
+    })
+    expect(fixture.db.sessions.getByHostSessionId(HOST_SESSION_ID)!.continuation).toEqual({
+      provider: 'openai',
+      kind: 'session',
+      key: codexSessionUuid,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 8. T-04215 — broker user.message echo dedup
 //
 //    A broker `user.message` that is merely the TUI echo of an HRC-authored

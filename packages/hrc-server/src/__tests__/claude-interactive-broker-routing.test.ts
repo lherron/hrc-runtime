@@ -20,9 +20,9 @@
  *     terminal state and surfaces failures.
  *
  *   D (resume): decideInteractiveTmuxBrokerContinuation returns the captured
- *     session continuation (=> adapter emits `--resume <uuid>`) only for the
- *     claude-code-tmux driver AND only when a captured session id exists;
- *     otherwise undefined (=> fresh `--session-id` launch).
+ *     session continuation for safe explicit-id TUI resume. Claude accepts an
+ *     Anthropic key; Codex accepts only openai + kind:session + UUID, so the
+ *     adapter can emit `codex resume <uuid>` and never no-arg picker resume.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -52,7 +52,7 @@ const api = hrc as unknown as {
   normalizeClaudeInteractiveBrokerIntent?: (intent: HrcRuntimeIntent) => HrcRuntimeIntent
   shouldBlockForBrokerTurnCompletion?: (waitForCompletion: boolean | undefined) => boolean
   decideInteractiveTmuxBrokerContinuation?: (options: {
-    allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux'
+    allowedBrokerDriver: 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'
     sessionContinuation: HrcContinuationRef | undefined
   }) => HrcContinuationRef | undefined
   // Reused existing predicates (now exported) to prove post-normalization routing.
@@ -197,6 +197,12 @@ describe('Phase C — shouldBlockForBrokerTurnCompletion convention (headless pa
 
 describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
   const captured: HrcContinuationRef = { provider: 'anthropic', key: 'session-uuid-1234' }
+  const codexSessionUuid = '018fe9d5-992c-7cc8-a4bc-9c0c04c4f919'
+  const codexCaptured = {
+    provider: 'openai',
+    kind: 'session',
+    key: codexSessionUuid,
+  } as HrcContinuationRef & { kind: 'session' }
 
   it('claude-code-tmux + captured session id => resume with the captured continuation', () => {
     expect(
@@ -225,11 +231,38 @@ describe('Phase D — decideInteractiveTmuxBrokerContinuation gating', () => {
     ).toBeUndefined()
   })
 
-  it('codex-cli-tmux is NOT reversed even with a captured id (claude --resume only)', () => {
+  it('codex-cli-tmux + openai session UUID => resume with explicit session id', () => {
     expect(
       api.decideInteractiveTmuxBrokerContinuation!({
         allowedBrokerDriver: 'codex-cli-tmux',
-        sessionContinuation: captured,
+        sessionContinuation: codexCaptured,
+      })
+    ).toEqual(codexCaptured)
+  })
+
+  it('codex-cli-tmux rejects non-session or non-UUID continuations so no-arg picker resume is unreachable', () => {
+    const badContinuations = [
+      { provider: 'openai', key: codexSessionUuid },
+      { provider: 'openai', kind: 'thread', key: codexSessionUuid },
+      { provider: 'openai', kind: 'session', key: 'rollout-file-or-thread-key' },
+      { provider: 'anthropic', kind: 'session', key: codexSessionUuid },
+    ] as Array<HrcContinuationRef & { kind?: string }>
+
+    for (const sessionContinuation of badContinuations) {
+      expect(
+        api.decideInteractiveTmuxBrokerContinuation!({
+          allowedBrokerDriver: 'codex-cli-tmux',
+          sessionContinuation,
+        })
+      ).toBeUndefined()
+    }
+  })
+
+  it('pi-tui-tmux remains blocked even with an openai session UUID continuation', () => {
+    expect(
+      api.decideInteractiveTmuxBrokerContinuation!({
+        allowedBrokerDriver: 'pi-tui-tmux',
+        sessionContinuation: codexCaptured,
       })
     ).toBeUndefined()
   })
