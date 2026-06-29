@@ -1090,23 +1090,29 @@
                 <span class="owner-chip owner-asp">agent-spaces</span>
                 <span class="badge core">Core</span>
               </div>
-              <div class="owner-path">Defined in <code>packages/agent-scope/src/types.ts</code></div>
-              <h3><code>ScopeRef</code> / <code>SessionRef</code></h3>
+              <div class="owner-path">Owned by the <code>agent-scope</code> root API</div>
+              <h3>Canonical scope/session refs</h3>
               <p>
-                Shared identity syntax from <code>agent-scope</code>. HRC stores
+                Canonical identity parsing and formatting from <code>agent-scope</code>. HRC stores
                 <code>scopeRef</code>, <code>laneRef</code>, and <code>scopeRef/lane:&lt;id&gt;</code>
-                session refs across sessions, events, monitor filters, and hrcchat addresses.
+                session refs across sessions, events, monitor selectors, and hrcchat addresses, and
+                consumes the root package's parsers, formatters, and validators for all of them.
               </p>
-              <pre class="codebox">type ParsedScopeRef = {
-  kind: ScopeKind
-  agentId: string
-  projectId?: string
-  taskId?: string
-  roleName?: string
-  scopeRef: string
-}
-type LaneRef = 'main' | `lane:${string}`
-type SessionRef = { scopeRef: string; laneRef: LaneRef }</pre>
+              <pre class="codebox">import {
+  type LaneRef,
+  type SessionRef,
+  formatSessionHandle,
+  parseSessionRef,
+  validateScopeRef,
+} from 'agent-scope'
+
+const scopeRef = 'agent:cody:project:hrc-runtime:task:T-00990'
+const laneRef: LaneRef = 'main'
+const sessionRef = `${scopeRef}/lane:main`
+const session: SessionRef = parseSessionRef(sessionRef)
+
+validateScopeRef(scopeRef)
+formatSessionHandle({ scopeRef, laneRef })</pre>
             </article>
           </div>
         </section>
