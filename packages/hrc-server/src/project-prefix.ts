@@ -28,7 +28,7 @@ const PROJECT_PREFIXES: Readonly<Record<string, string>> = {
   rex: 'rex',
   safoundry: 'safoundry',
   'semantic-capabilities': 'scp',
-  taskboard: 'board',
+  taskboard: 'taskboard',
   wrkq: 'wrkq',
   'zed-rpc': 'zrp',
   zedctl: 'zed',

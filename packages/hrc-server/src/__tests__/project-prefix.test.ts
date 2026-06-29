@@ -12,7 +12,7 @@ describe('shortenProjectId', () => {
     expect(shortenProjectId('archagent')).toBe('arch')
     expect(shortenProjectId('media-ingest')).toBe('ingest')
     expect(shortenProjectId('safoundry')).toBe('safoundry')
-    expect(shortenProjectId('taskboard')).toBe('board')
+    expect(shortenProjectId('taskboard')).toBe('taskboard')
     expect(shortenProjectId('wrkq')).toBe('wrkq')
   })
 
