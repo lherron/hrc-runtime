@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -658,6 +659,147 @@ describe('sqlite adapter', () => {
     expect(report.ok).toBe(true)
     expect(report.rawMirror).toEqual({ checked: 1, matched: 1 })
   })
+
+  it('auto-resolves only the matching operation transcript artifact when no explicit JSONL is supplied', async () => {
+    const fixture = await makeFixture()
+    seedBrokerEvent(fixture, 1, 'assistant.message.completed', { content: 'artifact transcript' })
+    const matchingPath = await writeCodexTranscript(fixture.dir, 'matching.jsonl', [
+      'artifact transcript',
+    ])
+    const otherPath = await writeCodexTranscript(fixture.dir, 'other-operation.jsonl', [
+      'wrong operation transcript',
+    ])
+
+    fixture.db.runtimeArtifacts.insert({
+      artifactId: 'art-provider-transcript-matching',
+      operationId: OPERATION_ID,
+      artifactKind: 'provider-transcript-jsonl',
+      mediaType: 'application/x-ndjson',
+      storageKind: 'file-path',
+      contentHash: sha256FileBytes(
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'artifact transcript' }],
+          },
+        })
+      ),
+      artifactPath: matchingPath,
+      artifactJson: JSON.stringify({
+        schema: 'hrc.provider-transcript-artifact/v1',
+        invocationId: INVOCATION_ID,
+        runtimeId: RUNTIME_ID,
+        runId: RUN_ID,
+        provider: 'codex',
+        brokerDriver: 'codex-app-server',
+        harnessGeneration: 1,
+        brokerSeq: 1,
+        hashAlgorithm: 'sha256',
+      }),
+      createdAt: ts(30),
+    })
+    fixture.db.runtimeArtifacts.insert({
+      artifactId: 'art-provider-transcript-other-operation',
+      operationId: 'op_other_operation',
+      artifactKind: 'provider-transcript-jsonl',
+      mediaType: 'application/x-ndjson',
+      storageKind: 'file-path',
+      contentHash: sha256FileBytes(
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'wrong operation transcript' }],
+          },
+        })
+      ),
+      artifactPath: otherPath,
+      artifactJson: JSON.stringify({
+        schema: 'hrc.provider-transcript-artifact/v1',
+        invocationId: 'inv_other_operation',
+        runtimeId: RUNTIME_ID,
+        provider: 'codex',
+        brokerDriver: 'codex-app-server',
+        harnessGeneration: 1,
+        brokerSeq: 99,
+        hashAlgorithm: 'sha256',
+      }),
+      createdAt: ts(31),
+    })
+
+    // T-04863: omitted --jsonl must use the durable artifact linked by this
+    // invocation's operation_id, not a heuristic scan or another operation's row.
+    const report = await verifyInvocation({
+      store: createSqliteCaptureVerificationStore(fixture.db),
+      invocationId: INVOCATION_ID,
+    })
+
+    expect(report.transcriptPath).toBe(matchingPath)
+    expect(report.analytics.providerJsonl).toMatchObject({
+      path: matchingPath,
+      applicableObservations: 1,
+    })
+    expect(report.providerMatches[0]?.status).toBe('matched')
+    expect(report.analytics.brokerLedger.eventCount).toBe(1)
+    expect(report.lifecycle[0]?.status).toBe('missing')
+  })
+
+  it('keeps explicit JSONL precedence when a stored transcript artifact exists', async () => {
+    const fixture = await makeFixture()
+    seedBrokerEvent(fixture, 1, 'assistant.message.completed', { content: 'explicit transcript' })
+    const storedPath = await writeCodexTranscript(fixture.dir, 'stored.jsonl', [
+      'stored transcript',
+    ])
+    const explicitPath = await writeCodexTranscript(fixture.dir, 'explicit.jsonl', [
+      'explicit transcript',
+    ])
+
+    fixture.db.runtimeArtifacts.insert({
+      artifactId: 'art-provider-transcript-stored',
+      operationId: OPERATION_ID,
+      artifactKind: 'provider-transcript-jsonl',
+      mediaType: 'application/x-ndjson',
+      storageKind: 'file-path',
+      contentHash: sha256FileBytes(
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'stored transcript' }],
+          },
+        })
+      ),
+      artifactPath: storedPath,
+      artifactJson: JSON.stringify({
+        schema: 'hrc.provider-transcript-artifact/v1',
+        invocationId: INVOCATION_ID,
+        runtimeId: RUNTIME_ID,
+        provider: 'codex',
+        brokerDriver: 'codex-app-server',
+        harnessGeneration: 1,
+        brokerSeq: 1,
+        hashAlgorithm: 'sha256',
+      }),
+      createdAt: ts(30),
+    })
+
+    const report = await verifyInvocation({
+      store: createSqliteCaptureVerificationStore(fixture.db),
+      invocationId: INVOCATION_ID,
+      transcriptPath: explicitPath,
+    })
+
+    expect(report.transcriptPath).toBe(explicitPath)
+    expect(report.analytics.providerJsonl).toMatchObject({
+      path: explicitPath,
+      applicableObservations: 1,
+    })
+    expect(report.providerMatches[0]?.status).toBe('matched')
+  })
 })
 
 describe('package boundaries', () => {
@@ -977,6 +1119,30 @@ function observationCounts(
     counts[observation.type] += 1
   }
   return counts
+}
+
+async function writeCodexTranscript(
+  dir: string,
+  filename: string,
+  messages: string[]
+): Promise<string> {
+  const lines = messages.map((text) =>
+    JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text }],
+      },
+    })
+  )
+  const path = join(dir, filename)
+  await writeFile(path, lines.join('\n'))
+  return path
+}
+
+function sha256FileBytes(content: string): string {
+  return `sha256:${createHash('sha256').update(content).digest('hex')}`
 }
 
 function ts(offsetSeconds = 0): string {
