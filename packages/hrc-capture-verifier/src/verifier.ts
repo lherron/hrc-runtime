@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+
 import {
   BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
   BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
@@ -27,6 +30,8 @@ import {
   type LifecycleProjectionAnalytics,
   type ProviderJsonlAnalytics,
   type ProviderObservationMatch,
+  type ProviderTranscriptArtifact,
+  type ProviderTranscriptArtifactHashStatus,
   type RawEventsAnalytics,
   type RawMirrorEvent,
   type VerificationCandidate,
@@ -74,13 +79,17 @@ export async function verifyInvocation(
   if (snapshot === undefined) {
     return missingInvocationReport(input.invocationId)
   }
+  const findings: CaptureVerificationFinding[] = []
+  const autoResolvedArtifact =
+    input.transcript === undefined && input.transcriptPath === undefined
+      ? await resolveAutoTranscriptArtifact(snapshot.transcriptArtifact, findings)
+      : undefined
   const transcript =
     input.transcript ??
     (input.transcriptPath !== undefined
       ? await parseProviderTranscript({ path: input.transcriptPath })
-      : undefined)
+      : autoResolvedArtifact?.transcript)
 
-  const findings: CaptureVerificationFinding[] = []
   const ledgerCheck = checkLedger(snapshot.invocation, snapshot.brokerEvents, findings)
   const rawMirrorCheck = checkRawMirrors(snapshot, findings)
   const providerMatches =
@@ -125,12 +134,73 @@ export async function verifyInvocation(
     runtimeId: snapshot.invocation.runtimeId,
     ...(snapshot.invocation.runId !== undefined ? { runId: snapshot.invocation.runId } : {}),
     ...(transcript !== undefined ? { transcriptPath: transcript.path, transcript } : {}),
+    ...(autoResolvedArtifact?.artifact !== undefined
+      ? { transcriptArtifact: autoResolvedArtifact.artifact }
+      : {}),
     ledger: ledgerCheck.ledger,
     rawMirror: rawMirrorCheck.rawMirror,
     providerMatches,
     lifecycle,
     findings,
     analytics,
+  }
+}
+
+async function resolveAutoTranscriptArtifact(
+  artifact: ProviderTranscriptArtifact | undefined,
+  findings: CaptureVerificationFinding[]
+): Promise<
+  | {
+      artifact: ProviderTranscriptArtifact
+      transcript?: Awaited<ReturnType<typeof parseProviderTranscript>> | undefined
+    }
+  | undefined
+> {
+  if (artifact === undefined) return undefined
+
+  let bytes: Buffer
+  try {
+    bytes = await readFile(artifact.path)
+  } catch {
+    const next = { ...artifact, hashStatus: 'unreadable' as const }
+    findings.push({
+      schema: CAPTURE_VERIFIER_SCHEMA,
+      severity: 'warning',
+      layer: 'provider-provenance',
+      code: 'transcript_artifact_unreadable',
+      message: `stored provider transcript artifact is unreadable: ${artifact.path}`,
+      sourceRef: artifact.artifactId,
+    })
+    return { artifact: next }
+  }
+
+  const currentHash = `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+  const hashStatus: ProviderTranscriptArtifactHashStatus =
+    currentHash === artifact.storedHash ? 'matched' : 'mismatched'
+  const next = { ...artifact, currentHash, hashStatus }
+  if (hashStatus === 'mismatched') {
+    findings.push({
+      schema: CAPTURE_VERIFIER_SCHEMA,
+      severity: 'warning',
+      layer: 'provider-provenance',
+      code: 'transcript_artifact_hash_mismatch',
+      message: `stored provider transcript hash ${artifact.storedHash} differs from current ${currentHash}: ${artifact.path}`,
+      sourceRef: artifact.artifactId,
+    })
+  }
+
+  try {
+    return { artifact: next, transcript: await parseProviderTranscript({ path: artifact.path }) }
+  } catch (error) {
+    findings.push({
+      schema: CAPTURE_VERIFIER_SCHEMA,
+      severity: 'warning',
+      layer: 'provider-provenance',
+      code: 'transcript_artifact_parse_failed',
+      message: `stored provider transcript artifact could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
+      sourceRef: artifact.artifactId,
+    })
+    return { artifact: next }
   }
 }
 

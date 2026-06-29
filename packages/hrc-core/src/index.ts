@@ -124,6 +124,18 @@ export type {
   HrcStatusSessionView,
   HrcStatusTmuxView,
 } from './contracts.js'
+export {
+  HRC_ARTIFACT_REPORTED_EVENT,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND,
+  HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
+} from './contracts.js'
+export type {
+  HrcProviderTranscriptArtifactMetadata,
+  HrcProviderTranscriptReportedPayload,
+} from './contracts.js'
 
 export type {
   ApplyAppManagedSessionInput,

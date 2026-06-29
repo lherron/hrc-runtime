@@ -11,7 +11,12 @@ export type CaptureObservationType =
   | 'tool.call.failed'
 
 export type FindingSeverity = 'error' | 'warning' | 'info'
-export type FindingLayer = 'provider' | 'broker-ledger' | 'raw-mirror' | 'lifecycle'
+export type FindingLayer =
+  | 'provider'
+  | 'provider-provenance'
+  | 'broker-ledger'
+  | 'raw-mirror'
+  | 'lifecycle'
 
 export type ListVerificationCandidatesInput = {
   scopeRef: string
@@ -111,12 +116,30 @@ export type HrcLifecycleProjection = {
   payload: unknown
 }
 
+export type ProviderTranscriptArtifactHashStatus =
+  | 'matched'
+  | 'mismatched'
+  | 'unreadable'
+  | 'unchecked'
+
+export type ProviderTranscriptArtifact = {
+  artifactId: string
+  operationId: string
+  path: string
+  storedHash: string
+  currentHash?: string | undefined
+  hashStatus: ProviderTranscriptArtifactHashStatus
+  createdAt: string
+  artifactJson?: string | undefined
+}
+
 export type InvocationCaptureSnapshot = {
   schema: typeof CAPTURE_VERIFIER_SCHEMA
   invocation: BrokerInvocationCapture
   brokerEvents: BrokerCaptureEvent[]
   rawMirrors: Record<number, RawMirrorEvent | undefined>
   lifecycleProjections: Record<string, HrcLifecycleProjection[]>
+  transcriptArtifact?: ProviderTranscriptArtifact | undefined
 }
 
 export type CaptureObservation = {
@@ -323,6 +346,7 @@ export type CaptureVerificationReport = {
   runtimeId: string
   runId?: string | undefined
   transcriptPath?: string | undefined
+  transcriptArtifact?: ProviderTranscriptArtifact | undefined
   transcript?: ParsedProviderTranscript | undefined
   ledger: LedgerCheck
   rawMirror: RawMirrorCheck

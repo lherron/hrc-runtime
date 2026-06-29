@@ -34,6 +34,10 @@
  *   }
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 import type { TurnId } from 'spaces-harness-broker-protocol'
@@ -48,6 +52,7 @@ import {
   HOST_SESSION_ID,
   INVOCATION_ID,
   LANE_REF,
+  OPERATION_ID,
   RUNTIME_ID,
   RUN_ID,
   SCOPE_REF,
@@ -103,6 +108,92 @@ describe('emitted HRC events', () => {
     for (const event of persisted) {
       expect(event.source).toBe('broker')
     }
+  })
+
+  it('persists provider transcript artifacts from explicit broker notifications', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-provider-transcript-'))
+    try {
+      const transcriptPath = join(dir, 'transcript.jsonl')
+      const line = JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'artifact text' }],
+        },
+      })
+      await writeFile(transcriptPath, `${line}\n`, 'utf8')
+      const mapper = makeMapper()
+
+      mapper.apply(
+        envelope(
+          'provider.transcript.reported' as never,
+          8,
+          { artifactPath: transcriptPath, provider: 'codex', harnessGeneration: GENERATION },
+          { harnessGeneration: GENERATION }
+        )
+      )
+      mapper.apply(
+        envelope(
+          'provider.transcript.reported' as never,
+          8,
+          { artifactPath: transcriptPath, provider: 'codex', harnessGeneration: GENERATION },
+          { harnessGeneration: GENERATION }
+        )
+      )
+
+      const artifacts = fixture.db.runtimeArtifacts.listByOperationIdAndKind(
+        OPERATION_ID,
+        'provider-transcript-jsonl'
+      )
+      expect(artifacts).toHaveLength(1)
+      expect(artifacts[0]).toMatchObject({
+        artifactId: `provider-transcript:${INVOCATION_ID}:8`,
+        artifactKind: 'provider-transcript-jsonl',
+        storageKind: 'file-path',
+        mediaType: 'application/x-ndjson',
+        artifactPath: transcriptPath,
+        contentHash: `sha256:${createHash('sha256').update(`${line}\n`).digest('hex')}`,
+      })
+      expect(JSON.parse(artifacts[0]!.artifactJson ?? '{}')).toMatchObject({
+        schema: 'hrc.provider-transcript-artifact/v1',
+        invocationId: INVOCATION_ID,
+        runtimeId: RUNTIME_ID,
+        runId: RUN_ID,
+        brokerSeq: 8,
+        hashAlgorithm: 'sha256',
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('warns without artifact persistence when transcript notification path is not absolute', () => {
+    const mapper = makeMapper()
+    mapper.apply(
+      envelope(
+        'provider.transcript.reported' as never,
+        8,
+        { artifactPath: 'relative/transcript.jsonl', provider: 'codex' },
+        { harnessGeneration: GENERATION }
+      )
+    )
+
+    expect(
+      fixture.db.runtimeArtifacts.listByOperationIdAndKind(
+        OPERATION_ID,
+        'provider-transcript-jsonl'
+      )
+    ).toEqual([])
+    const warnings = fixture.db.events
+      .listFromSeq(1, { runtimeId: RUNTIME_ID })
+      .filter((event) => event.eventKind === 'broker.provider_transcript_artifact.warning')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.eventJson).toMatchObject({
+      invocationId: INVOCATION_ID,
+      seq: 8,
+      reason: 'invalid_path',
+    })
   })
 
   // T-01711: clients follow the canonical hrc_events lifecycle stream (/v1/events),

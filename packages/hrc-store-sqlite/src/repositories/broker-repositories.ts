@@ -750,6 +750,19 @@ export class RuntimeArtifactRepository {
     )
   }
 
+  insertIdempotent(record: HrcRuntimeArtifactRecord): HrcRuntimeArtifactRecord {
+    const existing = this.getByArtifactId(record.artifactId)
+    if (existing) {
+      if (!sameRuntimeArtifact(existing, record)) {
+        throw new Error(
+          `runtime_artifacts conflict: artifact_id=${record.artifactId} already exists with different content`
+        )
+      }
+      return existing
+    }
+    return this.insert(record)
+  }
+
   getByArtifactId(artifactId: string): HrcRuntimeArtifactRecord | null {
     const row = this.db
       .query<RuntimeArtifactRow, [string]>(
@@ -771,6 +784,50 @@ export class RuntimeArtifactRepository {
 
     return rows.map(mapRuntimeArtifactRow)
   }
+
+  listByOperationIdAndKind(operationId: string, artifactKind: string): HrcRuntimeArtifactRecord[] {
+    const rows = this.db
+      .query<RuntimeArtifactRow, [string, string]>(
+        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
+          WHERE operation_id = ? AND artifact_kind = ?
+          ORDER BY created_at ASC, artifact_id ASC`
+      )
+      .all(operationId, artifactKind)
+
+    return rows.map(mapRuntimeArtifactRow)
+  }
+
+  getLatestByOperationIdAndKind(
+    operationId: string,
+    artifactKind: string
+  ): HrcRuntimeArtifactRecord | null {
+    const row = this.db
+      .query<RuntimeArtifactRow, [string, string]>(
+        `SELECT ${RUNTIME_ARTIFACT_COLUMNS} FROM runtime_artifacts
+          WHERE operation_id = ? AND artifact_kind = ?
+          ORDER BY created_at DESC, artifact_id DESC
+          LIMIT 1`
+      )
+      .get(operationId, artifactKind)
+
+    return row ? mapRuntimeArtifactRow(row) : null
+  }
+}
+
+function sameRuntimeArtifact(
+  existing: HrcRuntimeArtifactRecord,
+  next: HrcRuntimeArtifactRecord
+): boolean {
+  return (
+    existing.operationId === next.operationId &&
+    existing.artifactKind === next.artifactKind &&
+    existing.mediaType === next.mediaType &&
+    existing.storageKind === next.storageKind &&
+    existing.contentHash === next.contentHash &&
+    (existing.artifactJson ?? null) === (next.artifactJson ?? null) &&
+    (existing.artifactPath ?? null) === (next.artifactPath ?? null) &&
+    existing.createdAt === next.createdAt
+  )
 }
 
 export function computePermissionIdentityKey(input: {

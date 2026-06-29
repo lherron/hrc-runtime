@@ -526,6 +526,13 @@ describe('broker record repositories round-trip', () => {
       })
       expect(db.runtimeArtifacts.listByOperationId('op-1')).toHaveLength(1)
       expect(artifact.artifactKind).toBe('broker-start-request')
+      expect(db.runtimeArtifacts.listByOperationIdAndKind('op-1', 'broker-start-request')).toEqual([
+        artifact,
+      ])
+      expect(
+        db.runtimeArtifacts.getLatestByOperationIdAndKind('op-1', 'broker-start-request')
+      ).toEqual(artifact)
+      expect(db.runtimeArtifacts.insertIdempotent(artifact)).toEqual(artifact)
 
       const decision = db.permissionDecisions.insert({
         permissionRequestId: 'perm-1',

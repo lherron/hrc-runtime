@@ -29,6 +29,8 @@ export type {
   ParseProviderTranscriptInput,
   ProviderJsonlAnalytics,
   ProviderObservationMatch,
+  ProviderTranscriptArtifact,
+  ProviderTranscriptArtifactHashStatus,
   RawEventsAnalytics,
   RawMirrorCheck,
   RawMirrorEvent,

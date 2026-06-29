@@ -593,6 +593,34 @@ export type HrcRuntimeArtifactRecord = {
   createdAt: string
 }
 
+export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA = 'hrc.provider-transcript-artifact/v1'
+export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND = 'provider-transcript-jsonl'
+export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE = 'application/x-ndjson'
+export const HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND = 'file-path'
+export const HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT = 'provider.transcript.reported'
+export const HRC_ARTIFACT_REPORTED_EVENT = 'artifact.reported'
+
+export type HrcProviderTranscriptArtifactMetadata = {
+  schema: typeof HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA
+  invocationId: string
+  runtimeId: string
+  runId?: string | undefined
+  provider?: string | undefined
+  brokerDriver: string
+  harnessGeneration?: number | undefined
+  brokerSeq: number
+  hashAlgorithm: 'sha256'
+  hashObservedAt?: string | undefined
+}
+
+export type HrcProviderTranscriptReportedPayload = {
+  kind?: typeof HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND | string | undefined
+  path?: string | undefined
+  artifactPath?: string | undefined
+  provider?: string | undefined
+  harnessGeneration?: number | undefined
+}
+
 export type HrcPermissionDecisionRecord = {
   permissionIdentityKey?: string | undefined
   permissionRequestId: string

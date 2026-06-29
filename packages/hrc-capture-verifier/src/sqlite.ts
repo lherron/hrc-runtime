@@ -1,6 +1,10 @@
 import { Database } from 'bun:sqlite'
 
-import { lifecycleKindForBrokerEvent, resolveDatabasePath } from 'hrc-core'
+import {
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND,
+  lifecycleKindForBrokerEvent,
+  resolveDatabasePath,
+} from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { safeJsonParse } from './json.js'
@@ -13,6 +17,7 @@ import {
   type HrcLifecycleProjection,
   type InvocationCaptureSnapshot,
   type ListVerificationCandidatesInput,
+  type ProviderTranscriptArtifact,
   type RawMirrorEvent,
   type VerificationCandidate,
 } from './types.js'
@@ -82,6 +87,15 @@ type LifecycleRow = {
   hrc_seq: number
   event_kind: string
   payload_json: string
+}
+
+type ArtifactRow = {
+  artifact_id: string
+  operation_id: string
+  content_hash: string
+  artifact_json: string | null
+  artifact_path: string | null
+  created_at: string
 }
 
 export function createSqliteCaptureVerificationStore(db: HrcDatabase): CaptureVerificationStore {
@@ -203,6 +217,7 @@ function loadSnapshot(db: Database, invocationId: string): InvocationCaptureSnap
   const brokerEvents = listBrokerEvents(db, invocationId)
   const rawMirrors: Record<number, RawMirrorEvent | undefined> = {}
   const lifecycleProjections: Record<string, HrcLifecycleProjection[]> = {}
+  const transcriptArtifact = loadProviderTranscriptArtifact(db, invocation.operationId)
 
   for (const event of brokerEvents) {
     if (event.hrcEventSeq !== undefined) {
@@ -225,6 +240,37 @@ function loadSnapshot(db: Database, invocationId: string): InvocationCaptureSnap
     brokerEvents,
     rawMirrors,
     lifecycleProjections,
+    ...(transcriptArtifact !== undefined ? { transcriptArtifact } : {}),
+  }
+}
+
+function loadProviderTranscriptArtifact(
+  db: Database,
+  operationId: string
+): ProviderTranscriptArtifact | undefined {
+  const row = db
+    .query<ArtifactRow, [string, string]>(
+      `
+        SELECT artifact_id, operation_id, content_hash, artifact_json, artifact_path, created_at
+        FROM runtime_artifacts
+        WHERE operation_id = ?
+          AND artifact_kind = ?
+          AND storage_kind = 'file-path'
+          AND artifact_path IS NOT NULL
+        ORDER BY created_at DESC, artifact_id DESC
+        LIMIT 1
+      `
+    )
+    .get(operationId, HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND)
+  if (!row || row.artifact_path === null) return undefined
+  return {
+    artifactId: row.artifact_id,
+    operationId: row.operation_id,
+    path: row.artifact_path,
+    storedHash: row.content_hash,
+    hashStatus: 'unchecked',
+    createdAt: row.created_at,
+    ...(row.artifact_json !== null ? { artifactJson: row.artifact_json } : {}),
   }
 }
 

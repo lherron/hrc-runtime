@@ -516,6 +516,19 @@ const brokerFullEnvelopeMigration: HrcMigration = {
   },
 }
 
+// T-04863: verifier auto-resolution needs the latest provider transcript
+// artifact for one operation/kind without joining against the broker event
+// ledger. No backfill: old invocations remain verifiable without provider JSONL.
+const runtimeArtifactOperationKindMigration: HrcMigration = {
+  id: '0024_runtime_artifact_operation_kind',
+  apply(db) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runtime_artifacts_operation_kind_created
+        ON runtime_artifacts(operation_id, artifact_kind, created_at);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -525,4 +538,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   permissionIdentityMigration,
   brokerEventIdentityMigration,
   brokerFullEnvelopeMigration,
+  runtimeArtifactOperationKindMigration,
 ]

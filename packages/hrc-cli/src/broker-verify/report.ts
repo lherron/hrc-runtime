@@ -43,6 +43,12 @@ export function renderReportHuman(report: CaptureVerificationReport): string {
       `provider events: ${report.transcript?.observations.length ?? 0}`
     )
   }
+  if (report.transcriptArtifact !== undefined) {
+    lines.push(
+      `artifact: ${report.transcriptArtifact.artifactId}`,
+      `artifact hash: ${report.transcriptArtifact.hashStatus} stored=${report.transcriptArtifact.storedHash}${report.transcriptArtifact.currentHash !== undefined ? ` current=${report.transcriptArtifact.currentHash}` : ''}`
+    )
+  }
   lines.push(...renderAnalyticsHuman(report), '')
   const errors = report.findings.filter((issue) => issue.severity === 'error')
   const warnings = report.findings.filter((issue) => issue.severity === 'warning')

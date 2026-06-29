@@ -25,11 +25,25 @@
  * launches/execs anything. It is inert unless invoked by the W3B controller,
  * which is unreachable unless `HRC_HEADLESS_CODEX_BROKER_ENABLED` is set.
  */
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+
 import type {
   HrcBrokerInvocationRecord,
   HrcContinuationRef,
   HrcProvider,
+  HrcProviderTranscriptArtifactMetadata,
+  HrcProviderTranscriptReportedPayload,
   HrcRuntimeSnapshot,
+} from 'hrc-core'
+import {
+  HRC_ARTIFACT_REPORTED_EVENT,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA,
+  HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND,
+  HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type {
@@ -74,6 +88,42 @@ import {
 } from './event-mapper/runtime-state'
 
 export type { BrokerEventMapperDeps, BrokerProjectionResult } from './event-mapper/helpers'
+
+function providerTranscriptPayload(
+  envelope: InvocationEventEnvelope
+): HrcProviderTranscriptReportedPayload | undefined {
+  if (!isRecord(envelope.payload)) return undefined
+  const type = String(envelope.type)
+  if (type === HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT)
+    return normalizeTranscriptPayload(envelope.payload)
+  if (
+    type === HRC_ARTIFACT_REPORTED_EVENT &&
+    String(envelope.payload['kind']) === HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND
+  ) {
+    return normalizeTranscriptPayload(envelope.payload)
+  }
+  return undefined
+}
+
+function normalizeTranscriptPayload(
+  payload: Record<string, unknown>
+): HrcProviderTranscriptReportedPayload {
+  return {
+    ...(typeof payload['kind'] === 'string' ? { kind: payload['kind'] } : {}),
+    ...(typeof payload['path'] === 'string' ? { path: payload['path'] } : {}),
+    ...(typeof payload['artifactPath'] === 'string'
+      ? { artifactPath: payload['artifactPath'] }
+      : {}),
+    ...(typeof payload['provider'] === 'string' ? { provider: payload['provider'] } : {}),
+    ...(typeof payload['harnessGeneration'] === 'number'
+      ? { harnessGeneration: payload['harnessGeneration'] }
+      : {}),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 export class BrokerEventMapper {
   private readonly db: HrcDatabase
@@ -175,6 +225,7 @@ export class BrokerEventMapper {
     // (and semantically the tool_call precedes the awaiting_input it triggers).
     const derivedDescriptors: DerivedTurnDescriptor[] = []
     const stale = this.isStaleLifecycleEnvelope(persistedEnvelope, invocation, runtime)
+    this.persistProviderTranscriptArtifact(persistedEnvelope, invocation, runtime, ctx, now)
     this.projectState(persistedEnvelope, ctx, now, stale, derivedDescriptors)
     const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
     const lifecycleEvent = stale ? undefined : emitLifecycleEvent(db, persistedEnvelope, ctx, now)
@@ -197,6 +248,90 @@ export class BrokerEventMapper {
       events: [emitted],
       lifecycleEvents: [...(lifecycleEvent ? [lifecycleEvent] : []), ...derived],
     }
+  }
+
+  private persistProviderTranscriptArtifact(
+    envelope: InvocationEventEnvelope,
+    invocation: HrcBrokerInvocationRecord,
+    runtime: HrcRuntimeSnapshot,
+    ctx: ProjectionContext,
+    now: string
+  ): void {
+    const payload = providerTranscriptPayload(envelope)
+    if (payload === undefined) return
+
+    const artifactPath = payload.artifactPath ?? payload.path
+    if (artifactPath === undefined || artifactPath.length === 0 || !isAbsolute(artifactPath)) {
+      this.recordProviderTranscriptArtifactWarning(envelope, ctx, now, 'invalid_path', {
+        artifactPath,
+      })
+      return
+    }
+
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(artifactPath)
+    } catch {
+      this.recordProviderTranscriptArtifactWarning(envelope, ctx, now, 'unreadable_path', {
+        artifactPath,
+      })
+      return
+    }
+
+    const contentHash = `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+    const harnessGeneration =
+      payload.harnessGeneration ?? envelope.harnessGeneration ?? runtime.generation
+    const metadata: HrcProviderTranscriptArtifactMetadata = {
+      schema: HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA,
+      invocationId: String(envelope.invocationId),
+      runtimeId: runtime.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      ...(payload.provider !== undefined ? { provider: payload.provider } : {}),
+      brokerDriver: invocation.brokerDriver,
+      harnessGeneration,
+      brokerSeq: envelope.seq,
+      hashAlgorithm: 'sha256',
+      hashObservedAt: envelope.time ?? now,
+    }
+
+    this.db.runtimeArtifacts.insertIdempotent({
+      artifactId: `provider-transcript:${String(envelope.invocationId)}:${envelope.seq}`,
+      operationId: invocation.operationId,
+      artifactKind: HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND,
+      mediaType: HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE,
+      storageKind: HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND,
+      contentHash,
+      artifactPath,
+      artifactJson: JSON.stringify(metadata),
+      createdAt: envelope.time ?? now,
+    })
+  }
+
+  private recordProviderTranscriptArtifactWarning(
+    envelope: InvocationEventEnvelope,
+    ctx: ProjectionContext,
+    now: string,
+    reason: string,
+    data: Record<string, unknown>
+  ): void {
+    this.db.events.append({
+      ts: now,
+      hostSessionId: ctx.hostSessionId,
+      scopeRef: ctx.scopeRef,
+      laneRef: ctx.laneRef,
+      generation: ctx.generation,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      runtimeId: ctx.runtimeId,
+      source: 'broker',
+      eventKind: 'broker.provider_transcript_artifact.warning',
+      eventJson: {
+        invocationId: envelope.invocationId,
+        seq: envelope.seq,
+        type: envelope.type,
+        reason,
+        ...data,
+      },
+    })
   }
 
   private envelopeWithWriteTimeRepairCorrelation(
