@@ -156,6 +156,7 @@ function runtimeView(
     status: 'running',
     provider: 'anthropic',
     brokerDriver: 'claude-code-tmux',
+    inputDispatchable: true,
     ...overrides,
   }
 }
@@ -329,6 +330,20 @@ describe('decideInteractiveBrokerAdmission — live broker runtime → broker-re
       const decision = decideInteractiveBrokerAdmission!(claudeInteractive, live, BOTH_FLAGS_ON)
       expect(decision.decision).toBe('broker-start')
     }
+  })
+
+  it('T-05358: a matching runtime that is NOT input-dispatchable (starting/stopping) → stale-and-reprovision, NOT broker-reuse', () => {
+    // Row status is `stopping` (a non-unavailable status, so the status gate
+    // passes) but the active invocation cannot accept input. Must NOT be reused.
+    const live = runtimeView({ status: 'stopping', inputDispatchable: false })
+    const decision = decideInteractiveBrokerAdmission!(claudeInteractive, live, BOTH_FLAGS_ON)
+    expect(decision.decision).toBe('stale-and-reprovision')
+  })
+
+  it('T-05358: the SAME matching runtime IS reused when input-dispatchable', () => {
+    const live = runtimeView({ status: 'running', inputDispatchable: true })
+    const decision = decideInteractiveBrokerAdmission!(claudeInteractive, live, BOTH_FLAGS_ON)
+    expect(decision.decision).toBe('broker-reuse')
   })
 })
 

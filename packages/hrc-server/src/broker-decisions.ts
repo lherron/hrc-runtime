@@ -207,6 +207,13 @@ export type LatestRuntimeAdmissionView = {
   status: string
   provider: HrcProvider
   brokerDriver: InteractiveTmuxBrokerDriver | undefined
+  // T-05358: false when the runtime's active broker invocation is terminal or
+  // transitioning (starting/stopping) and therefore cannot accept input. Row
+  // `status` alone admits `stopping` (a non-unavailable status), so reuse must
+  // also gate on this — else the broker-reuse admission delivers input to a
+  // tearing-down runtime and the broker rejects it (`Cannot accept input in
+  // state: stopping`).
+  inputDispatchable: boolean
 } | null
 
 export type InteractiveBrokerAdmissionDecision =
@@ -326,7 +333,13 @@ export function decideInteractiveBrokerAdmission(
     latestRuntime.controllerKind === 'harness-broker' &&
     latestRuntime.transport === 'tmux' &&
     latestRuntime.provider === intent.harness.provider &&
-    latestRuntime.brokerDriver === resolved.allowedBrokerDriver
+    latestRuntime.brokerDriver === resolved.allowedBrokerDriver &&
+    // T-05358: never broker-REUSE a runtime whose broker invocation is
+    // transitioning (starting/stopping). It matches on driver/provider but
+    // cannot accept input right now; fall through to stale-and-reprovision so a
+    // FRESH interactive runtime is spun up instead of dispatching into the
+    // teardown window.
+    latestRuntime.inputDispatchable
   ) {
     return {
       decision: 'broker-reuse',
@@ -675,7 +688,11 @@ export function getBrokerRuntimeDriver(runtime: HrcRuntimeSnapshot): string | un
 }
 
 export function toLatestRuntimeAdmissionView(
-  runtime: HrcRuntimeSnapshot | null
+  runtime: HrcRuntimeSnapshot | null,
+  // T-05358: the caller computes input-dispatchability (needs db to read the
+  // active broker invocation state); defaults true so a non-broker / unknown
+  // runtime is unaffected and the existing status/driver gates still apply.
+  inputDispatchable = true
 ): LatestRuntimeAdmissionView {
   if (!runtime) {
     return null
@@ -688,6 +705,7 @@ export function toLatestRuntimeAdmissionView(
     status: runtime.status,
     provider: runtime.provider,
     brokerDriver: isInteractiveTmuxBrokerDriver(brokerDriver) ? brokerDriver : undefined,
+    inputDispatchable,
   }
 }
 

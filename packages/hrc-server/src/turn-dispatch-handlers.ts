@@ -767,7 +767,12 @@ export async function dispatchTurnForSession(
 
   const admission = decideInteractiveBrokerAdmission(
     intent,
-    toLatestRuntimeAdmissionView(latestRuntime),
+    // T-05358: pass input-dispatchability so a `stopping`/`starting` interactive
+    // runtime is routed to stale-and-reprovision (fresh) rather than broker-reuse.
+    toLatestRuntimeAdmissionView(
+      latestRuntime,
+      latestRuntime ? isBrokerRuntimeInputDispatchable(this.db, latestRuntime) : true
+    ),
     {
       claudeCodeTmuxBrokerEnabled: this.claudeCodeTmuxBrokerEnabled,
       codexCliTmuxBrokerEnabled: this.codexCliTmuxBrokerEnabled,
