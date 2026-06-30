@@ -40,7 +40,7 @@ export function printHrcDomainErrorBody(err: unknown): boolean {
  * CliStatusExit so the top-level handler does not re-prefix the line with `hrc:`.
  */
 export function emitScopeCommandErrorJson(
-  command: 'attach' | 'run' | 'start',
+  command: 'attach' | 'run' | 'start' | 'resume',
   err: unknown,
   scopeInput: string,
   sessionRef?: string
@@ -70,7 +70,7 @@ export function emitScopeCommandErrorJson(
  * `hrc:` prefix.
  */
 export function explainScopeCommandError(
-  command: 'attach' | 'run' | 'start',
+  command: 'attach' | 'run' | 'start' | 'resume',
   err: unknown,
   scopeInput: string,
   sessionRef?: string

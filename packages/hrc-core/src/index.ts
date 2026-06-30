@@ -211,6 +211,8 @@ export type {
   PrepareAttachedRunResponse,
   ResumeAttachedRunRequest,
   ResumeAttachedRunResponse,
+  ResumeContinuationRequest,
+  ResumeContinuationResponse,
   SendLiteralInputRequest,
   SendLiteralInputResponse,
   SendWindowLiteralInputRequest,

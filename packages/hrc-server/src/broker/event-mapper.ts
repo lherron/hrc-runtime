@@ -948,8 +948,14 @@ export class BrokerEventMapper {
     switch (envelope.type) {
       case 'continuation.updated': {
         const payload = envelope.payload as ContinuationUpdate
+        // T-04836: preserve the broker continuation `kind` (e.g. Codex
+        // 'session') so the interactive tmux recreate gate can distinguish a
+        // resume-compatible session UUID from other continuation keys and
+        // safely emit `codex resume <uuid>`. Claude rows omit kind and stay
+        // compatible.
         const continuation: HrcContinuationRef = {
           provider: payload.provider as HrcProvider,
+          ...(payload.kind !== undefined ? { kind: payload.kind } : {}),
           key: payload.key,
         }
         db.runtimes.update(ctx.runtimeId, {

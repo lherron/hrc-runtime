@@ -870,57 +870,45 @@ describe('hrc run --attach-only — §6 lifecycle (RED: flag does not exist yet)
   })
 })
 
-describe('hrc resume — §6 lifecycle (RED: command does not exist yet)', () => {
+// T-04836 Part A: `hrc resume` is now its OWN continuation-resume verb, NOT an
+// exact alias of `run`. It never fresh-launches and never attaches as a resume
+// substitute; it requires a captured continuation and fails clearly otherwise.
+describe('hrc resume — §6 lifecycle (T-04836: distinct continuation-resume verb)', () => {
   // ── no-server: --help ──
 
   it('hrc resume --help exits 0 with Usage', async () => {
     const result = await runCli(['resume', '--help'])
-    // RED: exits 2 "unknown command: resume"
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/i)
   })
 
-  it('hrc resume --help states start/reuse/attach semantics', async () => {
+  it('hrc resume --help states continuation-resume semantics', async () => {
     const result = await runCli(['resume', '--help'])
-    // RED: command not registered
     expect(result.exitCode).toBe(0)
-    // Help text must state exact semantics: "may start, reuse, or attach"
-    // (daedalus D4: help text must state exact semantics, not promise attach-only)
-    expect(result.stdout).toMatch(/start|reuse|attach/i)
+    // Help text describes resuming a stored continuation (not run aliasing).
+    expect(result.stdout).toMatch(/continuation/i)
   })
 
-  it('hrc resume --help points to --attach-only or run --attach-only', async () => {
+  it('hrc resume --help points to hrc attach / hrc run for the other paths', async () => {
     const result = await runCli(['resume', '--help'])
-    // RED: command not registered
     expect(result.exitCode).toBe(0)
-    // Daedalus D4: help must point to `attach` / `run --attach-only`
-    expect(result.stdout).toMatch(/--attach-only|hrc attach/i)
+    // T-04836: resume is not attach-only; help points elsewhere for attach/run.
+    expect(result.stdout).toMatch(/hrc attach|hrc run/i)
   })
 
-  it('hrc resume (no args) exits 0 with usage banner', async () => {
+  it('hrc resume (no args) exits 0 with its own usage banner', async () => {
     const result = await runCli(['resume'])
-    // RED: exits 2 "unknown command: resume"
-    // When implemented, resume with no args should print the same usage as `hrc run`
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/usage:\s+hrc resume/i)
   })
 
-  // ── server-required: resume is an exact alias of run ──
-
-  describe('resume as exact alias of run (needs live server)', () => {
+  describe('resume distinct-verb surface', () => {
     beforeEach(async () => {
       server = await createHrcServer(serverOpts())
       await seedRunRoots('rex', 'agent-spaces')
     })
 
-    it('hrc resume rex@agent-spaces --dry-run exits 0 (same as run --dry-run)', async () => {
-      const runResult = await runCli(
-        ['run', 'rex@agent-spaces', '--dry-run'],
-        cliEnv({
-          ASP_AGENTS_ROOT: agentsRoot,
-          ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        })
-      )
+    it('hrc resume rex@agent-spaces --dry-run exits 0 with a plan preview', async () => {
       const resumeResult = await runCli(
         ['resume', 'rex@agent-spaces', '--dry-run'],
         cliEnv({
@@ -928,25 +916,20 @@ describe('hrc resume — §6 lifecycle (RED: command does not exist yet)', () =>
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
       )
-      // RED: resume command not registered
-      expect(runResult.exitCode).toBe(0)
       expect(resumeResult.exitCode).toBe(0)
-      // Both produce plan preview output
       expect(resumeResult.stdout).toContain('local plan preview')
     })
 
-    it('hrc resume supports --no-attach (same flags as run)', async () => {
+    it('hrc resume supports --no-attach', async () => {
       const result = await runCli(['resume', '--help'])
-      // RED: command not registered
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain('--no-attach')
     })
 
-    it('hrc resume supports --force-restart (same flags as run)', async () => {
+    it('hrc resume does NOT advertise --force-restart (continuation is always preserved)', async () => {
       const result = await runCli(['resume', '--help'])
-      // RED: command not registered
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('--force-restart')
+      expect(result.stdout).not.toContain('--force-restart')
     })
   })
 })

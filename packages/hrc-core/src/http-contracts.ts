@@ -290,6 +290,32 @@ export type PrepareAttachedRunResponse =
       attach: OperatorAttachDescriptor
     }
 
+/**
+ * T-04836 Part A — `hrc resume` resume-continuation request. The server selects
+ * the latest non-invalidated continuation for the normalized target and mints an
+ * active successor inheriting it. `intent`/`parsedScope` (when supplied) are
+ * recorded on the successor so a subsequent start/prepare/dispatch has the
+ * managed runtime intent. `priorHostSessionId` optionally pins a specific prior;
+ * it must belong to the normalized target and still obeys invalidation barriers.
+ */
+export type ResumeContinuationRequest = {
+  sessionRef: string
+  priorHostSessionId?: string | undefined
+  intent?: HrcRuntimeIntent | undefined
+  parsedScope?: Record<string, unknown> | undefined
+}
+
+export type ResumeContinuationResponse = {
+  hostSessionId: string
+  status: HrcSessionRecord['status']
+  generation: number
+  priorHostSessionId?: string | undefined
+  continuation?: HrcContinuationRef | undefined
+  scopeRef: string
+  laneRef: string
+  session: HrcSessionRecord
+}
+
 export type ResumeAttachedRunRequest = {
   pendingStartId: string
 }

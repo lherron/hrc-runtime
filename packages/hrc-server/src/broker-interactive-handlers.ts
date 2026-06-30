@@ -835,9 +835,12 @@ export async function startInteractiveTmuxBrokerRuntime(
         // for codex would emit `codex resume <rollout>` (or `claude --continue`),
         // replaying a transcript and, when the recorded cwd differs, blocking the
         // TUI on a "choose working directory to resume" picker (commit 120eb7a).
-        // We REVERSE that disable ONLY for the safe recreate case: claude-code-tmux
-        // + a captured Claude session id ⇒ pass the continuation so the adapter
-        // emits `--resume <uuid>` (no cwd picker). All other cases stay undefined.
+        // We REVERSE that disable ONLY for the safe recreate cases (T-04836):
+        //   - claude-code-tmux + a captured Claude session id ⇒ `--resume <uuid>`
+        //   - codex-cli-tmux + an openai/kind:session/UUID continuation ⇒
+        //     `codex resume <uuid>` (explicit-id form; NOT no-arg picker resume).
+        // decideInteractiveTmuxBrokerContinuation enforces those gates; all other
+        // cases (incl. pi-tui-tmux, non-UUID/non-session codex keys) stay undefined.
         continuation: toRuntimeContinuationRef(
           decideInteractiveTmuxBrokerContinuation({
             allowedBrokerDriver: flagOptions.allowedBrokerDriver,

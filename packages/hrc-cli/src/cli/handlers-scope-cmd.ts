@@ -212,6 +212,152 @@ export async function cmdRun(
   }
 }
 
+function printResumeUsage(): void {
+  process.stdout.write(`Usage: hrc resume <scope> [options]
+
+  Resume the most recent stored continuation for a target, REGARDLESS of its
+  HRC status (archived / dormant / broken / removed-orphaned). Unlike \`hrc run\`,
+  resume NEVER starts a fresh session and NEVER attaches as a substitute for
+  resume — it requires a captured provider continuation and fails clearly if
+  none exists or if it was explicitly invalidated (\`/quit\`, drop-continuation,
+  clear-context, terminate-with-drop).
+
+  <scope>  Agent scope: agent, agent@project, or full scope ref.
+           When run from a project directory, the project is inferred
+           automatically (e.g. "larry" becomes "larry@agent-spaces").
+
+Options:
+  --no-attach          Resume and start without attaching to the tmux session
+  --dry-run            Local plan preview — no server calls, no side effects
+  --debug              Keep tmux shell alive after harness exits
+  --project-id <id>    Override the inferred project id (cwd is treated as its root)
+  --project-root <dir> Override project root (defaults to cwd when --project-id is set)
+  --no-register        Don't prompt to register cwd as a project marker
+  -p <text>            Initial prompt to send to the resumed harness
+  --prompt-file <path> Read initial prompt from a file
+`)
+}
+
+/**
+ * T-04836 Part A — `hrc resume`. A DISTINCT continuation-resume verb (no longer
+ * an alias of `hrc run`). It asks the server to select the latest non-invalidated
+ * continuation, mint an active successor, and then starts/prepares/dispatches
+ * ONLY against that successor with stale-generation rotation disabled.
+ */
+export async function cmdResumeContinuation(args: string[]): Promise<void> {
+  if (hasFlag(args, '--attach-only')) {
+    fatal('hrc resume does not support --attach-only; use `hrc attach` to reattach a live runtime')
+  }
+  if (hasFlag(args, '--force-restart')) {
+    fatal(
+      'hrc resume does not support --force-restart; it always preserves the resumed continuation'
+    )
+  }
+
+  if (args.length === 0) {
+    printResumeUsage()
+    return
+  }
+
+  const scopeInput = requireArg(args, 0, '<scope>')
+  const noAttach = hasFlag(args, '--no-attach')
+  const dryRun = hasFlag(args, '--dry-run')
+  const debug = hasFlag(args, '--debug')
+  const noRegister = hasFlag(args, '--no-register')
+  const jsonOutput = hasFlag(args, '--json')
+  const projectIdOverride = parseFlag(args, '--project-id')
+  const projectRootOverride = parseFlag(args, '--project-root')
+  const prompt = await parseScopePrompt(args, {
+    command: 'run',
+    passthroughFlags: [
+      '--no-attach',
+      '--dry-run',
+      '--debug',
+      '--no-register',
+      '--json',
+      '--project-id',
+      '--project-root',
+    ],
+  })
+
+  let sessionRef: string | undefined
+  try {
+    const scope = resolveManagedScopeContext(scopeInput, {
+      projectIdOverride,
+      projectRootOverride,
+      registerPolicy: dryRun || noRegister ? 'never' : 'prompt',
+    })
+    sessionRef = scope.sessionRef
+    const intent = buildManagedRunIntent(scope, { prompt, debug })
+
+    if (dryRun) {
+      const w = (s: string) => process.stdout.write(`${s}\n`)
+      w(`hrc resume ${scopeInput} --dry-run  (local plan preview — no server state consulted)`)
+      w('')
+      w(`  sessionRef:   ${sessionRef}`)
+      w('  action:       POST /v1/sessions/resume-continuation (mint successor from latest')
+      w('                non-invalidated continuation), then prepare/start against it with')
+      w('                allowStaleGeneration:true. Fails if no captured continuation exists.')
+      w(`  attach:       ${noAttach ? 'no (--no-attach)' : 'yes'}`)
+      w(`  initialPrompt: ${prompt !== undefined ? `${prompt.length} chars` : '(none)'}`)
+      w('')
+      w('  Note: this preview does not resolve the session or inspect continuation state.')
+      w('  Run without --dry-run to execute.')
+      return
+    }
+
+    const client = createClient()
+
+    const resumed = await client.resumeContinuation({ sessionRef, intent })
+    const hostSessionId = resumed.hostSessionId
+    const hasPrompt = prompt !== undefined && prompt.length > 0
+
+    if (noAttach) {
+      const runtime = hasPrompt
+        ? await client.dispatchTurn({
+            hostSessionId,
+            prompt,
+            runtimeIntent: intent,
+            allowStaleGeneration: true,
+          })
+        : await client.startRuntime({
+            hostSessionId,
+            intent,
+            restartStyle: 'reuse_pty',
+            allowStaleGeneration: true,
+          })
+      printJson({
+        sessionRef,
+        hostSessionId,
+        priorHostSessionId: resumed.priorHostSessionId,
+        continuation: resumed.continuation,
+        runtime,
+      })
+      return
+    }
+
+    const prepared = await client.prepareAttachedRun({
+      hostSessionId,
+      intent,
+      restartStyle: 'reuse_pty',
+      allowStaleGeneration: true,
+      ...(hasPrompt ? { prompt } : {}),
+    })
+
+    const attached = await spawnAttachDescriptor(client, prepared.attach)
+    if (prepared.status === 'prepared') {
+      await client.resumeAttachedRun({ pendingStartId: prepared.pendingStartId })
+    }
+    await waitForAttachProcess(attached, client, hostSessionId)
+    await renderSessionSummary(client, prepared.attach.bindingFence.runtimeId, scopeInput)
+  } catch (err) {
+    if (jsonOutput) {
+      emitScopeCommandErrorJson('resume', err, scopeInput, sessionRef)
+    }
+    throw explainScopeCommandError('resume', err, scopeInput, sessionRef)
+  }
+}
+
 export async function cmdStart(args: string[]): Promise<void> {
   if (args.length === 0) {
     printManagedScopeUsage('start')

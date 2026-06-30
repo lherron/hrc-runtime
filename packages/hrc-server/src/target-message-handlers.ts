@@ -6,6 +6,7 @@ import {
   HrcDomainError,
   HrcErrorCode,
   HrcNotFoundError,
+  HrcUnprocessableEntityError,
   isCodexAppOwnedScopeRef,
 } from 'hrc-core'
 import type {
@@ -50,6 +51,7 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { selectResumeContinuationCandidate } from './session-resume-continuation.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
 import {
   findTargetSession,
@@ -157,6 +159,104 @@ export async function handleCreateSessionSuccessor(
       reason: 'successor-from-continuation',
     })
   )
+
+  return json({
+    hostSessionId: successor.hostSessionId,
+    status: successor.status,
+    generation: successor.generation,
+    priorHostSessionId: successor.priorHostSessionId,
+    continuation: successor.continuation,
+    scopeRef: successor.scopeRef,
+    laneRef: successor.laneRef,
+    session: successor,
+  })
+}
+
+/**
+ * T-04836 Part A — `POST /v1/sessions/resume-continuation`.
+ *
+ * Policy authority for `hrc resume`: select the latest non-invalidated provider
+ * continuation for the normalized target (status-neutral — archived/dormant/
+ * removed-orphaned all count), mint an active successor that inherits it, and
+ * return the successor so the CLI starts/prepares/dispatches ONLY against it.
+ *
+ * Never fresh-launches: a target with no valid captured continuation, or a
+ * newer explicit invalidation barrier, fails with a structured non-2xx error
+ * and creates no successor. A selected prior whose runtime is still live (not
+ * an unavailable status) returns a 409 conflict and creates no successor.
+ */
+export async function handleResumeContinuation(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+
+  const sessionRef = body['sessionRef']
+  if (typeof sessionRef !== 'string' || sessionRef.trim().length === 0) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'sessionRef is required', {
+      field: 'sessionRef',
+    })
+  }
+
+  const priorHostSessionId = body['priorHostSessionId']
+  if (priorHostSessionId !== undefined && typeof priorHostSessionId !== 'string') {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'priorHostSessionId must be a string',
+      { field: 'priorHostSessionId' }
+    )
+  }
+
+  const intent = body['intent'] as HrcRuntimeIntent | undefined
+  const parsedScopeJson = isObjectRecord(body['parsedScope'])
+    ? (body['parsedScope'] as Record<string, unknown>)
+    : undefined
+
+  const selection = selectResumeContinuationCandidate(this.db, {
+    sessionRef,
+    ...(priorHostSessionId !== undefined ? { priorHostSessionId } : {}),
+  })
+
+  if (selection.outcome === 'barrier') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.NO_RESUMABLE_CONTINUATION,
+      `cannot resume "${sessionRef}": the latest continuation was explicitly invalidated (${selection.barrier.kind}). Start a fresh session with \`hrc run\`.`,
+      { sessionRef, barrier: selection.barrier }
+    )
+  }
+
+  if (selection.outcome === 'none') {
+    throw new HrcUnprocessableEntityError(
+      HrcErrorCode.NO_RESUMABLE_CONTINUATION,
+      `cannot resume "${sessionRef}": no captured continuation to resume. \`hrc resume\` only picks up an existing continuation; use \`hrc run\` to start fresh.`,
+      { sessionRef }
+    )
+  }
+
+  const prior = selection.session
+
+  // Reject a selected prior that still has a live (non-unavailable) runtime —
+  // resuming would fork a second live runtime for the same continuation.
+  const liveRuntime = this.db.runtimes
+    .listByHostSessionId(prior.hostSessionId)
+    .find((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+  if (liveRuntime) {
+    throw new HrcConflictError(
+      HrcErrorCode.RESUME_RUNTIME_LIVE,
+      `cannot resume "${sessionRef}": its runtime is still live; use \`hrc attach\`, or terminate/kill it before resume.`,
+      {
+        sessionRef,
+        hostSessionId: prior.hostSessionId,
+        runtimeId: liveRuntime.runtimeId,
+        runtimeStatus: liveRuntime.status,
+      }
+    )
+  }
+
+  const successor = createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -974,6 +1074,7 @@ export const targetMessageHandlersMethods = {
   handleListTargets,
   handleGetTarget,
   handleCreateSessionSuccessor,
+  handleResumeContinuation,
   handleArchiveAbandonedSessions,
   handleQueryMessages,
   handleSemanticTurnHandoff,

@@ -33,6 +33,10 @@ export const HrcErrorCode = {
   MISSING_SESSION_SPEC: 'missing_session_spec',
   /** A `--reply-to` anchor lives in a different conversation scope than the target. */
   REPLY_TO_SCOPE_MISMATCH: 'reply_to_scope_mismatch',
+  /** `hrc resume` found no latest non-invalidated continuation candidate to resume. */
+  NO_RESUMABLE_CONTINUATION: 'no_resumable_continuation',
+  /** `hrc resume` selected a prior whose runtime is still live — attach/terminate first. */
+  RESUME_RUNTIME_LIVE: 'resume_runtime_live',
 } as const
 
 export type HrcErrorCode = (typeof HrcErrorCode)[keyof typeof HrcErrorCode]
@@ -79,6 +83,8 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.UNSUPPORTED_CAPABILITY]: 422,
   [HrcErrorCode.MISSING_SESSION_SPEC]: 422,
   [HrcErrorCode.REPLY_TO_SCOPE_MISMATCH]: 409,
+  [HrcErrorCode.NO_RESUMABLE_CONTINUATION]: 422,
+  [HrcErrorCode.RESUME_RUNTIME_LIVE]: 409,
 }
 
 export function httpStatusForErrorCode(code: HrcErrorCode): HrcHttpStatus {
@@ -156,6 +162,7 @@ export class HrcConflictError extends HrcDomainError {
       | 'run_mismatch'
       | 'app_session_removed'
       | 'reply_to_scope_mismatch'
+      | 'resume_runtime_live'
     >,
     message: string,
     detail: Record<string, unknown> = {}
@@ -177,6 +184,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
       | 'session_kind_mismatch'
       | 'unsupported_capability'
       | 'missing_session_spec'
+      | 'no_resumable_continuation'
     >,
     message: string,
     detail: Record<string, unknown> = {}

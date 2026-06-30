@@ -37,6 +37,8 @@ export type {
   ReconcileActiveRunsResponse,
   ResumeAttachedRunRequest,
   ResumeAttachedRunResponse,
+  ResumeContinuationRequest,
+  ResumeContinuationResponse,
   RestartStyle,
   StartRuntimeRequest,
   StartRuntimeResponse,

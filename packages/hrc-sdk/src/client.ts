@@ -69,6 +69,8 @@ import type {
   ResolveSessionResponse,
   ResumeAttachedRunRequest,
   ResumeAttachedRunResponse,
+  ResumeContinuationRequest,
+  ResumeContinuationResponse,
   RunListFilter,
   RuntimeActionResponse,
   RuntimeListFilter,
@@ -304,6 +306,17 @@ export class HrcClient {
 
   async resumeAttachedRun(request: ResumeAttachedRunRequest): Promise<ResumeAttachedRunResponse> {
     return this.postJson<ResumeAttachedRunResponse>('/v1/runs/resume-attached', request)
+  }
+
+  /**
+   * T-04836 — resume the latest non-invalidated continuation for a target,
+   * minting an active successor. Throws on barrier / no-continuation / live-prior
+   * conflict (the server is the policy authority); never fresh-launches.
+   */
+  async resumeContinuation(
+    request: ResumeContinuationRequest
+  ): Promise<ResumeContinuationResponse> {
+    return this.postJson<ResumeContinuationResponse>('/v1/sessions/resume-continuation', request)
   }
 
   async sendInFlightInput(request: SendInFlightInputRequest): Promise<SendInFlightInputResponse> {

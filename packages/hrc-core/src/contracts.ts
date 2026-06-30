@@ -24,6 +24,14 @@ export type HrcTurnResponseFormat =
 
 export type HrcContinuationRef = {
   provider: HrcProvider
+  /**
+   * Continuation kind, when the provider distinguishes resume key shapes.
+   * For Codex this is `'session'` when `key` is a resume-compatible session
+   * UUID (vs a rollout-file path or thread key). Claude rows historically
+   * omit it and stay compatible. Persisted through HRC continuation storage so
+   * the interactive tmux recreate gate can safely emit `codex resume <uuid>`.
+   */
+  kind?: string | undefined
   key?: string | undefined
 }
 

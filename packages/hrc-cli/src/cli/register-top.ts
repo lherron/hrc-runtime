@@ -17,7 +17,7 @@ import {
   execHrcchatTurn,
 } from './handlers-control.js'
 import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
-import { cmdAttach, cmdRun, cmdStart } from './handlers-scope-cmd.js'
+import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 
 export function registerTopLevelCommands(program: Command): void {
   // -- top-level commands (commander, Phase 6 T2b) -----------------------------
@@ -176,22 +176,18 @@ export function registerTopLevelCommands(program: Command): void {
       await cmdRunReconcileActive(rawArgv, { deprecatedAlias: true })
     })
 
-  // -- resume (exact alias of `run`, T-04219 P2) -------------------------------
-  // daedalus D4: `resume` shares run's handler, flags, and semantics. It is NOT
-  // attach-only — it may start, reuse, or attach. Help text points at `attach` /
-  // `run --attach-only` for the attach-only path.
+  // -- resume (T-04836 Part A) -------------------------------------------------
+  // `resume` is its OWN verb — force-resume the latest stored continuation for a
+  // target regardless of HRC status. It is NOT an alias of `run`: it never
+  // fresh-launches and never attaches as a substitute for resume. For attach-only
+  // behavior use `hrc attach <scope>`; for start/reuse/attach use `hrc run`.
   program
     .command('resume')
-    .description('alias of `run`: start, reuse, or attach a managed runtime')
+    .description('resume the latest stored continuation for a target (regardless of status)')
     .argument('[scope]', 'agent scope (agent, agent@project, or full scope ref)')
     .allowExcessArguments(true)
     .allowUnknownOption(true)
-    .option('--force-restart', 'replace existing runtime with a fresh PTY')
-    .option('--no-attach', 'start/ensure without attaching to the tmux session')
-    .option(
-      '--attach-only',
-      'reattach to the existing runtime without starting one (like `hrc attach`)'
-    )
+    .option('--no-attach', 'resume and start without attaching to the tmux session')
     .option('--dry-run', 'local plan preview — no server calls')
     .option('--debug', 'keep tmux shell alive after harness exits')
     .option('--no-register', 'do not prompt to register cwd as a project marker')
@@ -204,9 +200,13 @@ export function registerTopLevelCommands(program: Command): void {
       'after',
       `
 Semantics:
-  resume is an exact alias of \`hrc run\`. It may start a new runtime, reuse an
-  existing one, or attach to a live one. It does NOT guarantee attach-only.
-  For attach-only behavior use \`hrc attach <scope>\` or \`hrc run --attach-only\`.
+  resume force-resumes the most recent stored continuation for a target,
+  REGARDLESS of HRC status (archived / dormant / broken / removed-orphaned).
+  Unlike \`hrc run\`, it requires a captured continuation: if none exists, or the
+  latest continuation was explicitly invalidated (\`/quit\`, drop-continuation,
+  clear-context, terminate-with-drop), it fails clearly and does NOT start fresh.
+  For attach-only behavior use \`hrc attach <scope>\`; for start/reuse/attach use
+  \`hrc run <scope>\`.
 `
     )
     .action(async (_scope, _opts, cmd: Command) => {
@@ -215,10 +215,10 @@ Semantics:
       const rawArgv = rawArgvForVerb(cmd, 'resume', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
+        booleans: ['dry-run', 'debug', 'json'],
         negatedBooleans: ['attach', 'register'],
       })
-      await cmdRun(args, { invokedAs: 'resume' })
+      await cmdResumeContinuation(args)
     })
 
   // -- admin group (T-04219 P2: run-RECORD repair, distinct from runtime sweep) -

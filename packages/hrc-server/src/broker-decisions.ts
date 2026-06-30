@@ -617,18 +617,53 @@ export function shouldBlockForBrokerTurnCompletion(
  * picker. This reverses commit 120eb7a's blanket disable ONLY for the safe
  * --resume case: strictly gated on (a) the claude-code-tmux driver and (b) a
  * captured session id key.
+ *
+ * T-04836 Part B: extend the same safe explicit-id recreate resume to Codex
+ * (codex-cli-tmux). `codex resume <SESSION_ID>` resumes by id with no cwd
+ * picker — the picker is only the no-arg default. To guarantee the launch is
+ * the explicit-id form (and never a rollout-file/transcript-replay/picker
+ * resume), Codex is admitted ONLY when the captured continuation is provider
+ * 'openai', kind 'session', and the key is a syntactic UUID (the Codex hook
+ * `session_id`). Pi stays blocked. Claude keeps its existing behavior and, when
+ * a provider is present on the stored ref, requires 'anthropic'.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function decideInteractiveTmuxBrokerContinuation(options: {
   allowedBrokerDriver: InteractiveTmuxBrokerDriver
   sessionContinuation: HrcContinuationRef | undefined
 }): HrcContinuationRef | undefined {
-  if (options.allowedBrokerDriver !== 'claude-code-tmux') {
+  const continuation = options.sessionContinuation
+  if (continuation?.key === undefined) {
     return undefined
   }
-  if (options.sessionContinuation?.key === undefined) {
-    return undefined
+
+  if (options.allowedBrokerDriver === 'claude-code-tmux') {
+    // Claude: stored keys resume via `claude --resume <uuid>`. When a provider
+    // is recorded it must be anthropic; legacy rows without a provider stay
+    // compatible.
+    if (continuation.provider !== undefined && continuation.provider !== 'anthropic') {
+      return undefined
+    }
+    return continuation
   }
-  return options.sessionContinuation
+
+  if (options.allowedBrokerDriver === 'codex-cli-tmux') {
+    // Codex: only explicit session-UUID resume (`codex resume <uuid>`) is safe.
+    if (continuation.provider !== 'openai') {
+      return undefined
+    }
+    if (continuation.kind !== 'session') {
+      return undefined
+    }
+    if (!UUID_RE.test(continuation.key)) {
+      return undefined
+    }
+    return continuation
+  }
+
+  // pi-tui-tmux and any other driver remain blocked.
+  return undefined
 }
 
 export function shouldConsiderCodexCliTmuxBrokerDispatch(intent: HrcRuntimeIntent): boolean {

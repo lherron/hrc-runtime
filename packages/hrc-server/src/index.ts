@@ -539,6 +539,8 @@ class HrcServerInstance implements HrcServer {
       this.handleDropContinuation(request),
     [exactRouteKey('POST', '/v1/sessions/create-successor')]: (request) =>
       this.handleCreateSessionSuccessor(request),
+    [exactRouteKey('POST', '/v1/sessions/resume-continuation')]: (request) =>
+      this.handleResumeContinuation(request),
     [exactRouteKey('POST', '/v1/sessions/archive-abandoned')]: (request) =>
       this.handleArchiveAbandonedSessions(request),
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
