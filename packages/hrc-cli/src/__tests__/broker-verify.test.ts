@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import type { CaptureVerificationReport, VerificationCandidate } from 'hrc-capture-verifier'
+import type {
+  CaptureVerificationReport,
+  CaptureVerificationStore,
+  InvocationCaptureSnapshot,
+  VerificationCandidate,
+} from 'hrc-capture-verifier'
+import { CAPTURE_VERIFIER_SCHEMA } from 'hrc-capture-verifier'
 
+import { cmdBrokerVerifyRun } from '../broker-verify/commands.js'
 import { renderCandidatesHuman, renderReportHuman } from '../broker-verify/report.js'
 
 describe('broker verify CLI rendering', () => {
@@ -136,6 +147,152 @@ describe('broker verify CLI rendering', () => {
     expect(renderReportHuman(report)).toContain('raw events: matched=1/1 missing=0 mismatched=0')
     expect(renderReportHuman(report)).toContain(
       'No broker capture or projection integrity issues found.'
+    )
+  })
+})
+
+describe('cmdBrokerVerifyRun auto-resolution (T-05375)', () => {
+  const cleanups: Array<() => Promise<void>> = []
+
+  afterEach(async () => {
+    while (cleanups.length > 0) {
+      await cleanups.pop()?.()
+    }
+  })
+
+  async function writeStoredTranscript(): Promise<{ path: string; storedHash: string }> {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-cli-broker-verify-'))
+    cleanups.push(() => rm(dir, { recursive: true, force: true }))
+    const path = join(dir, 'provider-transcript.jsonl')
+    const content = `${JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'auto resolve me' }],
+      },
+    })}\n`
+    await writeFile(path, content, 'utf8')
+    const storedHash = `sha256:${createHash('sha256').update(content).digest('hex')}`
+    return { path, storedHash }
+  }
+
+  function storeWithStoredArtifact(
+    transcriptPath: string,
+    storedHash: string
+  ): {
+    store: CaptureVerificationStore
+    close(): void
+  } {
+    const invocationId = 'inv_t05375_cli'
+    const operationId = 'op_t05375_cli'
+    const snapshot: InvocationCaptureSnapshot = {
+      schema: CAPTURE_VERIFIER_SCHEMA,
+      invocation: {
+        invocationId,
+        operationId,
+        runtimeId: 'rt_t05375_cli',
+        runId: 'run_t05375_cli',
+        brokerDriver: 'codex-app-server',
+        brokerProtocol: 'harness-broker/0.2',
+        state: 'turn_active',
+        currentHarnessGeneration: 1,
+        currentTurnAttempt: 1,
+        createdAt: '2026-06-30T00:00:00.000Z',
+        updatedAt: '2026-06-30T00:00:00.000Z',
+      },
+      brokerEvents: [
+        {
+          invocationId,
+          seq: 1,
+          time: '2026-06-30T00:00:01.000Z',
+          type: 'assistant.message.completed',
+          runId: 'run_t05375_cli',
+          runtimeId: 'rt_t05375_cli',
+          harnessGeneration: 1,
+          turnAttempt: 1,
+          payload: { content: 'auto resolve me' },
+          payloadJsonText: JSON.stringify({ content: 'auto resolve me' }),
+          hrcEventSeq: 11,
+          projectionStatus: 'applied',
+          createdAt: '2026-06-30T00:00:01.000Z',
+        },
+      ],
+      rawMirrors: {
+        11: {
+          seq: 11,
+          source: 'broker',
+          eventKind: 'broker.assistant.message.completed',
+          eventJson: {
+            invocationId,
+            seq: 1,
+            type: 'assistant.message.completed',
+            time: '2026-06-30T00:00:01.000Z',
+            payload: { content: 'auto resolve me' },
+          },
+          eventJsonText: '{}',
+        },
+      },
+      lifecycleProjections: {},
+      // The durable provider-transcript artifact HRC persisted for this
+      // operation; auto-resolution must pick THIS path when --jsonl is omitted.
+      transcriptArtifact: {
+        artifactId: `provider-transcript:${invocationId}:1`,
+        operationId,
+        path: transcriptPath,
+        storedHash,
+        hashStatus: 'unchecked',
+        createdAt: '2026-06-30T00:00:01.000Z',
+        artifactJson: JSON.stringify({
+          schema: 'hrc.provider-transcript-artifact/v1',
+          sourceSchema: 'harness-broker.provider-transcript.codex-jsonrpc-notification-jsonl/v1',
+        }),
+      },
+    }
+    return {
+      store: {
+        async listVerificationCandidates() {
+          return []
+        },
+        async loadInvocationCapture() {
+          return snapshot
+        },
+      },
+      close() {},
+    }
+  }
+
+  it('auto-resolves the stored transcript with no --jsonl and matches the explicit --jsonl status', async () => {
+    const { path, storedHash } = await writeStoredTranscript()
+
+    let autoReport: CaptureVerificationReport | undefined
+    await cmdBrokerVerifyRun(['--invocation', 'inv_t05375_cli', '--json'], {
+      openStore: () => storeWithStoredArtifact(path, storedHash),
+      emit: (report) => {
+        autoReport = report
+      },
+    })
+
+    let explicitReport: CaptureVerificationReport | undefined
+    await cmdBrokerVerifyRun(['--invocation', 'inv_t05375_cli', '--json', '--jsonl', path], {
+      openStore: () => storeWithStoredArtifact(path, storedHash),
+      emit: (report) => {
+        explicitReport = report
+      },
+    })
+
+    expect(autoReport).toBeDefined()
+    expect(explicitReport).toBeDefined()
+    // No --jsonl: the command auto-resolved the durable artifact path.
+    expect(autoReport?.transcriptPath).toBe(path)
+    // Explicit --jsonl: same transcript path.
+    expect(explicitReport?.transcriptPath).toBe(path)
+    // Paired result: same verification status and ok regardless of how the
+    // transcript was supplied.
+    expect(autoReport?.status).toBe(explicitReport?.status)
+    expect(autoReport?.ok).toBe(explicitReport?.ok)
+    expect(autoReport?.providerMatches.map((m) => m.status)).toEqual(
+      explicitReport?.providerMatches.map((m) => m.status)
     )
   })
 })

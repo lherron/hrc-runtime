@@ -157,6 +157,9 @@ describe('emitted HRC events', () => {
       })
       expect(JSON.parse(artifacts[0]!.artifactJson ?? '{}')).toMatchObject({
         schema: 'hrc.provider-transcript-artifact/v1',
+        // T-05375: carries the ASP producer CONTENT schema distinctly from the
+        // HRC-owned metadata schema above.
+        sourceSchema: 'harness-broker.provider-transcript.codex-jsonrpc-notification-jsonl/v1',
         invocationId: INVOCATION_ID,
         runtimeId: RUNTIME_ID,
         runId: RUN_ID,

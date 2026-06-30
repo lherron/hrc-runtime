@@ -610,6 +610,14 @@ export const HRC_ARTIFACT_REPORTED_EVENT = 'artifact.reported'
 
 export type HrcProviderTranscriptArtifactMetadata = {
   schema: typeof HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA
+  /**
+   * The ASP producer transcript CONTENT schema (source of truth:
+   * `spaces-harness-broker-protocol`'s `PROVIDER_TRANSCRIPT_SCHEMA`). Carried
+   * alongside — and kept distinct from — the HRC-owned `schema` metadata
+   * identifier. Optional so existing rows persisted before this field tolerate
+   * absence.
+   */
+  sourceSchema?: string | undefined
   invocationId: string
   runtimeId: string
   runId?: string | undefined

@@ -46,6 +46,7 @@ import {
   HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
+import { PROVIDER_TRANSCRIPT_SCHEMA } from 'spaces-harness-broker-protocol'
 import type {
   AssistantMessageCompletedPayload,
   AssistantMessageDeltaPayload,
@@ -283,6 +284,7 @@ export class BrokerEventMapper {
       payload.harnessGeneration ?? envelope.harnessGeneration ?? runtime.generation
     const metadata: HrcProviderTranscriptArtifactMetadata = {
       schema: HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA,
+      sourceSchema: PROVIDER_TRANSCRIPT_SCHEMA,
       invocationId: String(envelope.invocationId),
       runtimeId: runtime.runtimeId,
       ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
