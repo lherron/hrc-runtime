@@ -225,6 +225,7 @@ export type TargetListFilter = {
   projectId?: string | undefined
   lane?: string | undefined
   discover?: boolean | undefined
+  includeDormant?: boolean | undefined
 }
 
 export type WatchMessagesOptions = {

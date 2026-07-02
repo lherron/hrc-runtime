@@ -1,4 +1,5 @@
 import type { Command } from 'commander'
+import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
@@ -21,6 +22,20 @@ import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-s
 
 export function registerTopLevelCommands(program: Command): void {
   // -- top-level commands (commander, Phase 6 T2b) -----------------------------
+
+  program
+    .command('top')
+    .description('open the HRC session navigator')
+    .option('--project <id>', 'override project scope')
+    .option('--all-projects', 'show targets across all projects')
+    .option('--lane <lane>', 'filter by lane')
+    .action(async (opts: { project?: string; allProjects?: boolean; lane?: string }) => {
+      await runHrcTop({
+        projectId: opts.project ?? process.env['ASP_PROJECT'],
+        allProjects: opts.allProjects,
+        lane: opts.lane,
+      })
+    })
 
   program
     .command('start')

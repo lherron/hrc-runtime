@@ -49,6 +49,7 @@
         "hrc-sdk": "*",
         "hrc-server": "*",
         "hrc-store-sqlite": "*",
+        "hrc-top": "*",
         "spaces-config": "0.1.1-dev.20260630094704",
         "spaces-execution": "0.1.1-dev.20260630094704",
       },
@@ -140,6 +141,19 @@
       "version": "0.1.0",
       "dependencies": {
         "hrc-core": "*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/hrc-top": {
+      "name": "hrc-top",
+      "version": "0.1.0",
+      "dependencies": {
+        "hrc-core": "*",
+        "hrc-sdk": "*",
+        "spaces-config": "0.1.1-dev.20260630094704",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -512,6 +526,8 @@
     "hrc-server": ["hrc-server@workspace:packages/hrc-server"],
 
     "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
+
+    "hrc-top": ["hrc-top@workspace:packages/hrc-top"],
 
     "hrcchat-cli": ["hrcchat-cli@workspace:packages/hrcchat-cli"],
 

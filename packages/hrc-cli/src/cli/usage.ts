@@ -209,6 +209,7 @@ Commands:
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
+  top [--project <id>] [--all-projects]  Open the HRC session navigator
   run sweep-zombies [--older-than <duration>] [--dry-run|--yes] [--json]
   run reconcile-active [--older-than <duration>] [--dry-run|--yes] [--json]
   turn <target> [prompt]              Alias for hrcchat turn; all flags forwarded verbatim

@@ -928,6 +928,14 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stdout).toContain('--dry-run')
   })
 
+  it('hrc top --help exits 0 with Usage and project scope options', async () => {
+    const result = await runCli(['top', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toMatch(/Usage:/)
+    expect(result.stdout).toContain('--project')
+    expect(result.stdout).toContain('--all-projects')
+  })
+
   it('hrc capture --help exits 0 with Usage', async () => {
     const result = await runCli(['capture', '--help'])
     expect(result.exitCode).toBe(0)

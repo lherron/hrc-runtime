@@ -68,6 +68,7 @@ export type HrcTargetRuntimeView = {
    */
   brokerEndpoint?: 'unix-jsonrpc-ndjson' | 'stdio-jsonrpc-ndjson' | undefined
   presentation?: 'none' | 'tmux-tui' | undefined
+  operatorAttachable?: boolean | undefined
 }
 
 export type HrcTargetView = {
@@ -156,6 +157,7 @@ export type ListTargetsRequest = {
   projectId?: string | undefined
   lane?: string | undefined
   discover?: boolean | undefined
+  includeDormant?: boolean | undefined
 }
 
 // GET /v1/targets/by-session-ref

@@ -1,0 +1,34 @@
+{
+  "name": "hrc-top",
+  "version": "0.1.0",
+  "description": "HRC session navigator TUI foundation",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepack": "bun ../../scripts/strip-bun-exports.ts",
+    "postpack": "git checkout HEAD -- package.json"
+  },
+  "dependencies": {
+    "hrc-core": "*",
+    "hrc-sdk": "*",
+    "spaces-config": "0.1.1-dev.20260630094704"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

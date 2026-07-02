@@ -205,6 +205,7 @@ export function toTargetRuntimeView(
     ...(headlessRoute !== undefined ? { headlessRoute } : {}),
     ...(brokerEndpoint !== undefined ? { brokerEndpoint } : {}),
     ...(presentation !== undefined ? { presentation } : {}),
+    operatorAttachable,
   }
 }
 

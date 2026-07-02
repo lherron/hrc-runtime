@@ -101,8 +101,8 @@ function seedArchivedSession(opts: SeedArchivedOpts): void {
   }
 }
 
-async function getTargetList(): Promise<HrcTargetView[]> {
-  const res = await fixture.fetchSocket('/v1/targets')
+async function getTargetList(query = ''): Promise<HrcTargetView[]> {
+  const res = await fixture.fetchSocket(`/v1/targets${query}`)
   expect(res.status).toBe(200)
   return (await res.json()) as HrcTargetView[]
 }
@@ -160,6 +160,21 @@ describe('[RED 2a] GET /v1/targets list must NOT include archived sessions', () 
     const found = targets.find((t) => t.scopeRef === scopeRef)
     // RED: currently found because continuity.activeHostSessionId === hostSessionId
     expect(found).toBeUndefined()
+  })
+
+  it('includeDormant opt-in returns archived continuation rows as projected dormant targets', async () => {
+    const targets = await getTargetList('?includeDormant=true')
+    const found = targets.find((t) => t.sessionRef === sessionRef)
+
+    expect(found).toBeDefined()
+    expect(found?.state).toBe('dormant')
+    expect(found?.activeHostSessionId).toBe(hostSessionId)
+    expect(found?.continuation?.key).toBe('sess-key-t04831-g2')
+  })
+
+  it('includeDormant can still be scoped by projectId', async () => {
+    const targets = await getTargetList('?includeDormant=true&projectId=other-project')
+    expect(targets.find((t) => t.sessionRef === sessionRef)).toBeUndefined()
   })
 })
 

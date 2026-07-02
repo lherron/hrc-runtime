@@ -63,10 +63,21 @@ import {
 export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL): Response {
   const projectId = normalizeOptionalQuery(url.searchParams.get('projectId'))
   const laneRef = normalizeTargetLane(normalizeOptionalQuery(url.searchParams.get('lane')))
+  const includeDormant = url.searchParams.get('includeDormant') === 'true'
   const targets = new Map<string, HrcTargetView>()
 
   for (const session of this.listAllSessions()) {
-    if (!isActiveTargetSession(this.db, session)) {
+    if (!includeDormant && !isActiveTargetSession(this.db, session)) {
+      continue
+    }
+    if (includeDormant && session.status === 'archived' && !session.continuation?.key) {
+      continue
+    }
+    if (
+      includeDormant &&
+      session.status !== 'archived' &&
+      !isActiveTargetSession(this.db, session)
+    ) {
       continue
     }
     if (projectId && extractProjectId(session.scopeRef) !== projectId) {

@@ -26,6 +26,7 @@
     "hrc-sdk": "*",
     "hrc-server": "*",
     "hrc-store-sqlite": "*",
+    "hrc-top": "*",
     "spaces-config": "0.1.1-dev.20260630094704",
     "spaces-execution": "0.1.1-dev.20260630094704"
   },

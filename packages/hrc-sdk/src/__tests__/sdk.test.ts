@@ -377,7 +377,7 @@ describe('runtime lifecycle client methods', () => {
     expect(capturedQueries).toEqual(['', '', 'includeArchived=true'])
   })
 
-  it('listTargets preserves discover as a true-or-absent query flag', async () => {
+  it('listTargets preserves discover/includeDormant as true-or-absent query flags', async () => {
     const capturedQueries: string[] = []
 
     stubServer = Bun.serve({
@@ -394,11 +394,13 @@ describe('runtime lifecycle client methods', () => {
     await client.listTargets({ projectId: 'project-a', lane: 'main' })
     await client.listTargets({ projectId: 'project-a', lane: 'main', discover: false })
     await client.listTargets({ projectId: 'project-a', lane: 'main', discover: true })
+    await client.listTargets({ projectId: 'project-a', lane: 'main', includeDormant: true })
 
     expect(capturedQueries).toEqual([
       'projectId=project-a&lane=main',
       'projectId=project-a&lane=main',
       'projectId=project-a&lane=main&discover=true',
+      'projectId=project-a&lane=main&includeDormant=true',
     ])
   })
 })

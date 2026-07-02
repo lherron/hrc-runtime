@@ -538,6 +538,7 @@ export class HrcClient {
       projectId: emptyToUndefined(filter?.projectId),
       lane: emptyToUndefined(filter?.lane),
       discover: boolField(filter?.discover),
+      includeDormant: boolField(filter?.includeDormant),
     })
     return this.getJson<HrcTargetView[]>(path)
   }
