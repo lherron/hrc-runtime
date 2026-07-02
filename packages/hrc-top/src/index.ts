@@ -29,8 +29,14 @@ export type HrcTopOptions = HrcTopScope & {
 }
 
 export { buildReadModel, loadReadModel }
+export { dispatchHrcTopActionKey, executeHrcTopCommandLine } from './commands.js'
+export type { HrcTopActionExecutor, HrcTopActionResult } from './commands.js'
+export { createHrcTopActionExecutor } from './executor.js'
+export type { HrcTopExecutorOptions } from './executor.js'
 export { applyFilter } from './filter.js'
 export type { HrcTopFilterRow, HrcTopFilterResult } from './filter.js'
+export { interpretHrcTopKey } from './keymap.js'
+export type { HrcTopKeyIntent, HrcTopKeyPrefix } from './keymap.js'
 export { selectFilteredVisibleRows, selectVisibleTriageRowIds } from './render.js'
 export {
   groupTriageRows,
@@ -63,6 +69,7 @@ export type {
   HrcTopLastActivity,
   HrcTopReadModel,
   HrcTopRow,
+  HrcTopScope,
 } from './read-model.js'
 
 export class HrcTopTerminalInputDecoder {
@@ -528,7 +535,8 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
 
   const selectedRow = (): HrcTopRow | undefined => {
     const selectedId =
-      navState.selectedRowId ?? visibleRowsFor(model, filterText, showAll)[navState.selectedIndex]?.id
+      navState.selectedRowId ??
+      visibleRowsFor(model, filterText, showAll)[navState.selectedIndex]?.id
     if (!selectedId) return undefined
     return model.rows.find((row) => row.id === selectedId)
   }

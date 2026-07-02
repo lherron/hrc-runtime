@@ -1,4 +1,5 @@
 import type { Command } from 'commander'
+import { runHrcPiTop } from 'hrc-pi-top'
 import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
@@ -29,13 +30,17 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--project <id>', 'override project scope')
     .option('--all-projects', 'show targets across all projects')
     .option('--lane <lane>', 'filter by lane')
-    .action(async (opts: { project?: string; allProjects?: boolean; lane?: string }) => {
-      await runHrcTop({
-        projectId: opts.project ?? process.env['ASP_PROJECT'],
-        allProjects: opts.allProjects,
-        lane: opts.lane,
-      })
-    })
+    .option('--pi', 'use the Pi TUI replacement candidate')
+    .action(
+      async (opts: { project?: string; allProjects?: boolean; lane?: string; pi?: boolean }) => {
+        const runTop = opts.pi || process.env['HRC_TOP_IMPL'] === 'pi' ? runHrcPiTop : runHrcTop
+        await runTop({
+          projectId: opts.project ?? process.env['ASP_PROJECT'],
+          allProjects: opts.allProjects,
+          lane: opts.lane,
+        })
+      }
+    )
 
   program
     .command('start')

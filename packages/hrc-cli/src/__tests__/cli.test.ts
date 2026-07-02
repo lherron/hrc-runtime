@@ -934,6 +934,7 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--project')
     expect(result.stdout).toContain('--all-projects')
+    expect(result.stdout).toContain('--pi')
   })
 
   it('hrc capture --help exits 0 with Usage', async () => {

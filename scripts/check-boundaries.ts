@@ -36,6 +36,8 @@ const hrcPackages = [
   'hrc-capture-verifier',
   'hrc-server',
   'hrc-sdk',
+  'hrc-top',
+  'hrc-pi-top',
   'hrc-cli',
   'hrcchat-cli',
   'hrc-frame-render',

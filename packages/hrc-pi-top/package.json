@@ -1,7 +1,7 @@
 {
-  "name": "hrc-sdk",
+  "name": "hrc-pi-top",
   "version": "0.1.0",
-  "description": "Typed client for the HRC daemon over Unix socket",
+  "description": "Pi TUI replacement candidate for the HRC session navigator",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,12 +23,13 @@
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
+    "@earendil-works/pi-tui": "0.80.3",
     "hrc-core": "*",
-    "spaces-config": "0.1.1-dev.20260702134010"
+    "hrc-sdk": "*",
+    "hrc-top": "*"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "hrc-server": "*",
     "typescript": "^5.8.3"
   }
 }
