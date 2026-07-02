@@ -14,6 +14,11 @@ import type { HrcTopReadModel, HrcTopRow, HrcTopScope } from './read-model.js'
 import { renderTopScreen, selectFilteredVisibleRows } from './render.js'
 
 type HrcTopClient = Pick<HrcClient, 'listTargets'> & Partial<Pick<HrcClient, 'attachRuntime'>>
+type HrcTopTerminalInputState = 'normal' | 'escape' | 'csi' | 'ss3' | 'osc' | 'oscEscape'
+type HrcTopTerminalInput = Pick<NodeJS.ReadStream, 'read' | 'resume'> & {
+  setRawMode?: ((mode: boolean) => NodeJS.ReadStream) | undefined
+}
+type HrcTopTerminalOutput = Pick<NodeJS.WritableStream, 'write'>
 
 export type HrcTopOptions = HrcTopScope & {
   client?: HrcTopClient | undefined
@@ -39,6 +44,130 @@ export type {
   HrcTopReadModel,
   HrcTopRow,
 } from './read-model.js'
+
+export class HrcTopTerminalInputDecoder {
+  private state: HrcTopTerminalInputState = 'normal'
+  private csiBytes: number[] = []
+  private legacyMouseBytesRemaining = 0
+
+  feed(chunk: Buffer | string): string[] {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+    const keys: string[] = []
+
+    for (const byte of bytes) {
+      if (this.legacyMouseBytesRemaining > 0) {
+        this.legacyMouseBytesRemaining -= 1
+        continue
+      }
+
+      if (this.state === 'normal') {
+        if (byte === 0x1b) {
+          this.state = 'escape'
+          continue
+        }
+        keys.push(String.fromCharCode(byte))
+        continue
+      }
+
+      if (this.state === 'escape') {
+        if (byte === 0x5b) {
+          this.state = 'csi'
+          this.csiBytes = []
+          continue
+        }
+        if (byte === 0x4f) {
+          this.state = 'ss3'
+          continue
+        }
+        if (byte === 0x5d) {
+          this.state = 'osc'
+          continue
+        }
+        keys.push('\u001b', String.fromCharCode(byte))
+        this.reset()
+        continue
+      }
+
+      if (this.state === 'csi') {
+        this.csiBytes.push(byte)
+        if (isAnsiFinalByte(byte)) {
+          const isLegacyMouse = byte === 0x4d && this.csiBytes.length === 1
+          this.reset()
+          if (isLegacyMouse) this.legacyMouseBytesRemaining = 3
+        }
+        continue
+      }
+
+      if (this.state === 'ss3') {
+        this.reset()
+        continue
+      }
+
+      if (this.state === 'osc') {
+        if (byte === 0x07) {
+          this.reset()
+          continue
+        }
+        if (byte === 0x1b) {
+          this.state = 'oscEscape'
+          continue
+        }
+        continue
+      }
+
+      if (this.state === 'oscEscape') {
+        if (byte === 0x5c) {
+          this.reset()
+          continue
+        }
+        this.state = byte === 0x1b ? 'oscEscape' : 'osc'
+      }
+    }
+
+    return keys
+  }
+
+  flushPendingEscape(): string[] {
+    if (this.state !== 'escape') return []
+    this.reset()
+    return ['\u001b']
+  }
+
+  reset(): void {
+    this.state = 'normal'
+    this.csiBytes = []
+    this.legacyMouseBytesRemaining = 0
+  }
+}
+
+export function drainHrcTopPendingInput(
+  input: Pick<NodeJS.ReadStream, 'read'>,
+  decoder: HrcTopTerminalInputDecoder
+): number {
+  let drained = 0
+  while (true) {
+    const chunk = input.read()
+    if (chunk === null || chunk === undefined) break
+    drained += 1
+    decoder.feed(Buffer.isBuffer(chunk) ? chunk : String(chunk))
+  }
+  decoder.reset()
+  return drained
+}
+
+export function restoreHrcTopTerminalAfterSpawn(input: {
+  input: HrcTopTerminalInput
+  output: HrcTopTerminalOutput
+  decoder: HrcTopTerminalInputDecoder
+  redraw: () => void
+}): number {
+  input.input.setRawMode?.(true)
+  const drained = drainHrcTopPendingInput(input.input, input.decoder)
+  input.input.resume()
+  input.output.write('\u001b[?25l')
+  input.redraw()
+  return drained
+}
 
 export async function runHrcTop(options: HrcTopOptions = {}): Promise<void> {
   const client = options.client ?? new HrcClient(options.socketPath ?? discoverSocket())
@@ -88,6 +217,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   let notice: string | undefined
   let pendingRunConfirmationRowId: string | undefined
   let keyPrefix: HrcTopKeyPrefix
+  const terminalInput = new HrcTopTerminalInputDecoder()
   let closed = false
   let suspendedForSpawn = false
   let resolveClosed: (() => void) | undefined
@@ -119,15 +249,20 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   const executor = createHrcTopActionExecutor(requireActionClient(client), {
     beforeSpawn: () => {
       suspendedForSpawn = true
+      terminalInput.reset()
+      ttyInput.pause()
       ttyInput.setRawMode?.(false)
       output.write('\u001b[?25h\n')
     },
     afterSpawn: () => {
       if (closed) return
-      ttyInput.setRawMode?.(true)
-      ttyInput.resume()
-      output.write('\u001b[?25l')
       suspendedForSpawn = false
+      restoreHrcTopTerminalAfterSpawn({
+        input: ttyInput,
+        output,
+        decoder: terminalInput,
+        redraw,
+      })
     },
   })
 
@@ -368,7 +503,17 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   }
 
   const onData = (chunk: Buffer) => {
-    for (const inputChar of chunk.toString('utf8')) {
+    if (suspendedForSpawn) {
+      terminalInput.reset()
+      return
+    }
+
+    let inputChars = terminalInput.feed(chunk)
+    if (inputChars.length === 0 && (commandMode || filterMode)) {
+      inputChars = terminalInput.flushPendingEscape()
+    }
+
+    for (const inputChar of inputChars) {
       if (commandMode) {
         handleCommandKey(inputChar)
         continue
@@ -437,6 +582,10 @@ function viewportHeight(output: NodeJS.WritableStream): number {
 
 function terminalWidth(output: NodeJS.WritableStream): number {
   return Math.max(60, (output as NodeJS.WriteStream).columns ?? 100)
+}
+
+function isAnsiFinalByte(byte: number): boolean {
+  return byte >= 0x40 && byte <= 0x7e
 }
 
 function requireActionClient(client: HrcTopClient): Pick<HrcClient, 'attachRuntime'> {
