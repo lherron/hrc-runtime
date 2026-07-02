@@ -1,10 +1,11 @@
-# hrc-top TUI Proposal
+# hrc-top Session Navigator Proposal
 
 ## Summary
 
-`hrc top` is a local operator TUI for navigating HRC sessions. It is a session
-switcher, not a status dashboard. Its primary job is to answer one question
-quickly: where should the operator go next?
+`hrc top` launches the HRC session navigator: a local operator TUI for moving
+between HRC sessions. It is a session switcher, not a status dashboard or an
+`htop` clone. Its primary job is to answer one question quickly: where should
+the operator go next?
 
 The launch point is the `hrc` CLI:
 
@@ -28,6 +29,10 @@ Daedalus review note: Daedalus recommended `hrc nav` as the command name, but
 Lance specified `hrc top`. This spec keeps `hrc top` as the command and
 `packages/hrc-top` as the package boundary.
 
+Naming note: use `hrc-top`, not `hrc-htop`. The internal product language should
+be "session navigator" so the implementation stays centered on navigation and
+explicit session actions rather than process/resource monitoring.
+
 ## Goals
 
 - List HRC sessions in a compact terminal UI.
@@ -46,6 +51,8 @@ Lance specified `hrc top`. This spec keeps `hrc top` as the command and
 - Do not model authorization.
 - Do not add provenance hashes or audit-chain mechanics.
 - Do not make a full dashboard with every field visible at once.
+- Do not mimic `htop` resource-monitor behavior; process metrics are not the
+  product center.
 
 ## Source Model
 
