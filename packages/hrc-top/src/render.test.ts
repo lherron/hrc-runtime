@@ -53,6 +53,55 @@ describe('hrc-top renderer', () => {
     )
     const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })
 
+    // showAll reveals the idle tail so both rows render (color off for legible
+    // snapshot assertions).
+    const output = renderTopScreen({
+      model,
+      navState,
+      viewportHeight: 16,
+      width: 90,
+      filterText: '',
+      showAll: true,
+    })
+
+    // Triage strip replaces the "healthy N live" header.
+    expect(output).toContain('HRC TOP')
+    expect(output).toContain('need you')
+    expect(output).toContain('resumable')
+    expect(output).toContain('idle')
+    // Urgency-grouped sections.
+    expect(output).toContain('RESUMABLE')
+    expect(output).toContain('IDLE')
+    // Rows: state on the state column, action on the action column.
+    expect(output).toContain('cody@hrc-runtime:T-05405')
+    expect(output).toContain('clod@agent-spaces:primary')
+    expect(output).toContain('ready')
+    expect(output).toContain('dormant')
+    expect(output).toContain('attach')
+    expect(output).toContain('resume')
+    // Footer + key hints.
+    expect(output).toContain('filter: none')
+    expect(output).toContain('j/k move')
+    expect(output).toContain('q quit')
+  })
+
+  it('collapses the idle tail in the default view', () => {
+    const model = buildReadModel(
+      [
+        target(),
+        target({
+          sessionRef: 'agent:clod:project:agent-spaces:task:primary/lane:main',
+          scopeRef: 'agent:clod:project:agent-spaces:task:primary',
+          state: 'dormant',
+          runtime: undefined,
+          continuation: { provider: 'openai', key: 'conv-render-2' },
+        }),
+      ],
+      new Date('2026-07-02T12:05:00.000Z')
+    )
+    const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })
+
+    // Default view (no showAll): the ready row (cody) is idle and collapses.
     const output = renderTopScreen({
       model,
       navState,
@@ -61,14 +110,36 @@ describe('hrc-top renderer', () => {
       filterText: '',
     })
 
-    expect(output).toContain('HRC TOP')
-    expect(output).toContain('healthy  1 live  1 dormant')
-    expect(output).toContain('> cody@hrc-runtime:T-05405')
-    expect(output).toContain('ready')
-    expect(output).toContain('attach')
-    expect(output).toContain('primary: attach rt-render-1')
-    expect(output).toContain('filter: none')
-    expect(output).toContain('keys: j/k move')
+    expect(output).toContain('1 idle · press . to show')
+    expect(output).not.toContain('cody@hrc-runtime:T-05405')
+    // The resumable row still glows out of the collapsed sea.
+    expect(output).toContain('clod@agent-spaces:primary')
+  })
+
+  it('does not fabricate a last-activity value when the read-model lacks one', () => {
+    const model = buildReadModel(
+      [
+        target({
+          sessionRef: 'agent:clod:project:agent-spaces:task:primary/lane:main',
+          scopeRef: 'agent:clod:project:agent-spaces:task:primary',
+          state: 'dormant',
+          runtime: undefined,
+          continuation: { provider: 'openai', key: 'conv-render-3' },
+        }),
+      ],
+      new Date('2026-07-02T12:05:00.000Z')
+    )
+    const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })
+    const output = renderTopScreen({
+      model,
+      navState,
+      viewportHeight: 16,
+      width: 90,
+      filterText: '',
+    })
+
+    // No runtime.lastActivityAt → last renders BLANK, never "unknown".
+    expect(output).not.toContain('unknown')
   })
 
   it('projects focus detail without executing commands', () => {
@@ -80,6 +151,7 @@ describe('hrc-top renderer', () => {
       viewportHeight: 16,
       width: 90,
       focusMode: true,
+      showAll: true,
     })
 
     expect(screen.focus).toMatchObject({

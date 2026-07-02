@@ -31,6 +31,16 @@ export type HrcTopFocusPanelModel = {
   lane: string
   hostSessionId?: string | undefined
   latestRuntimeId?: string | undefined
+  /** Selected runtime transport (sdk/tmux/headless/ghostty), when a runtime exists. */
+  transport?: string | undefined
+  /** Whether the operator can attach a TUI to the selected runtime. */
+  operatorAttachable: boolean
+  /** Continuation provider (e.g. openai/anthropic), when one is recorded. */
+  continuationProvider?: string | undefined
+  /** Continuation key, when captured. Absent when the provider recorded none. */
+  continuationKey?: string | undefined
+  /** True when a captured, non-invalidated continuation is available. */
+  continuationCaptured: boolean
   primaryAction: HrcTopPrimaryAction
   disabledActions: readonly { kind: string; reason: string }[]
   latestEventSummary: string
@@ -53,6 +63,11 @@ export function buildFocusPanelModel(input: HrcTopFocusInput): HrcTopFocusPanelM
     lane: input.target.laneRef,
     hostSessionId: input.target.activeHostSessionId,
     latestRuntimeId: input.target.runtime?.runtimeId,
+    transport: input.target.runtime?.transport,
+    operatorAttachable: input.operatorAttachable,
+    continuationProvider: input.target.continuation?.provider,
+    continuationKey: input.target.continuation?.key,
+    continuationCaptured: input.hasValidContinuation,
     primaryAction,
     disabledActions: input.disabledActions ?? [],
     latestEventSummary: input.latestEventSummary ?? 'No recent event summary is available.',

@@ -10,6 +10,7 @@ export type HrcTopKeyIntent =
   | { type: 'quit' }
   | { type: 'help' }
   | { type: 'filter' }
+  | { type: 'toggleShowAll' }
   | { type: 'searchNext' }
   | { type: 'searchPrev' }
   | { type: 'noop'; reason: string }
@@ -55,6 +56,8 @@ export function interpretHrcTopKey(input: string, prefix?: HrcTopKeyPrefix): Hrc
       return { intent: { type: 'key', key: 'ctrl-b' } }
     case '/':
       return { intent: { type: 'filter' } }
+    case '.':
+      return { intent: { type: 'toggleShowAll' } }
     case 'n':
       return { intent: { type: 'searchNext' } }
     case 'N':

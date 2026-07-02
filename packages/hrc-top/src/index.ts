@@ -11,7 +11,7 @@ import { createNavState, reduceNavState } from './nav-state.js'
 import type { HrcTopNavState } from './nav-state.js'
 import { buildReadModel, loadReadModel } from './read-model.js'
 import type { HrcTopReadModel, HrcTopRow, HrcTopScope } from './read-model.js'
-import { renderTopScreen, selectFilteredVisibleRows } from './render.js'
+import { renderTopScreen, selectVisibleTriageRowIds } from './render.js'
 
 type HrcTopClient = Pick<HrcClient, 'listTargets'> & Partial<Pick<HrcClient, 'attachRuntime'>>
 type HrcTopTerminalInputState = 'normal' | 'escape' | 'csi' | 'ss3' | 'osc' | 'oscEscape'
@@ -31,13 +31,33 @@ export type HrcTopOptions = HrcTopScope & {
 export { buildReadModel, loadReadModel }
 export { applyFilter } from './filter.js'
 export type { HrcTopFilterRow, HrcTopFilterResult } from './filter.js'
-export { selectFilteredVisibleRows } from './render.js'
+export { selectFilteredVisibleRows, selectVisibleTriageRowIds } from './render.js'
+export {
+  groupTriageRows,
+  triageBucketFor,
+  triageCounts,
+  isActionableBucket,
+  TRIAGE_BUCKET_ORDER,
+} from './triage.js'
+export type {
+  HrcTopTriageBucket,
+  HrcTopTriageGroup,
+  HrcTopTriageRow,
+  HrcTopTriageCounts,
+} from './triage.js'
+export { PALETTE, createPainter, stateColorHex } from './theme.js'
+export type { Painter, StyleSpec } from './theme.js'
 export { buildFocusPanelModel } from './focus.js'
 export { createNavState, reduceNavState } from './nav-state.js'
 export { buildTopScreenModel, renderTopScreen, renderTopScreenModel } from './render.js'
 export type { HrcTopFocusInput, HrcTopFocusPanelModel } from './focus.js'
 export type { HrcTopNavState, HrcTopVisibleRow } from './nav-state.js'
-export type { HrcTopRenderInput, HrcTopScreenModel } from './render.js'
+export type {
+  HrcTopRenderInput,
+  HrcTopScreenModel,
+  HrcTopRenderedRow,
+  HrcTopTriageSection,
+} from './render.js'
 export type {
   HrcTopHeaderCounts,
   HrcTopLastActivity,
@@ -174,13 +194,15 @@ export async function runHrcTop(options: HrcTopOptions = {}): Promise<void> {
   const output = options.output ?? process.stdout
   const input = options.input ?? process.stdin
   const model = await loadReadModel(client, options)
+  const interactive = isInteractive(input, output)
   const navState = createNavState({
-    visibleRows: visibleRowsFor(model),
+    visibleRows: visibleRowsFor(model, '', !interactive),
     viewportHeight: viewportHeight(output),
   })
 
-  if (!isInteractive(input, output)) {
-    output.write(render(model, navState, output))
+  if (!interactive) {
+    // Piped / non-TTY: dump the full list (no idle collapse), no ANSI color.
+    output.write(render(model, navState, output, { showAll: true, color: false }))
     return
   }
 
@@ -209,6 +231,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   let model = input.initialModel
   let navState = input.initialNavState
   let focusMode = false
+  let showAll = false
   let showHelp = false
   let filterText = ''
   let filterMode = false
@@ -236,12 +259,14 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     output.write(
       render(model, navState, output, {
         focusMode,
+        showAll,
         showHelp,
         notice,
         filterText,
         filterMode,
         commandText,
         commandMode,
+        color: true,
       })
     )
   }
@@ -271,7 +296,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
       navState,
       { type: 'refresh' },
       {
-        visibleRows: visibleRowsFor(model, filterText),
+        visibleRows: visibleRowsFor(model, filterText, showAll),
         viewportHeight: viewportHeight(output),
       }
     )
@@ -387,6 +412,12 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
       redraw()
       return
     }
+    if (intent.type === 'toggleShowAll') {
+      showAll = !showAll
+      recomputeNav()
+      redraw()
+      return
+    }
     if (intent.type === 'command') {
       commandMode = true
       commandText = ''
@@ -398,7 +429,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
       return
     }
     if (intent.type === 'searchNext' || intent.type === 'searchPrev') {
-      const filtered = visibleRowsFor(model, filterText)
+      const filtered = visibleRowsFor(model, filterText, showAll)
       const bodyHeight = Math.max(1, viewportHeight(output) - 8)
       if (filterText.trim().length === 0 || filtered.length <= bodyHeight) {
         notice = 'n/N search only moves when a filter narrows past the viewport'
@@ -415,7 +446,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     }
 
     navState = reduceNavState(navState, intent, {
-      visibleRows: visibleRowsFor(model, filterText),
+      visibleRows: visibleRowsFor(model, filterText, showAll),
       viewportHeight: viewportHeight(output),
     })
     redraw()
@@ -497,7 +528,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
 
   const selectedRow = (): HrcTopRow | undefined => {
     const selectedId =
-      navState.selectedRowId ?? visibleRowsFor(model, filterText)[navState.selectedIndex]?.id
+      navState.selectedRowId ?? visibleRowsFor(model, filterText, showAll)[navState.selectedIndex]?.id
     if (!selectedId) return undefined
     return model.rows.find((row) => row.id === selectedId)
   }
@@ -541,12 +572,14 @@ function render(
   output: NodeJS.WritableStream,
   options: {
     focusMode?: boolean | undefined
+    showAll?: boolean | undefined
     showHelp?: boolean | undefined
     notice?: string | undefined
     filterText?: string | undefined
     filterMode?: boolean | undefined
     commandText?: string | undefined
     commandMode?: boolean | undefined
+    color?: boolean | undefined
   } = {}
 ): string {
   return renderTopScreen({
@@ -559,13 +592,19 @@ function render(
     commandText: options.commandText,
     commandMode: options.commandMode,
     focusMode: options.focusMode,
+    showAll: options.showAll,
     showHelp: options.showHelp,
     notice: options.notice,
+    color: options.color,
   })
 }
 
-function visibleRowsFor(model: HrcTopReadModel, filterText = ''): { id: string }[] {
-  return selectFilteredVisibleRows(model, filterText)
+function visibleRowsFor(
+  model: HrcTopReadModel,
+  filterText = '',
+  showAll = false
+): { id: string }[] {
+  return selectVisibleTriageRowIds(model, { filterText, showAll })
 }
 
 function isInteractive(input: NodeJS.ReadStream, output: NodeJS.WritableStream): boolean {

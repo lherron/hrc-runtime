@@ -35,4 +35,8 @@ describe('hrc-top keymap', () => {
       expect(interpretHrcTopKey(key).intent).toEqual({ type: 'action', key })
     }
   })
+
+  it('maps . to the show-all (faint idle tail) toggle', () => {
+    expect(interpretHrcTopKey('.').intent).toEqual({ type: 'toggleShowAll' })
+  })
 })

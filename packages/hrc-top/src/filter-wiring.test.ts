@@ -121,12 +121,14 @@ describe('hrc-top filter wiring', () => {
   it('restores all rows and reports the filter as inactive for a blank query', () => {
     const model = sampleModel()
     const navState = createNavState({ visibleRows: model.rows, viewportHeight: 20 })
+    // showAll so the idle tail is not collapsed and every row is present.
     const screen = buildTopScreenModel({
       model,
       navState,
       viewportHeight: 20,
       width: 90,
       filterText: '   ',
+      showAll: true,
     })
 
     expect(screen.rows).toHaveLength(3)
