@@ -275,6 +275,13 @@ export type {
   SemanticTurnHandoffResponse,
 } from './hrcchat-contracts.js'
 
+export { projectTargetOperatorState } from './target-operator-projection.js'
+export type {
+  HrcTargetOperatorDisplayState,
+  HrcTargetOperatorProjection,
+  HrcTargetOperatorProjectionFacts,
+} from './target-operator-projection.js'
+
 export {
   buildHrcInvocationExposure,
   canonicalCorrelationJson,
