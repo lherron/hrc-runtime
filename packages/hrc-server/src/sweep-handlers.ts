@@ -3,6 +3,9 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   KillBrokerTmuxLeasesResponse,
+  PruneRuntimeResult,
+  PruneRuntimesResponse,
+  PruneRuntimesSummary,
   SweepRuntimeResult,
   SweepRuntimeTransport,
   SweepRuntimesResponse,
@@ -23,13 +26,18 @@ import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
 import {
   parseJsonBody,
+  parsePruneRuntimesRequest,
   parseReconcileActiveRunsRequest,
   parseSweepRuntimesRequest,
   parseSweepZombieRunsRequest,
 } from './server-parsers.js'
 import { json, timestamp } from './server-util.js'
 import { markRuntimeStale, sweepOrphanedBrokerTmuxLeases } from './startup-reconcile.js'
-import { parseSweepDurationMs, runtimeMatchesSweepRequest } from './sweep-helpers.js'
+import {
+  evaluatePruneDisposition,
+  parseSweepDurationMs,
+  runtimeMatchesSweepRequest,
+} from './sweep-helpers.js'
 import {
   cleanupIdleClaudeGhosttyRuntimes,
   reconcileActiveRunsOnce,
@@ -137,6 +145,105 @@ export async function handleSweepRuntimes(
     results,
     summary,
   } satisfies SweepRuntimesResponse)
+}
+
+/**
+ * Record-level GC for orphaned runtime store rows (T-05441). Distinct from
+ * `handleSweepRuntimes`, which only marks live runtimes stale — prune DELETES
+ * the row (and its runtime-scoped satellites) for records that are genuinely
+ * orphaned. It is dry-run unless the caller passes both a non-dry-run request
+ * AND `yes:true`; every matched record is put through `evaluatePruneDisposition`
+ * so a live/ready/busy/claimed/active-run record is always spared even when the
+ * status filter would otherwise select it.
+ */
+export async function handlePruneRuntimes(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = parsePruneRuntimesRequest(await parseJsonBody(request))
+  const statuses = body.status ?? ['stale']
+  const nowMs = Date.now()
+  const cutoffMs = nowMs - parseSweepDurationMs(body.olderThan ?? '24h')
+  const mutate = body.dryRun !== true && body.yes === true
+
+  const matched = this.db.runtimes.listAll().filter((runtime) =>
+    runtimeMatchesSweepRequest(runtime, {
+      cutoffMs,
+      includeRecentUnavailable: false,
+      nowMs,
+      scope: body.scope,
+      statuses,
+      transport: body.transport,
+    })
+  )
+
+  const results: PruneRuntimeResult[] = []
+  for (const runtime of matched) {
+    const transport = runtime.transport as SweepRuntimeTransport
+    const base = {
+      type: 'runtime' as const,
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      transport,
+    }
+
+    let disposition: { prunable: boolean; reason?: string }
+    try {
+      disposition = await evaluatePruneDisposition(runtime, this.tmux)
+    } catch (err) {
+      results.push({
+        ...base,
+        status: 'error',
+        errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+
+    if (!disposition.prunable) {
+      results.push({
+        ...base,
+        status: 'skipped',
+        ...(disposition.reason ? { reason: disposition.reason } : {}),
+      })
+      continue
+    }
+
+    if (!mutate) {
+      results.push({ ...base, status: 'pruned', reason: 'dry_run' })
+      continue
+    }
+
+    try {
+      const removed = this.db.runtimes.pruneRuntime(runtime.runtimeId)
+      results.push({
+        ...base,
+        status: removed ? 'pruned' : 'skipped',
+        ...(removed ? {} : { reason: 'already_absent' }),
+      })
+    } catch (err) {
+      results.push({
+        ...base,
+        status: 'error',
+        errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  const summary: PruneRuntimesSummary = {
+    type: 'summary',
+    matched: matched.length,
+    pruned: results.filter((result) => result.status === 'pruned').length,
+    skipped: results.filter((result) => result.status === 'skipped').length,
+    errors: results.filter((result) => result.status === 'error').length,
+  }
+
+  return json({
+    ok: true,
+    results,
+    summary,
+  } satisfies PruneRuntimesResponse)
 }
 
 export async function handleKillBrokerTmuxLeases(
@@ -335,6 +442,7 @@ export function resolveSweepSummarySession(
 
 export const sweepHandlersMethods = {
   handleSweepRuntimes,
+  handlePruneRuntimes,
   handleKillBrokerTmuxLeases,
   handleSweepZombieRuns,
   startZombieRunSweeper,

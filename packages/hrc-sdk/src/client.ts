@@ -61,6 +61,8 @@ import type {
   OpenBrokerSessionResponse,
   PrepareAttachedRunRequest,
   PrepareAttachedRunResponse,
+  PruneRuntimesRequest,
+  PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
   RegisterBridgeTargetRequest,
@@ -384,6 +386,10 @@ export class HrcClient {
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {
     return this.postJson<SweepRuntimesResponse>('/v1/runtimes/sweep', request)
+  }
+
+  async pruneRuntimes(request: PruneRuntimesRequest = {}): Promise<PruneRuntimesResponse> {
+    return this.postJson<PruneRuntimesResponse>('/v1/runtimes/prune', request)
   }
 
   async killBrokerTmuxLeases(): Promise<KillBrokerTmuxLeasesResponse> {

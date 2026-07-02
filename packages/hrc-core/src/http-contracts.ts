@@ -724,6 +724,52 @@ export type SweepRuntimesResponse = {
   summary: SweepRuntimesSummary
 }
 
+/**
+ * Record-level GC for orphaned runtime STORE ROWS (T-05441). Distinct from
+ * `SweepRuntimes`, which only TERMINATES live processes/tmux and leaves the row
+ * behind. Prune DELETES the row (plus its runtime-scoped satellite rows) for
+ * genuinely orphaned records — status is unavailable (stale/dead/terminated),
+ * no active run, no live process, no live tmux session.
+ */
+export type PruneRuntimesRequest = {
+  transport?: SweepRuntimeTransport | undefined
+  olderThan?: string | undefined
+  status?: string[] | undefined
+  scope?: string | undefined
+  dryRun?: boolean | undefined
+  yes?: boolean | undefined
+}
+
+export type PruneRuntimeResult = {
+  type: 'runtime'
+  runtimeId: string
+  hostSessionId: string
+  transport: SweepRuntimeTransport
+  /**
+   * Disposition of the record, independent of dry-run. In dry-run, `pruned`
+   * means "would be pruned" (nothing is deleted); `skipped` carries a `reason`
+   * naming the safety guard that spared a live/active record.
+   */
+  status: 'pruned' | 'skipped' | 'error'
+  reason?: string | undefined
+  errorCode?: string | undefined
+  errorMessage?: string | undefined
+}
+
+export type PruneRuntimesSummary = {
+  type: 'summary'
+  matched: number
+  pruned: number
+  skipped: number
+  errors: number
+}
+
+export type PruneRuntimesResponse = {
+  ok: true
+  results: PruneRuntimeResult[]
+  summary: PruneRuntimesSummary
+}
+
 export type SweepZombieRunsRequest = {
   olderThan?: string | undefined
   dryRun?: boolean | undefined

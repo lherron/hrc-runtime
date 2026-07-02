@@ -63,6 +63,7 @@ export {
 } from './parsers/bridges.js'
 export { parseLaunchCommandScopedRunRequest } from './parsers/command-runs.js'
 export {
+  parsePruneRuntimesRequest,
   parseReconcileActiveRunsRequest,
   parseSweepRuntimesRequest,
   parseSweepZombieRunsRequest,

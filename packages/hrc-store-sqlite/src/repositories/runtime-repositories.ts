@@ -273,6 +273,49 @@ export class RuntimeRepository {
 
     return this.getByRuntimeId(runtimeId)
   }
+
+  /**
+   * Hard-delete an orphaned runtime store row plus its runtime-scoped satellite
+   * rows (T-05441). `runtimes(runtime_id)` is FK-referenced (no ON DELETE
+   * CASCADE, `foreign_keys = ON`) by runs, launches, events, runtime_buffers,
+   * surface_bindings and local_bridges, so a plain `DELETE FROM runtimes` throws
+   * FK_CONSTRAINT whenever any dependent row exists — essentially always for a
+   * real runtime. We clear the dependents inside a single transaction before
+   * removing the runtime itself.
+   *
+   * Delete ORDER matters: `events` and `runtime_buffers` ALSO FK-reference
+   * `runs(run_id)`, so every table that points at this runtime's runs must be
+   * cleared BEFORE the runs themselves — otherwise deleting a run whose buffer
+   * or event still exists trips the run-level FK. We therefore purge the
+   * run-referencing tables by (runtime_id OR run_id-of-this-runtime), then the
+   * remaining runtime-only tables, then runs, then the runtime.
+   *
+   * This mutates real rows and is NOT reversible — callers MUST enforce the
+   * orphan safety gate (unavailable status, no active run, no live
+   * process/tmux) before invoking it. Returns true when the runtime row was
+   * removed, false when it was already absent.
+   */
+  pruneRuntime(runtimeId: string): boolean {
+    const prune = this.db.transaction((id: string): boolean => {
+      // Tables that FK-reference runs(run_id): clear by either edge (a row may
+      // pin to this runtime's run while carrying a null/foreign runtime_id) so
+      // no run-level FK survives the DELETE FROM runs below.
+      const runScoped = 'runtime_id = ? OR run_id IN (SELECT run_id FROM runs WHERE runtime_id = ?)'
+      execute(this.db, `DELETE FROM events WHERE ${runScoped}`, id, id)
+      execute(this.db, `DELETE FROM runtime_buffers WHERE ${runScoped}`, id, id)
+      // Runtime-only satellite tables.
+      execute(this.db, 'DELETE FROM surface_bindings WHERE runtime_id = ?', id)
+      execute(this.db, 'DELETE FROM local_bridges WHERE runtime_id = ?', id)
+      execute(this.db, 'DELETE FROM launches WHERE runtime_id = ?', id)
+      // Runs last among the dependents (their referencing rows are now gone).
+      execute(this.db, 'DELETE FROM runs WHERE runtime_id = ?', id)
+      const result = this.db.query('DELETE FROM runtimes WHERE runtime_id = ?').run(id) as {
+        changes?: number
+      }
+      return (result.changes ?? 0) > 0
+    })
+    return prune(runtimeId)
+  }
 }
 
 const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [

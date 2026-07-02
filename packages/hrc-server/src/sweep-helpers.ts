@@ -97,6 +97,43 @@ export function runtimeMatchesSweepRequest(
   return Number.isFinite(activityMs) && activityMs <= filters.cutoffMs
 }
 
+/**
+ * Orphan safety gate for `runtime prune` (T-05441). A runtime store row is only
+ * prunable when it is genuinely orphaned: its status is unavailable
+ * (stale/dead/terminated), it owns no active run, its tracked process is dead,
+ * and — for tmux — its recorded session is no longer live. Any surviving edge of
+ * liveness spares the record (returned as a `skipped` disposition with a reason
+ * naming the guard). NEVER deletes a live/ready/busy/claimed/active-run record.
+ */
+export async function evaluatePruneDisposition(
+  runtime: HrcRuntimeSnapshot,
+  tmux: ServerTmuxManager
+): Promise<{ prunable: boolean; reason?: string }> {
+  if (!isRuntimeUnavailableStatus(runtime.status)) {
+    return { prunable: false, reason: `status_not_prunable:${runtime.status}` }
+  }
+  if (runtime.activeRunId != null) {
+    return { prunable: false, reason: 'active_run' }
+  }
+
+  const trackedPid = runtime.childPid ?? runtime.wrapperPid
+  if (trackedPid !== undefined && isLiveProcess(trackedPid)) {
+    return { prunable: false, reason: 'live_process' }
+  }
+
+  if (runtime.transport === 'tmux') {
+    const tmuxSessionName = getObservedTmuxSessionName(runtime)
+    if (tmuxSessionName) {
+      const inspected = await tmux.inspectSession(tmuxSessionName)
+      if (inspected) {
+        return { prunable: false, reason: 'live_tmux' }
+      }
+    }
+  }
+
+  return { prunable: true }
+}
+
 export function isSweepRuntimeTransport(transport: string): transport is SweepRuntimeTransport {
   return (
     transport === 'tmux' ||

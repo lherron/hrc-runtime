@@ -201,6 +201,8 @@ Commands:
   runtime inspect <runtimeId> [--json] Inspect one runtime
   runtime sweep [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--drop-continuation] [--dry-run|--yes] [--json]
                                      Sweep stale runtimes
+  runtime prune [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--dry-run|--yes] [--json]
+                                     Prune orphaned stale runtime records (deletes rows)
   runtime capture <runtimeId>         Capture tmux pane text
   runtime interrupt <runtimeId>       Interrupt a runtime
   runtime terminate <runtimeId> [--drop-continuation|--no-drop-continuation]

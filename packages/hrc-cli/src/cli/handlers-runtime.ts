@@ -1,6 +1,8 @@
 import type {
   BrokerInspectResponse,
   InspectRuntimeResponse,
+  PruneRuntimesRequest,
+  PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
   SweepRuntimesRequest,
@@ -308,6 +310,53 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
   }
   process.stdout.write(
     `summary matched=${result.summary.matched} stale=${result.summary.stale} terminated=${result.summary.terminated} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
+  )
+}
+
+/**
+ * Record-level GC for orphaned runtime store rows (T-05441). Distinct from
+ * `runtime sweep` (which terminates live processes/tmux): prune DELETES the
+ * store row for genuinely orphaned records. Dry-run by default; mutation
+ * requires `--yes`, mirroring the sweep mutation gate.
+ */
+export async function cmdRuntimePrune(args: string[]): Promise<void> {
+  const transport = parseTransportFlag(args)
+
+  const { dryRunFlag, yes, jsonOutput, dryRun } = resolveMutationGate(args, 'runtime prune')
+  if (!yes && !dryRunFlag) {
+    fatal('runtime prune requires --yes to delete records (use --dry-run to preview)')
+  }
+
+  const statusRaw = parseFlag(args, '--status')
+  const scope = parseFlag(args, '--scope')
+  const request: PruneRuntimesRequest = {
+    ...(transport ? { transport } : {}),
+    olderThan: parseFlag(args, '--older-than') ?? '24h',
+    ...(statusRaw ? { status: splitCsv(statusRaw) } : {}),
+    ...(scope ? { scope } : {}),
+    dryRun,
+    ...(yes ? { yes } : {}),
+  }
+
+  const client = createClient()
+  const result = await client.pruneRuntimes(request)
+  if (jsonOutput) {
+    printResultsNdjson(result)
+    return
+  }
+
+  printPruneHuman(result, request.dryRun === true)
+}
+
+function printPruneHuman(result: PruneRuntimesResponse, dryRun: boolean): void {
+  process.stdout.write(`runtime prune${dryRun ? ' (dry-run)' : ''}\n`)
+  for (const row of result.results) {
+    const detail = row.errorMessage ?? row.reason
+    const suffix = detail ? ` ${detail}` : ''
+    process.stdout.write(`  ${row.status.padEnd(8)} ${row.runtimeId} ${row.transport}${suffix}\n`)
+  }
+  process.stdout.write(
+    `summary matched=${result.summary.matched} pruned=${result.summary.pruned} skipped=${result.summary.skipped} errors=${result.summary.errors}\n`
   )
 }
 

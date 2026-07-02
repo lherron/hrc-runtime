@@ -50,6 +50,8 @@ export type {
   LaunchCommandScopedRunResponse,
   OpenBrokerSessionRequest,
   OpenBrokerSessionResponse,
+  PruneRuntimesRequest,
+  PruneRuntimesResponse,
   RuntimeActionResponse,
   StatusResponse,
   SweepZombieRunsRequest,

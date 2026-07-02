@@ -9,6 +9,7 @@ import {
   cmdLaunchList,
   cmdRuntimeInspect,
   cmdRuntimeList,
+  cmdRuntimePrune,
   cmdRuntimeSweep,
 } from './handlers-runtime.js'
 
@@ -127,6 +128,24 @@ export function registerRuntimeCommands(program: Command): void {
         booleans: ['dry-run', 'yes', 'json', 'drop-continuation'],
       })
       await cmdRuntimeSweep(args)
+    })
+
+  runtime
+    .command('prune')
+    .description('prune orphaned stale runtime store records (deletes rows; distinct from sweep)')
+    .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
+    .option('--status <status>', 'filter by status (default: stale)')
+    .option('--scope <scope>', 'filter by scope')
+    .option('--older-than <duration>', 'filter by age (default: 24h)')
+    .option('--dry-run', 'preview without deleting')
+    .option('--yes', 'confirm deletion')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['transport', 'status', 'scope', 'older-than'],
+        booleans: ['dry-run', 'yes', 'json'],
+      })
+      await cmdRuntimePrune(args)
     })
 
   runtime
