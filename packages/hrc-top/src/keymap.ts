@@ -7,6 +7,9 @@ export type HrcTopKeyIntent =
   | { type: 'focus' }
   | { type: 'quit' }
   | { type: 'help' }
+  | { type: 'filter' }
+  | { type: 'searchNext' }
+  | { type: 'searchPrev' }
   | { type: 'noop'; reason: string }
 
 export type HrcTopKeyResult = {
@@ -48,6 +51,12 @@ export function interpretHrcTopKey(input: string, prefix?: HrcTopKeyPrefix): Hrc
       return { intent: { type: 'key', key: 'ctrl-f' } }
     case '\u0002':
       return { intent: { type: 'key', key: 'ctrl-b' } }
+    case '/':
+      return { intent: { type: 'filter' } }
+    case 'n':
+      return { intent: { type: 'searchNext' } }
+    case 'N':
+      return { intent: { type: 'searchPrev' } }
     case 'g':
       return { prefix: 'g' }
     case 'm':

@@ -2,7 +2,9 @@ import { projectTargetOperatorState } from 'hrc-core'
 import type { HrcTargetOperatorDisplayState } from 'hrc-core'
 
 import { recommendPrimaryAction } from './action-policy.js'
-import type { HrcTopPrimaryAction } from './action-policy.js'
+import type { HrcTopPrimaryAction, HrcTopPrimaryActionKind } from './action-policy.js'
+import { applyFilter } from './filter.js'
+import type { HrcTopFilterRow } from './filter.js'
 import { buildFocusPanelModel } from './focus.js'
 import type { HrcTopFocusPanelModel } from './focus.js'
 import type { HrcTopNavState } from './nav-state.js'
@@ -14,6 +16,8 @@ export type HrcTopRenderInput = {
   viewportHeight: number
   width?: number | undefined
   filterText?: string | undefined
+  /** True while the operator is actively typing into the `/` filter entry. */
+  filterMode?: boolean | undefined
   focusMode?: boolean | undefined
   showHelp?: boolean | undefined
   notice?: string | undefined
@@ -35,6 +39,8 @@ export type HrcTopScreenModel = {
   selected?: HrcTopRenderedRow | undefined
   focus?: HrcTopFocusPanelModel | undefined
   filterText: string
+  filterActive: boolean
+  filterMode: boolean
   totalRows: number
   visibleRows: number
   refreshedAt: string
@@ -45,31 +51,74 @@ export type HrcTopScreenModel = {
 
 export function buildTopScreenModel(input: HrcTopRenderInput): HrcTopScreenModel {
   const width = Math.max(60, input.width ?? 100)
-  const renderedRows = input.model.rows.map((row) => renderRowModel(row, input.navState))
+  const filter = filterReadModel(input.model, input.filterText)
+  const renderedRows = filter.rows.map((row) => renderRowModel(row, input.navState))
   const selected = renderedRows.find((row) => row.selected) ?? renderedRows[0]
-  const selectedSource = selected
-    ? input.model.rows.find((row) => row.id === selected.id)
-    : undefined
+  const selectedSource = selected ? filter.rows.find((row) => row.id === selected.id) : undefined
 
   return {
     title: 'HRC TOP',
     counts: input.model.counts,
     rows: sliceRowsForViewport(renderedRows, input.navState.selectedIndex, input.viewportHeight),
     selected,
-    focus:
-      input.focusMode && selectedSource
-        ? focusPanelForRow(selectedSource)
-        : selectedSource
-          ? focusPanelForRow(selectedSource)
-          : undefined,
+    focus: selectedSource ? focusPanelForRow(selectedSource) : undefined,
     filterText: input.filterText ?? '',
-    totalRows: input.model.rows.length,
-    visibleRows: input.model.rows.length,
+    filterActive: filter.result.active,
+    filterMode: input.filterMode ?? false,
+    totalRows: filter.result.totalRows,
+    visibleRows: filter.result.visibleRows,
     refreshedAt: input.model.refreshedAt,
     width,
     showHelp: input.showHelp ?? false,
     notice: input.notice,
   }
+}
+
+type FilterFactRow = HrcTopFilterRow & { source: HrcTopRow }
+
+function filterFactRow(row: HrcTopRow): FilterFactRow {
+  return {
+    id: row.id,
+    visibleTargetText: handleForRow(row),
+    action: primaryActionKindForRow(row),
+    target: row.target,
+    source: row,
+  }
+}
+
+function filterReadModel(
+  model: HrcTopReadModel,
+  filterText: string | undefined
+): { rows: HrcTopRow[]; result: ReturnType<typeof applyFilter<FilterFactRow>> } {
+  const factRows = model.rows.map(filterFactRow)
+  const result = applyFilter(factRows, filterText ?? '')
+  return { rows: result.rows.map((row) => row.source), result }
+}
+
+/**
+ * Filtered visible-row identities for the TUI nav-state. The interactive loop
+ * feeds this to `reduceNavState` so movement/marks operate on the filtered set.
+ */
+export function selectFilteredVisibleRows(
+  model: HrcTopReadModel,
+  filterText: string | undefined
+): { id: string }[] {
+  return filterReadModel(model, filterText).rows.map((row) => ({ id: row.id }))
+}
+
+function primaryActionKindForRow(row: HrcTopRow): HrcTopPrimaryActionKind {
+  const projection = projectTargetOperatorState(row.target, {
+    runtimeStatus: row.runtime?.status,
+    operatorAttachable: row.target.runtime?.operatorAttachable,
+    hasValidContinuation: row.hasContinuation,
+  })
+  return recommendPrimaryAction({
+    handle: handleForRow(row),
+    target: row.target,
+    displayState: projection.displayState,
+    operatorAttachable: projection.operatorAttachable,
+    hasValidContinuation: projection.hasValidContinuation,
+  }).kind
 }
 
 export function renderTopScreen(input: HrcTopRenderInput): string {
@@ -100,6 +149,12 @@ export function renderTopScreenModel(screen: HrcTopScreenModel): string {
     lines.push(...renderBottomPanel(screen))
   } else {
     lines.push('no target selected')
+    lines.push(
+      `filter: ${screen.filterText || 'none'}   rows: ${screen.visibleRows}/${screen.totalRows}`
+    )
+    if (screen.filterMode) {
+      lines.push(`/${screen.filterText}█   (Enter/Esc keep filter, Backspace edits)`)
+    }
   }
 
   return `${lines.join('\n')}\n`
@@ -116,6 +171,10 @@ function renderBottomPanel(screen: HrcTopScreenModel): string[] {
     `filter: ${screen.filterText || 'none'}   rows: ${screen.visibleRows}/${screen.totalRows}`,
     'keys: j/k move  enter focus  o default  a attach  r resume  / filter  : command',
   ]
+
+  if (screen.filterMode) {
+    lines.push(`/${screen.filterText}█   (Enter/Esc keep filter, Backspace edits)`)
+  }
 
   if (screen.notice) lines.push(`notice: ${screen.notice}`)
 

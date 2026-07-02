@@ -5,7 +5,7 @@ import { createNavState, reduceNavState } from './nav-state.js'
 import type { HrcTopNavState } from './nav-state.js'
 import { buildReadModel, loadReadModel } from './read-model.js'
 import type { HrcTopReadModel, HrcTopScope } from './read-model.js'
-import { renderTopScreen } from './render.js'
+import { renderTopScreen, selectFilteredVisibleRows } from './render.js'
 
 export type HrcTopOptions = HrcTopScope & {
   client?: Pick<HrcClient, 'listTargets'> | undefined
@@ -16,6 +16,9 @@ export type HrcTopOptions = HrcTopScope & {
 }
 
 export { buildReadModel, loadReadModel }
+export { applyFilter } from './filter.js'
+export type { HrcTopFilterRow, HrcTopFilterResult } from './filter.js'
+export { selectFilteredVisibleRows } from './render.js'
 export { buildFocusPanelModel } from './focus.js'
 export { createNavState, reduceNavState } from './nav-state.js'
 export { buildTopScreenModel, renderTopScreen, renderTopScreenModel } from './render.js'
@@ -70,6 +73,8 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   let navState = input.initialNavState
   let focusMode = false
   let showHelp = false
+  let filterText = ''
+  let filterMode = false
   let notice: string | undefined
   let keyPrefix: HrcTopKeyPrefix
   let closed = false
@@ -85,20 +90,26 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
 
   const redraw = () => {
     output.write('\u001b[H\u001b[2J')
-    output.write(render(model, navState, output, { focusMode, showHelp, notice }))
+    output.write(
+      render(model, navState, output, { focusMode, showHelp, notice, filterText, filterMode })
+    )
+  }
+
+  const recomputeNav = () => {
+    navState = reduceNavState(
+      navState,
+      { type: 'refresh' },
+      {
+        visibleRows: visibleRowsFor(model, filterText),
+        viewportHeight: viewportHeight(output),
+      }
+    )
   }
 
   const refresh = async () => {
     try {
       model = await loadReadModel(client, options)
-      navState = reduceNavState(
-        navState,
-        { type: 'refresh' },
-        {
-          visibleRows: visibleRowsFor(model),
-          viewportHeight: viewportHeight(output),
-        }
-      )
+      recomputeNav()
       redraw()
     } catch (error) {
       notice = error instanceof Error ? error.message : String(error)
@@ -144,16 +155,72 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
       redraw()
       return
     }
+    if (intent.type === 'filter') {
+      filterMode = true
+      redraw()
+      return
+    }
+    if (intent.type === 'searchNext' || intent.type === 'searchPrev') {
+      const filtered = visibleRowsFor(model, filterText)
+      const bodyHeight = Math.max(1, viewportHeight(output) - 8)
+      if (filterText.trim().length === 0 || filtered.length <= bodyHeight) {
+        notice = 'n/N search only moves when a filter narrows past the viewport'
+        redraw()
+        return
+      }
+      navState = reduceNavState(
+        navState,
+        { type: 'key', key: intent.type === 'searchNext' ? 'j' : 'k' },
+        { visibleRows: filtered, viewportHeight: viewportHeight(output) }
+      )
+      redraw()
+      return
+    }
 
     navState = reduceNavState(navState, intent, {
-      visibleRows: visibleRowsFor(model),
+      visibleRows: visibleRowsFor(model, filterText),
       viewportHeight: viewportHeight(output),
     })
     redraw()
   }
 
+  const handleFilterKey = (inputChar: string) => {
+    notice = undefined
+    const code = inputChar.charCodeAt(0)
+    // Ctrl-C always quits.
+    if (code === 3) {
+      stop()
+      return
+    }
+    // Enter or Esc exit filter ENTRY but keep the current filter.
+    if (inputChar === '\r' || inputChar === '\n' || code === 27) {
+      filterMode = false
+      recomputeNav()
+      redraw()
+      return
+    }
+    // Backspace / DEL edits the query; emptying it restores all rows.
+    if (code === 127 || code === 8) {
+      filterText = filterText.slice(0, -1)
+      recomputeNav()
+      redraw()
+      return
+    }
+    // Printable characters extend the query.
+    if (code >= 32) {
+      filterText += inputChar
+      recomputeNav()
+      redraw()
+      return
+    }
+  }
+
   const onData = (chunk: Buffer) => {
     for (const inputChar of chunk.toString('utf8')) {
+      if (filterMode) {
+        handleFilterKey(inputChar)
+        continue
+      }
       const result = interpretHrcTopKey(inputChar, keyPrefix)
       keyPrefix = result.prefix
       if (result.intent) handleIntent(result.intent)
@@ -175,6 +242,8 @@ function render(
     focusMode?: boolean | undefined
     showHelp?: boolean | undefined
     notice?: string | undefined
+    filterText?: string | undefined
+    filterMode?: boolean | undefined
   } = {}
 ): string {
   return renderTopScreen({
@@ -182,14 +251,16 @@ function render(
     navState,
     viewportHeight: viewportHeight(output),
     width: terminalWidth(output),
+    filterText: options.filterText,
+    filterMode: options.filterMode,
     focusMode: options.focusMode,
     showHelp: options.showHelp,
     notice: options.notice,
   })
 }
 
-function visibleRowsFor(model: HrcTopReadModel): { id: string }[] {
-  return model.rows.map((row) => ({ id: row.id }))
+function visibleRowsFor(model: HrcTopReadModel, filterText = ''): { id: string }[] {
+  return selectFilteredVisibleRows(model, filterText)
 }
 
 function isInteractive(input: NodeJS.ReadStream, output: NodeJS.WritableStream): boolean {
