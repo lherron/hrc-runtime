@@ -92,6 +92,22 @@ describe('hrc-top renderer', () => {
     })
   })
 
+  it('renders command mode entry when active', () => {
+    const model = buildReadModel([target()], new Date('2026-07-02T12:05:00.000Z'))
+    const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })
+
+    const output = renderTopScreen({
+      model,
+      navState,
+      viewportHeight: 16,
+      width: 90,
+      commandMode: true,
+      commandText: 'filter cody',
+    })
+
+    expect(output).toContain(':filter cody█')
+  })
+
   it('uses only listTargets in the non-interactive launch path', async () => {
     const calls: string[] = []
     const output = new MemoryOutput()

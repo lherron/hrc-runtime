@@ -4,6 +4,8 @@ export type HrcTopKeyPrefix = 'g' | 'mark' | 'jump' | undefined
 
 export type HrcTopKeyIntent =
   | HrcTopNavAction
+  | { type: 'action'; key: string }
+  | { type: 'command' }
   | { type: 'focus' }
   | { type: 'quit' }
   | { type: 'help' }
@@ -57,6 +59,16 @@ export function interpretHrcTopKey(input: string, prefix?: HrcTopKeyPrefix): Hrc
       return { intent: { type: 'searchNext' } }
     case 'N':
       return { intent: { type: 'searchPrev' } }
+    case ':':
+      return { intent: { type: 'command' } }
+    case 'o':
+    case 'a':
+    case 'r':
+    case 'R':
+    case 'e':
+    case 'c':
+    case 'i':
+      return { intent: { type: 'action', key: input } }
     case 'g':
       return { prefix: 'g' }
     case 'm':

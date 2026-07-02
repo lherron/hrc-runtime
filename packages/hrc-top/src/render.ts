@@ -18,6 +18,9 @@ export type HrcTopRenderInput = {
   filterText?: string | undefined
   /** True while the operator is actively typing into the `/` filter entry. */
   filterMode?: boolean | undefined
+  /** True while the operator is actively typing into the `:` command entry. */
+  commandMode?: boolean | undefined
+  commandText?: string | undefined
   focusMode?: boolean | undefined
   showHelp?: boolean | undefined
   notice?: string | undefined
@@ -41,6 +44,8 @@ export type HrcTopScreenModel = {
   filterText: string
   filterActive: boolean
   filterMode: boolean
+  commandMode: boolean
+  commandText: string
   totalRows: number
   visibleRows: number
   refreshedAt: string
@@ -65,6 +70,8 @@ export function buildTopScreenModel(input: HrcTopRenderInput): HrcTopScreenModel
     filterText: input.filterText ?? '',
     filterActive: filter.result.active,
     filterMode: input.filterMode ?? false,
+    commandMode: input.commandMode ?? false,
+    commandText: input.commandText ?? '',
     totalRows: filter.result.totalRows,
     visibleRows: filter.result.visibleRows,
     refreshedAt: input.model.refreshedAt,
@@ -155,6 +162,9 @@ export function renderTopScreenModel(screen: HrcTopScreenModel): string {
     if (screen.filterMode) {
       lines.push(`/${screen.filterText}█   (Enter/Esc keep filter, Backspace edits)`)
     }
+    if (screen.commandMode) {
+      lines.push(`:${screen.commandText}█`)
+    }
   }
 
   return `${lines.join('\n')}\n`
@@ -174,6 +184,9 @@ function renderBottomPanel(screen: HrcTopScreenModel): string[] {
 
   if (screen.filterMode) {
     lines.push(`/${screen.filterText}█   (Enter/Esc keep filter, Backspace edits)`)
+  }
+  if (screen.commandMode) {
+    lines.push(`:${screen.commandText}█`)
   }
 
   if (screen.notice) lines.push(`notice: ${screen.notice}`)

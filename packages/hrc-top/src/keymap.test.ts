@@ -28,4 +28,11 @@ describe('hrc-top keymap', () => {
     expect(interpretHrcTopKey('\r').intent).toEqual({ type: 'focus' })
     expect(interpretHrcTopKey('q').intent).toEqual({ type: 'quit' })
   })
+
+  it('maps action keys and command entry for the live TUI loop', () => {
+    expect(interpretHrcTopKey(':').intent).toEqual({ type: 'command' })
+    for (const key of ['o', 'a', 'r', 'R', 'e', 'c', 'i']) {
+      expect(interpretHrcTopKey(key).intent).toEqual({ type: 'action', key })
+    }
+  })
 })

@@ -186,7 +186,7 @@ async function attachRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopAc
 
   const descriptor = await input.executor.attachRuntime(runtimeId)
   const spawned = await input.executor.spawnAttachDescriptor(descriptor)
-  return executed('attach', spawned.reason ?? `Attached to runtime ${runtimeId}.`)
+  return executorResult('attach', spawned, `Attached to runtime ${runtimeId}.`)
 }
 
 async function resumeTarget(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -204,7 +204,7 @@ async function resumeTarget(input: HrcTopActionDispatchInput): Promise<HrcTopAct
 
   const handle = handleForRow(input.row)
   const result = await input.executor.runCommand(['hrc', 'resume', handle])
-  return executed('resume', result.reason ?? `Resumed ${handle}.`)
+  return executorResult('resume', result, `Resumed ${handle}.`)
 }
 
 async function runTarget(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -219,7 +219,7 @@ async function runTarget(input: HrcTopActionDispatchInput): Promise<HrcTopAction
   }
 
   const result = await input.executor.runCommand(['hrc', 'run', handle])
-  return executed('run', result.reason ?? `Started ${handle}.`)
+  return executorResult('run', result, `Started ${handle}.`)
 }
 
 async function captureRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -229,13 +229,13 @@ async function captureRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopA
   }
 
   const result = await input.executor.runCommand(['hrc', 'runtime', 'capture', runtimeId])
-  return executed('capture', result.reason ?? `Captured runtime output for ${runtimeId}.`)
+  return executorResult('capture', result, `Captured runtime output for ${runtimeId}.`)
 }
 
 async function showMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
   if (!input.messageId) return disabled('messageShow', 'Message show requires a message id.')
   const result = await input.executor.runCommand(['hrcchat', 'show', input.messageId])
-  return executed('messageShow', result.reason ?? `Showed message ${input.messageId}.`)
+  return executorResult('messageShow', result, `Showed message ${input.messageId}.`)
 }
 
 async function replyToMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -248,7 +248,7 @@ async function replyToMessage(input: HrcTopActionDispatchInput): Promise<HrcTopA
     '--reply-to',
     input.messageId,
   ])
-  return executed('messageReply', result.reason ?? `Replying to message ${input.messageId}.`)
+  return executorResult('messageReply', result, `Replying to message ${input.messageId}.`)
 }
 
 function unavailableForRecommendedAction(row: HrcTopRow): HrcTopActionResult {
@@ -311,8 +311,17 @@ function focused(action: HrcTopExplicitAction, reason: string): HrcTopActionResu
   return { status: 'focused', action, reason }
 }
 
-function executed(action: HrcTopExplicitAction, reason: string): HrcTopActionResult {
-  return { status: 'executed', action, reason }
+function executorResult(
+  action: HrcTopExplicitAction,
+  result: Partial<HrcTopActionResult>,
+  fallbackReason: string
+): HrcTopActionResult {
+  return {
+    status: result.status ?? 'executed',
+    action,
+    reason: result.reason ?? fallbackReason,
+    errorCode: result.errorCode,
+  }
 }
 
 function disabled(

@@ -1,14 +1,22 @@
 import { HrcClient, discoverSocket } from 'hrc-sdk'
+import {
+  type HrcTopActionResult,
+  dispatchHrcTopActionKey,
+  executeHrcTopCommandLine,
+} from './commands.js'
+import { createHrcTopActionExecutor } from './executor.js'
 import { interpretHrcTopKey } from './keymap.js'
 import type { HrcTopKeyIntent, HrcTopKeyPrefix } from './keymap.js'
 import { createNavState, reduceNavState } from './nav-state.js'
 import type { HrcTopNavState } from './nav-state.js'
 import { buildReadModel, loadReadModel } from './read-model.js'
-import type { HrcTopReadModel, HrcTopScope } from './read-model.js'
+import type { HrcTopReadModel, HrcTopRow, HrcTopScope } from './read-model.js'
 import { renderTopScreen, selectFilteredVisibleRows } from './render.js'
 
+type HrcTopClient = Pick<HrcClient, 'listTargets'> & Partial<Pick<HrcClient, 'attachRuntime'>>
+
 export type HrcTopOptions = HrcTopScope & {
-  client?: Pick<HrcClient, 'listTargets'> | undefined
+  client?: HrcTopClient | undefined
   socketPath?: string | undefined
   output?: NodeJS.WritableStream | undefined
   input?: NodeJS.ReadStream | undefined
@@ -58,7 +66,7 @@ export async function runHrcTop(options: HrcTopOptions = {}): Promise<void> {
 }
 
 type InteractiveTopInput = {
-  client: Pick<HrcClient, 'listTargets'>
+  client: HrcTopClient
   options: HrcTopOptions
   input: NodeJS.ReadStream
   output: NodeJS.WritableStream
@@ -75,9 +83,13 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   let showHelp = false
   let filterText = ''
   let filterMode = false
+  let commandText = ''
+  let commandMode = false
   let notice: string | undefined
+  let pendingRunConfirmationRowId: string | undefined
   let keyPrefix: HrcTopKeyPrefix
   let closed = false
+  let suspendedForSpawn = false
   let resolveClosed: (() => void) | undefined
   const closedPromise = new Promise<void>((resolve) => {
     resolveClosed = resolve
@@ -89,11 +101,35 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   output.write('\u001b[?25l')
 
   const redraw = () => {
+    if (suspendedForSpawn) return
     output.write('\u001b[H\u001b[2J')
     output.write(
-      render(model, navState, output, { focusMode, showHelp, notice, filterText, filterMode })
+      render(model, navState, output, {
+        focusMode,
+        showHelp,
+        notice,
+        filterText,
+        filterMode,
+        commandText,
+        commandMode,
+      })
     )
   }
+
+  const executor = createHrcTopActionExecutor(requireActionClient(client), {
+    beforeSpawn: () => {
+      suspendedForSpawn = true
+      ttyInput.setRawMode?.(false)
+      output.write('\u001b[?25h\n')
+    },
+    afterSpawn: () => {
+      if (closed) return
+      ttyInput.setRawMode?.(true)
+      ttyInput.resume()
+      output.write('\u001b[?25l')
+      suspendedForSpawn = false
+    },
+  })
 
   const recomputeNav = () => {
     navState = reduceNavState(
@@ -107,6 +143,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   }
 
   const refresh = async () => {
+    if (suspendedForSpawn) return
     try {
       model = await loadReadModel(client, options)
       recomputeNav()
@@ -129,9 +166,64 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     resolveClosed?.()
   }
 
+  const handleActionResult = async (result: HrcTopActionResult, selectedRowId?: string) => {
+    notice = result.reason
+    if (result.status === 'confirmation_required') {
+      pendingRunConfirmationRowId = selectedRowId
+      redraw()
+      return
+    }
+    pendingRunConfirmationRowId = undefined
+
+    if (result.status === 'quit') {
+      stop()
+      return
+    }
+    if (result.status === 'filter_changed') {
+      filterText = result.filterText ?? ''
+      recomputeNav()
+    }
+    if (result.action === 'focus' || result.action === 'inspect') {
+      focusMode = true
+    }
+    if (result.status === 'executed') {
+      await refresh()
+      return
+    }
+    redraw()
+  }
+
+  const handleActionKey = async (key: string) => {
+    try {
+      const row = selectedRow()
+      if (!row) {
+        notice = 'No target selected.'
+        redraw()
+        return
+      }
+      const confirmRunWithContinuation = key === 'R' && pendingRunConfirmationRowId === row.id
+      const result = await dispatchHrcTopActionKey({
+        key,
+        row,
+        executor,
+        confirmRunWithContinuation,
+      })
+      await handleActionResult(result, row.id)
+    } catch (error) {
+      notice = error instanceof Error ? error.message : String(error)
+      redraw()
+    }
+  }
+
   const handleIntent = (intent: HrcTopKeyIntent) => {
     notice = undefined
     if (intent.type === 'quit') {
+      if (commandMode) {
+        commandMode = false
+        commandText = ''
+        redraw()
+        return
+      }
       if (focusMode) {
         focusMode = false
         redraw()
@@ -158,6 +250,16 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     if (intent.type === 'filter') {
       filterMode = true
       redraw()
+      return
+    }
+    if (intent.type === 'command') {
+      commandMode = true
+      commandText = ''
+      redraw()
+      return
+    }
+    if (intent.type === 'action') {
+      void handleActionKey(intent.key)
       return
     }
     if (intent.type === 'searchNext' || intent.type === 'searchPrev') {
@@ -215,8 +317,62 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     }
   }
 
+  const handleCommandKey = (inputChar: string) => {
+    notice = undefined
+    const code = inputChar.charCodeAt(0)
+    if (code === 3) {
+      stop()
+      return
+    }
+    if (code === 27) {
+      commandMode = false
+      commandText = ''
+      redraw()
+      return
+    }
+    if (inputChar === '\r' || inputChar === '\n') {
+      const line = `:${commandText}`
+      commandMode = false
+      commandText = ''
+      const row = selectedRow()
+      if (!row) {
+        notice = 'No target selected.'
+        redraw()
+        return
+      }
+      void executeHrcTopCommandLine({ line, row, executor })
+        .then((result) => handleActionResult(result, row.id))
+        .catch((error: unknown) => {
+          notice = error instanceof Error ? error.message : String(error)
+          redraw()
+        })
+      return
+    }
+    if (code === 127 || code === 8) {
+      commandText = commandText.slice(0, -1)
+      redraw()
+      return
+    }
+    if (code >= 32) {
+      commandText += inputChar
+      redraw()
+      return
+    }
+  }
+
+  const selectedRow = (): HrcTopRow | undefined => {
+    const selectedId =
+      navState.selectedRowId ?? visibleRowsFor(model, filterText)[navState.selectedIndex]?.id
+    if (!selectedId) return undefined
+    return model.rows.find((row) => row.id === selectedId)
+  }
+
   const onData = (chunk: Buffer) => {
     for (const inputChar of chunk.toString('utf8')) {
+      if (commandMode) {
+        handleCommandKey(inputChar)
+        continue
+      }
       if (filterMode) {
         handleFilterKey(inputChar)
         continue
@@ -244,6 +400,8 @@ function render(
     notice?: string | undefined
     filterText?: string | undefined
     filterMode?: boolean | undefined
+    commandText?: string | undefined
+    commandMode?: boolean | undefined
   } = {}
 ): string {
   return renderTopScreen({
@@ -253,6 +411,8 @@ function render(
     width: terminalWidth(output),
     filterText: options.filterText,
     filterMode: options.filterMode,
+    commandText: options.commandText,
+    commandMode: options.commandMode,
     focusMode: options.focusMode,
     showHelp: options.showHelp,
     notice: options.notice,
@@ -277,4 +437,15 @@ function viewportHeight(output: NodeJS.WritableStream): number {
 
 function terminalWidth(output: NodeJS.WritableStream): number {
   return Math.max(60, (output as NodeJS.WriteStream).columns ?? 100)
+}
+
+function requireActionClient(client: HrcTopClient): Pick<HrcClient, 'attachRuntime'> {
+  if (typeof client.attachRuntime !== 'function') {
+    return {
+      async attachRuntime() {
+        throw new Error('hrc top action executor requires HrcClient.attachRuntime')
+      },
+    }
+  }
+  return { attachRuntime: client.attachRuntime.bind(client) }
 }
