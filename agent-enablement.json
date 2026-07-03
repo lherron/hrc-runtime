@@ -40,7 +40,7 @@
         "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
         "deltas": "agent-enablement/assessments/hrc-runtime/deltas.json",
         "profileHash": "1148487cc95db0113557eb209db14d25b0b2823ba9fe3cfa1d54f15225659b9b",
-        "assessmentHash": "d9bb01c680cd40be1c7b6e53c16b02a35ed97f38caf5d5c6e1c9501d84211589",
+        "assessmentHash": "2351267d3dd9607516dbed1b71050cf57c85970deccb10e9b6f4b63e0939e37f",
         "deltasHash": "529a6df1d12bfff7ade7b1b976a8a8fece68be6a7e1c5793b349de51bdb63cc3"
       },
       "decidedAt": "2026-07-03",
