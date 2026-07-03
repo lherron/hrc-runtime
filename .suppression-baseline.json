@@ -1,0 +1,105 @@
+{
+  "_meta": {
+    "schemaVersion": 1,
+    "generatedBy": "bun scripts/check-suppressions.ts --update-baseline",
+    "warning": "future suppressions use EXCEPTION(T-00000): reason; baseline update is for intentional grandfather/reset only and must be reviewed"
+  },
+  "suppressions": [
+    {
+      "file": "packages/hrc-cli/src/__tests__/in-flight-gate.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "999f74ab2a50c664acde6c6fad4ae9d09bf30746525aa36bad7e67947dc70cd1",
+      "count": 2
+    },
+    {
+      "file": "packages/hrc-cli/src/monitor-render.ts",
+      "rule": "lint/suspicious/noControlCharactersInRegex",
+      "hash": "baacc5ba09b672400f21b0253307c4cf1d3966aff6773a463b9a5d9ba2ae43ab",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-sdk/src/__tests__/sdk.test.ts",
+      "rule": "@typescript-eslint/no-unused-vars",
+      "hash": "41cd5b833be9e66282e43f4acd481e6cbf95e4c62e977021cec02c9668d8a461",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/agentchat-launch-env-regression.test.ts",
+      "rule": "@ts-expect-error",
+      "hash": "2616d50144afc9ae7ef333432e3d1437b061d1fa8fc12cf3a7c51ea5b3dbdc44",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/broker-durable-activation.red.test.ts",
+      "rule": "lint/correctness/useYield",
+      "hash": "04f73282d2a3dbc3ffebf1835eb5e97be920e3c8d7bb3de4a874956b0b0dbad9",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/sdk-adapter.to-frontend.characterization.red.test.ts",
+      "rule": "@typescript-eslint/no-explicit-any",
+      "hash": "8a528046fa1f335c47c2fd155bc280e737d2cac63f778a483418ea4fe39e9bc8",
+      "count": 3
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-headless-anthropic.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "461a995c16d456c6e13a54a9a62703295c5f568b96c0e6e6ba5dcfc88954e2cb",
+      "count": 4
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-headless-anthropic.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "dbc4996345a7eb0de9b22d990d44cb0704faf7e11cdc8b101cab1c033392c571",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-hrcchat-minimal.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "461a995c16d456c6e13a54a9a62703295c5f568b96c0e6e6ba5dcfc88954e2cb",
+      "count": 2
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-hrcchat-minimal.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "dbc4996345a7eb0de9b22d990d44cb0704faf7e11cdc8b101cab1c033392c571",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-sdk-dispatch.test.ts",
+      "rule": "@ts-expect-error",
+      "hash": "88b9c06ceb5846a45a759127e1e2b3993f3c69a21bcacc421124f106c8351149",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-sdk-dispatch.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "461a995c16d456c6e13a54a9a62703295c5f568b96c0e6e6ba5dcfc88954e2cb",
+      "count": 4
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-sdk-dispatch.test.ts",
+      "rule": "lint/performance/noDelete",
+      "hash": "dbc4996345a7eb0de9b22d990d44cb0704faf7e11cdc8b101cab1c033392c571",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/__tests__/server-surface-binding.test.ts",
+      "rule": "@ts-expect-error",
+      "hash": "88b9c06ceb5846a45a759127e1e2b3993f3c69a21bcacc421124f106c8351149",
+      "count": 1
+    },
+    {
+      "file": "packages/hrc-server/src/index.ts",
+      "rule": "lint/correctness/noUnusedVariables",
+      "hash": "409c9d8b640bb87d94ecf55b8723628729e74425d03de25da4051d23033634cf",
+      "count": 1
+    },
+    {
+      "file": "packages/hrcchat-cli/src/__tests__/t04733-char-isturnend.test.ts",
+      "rule": "@typescript-eslint/no-explicit-any",
+      "hash": "8a528046fa1f335c47c2fd155bc280e737d2cac63f778a483418ea4fe39e9bc8",
+      "count": 3
+    }
+  ]
+}
