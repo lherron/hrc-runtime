@@ -2,9 +2,9 @@ import { describe, expect, it } from 'bun:test'
 
 import type { HrcTargetView } from '../hrcchat-contracts.js'
 import {
-  projectTargetOperatorState,
   type HrcTargetOperatorDisplayState,
   type HrcTargetOperatorProjectionFacts,
+  projectTargetOperatorState,
 } from '../target-operator-projection.js'
 
 const capabilities: HrcTargetView['capabilities'] = {
@@ -99,7 +99,9 @@ describe('target operator projection contract', () => {
 
     expect(
       projectTargetOperatorState(
-        target({ runtime: { ...target().runtime!, transport: 'headless', presentation: 'tmux-tui' } })
+        target({
+          runtime: { ...target().runtime!, transport: 'headless', presentation: 'tmux-tui' },
+        })
       ).operatorAttachable
     ).toBe(true)
 

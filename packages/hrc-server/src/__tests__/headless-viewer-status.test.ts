@@ -218,9 +218,7 @@ describe('HeadlessViewerStatusProjector', () => {
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
     expect(applied).toHaveLength(1)
-    expect(applied[0]?.spec.center).toBe(
-      'hrc · T-04977 · add-task-slug-to-ghostmux-status-bar'
-    )
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977 · add-task-slug-to-ghostmux-status-bar')
   })
 
   it('falls back to project · T-id when the slug resolver returns null', async () => {

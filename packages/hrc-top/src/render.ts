@@ -369,7 +369,10 @@ function renderBoard(screen: HrcTopScreenModel, p: Painter): string[] {
 
   const body: BodyLine[] = []
   if (screen.sections.length === 0 && !screen.idleCollapsed) {
-    body.push({ text: p.paint('  no targets need you right now.', { fg: PALETTE.dim }), selected: false })
+    body.push({
+      text: p.paint('  no targets need you right now.', { fg: PALETTE.dim }),
+      selected: false,
+    })
   }
   for (const section of screen.sections) {
     const sectionHeader = renderSectionHeader(section, p)
@@ -441,11 +444,9 @@ function renderColumnHeader(p: Painter): string {
   return p.paint(header, { fg: PALETTE.ghost })
 }
 
-function renderSectionHeader(
-  section: HrcTopTriageSection,
-  p: Painter
-): string {
-  const color = section.bucket === 'idle' ? PALETTE.faint : stateColorHex(bucketState(section.bucket))
+function renderSectionHeader(section: HrcTopTriageSection, p: Painter): string {
+  const color =
+    section.bucket === 'idle' ? PALETTE.faint : stateColorHex(bucketState(section.bucket))
   const glyph = p.paint(STRIP_GLYPH[section.bucket], { fg: color })
   const label = p.paint(section.label, { fg: PALETTE.dim, bold: true })
   const count = p.paint(`${section.rows.length}`, { fg: PALETTE.ghost })
@@ -465,9 +466,7 @@ function renderRow(row: HrcTopRenderedRow, p: Painter): string {
   const stateFg = idle ? PALETTE.faint : stateHex
   const actionFg = idle ? PALETTE.faint : PALETTE.dim
 
-  const marker: Cell = row.selected
-    ? { text: '▌', fg: stateHex, bold: true }
-    : { text: ' ' }
+  const marker: Cell = row.selected ? { text: '▌', fg: stateHex, bold: true } : { text: ' ' }
   const caret: Cell = row.selected ? { text: '▸', fg: PALETTE.ink, bold: true } : { text: ' ' }
 
   const cells: Cell[] = [
@@ -579,7 +578,9 @@ function renderFocusLens(screen: HrcTopScreenModel, p: Painter): string[] {
   // Recommended action box (accent-barred).
   const bar = p.paint('▌', { fg: stateHex, bold: true })
   const rec = focus.primaryAction
-  lines.push(`${bar} ${p.paint('RECOMMENDED', { fg: PALETTE.ghost, bold: true })}  ${p.paint(rec.kind, { fg: stateHex, bold: true })}`)
+  lines.push(
+    `${bar} ${p.paint('RECOMMENDED', { fg: PALETTE.ghost, bold: true })}  ${p.paint(rec.kind, { fg: stateHex, bold: true })}`
+  )
   lines.push(`${bar} ${p.paint(rec.reason, { fg: PALETTE.dim })}`)
   if (focus.commandPreview) {
     lines.push(`${bar} ${p.paint(`$ ${focus.commandPreview.join(' ')}`, { fg: PALETTE.ink })}`)
@@ -601,15 +602,15 @@ function renderFocusLens(screen: HrcTopScreenModel, p: Painter): string[] {
     lines.push('')
     lines.push(p.paint('candidates', { fg: PALETTE.ghost }))
     for (const candidate of focus.ambiguityCandidates) {
-      lines.push(
-        p.paint(`  ${candidate.runtimeId}  ${candidate.label}`, { fg: PALETTE.dim })
-      )
+      lines.push(p.paint(`  ${candidate.runtimeId}  ${candidate.label}`, { fg: PALETTE.dim }))
     }
   }
 
   lines.push('')
   lines.push(p.paint('─'.repeat(screen.width), { fg: PALETTE.rule }))
-  lines.push(p.paint('q return · o act · a attach · r resume · e tail · c capture', { fg: PALETTE.ghost }))
+  lines.push(
+    p.paint('q return · o act · a attach · r resume · e tail · c capture', { fg: PALETTE.ghost })
+  )
   if (screen.notice) lines.push(p.paint(`notice: ${screen.notice}`, { fg: PALETTE.stale }))
   return lines
 }

@@ -74,13 +74,7 @@ describe('triage grouping + urgency sort', () => {
       'idle',
     ])
     // The declared order matches the exported constant.
-    expect(TRIAGE_BUCKET_ORDER).toEqual([
-      'needsYou',
-      'working',
-      'resumable',
-      'attention',
-      'idle',
-    ])
+    expect(TRIAGE_BUCKET_ORDER).toEqual(['needsYou', 'working', 'resumable', 'attention', 'idle'])
   })
 
   it('omits empty buckets', () => {

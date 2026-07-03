@@ -133,7 +133,7 @@ function parseArgs(argv: string[]): Options {
     throw new Error(`WAIT_SECONDS must be a non-negative number, got ${options.waitSeconds}`)
   }
   if (!Number.isFinite(options.reapTimeoutMs) || options.reapTimeoutMs < 0) {
-    throw new Error(`REAP_TIMEOUT_SECONDS must be a non-negative number`)
+    throw new Error('REAP_TIMEOUT_SECONDS must be a non-negative number')
   }
   return options
 }

@@ -78,7 +78,9 @@ function focusInput(
     operatorAttachable: true,
     hasValidContinuation: true,
     latestEventSummary: 'last event: tool completed 12s ago',
-    disabledActions: [{ kind: 'resume', reason: 'runtime is live; resume is not the current semantic action' }],
+    disabledActions: [
+      { kind: 'resume', reason: 'runtime is live; resume is not the current semantic action' },
+    ],
     ...overrides,
   }
 }
@@ -112,8 +114,16 @@ describe('hrc-top focus panel pure projection', () => {
       focusInput('ambiguous', {
         operatorAttachable: false,
         ambiguityCandidates: [
-          { runtimeId: 'rt-newest', label: 'newest live runtime', command: ['hrc', 'attach', 'rt-newest'] },
-          { runtimeId: 'rt-older', label: 'older live runtime', command: ['hrc', 'attach', 'rt-older'] },
+          {
+            runtimeId: 'rt-newest',
+            label: 'newest live runtime',
+            command: ['hrc', 'attach', 'rt-newest'],
+          },
+          {
+            runtimeId: 'rt-older',
+            label: 'older live runtime',
+            command: ['hrc', 'attach', 'rt-older'],
+          },
         ],
       })
     )
@@ -121,8 +131,16 @@ describe('hrc-top focus panel pure projection', () => {
     expect(model.primaryAction.kind).toBe('focus')
     expect(model.commandPreview).toBeUndefined()
     expect(model.ambiguityCandidates).toEqual([
-      { runtimeId: 'rt-newest', label: 'newest live runtime', command: ['hrc', 'attach', 'rt-newest'] },
-      { runtimeId: 'rt-older', label: 'older live runtime', command: ['hrc', 'attach', 'rt-older'] },
+      {
+        runtimeId: 'rt-newest',
+        label: 'newest live runtime',
+        command: ['hrc', 'attach', 'rt-newest'],
+      },
+      {
+        runtimeId: 'rt-older',
+        label: 'older live runtime',
+        command: ['hrc', 'attach', 'rt-older'],
+      },
     ])
   })
 

@@ -22,7 +22,9 @@ function brokerTransportError(message: string): Error {
 
 describe('T-05358 isBenignBrokerTransportClosed', () => {
   it('swallows the mid-flight unix/stdio close: "Broker transport closed"', () => {
-    expect(isBenignBrokerTransportClosed(brokerTransportError('Broker transport closed'))).toBe(true)
+    expect(isBenignBrokerTransportClosed(brokerTransportError('Broker transport closed'))).toBe(
+      true
+    )
   })
 
   it('swallows the already-closed json-rpc channel: "Broker transport is closed"', () => {

@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test'
 import type { HrcTargetView } from 'hrc-core'
 
 import {
+  type HrcTopActionExecutor,
+  type HrcTopCommandModeDispatcher,
   dispatchHrcTopAction,
   dispatchHrcTopActionKey,
   executeHrcTopCommandLine,
-  type HrcTopActionExecutor,
-  type HrcTopCommandModeDispatcher,
 } from './commands.js'
 import type { HrcTopRow } from './read-model.js'
 
@@ -107,15 +107,21 @@ describe('hrc-top command action dispatcher', () => {
     const executor = makeExecutor(calls)
     const selected = row()
 
-    await expect(dispatchHrcTopActionKey({ key: '\r', row: selected, executor })).resolves.toMatchObject({
+    await expect(
+      dispatchHrcTopActionKey({ key: '\r', row: selected, executor })
+    ).resolves.toMatchObject({
       status: 'focused',
       action: 'focus',
     })
-    await expect(dispatchHrcTopActionKey({ key: 'i', row: selected, executor })).resolves.toMatchObject({
+    await expect(
+      dispatchHrcTopActionKey({ key: 'i', row: selected, executor })
+    ).resolves.toMatchObject({
       status: 'focused',
       action: 'inspect',
     })
-    await expect(dispatchHrcTopActionKey({ key: 'e', row: selected, executor })).resolves.toMatchObject({
+    await expect(
+      dispatchHrcTopActionKey({ key: 'e', row: selected, executor })
+    ).resolves.toMatchObject({
       status: 'focused',
       action: 'tail',
     })
@@ -207,7 +213,9 @@ describe('hrc-top command action dispatcher', () => {
       confirmRunWithContinuation: true,
     })
 
-    expect(calls).toEqual([{ type: 'runCommand', argv: ['hrc', 'run', 'cody@hrc-runtime:T-05407'] }])
+    expect(calls).toEqual([
+      { type: 'runCommand', argv: ['hrc', 'run', 'cody@hrc-runtime:T-05407'] },
+    ])
   })
 
   it('returns footer-copy reasons for disabled explicit actions instead of throwing', async () => {

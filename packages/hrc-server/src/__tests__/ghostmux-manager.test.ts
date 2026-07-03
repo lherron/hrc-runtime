@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import {
-  GhostmuxManager,
-  deriveHeadlessTabIdentity,
-  parseGhostmuxSurfaceState,
-} from '../ghostmux'
+import { GhostmuxManager, deriveHeadlessTabIdentity, parseGhostmuxSurfaceState } from '../ghostmux'
 
 /**
  * A metadata-modeling fake ghostmux (T-05237). Tracks live surfaces with both
@@ -24,7 +20,8 @@ function makeFakeGhostmux() {
   const calls: string[][] = []
   let counter = 0
   const alloc = (title?: string | undefined): string => {
-    const id = `surf-${(counter += 1)}`
+    counter += 1
+    const id = `surf-${counter}`
     surfaces.set(id, { surfaceMeta: {}, windowMeta: {}, title, columns: 120, rows: 40 })
     return id
   }
@@ -84,7 +81,9 @@ function makeFakeGhostmux() {
   const agentPanes = () =>
     [...surfaces.entries()].filter(([, s]) => s.surfaceMeta['hrc_role'] === 'headless-agent-pane')
   const anchors = () =>
-    [...surfaces.entries()].filter(([, s]) => s.surfaceMeta['hrc_role'] === 'headless-window-anchor')
+    [...surfaces.entries()].filter(
+      ([, s]) => s.surfaceMeta['hrc_role'] === 'headless-window-anchor'
+    )
   return { runner, calls, surfaces, surfaceMeta, liveIds, agentPanes, anchors }
 }
 
@@ -504,7 +503,11 @@ describe('GhostmuxManager.reapHeadlessAgentPane (runtime-fenced, daedalus C4)', 
     const fake = makeFakeGhostmux()
     const manager = new GhostmuxManager('ghostmux', fake.runner)
     await manager.ensureHeadlessViewer({ scopeRef: cloRef, runtimeId: 'rt-1', attachCommand: 'a' })
-    await manager.ensureHeadlessViewer({ scopeRef: curlyRef, runtimeId: 'rt-2', attachCommand: 'b' })
+    await manager.ensureHeadlessViewer({
+      scopeRef: curlyRef,
+      runtimeId: 'rt-2',
+      attachCommand: 'b',
+    })
     const cloPane =
       fake.agentPanes().find(([, s]) => s.surfaceMeta['hrc_agent_id'] === 'clod')?.[0] ?? ''
 

@@ -173,7 +173,13 @@ describe('. faint-show-all view', () => {
   it('reveals idle rows and paints them at the faint tier while actionable rows glow', () => {
     const model = fleet()
     const navState = createNavState({ visibleRows: model.rows, viewportHeight: 30 })
-    const screen = buildTopScreenModel({ model, navState, viewportHeight: 30, width: 100, showAll: true })
+    const screen = buildTopScreenModel({
+      model,
+      navState,
+      viewportHeight: 30,
+      width: 100,
+      showAll: true,
+    })
 
     // Idle becomes a rendered section now.
     expect(screen.sections.map((section) => section.bucket)).toEqual([

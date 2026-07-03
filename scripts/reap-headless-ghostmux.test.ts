@@ -361,8 +361,16 @@ describe('selectHeadlessPanes (metadata-role discovery)', () => {
     { short_id: '3851935F', title: 'hrc headless agent:cody:project:acp:task:T-05190' },
   ]
   const metadataById: Record<string, Record<string, unknown>> = {
-    '4EF80A10': { hrc_role: HEADLESS_PANE_ROLE, hrc_runtime_id: 'rt-a', hrc_scope_ref: 'agent:clod' },
-    '5B01A4E9': { hrc_role: HEADLESS_PANE_ROLE, hrc_runtime_id: 'rt-b', hrc_scope_ref: 'agent:clod' },
+    '4EF80A10': {
+      hrc_role: HEADLESS_PANE_ROLE,
+      hrc_runtime_id: 'rt-a',
+      hrc_scope_ref: 'agent:clod',
+    },
+    '5B01A4E9': {
+      hrc_role: HEADLESS_PANE_ROLE,
+      hrc_runtime_id: 'rt-b',
+      hrc_scope_ref: 'agent:clod',
+    },
     '618CFC8D': { hrc_role: 'headless-window-anchor' },
     DD4C6CE6: { hrc_role: 'interactive-tui' },
     '3851935F': {}, // leftover: no metadata at all
@@ -388,7 +396,9 @@ describe('selectHeadlessPanes (metadata-role discovery)', () => {
   })
 
   it('applies an optional title regex as a secondary filter', () => {
-    const ids = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE, '^wrkq ').map((p) => p.id)
+    const ids = selectHeadlessPanes(terminals, resolve, HEADLESS_PANE_ROLE, '^wrkq ').map(
+      (p) => p.id
+    )
     expect(ids).toEqual(['5B01A4E9'])
   })
 
@@ -422,12 +432,18 @@ describe('classifyReapExec (bounded terminate outcome)', () => {
   })
 
   it('classifies exit 0 as sent', () => {
-    expect(classifyReapExec({ exitCode: 0, stdout: '', stderr: '' }, argv, 20_000).kind).toBe('sent')
+    expect(classifyReapExec({ exitCode: 0, stdout: '', stderr: '' }, argv, 20_000).kind).toBe(
+      'sent'
+    )
   })
 
   it('classifies a non-zero already-terminated exit as benign', () => {
     const r = classifyReapExec(
-      { exitCode: 1, stdout: '', stderr: 'hrc: [runtime_unavailable] runtime "rt-x" is terminated' },
+      {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'hrc: [runtime_unavailable] runtime "rt-x" is terminated',
+      },
       argv,
       20_000
     )

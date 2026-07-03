@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import type { HrcTargetView } from 'hrc-core'
 
-import { applyFilter } from './filter.js'
-import type { HrcTopFilterRow, HrcTopFilterResult } from './filter.js'
 import type { HrcTopPrimaryActionKind } from './action-policy.js'
+import { applyFilter } from './filter.js'
+import type { HrcTopFilterResult, HrcTopFilterRow } from './filter.js'
 
 /**
  * T-05406 Ph4 export contract for the pure filter seam:

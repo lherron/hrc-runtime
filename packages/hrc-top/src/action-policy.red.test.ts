@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { HrcTargetOperatorDisplayState } from 'hrc-core'
 import type { HrcTargetView } from 'hrc-core'
 
-import { recommendPrimaryAction, type HrcTopActionInput } from './action-policy.js'
+import { type HrcTopActionInput, recommendPrimaryAction } from './action-policy.js'
 
 const capabilities: HrcTargetView['capabilities'] = {
   state: 'bound',
@@ -148,11 +148,14 @@ describe('hrc-top primary action policy contract', () => {
     ).not.toBe('run')
   })
 
-  it.each(['broken', 'ambiguous'] as const)('keeps %s targets on non-mutating focus', (displayState) => {
-    const recommendation = recommendPrimaryAction(actionInput(displayState))
+  it.each(['broken', 'ambiguous'] as const)(
+    'keeps %s targets on non-mutating focus',
+    (displayState) => {
+      const recommendation = recommendPrimaryAction(actionInput(displayState))
 
-    expect(recommendation.kind).toBe('focus')
-    expect(recommendation.command).toBeUndefined()
-    expect(recommendation.reason.length).toBeGreaterThan(0)
-  })
+      expect(recommendation.kind).toBe('focus')
+      expect(recommendation.command).toBeUndefined()
+      expect(recommendation.reason.length).toBeGreaterThan(0)
+    }
+  )
 })

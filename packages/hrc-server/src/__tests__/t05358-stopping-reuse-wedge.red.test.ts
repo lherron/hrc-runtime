@@ -23,11 +23,11 @@ import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { isBrokerRuntimeInputDispatchable } from '../require-helpers.js'
 import {
   getDurableHeadlessRuntimeForReattach,
   getReusableHeadlessRuntimeForSession,
 } from '../runtime-select'
-import { isBrokerRuntimeInputDispatchable } from '../require-helpers.js'
 
 const HOST_SESSION_ID = 'hsid_t05358'
 const SCOPE_REF = 'agent:curly:project:taskboard:task:T-05358'
@@ -162,7 +162,11 @@ describe('T-05358 stopping-state runtime reuse wedge', () => {
     // Daedalus: the live DB carries `ready|stopping` row/invocation pairs, so
     // status-only filtering is insufficient — invocation-state filtering is what
     // closes the race.
-    seedRuntime({ runtimeId: 'rt-ready-row-stopping-inv', status: 'ready', invocationState: 'stopping' })
+    seedRuntime({
+      runtimeId: 'rt-ready-row-stopping-inv',
+      status: 'ready',
+      invocationState: 'stopping',
+    })
     expect(
       getReusableHeadlessRuntimeForSession(db, HOST_SESSION_ID, 'openai', 'codex-app-server')
     ).toBeNull()

@@ -520,7 +520,11 @@ export class GhostmuxManager {
           await this.exec(['set-title', '-t', existing.surfaceId, paneTitle]).catch(() => undefined)
           this.applyStatusBarBestEffort(existing.surfaceId, options.statusBar)
           this.applyTerminalBackgroundBestEffort(existing.surfaceId, options.terminalBg)
-          return { status: 'reused' as const, surfaceId: existing.surfaceId, tabKey: identity.tabKey }
+          return {
+            status: 'reused' as const,
+            surfaceId: existing.surfaceId,
+            tabKey: identity.tabKey,
+          }
         }
 
         const anchor = await this.ensureHeadlessWindow()
@@ -599,7 +603,8 @@ export class GhostmuxManager {
         // Rebound to a newer runtime — the fence: do NOT reap.
         return { status: 'skipped', reason: 'runtime_rebound' }
       }
-      const tabKey = typeof metadata['hrc_tab_key'] === 'string' ? metadata['hrc_tab_key'] : undefined
+      const tabKey =
+        typeof metadata['hrc_tab_key'] === 'string' ? metadata['hrc_tab_key'] : undefined
       await this.terminate(surfaceId)
       // After the kill, did any sibling agent pane for this tab survive?
       let tabCollapsed = false
@@ -737,9 +742,11 @@ export class GhostmuxManager {
       )
       // Surface-level role identifies the anchor pane; window-level role marks the
       // whole window. Both best-effort.
-      await this.setMetadata(created.surfaceId, { hrc_role: HEADLESS_WINDOW_ANCHOR_ROLE }, false).catch(
-        () => undefined
-      )
+      await this.setMetadata(
+        created.surfaceId,
+        { hrc_role: HEADLESS_WINDOW_ANCHOR_ROLE },
+        false
+      ).catch(() => undefined)
       await this.setMetadata(
         created.surfaceId,
         { hrc_role: HEADLESS_SESSIONS_WINDOW_ROLE },

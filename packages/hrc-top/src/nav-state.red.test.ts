@@ -69,32 +69,68 @@ describe('hrc-top navigation state over an abstract visible-row set', () => {
     const visibleRows = rows(['row-0', 'row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6'])
     let state = createNavState({ visibleRows, viewportHeight: 4, selectedRowId: 'row-1' })
 
-    state = reduceNavState(state, { type: 'key', key: 'ctrl-d' }, { visibleRows, viewportHeight: 4 })
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'ctrl-d' },
+      { visibleRows, viewportHeight: 4 }
+    )
     expect(selected(state)).toBe('row-3')
 
-    state = reduceNavState(state, { type: 'key', key: 'ctrl-f' }, { visibleRows, viewportHeight: 4 })
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'ctrl-f' },
+      { visibleRows, viewportHeight: 4 }
+    )
     expect(selected(state)).toBe('row-6')
 
-    state = reduceNavState(state, { type: 'key', key: 'ctrl-u' }, { visibleRows, viewportHeight: 4 })
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'ctrl-u' },
+      { visibleRows, viewportHeight: 4 }
+    )
     expect(selected(state)).toBe('row-4')
 
-    state = reduceNavState(state, { type: 'key', key: 'ctrl-b' }, { visibleRows, viewportHeight: 4 })
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'ctrl-b' },
+      { visibleRows, viewportHeight: 4 }
+    )
     expect(selected(state)).toBe('row-0')
   })
 
   it('stores marks by stable row identity and jumps to the marked row after reorder', () => {
     const initialRows = rows(['agent-a', 'agent-b', 'agent-c'])
     const reorderedRows = rows(['agent-c', 'agent-a', 'agent-b'])
-    let state = createNavState({ visibleRows: initialRows, viewportHeight: 3, selectedRowId: 'agent-b' })
+    let state = createNavState({
+      visibleRows: initialRows,
+      viewportHeight: 3,
+      selectedRowId: 'agent-b',
+    })
 
-    state = reduceNavState(state, { type: 'mark', name: 'x' }, { visibleRows: initialRows, viewportHeight: 3 })
-    state = reduceNavState(state, { type: 'key', key: 'G' }, { visibleRows: reorderedRows, viewportHeight: 3 })
+    state = reduceNavState(
+      state,
+      { type: 'mark', name: 'x' },
+      { visibleRows: initialRows, viewportHeight: 3 }
+    )
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'G' },
+      { visibleRows: reorderedRows, viewportHeight: 3 }
+    )
     expect(selected(state)).toBe('agent-b')
 
-    state = reduceNavState(state, { type: 'key', key: 'gg' }, { visibleRows: reorderedRows, viewportHeight: 3 })
+    state = reduceNavState(
+      state,
+      { type: 'key', key: 'gg' },
+      { visibleRows: reorderedRows, viewportHeight: 3 }
+    )
     expect(selected(state)).toBe('agent-c')
 
-    state = reduceNavState(state, { type: 'jumpToMark', name: 'x' }, { visibleRows: reorderedRows, viewportHeight: 3 })
+    state = reduceNavState(
+      state,
+      { type: 'jumpToMark', name: 'x' },
+      { visibleRows: reorderedRows, viewportHeight: 3 }
+    )
     expect(selected(state)).toBe('agent-b')
     expect(state.selectedIndex).toBe(2)
   })
@@ -104,12 +140,20 @@ describe('hrc-top navigation state over an abstract visible-row set', () => {
     let state = createNavState({ visibleRows: allRows, viewportHeight: 5, selectedRowId: 'row-c' })
 
     const reorderedRows = rows(['row-e', 'row-c', 'row-a'])
-    state = reduceNavState(state, { type: 'refresh' }, { visibleRows: reorderedRows, viewportHeight: 5 })
+    state = reduceNavState(
+      state,
+      { type: 'refresh' },
+      { visibleRows: reorderedRows, viewportHeight: 5 }
+    )
     expect(selected(state)).toBe('row-c')
 
     state = createNavState({ visibleRows: allRows, viewportHeight: 5, selectedRowId: 'row-c' })
     const filteredRows = rows(['row-a', 'row-d', 'row-e'])
-    state = reduceNavState(state, { type: 'refresh' }, { visibleRows: filteredRows, viewportHeight: 5 })
+    state = reduceNavState(
+      state,
+      { type: 'refresh' },
+      { visibleRows: filteredRows, viewportHeight: 5 }
+    )
     expect(selected(state)).toBe('row-d')
   })
 })
