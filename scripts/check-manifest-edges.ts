@@ -174,41 +174,82 @@ async function importedWorkspacePackages(
   return imports
 }
 
-const packages = await workspacePackages()
-const workspaceNames = new Set(packages.map((packageInfo) => packageInfo.name))
-const missingEdges: MissingEdge[] = []
+async function collectMissingManifestEdges(): Promise<MissingEdge[]> {
+  const packages = await workspacePackages()
+  const workspaceNames = new Set(packages.map((packageInfo) => packageInfo.name))
+  const missingEdges: MissingEdge[] = []
 
-for (const packageInfo of packages) {
-  const imports = await importedWorkspacePackages(packageInfo, workspaceNames)
-  for (const [dependency, files] of imports) {
-    if (!packageInfo.declared.has(dependency)) {
-      missingEdges.push({
-        packageDir: packageInfo.dir,
-        packageName: packageInfo.name,
-        dependency,
-        files: [...files].sort(),
-      })
+  for (const packageInfo of packages) {
+    const imports = await importedWorkspacePackages(packageInfo, workspaceNames)
+    for (const [dependency, files] of imports) {
+      if (!packageInfo.declared.has(dependency)) {
+        missingEdges.push({
+          packageDir: packageInfo.dir,
+          packageName: packageInfo.name,
+          dependency,
+          files: [...files].sort(),
+        })
+      }
+    }
+  }
+
+  return missingEdges
+}
+
+function formatManifestEdgeDiagnostic(edge: MissingEdge): string[] {
+  return [
+    [
+      `FIX: declare '${edge.dependency}' in ${edge.packageDir}/package.json`,
+      'under dependencies for runtime imports, devDependencies for test/tool-only imports, or peerDependencies when the consuming package must provide it.',
+      `If the import was accidental, remove it from ${edge.files.join(', ')} instead.`,
+    ].join(' '),
+    [
+      'WHY: workspace resolution can hide undeclared package edges during local development.',
+      `${edge.packageName} must carry its own manifest contract so published packages, installs, and agents can reproduce the dependency graph without relying on a sibling workspace.`,
+    ].join(' '),
+    [
+      'EXCEPTION: if the edge is intentionally undeclared, get architecture approval in a wrkq task and encode a named, narrow exception in scripts/check-manifest-edges.ts',
+      `for ${edge.packageName} -> ${edge.dependency} with the reason and expiry/review condition.`,
+    ].join(' '),
+  ]
+}
+
+function reportMissingManifestEdges(missingEdges: MissingEdge[]): void {
+  console.error('Manifest edge check failed: source imports missing from package manifests.')
+
+  const grouped = Map.groupBy(missingEdges, (edge) => `${edge.packageDir} (${edge.packageName})`)
+  for (const [group, edges] of grouped) {
+    console.error('')
+    console.error(group)
+    for (const edge of edges.sort((left, right) =>
+      left.dependency.localeCompare(right.dependency)
+    )) {
+      console.error(`  missing dependency '${edge.dependency}'`)
+      for (const file of edge.files) {
+        console.error(`    ${file}`)
+      }
+      for (const line of formatManifestEdgeDiagnostic(edge)) {
+        console.error(`    ${line}`)
+      }
     }
   }
 }
 
-if (missingEdges.length === 0) {
-  console.log('Manifest edge check passed.')
-  process.exit(0)
+export {
+  collectMissingManifestEdges,
+  formatManifestEdgeDiagnostic,
+  reportMissingManifestEdges,
+  type MissingEdge,
 }
 
-console.error('Manifest edge check failed: source imports missing from package manifests.')
+if (import.meta.main) {
+  const missingEdges = await collectMissingManifestEdges()
 
-const grouped = Map.groupBy(missingEdges, (edge) => `${edge.packageDir} (${edge.packageName})`)
-for (const [group, edges] of grouped) {
-  console.error('')
-  console.error(group)
-  for (const edge of edges.sort((left, right) => left.dependency.localeCompare(right.dependency))) {
-    console.error(`  missing dependency '${edge.dependency}'`)
-    for (const file of edge.files) {
-      console.error(`    ${file}`)
-    }
+  if (missingEdges.length === 0) {
+    console.log('Manifest edge check passed.')
+    process.exit(0)
   }
-}
 
-process.exit(1)
+  reportMissingManifestEdges(missingEdges)
+  process.exit(1)
+}

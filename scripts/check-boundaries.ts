@@ -227,40 +227,118 @@ async function findViolations(layer: Layer): Promise<Violation[]> {
   return violations
 }
 
-const violationsByLayer = new Map<string, Violation[]>()
+async function collectBoundaryViolations(): Promise<Map<string, Violation[]>> {
+  const found = new Map<string, Violation[]>()
 
-for (const layer of layers) {
-  const violations = await findViolations(layer)
-  if (violations.length > 0) {
-    violationsByLayer.set(layer.name, violations)
+  for (const layer of layers) {
+    const violations = await findViolations(layer)
+    if (violations.length > 0) {
+      found.set(layer.name, violations)
+    }
   }
+
+  const brokerScopedViolations = await findBrokerScopedViolations()
+  if (brokerScopedViolations.length > 0) {
+    found.set('HRC broker-path scoped', brokerScopedViolations)
+  }
+
+  return found
 }
 
-const brokerScopedViolations = await findBrokerScopedViolations()
-if (brokerScopedViolations.length > 0) {
-  violationsByLayer.set('HRC broker-path scoped', brokerScopedViolations)
+function fixForViolation(layerName: string, violation: Violation): string {
+  if (violation.reason) {
+    return [
+      `FIX: remove the direct '${violation.specifier}' import from ${violation.file}.`,
+      'Route broker-path code through the broker client/protocol seam or move the adapter to the owning subsystem; do not widen the broker-path allowlist.',
+    ].join(' ')
+  }
+
+  if (layerName === 'ASP') {
+    return [
+      `FIX: remove the '${violation.specifier}' import from ${violation.file}.`,
+      'Move shared contracts into an ASP-owned package, invert the dependency through a caller-supplied adapter, or keep the HRC/ACP call at the application edge.',
+    ].join(' ')
+  }
+
+  return [
+    `FIX: remove the '${violation.specifier}' import from ${violation.file}.`,
+    'Use an HRC-owned package, an allowed pinned ASP package, or pass data through an adapter owned by the forbidden layer instead of importing that layer directly.',
+  ].join(' ')
 }
 
-if (violationsByLayer.size === 0) {
-  console.log('Boundary check passed.')
-  console.log(`Broker-path scoped guard passed for: ${brokerScopedPaths.join(', ')}`)
-  process.exit(0)
+function whyForViolation(layerName: string, violation: Violation): string {
+  if (violation.reason) {
+    return [
+      'WHY: broker-path files are the runtime-control boundary.',
+      'Direct launch/harness internals couple durable broker dispatch to legacy execution details and make the broker split unenforceable.',
+    ].join(' ')
+  }
+
+  if (layerName === 'ASP') {
+    return [
+      'WHY: ASP packages are the lower reusable layer.',
+      'Pulling HRC/ACP/gateway/task implementations into ASP makes the platform split cyclic and breaks cross-repo package reuse.',
+    ].join(' ')
+  }
+
+  return [
+    'WHY: HRC runtime packages must stay independent of ACP gateways, coordination substrate, wrkq, wlearn, and other application-layer implementations.',
+    'A forbidden import turns those systems into undeclared runtime dependencies and lets architecture drift ship silently.',
+  ].join(' ')
 }
 
-console.error('Boundary check failed: forbidden layer imports found.')
+function exceptionForViolation(layerName: string): string {
+  return [
+    'EXCEPTION: if this crossing is intentional, get architecture approval in a wrkq task and encode a named, narrow exception in scripts/check-boundaries.ts',
+    `for the exact ${layerName} file/specifier pair with the reason and expiry/review condition.`,
+  ].join(' ')
+}
 
-for (const [layerName, violations] of violationsByLayer) {
-  console.error('')
-  console.error(`${layerName} layer violations:`)
+function formatBoundaryViolationDiagnostic(layerName: string, violation: Violation): string[] {
+  return [
+    fixForViolation(layerName, violation),
+    whyForViolation(layerName, violation),
+    exceptionForViolation(layerName),
+  ]
+}
 
-  const grouped = Map.groupBy(violations, (violation) => packageGroup(violation.file))
-  for (const [group, groupViolations] of grouped) {
-    console.error(`  ${group}`)
-    for (const violation of groupViolations) {
-      const reason = violation.reason ? ` (${violation.reason})` : ''
-      console.error(`    ${violation.file}: forbidden '${violation.specifier}'${reason}`)
+function reportBoundaryViolations(found: Map<string, Violation[]>): void {
+  console.error('Boundary check failed: forbidden layer imports found.')
+
+  for (const [layerName, violations] of found) {
+    console.error('')
+    console.error(`${layerName} layer violations:`)
+
+    const grouped = Map.groupBy(violations, (violation) => packageGroup(violation.file))
+    for (const [group, groupViolations] of grouped) {
+      console.error(`  ${group}`)
+      for (const violation of groupViolations) {
+        const reason = violation.reason ? ` (${violation.reason})` : ''
+        console.error(`    ${violation.file}: forbidden '${violation.specifier}'${reason}`)
+        for (const line of formatBoundaryViolationDiagnostic(layerName, violation)) {
+          console.error(`      ${line}`)
+        }
+      }
     }
   }
 }
 
-process.exit(1)
+export {
+  collectBoundaryViolations,
+  formatBoundaryViolationDiagnostic,
+  reportBoundaryViolations,
+  type Violation,
+}
+
+if (import.meta.main) {
+  const found = await collectBoundaryViolations()
+
+  if (found.size === 0) {
+    console.log('Boundary check passed.')
+    console.log(`Broker-path scoped guard passed for: ${brokerScopedPaths.join(', ')}`)
+    process.exit(0)
+  }
+
+  reportBoundaryViolations(found)
+  process.exit(1)
+}
