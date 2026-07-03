@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "rubricVersion": "rubric.md@d793717",
+  "catalogVersion": "not-recorded",
+  "floor": {
+    "lastSweep": null,
+    "etag": 0,
+    "axes": {}
+  },
+  "observations": [],
+  "depth": {
+    "lastAssess": "2026-07-03",
+    "writer": "ae",
+    "etag": 1,
+    "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
+    "axes": {
+      "F0": "PARTIAL.DORMANT.satisfied.dormant",
+      "P0": "PRESENT.EXERCISED.open_delta",
+      "S1": "PARTIAL.EXERCISED.open_delta",
+      "S2": "PARTIAL.DORMANT.open_delta",
+      "S3": "PRESENT.EXERCISED.satisfied.exercised",
+      "S4": "PARTIAL.EXERCISED.open_delta",
+      "S5": "ABSENT.DORMANT.open_delta",
+      "S6": "PARTIAL.EXERCISED.open_delta",
+      "S7": "PARTIAL.EXERCISED.open_delta",
+      "S8": "PRESENT.EXERCISED.tacit",
+      "TA": "PARTIAL.EXERCISED.open_delta",
+      "TA.actuatorSplit": "ABSENT.DORMANT.deferred",
+      "TB": "PRESENT.EXERCISED.satisfied.exercised",
+      "TC": "ABSENT.DORMANT.open_delta",
+      "TD": "PARTIAL.EXERCISED.open_delta",
+      "TD.selfDescribingSurfaceConformance": "PRESENT.EXERCISED.satisfied.exercised",
+      "TE": "PARTIAL.EXERCISED.open_delta",
+      "TF": "PRESENT.EXERCISED.satisfied.exercised"
+    },
+    "profileSummary": {
+      "generatedBy": "agent-enablement/validate-contract.mjs --sync-target",
+      "source": {
+        "profile": "agent-enablement/assessments/hrc-runtime/profile.json",
+        "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
+        "deltas": "agent-enablement/assessments/hrc-runtime/deltas.json",
+        "profileHash": "1148487cc95db0113557eb209db14d25b0b2823ba9fe3cfa1d54f15225659b9b",
+        "assessmentHash": "d9bb01c680cd40be1c7b6e53c16b02a35ed97f38caf5d5c6e1c9501d84211589",
+        "deltasHash": "529a6df1d12bfff7ade7b1b976a8a8fece68be6a7e1c5793b349de51bdb63cc3"
+      },
+      "decidedAt": "2026-07-03",
+      "assessedAt": "2026-07-03",
+      "profileStatusCounts": {
+        "required": 17,
+        "not_applicable": 1,
+        "deferred": 1
+      },
+      "openDeltaIds": [
+        "delta:add-enablement-changelog",
+        "delta:add-live-code-discovery-tools",
+        "delta:add-public-surface-baseline",
+        "delta:add-suppression-cost-guard",
+        "delta:materialize-lefthook-hook",
+        "delta:raise-boundary-diagnostic-conformance",
+        "delta:repair-red-verify-gate",
+        "delta:route-actuator-split-residency"
+      ],
+      "failingOpenAxes": [
+        "F0",
+        "P0",
+        "S1",
+        "S2",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "TA",
+        "TA.actuatorSplit",
+        "TC",
+        "TD",
+        "TE"
+      ],
+      "axes": {
+        "F0": {
+          "status": "required",
+          "rationale": "Baseline hygiene remains PM/floor-owned and presence-only; secret-scan and lockfile floors exist but readme and spaces-config predicates are partial. Cannot satisfy depth."
+        },
+        "P0": {
+          "status": "required",
+          "minimumRung": "runnable-verify-plus-materialized-hook-gate",
+          "rationale": "hrc-runtime is the runtime-controller layer with a single-command verify; the precondition is real but its gate is currently red and its hook unmaterialized, so P0 conditions the S6 deltas."
+        },
+        "S1": {
+          "status": "required",
+          "minimumRung": "type-local-domain-invariants-where-expressible",
+          "rationale": "Scope/identity parse-don't-validate is inherited from ASP and hrc-core is deliberately opaque-at-boundary; local domain invariants remain a design frontier rather than an ingress-typing requirement."
+        },
+        "S2": {
+          "status": "required",
+          "minimumRung": "dominant-shape-plus-scaffold",
+          "rationale": "~66 Commander commands share one shape but no generator seeds it; a new-command scaffold would materially improve the construction prior."
+        },
+        "S3": {
+          "status": "required",
+          "minimumRung": "TRAIN-router-plus-reachability-guard",
+          "rationale": "Agents enter through AGENTS.md; disclosure is reachable via the CLAUDE.md symlink but has no executable reachability guard and no package-local routers."
+        },
+        "S3.affordanceGating": {
+          "status": "not_applicable",
+          "rationale": "hrc-runtime is the runtime controller: it hosts sessions but does not assemble the agent prompt/context surface. Dynamic affordance-gated disclosure resides in ASP (context-template/context-resolver), so this refinement does not project onto HRC."
+        },
+        "S4": {
+          "status": "required",
+          "minimumRung": "GUARD-with-teaching-diagnostics",
+          "rationale": "Boundary, manifest-edge, and broker-path guards are verify-gating; every firing diagnostic should reach the fix/why/exception shape that check-cli-surface.ts already demonstrates."
+        },
+        "S5": {
+          "status": "required",
+          "minimumRung": "GUARD-suppression-cost",
+          "rationale": "The repo has structural guards but no meta-lint or reviewed exception channel, so suppressions are free; a suppression-cost guard should land before the guard set grows."
+        },
+        "S6": {
+          "status": "required",
+          "minimumRung": "GUARD-green-verify-materialized-hook",
+          "rationale": "The local hook-enforced verify path is the handoff gate for this local-first repo; the gate must be green AND the hook materialized, and today neither holds."
+        },
+        "S7": {
+          "status": "required",
+          "minimumRung": "GUARD-rot-sensors-plus-public-surface",
+          "rationale": "CLI-help and manifest-edge rot are guarded, but exported public-package surfaces can silently rot without a surface baseline sensor."
+        },
+        "S8": {
+          "status": "required",
+          "minimumRung": "few-high-signal-guard-set",
+          "note": "Scored PRESENT.tacit in the assessment: taste is respected as an output, not mechanized as a process.",
+          "rationale": "The desired S8 output — a small, high-signal guard set with no sprawl — already holds; the authoring/cut-line procedure is deliberately tacit at this guard count and needs a written ledger only if the set grows."
+        },
+        "TA": {
+          "status": "required",
+          "minimumRung": "team-role-separation",
+          "rationale": "hrc-runtime work relies on coordinator/implementer/verifier separation socially; high-risk runtime mutation paths still lack an authority design."
+        },
+        "TA.actuatorSplit": {
+          "status": "deferred",
+          "until": "T-05439 designs and daedalus approves the HRC high-risk-lane authority split / post-approval actuator",
+          "note": "N=3 residency: this defer is LOCAL (the enforcement point resides here, it is simply unbuilt), NOT a cross-repo-residency strain. The only cross-repo residency edge (agent-spaces -> hrc-runtime via T-05439) is still observed from agent-spaces' end only, so the T-05443 trigger has not fired and the deferred+until+route convention stands unchallenged at N=2. See retro.",
+          "rationale": "hrc-runtime is the routed home for the actuator/credential split, but no design or code exists yet; the broker-path cordon is the nearest existing write-authority primitive."
+        },
+        "TB": {
+          "status": "required",
+          "minimumRung": "process-carrier",
+          "rationale": "AGENTS.md is an active process carrier for the cross-repo publish/sync, daemon lifecycle, and hrcchat validation rituals."
+        },
+        "TC": {
+          "status": "required",
+          "minimumRung": "TRAIN-retro-cadence",
+          "rationale": "The repo does substantial agent work but has no enablement changelog / retro carrier, so lessons are not routed after work."
+        },
+        "TD": {
+          "status": "required",
+          "minimumRung": "GUARD-live-code-discovery",
+          "rationale": "A 12-package Bun/TS workspace benefits from find-entry-points / explain-area discovery beyond the CLI roster; only the roster is computed from live code today."
+        },
+        "TD.selfDescribingSurfaceConformance": {
+          "status": "required",
+          "minimumRung": "registry-derived-help-docs-plus-drift-gate",
+          "rationale": "hrc + hrcchat ship large CLIs where stale help would misfire agents; hrc-runtime already meets this bar with check-cli-surface.ts and is the N=2 PRESENT corroboration of the refinement."
+        },
+        "TE": {
+          "status": "required",
+          "minimumRung": "TRAIN-acceptance-behavioral-specs",
+          "rationale": "Runtime/harness changes carry red/green TDD and integration tests as executable requirements; claim-scoped evidence routing is not yet present."
+        },
+        "TF": {
+          "status": "required",
+          "minimumRung": "work-state-control-plane-adopted",
+          "rationale": "hrc-runtime natively hosts an executable run/session state control plane driving live runs; TF projects onto the runtime-run domain here, not onto a task-work engine (which HRC consumes but is boundary-forbidden from importing)."
+        }
+      }
+    }
+  },
+  "escalations": []
+}
