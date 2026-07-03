@@ -25,6 +25,15 @@ export type ExportReference = {
   specifier?: string | undefined
 }
 
+export type ExportStatement = {
+  file: string
+  line: number
+  kind: 'star' | 'namespace' | 'type' | 'value'
+  statement: string
+  symbols: string[]
+  specifier?: string | undefined
+}
+
 export type ImportEdge = ImportReference & {
   target?: string
   targetPackage?: string
@@ -143,14 +152,6 @@ export function parseImportReferences(file: string, content: string): ImportRefe
   return imports
 }
 
-function lineNumberForExportMember(
-  content: string,
-  fallbackIndex: number,
-  memberIndex: number
-): number {
-  return lineNumberForIndex(content, memberIndex >= 0 ? memberIndex : fallbackIndex)
-}
-
 function parseExportMembers(text: string): string[] {
   return text
     .split(',')
@@ -198,7 +199,7 @@ export function parseExportReferences(file: string, content: string): ExportRefe
     const members = match[2] ?? ''
     const specifier = match[3]
     const statement = match[0]
-    const statementIndex = match.index
+    const statementLine = lineNumberForIndex(content, match.index)
 
     for (const member of parseExportMembers(members)) {
       const parsed = cleanExportMember(member)
@@ -206,10 +207,9 @@ export function parseExportReferences(file: string, content: string): ExportRefe
         continue
       }
 
-      const memberIndex = content.indexOf(member, statementIndex)
       exports.push({
         file,
-        line: lineNumberForExportMember(content, statementIndex, memberIndex),
+        line: statementLine,
         kind: typeOnlyBlock || parsed.typeOnly ? 'type' : 'value',
         statement,
         symbol: parsed.symbol,
@@ -272,6 +272,89 @@ export function parseExportReferences(file: string, content: string): ExportRefe
 
   return exports.sort(
     (left, right) => left.line - right.line || left.symbol?.localeCompare(right.symbol ?? '') || 0
+  )
+}
+
+export function parseExportStatements(file: string, content: string): ExportStatement[] {
+  const exports: ExportStatement[] = []
+
+  for (const match of content.matchAll(
+    /\bexport\s+(type\s+)?\{([\s\S]*?)\}\s*(?:from\s*['"]([^'"]+)['"])?/g
+  )) {
+    const typeOnlyBlock = Boolean(match[1])
+    const members = match[2] ?? ''
+    const specifier = match[3]
+    const statement = match[0]
+    const statementIndex = match.index
+    const parsedMembers = parseExportMembers(members)
+      .map((member) => cleanExportMember(member))
+      .filter((member): member is NonNullable<typeof member> => member !== undefined)
+    if (parsedMembers.length > 0) {
+      exports.push({
+        file,
+        line: lineNumberForIndex(content, statementIndex),
+        kind: typeOnlyBlock || parsedMembers.every((member) => member.typeOnly) ? 'type' : 'value',
+        statement,
+        symbols: parsedMembers.map((member) => member.symbol),
+        specifier,
+      })
+    }
+  }
+
+  for (const match of content.matchAll(
+    /\bexport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'"]+)['"]/g
+  )) {
+    exports.push({
+      file,
+      line: lineNumberForIndex(content, match.index),
+      kind: 'namespace',
+      statement: match[0],
+      symbols: match[1] ? [match[1]] : [],
+      specifier: match[2],
+    })
+  }
+
+  for (const match of content.matchAll(/\bexport\s+\*\s+from\s*['"]([^'"]+)['"]/g)) {
+    exports.push({
+      file,
+      line: lineNumberForIndex(content, match.index),
+      kind: 'star',
+      statement: match[0],
+      symbols: ['*'],
+      specifier: match[1],
+    })
+  }
+
+  for (const match of content.matchAll(
+    /\bexport\s+(?:declare\s+)?(?:abstract\s+)?(type|interface|const|let|var|async\s+function|function|class|enum)\s+([A-Za-z_$][\w$]*)/g
+  )) {
+    const declarationKind = match[1]
+    exports.push({
+      file,
+      line: lineNumberForIndex(content, match.index),
+      kind: declarationKind === 'type' || declarationKind === 'interface' ? 'type' : 'value',
+      statement: match[0],
+      symbols: match[2] ? [match[2]] : [],
+    })
+  }
+
+  for (const match of content.matchAll(
+    /\bexport\s+default\s+(?:async\s+)?(?:function|class)?\s*([A-Za-z_$][\w$]*)?/g
+  )) {
+    exports.push({
+      file,
+      line: lineNumberForIndex(content, match.index),
+      kind: 'value',
+      statement: match[0],
+      symbols: [match[1] || 'default'],
+    })
+  }
+
+  return exports.sort(
+    (left, right) =>
+      left.line - right.line ||
+      (left.symbols[0] ?? '').localeCompare(right.symbols[0] ?? '') ||
+      left.statement.localeCompare(right.statement)
   )
 }
 

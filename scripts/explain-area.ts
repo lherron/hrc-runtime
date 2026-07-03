@@ -9,7 +9,7 @@ import {
   collectTsFiles,
   layerOf,
   packageGroup,
-  parseExportReferences,
+  parseExportStatements,
   repoPath,
 } from './lib/import-graph.ts'
 
@@ -98,11 +98,14 @@ async function exportEntries(): Promise<Entry[]> {
       continue
     }
     const content = await readFile(absoluteFile, 'utf8')
-    for (const exported of parseExportReferences(file, content)) {
+    for (const exported of parseExportStatements(file, content)) {
+      const kind = exported.kind === 'type' ? 'type export' : 'public export'
+      const symbols = exported.symbols.join(', ')
+      const from = exported.specifier ? ` from ${exported.specifier}` : ''
       entries.push({
         file,
         line: exported.line,
-        role: `public export: ${exported.statement.replace(/\s+/g, ' ').slice(0, 120)}`,
+        role: `${kind}: ${symbols}${from}`,
       })
     }
   }
