@@ -16,6 +16,8 @@ pre-commit:
       run: bun scripts/check-manifest-edges.ts
     cli-surface:
       run: bun scripts/check-cli-surface.ts
+    public-surface:
+      run: bun scripts/check-public-surface.ts
     suppressions:
       run: bun scripts/check-suppressions.ts
     typecheck:

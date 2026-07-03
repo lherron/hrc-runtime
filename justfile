@@ -48,6 +48,7 @@ check:
     bun scripts/check-boundaries.ts
     bun scripts/check-manifest-edges.ts
     bun scripts/check-cli-surface.ts
+    bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
 
 # Run all verification (check + lint + typecheck + test)

@@ -1,0 +1,3249 @@
+{
+  "_meta": {
+    "schemaVersion": 1,
+    "generatedBy": "bun scripts/check-public-surface.ts --update-baseline",
+    "warning": "Grandfathers the ACP-consumed public package exports. Regenerate only after reviewed API surface changes."
+  },
+  "surfaces": [
+    {
+      "package": "agent-action-render",
+      "symbol": "admissionLabel",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/admission-labels.ts",
+      "hash": "agent-action-render|admissionLabel|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "admissionLabelFromResponse",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/admission-labels.ts",
+      "hash": "agent-action-render|admissionLabelFromResponse|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "AdmissionLabelInput",
+      "kind": "type",
+      "file": "packages/agent-action-render/src/admission-labels.ts",
+      "hash": "agent-action-render|AdmissionLabelInput|type",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "extractEventPreview",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/event-previews.ts",
+      "hash": "agent-action-render|extractEventPreview|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "extractToolPreview",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|extractToolPreview|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "formatEventPreviewLine",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/event-previews.ts",
+      "hash": "agent-action-render|formatEventPreviewLine|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "formatNoticeLine",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/notice-formatters.ts",
+      "hash": "agent-action-render|formatNoticeLine|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "formatToolLine",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|formatToolLine|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "getHrcEventIcon",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/hrc-kind-icons.ts",
+      "hash": "agent-action-render|getHrcEventIcon|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "getToolDisplayName",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-presenters.ts",
+      "hash": "agent-action-render|getToolDisplayName|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "getToolEmoji",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|getToolEmoji|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "MAX_LINE_CHARS",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/budgets.ts",
+      "hash": "agent-action-render|MAX_LINE_CHARS|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "MAX_PREVIEW_CHARS",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/budgets.ts",
+      "hash": "agent-action-render|MAX_PREVIEW_CHARS|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "NOTICE_ICON",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/notice-formatters.ts",
+      "hash": "agent-action-render|NOTICE_ICON|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "PRIMARY_ARG_KEY",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|PRIMARY_ARG_KEY|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "renderMarkdownBlock",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/markdown-block.ts",
+      "hash": "agent-action-render|renderMarkdownBlock|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "resolveToolPresenter",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-presenters.ts",
+      "hash": "agent-action-render|resolveToolPresenter|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "TOOL_EMOJI",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|TOOL_EMOJI|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
+      "symbol": "truncateText",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/budgets.ts",
+      "hash": "agent-action-render|truncateText|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ActiveRunContributionCapability",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ActiveRunContributionCapability|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ActiveRunContributionCapabilityReason",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ActiveRunContributionCapabilityReason|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppManagedSessionInput",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppManagedSessionInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppManagedSessionsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppManagedSessionsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppManagedSessionsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppManagedSessionsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppSessionInput",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppSessionInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppSessionsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppSessionsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ApplyAppSessionsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ApplyAppSessionsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "AppSessionFreshnessFence",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|AppSessionFreshnessFence|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "AttachRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|AttachRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "AttachRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|AttachRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BindSurfaceRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BindSurfaceRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BROKER_TO_HRC_LIFECYCLE_KIND",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|BROKER_TO_HRC_LIFECYCLE_KIND|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BROKER_TO_HRC_LIFECYCLE_POLICY_HASH",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|BROKER_TO_HRC_LIFECYCLE_POLICY_HASH|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BROKER_TO_HRC_LIFECYCLE_POLICY_ID",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|BROKER_TO_HRC_LIFECYCLE_POLICY_ID|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BROKER_TO_HRC_LIFECYCLE_POLICY_VERSION",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|BROKER_TO_HRC_LIFECYCLE_POLICY_VERSION|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerInspectRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerInspectRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerInspectResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerInspectResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "brokerToHrcLifecyclePolicyHash",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|brokerToHrcLifecyclePolicyHash|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "buildHrcInvocationExposure",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|buildHrcInvocationExposure|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BuildHrcInvocationExposureInput",
+      "kind": "type",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|BuildHrcInvocationExposureInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "canonicalCorrelationJson",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|canonicalCorrelationJson|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CaptureBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|CaptureBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CaptureBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|CaptureBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CaptureResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|CaptureResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ClearAppSessionContextRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ClearAppSessionContextRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ClearAppSessionContextResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ClearAppSessionContextResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ClearContextRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ClearContextRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ClearContextResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ClearContextResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CloseBridgeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|CloseBridgeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "correlationConflicts",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|correlationConflicts|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "createHrcError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|createHrcError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CreateMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|CreateMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "CreateMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|CreateMessageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "createMonitorConditionEngine",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|createMonitorConditionEngine|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "createMonitorReader",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|createMonitorReader|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeliverBridgeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DeliverBridgeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeliverBridgeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DeliverBridgeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeliverLiteralBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|DeliverLiteralBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeliverLiteralBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|DeliverLiteralBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchAppHarnessTurnRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DispatchAppHarnessTurnRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchAppHarnessTurnResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DispatchAppHarnessTurnResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchTurnBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|DispatchTurnBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchTurnBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|DispatchTurnBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchTurnRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DispatchTurnRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DispatchTurnResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DispatchTurnResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DropContinuationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DropContinuationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DropContinuationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DropContinuationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureAppSessionDryRunPlan",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureAppSessionDryRunPlan|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureAppSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureAppSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureAppSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureAppSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|EnsureTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureTargetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|EnsureTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureWindowRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureWindowRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EnsureWindowResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|EnsureWindowResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FinalSummaryRecoveryResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|FinalSummaryRecoveryResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FinalSummaryRecoveryState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|FinalSummaryRecoveryState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatCanonicalScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|formatCanonicalScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatCanonicalSessionRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|formatCanonicalSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "formatSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|formatSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "GetTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|GetTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HealthResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HealthResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_API_VERSION",
+      "kind": "value",
+      "file": "packages/hrc-core/src/index.ts",
+      "hash": "hrc-core|HRC_API_VERSION|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_ARTIFACT_REPORTED_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_ARTIFACT_REPORTED_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_MEDIA_TYPE|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_SCHEMA|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_ARTIFACT_STORAGE_KIND|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcActiveRunContributionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcActiveRunContributionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcActiveRunContributionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcActiveRunContributionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcActiveSessionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|HrcActiveSessionState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppCommandSessionSpec",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAppCommandSessionSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppHarnessSessionSpec",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAppHarnessSessionSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppSessionFilter",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcAppSessionFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppSessionRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAppSessionRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppSessionRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAppSessionRef|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAppSessionSpec",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcAppSessionSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcAttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcAttachDescriptor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBadRequestError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcBadRequestError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBridgeDeliverTextRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBridgeDeliverTextRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBridgeDeliverTextResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBridgeDeliverTextResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBridgeTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBridgeTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBridgeTargetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBridgeTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBridgeTargetSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBridgeTargetSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBrokerEventProjectionStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcBrokerEventProjectionStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBrokerInvocationEventRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcBrokerInvocationEventRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBrokerInvocationRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcBrokerInvocationRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBrokerInvocationState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcBrokerInvocationState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCapabilityStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcCapabilityStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCommandLaunchSpec",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcCommandLaunchSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCompiledRuntimePlanRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcCompiledRuntimePlanRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcConcreteSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcConcreteSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcConflictError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcConflictError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcContinuationRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcContinuationRef|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcContinuityRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcContinuityRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcDomainError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcDomainError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcErrorCode",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcErrorCode|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventCategory",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcEventCategory|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcEventEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventSource",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcEventSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcExecutionIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcExecutionIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcExecutionMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcExecutionMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFence",
+      "kind": "type",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|HrcFence|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFenceValidationFailure",
+      "kind": "type",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|HrcFenceValidationFailure|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFenceValidationResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|HrcFenceValidationResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcFenceValidationSuccess",
+      "kind": "type",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|HrcFenceValidationSuccess|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHarness",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcHarness|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHarnessIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcHarnessIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHookBridgeConfig",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcHookBridgeConfig|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHostSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcHostSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHttpError",
+      "kind": "type",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcHttpError|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcHttpStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcHttpStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInternalError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcInternalError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcInvocationExposure",
+      "kind": "type",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|HrcInvocationExposure|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcIoMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcIoMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLaunchArtifact",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLaunchArtifact|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLaunchEnvConfig",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLaunchEnvConfig|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLaunchPromptMaterial",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLaunchPromptMaterial|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLaunchRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLaunchRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLifecycleEvent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLifecycleEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLifecyclePolicyRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLifecyclePolicyRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLifecycleTransport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLifecycleTransport|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLocalBridgeRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcLocalBridgeRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcManagedSessionKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcManagedSessionKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcManagedSessionRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcManagedSessionRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageAddress",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageAddress|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageExecution",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageExecution|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageExecutionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageExecutionState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageFilter",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessagePhase",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessagePhase|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcMessageSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageSeqSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcMessageSeqSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorCapture",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorCapture|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorCaptureOptions",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorCaptureOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorCondition",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorCondition|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorConditionEngine",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorConditionEngine|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorConditionEngineReader",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorConditionEngineReader|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorConditionOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorConditionOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorConditionResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorConditionResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorConditionWaitRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorConditionWaitRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorContextChangedReason",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorContextChangedReason|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorEvent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorFailureKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/condition-engine.ts",
+      "hash": "hrc-core|HrcMonitorFailureKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorMessageState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorMessageState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorResolution",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorResolution|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorResolutionResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorResolutionResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorResolvedSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorResolvedSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorRuntimeState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorRuntimeState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcMonitorSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorSessionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorSessionState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorSnapshot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorSnapshot|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorWatchRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorWatchRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcNotFoundError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcNotFoundError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcPermissionDecisionRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcPermissionDecisionRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcProvider",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcProvider|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcProviderTranscriptArtifactMetadata",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcProviderTranscriptArtifactMetadata|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcProviderTranscriptReportedPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcProviderTranscriptReportedPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRunCorrelation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|HrcRunCorrelation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRunRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRunRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeArtifactRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeArtifactRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeControllerKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeControllerKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeOperationKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeOperationKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeOperationRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeOperationRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeOperationStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeOperationStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcRuntimeSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeSnapshot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcRuntimeSnapshot|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcRuntimeUnavailableError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcRuntimeUnavailableError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcScopeSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcScopeSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSessionRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcSessionRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSessionRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcSessionRef|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSessionSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcSessionSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcStableSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcStableSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcStatusActiveRuntimeView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcStatusActiveRuntimeView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcStatusResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcStatusResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcStatusSessionView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcStatusSessionView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcStatusTmuxView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcStatusTmuxView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSurfaceBindingRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcSurfaceBindingRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetOperatorDisplayState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/target-operator-projection.ts",
+      "hash": "hrc-core|HrcTargetOperatorDisplayState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetOperatorProjection",
+      "kind": "type",
+      "file": "packages/hrc-core/src/target-operator-projection.ts",
+      "hash": "hrc-core|HrcTargetOperatorProjection|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetOperatorProjectionFacts",
+      "kind": "type",
+      "file": "packages/hrc-core/src/target-operator-projection.ts",
+      "hash": "hrc-core|HrcTargetOperatorProjectionFacts|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetRuntimeView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcTargetRuntimeView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetSelector",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|HrcTargetSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcTargetState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTargetView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcTargetView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTaskContext",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcTaskContext|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTurnResponseFormat",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcTurnResponseFormat|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcUnprocessableEntityError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|HrcUnprocessableEntityError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "httpStatusForErrorCode",
+      "kind": "value",
+      "file": "packages/hrc-core/src/errors.ts",
+      "hash": "hrc-core|httpStatusForErrorCode|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InspectRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InspectRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InspectRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InspectRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "InterruptAppSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|InterruptAppSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isCodexAppOwnedScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|isCodexAppOwnedScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isConcreteSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|isConcreteSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isStableSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|isStableSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "KillBrokerTmuxLeasesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|KillBrokerTmuxLeasesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LaunchCommandScopedRunBinding",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|LaunchCommandScopedRunBinding|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LaunchCommandScopedRunRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|LaunchCommandScopedRunRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LaunchCommandScopedRunResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|LaunchCommandScopedRunResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "lifecycleKindForBrokerEvent",
+      "kind": "value",
+      "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
+      "hash": "hrc-core|lifecycleKindForBrokerEvent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListAppSessionsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ListAppSessionsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListMessagesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|ListMessagesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListMessagesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|ListMessagesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListTargetsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|ListTargetsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "normalizeCorrelation",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|normalizeCorrelation|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "normalizeSessionRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|normalizeSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "OpenBrokerSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|OpenBrokerSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "OpenBrokerSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|OpenBrokerSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "OPERATOR_REAP_REASON",
+      "kind": "value",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|OPERATOR_REAP_REASON|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "OperatorAttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|OperatorAttachDescriptor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "OperatorInspectSource",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|OperatorInspectSource|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseFence",
+      "kind": "value",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|parseFence|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "parseSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|parseSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PrepareAttachedRunRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PrepareAttachedRunRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PrepareAttachedRunResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PrepareAttachedRunResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "projectTargetOperatorState",
+      "kind": "value",
+      "file": "packages/hrc-core/src/target-operator-projection.ts",
+      "hash": "hrc-core|projectTargetOperatorState|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PruneRuntimeResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PruneRuntimeResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PruneRuntimesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PruneRuntimesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PruneRuntimesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PruneRuntimesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PruneRuntimesSummary",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|PruneRuntimesSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReconcileActiveRunReason",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ReconcileActiveRunReason|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReconcileActiveRunResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ReconcileActiveRunResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReconcileActiveRunsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ReconcileActiveRunsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReconcileActiveRunsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ReconcileActiveRunsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ReconcileActiveRunsSummary",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ReconcileActiveRunsSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RegisterBridgeTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RegisterBridgeTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RegisterBridgeTargetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RegisterBridgeTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RemoveAppSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RemoveAppSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RemoveAppSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RemoveAppSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveControlSocketPath",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveControlSocketPath|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveDatabasePath",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveDatabasePath|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveLaunchesDir",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveLaunchesDir|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveMigrationsDir",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveMigrationsDir|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveRuntimeRoot",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveRuntimeRoot|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolveSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResolveSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResolveSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResolveSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveSpoolDir",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveSpoolDir|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveStateRoot",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveStateRoot|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveTmuxSocketPath",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveTmuxSocketPath|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RestartStyle",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RestartStyle|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResumeAttachedRunRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResumeAttachedRunRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResumeAttachedRunResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResumeAttachedRunResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResumeContinuationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResumeContinuationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ResumeContinuationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|ResumeContinuationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RuntimeActionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|RuntimeActionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "selectorFor",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|selectorFor|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SemanticDmRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticDmRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SemanticDmResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticDmResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SemanticTurnHandoffRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticTurnHandoffRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SemanticTurnHandoffResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|SemanticTurnHandoffResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SendAppHarnessInFlightInputRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SendAppHarnessInFlightInputRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SendAppHarnessInFlightInputResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SendAppHarnessInFlightInputResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SendLiteralInputRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SendLiteralInputRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SendLiteralInputResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SendLiteralInputResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SendWindowLiteralInputRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SendWindowLiteralInputRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "sessionRefFor",
+      "kind": "value",
+      "file": "packages/hrc-core/src/invocation-exposure.ts",
+      "hash": "hrc-core|sessionRefFor|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "splitSessionRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|splitSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StartRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|StartRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StartRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|StartRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StatusResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|StatusResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepRuntimeResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepRuntimeResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepRuntimesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepRuntimesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepRuntimesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepRuntimesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepRuntimesSummary",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepRuntimesSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepRuntimeTransport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepRuntimeTransport|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepZombieRunResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepZombieRunResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepZombieRunsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepZombieRunsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepZombieRunsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepZombieRunsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SweepZombieRunsSummary",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SweepZombieRunsSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TargetCapabilityView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|TargetCapabilityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TerminateAppSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|TerminateAppSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TerminateRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|TerminateRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TerminateRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|TerminateRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "UnbindSurfaceRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|UnbindSurfaceRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "validateFence",
+      "kind": "value",
+      "file": "packages/hrc-core/src/fences.ts",
+      "hash": "hrc-core|validateFence|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WaitMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|WaitMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WaitMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|WaitMessageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "WatchMessagesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|WatchMessagesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "adaptHrcLifecycleEvent",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/hrc-event-adapter.ts",
+      "hash": "hrc-frame-render|adaptHrcLifecycleEvent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "AssistantSegment",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|AssistantSegment|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "canonicalSessionRefFromEvent",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/hrc-event-adapter.ts",
+      "hash": "hrc-frame-render|canonicalSessionRefFromEvent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "createLogger",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/logger.ts",
+      "hash": "hrc-frame-render|createLogger|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayNoticeEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayNoticeEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayPermissionDecisionEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayPermissionDecisionEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayPermissionRequestEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayPermissionRequestEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayRunCancelledEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayRunCancelledEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayRunCompletedEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayRunCompletedEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayRunFailedEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayRunFailedEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayRunQueuedEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayRunQueuedEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewayRunStartedEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewayRunStartedEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewaySessionEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewaySessionEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "GatewaySessionMetadataEvent",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|GatewaySessionMetadataEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "HrcLifecycleEventPayload",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/hrc-event-adapter.ts",
+      "hash": "hrc-frame-render|HrcLifecycleEventPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "hrcLifecycleEventToSessionEnvelope",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/hrc-event-adapter.ts",
+      "hash": "hrc-frame-render|hrcLifecycleEventToSessionEnvelope|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "OnRenderCallback",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|OnRenderCallback|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "OnRunQueuedCallback",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|OnRunQueuedCallback|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "PermissionAction",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|PermissionAction|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "ProjectId",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|ProjectId|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "RenderAction",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|RenderAction|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "RenderBlock",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|RenderBlock|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "RenderFrame",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|RenderFrame|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "RunId",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|RunId|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "RunState",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|RunState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "runStateToFrame",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|runStateToFrame|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "SessionEventEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/types.ts",
+      "hash": "hrc-frame-render|SessionEventEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
+      "symbol": "SessionEventsManager",
+      "kind": "value",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|SessionEventsManager|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "AdoptRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|AdoptRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "AttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|AttachDescriptor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "AttachRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|AttachRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "AttachRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|AttachRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "BindSurfaceRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|BindSurfaceRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "BridgeListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|BridgeListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "buildHrcRuntimeIntent",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|buildHrcRuntimeIntent|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "BuildHrcRuntimeIntentInput",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|BuildHrcRuntimeIntentInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CaptureBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|CaptureBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CaptureBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|CaptureBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CaptureResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|CaptureResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ClearContextRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|ClearContextRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ClearContextResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|ClearContextResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CloseBridgeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|CloseBridgeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CreateMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|CreateMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "CreateMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|CreateMessageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeliverBridgeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|DeliverBridgeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeliverBridgeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|DeliverBridgeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeliverLiteralBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|DeliverLiteralBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeliverLiteralBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|DeliverLiteralBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "discoverSocket",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/discover.ts",
+      "hash": "hrc-sdk|discoverSocket|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DispatchTurnBySelectorRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|DispatchTurnBySelectorRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DispatchTurnBySelectorResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|DispatchTurnBySelectorResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DispatchTurnRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|DispatchTurnRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DispatchTurnResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|DispatchTurnResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "EnsureRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|EnsureRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "EnsureRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|EnsureRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "EnsureTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|EnsureTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "EnsureTargetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|EnsureTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "harnessFrontendToHrcHarness",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|harnessFrontendToHrcHarness|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HealthResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|HealthResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcClient",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/client.ts",
+      "hash": "hrc-sdk|HrcClient|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "InvocationEventEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|InvocationEventEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "KillBrokerTmuxLeasesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|KillBrokerTmuxLeasesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "LatestEventBySessionFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|LatestEventBySessionFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "LaunchListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|LaunchListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "LaunchRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-sdk|LaunchRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ListMessagesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|ListMessagesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ListMessagesResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|ListMessagesResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "LocalBridgeRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-sdk|LocalBridgeRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "OpenBrokerSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|OpenBrokerSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "OpenBrokerSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|OpenBrokerSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RegisterBridgeTargetRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|RegisterBridgeTargetRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RegisterBridgeTargetResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|RegisterBridgeTargetResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "resolveAgentHarness",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|resolveAgentHarness|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ResolvedAgentHarness",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/resolve-intent.ts",
+      "hash": "hrc-sdk|ResolvedAgentHarness|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ResolveSessionRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|ResolveSessionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ResolveSessionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|ResolveSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RestartStyle",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|RestartStyle|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RunListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|RunListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RunRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-sdk|RunRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RuntimeActionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|RuntimeActionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RuntimeListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|RuntimeListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "RuntimeRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-sdk|RuntimeRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SemanticDmRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|SemanticDmRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SemanticDmResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|SemanticDmResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SendInFlightInputRequest",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SendInFlightInputRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SendInFlightInputResponse",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SendInFlightInputResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SessionFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "StartRuntimeRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|StartRuntimeRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "StartRuntimeResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|StartRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "StatusResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|StatusResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SurfaceBindingRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-sdk|SurfaceBindingRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SurfaceListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|SurfaceListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "TargetListFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|TargetListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "UnbindSurfaceRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|UnbindSurfaceRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WaitMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|WaitMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WaitMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|WaitMessageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WatchBrokerEventsOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|WatchBrokerEventsOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WatchMessagesOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|WatchMessagesOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WatchMessagesRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-sdk|WatchMessagesRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "WatchOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|WatchOptions|type",
+      "count": 1
+    }
+  ]
+}
