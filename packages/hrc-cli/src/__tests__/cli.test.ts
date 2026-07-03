@@ -173,11 +173,7 @@ async function runCliInProcess(args: string[], env?: Record<string, string>): Pr
     process.stderr.write = originalStderrWrite
     process.exit = originalExit
     for (const [key, value] of originalEnv.entries()) {
-      if (value === undefined) {
-        delete process.env[key]
-      } else {
-        process.env[key] = value
-      }
+      restoreEnvValue(key, value)
     }
   }
 }
@@ -203,11 +199,13 @@ let agentsRoot: string
 let projectsRoot: string
 let originalPath: string | undefined
 let originalClaudePath: string | undefined
+let originalAllowHarnessShim: string | undefined
 const leaseSockets: string[] = []
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
 const CLAUDE_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'claude-shim')
 const CODEX_SHIM_DIR = join(REPO_ROOT, 'integration-tests', 'fixtures', 'codex-shim')
+const BROKER_LIFECYCLE_TEST_TIMEOUT_MS = 30_000
 
 function serverOpts(): HrcServerOptions {
   return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath, tmuxSocketPath }
@@ -219,6 +217,14 @@ function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
     HRC_RUNTIME_DIR: runtimeRoot,
     HRC_STATE_DIR: stateRoot,
     ...extra,
+  }
+}
+
+function restoreEnvValue(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key]
+  } else {
+    process.env[key] = value
   }
 }
 
@@ -242,6 +248,7 @@ beforeEach(async () => {
 
   originalPath = process.env.PATH
   originalClaudePath = process.env.ASP_CLAUDE_PATH
+  originalAllowHarnessShim = process.env.HRC_ALLOW_HARNESS_SHIM
   process.env.PATH = `${CLAUDE_SHIM_DIR}:${CODEX_SHIM_DIR}:${originalPath ?? ''}`
   process.env.HRC_ALLOW_HARNESS_SHIM = '1'
 })
@@ -295,8 +302,9 @@ afterEach(async () => {
   } catch {
     // fine when no broker tmux allocations happened
   }
-  process.env.PATH = originalPath
-  process.env.ASP_CLAUDE_PATH = originalClaudePath
+  restoreEnvValue('PATH', originalPath)
+  restoreEnvValue('ASP_CLAUDE_PATH', originalClaudePath)
+  restoreEnvValue('HRC_ALLOW_HARNESS_SHIM', originalAllowHarnessShim)
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -1187,20 +1195,24 @@ describe('session clear-context', () => {
     expect(result.stderr.toLowerCase()).toContain('missing required argument')
   })
 
-  it('session clear-context outputs rotation JSON for a known hostSessionId', async () => {
-    const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
-    const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
-    expect(ensureResult.exitCode).toBe(0)
+  it(
+    'session clear-context outputs rotation JSON for a known hostSessionId',
+    async () => {
+      const hostSessionId = await resolveHostSessionId(testProjectScope('clearctxcli'))
+      const ensureResult = await runCli(['runtime', 'ensure', hostSessionId], cliEnv())
+      expect(ensureResult.exitCode).toBe(0)
 
-    const result = await runCli(['session', 'clear-context', hostSessionId], cliEnv())
+      const result = await runCli(['session', 'clear-context', hostSessionId], cliEnv())
 
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.hostSessionId).toBeString()
-    expect(body.hostSessionId).not.toBe(hostSessionId)
-    expect(body.priorHostSessionId).toBe(hostSessionId)
-    expect(body.generation).toBeGreaterThan(1)
-  })
+      expect(result.exitCode).toBe(0)
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.hostSessionId).toBeString()
+      expect(body.hostSessionId).not.toBe(hostSessionId)
+      expect(body.priorHostSessionId).toBe(hostSessionId)
+      expect(body.generation).toBeGreaterThan(1)
+    },
+    BROKER_LIFECYCLE_TEST_TIMEOUT_MS
+  )
 })
 
 // ===========================================================================
@@ -1291,15 +1303,19 @@ describe('runtime lifecycle commands', () => {
     expect(body.runtimeId).toBe(runtimeId)
   })
 
-  it('runtime terminate prints JSON for a runtimeId', async () => {
-    const runtimeId = await ensureRuntime(testProjectScope('terminatecli'))
-    const result = await runCli(['runtime', 'terminate', runtimeId], cliEnv())
+  it(
+    'runtime terminate prints JSON for a runtimeId',
+    async () => {
+      const runtimeId = await ensureRuntime(testProjectScope('terminatecli'))
+      const result = await runCli(['runtime', 'terminate', runtimeId], cliEnv())
 
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.ok).toBe(true)
-    expect(body.runtimeId).toBe(runtimeId)
-  })
+      expect(result.exitCode).toBe(0)
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.ok).toBe(true)
+      expect(body.runtimeId).toBe(runtimeId)
+    },
+    BROKER_LIFECYCLE_TEST_TIMEOUT_MS
+  )
 
   it('surface bind/list/unbind commands manage runtime bindings', async () => {
     const runtimeId = await ensureRuntime(testProjectScope('surfacecli'))
