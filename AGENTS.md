@@ -21,6 +21,8 @@ bun run build     # Build all HRC packages in order
 - Typecheck: `bun run typecheck`
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 - Boundary checks: `bun run check:boundaries`, `bun run check:manifests`
+- Agent enablement changelog / retro step: see
+  [docs/agent-enablement-changelog.md#retro-cadence](docs/agent-enablement-changelog.md#retro-cadence)
 - Live-code discovery:
   `bun scripts/find-entry-points.ts <topic>` finds entry points for a topic
   from the source graph, and `bun scripts/explain-area.ts <file|dir>` explains
