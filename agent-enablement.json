@@ -19,16 +19,16 @@
       "S1": "PARTIAL.EXERCISED.open_delta",
       "S2": "PARTIAL.DORMANT.open_delta",
       "S3": "PRESENT.EXERCISED.satisfied.exercised",
-      "S4": "PARTIAL.EXERCISED.open_delta",
-      "S5": "ABSENT.DORMANT.open_delta",
+      "S4": "PRESENT.EXERCISED.satisfied.exercised",
+      "S5": "PARTIAL.EXERCISED.open_delta",
       "S6": "PARTIAL.EXERCISED.open_delta",
-      "S7": "PARTIAL.EXERCISED.open_delta",
+      "S7": "PRESENT.EXERCISED.satisfied.exercised",
       "S8": "PRESENT.EXERCISED.tacit",
       "TA": "PARTIAL.EXERCISED.open_delta",
       "TA.actuatorSplit": "ABSENT.DORMANT.deferred",
       "TB": "PRESENT.EXERCISED.satisfied.exercised",
-      "TC": "ABSENT.DORMANT.open_delta",
-      "TD": "PARTIAL.EXERCISED.open_delta",
+      "TC": "PRESENT.EXERCISED.satisfied.exercised",
+      "TD": "PRESENT.EXERCISED.satisfied.exercised",
       "TD.selfDescribingSurfaceConformance": "PRESENT.EXERCISED.satisfied.exercised",
       "TE": "PARTIAL.EXERCISED.open_delta",
       "TF": "PRESENT.EXERCISED.satisfied.exercised"
@@ -40,8 +40,8 @@
         "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
         "deltas": "agent-enablement/assessments/hrc-runtime/deltas.json",
         "profileHash": "1148487cc95db0113557eb209db14d25b0b2823ba9fe3cfa1d54f15225659b9b",
-        "assessmentHash": "bd8ab85dea4b176eb8e1b23efe54039de9d8a7613984b6aacebaccbb5510b936",
-        "deltasHash": "529a6df1d12bfff7ade7b1b976a8a8fece68be6a7e1c5793b349de51bdb63cc3"
+        "assessmentHash": "0f46345c43465414ae643b0f15a6c2b733d53dfd732098987377063f7a893f32",
+        "deltasHash": "97cc75fa5d3038685b2aa7ad474cf3264b8bb3bb97b67e8ce635d6b7bfbe874b"
       },
       "decidedAt": "2026-07-03",
       "assessedAt": "2026-07-03",
@@ -51,12 +51,7 @@
         "deferred": 1
       },
       "openDeltaIds": [
-        "delta:add-enablement-changelog",
-        "delta:add-live-code-discovery-tools",
-        "delta:add-public-surface-baseline",
-        "delta:add-suppression-cost-guard",
         "delta:materialize-lefthook-hook",
-        "delta:raise-boundary-diagnostic-conformance",
         "delta:repair-red-verify-gate",
         "delta:route-actuator-split-residency"
       ],
@@ -65,14 +60,10 @@
         "P0",
         "S1",
         "S2",
-        "S4",
         "S5",
         "S6",
-        "S7",
         "TA",
         "TA.actuatorSplit",
-        "TC",
-        "TD",
         "TE"
       ],
       "axes": {

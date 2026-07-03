@@ -25,3 +25,4 @@ carrier. Keep it terse and structural: a lesson, not a status summary.
 | --- | --- | --- | --- | --- |
 | 2026-07-03 | T-05495 | Structural guards need a reviewed exception channel before they multiply; otherwise a local suppression can silently erase the guard set. | check | `scripts/check-suppressions.ts`, `.suppression-baseline.json`, `docs/suppression-policy.md` |
 | 2026-07-03 | T-05499 | Boundary and manifest guards should teach the repair path when they fire, with FIX, WHY, and EXCEPTION text pinned by planted-negative tests. | check | `scripts/check-boundaries.test.ts`, `scripts/check-manifest-edges.test.ts` |
+| 2026-07-03 | T-05516 | The lefthook commit/push gate is green but only enforced after `bun install` runs `prepare: lefthook install`; a fresh clone has `.git/hooks/*.sample` and no protection until then, so S6 enforcement is materialization-gated, not committed. | rule | `package.json` (`prepare`), `lefthook.yml`; run `bun install` on fresh clones |

@@ -13,8 +13,8 @@ PM floor: not swept (etag 0)
 Required: 17
 Frontier: 0
 Deferred: 1
-Open deltas: delta:add-enablement-changelog, delta:add-live-code-discovery-tools, delta:add-public-surface-baseline, delta:add-suppression-cost-guard, delta:materialize-lefthook-hook, delta:raise-boundary-diagnostic-conformance, delta:repair-red-verify-gate, delta:route-actuator-split-residency
-Failing/open axes: F0, P0, S1, S2, S4, S5, S6, S7, TA, TA.actuatorSplit, TC, TD, TE
+Open deltas: delta:materialize-lefthook-hook, delta:repair-red-verify-gate, delta:route-actuator-split-residency
+Failing/open axes: F0, P0, S1, S2, S5, S6, TA, TA.actuatorSplit, TE
 
 ## PM Floor Axes
 - none
@@ -31,16 +31,16 @@ Failing/open axes: F0, P0, S1, S2, S4, S5, S6, S7, TA, TA.actuatorSplit, TC, TD,
 - S1: PARTIAL.EXERCISED.open_delta
 - S2: PARTIAL.DORMANT.open_delta
 - S3: PRESENT.EXERCISED.satisfied.exercised
-- S4: PARTIAL.EXERCISED.open_delta
-- S5: ABSENT.DORMANT.open_delta
+- S4: PRESENT.EXERCISED.satisfied.exercised
+- S5: PARTIAL.EXERCISED.open_delta
 - S6: PARTIAL.EXERCISED.open_delta
-- S7: PARTIAL.EXERCISED.open_delta
+- S7: PRESENT.EXERCISED.satisfied.exercised
 - S8: PRESENT.EXERCISED.tacit
 - TA: PARTIAL.EXERCISED.open_delta
 - TA.actuatorSplit: ABSENT.DORMANT.deferred
 - TB: PRESENT.EXERCISED.satisfied.exercised
-- TC: ABSENT.DORMANT.open_delta
-- TD: PARTIAL.EXERCISED.open_delta
+- TC: PRESENT.EXERCISED.satisfied.exercised
+- TD: PRESENT.EXERCISED.satisfied.exercised
 - TD.selfDescribingSurfaceConformance: PRESENT.EXERCISED.satisfied.exercised
 - TE: PARTIAL.EXERCISED.open_delta
 - TF: PRESENT.EXERCISED.satisfied.exercised
