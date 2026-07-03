@@ -21,6 +21,10 @@ bun run build     # Build all HRC packages in order
 - Typecheck: `bun run typecheck`
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 - Boundary checks: `bun run check:boundaries`, `bun run check:manifests`
+- Live-code discovery:
+  `bun scripts/find-entry-points.ts <topic>` finds entry points for a topic
+  from the source graph, and `bun scripts/explain-area.ts <file|dir>` explains
+  exports, imports, importers, and specs for a package area.
 
 ## HTML Specs
 
