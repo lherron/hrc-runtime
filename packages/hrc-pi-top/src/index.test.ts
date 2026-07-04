@@ -205,6 +205,61 @@ describe('hrc-pi-top app', () => {
     expect(closed).toBe(true)
   })
 
+  it('opens a Pi-native help overlay with normal, filter, command, and action semantics', () => {
+    const { app } = createApp()
+
+    // T-05458 red bar: `?` should be a modal Pi overlay, not one more footer
+    // hint line delegated to the text renderer.
+    app.handleInput('?')
+
+    const output = app.render(96).join('\n')
+    expect(output).toContain('HELP')
+    expect(output).toContain('NORMAL MODE')
+    expect(output).toContain('gg')
+    expect(output).toContain('m<char>')
+    expect(output).toContain('FILTER MODE')
+    expect(output).toContain('Enter')
+    expect(output).toContain('COMMAND MODE')
+    expect(output).toContain(':filter')
+    expect(output).toContain(':tail')
+    expect(output).toContain('ACTIONS')
+    expect(output).toContain('a attach')
+    expect(output).toContain('r resume')
+    expect(output).toContain('R run')
+    expect(output).toContain('e tail')
+    expect(output).toContain('c capture')
+    expect(output).not.toContain('gg/G top/bottom · Ctrl-d/u half-page')
+  })
+
+  it('dismisses the help overlay with ?, Esc, or q without quitting or losing board state', () => {
+    for (const dismissKey of ['?', '\x1b', 'q']) {
+      let closed = false
+      const { app } = createApp({
+        onQuit: () => {
+          closed = true
+        },
+      })
+
+      for (const key of ['/', 'c', 'o', 'd', 'y', '\r']) app.handleInput(key)
+      const selectedBeforeHelp = app.snapshot().selectedRowId
+      app.handleInput('?')
+
+      expect(app.render(96).join('\n')).toContain('HELP')
+
+      app.handleInput(dismissKey)
+
+      const snapshot = app.snapshot()
+      const output = app.render(96).join('\n')
+      expect(closed).toBe(false)
+      expect(snapshot.filterText).toBe('cody')
+      expect(snapshot.selectedRowId).toBe(selectedBeforeHelp)
+      expect(output).toContain('HRC TOP')
+      expect(output).toContain('cody@hrc-runtime:T-05449')
+      expect(output).not.toContain('HELP')
+      expect(output).not.toContain('clod@agent-spaces:primary')
+    }
+  })
+
   it('truncates rendered lines to the Pi TUI width contract', () => {
     const { app } = createApp()
     const width = 48
