@@ -164,6 +164,70 @@ describe('hrc-top renderer', () => {
     })
   })
 
+  it('renders inspect as a structured diagnostic view distinct from focus', () => {
+    const inspectTarget = target({
+      activeHostSessionId: 'hsid-inspect-1',
+      generation: 9,
+      runtime: {
+        runtimeId: 'rt-inspect-1',
+        transport: 'tmux',
+        status: 'ready',
+        supportsLiteralSend: true,
+        supportsCapture: true,
+        operatorAttachable: false,
+        activeRunId: 'run-inspect-1',
+        lastActivityAt: '2026-07-02T12:00:00.000Z',
+        brokerSubstrate: 'local',
+        headlessRoute: 'headless://inspect',
+        brokerEndpoint: 'unix:///tmp/inspect.sock',
+        presentation: 'pane',
+      } as NonNullable<HrcTargetView['runtime']>,
+      continuation: { provider: 'openai', key: 'conv-inspect-1' },
+      capabilities: {
+        state: 'bound',
+        modesSupported: ['tmux', 'headless'],
+        defaultMode: 'tmux',
+        dmReady: true,
+        sendReady: false,
+        peekReady: true,
+      },
+    })
+    const model = buildReadModel([inspectTarget], new Date('2026-07-02T12:05:00.000Z'))
+    const navState = createNavState({ visibleRows: model.rows, viewportHeight: 22 })
+
+    // T-05457 red bar: `inspectMode` must render a diagnostic inspect panel,
+    // not the Enter/focus lens, and it must expose action-debugging facts.
+    const output = renderTopScreen({
+      model,
+      navState,
+      viewportHeight: 22,
+      width: 120,
+      showAll: true,
+      inspectMode: true,
+    } as Parameters<typeof renderTopScreen>[0] & { inspectMode: boolean })
+
+    expect(output).toContain('INSPECT')
+    expect(output).not.toContain('FOCUS')
+    expect(output).toContain('cody@hrc-runtime:T-05405')
+    expect(output).toContain('agent:cody:project:hrc-runtime:task:T-05405/lane:main')
+    expect(output).toContain('main')
+    expect(output).toContain('hsid-inspect-1')
+    expect(output).toContain('generation')
+    expect(output).toContain('rt-inspect-1')
+    expect(output).toContain('ready')
+    expect(output).toContain('tmux')
+    expect(output).toContain('not attachable')
+    expect(output).toContain('run-inspect-1')
+    expect(output).toContain('openai')
+    expect(output).toContain('conv-inspect-1')
+    expect(output).toContain('captured')
+    expect(output).toContain('dmReady')
+    expect(output).toContain('sendReady')
+    expect(output).toContain('peekReady')
+    expect(output).toContain('Attach is unavailable: no live operator-attachable runtime exists.')
+    expect(output).toContain('$ hrc')
+  })
+
   it('renders command mode entry when active', () => {
     const model = buildReadModel([target()], new Date('2026-07-02T12:05:00.000Z'))
     const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })

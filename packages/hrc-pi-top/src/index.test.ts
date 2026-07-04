@@ -40,6 +40,7 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
   app: HrcPiTopApp
   renders: () => number
   commands: string[][]
+  executorCalls: string[]
 } {
   const targets = input.targets ?? [
     target({
@@ -53,14 +54,18 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
   ]
   let renderCount = 0
   const commands: string[][] = []
+  const executorCalls: string[] = []
   const executor: HrcTopActionExecutor = {
     async attachRuntime() {
+      executorCalls.push('attachRuntime')
       return { argv: ['true'] }
     },
     async spawnAttachDescriptor() {
+      executorCalls.push('spawnAttachDescriptor')
       return { status: 'executed' }
     },
     async runCommand(argv) {
+      executorCalls.push('runCommand')
       commands.push(argv)
       return { status: 'executed' }
     },
@@ -80,7 +85,7 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
     },
     onQuit: input.onQuit ?? (() => undefined),
   })
-  return { app, renders: () => renderCount, commands }
+  return { app, renders: () => renderCount, commands, executorCalls }
 }
 
 function lifecycleEvent(overrides: Partial<HrcLifecycleEvent> = {}): HrcLifecycleEvent {
@@ -351,6 +356,81 @@ describe('hrc-pi-top app', () => {
     const captureSupported = focusOutput(target({ continuation: undefined }))
     expectActionEnabled(captureSupported, 'a attach')
     expectActionEnabled(captureSupported, 'c capture')
+  })
+
+  it('opens inspect from i and :inspect without reusing focus or mutating runtime state', async () => {
+    for (const openInspect of [
+      (app: HrcPiTopApp) => app.handleInput('i'),
+      (app: HrcPiTopApp) => {
+        for (const key of [':', 'i', 'n', 's', 'p', 'e', 'c', 't', '\r']) app.handleInput(key)
+      },
+    ]) {
+      let closed = false
+      const { app, commands, executorCalls } = createApp({
+        targets: [
+          target({
+            state: 'busy',
+            activeHostSessionId: 'hsid-pi-inspect-1',
+            generation: 12,
+            runtime: {
+              runtimeId: 'rt-pi-inspect-1',
+              transport: 'tmux',
+              status: 'busy',
+              supportsLiteralSend: true,
+              supportsCapture: false,
+              operatorAttachable: true,
+              activeRunId: 'run-pi-inspect-1',
+              lastActivityAt: '2026-07-02T12:00:00.000Z',
+            },
+            continuation: { provider: 'anthropic', key: 'conv-pi-inspect-1' },
+            capabilities: {
+              state: 'bound',
+              modesSupported: ['tmux', 'headless'],
+              defaultMode: 'tmux',
+              dmReady: true,
+              sendReady: true,
+              peekReady: false,
+            },
+          }),
+        ],
+        onQuit: () => {
+          closed = true
+        },
+      })
+
+      // T-05457 red bar: inspect is its own read-only diagnostic surface. It
+      // must not fall through to the Enter/focus lens or any mutating executor.
+      openInspect(app)
+      await app.whenIdle()
+
+      const inspectOutput = app.render(120).join('\n')
+      expect(inspectOutput).toContain('INSPECT')
+      expect(inspectOutput).not.toContain('FOCUS')
+      expect(inspectOutput).toContain('cody@hrc-runtime:T-05449')
+      expect(inspectOutput).toContain('hsid-pi-inspect-1')
+      expect(inspectOutput).toContain('rt-pi-inspect-1')
+      expect(inspectOutput).toContain('busy')
+      expect(inspectOutput).toContain('tmux')
+      expect(inspectOutput).toContain('anthropic')
+      expect(inspectOutput).toContain('conv-pi-inspect-1')
+      expect(inspectOutput).toContain('dmReady')
+      expect(inspectOutput).toContain('peekReady')
+      expect(commands).toEqual([])
+      expect(executorCalls).toEqual([])
+
+      app.handleInput('q')
+
+      const boardOutput = app.render(120).join('\n')
+      expect(closed).toBe(false)
+      expect(boardOutput).toContain('HRC TOP')
+      expect(boardOutput).not.toContain('INSPECT')
+
+      app.handleInput('\r')
+
+      const focusOutput = app.render(120).join('\n')
+      expect(focusOutput).toContain('FOCUS')
+      expect(focusOutput).not.toContain('INSPECT')
+    }
   })
 
   it('opens a read-only event tail preview from e and returns to the board with q', async () => {
