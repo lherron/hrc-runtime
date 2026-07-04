@@ -127,25 +127,26 @@ function projectRowFact(row: HrcTopRow, ambiguityGroup?: HrcTopAmbiguityGroup): 
     hasValidContinuation: row.hasContinuation,
     ambiguous: ambiguityGroup?.ambiguous,
   })
+  const displayState = ambiguityGroup?.ambiguous ? 'ambiguous' : projection.displayState
   const handle = handleForRow(row)
   const action = recommendPrimaryAction({
     handle,
     target: row.target,
-    displayState: projection.displayState,
+    displayState,
     operatorAttachable: projection.operatorAttachable,
     hasValidContinuation: projection.hasValidContinuation,
   })
   const group = groupTriageRows([
     {
       id: row.id,
-      displayState: projection.displayState,
+      displayState,
       hasValidContinuation: projection.hasValidContinuation,
     },
   ])
   return {
     source: row,
     handle,
-    displayState: projection.displayState,
+    displayState,
     operatorAttachable: projection.operatorAttachable,
     hasValidContinuation: projection.hasValidContinuation,
     action,
