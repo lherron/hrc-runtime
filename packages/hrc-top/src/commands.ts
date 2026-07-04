@@ -78,7 +78,7 @@ export async function dispatchHrcTopAction(
     case 'focus':
       return focused('focus', 'Focused selected target.')
     case 'inspect':
-      return focused('inspect', 'Inspect selected target in the focus panel.')
+      return focused('inspect', 'Inspect selected target diagnostics.')
     case 'tail':
       return focused('tail', 'Show the selected target event tail preview.')
     case 'capture':

@@ -54,9 +54,11 @@ export type {
 export { PALETTE, createPainter, stateColorHex } from './theme.js'
 export type { Painter, StyleSpec } from './theme.js'
 export { buildFocusPanelModel } from './focus.js'
+export { buildInspectPanelModel } from './inspect.js'
 export { createNavState, reduceNavState } from './nav-state.js'
 export { buildTopScreenModel, renderTopScreen, renderTopScreenModel } from './render.js'
 export type { HrcTopFocusInput, HrcTopFocusPanelModel } from './focus.js'
+export type { HrcTopInspectInput, HrcTopInspectPanelModel } from './inspect.js'
 export type { HrcTopNavState, HrcTopVisibleRow } from './nav-state.js'
 export type {
   HrcTopRenderInput,
@@ -238,6 +240,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
   let model = input.initialModel
   let navState = input.initialNavState
   let focusMode = false
+  let inspectMode = false
   let showAll = false
   let showHelp = false
   let filterText = ''
@@ -266,6 +269,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     output.write(
       render(model, navState, output, {
         focusMode,
+        inspectMode,
         showAll,
         showHelp,
         notice,
@@ -350,8 +354,13 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
       filterText = result.filterText ?? ''
       recomputeNav()
     }
-    if (result.action === 'focus' || result.action === 'inspect') {
+    if (result.action === 'focus') {
       focusMode = true
+      inspectMode = false
+    }
+    if (result.action === 'inspect') {
+      inspectMode = true
+      focusMode = false
     }
     if (result.status === 'executed') {
       await refresh()
@@ -391,6 +400,11 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
         redraw()
         return
       }
+      if (inspectMode) {
+        inspectMode = false
+        redraw()
+        return
+      }
       if (focusMode) {
         focusMode = false
         redraw()
@@ -401,6 +415,7 @@ async function runInteractiveTop(input: InteractiveTopInput): Promise<void> {
     }
     if (intent.type === 'focus') {
       focusMode = true
+      inspectMode = false
       redraw()
       return
     }
@@ -580,6 +595,7 @@ function render(
   output: NodeJS.WritableStream,
   options: {
     focusMode?: boolean | undefined
+    inspectMode?: boolean | undefined
     showAll?: boolean | undefined
     showHelp?: boolean | undefined
     notice?: string | undefined
@@ -600,6 +616,7 @@ function render(
     commandText: options.commandText,
     commandMode: options.commandMode,
     focusMode: options.focusMode,
+    inspectMode: options.inspectMode,
     showAll: options.showAll,
     showHelp: options.showHelp,
     notice: options.notice,

@@ -7,6 +7,8 @@ import { applyFilter } from './filter.js'
 import type { HrcTopFilterRow } from './filter.js'
 import { buildFocusPanelModel } from './focus.js'
 import type { HrcTopFocusPanelModel } from './focus.js'
+import { buildInspectPanelModel } from './inspect.js'
+import type { HrcTopInspectPanelModel } from './inspect.js'
 import type { HrcTopNavState } from './nav-state.js'
 import type { HrcTopReadModel, HrcTopRow } from './read-model.js'
 import { PALETTE, createPainter, stateColorHex } from './theme.js'
@@ -27,6 +29,8 @@ export type HrcTopRenderInput = {
   commandText?: string | undefined
   /** Enter opens the full-disclosure focus lens over the selected target. */
   focusMode?: boolean | undefined
+  /** `i` / `:inspect` opens a read-only diagnostic view over the selected target. */
+  inspectMode?: boolean | undefined
   /** `.` expands the collapsed idle tail into the faint full list. */
   showAll?: boolean | undefined
   showHelp?: boolean | undefined
@@ -65,12 +69,14 @@ export type HrcTopScreenModel = {
   idleCollapsed?: { count: number } | undefined
   selected?: HrcTopRenderedRow | undefined
   focus?: HrcTopFocusPanelModel | undefined
+  inspect?: HrcTopInspectPanelModel | undefined
   filterText: string
   filterActive: boolean
   filterMode: boolean
   commandMode: boolean
   commandText: string
   focusMode: boolean
+  inspectMode: boolean
   showAll: boolean
   totalRows: number
   visibleRows: number
@@ -299,12 +305,14 @@ export function buildTopScreenModel(input: HrcTopRenderInput): HrcTopScreenModel
     idleCollapsed: view.idleCollapsed,
     selected,
     focus: selectedFact ? focusPanelForFact(selectedFact) : undefined,
+    inspect: selectedFact ? inspectPanelForFact(selectedFact) : undefined,
     filterText: input.filterText ?? '',
     filterActive: view.filterActive,
     filterMode: input.filterMode ?? false,
     commandMode: input.commandMode ?? false,
     commandText: input.commandText ?? '',
     focusMode: input.focusMode ?? false,
+    inspectMode: input.inspectMode ?? false,
     showAll: input.showAll ?? false,
     totalRows: view.totalRows,
     visibleRows: view.visibleRows,
@@ -343,6 +351,19 @@ function focusPanelForFact(fact: RowFact): HrcTopFocusPanelModel {
   })
 }
 
+function inspectPanelForFact(fact: RowFact): HrcTopInspectPanelModel {
+  return buildInspectPanelModel({
+    handle: fact.handle,
+    target: fact.source.target,
+    displayState: fact.displayState,
+    operatorAttachable: fact.operatorAttachable,
+    hasValidContinuation: fact.hasValidContinuation,
+    latestEventSummary: latestEventSummary(fact.source),
+    primaryAction: fact.action,
+    disabledActions: disabledActionsFor(fact),
+  })
+}
+
 // -- Serialization ------------------------------------------------------------
 
 const COL = { handle: 40, state: 9, last: 5, action: 9 } as const
@@ -353,6 +374,9 @@ export function renderTopScreen(input: HrcTopRenderInput): string {
 
 export function renderTopScreenModel(screen: HrcTopScreenModel): string {
   const painter = createPainter(screen.color)
+  if (screen.inspectMode && screen.selected && screen.inspect) {
+    return `${renderInspectLens(screen, painter).join('\n')}\n`
+  }
   if (screen.focusMode && screen.selected && screen.focus) {
     return `${renderFocusLens(screen, painter).join('\n')}\n`
   }
@@ -539,8 +563,8 @@ function renderFooter(screen: HrcTopScreenModel, p: Painter): string[] {
   if (screen.notice) lines.push(p.paint(`notice: ${screen.notice}`, { fg: PALETTE.stale }))
 
   const hint = screen.showAll
-    ? 'j/k move · enter focus · o act · / filter · . collapse · q quit'
-    : 'j/k move · enter focus · o act · / filter · . show all · q quit'
+    ? 'j/k move · enter focus · i inspect · o act · / filter · . collapse · q quit'
+    : 'j/k move · enter focus · i inspect · o act · / filter · . show all · q quit'
   lines.push(p.paint(hint, { fg: PALETTE.ghost }))
 
   if (screen.showHelp) {
@@ -613,6 +637,101 @@ function renderFocusLens(screen: HrcTopScreenModel, p: Painter): string[] {
   return lines
 }
 
+// -- Inspect lens -------------------------------------------------------------
+
+function renderInspectLens(screen: HrcTopScreenModel, p: Painter): string[] {
+  const inspect = screen.inspect
+  const row = screen.selected
+  if (!inspect || !row) return renderBoard(screen, p)
+
+  const stateHex = stateColorHex(row.displayState)
+  const lines: string[] = []
+
+  lines.push(
+    `${p.paint('◇ INSPECT', { fg: PALETTE.ghost, bold: true })}  ${p.paint(inspect.handle, { fg: PALETTE.ink, bold: true })}  ${p.paint(`~${inspect.lane}`, { fg: PALETTE.dim })}`
+  )
+  lines.push('')
+  lines.push(p.paint('IDENTITY', { fg: PALETTE.ghost, bold: true }))
+  lines.push(labelLine('handle', inspect.handle, p))
+  lines.push(labelLine('sessionRef', inspect.sessionRef, p))
+  lines.push(labelLine('scopeRef', inspect.scopeRef, p))
+  lines.push(labelLine('lane', inspect.lane, p))
+  lines.push(labelLine('host', inspect.hostSessionId ?? '', p))
+  lines.push(labelLine('generation', optionalNumber(inspect.generation), p))
+  lines.push('')
+
+  lines.push(p.paint('RUNTIME', { fg: PALETTE.ghost, bold: true }))
+  if (inspect.runtime) {
+    const runtime = inspect.runtime
+    lines.push(labelLine('runtime id', runtime.runtimeId, p))
+    lines.push(labelLine('status', runtime.status, p, { valueFg: stateHex, bold: true }))
+    lines.push(labelLine('transport', runtime.transport, p))
+    lines.push(
+      labelLine('attachable', runtime.operatorAttachable ? 'attachable' : 'not attachable', p)
+    )
+    lines.push(labelLine('capture', runtime.supportsCapture ? 'supported' : 'not supported', p))
+    lines.push(
+      labelLine('literal send', runtime.supportsLiteralSend ? 'supported' : 'not supported', p)
+    )
+    lines.push(labelLine('active run', runtime.activeRunId ?? '', p))
+    lines.push(labelLine('last activity', runtime.lastActivityAt ?? '', p))
+    if (runtime.brokerSubstrate) lines.push(labelLine('broker', runtime.brokerSubstrate, p))
+    if (runtime.headlessRoute) lines.push(labelLine('route', runtime.headlessRoute, p))
+    if (runtime.brokerEndpoint) lines.push(labelLine('endpoint', runtime.brokerEndpoint, p))
+    if (runtime.presentation) lines.push(labelLine('presentation', runtime.presentation, p))
+  } else {
+    lines.push(labelLine('runtime', '', p))
+  }
+  lines.push('')
+
+  lines.push(p.paint('CONTINUATION', { fg: PALETTE.ghost, bold: true }))
+  lines.push(labelLine('provider', inspect.continuation.provider ?? '', p))
+  lines.push(labelLine('key', inspect.continuation.key ?? '', p))
+  lines.push(labelLine('captured', inspect.continuation.captured ? 'captured' : 'absent', p))
+  lines.push(labelLine('resume valid', inspect.continuation.resumeValid ? 'valid' : 'not valid', p))
+  lines.push('')
+
+  lines.push(p.paint('CAPABILITIES', { fg: PALETTE.ghost, bold: true }))
+  lines.push(labelLine('target state', inspect.capabilities.state, p))
+  lines.push(labelLine('modes', inspect.capabilities.modesSupported.join(', '), p))
+  lines.push(labelLine('default', inspect.capabilities.defaultMode, p))
+  lines.push(
+    labelLine(
+      'readiness',
+      `dmReady=${boolText(inspect.capabilities.dmReady)} sendReady=${boolText(inspect.capabilities.sendReady)} peekReady=${boolText(inspect.capabilities.peekReady)}`,
+      p
+    )
+  )
+  lines.push(labelLine('latest', inspect.latestEventSummary, p))
+  lines.push('')
+
+  lines.push(p.paint('ACTION AVAILABILITY', { fg: PALETTE.ghost, bold: true }))
+  lines.push(
+    `${p.paint('recommended'.padEnd(12), { fg: PALETTE.ghost })} ${p.paint(inspect.primaryAction.kind, { fg: stateHex, bold: true })}  ${p.paint(inspect.primaryAction.reason, { fg: PALETTE.dim })}`
+  )
+  for (const preview of inspect.commandPreviews) {
+    const key = ACTION_KEYS[preview.kind] ?? ''
+    const label = `${key ? `${key} ` : ''}${preview.kind}`.padEnd(12)
+    if (preview.disabledReason) {
+      lines.push(
+        `${p.paint(label, { fg: PALETTE.ghost })} ${p.paint(preview.disabledReason, { fg: PALETTE.faint })}`
+      )
+      continue
+    }
+    if (preview.argv) {
+      lines.push(
+        `${p.paint(label, { fg: PALETTE.ghost })} ${p.paint(`$ ${preview.argv.join(' ')}`, { fg: PALETTE.ink })}`
+      )
+    }
+  }
+
+  lines.push('')
+  lines.push(p.paint('─'.repeat(screen.width), { fg: PALETTE.rule }))
+  lines.push(p.paint('q return · enter focus · i inspect · e tail', { fg: PALETTE.ghost }))
+  if (screen.notice) lines.push(p.paint(`notice: ${screen.notice}`, { fg: PALETTE.stale }))
+  return lines
+}
+
 const ACTION_KEYS: Record<string, string> = {
   attach: 'a',
   resume: 'r',
@@ -662,6 +781,14 @@ function continuationDetail(focus: HrcTopFocusPanelModel): string {
   const key = focus.continuationKey ? focus.continuationKey : 'no key'
   const captured = focus.continuationCaptured ? 'captured' : 'not captured'
   return `${focus.continuationProvider} · ${key} · ${captured}`
+}
+
+function optionalNumber(value: number | undefined): string {
+  return value === undefined ? '' : String(value)
+}
+
+function boolText(value: boolean): string {
+  return value ? 'true' : 'false'
 }
 
 function labelLine(

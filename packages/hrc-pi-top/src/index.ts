@@ -150,6 +150,7 @@ export class HrcPiTopApp implements Component {
   private model: HrcTopReadModel
   private navState: HrcTopNavState
   private focusMode = false
+  private inspectMode = false
   private showAll = false
   private showHelp = false
   private filterText = ''
@@ -216,6 +217,7 @@ export class HrcPiTopApp implements Component {
     filterMode: boolean
     commandMode: boolean
     focusMode: boolean
+    inspectMode: boolean
     selectedRowId: string | undefined
     notice: string | undefined
   } {
@@ -224,6 +226,7 @@ export class HrcPiTopApp implements Component {
       filterMode: this.filterMode,
       commandMode: this.commandMode,
       focusMode: this.focusMode,
+      inspectMode: this.inspectMode,
       selectedRowId: this.navState.selectedRowId,
       notice: this.notice,
     }
@@ -253,6 +256,7 @@ export class HrcPiTopApp implements Component {
       commandText: this.commandInput.getValue(),
       commandMode: this.commandMode,
       focusMode: this.focusMode,
+      inspectMode: this.inspectMode,
       showAll: this.showAll,
       showHelp: false,
       notice: this.notice,
@@ -442,6 +446,11 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
+      if (this.inspectMode) {
+        this.inspectMode = false
+        this.requestRender()
+        return
+      }
       if (this.focusMode) {
         this.focusMode = false
         this.requestRender()
@@ -453,6 +462,8 @@ export class HrcPiTopApp implements Component {
 
     if (intent.type === 'focus') {
       this.focusMode = true
+      this.inspectMode = false
+      this.eventTailPreview = undefined
       this.requestRender()
       return
     }
@@ -591,11 +602,20 @@ export class HrcPiTopApp implements Component {
       this.recomputeNav()
     }
     if (result.action === 'tail') {
+      this.focusMode = false
+      this.inspectMode = false
       await this.openEventTailPreview(selectedRow ?? this.rowById(selectedRowId))
       return
     }
-    if (result.action === 'focus' || result.action === 'inspect') {
+    if (result.action === 'focus') {
       this.focusMode = true
+      this.inspectMode = false
+      this.eventTailPreview = undefined
+    }
+    if (result.action === 'inspect') {
+      this.inspectMode = true
+      this.focusMode = false
+      this.eventTailPreview = undefined
     }
     if (result.status === 'executed') {
       await this.refresh()
