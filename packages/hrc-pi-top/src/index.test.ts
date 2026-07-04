@@ -236,6 +236,68 @@ describe('hrc-pi-top app', () => {
     expect(output).not.toContain('gg/G top/bottom · Ctrl-d/u half-page')
   })
 
+  it('opens an explicit run confirmation overlay for a continuation-bearing target', async () => {
+    const { app, commands } = createApp()
+
+    // T-05459 red bar: Pi must replace the hidden hrc-top double-press state
+    // with an explicit overlay that explains the fresh-run/resume tradeoff and
+    // displays the canonical handle that the confirmed command will run.
+    app.handleInput('R')
+    await app.whenIdle()
+
+    const output = app.render(96).join('\n')
+    expect(output).toContain('RUN CONFIRMATION')
+    expect(output).toContain('clod@agent-spaces:primary')
+    expect(output).toContain('hrc run')
+    expect(output).toContain('bypasses resume semantics')
+    expect(output).toContain('R or Enter')
+    expect(output).toContain('Esc or q')
+    expect(commands).toEqual([])
+  })
+
+  it('cancels the run confirmation overlay without executing a run', async () => {
+    for (const cancelKey of ['\x1b', 'q']) {
+      let closed = false
+      const { app, commands } = createApp({
+        onQuit: () => {
+          closed = true
+        },
+      })
+
+      app.handleInput('R')
+      await app.whenIdle()
+      expect(app.render(96).join('\n')).toContain('RUN CONFIRMATION')
+
+      app.handleInput(cancelKey)
+      await app.whenIdle()
+
+      const output = app.render(96).join('\n')
+      expect(closed).toBe(false)
+      expect(commands).toEqual([])
+      expect(output).toContain('HRC TOP')
+      expect(output).not.toContain('RUN CONFIRMATION')
+    }
+  })
+
+  it('keeps navigation keys from changing the confirmation target before confirm', async () => {
+    const { app, commands } = createApp()
+
+    // A matching-looking second row is in scope as the negative guard: while
+    // confirmation is open, `j` must not move selection and let R run the
+    // wrong target through the stale confirmation state.
+    app.handleInput('.')
+    app.handleInput('R')
+    await app.whenIdle()
+    const selectedBeforeOverlay = app.snapshot().selectedRowId
+
+    app.handleInput('j')
+    app.handleInput('R')
+    await app.whenIdle()
+
+    expect(app.snapshot().selectedRowId).toBe(selectedBeforeOverlay)
+    expect(commands).toEqual([['hrc', 'run', 'clod@agent-spaces:primary']])
+  })
+
   it('dismisses the help overlay with ?, Esc, or q without quitting or losing board state', () => {
     for (const dismissKey of ['?', '\x1b', 'q']) {
       let closed = false
