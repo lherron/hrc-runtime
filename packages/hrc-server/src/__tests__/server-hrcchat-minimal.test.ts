@@ -175,6 +175,58 @@ if (cmd === 'app-server') {
     expect(targets[0]?.state).toBe('summoned')
   })
 
+  it('preserves same-session concrete candidates through target-list dedupe', async () => {
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:T-05460'
+    const timestamp = fixture.now()
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      for (const generation of [1, 2]) {
+        const hostSessionId = `hsid-ambiguity-${generation}`
+        const runtimeId = `rt-ambiguity-${generation}`
+        db.sessions.insert({
+          hostSessionId,
+          scopeRef,
+          laneRef: 'main',
+          generation,
+          status: 'active',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ancestorScopeRefs: [],
+        })
+        db.runtimes.insert({
+          runtimeId,
+          hostSessionId,
+          scopeRef,
+          laneRef: 'main',
+          generation,
+          transport: 'tmux',
+          harness: 'codex-cli',
+          provider: 'openai',
+          status: 'ready',
+          supportsInflightInput: false,
+          adopted: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lastActivityAt: timestamp,
+        })
+      }
+    } finally {
+      db.close()
+    }
+
+    const res = await fixture.fetchSocket('/v1/targets?projectId=hrc-runtime')
+    expect(res.status).toBe(200)
+
+    const targets = (await res.json()) as HrcTargetView[]
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.sessionRef).toBe(`${scopeRef}/lane:main`)
+    expect(targets[0]?.activeHostSessionId).toBe('hsid-ambiguity-2')
+    expect(targets[0]?.runtime?.runtimeId).toBe('rt-ambiguity-2')
+    expect(
+      targets[0]?.ambiguityCandidates?.map((candidate) => candidate.runtime?.runtimeId)
+    ).toEqual(['rt-ambiguity-1', 'rt-ambiguity-2'])
+  })
+
   it('looks up a single target by sessionRef with main/default aliasing', async () => {
     await fixture.resolveSession('agent:clod:project:agent-spaces')
 

@@ -41,6 +41,7 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
   renders: () => number
   commands: string[][]
   executorCalls: string[]
+  attachRuntimeIds: string[]
 } {
   const targets = input.targets ?? [
     target({
@@ -55,9 +56,11 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
   let renderCount = 0
   const commands: string[][] = []
   const executorCalls: string[] = []
+  const attachRuntimeIds: string[] = []
   const executor: HrcTopActionExecutor = {
-    async attachRuntime() {
+    async attachRuntime(runtimeId) {
       executorCalls.push('attachRuntime')
+      attachRuntimeIds.push(runtimeId)
       return { argv: ['true'] }
     },
     async spawnAttachDescriptor() {
@@ -85,7 +88,7 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
     },
     onQuit: input.onQuit ?? (() => undefined),
   })
-  return { app, renders: () => renderCount, commands, executorCalls }
+  return { app, renders: () => renderCount, commands, executorCalls, attachRuntimeIds }
 }
 
 function lifecycleEvent(overrides: Partial<HrcLifecycleEvent> = {}): HrcLifecycleEvent {
@@ -106,6 +109,31 @@ function lifecycleEvent(overrides: Partial<HrcLifecycleEvent> = {}): HrcLifecycl
     payload: { promptPreview: 'inspect the queue state' },
     ...overrides,
   }
+}
+
+function ambiguousTargets(): HrcTargetView[] {
+  return [
+    target({
+      activeHostSessionId: 'hsid-ambiguity-newer',
+      generation: 3,
+      runtime: {
+        ...target().runtime!,
+        runtimeId: 'rt-ambiguity-newer',
+        status: 'busy',
+        lastActivityAt: '2026-07-02T12:04:00.000Z',
+      },
+    }),
+    target({
+      activeHostSessionId: 'hsid-ambiguity-older',
+      generation: 2,
+      runtime: {
+        ...target().runtime!,
+        runtimeId: 'rt-ambiguity-older',
+        status: 'ready',
+        lastActivityAt: '2026-07-02T12:03:00.000Z',
+      },
+    }),
+  ]
 }
 
 function createTailApp(input: {
@@ -418,6 +446,117 @@ describe('hrc-pi-top app', () => {
     const captureSupported = focusOutput(target({ continuation: undefined }))
     expectActionEnabled(captureSupported, 'a attach')
     expectActionEnabled(captureSupported, 'c capture')
+  })
+
+  it('opens an ambiguity resolver for attach inputs and cancels without executor calls', async () => {
+    for (const openAttach of [
+      (app: HrcPiTopApp) => app.handleInput('a'),
+      (app: HrcPiTopApp) => app.handleInput('o'),
+      (app: HrcPiTopApp) => {
+        for (const key of [':', 'a', 't', 't', 'a', 'c', 'h', '\r']) app.handleInput(key)
+      },
+    ]) {
+      const { app, executorCalls } = createApp({ targets: ambiguousTargets() })
+
+      openAttach(app)
+      await app.whenIdle()
+
+      const output = app.render(120).join('\n')
+      expect(output).toContain('ATTACH RESOLVER')
+      expect(output).toContain('rt-ambiguity-newer')
+      expect(output).toContain('rt-ambiguity-older')
+      expect(executorCalls).toEqual([])
+
+      app.handleInput('q')
+      await app.whenIdle()
+
+      expect(app.render(120).join('\n')).not.toContain('ATTACH RESOLVER')
+      expect(executorCalls).toEqual([])
+    }
+  })
+
+  it('attaches the explicitly selected second ambiguity candidate by runtime id', async () => {
+    const { app, executorCalls, attachRuntimeIds } = createApp({ targets: ambiguousTargets() })
+
+    app.handleInput('a')
+    await app.whenIdle()
+    app.handleInput('j')
+    app.handleInput('\r')
+    await app.whenIdle()
+
+    expect(attachRuntimeIds).toEqual(['rt-ambiguity-older'])
+    expect(executorCalls).toEqual(['attachRuntime', 'spawnAttachDescriptor'])
+    expect(app.render(120).join('\n')).not.toContain('ATTACH RESOLVER')
+  })
+
+  it('opens inspect resolver from i and :inspect, then renders the selected concrete candidate', async () => {
+    for (const openInspect of [
+      (app: HrcPiTopApp) => app.handleInput('i'),
+      (app: HrcPiTopApp) => {
+        for (const key of [':', 'i', 'n', 's', 'p', 'e', 'c', 't', '\r']) app.handleInput(key)
+      },
+    ]) {
+      const { app, executorCalls } = createApp({ targets: ambiguousTargets() })
+
+      openInspect(app)
+      await app.whenIdle()
+      expect(app.render(120).join('\n')).toContain('INSPECT RESOLVER')
+
+      app.handleInput('j')
+      app.handleInput('\r')
+      await app.whenIdle()
+
+      const output = app.render(120).join('\n')
+      expect(output).toContain('INSPECT')
+      expect(output).toContain('rt-ambiguity-older')
+      expect(output).toContain('hsid-ambiguity-older')
+      expect(output).not.toContain('INSPECT RESOLVER')
+      expect(executorCalls).toEqual([])
+    }
+  })
+
+  it('rejects a stale ambiguity selection after refresh without attaching', async () => {
+    let targets = ambiguousTargets()
+    const commands: string[][] = []
+    const attachRuntimeIds: string[] = []
+    const executor: HrcTopActionExecutor = {
+      async attachRuntime(runtimeId) {
+        attachRuntimeIds.push(runtimeId)
+        return { argv: ['true'] }
+      },
+      async spawnAttachDescriptor() {
+        return { status: 'executed' }
+      },
+      async runCommand(argv) {
+        commands.push(argv)
+        return { status: 'executed' }
+      },
+    }
+    const app = new HrcPiTopApp({
+      client: {
+        async listTargets() {
+          return targets
+        },
+      },
+      executor,
+      initialModel: buildReadModel(targets, new Date('2026-07-02T12:05:00.000Z')),
+      scope: { projectId: 'hrc-runtime' },
+      viewportHeight: () => 18,
+      requestRender: () => undefined,
+      onQuit: () => undefined,
+    })
+
+    app.handleInput('a')
+    await app.whenIdle()
+    expect(app.render(120).join('\n')).toContain('ATTACH RESOLVER')
+
+    targets = [ambiguousTargets()[0]!]
+    await app.refresh()
+    await app.whenIdle()
+
+    expect(attachRuntimeIds).toEqual([])
+    expect(commands).toEqual([])
+    expect(app.render(120).join('\n')).toContain('expired')
   })
 
   it('opens inspect from i and :inspect without reusing focus or mutating runtime state', async () => {

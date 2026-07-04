@@ -29,6 +29,20 @@ export type HrcTopOptions = HrcTopScope & {
 }
 
 export { buildReadModel, loadReadModel }
+export {
+  actionNeedsAmbiguityResolution,
+  ambiguityGroupForRow,
+  buildHrcTopAmbiguityModel,
+  candidatesForAmbiguousAction,
+  sameAmbiguitySource,
+} from './ambiguity.js'
+export type {
+  HrcTopAmbiguityAction,
+  HrcTopAmbiguityCandidate,
+  HrcTopAmbiguityGroup,
+  HrcTopAmbiguityModel,
+  HrcTopAmbiguitySourceIdentity,
+} from './ambiguity.js'
 export { dispatchHrcTopActionKey, executeHrcTopCommandLine, handleForRow } from './commands.js'
 export type { HrcTopActionExecutor, HrcTopActionResult } from './commands.js'
 export { createHrcTopActionExecutor } from './executor.js'

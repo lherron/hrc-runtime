@@ -33,7 +33,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcLifecycleEvent, StatusResponse } from 'hrc-core'
+import type { HrcLifecycleEvent, HrcTargetView, StatusResponse } from 'hrc-core'
 import { HRC_API_VERSION, HrcDomainError, HrcErrorCode } from 'hrc-core'
 
 // RED GATE: These imports will fail until Curly implements the sdk module
@@ -402,6 +402,63 @@ describe('runtime lifecycle client methods', () => {
       'projectId=project-a&lane=main&discover=true',
       'projectId=project-a&lane=main&includeDormant=true',
     ])
+  })
+
+  it('listTargets preserves producer-exposed ambiguity candidates', async () => {
+    const target: HrcTargetView = {
+      sessionRef: 'agent:cody:project:hrc-runtime:task:T-05460/lane:main',
+      scopeRef: 'agent:cody:project:hrc-runtime:task:T-05460',
+      laneRef: 'main',
+      state: 'bound',
+      activeHostSessionId: 'hsid-newer',
+      generation: 2,
+      runtime: {
+        runtimeId: 'rt-newer',
+        transport: 'tmux',
+        status: 'ready',
+        supportsLiteralSend: true,
+        supportsCapture: true,
+        operatorAttachable: true,
+      },
+      ambiguityCandidates: [
+        {
+          sessionRef: 'agent:cody:project:hrc-runtime:task:T-05460/lane:main',
+          scopeRef: 'agent:cody:project:hrc-runtime:task:T-05460',
+          laneRef: 'main',
+          state: 'bound',
+          activeHostSessionId: 'hsid-older',
+          generation: 1,
+          runtime: {
+            runtimeId: 'rt-older',
+            transport: 'tmux',
+            status: 'ready',
+            supportsLiteralSend: true,
+            supportsCapture: true,
+            operatorAttachable: true,
+          },
+        },
+      ],
+      capabilities: {
+        state: 'bound',
+        modesSupported: ['headless'],
+        defaultMode: 'headless',
+        dmReady: true,
+        sendReady: true,
+        peekReady: true,
+      },
+    }
+
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch() {
+        return Response.json([target])
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    const targets = await client.listTargets()
+
+    expect(targets[0]?.ambiguityCandidates?.[0]?.runtime?.runtimeId).toBe('rt-older')
   })
 })
 

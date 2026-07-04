@@ -71,6 +71,16 @@ export type HrcTargetRuntimeView = {
   operatorAttachable?: boolean | undefined
 }
 
+export type HrcTargetAmbiguityCandidateView = {
+  sessionRef: string
+  scopeRef: string
+  laneRef: string
+  state: HrcTargetState
+  activeHostSessionId?: string | undefined
+  generation?: number | undefined
+  runtime?: HrcTargetRuntimeView | undefined
+}
+
 export type HrcTargetView = {
   sessionRef: string
   scopeRef: string
@@ -82,6 +92,7 @@ export type HrcTargetView = {
   activeHostSessionId?: string | undefined
   generation?: number | undefined
   runtime?: HrcTargetRuntimeView | undefined
+  ambiguityCandidates?: HrcTargetAmbiguityCandidateView[] | undefined
   capabilities: TargetCapabilityView
 }
 

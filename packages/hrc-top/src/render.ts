@@ -3,6 +3,8 @@ import type { HrcTargetOperatorDisplayState } from 'hrc-core'
 
 import { recommendPrimaryAction } from './action-policy.js'
 import type { HrcTopPrimaryAction } from './action-policy.js'
+import { ambiguityGroupForRow, buildHrcTopAmbiguityModel } from './ambiguity.js'
+import type { HrcTopAmbiguityGroup } from './ambiguity.js'
 import { handleForRow } from './commands.js'
 import { applyFilter } from './filter.js'
 import type { HrcTopFilterRow } from './filter.js'
@@ -115,13 +117,15 @@ type RowFact = {
   hasValidContinuation: boolean
   action: HrcTopPrimaryAction
   bucket: HrcTopTriageBucket
+  ambiguityGroup?: HrcTopAmbiguityGroup | undefined
 }
 
-function projectRowFact(row: HrcTopRow): RowFact {
+function projectRowFact(row: HrcTopRow, ambiguityGroup?: HrcTopAmbiguityGroup): RowFact {
   const projection = projectTargetOperatorState(row.target, {
     runtimeStatus: row.runtime?.status,
     operatorAttachable: row.target.runtime?.operatorAttachable,
     hasValidContinuation: row.hasContinuation,
+    ambiguous: ambiguityGroup?.ambiguous,
   })
   const handle = handleForRow(row)
   const action = recommendPrimaryAction({
@@ -146,6 +150,7 @@ function projectRowFact(row: HrcTopRow): RowFact {
     hasValidContinuation: projection.hasValidContinuation,
     action,
     bucket: group[0]?.bucket ?? 'idle',
+    ambiguityGroup,
   }
 }
 
@@ -186,8 +191,9 @@ function computeTriageView(
   model: HrcTopReadModel,
   opts: { filterText?: string | undefined; showAll?: boolean | undefined }
 ): TriageView {
+  const ambiguityModel = buildHrcTopAmbiguityModel(model.rows)
   const factRows: (HrcTopFilterRow & { fact: RowFact })[] = model.rows.map((row) => {
-    const fact = projectRowFact(row)
+    const fact = projectRowFact(row, ambiguityGroupForRow(ambiguityModel, row))
     return {
       id: row.id,
       visibleTargetText: fact.handle,
@@ -251,8 +257,9 @@ export function selectFilteredVisibleRows(
   model: HrcTopReadModel,
   filterText: string | undefined
 ): { id: string }[] {
+  const ambiguityModel = buildHrcTopAmbiguityModel(model.rows)
   const factRows = model.rows.map((row) => {
-    const fact = projectRowFact(row)
+    const fact = projectRowFact(row, ambiguityGroupForRow(ambiguityModel, row))
     return {
       id: row.id,
       visibleTargetText: fact.handle,
@@ -349,6 +356,7 @@ function focusPanelForFact(fact: RowFact): HrcTopFocusPanelModel {
     hasValidContinuation: fact.hasValidContinuation,
     latestEventSummary: latestEventSummary(fact.source),
     disabledActions: disabledActionsFor(fact),
+    ambiguityCandidates: focusAmbiguityCandidates(fact.ambiguityGroup),
   })
 }
 
@@ -363,6 +371,20 @@ function inspectPanelForFact(fact: RowFact): HrcTopInspectPanelModel {
     primaryAction: fact.action,
     disabledActions: disabledActionsFor(fact),
   })
+}
+
+function focusAmbiguityCandidates(group: HrcTopAmbiguityGroup | undefined) {
+  if (!group?.ambiguous) return []
+  return group.attachCandidates
+    .filter(
+      (candidate): candidate is typeof candidate & { runtimeId: string } =>
+        candidate.runtimeId !== undefined && candidate.attachable
+    )
+    .map((candidate) => ({
+      runtimeId: candidate.runtimeId,
+      label: candidate.label,
+      command: candidate.command,
+    }))
 }
 
 // -- Serialization ------------------------------------------------------------

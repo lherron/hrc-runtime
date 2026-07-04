@@ -249,6 +249,7 @@ export type {
   HrcTargetState,
   TargetCapabilityView,
   HrcTargetRuntimeView,
+  HrcTargetAmbiguityCandidateView,
   HrcTargetView,
   HrcMessageKind,
   HrcMessagePhase,

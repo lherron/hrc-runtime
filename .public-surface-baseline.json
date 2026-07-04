@@ -1647,6 +1647,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcTargetAmbiguityCandidateView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcTargetAmbiguityCandidateView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcTargetOperatorDisplayState",
       "kind": "type",
       "file": "packages/hrc-core/src/target-operator-projection.ts",

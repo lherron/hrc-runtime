@@ -17,6 +17,7 @@ import type {
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
+  HrcTargetAmbiguityCandidateView,
   HrcTargetView,
   HrcTurnResponseFormat,
   ListMessagesResponse,
@@ -64,7 +65,7 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
   const projectId = normalizeOptionalQuery(url.searchParams.get('projectId'))
   const laneRef = normalizeTargetLane(normalizeOptionalQuery(url.searchParams.get('lane')))
   const includeDormant = url.searchParams.get('includeDormant') === 'true'
-  const targets = new Map<string, HrcTargetView>()
+  const views: HrcTargetView[] = []
 
   for (const session of this.listAllSessions()) {
     if (!includeDormant && !isActiveTargetSession(this.db, session)) {
@@ -88,13 +89,46 @@ export function handleListTargets(this: HrcServerInstanceForHandlers, url: URL):
     }
 
     const view = toTargetView(this.db, session)
+    views.push(view)
+  }
+
+  const targets = new Map<string, HrcTargetView>()
+  const candidatesBySessionRef = new Map<string, HrcTargetView[]>()
+
+  for (const view of views) {
+    const candidates = candidatesBySessionRef.get(view.sessionRef)
+    if (candidates) candidates.push(view)
+    else candidatesBySessionRef.set(view.sessionRef, [view])
+
     const existing = targets.get(view.sessionRef)
     if (!existing || (view.generation ?? 0) >= (existing.generation ?? 0)) {
       targets.set(view.sessionRef, view)
     }
   }
 
+  for (const view of targets.values()) {
+    const candidates = candidatesBySessionRef.get(view.sessionRef) ?? []
+    const concreteCandidates = candidates.filter(
+      (candidate) => candidate.runtime !== undefined || candidate.activeHostSessionId !== undefined
+    )
+    if (concreteCandidates.length > 1) {
+      view.ambiguityCandidates = concreteCandidates.map(toAmbiguityCandidateView)
+    }
+  }
+
   return json(Array.from(targets.values()).sort((a, b) => a.sessionRef.localeCompare(b.sessionRef)))
+}
+
+function toAmbiguityCandidateView(view: HrcTargetView): HrcTargetAmbiguityCandidateView {
+  return {
+    sessionRef: view.sessionRef,
+    scopeRef: view.scopeRef,
+    laneRef: view.laneRef,
+    state: view.state,
+    activeHostSessionId: view.activeHostSessionId,
+    generation: view.generation,
+    runtime: view.runtime,
+  }
 }
 
 export async function handleGetTarget(

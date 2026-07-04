@@ -14,6 +14,9 @@ import type { WatchOptions } from 'hrc-sdk'
 import {
   type HrcTopActionExecutor,
   type HrcTopActionResult,
+  type HrcTopAmbiguityAction,
+  type HrcTopAmbiguityCandidate,
+  type HrcTopAmbiguitySourceIdentity,
   type HrcTopKeyIntent,
   type HrcTopKeyPrefix,
   type HrcTopNavState,
@@ -21,6 +24,9 @@ import {
   type HrcTopReadModel,
   type HrcTopRow,
   type HrcTopScope,
+  ambiguityGroupForRow,
+  buildHrcTopAmbiguityModel,
+  candidatesForAmbiguousAction,
   createHrcTopActionExecutor,
   createNavState,
   dispatchHrcTopActionKey,
@@ -30,6 +36,7 @@ import {
   reduceNavState,
   renderTopScreen,
   runHrcTop,
+  sameAmbiguitySource,
   selectVisibleTriageRowIds,
 } from 'hrc-top'
 
@@ -47,6 +54,14 @@ type RunConfirmationOverlayState = {
   rowId: string
   handle: string
   continuationText?: string | undefined
+}
+
+type AmbiguityResolverOverlayState = {
+  originRowId?: string | undefined
+  handle: string
+  action: HrcTopAmbiguityAction
+  candidates: readonly HrcTopAmbiguityCandidate[]
+  selectedIndex: number
 }
 
 export type HrcPiTopOptions = HrcTopOptions & {
@@ -166,6 +181,8 @@ export class HrcPiTopApp implements Component {
   private notice: string | undefined
   private eventTailPreview: EventTailPreviewState | undefined
   private runConfirmationOverlay: RunConfirmationOverlayState | undefined
+  private ambiguityResolver: AmbiguityResolverOverlayState | undefined
+  private inspectCandidateRow: HrcTopRow | undefined
   private keyPrefix: HrcTopKeyPrefix
   private pendingAction: Promise<void> = Promise.resolve()
 
@@ -214,6 +231,9 @@ export class HrcPiTopApp implements Component {
       this.model = await loadReadModel(this.client, this.scope)
       this.recomputeNav()
       this.expireRunConfirmationIfStale()
+      this.expireAmbiguityResolver(
+        'Ambiguity resolver expired after refresh; choose the action again.'
+      )
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
     }
@@ -228,6 +248,7 @@ export class HrcPiTopApp implements Component {
     inspectMode: boolean
     selectedRowId: string | undefined
     notice: string | undefined
+    ambiguityResolver: string | undefined
   } {
     return {
       filterText: this.filterText,
@@ -237,6 +258,7 @@ export class HrcPiTopApp implements Component {
       inspectMode: this.inspectMode,
       selectedRowId: this.navState.selectedRowId,
       notice: this.notice,
+      ambiguityResolver: this.ambiguityResolver?.action,
     }
   }
 
@@ -262,9 +284,10 @@ export class HrcPiTopApp implements Component {
       return this.showHelp ? renderHelpOverlay(lines, this.height(), width) : lines
     }
 
+    const renderState = this.renderModelState()
     const frame = renderTopScreen({
-      model: this.model,
-      navState: this.navState,
+      model: renderState.model,
+      navState: renderState.navState,
       viewportHeight: this.height(),
       width,
       filterText: this.filterText,
@@ -299,6 +322,9 @@ export class HrcPiTopApp implements Component {
     }
 
     const rendered = lines.map((line) => truncateToWidth(line, width, '', false))
+    if (this.ambiguityResolver) {
+      return renderAmbiguityResolverOverlay(rendered, this.ambiguityResolver, this.height(), width)
+    }
     if (this.runConfirmationOverlay) {
       return renderRunConfirmationOverlay(
         rendered,
@@ -321,6 +347,11 @@ export class HrcPiTopApp implements Component {
 
     if (this.runConfirmationOverlay) {
       this.handleRunConfirmationInput(data)
+      return
+    }
+
+    if (this.ambiguityResolver) {
+      this.handleAmbiguityResolverInput(data)
       return
     }
 
@@ -365,6 +396,23 @@ export class HrcPiTopApp implements Component {
       filterText: this.filterText,
       showAll: this.showAll,
     })
+  }
+
+  private renderModelState(): { model: HrcTopReadModel; navState: HrcTopNavState } {
+    if (!this.inspectMode || !this.inspectCandidateRow) {
+      return { model: this.model, navState: this.navState }
+    }
+    const exists = this.model.rows.some((row) => row.id === this.inspectCandidateRow?.id)
+    const model = exists
+      ? this.model
+      : { ...this.model, rows: [...this.model.rows, this.inspectCandidateRow] }
+    return {
+      model,
+      navState: {
+        ...this.navState,
+        selectedRowId: this.inspectCandidateRow.id,
+      },
+    }
   }
 
   private recomputeNav(): void {
@@ -570,6 +618,10 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
+      if (this.openAmbiguityResolverForKey(key, row)) {
+        this.requestRender()
+        return
+      }
       const result = await dispatchHrcTopActionKey({
         key,
         row,
@@ -582,6 +634,37 @@ export class HrcPiTopApp implements Component {
     }
   }
 
+  private openAmbiguityResolverForKey(key: string, row: HrcTopRow): boolean {
+    if (key === 'a') return this.openAmbiguityResolver('attach', row)
+    if (key === 'i') return this.openAmbiguityResolver('inspect', row)
+    if (key === 'o') return this.openAmbiguityResolver('attach', row)
+    return false
+  }
+
+  private openAmbiguityResolver(action: HrcTopAmbiguityAction, row: HrcTopRow): boolean {
+    const model = buildHrcTopAmbiguityModel(this.model.rows)
+    const group = ambiguityGroupForRow(model, row)
+    const candidates = candidatesForAmbiguousAction(group, action)
+    if (!group?.ambiguous || candidates.length <= 1) return false
+
+    this.ambiguityResolver = {
+      originRowId: row.id,
+      handle: handleForRow(row),
+      action,
+      candidates,
+      selectedIndex: firstEnabledCandidateIndex(action, candidates),
+    }
+    this.focusMode = false
+    this.inspectMode = false
+    this.inspectCandidateRow = undefined
+    this.eventTailPreview = undefined
+    this.runConfirmationOverlay = undefined
+    this.showHelp = false
+    this.keyPrefix = undefined
+    this.notice = undefined
+    return true
+  }
+
   private async submitCommand(value: string): Promise<void> {
     const row = this.selectedRow()
     if (!row) {
@@ -591,6 +674,11 @@ export class HrcPiTopApp implements Component {
     }
 
     try {
+      const commandAction = ambiguityActionForCommand(value)
+      if (commandAction && this.openAmbiguityResolver(commandAction, row)) {
+        this.requestRender()
+        return
+      }
       await this.handleActionResult(
         await executeHrcTopCommandLine({
           line: `:${value}`,
@@ -612,6 +700,7 @@ export class HrcPiTopApp implements Component {
     selectedRow?: HrcTopRow | undefined
   ): Promise<void> {
     this.notice = result.reason
+    if (result.action !== 'inspect') this.inspectCandidateRow = undefined
     if (result.status === 'confirmation_required') {
       const row = selectedRow ?? this.rowById(selectedRowId)
       if (!row) {
@@ -673,6 +762,118 @@ export class HrcPiTopApp implements Component {
   private rowById(rowId: string | undefined): HrcTopRow | undefined {
     if (!rowId) return undefined
     return this.model.rows.find((row) => row.id === rowId)
+  }
+
+  private handleAmbiguityResolverInput(data: string): void {
+    const overlay = this.ambiguityResolver
+    if (!overlay) return
+    const printable = printableInput(data)
+
+    if (printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')) {
+      this.ambiguityResolver = undefined
+      this.keyPrefix = undefined
+      this.notice = 'Ambiguity resolver cancelled.'
+      this.requestRender()
+      return
+    }
+
+    if (matchesKey(data, 'down') || printable === 'j') {
+      this.ambiguityResolver = {
+        ...overlay,
+        selectedIndex: Math.min(overlay.candidates.length - 1, overlay.selectedIndex + 1),
+      }
+      this.requestRender()
+      return
+    }
+
+    if (matchesKey(data, 'up') || printable === 'k') {
+      this.ambiguityResolver = {
+        ...overlay,
+        selectedIndex: Math.max(0, overlay.selectedIndex - 1),
+      }
+      this.requestRender()
+      return
+    }
+
+    if (matchesKey(data, 'enter') || matchesKey(data, 'return')) {
+      this.enqueue(() => this.confirmAmbiguityResolver())
+      return
+    }
+
+    this.notice = 'Ambiguity resolver is active; choose with j/k, Enter confirms, Esc or q cancels.'
+    this.requestRender()
+  }
+
+  private async confirmAmbiguityResolver(): Promise<void> {
+    const overlay = this.ambiguityResolver
+    if (!overlay) return
+
+    const selected = overlay.candidates[overlay.selectedIndex]
+    if (!selected) {
+      this.expireAmbiguityResolver('Ambiguity resolver expired; choose the action again.')
+      return
+    }
+
+    const revalidated = this.revalidatedAmbiguityCandidate(overlay, selected.source)
+    if (!revalidated) {
+      this.expireAmbiguityResolver('Selected ambiguity candidate changed; no action was executed.')
+      return
+    }
+
+    if (overlay.action === 'attach') {
+      await this.confirmAttachCandidate(revalidated)
+      return
+    }
+
+    this.ambiguityResolver = undefined
+    this.inspectCandidateRow = revalidated.row
+    this.inspectMode = true
+    this.focusMode = false
+    this.eventTailPreview = undefined
+    this.navState = createNavState({
+      visibleRows: [...this.visibleRows(), { id: revalidated.row.id }],
+      viewportHeight: this.height(),
+      selectedRowId: revalidated.row.id,
+    })
+    this.notice = `Inspecting runtime ${revalidated.runtimeId ?? revalidated.source.activeHostSessionId}.`
+    this.requestRender()
+  }
+
+  private async confirmAttachCandidate(candidate: HrcTopAmbiguityCandidate): Promise<void> {
+    if (!candidate.runtimeId || !candidate.attachable) {
+      this.notice = candidate.disabledReason ?? 'Selected candidate is not attachable.'
+      this.requestRender()
+      return
+    }
+
+    this.ambiguityResolver = undefined
+    try {
+      const descriptor = await this.executor.attachRuntime(candidate.runtimeId)
+      const spawned = await this.executor.spawnAttachDescriptor(descriptor)
+      await this.handleActionResult(
+        {
+          status: spawned.status ?? 'executed',
+          action: 'attach',
+          reason: spawned.reason ?? `Attached to runtime ${candidate.runtimeId}.`,
+          errorCode: spawned.errorCode,
+        },
+        candidate.row.id,
+        candidate.row
+      )
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error)
+      this.requestRender()
+    }
+  }
+
+  private revalidatedAmbiguityCandidate(
+    overlay: AmbiguityResolverOverlayState,
+    source: HrcTopAmbiguitySourceIdentity
+  ): HrcTopAmbiguityCandidate | undefined {
+    const model = buildHrcTopAmbiguityModel(this.model.rows)
+    const group = model.byHandle.get(overlay.handle)
+    const candidates = candidatesForAmbiguousAction(group, overlay.action)
+    return candidates.find((candidate) => sameAmbiguitySource(candidate.source, source))
   }
 
   private handleRunConfirmationInput(data: string): void {
@@ -748,6 +949,13 @@ export class HrcPiTopApp implements Component {
     this.keyPrefix = undefined
     this.notice = 'Run confirmation expired; select the target and press R again.'
     this.requestRender()
+  }
+
+  private expireAmbiguityResolver(reason: string): void {
+    if (!this.ambiguityResolver) return
+    this.ambiguityResolver = undefined
+    this.keyPrefix = undefined
+    this.notice = reason
   }
 
   private async openEventTailPreview(row: HrcTopRow | undefined): Promise<void> {
@@ -898,6 +1106,32 @@ function renderRunConfirmationOverlay(
   return renderFramedOverlay(baseLines, content, height, width)
 }
 
+function renderAmbiguityResolverOverlay(
+  baseLines: string[],
+  overlayState: AmbiguityResolverOverlayState,
+  height: number,
+  width: number
+): string[] {
+  const action = overlayState.action === 'attach' ? 'ATTACH RESOLVER' : 'INSPECT RESOLVER'
+  const content = [
+    action,
+    `Target: ${overlayState.handle}`,
+    'Choose a concrete runtime candidate:',
+    ...overlayState.candidates.map((candidate, index) => {
+      const marker = index === overlayState.selectedIndex ? '>' : ' '
+      const runtime = candidate.runtimeId ?? candidate.source.activeHostSessionId ?? 'no-runtime'
+      const disabled =
+        overlayState.action === 'attach' && !candidate.attachable
+          ? ` disabled: ${candidate.disabledReason ?? 'not attachable'}`
+          : ''
+      return `${marker} ${runtime}  ${candidate.label}${disabled}`
+    }),
+    'Confirm: Enter',
+    'Cancel: Esc or q',
+  ]
+  return renderFramedOverlay(baseLines, content, height, width)
+}
+
 function renderFramedOverlay(
   baseLines: string[],
   content: string[],
@@ -966,6 +1200,22 @@ function continuationTextForRow(row: HrcTopRow): string | undefined {
   const continuation = row.target.continuation
   if (!continuation) return undefined
   return continuation.key ? `${continuation.provider}:${continuation.key}` : continuation.provider
+}
+
+function firstEnabledCandidateIndex(
+  action: HrcTopAmbiguityAction,
+  candidates: readonly HrcTopAmbiguityCandidate[]
+): number {
+  if (action !== 'attach') return 0
+  const index = candidates.findIndex((candidate) => candidate.attachable)
+  return index >= 0 ? index : 0
+}
+
+function ambiguityActionForCommand(value: string): HrcTopAmbiguityAction | undefined {
+  const verb = value.trim().split(/\s+/)[0]
+  if (verb === 'attach') return 'attach'
+  if (verb === 'inspect') return 'inspect'
+  return undefined
 }
 
 function printableInput(data: string): string | undefined {
