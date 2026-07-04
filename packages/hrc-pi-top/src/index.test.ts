@@ -146,4 +146,88 @@ describe('hrc-pi-top app', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width)
     }
   })
+
+  it('renders focus action affordances from the same availability facts as dispatch', () => {
+    const focusOutput = (focusedTarget: HrcTargetView): string => {
+      const { app } = createApp({ targets: [focusedTarget] })
+      app.handleInput('.')
+      app.handleInput('\r')
+      return app.render(120).join('\n')
+    }
+    const expectActionEnabled = (output: string, action: string): void => {
+      const enabledLine = output.split('\n').find((line) => line.includes(action))
+      expect(enabledLine).toBeDefined()
+      expect(enabledLine).not.toContain('unavailable')
+    }
+    const expectActionDisabled = (output: string, action: string, reason: string): void => {
+      expect(output).toContain(reason)
+      for (const line of output.split('\n')) {
+        if (line.includes(action)) expect(line).toContain(reason)
+      }
+    }
+
+    // Regression: a row can have a captured continuation without any runtime
+    // capture surface. The focus lens must not advertise `c capture` as enabled.
+    const noRuntimeWithContinuation = focusOutput(
+      target({
+        state: 'bound',
+        runtime: undefined,
+        continuation: { provider: 'openai', key: 'conv-pi-top-captured' },
+      })
+    )
+    expectActionDisabled(
+      noRuntimeWithContinuation,
+      'c capture',
+      'Capture is unavailable: no runtime capture surface exists.'
+    )
+    expectActionEnabled(noRuntimeWithContinuation, 'r resume')
+    expectActionDisabled(
+      noRuntimeWithContinuation,
+      'R run',
+      'Run is unavailable: policy does not allow a fresh launch for this row.'
+    )
+
+    const noContinuation = focusOutput(
+      target({
+        state: 'dormant',
+        runtime: undefined,
+        continuation: undefined,
+      })
+    )
+    expectActionDisabled(
+      noContinuation,
+      'r resume',
+      'Resume is unavailable: no captured, non-invalidated continuation exists.'
+    )
+    expectActionDisabled(
+      noContinuation,
+      'c capture',
+      'Capture is unavailable: no runtime capture surface exists.'
+    )
+
+    const liveAttachableWithoutCapture = focusOutput(
+      target({
+        runtime: {
+          runtimeId: 'rt-pi-top-no-capture',
+          transport: 'tmux',
+          status: 'ready',
+          supportsLiteralSend: true,
+          supportsCapture: false,
+          operatorAttachable: true,
+          lastActivityAt: '2026-07-02T12:00:00.000Z',
+        },
+        continuation: undefined,
+      })
+    )
+    expectActionEnabled(liveAttachableWithoutCapture, 'a attach')
+    expectActionDisabled(
+      liveAttachableWithoutCapture,
+      'c capture',
+      'Capture is unavailable: no runtime capture surface exists.'
+    )
+
+    const captureSupported = focusOutput(target({ continuation: undefined }))
+    expectActionEnabled(captureSupported, 'a attach')
+    expectActionEnabled(captureSupported, 'c capture')
+  })
 })
