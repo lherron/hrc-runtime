@@ -8,7 +8,9 @@ import {
   matchesKey,
   truncateToWidth,
 } from '@earendil-works/pi-tui'
+import type { HrcLifecycleEvent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
+import type { WatchOptions } from 'hrc-sdk'
 import {
   type HrcTopActionExecutor,
   type HrcTopActionResult,
@@ -30,7 +32,15 @@ import {
   selectVisibleTriageRowIds,
 } from 'hrc-top'
 
-type HrcPiTopClient = Pick<HrcClient, 'listTargets'> & Partial<Pick<HrcClient, 'attachRuntime'>>
+type HrcPiTopClient = Pick<HrcClient, 'listTargets'> &
+  Partial<Pick<HrcClient, 'attachRuntime' | 'watch'>>
+
+type EventTailPreviewState = {
+  rowId: string
+  handle: string
+  events: HrcLifecycleEvent[]
+  error?: string | undefined
+}
 
 export type HrcPiTopOptions = HrcTopOptions & {
   terminal?: Terminal | undefined
@@ -146,6 +156,7 @@ export class HrcPiTopApp implements Component {
   private filterMode = false
   private commandMode = false
   private notice: string | undefined
+  private eventTailPreview: EventTailPreviewState | undefined
   private pendingRunConfirmationRowId: string | undefined
   private keyPrefix: HrcTopKeyPrefix
   private pendingAction: Promise<void> = Promise.resolve()
@@ -223,6 +234,14 @@ export class HrcPiTopApp implements Component {
   }
 
   render(width: number): string[] {
+    if (this.eventTailPreview) {
+      return renderEventTailPreview({
+        preview: this.eventTailPreview,
+        height: this.height(),
+        width,
+      })
+    }
+
     const frame = renderTopScreen({
       model: this.model,
       navState: this.navState,
@@ -407,6 +426,11 @@ export class HrcPiTopApp implements Component {
     this.notice = undefined
 
     if (intent.type === 'quit') {
+      if (this.eventTailPreview) {
+        this.eventTailPreview = undefined
+        this.requestRender()
+        return
+      }
       if (this.focusMode) {
         this.focusMode = false
         this.requestRender()
@@ -501,7 +525,7 @@ export class HrcPiTopApp implements Component {
         executor: this.executor,
         confirmRunWithContinuation,
       })
-      await this.handleActionResult(result, row.id)
+      await this.handleActionResult(result, row.id, row)
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
       this.requestRender()
@@ -523,7 +547,8 @@ export class HrcPiTopApp implements Component {
           row,
           executor: this.executor,
         }),
-        row.id
+        row.id,
+        row
       )
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
@@ -533,7 +558,8 @@ export class HrcPiTopApp implements Component {
 
   private async handleActionResult(
     result: HrcTopActionResult,
-    selectedRowId?: string | undefined
+    selectedRowId?: string | undefined,
+    selectedRow?: HrcTopRow | undefined
   ): Promise<void> {
     this.notice = result.reason
     if (result.status === 'confirmation_required') {
@@ -552,6 +578,10 @@ export class HrcPiTopApp implements Component {
       this.filterInput.setValue(this.filterText)
       this.recomputeNav()
     }
+    if (result.action === 'tail') {
+      await this.openEventTailPreview(selectedRow ?? this.rowById(selectedRowId))
+      return
+    }
     if (result.action === 'focus' || result.action === 'inspect') {
       this.focusMode = true
     }
@@ -567,6 +597,121 @@ export class HrcPiTopApp implements Component {
     this.pendingAction = next.catch(() => undefined)
     void this.pendingAction
   }
+
+  private rowById(rowId: string | undefined): HrcTopRow | undefined {
+    if (!rowId) return undefined
+    return this.model.rows.find((row) => row.id === rowId)
+  }
+
+  private async openEventTailPreview(row: HrcTopRow | undefined): Promise<void> {
+    if (!row) {
+      this.notice = 'No target selected.'
+      this.requestRender()
+      return
+    }
+
+    const previewBase = {
+      rowId: row.id,
+      handle: handleForRow(row),
+      events: [],
+    }
+
+    if (typeof this.client.watch !== 'function') {
+      this.eventTailPreview = {
+        ...previewBase,
+        error: 'Event tail is unavailable: this HRC client does not expose monitor events.',
+      }
+      this.notice = undefined
+      this.requestRender()
+      return
+    }
+
+    try {
+      const events: HrcLifecycleEvent[] = []
+      for await (const event of this.client.watch(tailWatchOptions(row))) {
+        events.push(event)
+        if (events.length > 50) events.shift()
+      }
+      this.eventTailPreview = {
+        ...previewBase,
+        events,
+      }
+      this.notice = undefined
+    } catch (error) {
+      this.eventTailPreview = {
+        ...previewBase,
+        error: error instanceof Error ? error.message : String(error),
+      }
+      this.notice = undefined
+    }
+    this.requestRender()
+  }
+}
+
+function tailWatchOptions(row: HrcTopRow): WatchOptions {
+  const target = row.target
+  return {
+    follow: false,
+    hostSessionId: target.activeHostSessionId,
+    generation: target.generation,
+    scopeRef: target.scopeRef,
+    laneRef: target.laneRef,
+  }
+}
+
+function renderEventTailPreview(input: {
+  preview: EventTailPreviewState
+  height: number
+  width: number
+}): string[] {
+  const { preview, width } = input
+  const header = [`EVENT TAIL  ${preview.handle}`, '']
+  const footer = ['', '-'.repeat(width), 'q return']
+  const bodyHeight = Math.max(1, input.height - header.length - footer.length)
+  const body = eventTailBody(preview, bodyHeight)
+  return [...header, ...body, ...footer].map((line) => truncateToWidth(line, width, '', false))
+}
+
+function eventTailBody(preview: EventTailPreviewState, height: number): string[] {
+  if (preview.error) {
+    return [`Event tail unavailable: ${preview.error}`]
+  }
+  if (preview.events.length === 0) {
+    return [`No recent events for ${preview.handle}.`]
+  }
+  return preview.events.slice(-height).map(renderEventLine)
+}
+
+function renderEventLine(event: HrcLifecycleEvent): string {
+  const ts = event.ts.replace('T', ' ').replace(/\.\d{3}Z$/, 'Z')
+  const seq = `#${event.hrcSeq}`
+  const bits = [seq, ts, event.category, event.eventKind]
+  if (event.runId) bits.push(`run=${event.runId}`)
+  if (event.runtimeId) bits.push(`runtime=${event.runtimeId}`)
+  const payload = payloadPreview(event.payload)
+  return payload ? `${bits.join('  ')}  ${payload}` : bits.join('  ')
+}
+
+function payloadPreview(payload: unknown): string {
+  if (payload === undefined || payload === null) return ''
+  if (typeof payload === 'string') return payload
+  try {
+    return JSON.stringify(payload)
+  } catch {
+    return String(payload)
+  }
+}
+
+function handleForRow(row: HrcTopRow): string {
+  return handleFromScopeRef(row.target.scopeRef) ?? row.sessionRef
+}
+
+function handleFromScopeRef(scopeRef: string): string | undefined {
+  const agent = scopeRef.match(/^agent:([^:]+)/)?.[1]
+  const project = scopeRef.match(/:project:([^:]+)/)?.[1]
+  const task = scopeRef.match(/:task:([^:/]+)/)?.[1]
+  if (!agent || !project) return undefined
+  return task ? `${agent}@${project}:${task}` : `${agent}@${project}`
 }
 
 function printableInput(data: string): string | undefined {
