@@ -235,11 +235,12 @@ export class HrcPiTopApp implements Component {
 
   render(width: number): string[] {
     if (this.eventTailPreview) {
-      return renderEventTailPreview({
+      const lines = renderEventTailPreview({
         preview: this.eventTailPreview,
         height: this.height(),
         width,
       })
+      return this.showHelp ? renderHelpOverlay(lines, this.height(), width) : lines
     }
 
     const frame = renderTopScreen({
@@ -253,7 +254,7 @@ export class HrcPiTopApp implements Component {
       commandMode: this.commandMode,
       focusMode: this.focusMode,
       showAll: this.showAll,
-      showHelp: this.showHelp,
+      showHelp: false,
       notice: this.notice,
       color: true,
     })
@@ -277,7 +278,8 @@ export class HrcPiTopApp implements Component {
       )
     }
 
-    return lines.map((line) => truncateToWidth(line, width, '', false))
+    const rendered = lines.map((line) => truncateToWidth(line, width, '', false))
+    return this.showHelp ? renderHelpOverlay(rendered, this.height(), width) : rendered
   }
 
   handleInput(data: string): void {
@@ -286,6 +288,15 @@ export class HrcPiTopApp implements Component {
 
     if (matchesKey(data, 'ctrl+c')) {
       this.onQuit()
+      return
+    }
+
+    if (this.showHelp) {
+      if (isHelpDismissInput(data)) {
+        this.showHelp = false
+        this.keyPrefix = undefined
+      }
+      this.requestRender()
       return
     }
 
@@ -447,7 +458,8 @@ export class HrcPiTopApp implements Component {
     }
 
     if (intent.type === 'help') {
-      this.showHelp = !this.showHelp
+      this.showHelp = true
+      this.keyPrefix = undefined
       this.requestRender()
       return
     }
@@ -700,6 +712,65 @@ function payloadPreview(payload: unknown): string {
   } catch {
     return String(payload)
   }
+}
+
+function renderHelpOverlay(baseLines: string[], height: number, width: number): string[] {
+  const safeWidth = Math.max(1, width)
+  const lines = baseLines.slice(0, height)
+  while (lines.length < height) lines.push('')
+
+  const overlayWidth = Math.max(1, Math.min(safeWidth, 84))
+  const bodyWidth = Math.max(1, overlayWidth - 4)
+  const content = helpOverlayContent().slice(0, Math.max(1, height - 2))
+  const border = `+${'-'.repeat(Math.max(0, overlayWidth - 2))}+`
+  const overlay = [
+    border,
+    ...content.map((line) => framedHelpLine(line, bodyWidth, overlayWidth)),
+    border,
+  ]
+  const top = Math.max(0, Math.floor((height - overlay.length) / 2))
+  const left = Math.max(0, Math.floor((safeWidth - overlayWidth) / 2))
+
+  for (let index = 0; index < overlay.length && top + index < lines.length; index += 1) {
+    lines[top + index] = truncateToWidth(
+      `${' '.repeat(left)}${overlay[index]}`,
+      safeWidth,
+      '',
+      false
+    )
+  }
+
+  return lines.map((line) => truncateToWidth(line, safeWidth, '', false))
+}
+
+function helpOverlayContent(): string[] {
+  return [
+    'HELP',
+    'NORMAL MODE',
+    'j/k or arrows move | gg/G top/bottom | Ctrl-d/u half-page | Ctrl-f/b page',
+    "m<char> mark | '<char> jump | / filter | n/N next/prev | . show all",
+    'Enter focus | o recommended action | q quit',
+    'FILTER MODE',
+    'Type to filter rows | Enter accept | Esc accept current text | Backspace edits',
+    'COMMAND MODE',
+    ':filter <text> | :clear-filter | :quit',
+    ':attach | :resume | :run | :tail | :capture | :inspect',
+    'Destructive verbs are disabled; actions use the same availability checks as keys.',
+    'ACTIONS',
+    'a attach | r resume | R run | e tail | c capture | i inspect',
+    'o runs the selected row recommendation; Enter/i/e are read-only views',
+    '?/Esc/q close help; other keys stay in this overlay',
+  ]
+}
+
+function framedHelpLine(line: string, bodyWidth: number, overlayWidth: number): string {
+  const body = truncateToWidth(line, bodyWidth, '', false)
+  return `| ${body}${' '.repeat(Math.max(0, overlayWidth - body.length - 4))} |`
+}
+
+function isHelpDismissInput(data: string): boolean {
+  const printable = printableInput(data)
+  return printable === '?' || printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')
 }
 
 function handleForRow(row: HrcTopRow): string {
