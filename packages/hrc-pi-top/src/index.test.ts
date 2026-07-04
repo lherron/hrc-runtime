@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { visibleWidth } from '@earendil-works/pi-tui'
-import type { HrcTargetView } from 'hrc-core'
+import type { HrcLifecycleEvent, HrcTargetView } from 'hrc-core'
 import { type HrcTopActionExecutor, buildReadModel } from 'hrc-top'
 
 import { HrcPiTopApp } from './index.js'
@@ -21,6 +21,7 @@ function target(overrides: Partial<HrcTargetView> = {}): HrcTargetView {
     laneRef: 'main',
     state: 'bound',
     activeHostSessionId: 'hsid-pi-top-1',
+    generation: 7,
     runtime: {
       runtimeId: 'rt-pi-top-1',
       transport: 'tmux',
@@ -80,6 +81,72 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
     onQuit: input.onQuit ?? (() => undefined),
   })
   return { app, renders: () => renderCount, commands }
+}
+
+function lifecycleEvent(overrides: Partial<HrcLifecycleEvent> = {}): HrcLifecycleEvent {
+  return {
+    hrcSeq: 41,
+    streamSeq: 41,
+    ts: '2026-07-02T12:04:30.000Z',
+    hostSessionId: 'hsid-pi-top-1',
+    scopeRef: 'agent:cody:project:hrc-runtime:task:T-05449',
+    laneRef: 'main',
+    generation: 7,
+    runtimeId: 'rt-pi-top-1',
+    runId: 'run-pi-top-1',
+    category: 'turn',
+    eventKind: 'turn.started',
+    transport: 'tmux',
+    replayed: true,
+    payload: { promptPreview: 'inspect the queue state' },
+    ...overrides,
+  }
+}
+
+function createTailApp(input: {
+  events: HrcLifecycleEvent[]
+  target?: HrcTargetView | undefined
+}): {
+  app: HrcPiTopApp
+  watchCalls: unknown[]
+  commands: string[][]
+} {
+  const selected = input.target ?? target({ state: 'busy' })
+  const watchCalls: unknown[] = []
+  const commands: string[][] = []
+  const executor: HrcTopActionExecutor = {
+    async attachRuntime() {
+      return { argv: ['true'] }
+    },
+    async spawnAttachDescriptor() {
+      return { status: 'executed' }
+    },
+    async runCommand(argv) {
+      commands.push(argv)
+      return { status: 'executed' }
+    },
+  }
+  const client = {
+    async listTargets() {
+      return [selected]
+    },
+    async *watch(options: unknown) {
+      watchCalls.push(options)
+      for (const event of input.events) yield event
+    },
+  }
+
+  const app = new HrcPiTopApp({
+    client,
+    executor,
+    initialModel: buildReadModel([selected], new Date('2026-07-02T12:05:00.000Z')),
+    scope: { projectId: 'hrc-runtime' },
+    viewportHeight: () => 18,
+    requestRender: () => undefined,
+    onQuit: () => undefined,
+  })
+
+  return { app, watchCalls, commands }
 }
 
 describe('hrc-pi-top app', () => {
@@ -229,5 +296,80 @@ describe('hrc-pi-top app', () => {
     const captureSupported = focusOutput(target({ continuation: undefined }))
     expectActionEnabled(captureSupported, 'a attach')
     expectActionEnabled(captureSupported, 'c capture')
+  })
+
+  it('opens a read-only event tail preview from e and returns to the board with q', async () => {
+    const { app, watchCalls, commands } = createTailApp({
+      events: [
+        lifecycleEvent(),
+        lifecycleEvent({
+          hrcSeq: 42,
+          streamSeq: 42,
+          ts: '2026-07-02T12:04:40.000Z',
+          category: 'runtime',
+          eventKind: 'runtime.ready',
+          payload: { status: 'ready' },
+        }),
+      ],
+    })
+
+    // T-05456 red bar: e must render a selected target event-tail panel, not
+    // just a footer notice, and it must read existing monitor events without
+    // spawning shell commands or mutating target state.
+    app.handleInput('e')
+    await app.whenIdle()
+
+    const tailOutput = app.render(120).join('\n')
+    expect(tailOutput).toContain('EVENT TAIL')
+    expect(tailOutput).toContain('cody@hrc-runtime:T-05449')
+    expect(tailOutput).toContain('turn.started')
+    expect(tailOutput).toContain('runtime.ready')
+    expect(tailOutput).not.toContain('Show the selected target event tail preview.')
+    expect(commands).toEqual([])
+    expect(watchCalls).toHaveLength(1)
+    expect(watchCalls[0]).toMatchObject({
+      follow: false,
+      hostSessionId: 'hsid-pi-top-1',
+      generation: 7,
+    })
+
+    app.handleInput('q')
+
+    const boardOutput = app.render(120).join('\n')
+    expect(boardOutput).toContain('HRC TOP')
+    expect(boardOutput).not.toContain('EVENT TAIL')
+  })
+
+  it('gives :tail the same event-present semantics as e', async () => {
+    const { app, commands } = createTailApp({
+      events: [
+        lifecycleEvent({
+          eventKind: 'turn.completed',
+          payload: { outcome: 'ok' },
+        }),
+      ],
+    })
+
+    for (const key of [':', 't', 'a', 'i', 'l', '\r']) app.handleInput(key)
+    await app.whenIdle()
+
+    const output = app.render(120).join('\n')
+    expect(output).toContain('EVENT TAIL')
+    expect(output).toContain('turn.completed')
+    expect(output).not.toContain('Show the selected target event tail preview.')
+    expect(commands).toEqual([])
+  })
+
+  it('renders an explicit non-fatal empty state when the selected target has no tail events', async () => {
+    const { app, commands } = createTailApp({ events: [] })
+
+    app.handleInput('e')
+    await app.whenIdle()
+
+    const output = app.render(120).join('\n')
+    expect(output).toContain('EVENT TAIL')
+    expect(output).toContain('No recent events')
+    expect(output).toContain('cody@hrc-runtime:T-05449')
+    expect(commands).toEqual([])
   })
 })
