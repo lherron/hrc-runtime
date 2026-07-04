@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
+  HrcMessageAddress,
+  HrcMessageFilter,
   HrcMessageRecord,
   HrcTurnResponseFormat,
   SemanticTurnHandoffResponse,
@@ -57,6 +59,8 @@ export type TurnOptions = {
 }
 
 const TURN_WAIT_DEFAULT_TIMEOUT = '45m'
+const TURN_FINAL_REPLY_GRACE_MS = 1_000
+const TURN_FINAL_REPLY_POLL_MS = 50
 
 type TurnBodyInput = {
   targetInput: string
@@ -403,6 +407,7 @@ export async function cmdTurn(
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,
   })
+  const expectedResponder = { kind: 'session' as const, sessionRef: handoff.sessionRef }
 
   // ── Final-only Codex wait mode ──
   // Watch quietly until the turn reaches a terminal state, then emit exactly
@@ -412,6 +417,8 @@ export async function cmdTurn(
     await runTurnFinalWait({
       client,
       handoff,
+      expectedResponder,
+      expectedRecipient: from,
       projectId: resolved.parsed.projectId ?? '',
       timeoutMs: waitTimeoutMs,
     })
@@ -514,7 +521,10 @@ export async function cmdTurn(
     })) {
       const stackedEvent =
         stackedAggregator && isWatchLoopTurnTerminal(event)
-          ? await enrichFinalEvent(client, handoff, event)
+          ? await enrichFinalEvent(client, handoff, event, {
+              expectedResponder,
+              expectedRecipient: from,
+            })
           : event
       if (stackedAggregator) {
         lastPhase = deriveStackedPhase(stackedEvent, lastPhase)
@@ -591,10 +601,12 @@ export async function cmdTurn(
 async function runTurnFinalWait(args: {
   client: HrcClient
   handoff: SemanticTurnHandoffResponse
+  expectedResponder: HrcMessageAddress
+  expectedRecipient: HrcMessageAddress
   projectId: string
   timeoutMs: number
 }): Promise<void> {
-  const { client, handoff, timeoutMs } = args
+  const { client, handoff, expectedResponder, expectedRecipient, timeoutMs } = args
   const target = formatAddress({ kind: 'session', sessionRef: handoff.sessionRef })
   const sentMessageId = handoff.messageId
   const afterSeq = handoff.fromSeq
@@ -666,7 +678,12 @@ async function runTurnFinalWait(args: {
   let result: WaitFinalResult
 
   if (outcome === 'completed') {
-    const reply = await findDurableReply(client, handoff.messageId)
+    const reply = await findDurableReply(client, {
+      handoff,
+      expectedResponder,
+      expectedRecipient,
+      graceMs: TURN_FINAL_REPLY_GRACE_MS,
+    })
     result = {
       status: 'responded',
       sentMessageId,
@@ -752,7 +769,11 @@ function deriveStackedPhase(
 async function enrichFinalEvent(
   client: HrcClient,
   handoff: SemanticTurnHandoffResponse,
-  event: HrcLifecycleEvent
+  event: HrcLifecycleEvent,
+  correlation: {
+    expectedResponder: HrcMessageAddress
+    expectedRecipient: HrcMessageAddress
+  }
 ): Promise<HrcLifecycleEvent> {
   const payload = isRecord(event.payload) ? event.payload : {}
   const payloadBody = typeof payload['body'] === 'string' ? payload['body'] : undefined
@@ -762,7 +783,12 @@ async function enrichFinalEvent(
     return event
   }
 
-  const reply = await findDurableReply(client, handoff.messageId)
+  const reply = await findDurableReply(client, {
+    handoff,
+    expectedResponder: correlation.expectedResponder,
+    expectedRecipient: correlation.expectedRecipient,
+    graceMs: TURN_FINAL_REPLY_GRACE_MS,
+  })
   if (reply === undefined) {
     return event
   }
@@ -779,7 +805,12 @@ async function enrichFinalEvent(
 
 async function findDurableReply(
   client: HrcClient,
-  requestMessageId: string
+  correlation: {
+    handoff: SemanticTurnHandoffResponse
+    expectedResponder: HrcMessageAddress
+    expectedRecipient: HrcMessageAddress
+    graceMs?: number | undefined
+  }
 ): Promise<HrcMessageRecord | undefined> {
   const maybeClient = client as HrcClient & {
     listMessages?: HrcClient['listMessages'] | undefined
@@ -788,15 +819,94 @@ async function findDurableReply(
     return undefined
   }
 
-  try {
-    const result = await maybeClient.listMessages({
-      thread: { rootMessageId: requestMessageId },
-      phases: ['response'],
-      limit: 1,
-      order: 'desc',
-    })
-    return result.messages[0]
-  } catch {
-    return undefined
+  const { handoff, expectedResponder, expectedRecipient } = correlation
+  const filter: HrcMessageFilter = {
+    from: expectedResponder,
+    to: expectedRecipient,
+    replyToMessageId: handoff.messageId,
+    runId: handoff.runId,
+    hostSessionId: handoff.hostSessionId,
+    generation: handoff.generation,
+    phases: ['response'],
+    limit: 1,
+    order: 'desc',
   }
+  const deadline = Date.now() + (correlation.graceMs ?? 0)
+
+  while (Date.now() <= deadline) {
+    try {
+      const result = await maybeClient.listMessages({
+        ...filter,
+      })
+      const strictReply = result.messages.find((message) =>
+        matchesDurableReply(message, {
+          handoff,
+          expectedResponder,
+          expectedRecipient,
+        })
+      )
+      if (strictReply !== undefined) {
+        return strictReply
+      }
+      if (result.messages.length === 1) {
+        const legacyReply = result.messages.find((message) =>
+          matchesDurableReply(message, {
+            handoff,
+            expectedResponder,
+            expectedRecipient,
+            allowMissingExecutionIdentity: true,
+          })
+        )
+        if (legacyReply !== undefined) {
+          return legacyReply
+        }
+      }
+    } catch {
+      return undefined
+    }
+
+    await sleep(Math.min(TURN_FINAL_REPLY_POLL_MS, Math.max(0, deadline - Date.now())))
+  }
+  return undefined
+}
+
+function matchesDurableReply(
+  message: HrcMessageRecord,
+  correlation: {
+    handoff: SemanticTurnHandoffResponse
+    expectedResponder: HrcMessageAddress
+    expectedRecipient: HrcMessageAddress
+    allowMissingExecutionIdentity?: boolean | undefined
+  }
+): boolean {
+  const { handoff, expectedResponder, expectedRecipient, allowMissingExecutionIdentity } =
+    correlation
+  const executionMatches =
+    message.execution.runId === handoff.runId &&
+    message.execution.hostSessionId === handoff.hostSessionId &&
+    message.execution.generation === handoff.generation
+  const legacyMissingExecutionIdentity =
+    allowMissingExecutionIdentity === true &&
+    message.execution.runId === undefined &&
+    message.execution.hostSessionId === undefined &&
+    message.execution.generation === undefined
+  return (
+    message.phase === 'response' &&
+    addressesEqual(message.from, expectedResponder) &&
+    addressesEqual(message.to, expectedRecipient) &&
+    message.replyToMessageId === handoff.messageId &&
+    (executionMatches || legacyMissingExecutionIdentity)
+  )
+}
+
+function addressesEqual(left: HrcMessageAddress, right: HrcMessageAddress): boolean {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'entity' && right.kind === 'entity') return left.entity === right.entity
+  if (left.kind === 'session' && right.kind === 'session')
+    return left.sessionRef === right.sessionRef
+  return false
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

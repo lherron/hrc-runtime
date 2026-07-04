@@ -143,7 +143,9 @@ export type HrcMessageFilter = {
   from?: HrcMessageAddress | undefined
   to?: HrcMessageAddress | undefined
   thread?: { rootMessageId: string } | undefined
+  replyToMessageId?: string | undefined
   hostSessionId?: string | undefined
+  runId?: string | undefined
   generation?: number | undefined
   afterSeq?: number | undefined
   kinds?: HrcMessageKind[] | undefined

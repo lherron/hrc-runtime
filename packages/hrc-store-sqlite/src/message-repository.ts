@@ -265,9 +265,19 @@ export class MessageRepository {
       values.push(filter.thread.rootMessageId)
     }
 
+    if (filter.replyToMessageId !== undefined) {
+      where.push('reply_to_message_id = ?')
+      values.push(filter.replyToMessageId)
+    }
+
     if (filter.hostSessionId !== undefined) {
       where.push('host_session_id = ?')
       values.push(filter.hostSessionId)
+    }
+
+    if (filter.runId !== undefined) {
+      where.push('run_id = ?')
+      values.push(filter.runId)
     }
 
     if (filter.generation !== undefined) {

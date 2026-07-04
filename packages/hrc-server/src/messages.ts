@@ -195,6 +195,18 @@ function parseOptionalIntegerBodyField(input: unknown, field: string): number | 
   return input
 }
 
+function parseOptionalStringBodyField(input: unknown, field: string): string | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+  if (typeof input !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, `${field} must be a string`, {
+      field,
+    })
+  }
+  return input
+}
+
 export function parseMessageFilter(input: unknown): HrcMessageFilter {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -247,12 +259,12 @@ export function parseMessageFilter(input: unknown): HrcMessageFilter {
     'response',
     'oneway',
   ] as const)
-  const hostSessionId = input['hostSessionId']
-  if (hostSessionId !== undefined && typeof hostSessionId !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'hostSessionId must be a string', {
-      field: 'hostSessionId',
-    })
-  }
+  const replyToMessageId = parseOptionalStringBodyField(
+    input['replyToMessageId'],
+    'replyToMessageId'
+  )
+  const hostSessionId = parseOptionalStringBodyField(input['hostSessionId'], 'hostSessionId')
+  const runId = parseOptionalStringBodyField(input['runId'], 'runId')
   const generation = parseOptionalIntegerBodyField(input['generation'], 'generation')
 
   return {
@@ -264,7 +276,9 @@ export function parseMessageFilter(input: unknown): HrcMessageFilter {
     ...(thread !== undefined
       ? { thread: { rootMessageId: thread['rootMessageId'] as string } }
       : {}),
+    ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
     ...(hostSessionId !== undefined ? { hostSessionId } : {}),
+    ...(runId !== undefined ? { runId } : {}),
     ...(generation !== undefined ? { generation } : {}),
     ...(afterSeq !== undefined ? { afterSeq } : {}),
     ...(kinds !== undefined ? { kinds } : {}),
@@ -393,9 +407,18 @@ export function matchesMessageFilter(record: HrcMessageRecord, filter: HrcMessag
   }
   if (filter.thread && record.rootMessageId !== filter.thread.rootMessageId) return false
   if (
+    filter.replyToMessageId !== undefined &&
+    record.replyToMessageId !== filter.replyToMessageId
+  ) {
+    return false
+  }
+  if (
     filter.hostSessionId !== undefined &&
     record.execution.hostSessionId !== filter.hostSessionId
   ) {
+    return false
+  }
+  if (filter.runId !== undefined && record.execution.runId !== filter.runId) {
     return false
   }
   if (filter.generation !== undefined && record.execution.generation !== filter.generation) {
