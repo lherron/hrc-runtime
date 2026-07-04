@@ -4,7 +4,7 @@ import { recommendPrimaryAction } from './action-policy.js'
 import type { HrcTopPrimaryAction } from './action-policy.js'
 
 export type HrcTopDisabledAction = {
-  kind: 'attach' | 'resume' | 'run'
+  kind: 'attach' | 'resume' | 'run' | 'capture'
   reason: string
 }
 

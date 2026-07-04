@@ -608,9 +608,7 @@ function renderFocusLens(screen: HrcTopScreenModel, p: Painter): string[] {
 
   lines.push('')
   lines.push(p.paint('─'.repeat(screen.width), { fg: PALETTE.rule }))
-  lines.push(
-    p.paint('q return · o act · a attach · r resume · e tail · c capture', { fg: PALETTE.ghost })
-  )
+  lines.push(p.paint(renderFocusFooter(row, focus), { fg: PALETTE.ghost }))
   if (screen.notice) lines.push(p.paint(`notice: ${screen.notice}`, { fg: PALETTE.stale }))
   return lines
 }
@@ -629,13 +627,26 @@ function renderEnabledActions(
   focus: HrcTopFocusPanelModel,
   p: Painter
 ): string {
+  return `  ${enabledActionEntries(row, focus)
+    .map((entry) => p.paint(entry, { fg: PALETTE.ready }))
+    .join('   ')}`
+}
+
+function renderFocusFooter(row: HrcTopRenderedRow, focus: HrcTopFocusPanelModel): string {
+  const entries = ['q return']
+  if (row.action.kind !== 'unavailable') entries.push('o act')
+  entries.push(...enabledActionEntries(row, focus))
+  return entries.join(' · ')
+}
+
+function enabledActionEntries(row: HrcTopRenderedRow, focus: HrcTopFocusPanelModel): string[] {
   const disabledKinds = new Set(focus.disabledActions.map((action) => action.kind))
   const enabled: string[] = ['enter focus', 'i inspect', 'e tail']
   if (!disabledKinds.has('attach') && row.action.kind === 'attach') enabled.unshift('a attach')
   if (!disabledKinds.has('resume')) enabled.push('r resume')
   if (!disabledKinds.has('run')) enabled.push('R run')
   if (!disabledKinds.has('capture')) enabled.push('c capture')
-  return `  ${enabled.map((entry) => p.paint(entry, { fg: PALETTE.ready })).join('   ')}`
+  return enabled
 }
 
 function runtimeDetail(focus: HrcTopFocusPanelModel): string {
@@ -684,18 +695,34 @@ function bucketState(bucket: HrcTopTriageBucket): HrcTargetOperatorDisplayState 
 
 function disabledActionsFor(
   fact: RowFact
-): readonly { kind: 'attach' | 'resume' | 'run'; reason: string }[] {
-  const disabled: { kind: 'attach' | 'resume' | 'run'; reason: string }[] = []
+): readonly { kind: 'attach' | 'resume' | 'run' | 'capture'; reason: string }[] {
+  const disabled: { kind: 'attach' | 'resume' | 'run' | 'capture'; reason: string }[] = []
   if (!fact.operatorAttachable)
-    disabled.push({ kind: 'attach', reason: 'no live operator-attachable runtime exists' })
+    disabled.push({
+      kind: 'attach',
+      reason: 'Attach is unavailable: no live operator-attachable runtime exists.',
+    })
   if (!fact.hasValidContinuation)
-    disabled.push({ kind: 'resume', reason: 'no captured, non-invalidated continuation exists' })
-  if (fact.displayState === 'dormant') {
+    disabled.push({
+      kind: 'resume',
+      reason:
+        'Resume is unavailable: no captured, non-invalidated continuation exists. ' +
+        'hrc top will not fall back to a fresh launch.',
+    })
+  if (fact.action.kind !== 'run') {
     disabled.push({
       kind: 'run',
-      reason: 'dormant targets require resume semantics, not a fresh launch',
+      reason: 'Run is unavailable: policy does not allow a fresh launch for this row.',
     })
   }
+  if (
+    !fact.source.target.runtime?.runtimeId ||
+    fact.source.target.runtime?.supportsCapture === false
+  )
+    disabled.push({
+      kind: 'capture',
+      reason: 'Capture is unavailable: no runtime capture surface exists.',
+    })
   return disabled
 }
 
