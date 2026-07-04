@@ -3,6 +3,7 @@ import { CliUsageError } from 'cli-kit'
 import type {
   HrcLifecycleEvent,
   HrcMessageAddress,
+  HrcMessageFilter,
   HrcMessageRecord,
   ListMessagesResponse,
   SemanticDmRequest,
@@ -417,6 +418,98 @@ describe('hrcchat turn --wait final', () => {
     expect(parsed.target).toBe('clod@hrc-runtime')
     expect(parsed.correlation).toEqual({ mode: 'reply_to', afterSeq: 100 })
     expect(parsed.response?.text).toBe('chat-follow validation done')
+  })
+
+  it('ignores same-thread decoy responses unless they exactly match the handoff identity', async () => {
+    const validReply = makeReply({
+      messageId: 'msg-terminal',
+      body: 'terminal turn response',
+      execution: {
+        state: 'completed',
+        runId: 'run-test',
+        hostSessionId: 'hsid-test',
+        generation: 1,
+      },
+    })
+    const operatorDecoy = makeReply({
+      messageId: 'msg-operator-decoy',
+      from: { kind: 'entity', entity: 'human' },
+      to: SESSION,
+      body: 'operator mid-flight reply that must not complete the turn wait',
+      execution: {
+        state: 'completed',
+        runId: 'run-other',
+        hostSessionId: 'hsid-test',
+        generation: 1,
+      },
+    })
+    const wrongRunDecoy = makeReply({
+      messageId: 'msg-wrong-run-decoy',
+      body: 'same-thread response from a different run',
+      execution: {
+        state: 'completed',
+        runId: 'run-other',
+        hostSessionId: 'hsid-test',
+        generation: 1,
+      },
+    })
+    const observedFilters: HrcMessageFilter[] = []
+    const client = {
+      async semanticTurnHandoff(): Promise<SemanticTurnHandoffResponse> {
+        return makeHandoff()
+      },
+      async listMessages(filter?: HrcMessageFilter): Promise<ListMessagesResponse> {
+        if (filter) observedFilters.push(filter)
+        // T-05588 regression guard: a loose same-thread lookup sees decoys before
+        // the real terminal turn response. Only exact handoff correlation returns
+        // the valid response.
+        const hasExactHandoffFilter =
+          filter?.from !== undefined &&
+          filter.to !== undefined &&
+          (filter as HrcMessageFilter & { replyToMessageId?: string }).replyToMessageId ===
+            'msg-request' &&
+          (filter as HrcMessageFilter & { runId?: string }).runId === 'run-test' &&
+          filter.hostSessionId === 'hsid-test' &&
+          filter.generation === 1
+        return {
+          messages: hasExactHandoffFilter
+            ? [validReply]
+            : [operatorDecoy, wrongRunDecoy, validReply],
+        }
+      },
+      async *watch(): AsyncIterable<HrcLifecycleEvent> {
+        yield lifecycle('turn_end')
+      },
+    } as HrcClient
+
+    const { stdout } = await runTurn(client, { wait: 'final', timeout: '45m' }, [
+      'clod@hrc-runtime:primary',
+      'do the thing',
+    ])
+
+    const parsed = JSON.parse(stdout.trim()) as WaitFinalResult
+    expect(parsed.status).toBe('responded')
+    expect(parsed.response).toEqual({
+      messageId: 'msg-terminal',
+      from: 'clod@hrc-runtime',
+      text: 'terminal turn response',
+    })
+    expect(observedFilters).toContainEqual(
+      expect.objectContaining({
+        phases: ['response'],
+        from: SESSION,
+        to: { kind: 'entity', entity: 'human' },
+        hostSessionId: 'hsid-test',
+        generation: 1,
+        limit: 1,
+      })
+    )
+    const exactFilter = observedFilters.find(
+      (filter) =>
+        (filter as HrcMessageFilter & { replyToMessageId?: string }).replyToMessageId ===
+        'msg-request'
+    ) as (HrcMessageFilter & { replyToMessageId?: string; runId?: string }) | undefined
+    expect(exactFilter?.runId).toBe('run-test')
   })
 
   it('reports error with a cursor when the runtime dies before completion', async () => {

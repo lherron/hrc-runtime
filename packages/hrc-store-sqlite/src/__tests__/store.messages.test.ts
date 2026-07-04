@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { HrcMessageAddress } from 'hrc-core'
+import type { HrcMessageAddress, HrcMessageFilter } from 'hrc-core'
 import { openHrcDatabase } from '../index'
 import type { HrcDatabase } from '../index'
 
@@ -186,6 +186,72 @@ describe('MessageRepository', () => {
       thread: { rootMessageId: 'root-1' },
     })
     expect(thread).toHaveLength(2)
+  })
+
+  it('queries by exact replyToMessageId and runId without matching same-thread decoys', () => {
+    db.messages.insert({
+      messageId: 'turn-request',
+      kind: 'dm',
+      phase: 'request',
+      from: humanAddr,
+      to: codyAddr,
+      body: 'start turn',
+    })
+    db.messages.insert({
+      messageId: 'operator-decoy',
+      kind: 'dm',
+      phase: 'response',
+      from: humanAddr,
+      to: codyAddr,
+      body: 'operator mid-flight reply',
+      replyToMessageId: 'status-message',
+      rootMessageId: 'turn-request',
+      execution: { state: 'completed', runId: 'run-other' },
+    })
+    db.messages.insert({
+      messageId: 'wrong-run-decoy',
+      kind: 'dm',
+      phase: 'response',
+      from: codyAddr,
+      to: humanAddr,
+      body: 'same reply target, wrong run',
+      replyToMessageId: 'turn-request',
+      rootMessageId: 'turn-request',
+      execution: { state: 'completed', runId: 'run-other' },
+    })
+    db.messages.insert({
+      messageId: 'wrong-reply-decoy',
+      kind: 'dm',
+      phase: 'response',
+      from: codyAddr,
+      to: humanAddr,
+      body: 'same run, wrong reply target',
+      replyToMessageId: 'other-request',
+      rootMessageId: 'turn-request',
+      execution: { state: 'completed', runId: 'run-turn' },
+    })
+    db.messages.insert({
+      messageId: 'turn-terminal',
+      kind: 'dm',
+      phase: 'response',
+      from: codyAddr,
+      to: humanAddr,
+      body: 'terminal turn response',
+      replyToMessageId: 'turn-request',
+      rootMessageId: 'turn-request',
+      execution: { state: 'completed', runId: 'run-turn' },
+    })
+
+    // T-05588: final-wait enrichment must be able to ask storage for the exact
+    // finalizer-owned identity, not the newest response in the broader thread.
+    const exactFilter: HrcMessageFilter & { replyToMessageId: string; runId: string } = {
+      thread: { rootMessageId: 'turn-request' },
+      phases: ['response'],
+      replyToMessageId: 'turn-request',
+      runId: 'run-turn',
+    }
+    const exact = db.messages.query(exactFilter)
+    expect(exact.map((message) => message.messageId)).toEqual(['turn-terminal'])
   })
 
   it('queries with afterSeq and limit', () => {
