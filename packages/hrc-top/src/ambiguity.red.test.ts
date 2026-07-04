@@ -112,4 +112,82 @@ describe('hrc-top shared ambiguity model', () => {
     expect(sideRow?.displayState).toBe('ready')
     expect(sideRow?.action.kind).toBe('attach')
   })
+
+  it('lets producer ambiguity candidates override a busy row into non-mutating ambiguous state', () => {
+    const model = buildReadModel(
+      [
+        target({
+          state: 'busy',
+          activeHostSessionId: 'hsid-deduped-current',
+          generation: 4,
+          runtime: {
+            ...target().runtime!,
+            runtimeId: 'rt-deduped-current',
+            status: 'busy',
+            activeRunId: 'run-deduped-current',
+            lastActivityAt: '2026-07-04T18:20:00.000Z',
+          },
+          ambiguityCandidates: [
+            {
+              sessionRef: 'agent:cody:project:hrc-runtime:task:T-05460/lane:main',
+              scopeRef: 'agent:cody:project:hrc-runtime:task:T-05460',
+              laneRef: 'main',
+              state: 'busy',
+              activeHostSessionId: 'hsid-deduped-older',
+              generation: 3,
+              runtime: {
+                ...target().runtime!,
+                runtimeId: 'rt-deduped-older',
+                status: 'ready',
+                activeRunId: 'run-deduped-older',
+                lastActivityAt: '2026-07-04T18:19:00.000Z',
+              },
+            },
+          ],
+        }),
+        target({
+          sessionRef: 'agent:cody:project:hrc-runtime:task:T-05460/lane:solo',
+          scopeRef: 'agent:cody:project:hrc-runtime:task:T-05460',
+          laneRef: 'solo',
+          state: 'busy',
+          activeHostSessionId: 'hsid-busy-solo',
+          generation: 1,
+          runtime: {
+            ...target().runtime!,
+            runtimeId: 'rt-busy-solo',
+            status: 'busy',
+            activeRunId: 'run-busy-solo',
+          },
+        }),
+      ],
+      new Date('2026-07-04T18:21:00.000Z')
+    )
+    const navState = createNavState({ visibleRows: model.rows, viewportHeight: 16 })
+
+    // T-05460 regression bar from the live hrc top --pi observer: the server can
+    // expose one deduped busy row plus producer-owned ambiguityCandidates. That
+    // row must still render as explicit ambiguity with a non-mutating primary
+    // action; otherwise the board advertises attach and can guess silently.
+    const screen = buildTopScreenModel({
+      model,
+      navState,
+      viewportHeight: 16,
+      width: 120,
+      showAll: true,
+      focusMode: true,
+    })
+
+    const ambiguousRow = screen.rows.find((row) => row.handle === 'cody@hrc-runtime:T-05460')
+    expect(ambiguousRow?.displayState).toBe('ambiguous')
+    expect(ambiguousRow?.action.kind).toBe('focus')
+    expect(screen.focus?.commandPreview).toBeUndefined()
+    expect(screen.focus?.ambiguityCandidates.map((candidate) => candidate.runtimeId)).toEqual([
+      'rt-deduped-current',
+      'rt-deduped-older',
+    ])
+
+    const soloRow = screen.rows.find((row) => row.handle === 'cody@hrc-runtime:T-05460~solo')
+    expect(soloRow?.displayState).toBe('busy')
+    expect(soloRow?.action.kind).toBe('attach')
+  })
 })
