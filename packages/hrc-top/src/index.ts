@@ -29,7 +29,7 @@ export type HrcTopOptions = HrcTopScope & {
 }
 
 export { buildReadModel, loadReadModel }
-export { dispatchHrcTopActionKey, executeHrcTopCommandLine } from './commands.js'
+export { dispatchHrcTopActionKey, executeHrcTopCommandLine, handleForRow } from './commands.js'
 export type { HrcTopActionExecutor, HrcTopActionResult } from './commands.js'
 export { createHrcTopActionExecutor } from './executor.js'
 export type { HrcTopExecutorOptions } from './executor.js'

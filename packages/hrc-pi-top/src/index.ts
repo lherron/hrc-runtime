@@ -25,6 +25,7 @@ import {
   createNavState,
   dispatchHrcTopActionKey,
   executeHrcTopCommandLine,
+  handleForRow,
   loadReadModel,
   reduceNavState,
   renderTopScreen,
@@ -40,6 +41,12 @@ type EventTailPreviewState = {
   handle: string
   events: HrcLifecycleEvent[]
   error?: string | undefined
+}
+
+type RunConfirmationOverlayState = {
+  rowId: string
+  handle: string
+  continuationText?: string | undefined
 }
 
 export type HrcPiTopOptions = HrcTopOptions & {
@@ -158,7 +165,7 @@ export class HrcPiTopApp implements Component {
   private commandMode = false
   private notice: string | undefined
   private eventTailPreview: EventTailPreviewState | undefined
-  private pendingRunConfirmationRowId: string | undefined
+  private runConfirmationOverlay: RunConfirmationOverlayState | undefined
   private keyPrefix: HrcTopKeyPrefix
   private pendingAction: Promise<void> = Promise.resolve()
 
@@ -206,6 +213,7 @@ export class HrcPiTopApp implements Component {
     try {
       this.model = await loadReadModel(this.client, this.scope)
       this.recomputeNav()
+      this.expireRunConfirmationIfStale()
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
     }
@@ -243,6 +251,14 @@ export class HrcPiTopApp implements Component {
         height: this.height(),
         width,
       })
+      if (this.runConfirmationOverlay) {
+        return renderRunConfirmationOverlay(
+          lines,
+          this.runConfirmationOverlay,
+          this.height(),
+          width
+        )
+      }
       return this.showHelp ? renderHelpOverlay(lines, this.height(), width) : lines
     }
 
@@ -283,6 +299,14 @@ export class HrcPiTopApp implements Component {
     }
 
     const rendered = lines.map((line) => truncateToWidth(line, width, '', false))
+    if (this.runConfirmationOverlay) {
+      return renderRunConfirmationOverlay(
+        rendered,
+        this.runConfirmationOverlay,
+        this.height(),
+        width
+      )
+    }
     return this.showHelp ? renderHelpOverlay(rendered, this.height(), width) : rendered
   }
 
@@ -292,6 +316,11 @@ export class HrcPiTopApp implements Component {
 
     if (matchesKey(data, 'ctrl+c')) {
       this.onQuit()
+      return
+    }
+
+    if (this.runConfirmationOverlay) {
+      this.handleRunConfirmationInput(data)
       return
     }
 
@@ -541,12 +570,10 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
-      const confirmRunWithContinuation = key === 'R' && this.pendingRunConfirmationRowId === row.id
       const result = await dispatchHrcTopActionKey({
         key,
         row,
         executor: this.executor,
-        confirmRunWithContinuation,
       })
       await this.handleActionResult(result, row.id, row)
     } catch (error) {
@@ -586,12 +613,25 @@ export class HrcPiTopApp implements Component {
   ): Promise<void> {
     this.notice = result.reason
     if (result.status === 'confirmation_required') {
-      this.pendingRunConfirmationRowId = selectedRowId
+      const row = selectedRow ?? this.rowById(selectedRowId)
+      if (!row) {
+        this.runConfirmationOverlay = undefined
+        this.notice = 'Run confirmation expired; select the target and press R again.'
+        this.requestRender()
+        return
+      }
+      this.runConfirmationOverlay = {
+        rowId: row.id,
+        handle: handleForRow(row),
+        continuationText: continuationTextForRow(row),
+      }
+      this.showHelp = false
+      this.keyPrefix = undefined
       this.requestRender()
       return
     }
 
-    this.pendingRunConfirmationRowId = undefined
+    this.runConfirmationOverlay = undefined
     if (result.status === 'quit') {
       this.onQuit()
       return
@@ -633,6 +673,81 @@ export class HrcPiTopApp implements Component {
   private rowById(rowId: string | undefined): HrcTopRow | undefined {
     if (!rowId) return undefined
     return this.model.rows.find((row) => row.id === rowId)
+  }
+
+  private handleRunConfirmationInput(data: string): void {
+    const printable = printableInput(data)
+    if (printable === 'R' || matchesKey(data, 'enter') || matchesKey(data, 'return')) {
+      this.enqueue(() => this.confirmRunOverlay())
+      return
+    }
+    if (printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')) {
+      this.runConfirmationOverlay = undefined
+      this.keyPrefix = undefined
+      this.requestRender()
+      return
+    }
+    this.notice = 'Run confirmation is active; press R or Enter to confirm, Esc or q to cancel.'
+    this.requestRender()
+  }
+
+  private async confirmRunOverlay(): Promise<void> {
+    const overlay = this.runConfirmationOverlay
+    if (!overlay) return
+
+    const selected = this.selectedRow()
+    const rowById = this.rowById(overlay.rowId)
+    const selectedHandle = selected ? handleForRow(selected) : undefined
+    const rowByIdHandle = rowById ? handleForRow(rowById) : undefined
+    if (
+      !selected ||
+      !rowById ||
+      selected.id !== overlay.rowId ||
+      selected.id !== rowById.id ||
+      selectedHandle !== overlay.handle ||
+      rowByIdHandle !== overlay.handle
+    ) {
+      this.expireRunConfirmation()
+      return
+    }
+
+    try {
+      this.runConfirmationOverlay = undefined
+      const result = await dispatchHrcTopActionKey({
+        key: 'R',
+        row: selected,
+        executor: this.executor,
+        confirmRunWithContinuation: true,
+      })
+      await this.handleActionResult(result, selected.id, selected)
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error)
+      this.requestRender()
+    }
+  }
+
+  private expireRunConfirmationIfStale(): void {
+    const overlay = this.runConfirmationOverlay
+    if (!overlay) return
+    const selected = this.selectedRow()
+    const rowById = this.rowById(overlay.rowId)
+    if (
+      !selected ||
+      !rowById ||
+      selected.id !== overlay.rowId ||
+      selected.id !== rowById.id ||
+      handleForRow(selected) !== overlay.handle ||
+      handleForRow(rowById) !== overlay.handle
+    ) {
+      this.expireRunConfirmation()
+    }
+  }
+
+  private expireRunConfirmation(): void {
+    this.runConfirmationOverlay = undefined
+    this.keyPrefix = undefined
+    this.notice = 'Run confirmation expired; select the target and press R again.'
+    this.requestRender()
   }
 
   private async openEventTailPreview(row: HrcTopRow | undefined): Promise<void> {
@@ -763,6 +878,60 @@ function renderHelpOverlay(baseLines: string[], height: number, width: number): 
   return lines.map((line) => truncateToWidth(line, safeWidth, '', false))
 }
 
+function renderRunConfirmationOverlay(
+  baseLines: string[],
+  overlayState: RunConfirmationOverlayState,
+  height: number,
+  width: number
+): string[] {
+  const content = [
+    'RUN CONFIRMATION',
+    `Target: ${overlayState.handle}`,
+    overlayState.continuationText
+      ? `Continuation: ${overlayState.continuationText}`
+      : 'Continuation: captured',
+    'hrc run starts a fresh run and bypasses resume semantics for this target.',
+    'A continuation exists; use resume if you want to continue that conversation.',
+    'Confirm: R or Enter',
+    'Cancel: Esc or q',
+  ]
+  return renderFramedOverlay(baseLines, content, height, width)
+}
+
+function renderFramedOverlay(
+  baseLines: string[],
+  content: string[],
+  height: number,
+  width: number
+): string[] {
+  const safeWidth = Math.max(1, width)
+  const lines = baseLines.slice(0, height)
+  while (lines.length < height) lines.push('')
+
+  const overlayWidth = Math.max(1, Math.min(safeWidth, 84))
+  const bodyWidth = Math.max(1, overlayWidth - 4)
+  const overlayContent = content.slice(0, Math.max(1, height - 2))
+  const border = `+${'-'.repeat(Math.max(0, overlayWidth - 2))}+`
+  const overlay = [
+    border,
+    ...overlayContent.map((line) => framedHelpLine(line, bodyWidth, overlayWidth)),
+    border,
+  ]
+  const top = Math.max(0, Math.floor((height - overlay.length) / 2))
+  const left = Math.max(0, Math.floor((safeWidth - overlayWidth) / 2))
+
+  for (let index = 0; index < overlay.length && top + index < lines.length; index += 1) {
+    lines[top + index] = truncateToWidth(
+      `${' '.repeat(left)}${overlay[index]}`,
+      safeWidth,
+      '',
+      false
+    )
+  }
+
+  return lines.map((line) => truncateToWidth(line, safeWidth, '', false))
+}
+
 function helpOverlayContent(): string[] {
   return [
     'HELP',
@@ -793,16 +962,10 @@ function isHelpDismissInput(data: string): boolean {
   return printable === '?' || printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')
 }
 
-function handleForRow(row: HrcTopRow): string {
-  return handleFromScopeRef(row.target.scopeRef) ?? row.sessionRef
-}
-
-function handleFromScopeRef(scopeRef: string): string | undefined {
-  const agent = scopeRef.match(/^agent:([^:]+)/)?.[1]
-  const project = scopeRef.match(/:project:([^:]+)/)?.[1]
-  const task = scopeRef.match(/:task:([^:/]+)/)?.[1]
-  if (!agent || !project) return undefined
-  return task ? `${agent}@${project}:${task}` : `${agent}@${project}`
+function continuationTextForRow(row: HrcTopRow): string | undefined {
+  const continuation = row.target.continuation
+  if (!continuation) return undefined
+  return continuation.key ? `${continuation.provider}:${continuation.key}` : continuation.provider
 }
 
 function printableInput(data: string): string | undefined {

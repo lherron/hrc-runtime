@@ -3,6 +3,7 @@ import type { HrcTargetOperatorDisplayState } from 'hrc-core'
 
 import { recommendPrimaryAction } from './action-policy.js'
 import type { HrcTopPrimaryAction } from './action-policy.js'
+import { handleForRow } from './commands.js'
 import { applyFilter } from './filter.js'
 import type { HrcTopFilterRow } from './filter.js'
 import { buildFocusPanelModel } from './focus.js'
@@ -876,35 +877,6 @@ function formatLast(value: string | undefined): string {
   if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m`
   if (ageMs < 86_400_000) return `${Math.floor(ageMs / 3_600_000)}h`
   return `${Math.floor(ageMs / 86_400_000)}d`
-}
-
-function handleForRow(row: HrcTopRow): string {
-  const parsed = parseSessionRef(row.sessionRef)
-  if (!parsed) return row.sessionRef
-  const task = parsed.task && parsed.task !== 'primary' ? `:${parsed.task}` : ':primary'
-  const lane = parsed.lane && parsed.lane !== 'main' ? `~${parsed.lane}` : ''
-  return `${parsed.agent}@${parsed.project}${task}${lane}`
-}
-
-function parseSessionRef(
-  sessionRef: string
-):
-  | { agent: string; project: string; task?: string | undefined; lane?: string | undefined }
-  | undefined {
-  const [scope, lanePart] = sessionRef.split('/lane:')
-  const parts = scope?.split(':') ?? []
-  const agentIndex = parts.indexOf('agent')
-  const projectIndex = parts.indexOf('project')
-  const taskIndex = parts.indexOf('task')
-  const agent = agentIndex >= 0 ? parts[agentIndex + 1] : undefined
-  const project = projectIndex >= 0 ? parts[projectIndex + 1] : undefined
-  if (!agent || !project) return undefined
-  return {
-    agent,
-    project,
-    task: taskIndex >= 0 ? parts[taskIndex + 1] : undefined,
-    lane: lanePart,
-  }
 }
 
 function pad(value: string, width: number): string {

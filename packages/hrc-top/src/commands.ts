@@ -351,7 +351,7 @@ function isHrcTopAction(action: string): action is HrcTopExplicitAction {
   )
 }
 
-function handleForRow(row: HrcTopRow): string {
+export function handleForRow(row: HrcTopRow): string {
   const parsed = parseSessionRef(row.sessionRef)
   if (!parsed) return row.sessionRef
   const task = parsed.task && parsed.task !== 'primary' ? `:${parsed.task}` : ':primary'
