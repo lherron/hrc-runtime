@@ -140,7 +140,7 @@ async function resolveMessageContexts(
   const contexts = new Map<string, HrcTopMessageContext>()
   for (const target of targets) {
     const row = projectTargetRow(target)
-    const record = await latestMessageForTarget(client, target)
+    const record = await latestMessageForTarget(client, target).catch(() => undefined)
     const context = messageContextFromRecord(record)
     if (context) contexts.set(row.id, context)
   }
