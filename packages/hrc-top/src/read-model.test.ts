@@ -217,4 +217,54 @@ describe('hrc-top read model', () => {
       ],
     })
   })
+
+  it('attaches message context when listMessages is a prototype method on the client instance', async () => {
+    const selected = target()
+    class PrototypeMessageClient {
+      readonly messages = [
+        {
+          messageId: 'msg-prototype-client',
+          messageSeq: 9096,
+          createdAt: '2026-07-05T05:31:00.000Z',
+          kind: 'dm',
+          phase: 'request',
+          from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+          to: { kind: 'session', sessionRef: selected.sessionRef },
+          rootMessageId: 'msg-prototype-client',
+          body: 'durable context from a real client receiver',
+          bodyFormat: 'text/plain',
+          execution: { state: 'delivered' },
+        },
+      ]
+
+      async listTargets(): Promise<HrcTargetView[]> {
+        return [selected]
+      }
+
+      async listMessages(filter: unknown): Promise<{ messages: unknown[] }> {
+        if (!('messages' in this)) {
+          throw new Error('listMessages receiver was detached')
+        }
+        if ((filter as { runId?: string }).runId !== 'run-1') {
+          return { messages: [] }
+        }
+        return { messages: this.messages }
+      }
+    }
+    const client = new PrototypeMessageClient()
+    expect(Object.hasOwn(client, 'listMessages')).toBe(false)
+
+    // T-05462 binding red: real HrcClient methods live on the prototype and
+    // depend on their receiver. The read model must call listMessages on the
+    // original client instance so durable context actually attaches.
+    const model = await loadReadModel(client as never, { projectId: 'hrc-runtime' })
+
+    expect(model.rows[0]).toMatchObject({
+      message: {
+        messageId: 'msg-prototype-client',
+        messageSeq: 9096,
+        bodyPreview: 'durable context from a real client receiver',
+      },
+    })
+  })
 })
