@@ -833,6 +833,129 @@ describe('hrc-pi-top app', () => {
     expect(boardOutput).not.toContain('EVENT TAIL')
   })
 
+  it('keeps action failure detail out of the footer and opens a transient detail overlay', async () => {
+    const detail = {
+      message: 'hrc resume cody@hrc-runtime:T-05449 failed',
+      argv: ['hrc', 'resume', 'cody@hrc-runtime:T-05449'],
+      exitStatus: 37,
+      stderrSummary:
+        'resume refused because the captured continuation is stale and the runtime requires operator review before retrying',
+      targetIdentity: {
+        handle: 'cody@hrc-runtime:T-05449',
+        sessionRef: 'agent:cody:project:hrc-runtime:task:T-05449/lane:main',
+        scopeRef: 'agent:cody:project:hrc-runtime:task:T-05449',
+        laneRef: 'main',
+        hostSessionId: 'hsid-pi-top-1',
+        generation: 7,
+        runtimeId: 'rt-pi-top-1',
+      },
+    }
+    const commands: string[][] = []
+    const resumeTarget = target({
+      continuation: { provider: 'openai', key: 'conv-pi-top-resume-detail' },
+    })
+    const executor: HrcTopActionExecutor = {
+      async attachRuntime() {
+        return { argv: ['true'] }
+      },
+      async spawnAttachDescriptor() {
+        return { status: 'executed' }
+      },
+      async runCommand(argv) {
+        commands.push(argv)
+        return {
+          status: 'disabled',
+          reason: 'hrc resume cody@hrc-runtime:T-05449 failed',
+          detail,
+        } as Awaited<ReturnType<HrcTopActionExecutor['runCommand']>>
+      },
+    }
+    const app = new HrcPiTopApp({
+      client: {
+        async listTargets() {
+          return [resumeTarget]
+        },
+      },
+      executor,
+      initialModel: buildReadModel([resumeTarget], new Date('2026-07-02T12:05:00.000Z')),
+      scope: { projectId: 'hrc-runtime' },
+      viewportHeight: () => 18,
+      requestRender: () => undefined,
+      onQuit: () => undefined,
+    })
+
+    // T-05461 red bar: command-backed failures keep the footer concise and
+    // expose argv/exit/stderr/target identity through a dismissible overlay.
+    app.handleInput('.')
+    app.handleInput('r')
+    await app.whenIdle()
+
+    const footerOutput = app.render(96).join('\n')
+    expect(commands).toEqual([['hrc', 'resume', 'cody@hrc-runtime:T-05449']])
+    expect(footerOutput).toContain('press ! for details')
+    expect(footerOutput).not.toContain(detail.stderrSummary)
+
+    const selectedBeforeOverlay = app.snapshot().selectedRowId
+    for (const key of ['/', 'c', 'o', 'd', 'y', '\r']) app.handleInput(key)
+    const filterTextBeforeDismiss = app.snapshot().filterText
+
+    app.handleInput('!')
+
+    const overlayOutput = app.render(120).join('\n')
+    expect(overlayOutput).toContain('ACTION DETAIL')
+    expect(overlayOutput).toContain('resume')
+    expect(overlayOutput).toContain('disabled')
+    expect(overlayOutput).toContain('hrc resume cody@hrc-runtime:T-05449')
+    expect(overlayOutput).toContain('exit status: 37')
+    expect(overlayOutput).toContain(detail.stderrSummary)
+    expect(overlayOutput).toContain('sessionRef')
+    expect(overlayOutput).toContain('agent:cody:project:hrc-runtime:task:T-05449/lane:main')
+    expect(overlayOutput).toContain('runtimeId')
+    expect(overlayOutput).toContain('rt-pi-top-1')
+
+    app.handleInput('q')
+
+    const dismissedOutput = app.render(120).join('\n')
+    expect(app.snapshot().selectedRowId).toBe(selectedBeforeOverlay)
+    expect(app.snapshot().filterText).toBe(filterTextBeforeDismiss)
+    expect(commands).toEqual([['hrc', 'resume', 'cody@hrc-runtime:T-05449']])
+    expect(dismissedOutput).toContain('HRC TOP')
+    expect(dismissedOutput).not.toContain('ACTION DETAIL')
+  })
+
+  it('offers transient details for an intentionally disabled action without spawning commands', async () => {
+    const noCaptureTarget = target({
+      runtime: {
+        ...target().runtime!,
+        supportsCapture: false,
+      },
+    })
+    const { app, commands } = createApp({ targets: [noCaptureTarget] })
+
+    // Disabled policy actions have no argv/stderr, but they should still expose
+    // the selected target identity and short reason behind the same detail key.
+    app.handleInput('.')
+    app.handleInput('c')
+    await app.whenIdle()
+
+    const footerOutput = app.render(96).join('\n')
+    expect(commands).toEqual([])
+    expect(footerOutput).toContain('Capture is unavailable: no runtime capture surface exists.')
+    expect(footerOutput).toContain('press ! for details')
+
+    app.handleInput('!')
+
+    const overlayOutput = app.render(120).join('\n')
+    expect(overlayOutput).toContain('ACTION DETAIL')
+    expect(overlayOutput).toContain('capture')
+    expect(overlayOutput).toContain('disabled')
+    expect(overlayOutput).toContain('cody@hrc-runtime:T-05449')
+    expect(overlayOutput).toContain('rt-pi-top-1')
+    expect(overlayOutput).not.toContain('argv')
+    expect(overlayOutput).not.toContain('stderr')
+    expect(commands).toEqual([])
+  })
+
   it('gives :tail the same event-present semantics as e', async () => {
     const { app, commands } = createTailApp({
       events: [
