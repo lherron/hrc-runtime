@@ -13,7 +13,8 @@ import { buildReadModel, loadReadModel } from './read-model.js'
 import type { HrcTopReadModel, HrcTopRow, HrcTopScope } from './read-model.js'
 import { renderTopScreen, selectVisibleTriageRowIds } from './render.js'
 
-type HrcTopClient = Pick<HrcClient, 'listTargets'> & Partial<Pick<HrcClient, 'attachRuntime'>>
+type HrcTopClient = Pick<HrcClient, 'listTargets'> &
+  Partial<Pick<HrcClient, 'attachRuntime' | 'listMessages'>>
 type HrcTopTerminalInputState = 'normal' | 'escape' | 'csi' | 'ss3' | 'osc' | 'oscEscape'
 type HrcTopTerminalInput = Pick<NodeJS.ReadStream, 'read' | 'resume'> & {
   setRawMode?: ((mode: boolean) => NodeJS.ReadStream) | undefined
@@ -89,6 +90,7 @@ export type {
 export type {
   HrcTopHeaderCounts,
   HrcTopLastActivity,
+  HrcTopMessageContext,
   HrcTopReadModel,
   HrcTopRow,
   HrcTopScope,

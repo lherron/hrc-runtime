@@ -114,6 +114,7 @@ export async function dispatchHrcTopAction(
     case 'unavailable':
       return unavailableForRecommendedAction(input.row)
     case 'messagePreview':
+      if (!messageIdForAction(input)) return noMessageContext('messagePreview')
       return focused('messagePreview', 'Preview selected message.')
     case 'messageShow':
       return showMessage(input)
@@ -183,6 +184,12 @@ function actionForKey(key: string, row: HrcTopRow): HrcTopExplicitAction | undef
       return 'capture'
     case 'i':
       return 'inspect'
+    case 'p':
+      return 'messagePreview'
+    case 's':
+      return 'messageShow'
+    case 'y':
+      return 'messageReply'
     default:
       return undefined
   }
@@ -255,27 +262,36 @@ async function captureRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopA
 }
 
 async function showMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
-  if (!input.messageId) return disabled('messageShow', 'Message show requires a message id.')
-  const result = await input.executor.runCommand(['hrcchat', 'show', input.messageId])
-  return executorResult('messageShow', result, `Showed message ${input.messageId}.`, input.row)
+  const messageId = messageIdForAction(input)
+  if (!messageId) return noMessageContext('messageShow')
+  const result = await input.executor.runCommand(['hrcchat', 'show', messageId])
+  return executorResult('messageShow', result, `Showed message ${messageId}.`, input.row)
 }
 
 async function replyToMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
-  if (!input.messageId) return disabled('messageReply', 'Message reply requires a message id.')
+  const messageId = messageIdForAction(input)
+  if (!messageId) return noMessageContext('messageReply')
   const handle = handleForRow(input.row)
   const result = await input.executor.runCommand([
     'hrcchat',
     'dm',
     handle,
     '--reply-to',
-    input.messageId,
+    messageId,
+    '-',
   ])
-  return executorResult(
-    'messageReply',
-    result,
-    `Replying to message ${input.messageId}.`,
-    input.row
-  )
+  return executorResult('messageReply', result, `Replying to message ${messageId}.`, input.row)
+}
+
+function messageIdForAction(input: HrcTopActionDispatchInput): string | undefined {
+  const explicit = input.messageId?.trim()
+  if (explicit) return explicit
+  const fromRow = input.row.message?.messageId.trim()
+  return fromRow || undefined
+}
+
+function noMessageContext(action: 'messagePreview' | 'messageShow' | 'messageReply') {
+  return disabled(action, 'No message is available for the selected target.')
 }
 
 function unavailableForRecommendedAction(row: HrcTopRow): HrcTopActionResult {
@@ -309,6 +325,12 @@ function commandAction(verb: string): HrcTopExplicitAction | undefined {
     case 'capture':
     case 'inspect':
       return verb
+    case 'message-preview':
+      return 'messagePreview'
+    case 'message-show':
+      return 'messageShow'
+    case 'message-reply':
+      return 'messageReply'
     default:
       return undefined
   }

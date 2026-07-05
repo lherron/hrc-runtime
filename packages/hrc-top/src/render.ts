@@ -54,6 +54,9 @@ export type HrcTopRenderedRow = {
   glyph: string
   /** True for the quiet idle sea — rendered ~2 luminance tiers down. */
   idle: boolean
+  /** True when selected-row message actions can execute from concrete context. */
+  messageActionsAvailable: boolean
+  messageId?: string | undefined
 }
 
 export type HrcTopTriageSection = {
@@ -225,7 +228,13 @@ function computeTriageView(
       .map((row) => factById.get(row.id))
       .filter((fact): fact is RowFact => fact !== undefined)
     if (group.bucket === 'idle' && collapseIdle) {
-      idleCollapsed = { count: rows.length }
+      const messageRows = rows.filter((fact) => hasMessageActions(fact.source))
+      const collapsedRows = rows.length - messageRows.length
+      if (messageRows.length > 0) {
+        sections.push({ bucket: group.bucket, rows: messageRows })
+        orderedFacts.push(...messageRows)
+      }
+      if (collapsedRows > 0) idleCollapsed = { count: collapsedRows }
       continue
     }
     sections.push({ bucket: group.bucket, rows })
@@ -345,6 +354,8 @@ function renderRowModel(fact: RowFact, navState: HrcTopNavState): HrcTopRendered
     bucket: fact.bucket,
     glyph: gutterGlyphFor(fact),
     idle: !isActionableBucket(fact.bucket),
+    messageActionsAvailable: hasMessageActions(fact.source),
+    messageId: fact.source.message?.messageId,
   }
 }
 
@@ -589,7 +600,10 @@ function renderFooter(screen: HrcTopScreenModel, p: Painter): string[] {
   const hint = screen.showAll
     ? 'j/k move · enter focus · i inspect · o act · / filter · . collapse · q quit'
     : 'j/k move · enter focus · i inspect · o act · / filter · . show all · q quit'
-  lines.push(p.paint(hint, { fg: PALETTE.ghost }))
+  const selectedMessageHints = screen.selected?.messageActionsAvailable
+    ? ' · p preview · s show · y reply'
+    : ''
+  lines.push(p.paint(`${hint}${selectedMessageHints}`, { fg: PALETTE.ghost }))
 
   if (screen.showHelp) {
     lines.push(
@@ -598,6 +612,11 @@ function renderFooter(screen: HrcTopScreenModel, p: Painter): string[] {
         { fg: PALETTE.ghost }
       )
     )
+    if (screen.selected?.messageActionsAvailable) {
+      lines.push(
+        p.paint('p message preview · s message show · y message reply', { fg: PALETTE.ghost })
+      )
+    }
   }
   return lines
 }
@@ -748,10 +767,23 @@ function renderInspectLens(screen: HrcTopScreenModel, p: Painter): string[] {
       )
     }
   }
+  if (row.messageActionsAvailable) {
+    for (const preview of messageCommandPreviews(inspect.handle, row)) {
+      const label = `${ACTION_KEYS[preview.kind] ?? ''} ${preview.label}`.padEnd(12)
+      lines.push(
+        `${p.paint(label, { fg: PALETTE.ghost })} ${p.paint(
+          preview.argv ? `$ ${preview.argv.join(' ')}` : preview.reason,
+          { fg: PALETTE.ink }
+        )}`
+      )
+    }
+  }
 
   lines.push('')
   lines.push(p.paint('─'.repeat(screen.width), { fg: PALETTE.rule }))
-  lines.push(p.paint('q return · enter focus · i inspect · e tail', { fg: PALETTE.ghost }))
+  const footer = ['q return', 'enter focus', 'i inspect', 'e tail']
+  if (row.messageActionsAvailable) footer.push('p preview', 's show', 'y reply')
+  lines.push(p.paint(footer.join(' · '), { fg: PALETTE.ghost }))
   if (screen.notice) lines.push(p.paint(`notice: ${screen.notice}`, { fg: PALETTE.stale }))
   return lines
 }
@@ -763,6 +795,9 @@ const ACTION_KEYS: Record<string, string> = {
   capture: 'c',
   tail: 'e',
   inspect: 'i',
+  messagePreview: 'p',
+  messageShow: 's',
+  messageReply: 'y',
 }
 
 function renderEnabledActions(
@@ -789,7 +824,27 @@ function enabledActionEntries(row: HrcTopRenderedRow, focus: HrcTopFocusPanelMod
   if (!disabledKinds.has('resume')) enabled.push('r resume')
   if (!disabledKinds.has('run')) enabled.push('R run')
   if (!disabledKinds.has('capture')) enabled.push('c capture')
+  if (row.messageActionsAvailable) {
+    enabled.push('p message preview', 's message show', 'y message reply')
+  }
   return enabled
+}
+
+function messageCommandPreviews(handle: string, row: HrcTopRenderedRow) {
+  if (!row.messageActionsAvailable || !row.messageId) return []
+  return [
+    { kind: 'messagePreview', label: 'message preview', reason: 'Pi-native read-only preview' },
+    {
+      kind: 'messageShow',
+      label: 'message show',
+      argv: ['hrcchat', 'show', row.messageId],
+    },
+    {
+      kind: 'messageReply',
+      label: 'message reply',
+      argv: ['hrcchat', 'dm', handle, '--reply-to', row.messageId, '-'],
+    },
+  ]
 }
 
 function runtimeDetail(focus: HrcTopFocusPanelModel): string {
@@ -885,6 +940,10 @@ function disabledActionsFor(
 function latestEventSummary(row: HrcTopRow): string {
   if (row.last.at) return `last activity ${formatLast(row.last.at)} ago (${row.last.at})`
   return 'no recorded activity'
+}
+
+function hasMessageActions(row: HrcTopRow): boolean {
+  return (row.message?.messageId.trim().length ?? 0) > 0
 }
 
 /**

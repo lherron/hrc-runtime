@@ -7,6 +7,7 @@ import {
   decodeKittyPrintable,
   matchesKey,
   truncateToWidth,
+  visibleWidth,
 } from '@earendil-works/pi-tui'
 import type { HrcLifecycleEvent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
@@ -22,6 +23,7 @@ import {
   type HrcTopExplicitAction,
   type HrcTopKeyIntent,
   type HrcTopKeyPrefix,
+  type HrcTopMessageContext,
   type HrcTopNavState,
   type HrcTopOptions,
   type HrcTopReadModel,
@@ -44,13 +46,19 @@ import {
 } from 'hrc-top'
 
 type HrcPiTopClient = Pick<HrcClient, 'listTargets'> &
-  Partial<Pick<HrcClient, 'attachRuntime' | 'watch'>>
+  Partial<Pick<HrcClient, 'attachRuntime' | 'listMessages' | 'watch'>>
 
 type EventTailPreviewState = {
   rowId: string
   handle: string
   events: HrcLifecycleEvent[]
   error?: string | undefined
+}
+
+type MessagePreviewOverlayState = {
+  rowId: string
+  handle: string
+  message: HrcTopMessageContext
 }
 
 type RunConfirmationOverlayState = {
@@ -319,6 +327,7 @@ export class HrcPiTopApp implements Component {
   private commandMode = false
   private notice: string | undefined
   private eventTailPreview: EventTailPreviewState | undefined
+  private messagePreview: MessagePreviewOverlayState | undefined
   private runConfirmationOverlay: RunConfirmationOverlayState | undefined
   private ambiguityResolver: AmbiguityResolverOverlayState | undefined
   private actionDetailOverlay: ActionDetailOverlayState | undefined
@@ -368,9 +377,14 @@ export class HrcPiTopApp implements Component {
   async refresh(): Promise<void> {
     if (this.isSuspended()) return
     try {
-      this.model = await loadReadModel(this.client, this.scope)
+      const refreshed = await loadReadModel(this.client, this.scope)
+      this.model =
+        typeof this.client.listMessages === 'function'
+          ? refreshed
+          : preserveMessageContexts(refreshed, this.model)
       this.recomputeNav()
       this.expireRunConfirmationIfStale()
+      this.expireMessagePreviewIfStale()
       this.expireAmbiguityResolver(
         'Ambiguity resolver expired after refresh; choose the action again.'
       )
@@ -408,6 +422,20 @@ export class HrcPiTopApp implements Component {
   }
 
   render(width: number): string[] {
+    if (this.messagePreview) {
+      const lines = renderMessagePreview({
+        preview: this.messagePreview,
+        height: this.height(),
+        width,
+      })
+      if (this.actionDetailOverlay?.open) {
+        return renderActionDetailOverlay(lines, this.actionDetailOverlay, this.height(), width)
+      }
+      return this.showHelp
+        ? renderHelpOverlay(lines, this.height(), width, this.selectedHasMessageContext())
+        : lines
+    }
+
     if (this.eventTailPreview) {
       const lines = renderEventTailPreview({
         preview: this.eventTailPreview,
@@ -425,7 +453,9 @@ export class HrcPiTopApp implements Component {
           width
         )
       }
-      return this.showHelp ? renderHelpOverlay(lines, this.height(), width) : lines
+      return this.showHelp
+        ? renderHelpOverlay(lines, this.height(), width, this.selectedHasMessageContext())
+        : lines
     }
 
     const renderState = this.renderModelState()
@@ -480,7 +510,9 @@ export class HrcPiTopApp implements Component {
         width
       )
     }
-    return this.showHelp ? renderHelpOverlay(rendered, this.height(), width) : rendered
+    return this.showHelp
+      ? renderHelpOverlay(rendered, this.height(), width, this.selectedHasMessageContext())
+      : rendered
   }
 
   handleInput(data: string): void {
@@ -494,6 +526,11 @@ export class HrcPiTopApp implements Component {
 
     if (this.actionDetailOverlay?.open) {
       this.handleActionDetailOverlayInput(data)
+      return
+    }
+
+    if (this.messagePreview) {
+      this.handleMessagePreviewInput(data)
       return
     }
 
@@ -647,6 +684,9 @@ export class HrcPiTopApp implements Component {
       case 'e':
       case 'c':
       case 'i':
+      case 'p':
+      case 's':
+      case 'y':
         return { type: 'action', key: printable }
       case 'g':
         this.keyPrefix = 'g'
@@ -678,6 +718,11 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
+      if (this.messagePreview) {
+        this.messagePreview = undefined
+        this.requestRender()
+        return
+      }
       if (this.inspectMode) {
         this.inspectMode = false
         this.requestRender()
@@ -696,6 +741,7 @@ export class HrcPiTopApp implements Component {
       this.focusMode = true
       this.inspectMode = false
       this.eventTailPreview = undefined
+      this.messagePreview = undefined
       this.requestRender()
       return
     }
@@ -830,6 +876,7 @@ export class HrcPiTopApp implements Component {
     this.inspectMode = false
     this.inspectCandidateRow = undefined
     this.eventTailPreview = undefined
+    this.messagePreview = undefined
     this.runConfirmationOverlay = undefined
     this.showHelp = false
     this.keyPrefix = undefined
@@ -931,18 +978,25 @@ export class HrcPiTopApp implements Component {
     if (result.action === 'tail') {
       this.focusMode = false
       this.inspectMode = false
+      this.messagePreview = undefined
       await this.openEventTailPreview(selectedRow ?? this.rowById(selectedRowId))
+      return
+    }
+    if (result.action === 'messagePreview' && result.status === 'focused') {
+      this.openMessagePreview(selectedRow ?? this.rowById(selectedRowId))
       return
     }
     if (result.action === 'focus') {
       this.focusMode = true
       this.inspectMode = false
       this.eventTailPreview = undefined
+      this.messagePreview = undefined
     }
     if (result.action === 'inspect') {
       this.inspectMode = true
       this.focusMode = false
       this.eventTailPreview = undefined
+      this.messagePreview = undefined
     }
     if (result.status === 'executed') {
       await this.refresh()
@@ -1028,6 +1082,7 @@ export class HrcPiTopApp implements Component {
     this.inspectMode = true
     this.focusMode = false
     this.eventTailPreview = undefined
+    this.messagePreview = undefined
     this.navState = createNavState({
       visibleRows: [...this.visibleRows(), { id: revalidated.row.id }],
       viewportHeight: this.height(),
@@ -1177,6 +1232,50 @@ export class HrcPiTopApp implements Component {
     this.requestRender()
   }
 
+  private openMessagePreview(row: HrcTopRow | undefined): void {
+    if (!row?.message?.messageId) {
+      this.notice = 'No message is available for the selected target.'
+      this.requestRender()
+      return
+    }
+
+    this.messagePreview = {
+      rowId: row.id,
+      handle: handleForRow(row),
+      message: row.message,
+    }
+    this.focusMode = false
+    this.inspectMode = false
+    this.eventTailPreview = undefined
+    this.runConfirmationOverlay = undefined
+    this.showHelp = false
+    this.keyPrefix = undefined
+    this.notice = undefined
+    this.requestRender()
+  }
+
+  private handleMessagePreviewInput(data: string): void {
+    const printable = printableInput(data)
+    if (printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')) {
+      this.messagePreview = undefined
+      this.keyPrefix = undefined
+      this.requestRender()
+      return
+    }
+    this.notice = 'Message preview is open; press Esc or q to return.'
+    this.requestRender()
+  }
+
+  private expireMessagePreviewIfStale(): void {
+    const preview = this.messagePreview
+    if (!preview) return
+    const row = this.rowById(preview.rowId)
+    if (row?.message?.messageId !== preview.message.messageId) {
+      this.messagePreview = undefined
+      this.notice = 'Message preview expired; select the target and preview again.'
+    }
+  }
+
   private expireAmbiguityResolver(reason: string): void {
     if (!this.ambiguityResolver) return
     this.ambiguityResolver = undefined
@@ -1266,6 +1365,10 @@ export class HrcPiTopApp implements Component {
     }
     this.requestRender()
   }
+
+  private selectedHasMessageContext(): boolean {
+    return (this.selectedRow()?.message?.messageId.trim().length ?? 0) > 0
+  }
 }
 
 function tailWatchOptions(row: HrcTopRow): WatchOptions {
@@ -1276,6 +1379,25 @@ function tailWatchOptions(row: HrcTopRow): WatchOptions {
     generation: target.generation,
     scopeRef: target.scopeRef,
     laneRef: target.laneRef,
+  }
+}
+
+function preserveMessageContexts(
+  refreshed: HrcTopReadModel,
+  previous: HrcTopReadModel
+): HrcTopReadModel {
+  const previousMessageByRowId = new Map(
+    previous.rows
+      .filter((row) => row.message?.messageId)
+      .map((row) => [row.id, row.message] as const)
+  )
+  return {
+    ...refreshed,
+    rows: refreshed.rows.map((row) => {
+      if (row.message?.messageId) return row
+      const message = previousMessageByRowId.get(row.id)
+      return message ? { ...row, message } : row
+    }),
   }
 }
 
@@ -1290,6 +1412,55 @@ function renderEventTailPreview(input: {
   const bodyHeight = Math.max(1, input.height - header.length - footer.length)
   const body = eventTailBody(preview, bodyHeight)
   return [...header, ...body, ...footer].map((line) => truncateToWidth(line, width, '', false))
+}
+
+function renderMessagePreview(input: {
+  preview: MessagePreviewOverlayState
+  height: number
+  width: number
+}): string[] {
+  const { preview, width } = input
+  const message = preview.message
+  const header = [`MESSAGE PREVIEW  ${preview.handle}`, '']
+  const metadata = [
+    `id ${message.messageId}`,
+    `seq ${message.messageSeq}`,
+    `phase ${message.phase}`,
+    `created ${message.createdAt}`,
+    `from ${formatMessageAddress(message.from)}`,
+    `to ${formatMessageAddress(message.to)}`,
+    '',
+  ]
+  const footer = ['', '-'.repeat(width), 'q return']
+  const bodyHeight = Math.max(1, input.height - header.length - metadata.length - footer.length)
+  const body = wrapPreviewBody(message.bodyPreview, Math.max(1, width), bodyHeight)
+  return [...header, ...metadata, ...body, ...footer].map((line) =>
+    truncateToWidth(line, width, '', false)
+  )
+}
+
+function wrapPreviewBody(text: string, width: number, height: number): string[] {
+  const words = text.split(/\s+/).filter((word) => word.length > 0)
+  if (words.length === 0) return ['']
+  const lines: string[] = []
+  let line = ''
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word
+    if (visibleWidth(next) <= width) {
+      line = next
+      continue
+    }
+    if (line) lines.push(line)
+    line = word
+    if (lines.length >= height) break
+  }
+  if (line && lines.length < height) lines.push(line)
+  return lines.slice(0, height)
+}
+
+function formatMessageAddress(address: HrcTopMessageContext['from']): string {
+  if (address.kind === 'session') return address.sessionRef
+  return address.entity
 }
 
 function eventTailBody(preview: EventTailPreviewState, height: number): string[] {
@@ -1322,14 +1493,19 @@ function payloadPreview(payload: unknown): string {
   }
 }
 
-function renderHelpOverlay(baseLines: string[], height: number, width: number): string[] {
+function renderHelpOverlay(
+  baseLines: string[],
+  height: number,
+  width: number,
+  includeMessageActions = false
+): string[] {
   const safeWidth = Math.max(1, width)
   const lines = baseLines.slice(0, height)
   while (lines.length < height) lines.push('')
 
   const overlayWidth = Math.max(1, Math.min(safeWidth, 84))
   const bodyWidth = Math.max(1, overlayWidth - 4)
-  const content = helpOverlayContent().slice(0, Math.max(1, height - 2))
+  const content = helpOverlayContent(includeMessageActions).slice(0, Math.max(1, height - 2))
   const border = `+${'-'.repeat(Math.max(0, overlayWidth - 2))}+`
   const overlay = [
     border,
@@ -1485,8 +1661,8 @@ function renderFramedOverlay(
   return lines.map((line) => truncateToWidth(line, safeWidth, '', false))
 }
 
-function helpOverlayContent(): string[] {
-  return [
+function helpOverlayContent(includeMessageActions = false): string[] {
+  const content = [
     'HELP',
     'NORMAL MODE',
     'j/k or arrows move | gg/G top/bottom | Ctrl-d/u half-page | Ctrl-f/b page',
@@ -1500,9 +1676,18 @@ function helpOverlayContent(): string[] {
     'Destructive verbs are disabled; actions use the same availability checks as keys.',
     'ACTIONS',
     'a attach | r resume | R run | e tail | c capture | i inspect',
-    'o runs the selected row recommendation; Enter/i/e are read-only views',
-    '?/Esc/q close help; other keys stay in this overlay',
   ]
+  if (includeMessageActions) {
+    content.push(
+      'p message preview | s message show | y message reply',
+      ':message-preview | :message-show | :message-reply'
+    )
+  }
+  content.push(
+    'o runs the selected row recommendation; Enter/i/e are read-only views',
+    '?/Esc/q close help; other keys stay in this overlay'
+  )
+  return content
 }
 
 function framedHelpLine(line: string, bodyWidth: number, overlayWidth: number): string {
@@ -1547,6 +1732,12 @@ function actionForCommandValue(value: string): HrcTopExplicitAction | undefined 
     case 'capture':
     case 'inspect':
       return verb
+    case 'message-preview':
+      return 'messagePreview'
+    case 'message-show':
+      return 'messageShow'
+    case 'message-reply':
+      return 'messageReply'
     default:
       return undefined
   }
@@ -1566,6 +1757,12 @@ function actionForInputKey(key: string): HrcTopExplicitAction | undefined {
       return 'tail'
     case 'i':
       return 'inspect'
+    case 'p':
+      return 'messagePreview'
+    case 's':
+      return 'messageShow'
+    case 'y':
+      return 'messageReply'
     case 'o':
       return 'unavailable'
     default:
@@ -1605,7 +1802,15 @@ function actionDetailForResult(
 }
 
 function actionSupportsTransientDetail(action: HrcTopExplicitAction): boolean {
-  return action === 'attach' || action === 'resume' || action === 'run' || action === 'capture'
+  return (
+    action === 'attach' ||
+    action === 'resume' ||
+    action === 'run' ||
+    action === 'capture' ||
+    action === 'messagePreview' ||
+    action === 'messageShow' ||
+    action === 'messageReply'
+  )
 }
 
 function targetIdentityForRow(row: HrcTopRow): HrcTopActionTargetIdentity {

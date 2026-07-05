@@ -71,6 +71,9 @@ export function interpretHrcTopKey(input: string, prefix?: HrcTopKeyPrefix): Hrc
     case 'e':
     case 'c':
     case 'i':
+    case 'p':
+    case 's':
+    case 'y':
       return { intent: { type: 'action', key: input } }
     case 'g':
       return { prefix: 'g' }
