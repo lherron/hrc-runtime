@@ -79,6 +79,118 @@ export type HrcPiTopAppOptions = {
   isSuspended?: (() => boolean) | undefined
 }
 
+type HrcPiTopRestoreInputListener = (data: string) => boolean | undefined
+
+type HrcPiTopRestoreTui = {
+  readonly started: boolean
+  start(): void
+  stop(): void
+  addInputListener(listener: HrcPiTopRestoreInputListener): () => void
+  requestRender(force?: boolean): void
+}
+
+type HrcPiTopRestoreApp = {
+  invalidate(): void
+}
+
+export type HrcPiTopSpawnRestoreCoordinator = {
+  beforeSpawn(): void
+  afterSpawn(): void
+  isSuspended(): boolean
+  close(): void
+}
+
+export function createHrcPiTopSpawnRestoreCoordinator(input: {
+  tui: HrcPiTopRestoreTui
+  app: HrcPiTopRestoreApp
+  restoreIdleMs?: number | undefined
+}): HrcPiTopSpawnRestoreCoordinator {
+  let closed = false
+  let suspended = false
+  let restorePending = false
+  let disposeRestoreListener: (() => void) | undefined
+  let restoreIdleTimer: ReturnType<typeof setTimeout> | undefined
+
+  const clearRestoreIdleTimer = () => {
+    if (!restoreIdleTimer) return
+    clearTimeout(restoreIdleTimer)
+    restoreIdleTimer = undefined
+  }
+
+  const clearRestoreListener = () => {
+    clearRestoreIdleTimer()
+    disposeRestoreListener?.()
+    disposeRestoreListener = undefined
+  }
+
+  const completeRestoreFiltering = () => {
+    clearRestoreListener()
+  }
+
+  const installRestoreListener = () => {
+    clearRestoreListener()
+    disposeRestoreListener = input.tui.addInputListener((data) => {
+      if (isHrcPiTopRestoreTerminalReport(data)) {
+        scheduleRestoreIdleCleanup()
+        return true
+      }
+      completeRestoreFiltering()
+      return undefined
+    })
+  }
+
+  const scheduleRestoreIdleCleanup = () => {
+    clearRestoreIdleTimer()
+    const timer = setTimeout(() => {
+      restoreIdleTimer = undefined
+      disposeRestoreListener?.()
+      disposeRestoreListener = undefined
+    }, input.restoreIdleMs ?? 50)
+    timer.unref?.()
+    restoreIdleTimer = timer
+  }
+
+  return {
+    beforeSpawn(): void {
+      if (closed) return
+      clearRestoreListener()
+      if (!restorePending && input.tui.started) {
+        input.tui.stop()
+      }
+      suspended = true
+      restorePending = true
+    },
+
+    afterSpawn(): void {
+      if (!restorePending) return
+      restorePending = false
+      if (closed) {
+        suspended = false
+        clearRestoreListener()
+        return
+      }
+
+      installRestoreListener()
+      input.tui.start()
+      suspended = false
+      input.app.invalidate()
+      input.tui.requestRender(true)
+      scheduleRestoreIdleCleanup()
+    },
+
+    isSuspended(): boolean {
+      return suspended
+    },
+
+    close(): void {
+      closed = true
+      suspended = false
+      restorePending = false
+      clearRestoreListener()
+    },
+  }
+}
+
 export async function runHrcPiTop(options: HrcPiTopOptions = {}): Promise<void> {
   if (!options.terminal && !isInteractiveProcess(options)) {
     await runHrcTop(options)
@@ -93,15 +205,42 @@ export async function runHrcPiTop(options: HrcPiTopOptions = {}): Promise<void> 
   let timer: ReturnType<typeof setInterval> | undefined
   let closed = false
   let started = false
-  let suspendedForSpawn = false
   let resolveClosed: (() => void) | undefined
   const closedPromise = new Promise<void>((resolve) => {
     resolveClosed = resolve
+  })
+  const appRef: { current?: HrcPiTopApp | undefined } = {}
+  const spawnRestore = createHrcPiTopSpawnRestoreCoordinator({
+    tui: {
+      get started() {
+        return started
+      },
+      start() {
+        tui.start()
+        started = true
+      },
+      stop() {
+        tui.stop()
+        started = false
+      },
+      addInputListener(listener) {
+        return tui.addInputListener((data) => (listener(data) ? { consume: true } : undefined))
+      },
+      requestRender(force) {
+        tui.requestRender(force)
+      },
+    },
+    app: {
+      invalidate() {
+        appRef.current?.invalidate()
+      },
+    },
   })
 
   const stop = () => {
     if (closed) return
     closed = true
+    spawnRestore.close()
     if (timer) clearInterval(timer)
     timer = undefined
     if (started) {
@@ -112,21 +251,8 @@ export async function runHrcPiTop(options: HrcPiTopOptions = {}): Promise<void> 
   }
 
   const executor = createHrcTopActionExecutor(requireActionClient(client), {
-    beforeSpawn: () => {
-      suspendedForSpawn = true
-      if (started) {
-        started = false
-        tui.stop()
-      }
-    },
-    afterSpawn: () => {
-      if (closed) return
-      suspendedForSpawn = false
-      tui.start()
-      started = true
-      app.invalidate()
-      tui.requestRender(true)
-    },
+    beforeSpawn: () => spawnRestore.beforeSpawn(),
+    afterSpawn: () => spawnRestore.afterSpawn(),
   })
 
   const app = new HrcPiTopApp({
@@ -137,8 +263,9 @@ export async function runHrcPiTop(options: HrcPiTopOptions = {}): Promise<void> 
     viewportHeight: () => terminal.rows,
     requestRender: () => tui.requestRender(),
     onQuit: stop,
-    isSuspended: () => suspendedForSpawn,
+    isSuspended: () => spawnRestore.isSuspended(),
   })
+  appRef.current = app
 
   tui.addChild(app)
   tui.setFocus(app)
@@ -1218,6 +1345,32 @@ function ambiguityActionForCommand(value: string): HrcTopAmbiguityAction | undef
   return undefined
 }
 
+function isHrcPiTopRestoreTerminalReport(data: string): boolean {
+  if (data.length === 0) return false
+
+  const esc = '\u001b'
+  if (!data.startsWith(esc)) {
+    const paste = bracketedPasteContent(data)
+    return paste !== undefined && printableInput(paste) === undefined
+  }
+
+  const tail = data.slice(esc.length)
+  if (/^\[(?:\?[\d;]*|>[\d;]*|[\d;]*)c$/.test(tail)) return true
+  if (/^\[\d+;\d+R$/.test(tail)) return true
+  if (/^\[[IO]$/.test(tail)) return true
+  if (tail.startsWith('O') && tail.length === 2) return true
+  if (tail.startsWith(']') && (data.endsWith('\u0007') || data.endsWith(`${esc}\\`))) {
+    return true
+  }
+  if (/^\[(?:\d+;)*\d*t$/.test(tail)) return true
+  if (tail.startsWith('[M') && tail.length === 5) return true
+
+  const paste = bracketedPasteContent(data)
+  if (paste !== undefined) return printableInput(paste) === undefined
+
+  return false
+}
+
 function printableInput(data: string): string | undefined {
   const pasted = singleCharacterPaste(data)
   if (pasted !== undefined) return printableInput(pasted)
@@ -1230,11 +1383,16 @@ function printableInput(data: string): string | undefined {
 }
 
 function singleCharacterPaste(data: string): string | undefined {
+  const pasted = bracketedPasteContent(data)
+  if (pasted === undefined) return undefined
+  return [...pasted].length === 1 ? pasted : undefined
+}
+
+function bracketedPasteContent(data: string): string | undefined {
   const open = '\x1b[200~'
   const close = '\x1b[201~'
   if (!data.startsWith(open) || !data.endsWith(close)) return undefined
-  const pasted = data.slice(open.length, data.length - close.length)
-  return [...pasted].length === 1 ? pasted : undefined
+  return data.slice(open.length, data.length - close.length)
 }
 
 function splitFrame(frame: string): string[] {
