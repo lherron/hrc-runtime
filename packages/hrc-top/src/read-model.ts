@@ -129,7 +129,10 @@ export async function loadReadModel(
     return buildReadModel(targets)
   }
 
-  const messageContextByRowId = await resolveMessageContexts({ listMessages }, targets)
+  const messageContextByRowId = await resolveMessageContexts(
+    { listMessages: listMessages.bind(client) },
+    targets
+  )
   return buildReadModel(targets, new Date(), messageContextByRowId)
 }
 
