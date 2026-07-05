@@ -182,7 +182,164 @@ function createTailApp(input: {
   return { app, watchCalls, commands }
 }
 
+type RestoreFakeTui = {
+  readonly started: boolean
+  start(): void
+  stop(): void
+  addInputListener(listener: (data: string) => boolean | undefined): () => void
+  requestRender(force?: boolean): void
+}
+
+type RestoreFakeApp = {
+  invalidate(): void
+  handleInput(data: string): void
+}
+
+type SpawnRestoreCoordinator = {
+  beforeSpawn(): void
+  afterSpawn(): void
+  isSuspended(): boolean
+}
+
+type SpawnRestoreCoordinatorFactory = (input: {
+  tui: RestoreFakeTui
+  app: RestoreFakeApp
+}) => SpawnRestoreCoordinator
+
+async function loadSpawnRestoreCoordinatorFactory(): Promise<
+  SpawnRestoreCoordinatorFactory | undefined
+> {
+  const mod = (await import('./index.js')) as Record<string, unknown>
+  const factory = mod.createHrcPiTopSpawnRestoreCoordinator
+  expect(typeof factory).toBe('function')
+  return typeof factory === 'function' ? (factory as SpawnRestoreCoordinatorFactory) : undefined
+}
+
+function createRestoreHarness(createCoordinator: SpawnRestoreCoordinatorFactory) {
+  const calls: string[] = []
+  const forwardedInput: string[] = []
+  let closed = false
+  let started = true
+  let listener: ((data: string) => boolean | undefined) | undefined
+  const tui: RestoreFakeTui = {
+    get started() {
+      return started
+    },
+    start() {
+      calls.push('tui.start')
+      started = true
+    },
+    stop() {
+      calls.push('tui.stop')
+      started = false
+    },
+    addInputListener(nextListener) {
+      calls.push('tui.addInputListener')
+      listener = nextListener
+      return () => {
+        calls.push('restoreListener.dispose')
+        if (listener === nextListener) listener = undefined
+      }
+    },
+    requestRender(force) {
+      calls.push(`tui.requestRender:${String(force)}`)
+    },
+  }
+  const app: RestoreFakeApp = {
+    invalidate() {
+      calls.push('app.invalidate')
+    },
+    handleInput(data) {
+      calls.push(`app.handleInput:${JSON.stringify(data)}`)
+      forwardedInput.push(data)
+      if (data === 'q') closed = true
+    },
+  }
+  const coordinator = createCoordinator({ tui, app })
+  return {
+    app,
+    calls,
+    coordinator,
+    forwardedInput,
+    get closed() {
+      return closed
+    },
+    get listener() {
+      return listener
+    },
+  }
+}
+
+function deliverRestoreInput(harness: ReturnType<typeof createRestoreHarness>, data: string): void {
+  const consumed = harness.listener?.(data) === true
+  if (!consumed) harness.app.handleInput(data)
+}
+
 describe('hrc-pi-top app', () => {
+  it('restores a spawned action through the Pi lifecycle once before accepting input', async () => {
+    const createCoordinator = await loadSpawnRestoreCoordinatorFactory()
+    if (!createCoordinator) return
+    const { calls, coordinator } = createRestoreHarness(createCoordinator)
+
+    // T-05464 red bar: spawned attach/resume/run must stop the running TUI,
+    // install restore filtering before restart, and redraw through Pi exactly
+    // once for each spawn attempt whose beforeSpawn hook completed.
+    coordinator.beforeSpawn()
+    coordinator.beforeSpawn()
+    expect(coordinator.isSuspended()).toBe(true)
+    expect(calls).toEqual(['tui.stop'])
+
+    coordinator.afterSpawn()
+    coordinator.afterSpawn()
+
+    expect(coordinator.isSuspended()).toBe(false)
+    expect(calls).toEqual([
+      'tui.stop',
+      'tui.addInputListener',
+      'tui.start',
+      'app.invalidate',
+      'tui.requestRender:true',
+    ])
+
+    coordinator.beforeSpawn()
+    coordinator.afterSpawn()
+
+    expect(calls.filter((call) => call === 'tui.addInputListener')).toHaveLength(2)
+    expect(calls.filter((call) => call === 'tui.start')).toHaveLength(2)
+    expect(calls.filter((call) => call === 'tui.requestRender:true')).toHaveLength(2)
+  })
+
+  it('filters terminal reports during restore while forwarding immediate printable quit', async () => {
+    const createCoordinator = await loadSpawnRestoreCoordinatorFactory()
+    if (!createCoordinator) return
+    const harness = createRestoreHarness(createCoordinator)
+    harness.coordinator.beforeSpawn()
+    harness.coordinator.afterSpawn()
+
+    const terminalReports = [
+      '\x1b[?1;2c', // DA with action-looking digit bytes.
+      '\x1b[>41;400;0c', // secondary DA.
+      '\x1b[12;34R', // cursor position report containing R.
+      '\x1b[I',
+      '\x1b[O',
+      '\x1bOP',
+      '\x1b]10;rgb:aa/bb/cc\x07', // OSC reply.
+      '\x1b[8;24;80t', // terminal cell-size report.
+      '\x1b[200~arRcq\x1b[201~', // bracketed-paste wrapper with only action-looking bytes.
+      '\x1b[M ar', // legacy mouse packet containing attach/resume-looking bytes.
+    ]
+
+    for (const report of terminalReports) deliverRestoreInput(harness, report)
+
+    expect(harness.forwardedInput).toEqual([])
+
+    deliverRestoreInput(harness, 'q')
+
+    expect(harness.forwardedInput).toEqual(['q'])
+    expect(harness.closed).toBe(true)
+    expect(harness.calls).toContain('restoreListener.dispose')
+  })
+
   it('renders the existing top screen model through a Pi component', () => {
     const { app } = createApp()
     const output = app.render(96).join('\n')
