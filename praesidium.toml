@@ -1,0 +1,7 @@
+schema = "praesidium.project/v1"
+slug = "hrc-runtime"
+
+[commands]
+# hrc-server is a daemon: verify must observe the LIVE installed surface, so the
+# install gate restarts it after build (T-05383; origin T-05375 false-block).
+install = "just install && hrc server restart --wait"
