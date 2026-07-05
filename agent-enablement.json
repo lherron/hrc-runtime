@@ -9,29 +9,29 @@
   },
   "observations": [],
   "depth": {
-    "lastAssess": "2026-07-03",
+    "lastAssess": "2026-07-05",
     "writer": "ae",
     "etag": 1,
     "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
     "axes": {
-      "F0": "PARTIAL.DORMANT.satisfied.dormant",
-      "P0": "PRESENT.EXERCISED.open_delta",
+      "F0": "PRESENT.DORMANT.satisfied.dormant",
+      "P0": "PRESENT.EXERCISED.satisfied.exercised",
       "S1": "PARTIAL.EXERCISED.open_delta",
       "S2": "PARTIAL.DORMANT.open_delta",
       "S3": "PRESENT.EXERCISED.satisfied.exercised",
       "S4": "PRESENT.EXERCISED.satisfied.exercised",
-      "S5": "PARTIAL.EXERCISED.open_delta",
-      "S6": "PARTIAL.EXERCISED.open_delta",
+      "S5": "PRESENT.EXERCISED.satisfied.exercised",
+      "S6": "PRESENT.EXERCISED.satisfied.exercised",
       "S7": "PRESENT.EXERCISED.satisfied.exercised",
-      "S8": "PRESENT.EXERCISED.tacit",
-      "TA": "PARTIAL.EXERCISED.open_delta",
-      "TA.actuatorSplit": "ABSENT.DORMANT.deferred",
+      "S8": "PRESENT.EXERCISED.satisfied.exercised",
+      "TA": "PRESENT.EXERCISED.open_delta",
       "TB": "PRESENT.EXERCISED.satisfied.exercised",
       "TC": "PRESENT.EXERCISED.satisfied.exercised",
       "TD": "PRESENT.EXERCISED.satisfied.exercised",
       "TD.selfDescribingSurfaceConformance": "PRESENT.EXERCISED.satisfied.exercised",
       "TE": "PARTIAL.EXERCISED.open_delta",
-      "TF": "PRESENT.EXERCISED.satisfied.exercised"
+      "TF": "PRESENT.EXERCISED.satisfied.exercised",
+      "TF.workflowAdoption": "PARTIAL.DORMANT.open_delta"
     },
     "profileSummary": {
       "generatedBy": "agent-enablement/validate-contract.mjs --sync-target",
@@ -40,31 +40,30 @@
         "assessment": "agent-enablement/assessments/hrc-runtime/assessment.json",
         "deltas": "agent-enablement/assessments/hrc-runtime/deltas.json",
         "profileHash": "1148487cc95db0113557eb209db14d25b0b2823ba9fe3cfa1d54f15225659b9b",
-        "assessmentHash": "ffb795ec9d04d6649ead339ea31dead381bafa3ca8d5e37fe22433b16c2ca4fb",
-        "deltasHash": "97cc75fa5d3038685b2aa7ad474cf3264b8bb3bb97b67e8ce635d6b7bfbe874b"
+        "assessmentHash": "b656cebe5fae2b7b4254af44fcc847d77a044b5e28e4fd28bff8e92e6700fa66",
+        "deltasHash": "e51d1fc6fa0e2e96a30b74c6474e139835da452a0fb3be8ad7d1d46956dc85a6"
       },
       "decidedAt": "2026-07-03",
-      "assessedAt": "2026-07-03",
+      "assessedAt": "2026-07-05",
       "profileStatusCounts": {
         "required": 17,
         "not_applicable": 1,
         "deferred": 1
       },
       "openDeltaIds": [
-        "delta:materialize-lefthook-hook",
-        "delta:repair-red-verify-gate",
-        "delta:route-actuator-split-residency"
+        "delta:hrc-runtime-agent-router-fact-extractor",
+        "delta:hrc-runtime-credential-actuator-frontier",
+        "delta:hrc-runtime-runtime-telemetry-extractor",
+        "delta:hrc-runtime-s6-negative-fixture",
+        "delta:hrc-runtime-verify-evidence-extractor",
+        "delta:hrc-runtime-workflow-adoption-proof"
       ],
       "failingOpenAxes": [
-        "F0",
-        "P0",
         "S1",
         "S2",
-        "S5",
-        "S6",
         "TA",
-        "TA.actuatorSplit",
-        "TE"
+        "TE",
+        "TF.workflowAdoption"
       ],
       "axes": {
         "F0": {
