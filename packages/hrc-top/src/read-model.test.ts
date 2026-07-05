@@ -191,4 +191,30 @@ describe('hrc-top read model', () => {
 
     expect(model.rows[0]).not.toHaveProperty('message')
   })
+
+  it('keeps target rows available when message context lookup fails', async () => {
+    const selected = target()
+    const client = {
+      async listTargets(): Promise<HrcTargetView[]> {
+        return [selected]
+      },
+      async listMessages(): Promise<unknown[]> {
+        throw new Error('messages endpoint unavailable during live pi top startup')
+      },
+    }
+
+    // T-05462 follow-up red: the live Pi surface must not crash while loading
+    // optional message context. A message-store/query failure should degrade to
+    // rows without message affordances so the operator can still use hrc top.
+    await expect(
+      loadReadModel(client as never, { projectId: 'hrc-runtime' })
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          id: 'rt-1',
+          sessionRef: selected.sessionRef,
+        },
+      ],
+    })
+  })
 })
