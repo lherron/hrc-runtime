@@ -90,4 +90,105 @@ describe('hrc-top read model', () => {
       { projectId: undefined, lane: undefined, includeDormant: true },
     ])
   })
+
+  it('resolves latest durable message context by active run before participant fallback', async () => {
+    const calls: unknown[] = []
+    const activeRunTarget = target()
+    const participantTarget = target({
+      sessionRef: 'agent:clod:project:hrc-runtime:task:primary/lane:main',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:primary',
+      runtime: {
+        ...target().runtime!,
+        runtimeId: 'rt-2',
+        activeRunId: undefined,
+      },
+    })
+    const client = {
+      async listTargets(): Promise<HrcTargetView[]> {
+        return [activeRunTarget, participantTarget]
+      },
+      async listMessages(filter: unknown): Promise<unknown[]> {
+        calls.push(filter)
+        if ((filter as { runId?: string }).runId === 'run-1') {
+          return [
+            {
+              messageId: 'msg-active-run',
+              messageSeq: 40,
+              createdAt: '2026-07-04T12:00:00.000Z',
+              phase: 'queued',
+              from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+              to: { kind: 'session', sessionRef: activeRunTarget.sessionRef },
+              body: 'active run request body',
+            },
+          ]
+        }
+        return [
+          {
+            messageId: 'msg-participant',
+            messageSeq: 41,
+            createdAt: '2026-07-04T12:01:00.000Z',
+            phase: 'delivered',
+            from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+            to: { kind: 'session', sessionRef: participantTarget.sessionRef },
+            body: 'participant fallback body',
+          },
+        ]
+      },
+    }
+
+    // T-05462 red bar: read-model message context must be bounded to the
+    // selected row's current run first, then its own participant/host/generation
+    // facts. A previous or different target message must not bleed across rows.
+    const model = await loadReadModel(client as never, { projectId: 'hrc-runtime' })
+
+    expect(model.rows[0]).toMatchObject({
+      message: {
+        messageId: 'msg-active-run',
+        messageSeq: 40,
+        bodyPreview: 'active run request body',
+      },
+    })
+    expect(model.rows[1]).toMatchObject({
+      message: {
+        messageId: 'msg-participant',
+        messageSeq: 41,
+        bodyPreview: 'participant fallback body',
+      },
+    })
+    expect(calls).toEqual([
+      { runId: 'run-1', phase: 'request', order: 'desc', limit: 1 },
+      {
+        participant: { kind: 'session', sessionRef: participantTarget.sessionRef },
+        hostSessionId: 'hsid-1',
+        generation: 3,
+        order: 'desc',
+        limit: 1,
+      },
+    ])
+  })
+
+  it('does not attach message context when durable records lack a concrete message id', async () => {
+    const client = {
+      async listTargets(): Promise<HrcTargetView[]> {
+        return [target()]
+      },
+      async listMessages(): Promise<unknown[]> {
+        return [
+          {
+            messageId: '',
+            messageSeq: 42,
+            createdAt: '2026-07-04T12:02:00.000Z',
+            phase: 'queued',
+            from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+            to: { kind: 'session', sessionRef: target().sessionRef },
+            body: 'missing id must not advertise actions',
+          },
+        ]
+      },
+    }
+
+    const model = await loadReadModel(client as never, { projectId: 'hrc-runtime' })
+
+    expect(model.rows[0]).not.toHaveProperty('message')
+  })
 })

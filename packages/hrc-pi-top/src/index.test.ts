@@ -91,6 +91,59 @@ function createApp(input: { targets?: HrcTargetView[] | undefined; onQuit?: () =
   return { app, renders: () => renderCount, commands, executorCalls, attachRuntimeIds }
 }
 
+function withMessageContext(row: ReturnType<typeof buildReadModel>['rows'][number]) {
+  return {
+    ...row,
+    message: {
+      messageId: 'msg-pi-top-1',
+      messageSeq: 73,
+      createdAt: '2026-07-04T12:03:00.000Z',
+      phase: 'queued',
+      from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+      to: { kind: 'session', sessionRef: row.sessionRef },
+      bodyPreview: 'confirm the target can reply',
+    },
+  }
+}
+
+function createMessageApp(input: { includeMessage: boolean }): {
+  app: HrcPiTopApp
+  commands: string[][]
+} {
+  const selected = target()
+  const model = buildReadModel([selected], new Date('2026-07-02T12:05:00.000Z'))
+  const initialModel = input.includeMessage
+    ? { ...model, rows: model.rows.map((row) => withMessageContext(row)) }
+    : model
+  const commands: string[][] = []
+  const executor: HrcTopActionExecutor = {
+    async attachRuntime() {
+      return { argv: ['true'] }
+    },
+    async spawnAttachDescriptor() {
+      return { status: 'executed' }
+    },
+    async runCommand(argv) {
+      commands.push(argv)
+      return { status: 'executed' }
+    },
+  }
+  const app = new HrcPiTopApp({
+    client: {
+      async listTargets() {
+        return [selected]
+      },
+    },
+    executor,
+    initialModel,
+    scope: { projectId: 'hrc-runtime' },
+    viewportHeight: () => 18,
+    requestRender: () => undefined,
+    onQuit: () => undefined,
+  })
+  return { app, commands }
+}
+
 function lifecycleEvent(overrides: Partial<HrcLifecycleEvent> = {}): HrcLifecycleEvent {
   return {
     hrcSeq: 41,
@@ -603,6 +656,51 @@ describe('hrc-pi-top app', () => {
     const captureSupported = focusOutput(target({ continuation: undefined }))
     expectActionEnabled(captureSupported, 'a attach')
     expectActionEnabled(captureSupported, 'c capture')
+  })
+
+  it('shows message affordances only when the selected row has concrete message context', () => {
+    const noContext = createMessageApp({ includeMessage: false }).app
+    noContext.handleInput('\r')
+    const noContextOutput = noContext.render(120).join('\n')
+
+    // T-05462 red bar: absent message context must not create misleading
+    // preview/show/reply copy in the focus surface.
+    expect(noContextOutput).not.toContain('message preview')
+    expect(noContextOutput).not.toContain('message show')
+    expect(noContextOutput).not.toContain('message reply')
+
+    const withContext = createMessageApp({ includeMessage: true }).app
+    withContext.handleInput('\r')
+    const withContextOutput = withContext.render(120).join('\n')
+
+    expect(withContextOutput).toContain('p message preview')
+    expect(withContextOutput).toContain('s message show')
+    expect(withContextOutput).toContain('y message reply')
+  })
+
+  it('opens Pi-native message preview read-only and delegates show/reply through hrcchat', async () => {
+    const { app, commands } = createMessageApp({ includeMessage: true })
+
+    app.handleInput('p')
+    await app.whenIdle()
+
+    const previewOutput = app.render(120).join('\n')
+    expect(previewOutput).toContain('MESSAGE PREVIEW')
+    expect(previewOutput).toContain('msg-pi-top-1')
+    expect(previewOutput).toContain('seq 73')
+    expect(previewOutput).toContain('confirm the target can reply')
+    expect(commands).toEqual([])
+
+    app.handleInput('q')
+    app.handleInput('s')
+    await app.whenIdle()
+    app.handleInput('y')
+    await app.whenIdle()
+
+    expect(commands).toEqual([
+      ['hrcchat', 'show', 'msg-pi-top-1'],
+      ['hrcchat', 'dm', 'cody@hrc-runtime:T-05449', '--reply-to', 'msg-pi-top-1', '-'],
+    ])
   })
 
   it('opens an ambiguity resolver for attach inputs and cancels without executor calls', async () => {

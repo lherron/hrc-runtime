@@ -31,7 +31,7 @@ describe('hrc-top keymap', () => {
 
   it('maps action keys and command entry for the live TUI loop', () => {
     expect(interpretHrcTopKey(':').intent).toEqual({ type: 'command' })
-    for (const key of ['o', 'a', 'r', 'R', 'e', 'c', 'i']) {
+    for (const key of ['o', 'a', 'r', 'R', 'e', 'c', 'i', 'p', 's', 'y']) {
       expect(interpretHrcTopKey(key).intent).toEqual({ type: 'action', key })
     }
   })

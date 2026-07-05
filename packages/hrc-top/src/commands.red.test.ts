@@ -101,6 +101,21 @@ function row(overrides: Partial<HrcTargetView> = {}): HrcTopRow {
   }
 }
 
+function rowWithMessageContext(messageId = 'msg-123'): HrcTopRow {
+  return {
+    ...row(),
+    message: {
+      messageId,
+      messageSeq: 12,
+      createdAt: '2026-07-04T12:00:00.000Z',
+      phase: 'queued',
+      from: { kind: 'session', sessionRef: 'operator@hrc-runtime:primary' },
+      to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime:task:T-05407/lane:main' },
+      bodyPreview: 'please inspect this target',
+    },
+  } as HrcTopRow & { message: unknown }
+}
+
 describe('hrc-top command action dispatcher', () => {
   it('maps explicit action keys while keeping focus/inspect/tail read-only', async () => {
     const calls: ExecutorCall[] = []
@@ -270,9 +285,57 @@ describe('hrc-top command action dispatcher', () => {
       { type: 'runCommand', argv: ['hrcchat', 'show', 'msg-123'] },
       {
         type: 'runCommand',
-        argv: ['hrcchat', 'dm', 'cody@hrc-runtime:T-05407', '--reply-to', 'msg-123'],
+        argv: ['hrcchat', 'dm', 'cody@hrc-runtime:T-05407', '--reply-to', 'msg-123', '-'],
       },
     ])
+  })
+
+  it('uses selected row message context for preview/show/reply and disables message actions without it', async () => {
+    const calls: ExecutorCall[] = []
+    const executor = makeExecutor(calls)
+    const selected = rowWithMessageContext('msg-from-row')
+    const noMessage = row()
+
+    // T-05462 red bar: message actions are eligible only from concrete
+    // selected-row message context, not from unbounded history or hints.
+    await expect(
+      dispatchHrcTopActionKey({ key: 'p', row: selected, executor })
+    ).resolves.toMatchObject({
+      status: 'focused',
+      action: 'messagePreview',
+    })
+    expect(calls).toEqual([])
+
+    await dispatchHrcTopActionKey({ key: 's', row: selected, executor })
+    await dispatchHrcTopActionKey({ key: 'y', row: selected, executor })
+
+    expect(calls).toEqual([
+      { type: 'runCommand', argv: ['hrcchat', 'show', 'msg-from-row'] },
+      {
+        type: 'runCommand',
+        argv: ['hrcchat', 'dm', 'cody@hrc-runtime:T-05407', '--reply-to', 'msg-from-row', '-'],
+      },
+    ])
+
+    await expect(
+      dispatchHrcTopActionKey({ key: 'p', row: noMessage, executor })
+    ).resolves.toMatchObject({
+      status: 'disabled',
+      action: 'messagePreview',
+    })
+    await expect(
+      dispatchHrcTopActionKey({ key: 's', row: noMessage, executor })
+    ).resolves.toMatchObject({
+      status: 'disabled',
+      action: 'messageShow',
+    })
+    await expect(
+      dispatchHrcTopActionKey({ key: 'y', row: noMessage, executor })
+    ).resolves.toMatchObject({
+      status: 'disabled',
+      action: 'messageReply',
+    })
+    expect(calls).toHaveLength(2)
   })
 })
 
@@ -284,6 +347,9 @@ describe('hrc-top minimal command mode', () => {
     [':tail', 'tail'],
     [':capture', 'capture'],
     [':inspect', 'inspect'],
+    [':message-preview', 'messagePreview'],
+    [':message-show', 'messageShow'],
+    [':message-reply', 'messageReply'],
   ] as const)('delegates %s to the same action dispatcher', async (line, action) => {
     const delegated: string[] = []
     const dispatchAction: HrcTopCommandModeDispatcher = async (input) => {
