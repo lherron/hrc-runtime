@@ -44,7 +44,13 @@ export type {
   HrcTopAmbiguitySourceIdentity,
 } from './ambiguity.js'
 export { dispatchHrcTopActionKey, executeHrcTopCommandLine, handleForRow } from './commands.js'
-export type { HrcTopActionExecutor, HrcTopActionResult } from './commands.js'
+export type {
+  HrcTopActionDetail,
+  HrcTopActionExecutor,
+  HrcTopActionResult,
+  HrcTopActionTargetIdentity,
+  HrcTopExplicitAction,
+} from './commands.js'
 export { createHrcTopActionExecutor } from './executor.js'
 export type { HrcTopExecutorOptions } from './executor.js'
 export { applyFilter } from './filter.js'

@@ -28,9 +28,31 @@ export type HrcTopActionResult = {
   reason?: string | undefined
   errorCode?: string | undefined
   filterText?: string | undefined
+  detail?: HrcTopActionDetail | undefined
 }
 
 export type HrcTopAttachDescriptor = unknown
+
+export type HrcTopActionTargetIdentity = {
+  handle: string
+  sessionRef: string
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+}
+
+export type HrcTopActionDetail = {
+  action?: HrcTopExplicitAction | undefined
+  status?: HrcTopActionStatus | undefined
+  message?: string | undefined
+  errorCode?: string | undefined
+  argv?: string[] | undefined
+  exitStatus?: number | undefined
+  stderrSummary?: string | undefined
+  targetIdentity?: HrcTopActionTargetIdentity | undefined
+}
 
 export type HrcTopActionExecutor = {
   attachRuntime(runtimeId: string): Promise<HrcTopAttachDescriptor>
@@ -186,7 +208,7 @@ async function attachRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopAc
 
   const descriptor = await input.executor.attachRuntime(runtimeId)
   const spawned = await input.executor.spawnAttachDescriptor(descriptor)
-  return executorResult('attach', spawned, `Attached to runtime ${runtimeId}.`)
+  return executorResult('attach', spawned, `Attached to runtime ${runtimeId}.`, input.row)
 }
 
 async function resumeTarget(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -204,7 +226,7 @@ async function resumeTarget(input: HrcTopActionDispatchInput): Promise<HrcTopAct
 
   const handle = handleForRow(input.row)
   const result = await input.executor.runCommand(['hrc', 'resume', handle])
-  return executorResult('resume', result, `Resumed ${handle}.`)
+  return executorResult('resume', result, `Resumed ${handle}.`, input.row)
 }
 
 async function runTarget(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -219,7 +241,7 @@ async function runTarget(input: HrcTopActionDispatchInput): Promise<HrcTopAction
   }
 
   const result = await input.executor.runCommand(['hrc', 'run', handle])
-  return executorResult('run', result, `Started ${handle}.`)
+  return executorResult('run', result, `Started ${handle}.`, input.row)
 }
 
 async function captureRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -229,13 +251,13 @@ async function captureRuntime(input: HrcTopActionDispatchInput): Promise<HrcTopA
   }
 
   const result = await input.executor.runCommand(['hrc', 'runtime', 'capture', runtimeId])
-  return executorResult('capture', result, `Captured runtime output for ${runtimeId}.`)
+  return executorResult('capture', result, `Captured runtime output for ${runtimeId}.`, input.row)
 }
 
 async function showMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
   if (!input.messageId) return disabled('messageShow', 'Message show requires a message id.')
   const result = await input.executor.runCommand(['hrcchat', 'show', input.messageId])
-  return executorResult('messageShow', result, `Showed message ${input.messageId}.`)
+  return executorResult('messageShow', result, `Showed message ${input.messageId}.`, input.row)
 }
 
 async function replyToMessage(input: HrcTopActionDispatchInput): Promise<HrcTopActionResult> {
@@ -248,7 +270,12 @@ async function replyToMessage(input: HrcTopActionDispatchInput): Promise<HrcTopA
     '--reply-to',
     input.messageId,
   ])
-  return executorResult('messageReply', result, `Replying to message ${input.messageId}.`)
+  return executorResult(
+    'messageReply',
+    result,
+    `Replying to message ${input.messageId}.`,
+    input.row
+  )
 }
 
 function unavailableForRecommendedAction(row: HrcTopRow): HrcTopActionResult {
@@ -314,13 +341,26 @@ function focused(action: HrcTopExplicitAction, reason: string): HrcTopActionResu
 function executorResult(
   action: HrcTopExplicitAction,
   result: Partial<HrcTopActionResult>,
-  fallbackReason: string
+  fallbackReason: string,
+  row: HrcTopRow
 ): HrcTopActionResult {
+  const status = result.status ?? 'executed'
+  const reason = result.reason ?? fallbackReason
   return {
-    status: result.status ?? 'executed',
+    status,
     action,
-    reason: result.reason ?? fallbackReason,
+    reason,
     errorCode: result.errorCode,
+    detail: result.detail
+      ? {
+          ...result.detail,
+          action: result.detail.action ?? action,
+          status: result.detail.status ?? status,
+          message: result.detail.message ?? reason,
+          errorCode: result.detail.errorCode ?? result.errorCode,
+          targetIdentity: result.detail.targetIdentity ?? targetIdentityForRow(row),
+        }
+      : undefined,
   }
 }
 
@@ -357,6 +397,18 @@ export function handleForRow(row: HrcTopRow): string {
   const task = parsed.task && parsed.task !== 'primary' ? `:${parsed.task}` : ':primary'
   const lane = parsed.lane && parsed.lane !== 'main' ? `~${parsed.lane}` : ''
   return `${parsed.agent}@${parsed.project}${task}${lane}`
+}
+
+function targetIdentityForRow(row: HrcTopRow): HrcTopActionTargetIdentity {
+  return {
+    handle: handleForRow(row),
+    sessionRef: row.sessionRef,
+    scopeRef: row.target.scopeRef,
+    laneRef: row.target.laneRef,
+    hostSessionId: row.target.activeHostSessionId,
+    generation: row.target.generation,
+    runtimeId: row.target.runtime?.runtimeId ?? row.runtime?.runtimeId,
+  }
 }
 
 function parseSessionRef(

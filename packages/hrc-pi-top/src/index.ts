@@ -12,11 +12,14 @@ import type { HrcLifecycleEvent } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import type { WatchOptions } from 'hrc-sdk'
 import {
+  type HrcTopActionDetail,
   type HrcTopActionExecutor,
   type HrcTopActionResult,
+  type HrcTopActionTargetIdentity,
   type HrcTopAmbiguityAction,
   type HrcTopAmbiguityCandidate,
   type HrcTopAmbiguitySourceIdentity,
+  type HrcTopExplicitAction,
   type HrcTopKeyIntent,
   type HrcTopKeyPrefix,
   type HrcTopNavState,
@@ -62,6 +65,15 @@ type AmbiguityResolverOverlayState = {
   action: HrcTopAmbiguityAction
   candidates: readonly HrcTopAmbiguityCandidate[]
   selectedIndex: number
+}
+
+type ActionDetailOverlayState = {
+  action: HrcTopExplicitAction | undefined
+  status: HrcTopActionResult['status']
+  reason?: string | undefined
+  errorCode?: string | undefined
+  detail: HrcTopActionDetail
+  open: boolean
 }
 
 export type HrcPiTopOptions = HrcTopOptions & {
@@ -309,6 +321,7 @@ export class HrcPiTopApp implements Component {
   private eventTailPreview: EventTailPreviewState | undefined
   private runConfirmationOverlay: RunConfirmationOverlayState | undefined
   private ambiguityResolver: AmbiguityResolverOverlayState | undefined
+  private actionDetailOverlay: ActionDetailOverlayState | undefined
   private inspectCandidateRow: HrcTopRow | undefined
   private keyPrefix: HrcTopKeyPrefix
   private pendingAction: Promise<void> = Promise.resolve()
@@ -361,6 +374,7 @@ export class HrcPiTopApp implements Component {
       this.expireAmbiguityResolver(
         'Ambiguity resolver expired after refresh; choose the action again.'
       )
+      this.expireActionDetailIfStale()
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error)
     }
@@ -400,6 +414,9 @@ export class HrcPiTopApp implements Component {
         height: this.height(),
         width,
       })
+      if (this.actionDetailOverlay?.open) {
+        return renderActionDetailOverlay(lines, this.actionDetailOverlay, this.height(), width)
+      }
       if (this.runConfirmationOverlay) {
         return renderRunConfirmationOverlay(
           lines,
@@ -449,6 +466,9 @@ export class HrcPiTopApp implements Component {
     }
 
     const rendered = lines.map((line) => truncateToWidth(line, width, '', false))
+    if (this.actionDetailOverlay?.open) {
+      return renderActionDetailOverlay(rendered, this.actionDetailOverlay, this.height(), width)
+    }
     if (this.ambiguityResolver) {
       return renderAmbiguityResolverOverlay(rendered, this.ambiguityResolver, this.height(), width)
     }
@@ -469,6 +489,11 @@ export class HrcPiTopApp implements Component {
 
     if (matchesKey(data, 'ctrl+c')) {
       this.onQuit()
+      return
+    }
+
+    if (this.actionDetailOverlay?.open) {
+      this.handleActionDetailOverlayInput(data)
       return
     }
 
@@ -612,6 +637,9 @@ export class HrcPiTopApp implements Component {
         return { type: 'searchPrev' }
       case ':':
         return { type: 'command' }
+      case '!':
+        this.openActionDetailOverlay()
+        return undefined
       case 'o':
       case 'a':
       case 'r':
@@ -681,6 +709,7 @@ export class HrcPiTopApp implements Component {
 
     if (intent.type === 'noop') {
       this.notice = intent.reason
+      this.clearActionDetailOverlay()
       this.requestRender()
       return
     }
@@ -742,6 +771,7 @@ export class HrcPiTopApp implements Component {
       const row = this.selectedRow()
       if (!row) {
         this.notice = 'No target selected.'
+        this.clearActionDetailOverlay()
         this.requestRender()
         return
       }
@@ -749,6 +779,7 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
+      this.clearActionDetailOverlay()
       const result = await dispatchHrcTopActionKey({
         key,
         row,
@@ -756,7 +787,21 @@ export class HrcPiTopApp implements Component {
       })
       await this.handleActionResult(result, row.id, row)
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error)
+      const row = this.selectedRow()
+      const message = error instanceof Error ? error.message : String(error)
+      this.notice = `${message}; press ! for details`
+      this.actionDetailOverlay = {
+        action: actionForInputKey(key),
+        status: 'disabled',
+        reason: message,
+        detail: {
+          action: actionForInputKey(key),
+          status: 'disabled',
+          message,
+          targetIdentity: row ? targetIdentityForRow(row) : undefined,
+        },
+        open: false,
+      }
       this.requestRender()
     }
   }
@@ -806,6 +851,7 @@ export class HrcPiTopApp implements Component {
         this.requestRender()
         return
       }
+      this.clearActionDetailOverlay()
       await this.handleActionResult(
         await executeHrcTopCommandLine({
           line: `:${value}`,
@@ -816,7 +862,21 @@ export class HrcPiTopApp implements Component {
         row
       )
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error)
+      const action = actionForCommandValue(value)
+      const message = error instanceof Error ? error.message : String(error)
+      this.notice = `${message}; press ! for details`
+      this.actionDetailOverlay = {
+        action,
+        status: 'disabled',
+        reason: message,
+        detail: {
+          action,
+          status: 'disabled',
+          message,
+          targetIdentity: targetIdentityForRow(row),
+        },
+        open: false,
+      }
       this.requestRender()
     }
   }
@@ -826,7 +886,18 @@ export class HrcPiTopApp implements Component {
     selectedRowId?: string | undefined,
     selectedRow?: HrcTopRow | undefined
   ): Promise<void> {
-    this.notice = result.reason
+    const detail = actionDetailForResult(result, selectedRow ?? this.rowById(selectedRowId))
+    this.actionDetailOverlay = detail
+      ? {
+          action: result.action,
+          status: result.status,
+          reason: result.reason,
+          errorCode: result.errorCode,
+          detail,
+          open: false,
+        }
+      : undefined
+    this.notice = detail && result.reason ? `${result.reason}; press ! for details` : result.reason
     if (result.action !== 'inspect') this.inspectCandidateRow = undefined
     if (result.status === 'confirmation_required') {
       const row = selectedRow ?? this.rowById(selectedRowId)
@@ -969,12 +1040,25 @@ export class HrcPiTopApp implements Component {
   private async confirmAttachCandidate(candidate: HrcTopAmbiguityCandidate): Promise<void> {
     if (!candidate.runtimeId || !candidate.attachable) {
       this.notice = candidate.disabledReason ?? 'Selected candidate is not attachable.'
+      this.actionDetailOverlay = {
+        action: 'attach',
+        status: 'disabled',
+        reason: this.notice,
+        detail: {
+          action: 'attach',
+          status: 'disabled',
+          message: this.notice,
+          targetIdentity: targetIdentityForRow(candidate.row),
+        },
+        open: false,
+      }
       this.requestRender()
       return
     }
 
     this.ambiguityResolver = undefined
     try {
+      this.clearActionDetailOverlay()
       const descriptor = await this.executor.attachRuntime(candidate.runtimeId)
       const spawned = await this.executor.spawnAttachDescriptor(descriptor)
       await this.handleActionResult(
@@ -983,12 +1067,26 @@ export class HrcPiTopApp implements Component {
           action: 'attach',
           reason: spawned.reason ?? `Attached to runtime ${candidate.runtimeId}.`,
           errorCode: spawned.errorCode,
+          detail: spawned.detail,
         },
         candidate.row.id,
         candidate.row
       )
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error)
+      const message = error instanceof Error ? error.message : String(error)
+      this.notice = `${message}; press ! for details`
+      this.actionDetailOverlay = {
+        action: 'attach',
+        status: 'disabled',
+        reason: message,
+        detail: {
+          action: 'attach',
+          status: 'disabled',
+          message,
+          targetIdentity: targetIdentityForRow(candidate.row),
+        },
+        open: false,
+      }
       this.requestRender()
     }
   }
@@ -1041,6 +1139,7 @@ export class HrcPiTopApp implements Component {
 
     try {
       this.runConfirmationOverlay = undefined
+      this.clearActionDetailOverlay()
       const result = await dispatchHrcTopActionKey({
         key: 'R',
         row: selected,
@@ -1083,6 +1182,45 @@ export class HrcPiTopApp implements Component {
     this.ambiguityResolver = undefined
     this.keyPrefix = undefined
     this.notice = reason
+  }
+
+  private openActionDetailOverlay(): void {
+    if (!this.actionDetailOverlay) {
+      this.notice = 'No action detail is available.'
+      this.requestRender()
+      return
+    }
+    this.actionDetailOverlay = { ...this.actionDetailOverlay, open: true }
+    this.keyPrefix = undefined
+    this.showHelp = false
+    this.requestRender()
+  }
+
+  private handleActionDetailOverlayInput(data: string): void {
+    const printable = printableInput(data)
+    if (printable === 'q' || data === '\x1b' || matchesKey(data, 'escape')) {
+      if (this.actionDetailOverlay) {
+        this.actionDetailOverlay = { ...this.actionDetailOverlay, open: false }
+      }
+      this.keyPrefix = undefined
+      this.requestRender()
+      return
+    }
+    this.notice = 'Action detail is open; press Esc or q to return.'
+    this.requestRender()
+  }
+
+  private clearActionDetailOverlay(): void {
+    this.actionDetailOverlay = undefined
+  }
+
+  private expireActionDetailIfStale(): void {
+    const identity = this.actionDetailOverlay?.detail.targetIdentity
+    if (!identity) return
+    const row = this.selectedRow()
+    if (!row || targetIdentityKey(targetIdentityForRow(row)) !== targetIdentityKey(identity)) {
+      this.actionDetailOverlay = undefined
+    }
   }
 
   private async openEventTailPreview(row: HrcTopRow | undefined): Promise<void> {
@@ -1259,17 +1397,71 @@ function renderAmbiguityResolverOverlay(
   return renderFramedOverlay(baseLines, content, height, width)
 }
 
+function renderActionDetailOverlay(
+  baseLines: string[],
+  overlayState: ActionDetailOverlayState,
+  height: number,
+  width: number
+): string[] {
+  const detail = overlayState.detail
+  const content = [
+    'ACTION DETAIL',
+    detailLine('action', detail.action ?? overlayState.action),
+    detailLine('status', detail.status ?? overlayState.status),
+    detailLine('message', detail.message ?? overlayState.reason),
+    detailLine('error code', detail.errorCode ?? overlayState.errorCode),
+    ...targetIdentityLines(detail.targetIdentity),
+    ...commandDetailLines(detail),
+    'Dismiss: Esc or q',
+  ].filter((line): line is string => line !== undefined)
+  return renderFramedOverlay(baseLines, content, height, width, 120)
+}
+
+function targetIdentityLines(identity: HrcTopActionTargetIdentity | undefined): string[] {
+  if (!identity) return []
+  const runtimeBits = [
+    detailLine('laneRef', identity.laneRef),
+    detailLine('hostSessionId', identity.hostSessionId),
+    detailLine('generation', identity.generation),
+    detailLine('runtimeId', identity.runtimeId),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join('  ')
+  return [
+    detailLine('target', identity.handle),
+    detailLine('sessionRef', identity.sessionRef),
+    detailLine('scopeRef', identity.scopeRef),
+    runtimeBits,
+  ].filter((line): line is string => line !== undefined && line !== '')
+}
+
+function commandDetailLines(detail: HrcTopActionDetail): string[] {
+  const lines: string[] = []
+  if (detail.argv && detail.argv.length > 0) {
+    lines.push('command:', `argv: ${detail.argv.join(' ')}`)
+  }
+  if (detail.exitStatus !== undefined) lines.push(`exit status: ${detail.exitStatus}`)
+  if (detail.stderrSummary) lines.push('stderr:', detail.stderrSummary)
+  return lines
+}
+
+function detailLine(label: string, value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  return `${label}: ${String(value)}`
+}
+
 function renderFramedOverlay(
   baseLines: string[],
   content: string[],
   height: number,
-  width: number
+  width: number,
+  maxWidth = 84
 ): string[] {
   const safeWidth = Math.max(1, width)
   const lines = baseLines.slice(0, height)
   while (lines.length < height) lines.push('')
 
-  const overlayWidth = Math.max(1, Math.min(safeWidth, 84))
+  const overlayWidth = Math.max(1, Math.min(safeWidth, maxWidth))
   const bodyWidth = Math.max(1, overlayWidth - 4)
   const overlayContent = content.slice(0, Math.max(1, height - 2))
   const border = `+${'-'.repeat(Math.max(0, overlayWidth - 2))}+`
@@ -1343,6 +1535,101 @@ function ambiguityActionForCommand(value: string): HrcTopAmbiguityAction | undef
   if (verb === 'attach') return 'attach'
   if (verb === 'inspect') return 'inspect'
   return undefined
+}
+
+function actionForCommandValue(value: string): HrcTopExplicitAction | undefined {
+  const verb = value.trim().split(/\s+/)[0]
+  switch (verb) {
+    case 'attach':
+    case 'resume':
+    case 'run':
+    case 'tail':
+    case 'capture':
+    case 'inspect':
+      return verb
+    default:
+      return undefined
+  }
+}
+
+function actionForInputKey(key: string): HrcTopExplicitAction | undefined {
+  switch (key) {
+    case 'a':
+      return 'attach'
+    case 'r':
+      return 'resume'
+    case 'R':
+      return 'run'
+    case 'c':
+      return 'capture'
+    case 'e':
+      return 'tail'
+    case 'i':
+      return 'inspect'
+    case 'o':
+      return 'unavailable'
+    default:
+      return undefined
+  }
+}
+
+function actionDetailForResult(
+  result: HrcTopActionResult,
+  row: HrcTopRow | undefined
+): HrcTopActionDetail | undefined {
+  if (result.detail) {
+    return {
+      ...result.detail,
+      action: result.detail.action ?? result.action,
+      status: result.detail.status ?? result.status,
+      message: result.detail.message ?? result.reason,
+      errorCode: result.detail.errorCode ?? result.errorCode,
+      targetIdentity: result.detail.targetIdentity ?? (row ? targetIdentityForRow(row) : undefined),
+    }
+  }
+  if (
+    result.status !== 'disabled' ||
+    !row ||
+    !result.action ||
+    !actionSupportsTransientDetail(result.action)
+  ) {
+    return undefined
+  }
+  return {
+    action: result.action,
+    status: result.status,
+    message: result.reason,
+    errorCode: result.errorCode,
+    targetIdentity: targetIdentityForRow(row),
+  }
+}
+
+function actionSupportsTransientDetail(action: HrcTopExplicitAction): boolean {
+  return action === 'attach' || action === 'resume' || action === 'run' || action === 'capture'
+}
+
+function targetIdentityForRow(row: HrcTopRow): HrcTopActionTargetIdentity {
+  return {
+    handle: handleForRow(row),
+    sessionRef: row.sessionRef,
+    scopeRef: row.target.scopeRef,
+    laneRef: row.target.laneRef,
+    hostSessionId: row.target.activeHostSessionId,
+    generation: row.target.generation,
+    runtimeId: row.target.runtime?.runtimeId ?? row.runtime?.runtimeId,
+  }
+}
+
+function targetIdentityKey(identity: HrcTopActionTargetIdentity): string {
+  return [
+    identity.handle,
+    identity.sessionRef,
+    identity.scopeRef ?? '',
+    identity.laneRef ?? '',
+    identity.hostSessionId ?? '',
+    identity.generation ?? '',
+    identity.runtimeId ?? '',
+  ].join('\0')
 }
 
 function isHrcPiTopRestoreTerminalReport(data: string): boolean {
