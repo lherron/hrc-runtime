@@ -25,7 +25,7 @@
   "dependencies": {
     "hrc-core": "*",
     "hrc-sdk": "*",
-    "spaces-config": "0.1.1-dev.20260703210312"
+    "spaces-config": "0.1.1-dev.20260705181922"
   },
   "devDependencies": {
     "@types/bun": "latest",
