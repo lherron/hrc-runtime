@@ -5,7 +5,11 @@ import { join, resolve } from 'node:path'
 
 // scripts/lib/ -> repo root
 const ROOT = resolve(import.meta.dir, '..', '..')
-const REGISTRY = process.env.VERDACCIO_REGISTRY ?? 'http://127.0.0.1:4873/'
+// Destructure rather than index/property access: consumers span tsconfigs that
+// require bracket access on index signatures (noPropertyAccessFromIndexSignature)
+// and biome configs that forbid it (useLiteralKeys); destructuring satisfies both.
+const { VERDACCIO_REGISTRY } = process.env
+const REGISTRY = VERDACCIO_REGISTRY ?? 'http://127.0.0.1:4873/'
 const LOCK_STALE_MS = 120_000
 
 /**
@@ -26,7 +30,9 @@ type Manifest = {
 
 type RegistryMetadata = {
   versions?: Record<string, unknown>
-  'dist-tags'?: Record<string, string>
+  // Typed as a concrete field (not Record) so `.latest` is a real-property dot
+  // access — valid under both noPropertyAccessFromIndexSignature and useLiteralKeys.
+  'dist-tags'?: { latest?: string }
 }
 
 /** A set of packages published together as ONE coherent dev-timestamp stream. */
@@ -286,8 +292,9 @@ async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promis
  * top-level sync commits it.
  */
 function commitLockfile(label: string, summary: string): void {
-  if (process.env.PRAESIDIUM_SYNC_NO_COMMIT === '1') return
-  if (process.env.GIT_INDEX_FILE) return
+  const { PRAESIDIUM_SYNC_NO_COMMIT, GIT_INDEX_FILE } = process.env
+  if (PRAESIDIUM_SYNC_NO_COMMIT === '1') return
+  if (GIT_INDEX_FILE) return
   const status = run('git', ['status', '--porcelain', '--', 'bun.lock'])
   if (status.status !== 0 || status.out.trim() === '') return
   const commit = run('git', [
@@ -329,7 +336,10 @@ export async function syncFromVerdaccio(spec: SyncSpec): Promise<void> {
   await withLock(join(ROOT, spec.lockName), async () => {
     const latest = await resolveLatest(spec.groups)
     const summary = spec.groups
-      .map((group) => `${group.label}@${latest.get(group.packages[0])}`)
+      .map((group) => {
+        const first = group.packages[0]
+        return `${group.label}@${first ? latest.get(first) : '?'}`
+      })
       .join('  ')
 
     // Enforce the stable tag specifier (also migrates any stray exact pins).
