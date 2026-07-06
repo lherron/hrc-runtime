@@ -145,11 +145,18 @@ export async function workspaceManifestPaths(root: string): Promise<string[]> {
   const rootRaw = await readFile(join(root, 'package.json'), 'utf8').catch(() => undefined)
   const workspaces = rootRaw ? ((JSON.parse(rootRaw) as Manifest).workspaces ?? []) : []
   for (const pattern of workspaces) {
-    const base = pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern
-    const entries = await readdir(join(root, base), { withFileTypes: true }).catch(() => [])
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const path = join(root, base, entry.name, 'package.json')
+    if (pattern.endsWith('/*')) {
+      // Glob member: every immediate subdirectory is a package.
+      const base = join(root, pattern.slice(0, -2))
+      const entries = await readdir(base, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const path = join(base, entry.name, 'package.json')
+        if ((await stat(path).catch(() => undefined))?.isFile()) paths.add(path)
+      }
+    } else {
+      // Bare member: the directory is itself the package (e.g. "examples", "loops").
+      const path = join(root, pattern, 'package.json')
       if ((await stat(path).catch(() => undefined))?.isFile()) paths.add(path)
     }
   }
@@ -233,11 +240,26 @@ async function verifyInstalled(latest: Map<string, string>, label: string): Prom
   }
 }
 
+/**
+ * Isolated bunfig for the sync install. Forces minimumReleaseAge = 0 so a
+ * just-published dev version is not age-gated by a global ~/.npmrc, while
+ * preserving the repo's install linker: a `--config` bunfig fully replaces the
+ * repo's, and dropping a `linker = "hoisted"` makes bun relink file: workspace
+ * deps and fail with EEXIST.
+ */
+async function isolatedBunfigContent(): Promise<string> {
+  const repoBunfig = await readFile(join(ROOT, 'bunfig.toml'), 'utf8').catch(() => '')
+  const linker = repoBunfig.match(/^\s*linker\s*=\s*("[^"]*"|'[^']*')/m)?.[1]
+  const lines = ['[install]', 'minimumReleaseAge = 0']
+  if (linker) lines.push(`linker = ${linker}`)
+  return `${lines.join('\n')}\n`
+}
+
 async function bunInstallFromVerdaccio(label: string, tmpPrefix: string): Promise<void> {
   const tmp = await mkdtemp(join(tmpdir(), tmpPrefix))
   try {
     const bunfig = join(tmp, 'bunfig.toml')
-    await writeFile(bunfig, '[install]\nminimumReleaseAge = 0\n')
+    await writeFile(bunfig, await isolatedBunfigContent())
     // --no-cache bypasses bun's manifest cache so we always see Verdaccio's
     // current dist-tags. Without it, a freshly-published dev version can
     // "fail to resolve" until the cache TTL expires.
