@@ -18,14 +18,14 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
     "agent-action-render": "*",
-    "agent-scope": "0.1.1-dev.20260705181922",
+    "agent-scope": "latest",
     "chalk": "^5.3.0",
-    "cli-kit": "0.1.1-dev.20260705181922",
+    "cli-kit": "latest",
     "commander": "^14.0.0",
     "hrc-core": "*",
     "hrc-frame-render": "*",
     "hrc-sdk": "*",
-    "spaces-config": "0.1.1-dev.20260705181922"
+    "spaces-config": "latest"
   },
   "devDependencies": {
     "@types/bun": "latest",
