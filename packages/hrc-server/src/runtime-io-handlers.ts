@@ -286,7 +286,10 @@ export async function startRuntimeForSession(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   restartStyle: RestartStyle,
-  options: { attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined } = {}
+  options: {
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    suppressHeadlessViewer?: boolean | undefined
+  } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
@@ -303,6 +306,11 @@ export async function startRuntimeForSession(
         ? normalizeClaudeInteractiveBrokerIntent(intent)
         : intent
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
+    const viewerSpawnOptions = {
+      operatorAttachPending:
+        options.attachBeforeInvocationStart !== undefined ||
+        options.suppressHeadlessViewer === true,
+    }
     if (shouldUseHeadlessTransport(startIntent)) {
       const now = timestamp()
       this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
@@ -330,7 +338,7 @@ export async function startRuntimeForSession(
           !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
           (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
         ) {
-          await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime)
+          await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime, viewerSpawnOptions)
           return reusableBrokerRuntime
         }
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
@@ -353,7 +361,7 @@ export async function startRuntimeForSession(
           initialPrompt,
           startRunId
         )
-        await this.spawnBrokerHeadlessViewer(brokerRuntime)
+        await this.spawnBrokerHeadlessViewer(brokerRuntime, viewerSpawnOptions)
         // Explicit start WITH an initial prompt: wait for the startup turn to
         // complete (continuation established) via broker events, as the old
         // exec.ts start did. With NO initial user turn there is no run to wait
@@ -396,7 +404,7 @@ export async function startRuntimeForSession(
           interactiveBrokerOptions.allowedBrokerDriver
         )
       ) {
-        await this.spawnBrokerHeadlessViewer(existingRuntime)
+        await this.spawnBrokerHeadlessViewer(existingRuntime, viewerSpawnOptions)
         return existingRuntime
       }
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
@@ -418,7 +426,7 @@ export async function startRuntimeForSession(
               : {}),
           }),
       })
-      await this.spawnBrokerHeadlessViewer(runtime)
+      await this.spawnBrokerHeadlessViewer(runtime, viewerSpawnOptions)
       if ((normalizedIntent.initialPrompt ?? '').length > 0) {
         await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
       }
@@ -652,7 +660,14 @@ export async function attachRuntimeEffectfully(
       })
     }
 
-    const brokerRuntime = await this.startRuntimeForSession(session, interactiveIntent, 'reuse_pty')
+    const brokerRuntime = await this.startRuntimeForSession(
+      session,
+      interactiveIntent,
+      'reuse_pty',
+      {
+        suppressHeadlessViewer: true,
+      }
+    )
     return this.attachRuntime(requireKnownRuntime(this.db, brokerRuntime.runtimeId))
   })().finally(() => {
     this.runtimeAttachOperations.delete(refreshedRuntime.runtimeId)

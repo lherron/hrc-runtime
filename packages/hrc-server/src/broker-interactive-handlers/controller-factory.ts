@@ -223,13 +223,25 @@ export function getHarnessBrokerController(
  * JSON to a non-interactive invocation instead of attaching. Never throws — the
  * viewer is purely observational and must not gate the dispatch.
  */
+export type SpawnBrokerHeadlessViewerOptions = {
+  operatorAttachPending?: boolean | undefined
+}
+
 export async function spawnBrokerHeadlessViewer(
   this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
+  runtime: HrcRuntimeSnapshot,
+  options: SpawnBrokerHeadlessViewerOptions = {}
 ): Promise<void> {
   try {
     if (!shouldSpawnGhosttyViewer()) {
       writeServerLog('INFO', 'broker_headless_viewer.skipped_disabled', {
+        runtimeId: runtime.runtimeId,
+        scopeRef: runtime.scopeRef,
+      })
+      return
+    }
+    if (options.operatorAttachPending) {
+      writeServerLog('INFO', 'broker_headless_viewer.skipped_operator_attach_pending', {
         runtimeId: runtime.runtimeId,
         scopeRef: runtime.scopeRef,
       })

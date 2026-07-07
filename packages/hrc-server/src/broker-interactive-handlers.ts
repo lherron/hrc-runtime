@@ -421,7 +421,9 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
   // starts a tmux TUI with no operator terminal watching it. Pop a best-effort
   // viewer; spawnBrokerHeadlessViewer owns the global policy gate and dedupe.
   if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-    await this.spawnBrokerHeadlessViewer(runtime)
+    await this.spawnBrokerHeadlessViewer(runtime, {
+      operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+    })
   }
 
   // T-01770 Phase C: block the synchronous caller on the first broker turn
