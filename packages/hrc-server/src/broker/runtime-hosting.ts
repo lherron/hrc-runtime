@@ -27,6 +27,8 @@
  * (startup-reconcile / sweep / controller) is Ph2–Ph4.
  */
 
+import { createHash } from 'node:crypto'
+
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
 import { isRecord } from './json'
@@ -86,6 +88,40 @@ export type BrokerLeaseProbe = {
   sessionName: string
   brokerWindow: TmuxWindowIdentity
   tuiWindow?: TmuxWindowIdentity
+}
+
+export type RuntimeTelemetryQueryIdentity = {
+  projectId?: string
+  taskId?: string
+  command: string
+}
+
+export type RuntimeTelemetryLifecycleFacts = {
+  runtimeId: string
+  hostSessionId: string
+  scopeRef: string
+  laneRef: string
+  generation: number
+  status: string
+  transport: string
+  controllerKind?: string
+  createdAt: string
+  updatedAt: string
+  brokerEndpoint?: BrokerRuntimeEndpoint['kind']
+  brokerSubstrate?: BrokerRuntimeSubstrate['kind']
+  brokerPresentation?: BrokerRuntimePresentation['kind']
+}
+
+export type RuntimeTelemetryProbeInput = {
+  queryIdentity: RuntimeTelemetryQueryIdentity
+  output: string
+  runtime: HrcRuntimeSnapshot
+}
+
+export type RuntimeTelemetryProbe = {
+  queryIdentity: RuntimeTelemetryQueryIdentity
+  outputDigest: string
+  runtimeLifecycle: RuntimeTelemetryLifecycleFacts
 }
 
 // ── low-level extraction helpers ──────────────────────────────────────────────
@@ -444,6 +480,41 @@ export function projectBrokerHostingState(
     },
     substrate,
     presentation,
+  }
+}
+
+function sha256Digest(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+export function createRuntimeTelemetryProbe(
+  input: RuntimeTelemetryProbeInput
+): RuntimeTelemetryProbe {
+  const { queryIdentity, output, runtime } = input
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+
+  return {
+    queryIdentity,
+    outputDigest: sha256Digest(output),
+    runtimeLifecycle: {
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      status: runtime.status,
+      transport: runtime.transport,
+      ...(runtime.controllerKind !== undefined ? { controllerKind: runtime.controllerKind } : {}),
+      createdAt: runtime.createdAt,
+      updatedAt: runtime.updatedAt,
+      ...(hosting !== undefined
+        ? {
+            brokerEndpoint: hosting.endpoint.kind,
+            brokerSubstrate: hosting.substrate.kind,
+            brokerPresentation: hosting.presentation.kind,
+          }
+        : {}),
+    },
   }
 }
 
