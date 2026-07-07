@@ -86,6 +86,7 @@ export type TmuxStatus = {
   running: boolean
   sessionCount: number
   sessions: string[]
+  leaseDiagnostics?: BrokerTmuxLeaseDiagnostics | undefined
   /**
    * Per-runtime broker-tmux lease servers under `<runtimeRoot>/btmux/`. Each is
    * an independent tmux server on its own socket (T-01738 F-V2). Empty when no
@@ -93,6 +94,12 @@ export type TmuxStatus = {
    */
   leases?: TmuxLeaseStatus[] | undefined
   error?: string | undefined
+}
+
+export type BrokerTmuxLeaseDiagnostics = {
+  total: number
+  probed: number
+  skipped: number
 }
 
 export function writeServerProcessLog(
@@ -369,7 +376,7 @@ export async function collectServerRuntimeStatus(
     const tmux =
       options.includeTmux === false
         ? skippedTmuxStatus(paths.tmuxSocketPath)
-        : await collectTmuxStatus()
+        : await collectTmuxStatus({ includeLeases: false })
     let apiHealth: ServerRuntimeStatus['apiHealth'] = { ok: false, error: 'daemon not running' }
     let api: ServerRuntimeStatus['api']
     let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
@@ -653,11 +660,12 @@ export function listInFlightWork(dbPath?: string, filter?: InFlightFilter): InFl
            AND rt.active_run_id IS NOT NULL
            AND r.status IN ('accepted', 'started', 'running')
            AND r.completed_at IS NULL
-           AND EXISTS (
-             SELECT 1 FROM hrc_events e
-             WHERE e.runtime_id = rt.runtime_id AND e.ts > ?
+           AND (
+             SELECT e.ts FROM hrc_events e
+             WHERE e.runtime_id = rt.runtime_id
+             ORDER BY e.hrc_seq DESC
              LIMIT 1
-           )
+           ) > ?
          ORDER BY r.started_at ASC`
       )
       .all(cutoff)
@@ -772,6 +780,7 @@ export async function stopServerProcess(options?: {
 }
 
 const TMUX_DIAGNOSTIC_TIMEOUT_MS = 750
+const DEFAULT_BROKER_TMUX_LEASE_PROBE_LIMIT = 64
 
 type TmuxSessionProbe = {
   running: boolean
@@ -808,16 +817,28 @@ async function listTmuxSessionsOnSocket(socketPath: string): Promise<TmuxSession
  * Each `*.sock` is an independent tmux server; a dead/leftover socket reports
  * running:false (T-01738 F-V2). Read-only — never kills or removes anything.
  */
-export async function collectBrokerTmuxLeases(): Promise<TmuxLeaseStatus[]> {
+export async function collectBrokerTmuxLeases(options?: {
+  probeLimit?: number | undefined
+}): Promise<TmuxLeaseStatus[]> {
+  return collectBrokerTmuxLeaseDiagnostics(options).then((result) => result.leases)
+}
+
+export async function collectBrokerTmuxLeaseDiagnostics(options?: {
+  probeLimit?: number | undefined
+}): Promise<{ leases: TmuxLeaseStatus[]; diagnostics: BrokerTmuxLeaseDiagnostics }> {
   const dir = join(resolveRuntimeRoot(), 'btmux')
   let entries: string[]
   try {
     entries = (await readdir(dir)).filter((name) => name.endsWith('.sock'))
   } catch {
-    return []
+    return { leases: [], diagnostics: { total: 0, probed: 0, skipped: 0 } }
   }
+  const probeLimit = options?.probeLimit
+  const sortedEntries = entries.sort()
+  const probeEntries =
+    probeLimit !== undefined && probeLimit >= 0 ? sortedEntries.slice(0, probeLimit) : sortedEntries
   const leases: TmuxLeaseStatus[] = []
-  for (const entry of entries.sort()) {
+  for (const entry of probeEntries) {
     const socketPath = join(dir, entry)
     const probe = await listTmuxSessionsOnSocket(socketPath)
     leases.push({
@@ -827,10 +848,20 @@ export async function collectBrokerTmuxLeases(): Promise<TmuxLeaseStatus[]> {
       ...(probe.error ? { error: probe.error } : {}),
     })
   }
-  return leases
+  return {
+    leases,
+    diagnostics: {
+      total: entries.length,
+      probed: probeEntries.length,
+      skipped: Math.max(0, entries.length - probeEntries.length),
+    },
+  }
 }
 
-export async function collectTmuxStatus(): Promise<TmuxStatus> {
+export async function collectTmuxStatus(options?: {
+  includeLeases?: boolean | undefined
+  leaseProbeLimit?: number | undefined
+}): Promise<TmuxStatus> {
   const socketPath = resolveTmuxSocketPath()
   const versionResult = await execProcess(['tmux', '-V'], {
     timeoutMs: TMUX_DIAGNOSTIC_TIMEOUT_MS,
@@ -851,7 +882,16 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
     }
   }
 
-  const leases = await collectBrokerTmuxLeases()
+  const leaseResult =
+    options?.includeLeases === false
+      ? {
+          leases: [] as TmuxLeaseStatus[],
+          diagnostics: { total: 0, probed: 0, skipped: 0 },
+        }
+      : await collectBrokerTmuxLeaseDiagnostics({
+          probeLimit: options?.leaseProbeLimit ?? DEFAULT_BROKER_TMUX_LEASE_PROBE_LIMIT,
+        })
+  const { leases, diagnostics: leaseDiagnostics } = leaseResult
 
   const listResult = await execProcess(['tmux', '-S', socketPath, 'list-sessions', '-F', '#S'], {
     timeoutMs: TMUX_DIAGNOSTIC_TIMEOUT_MS,
@@ -866,6 +906,7 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
         sessionCount: 0,
         sessions: [],
         leases,
+        leaseDiagnostics,
         error: `tmux list-sessions unresponsive after ${TMUX_DIAGNOSTIC_TIMEOUT_MS}ms`,
       }
     }
@@ -883,6 +924,7 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
       sessionCount: 0,
       sessions: [],
       leases,
+      leaseDiagnostics,
       ...(noServer ? {} : { error: `${listResult.stderr}\n${listResult.stdout}`.trim() }),
     }
   }
@@ -900,6 +942,7 @@ export async function collectTmuxStatus(): Promise<TmuxStatus> {
     sessionCount: sessions.length,
     sessions,
     leases,
+    leaseDiagnostics,
   }
 }
 
@@ -918,7 +961,12 @@ export function formatTmuxStatus(status: TmuxStatus): string {
   }
 
   const leases = status.leases ?? []
-  lines.push(`  btmux leases: ${leases.length}`)
+  const leaseDiagnostics = status.leaseDiagnostics
+  const leaseSummary =
+    leaseDiagnostics && leaseDiagnostics.total !== leases.length
+      ? `${leases.length} probed of ${leaseDiagnostics.total} (${leaseDiagnostics.skipped} skipped)`
+      : String(leases.length)
+  lines.push(`  btmux leases: ${leaseSummary}`)
   for (const lease of leases) {
     const state = lease.running
       ? lease.sessions.length > 0
