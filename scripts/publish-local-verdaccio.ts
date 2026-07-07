@@ -28,6 +28,7 @@ type Manifest = {
 }
 
 type Options = {
+  channel?: 'dev' | 'worktree'
   dryRun: boolean
   force: boolean
   tag?: string
@@ -52,6 +53,18 @@ function parseArgs(argv: string[]): Options {
       options.dryRun = true
     } else if (arg === '--force') {
       options.force = true
+    } else if (arg === '--channel') {
+      const value = argv[++i]
+      if (value !== 'dev' && value !== 'worktree') {
+        throw new Error('--channel must be "dev" or "worktree"')
+      }
+      options.channel = value
+    } else if (arg.startsWith('--channel=')) {
+      const value = arg.slice('--channel='.length)
+      if (value !== 'dev' && value !== 'worktree') {
+        throw new Error('--channel must be "dev" or "worktree"')
+      }
+      options.channel = value
     } else if (arg === '--version') {
       const value = argv[++i]
       if (!value) throw new Error('--version requires a value')
@@ -78,9 +91,11 @@ function parseArgs(argv: string[]): Options {
 function printHelp(): void {
   console.log(`Usage:
   bun scripts/publish-local-verdaccio.ts [--dry-run]
+  bun scripts/publish-local-verdaccio.ts --channel worktree [--dry-run]
   bun scripts/publish-local-verdaccio.ts --version <semver> [--tag <tag>] [--force] [--dry-run]
 
 Default mode publishes a timestamped dev set as <base>-dev.YYYYMMDDHHMMSS tagged latest.
+Worktree channel publishes <base>-worktree.YYYYMMDDHHMMSS.<shortsha> tagged worktree.
 Explicit --version publishes that exact version. Stable versions default to --tag latest.
 Explicit prerelease versions require --tag.`)
 }
@@ -93,8 +108,17 @@ function isPrerelease(version: string): boolean {
   return /^\d+\.\d+\.\d+-/.test(version)
 }
 
-function timestampVersion(baseVersion: string): string {
-  const now = new Date()
+function gitShortSha(): string {
+  const result = run('git', ['rev-parse', '--short=12', 'HEAD'])
+  return result.status === 0 && result.out.trim() ? result.out.trim() : 'nogit'
+}
+
+export function timestampVersion(
+  baseVersion: string,
+  channel: 'dev' | 'worktree' = 'dev',
+  now = new Date(),
+  shortSha = gitShortSha()
+): string {
   const stamp = [
     now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
@@ -103,12 +127,15 @@ function timestampVersion(baseVersion: string): string {
     String(now.getMinutes()).padStart(2, '0'),
     String(now.getSeconds()).padStart(2, '0'),
   ].join('')
-  return `${baseVersion.split('-')[0]}-dev.${stamp}`
+  const base = baseVersion.split('-')[0]
+  return channel === 'worktree' ? `${base}-worktree.${stamp}.${shortSha}` : `${base}-dev.${stamp}`
 }
 
 function resolvePublishVersion(baseVersion: string, options: Options): string {
   const version =
-    options.version ?? process.env.HRC_PUBLISH_VERSION ?? timestampVersion(baseVersion)
+    options.version ??
+    process.env.HRC_PUBLISH_VERSION ??
+    timestampVersion(baseVersion, options.channel ?? 'dev')
   if (!isSemver(version)) {
     throw new Error(`Publish version must be valid semver: ${version}`)
   }
@@ -119,7 +146,7 @@ function resolvePublishVersion(baseVersion: string, options: Options): string {
 }
 
 function resolveTag(_version: string, options: Options): string {
-  return options.tag ?? 'latest'
+  return options.tag ?? (options.channel === 'worktree' ? 'worktree' : 'latest')
 }
 
 function run(cmd: string, args: string[], cwd = ROOT): { status: number; out: string } {
@@ -335,9 +362,8 @@ async function publishPackage(rel: string, options: Options): Promise<void> {
   }
 }
 
-const options = parseArgs(process.argv.slice(2))
-
 async function main() {
+  const options = parseArgs(process.argv.slice(2))
   const ping = run('npm', ['ping', '--registry', REGISTRY])
   if (ping.status !== 0) {
     throw new Error(`Verdaccio is not reachable at ${REGISTRY}: ${ping.out}`)
@@ -360,4 +386,6 @@ async function main() {
   }
 }
 
-await main()
+if (import.meta.main) {
+  await main()
+}

@@ -751,6 +751,7 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    this.headlessViewerStatus.dispose()
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
     this.harnessBrokerController?.shutdown?.()

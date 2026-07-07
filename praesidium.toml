@@ -2,6 +2,40 @@ schema = "praesidium.project/v1"
 slug = "hrc-runtime"
 
 [commands]
-# hrc-server is a daemon: verify must observe the LIVE installed surface, so the
-# install gate restarts it after build (T-05383; origin T-05375 false-block).
-install = "just install && hrc server restart --wait"
+# HRC consumes ASP packages from Verdaccio and publishes HRC packages for ACP
+# consumption. Full main-checkout `just install` keeps the ordinary ASP sync,
+# dev/latest publish, and hrc/hrcchat wrapper links. Linked-worktree installs
+# auto-detect Git worktree context, skip ASP sync and wrapper relinks by default,
+# and publish only isolated worktree-tagged artifacts.
+prep = "bun install --frozen-lockfile && bun run prepare"
+install = "just install"
+test = "just verify"
+
+[edges]
+publishes = [
+  "agent-action-render",
+  "hrc-core",
+  "hrc-sdk",
+  "hrc-frame-render",
+  "hrc-events",
+  "hrc-store-sqlite",
+  "hrc-server",
+]
+consumes = [
+  "agent-scope",
+  "cli-kit",
+  "spaces-config",
+  "spaces-runtime",
+  "spaces-execution",
+  "spaces-harness-broker-protocol",
+  "spaces-harness-broker-client",
+  "spaces-harness-broker",
+  "spaces-runtime-contracts",
+  "spaces-aspc-protocol",
+  "spaces-aspc",
+  "spaces-harness-claude",
+  "spaces-harness-codex",
+  "spaces-harness-pi",
+  "spaces-harness-pi-sdk",
+  "agent-spaces",
+]
