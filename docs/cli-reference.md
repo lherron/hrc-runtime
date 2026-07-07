@@ -89,7 +89,7 @@ hrc attach cody@agent-spaces
 hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 ```
 
-Shared notable flags (`run`/`start`): `--force-restart` (replace runtime with a fresh PTY), `--new-session` (`start` only — rotate to a fresh host session), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` additionally has `--no-attach`. `attach` takes `--dry-run` and `--json`.
+Shared notable flags (`run`/`start`): `--force-restart` (replace runtime with a fresh PTY), `--new-session` (`start` only — rotate to a fresh host session), `--dry-run` (local plan preview, no server calls), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
 
 A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); `hrc run` prints a session-summary block on detach and is not treated as an attach failure.
 

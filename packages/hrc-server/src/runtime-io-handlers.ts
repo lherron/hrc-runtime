@@ -18,8 +18,10 @@ import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
   isMatchingInteractiveTmuxBrokerRuntime,
+  normalizeClaudeInteractiveBrokerIntent,
   normalizeRuntimeProvisionIntent,
   runInteractiveTmuxRoute,
+  shouldRedirectClaudeToInteractiveBroker,
   shouldUseHeadlessTransport,
   toLatestRuntimeAdmissionView,
 } from './broker-decisions.js'
@@ -284,7 +286,10 @@ export async function startRuntimeForSession(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent,
   restartStyle: RestartStyle,
-  options: { attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined } = {}
+  options: {
+    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+    suppressHeadlessViewer?: boolean | undefined
+  } = {}
 ): Promise<HrcRuntimeSnapshot> {
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
@@ -296,8 +301,17 @@ export async function startRuntimeForSession(
     if (existingRuntime) {
       existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
     }
-    const normalizedIntent = normalizeRuntimeProvisionIntent(intent)
-    if (shouldUseHeadlessTransport(intent)) {
+    const startIntent =
+      this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(intent)
+        ? normalizeClaudeInteractiveBrokerIntent(intent)
+        : intent
+    const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
+    const viewerSpawnOptions = {
+      operatorAttachPending:
+        options.attachBeforeInvocationStart !== undefined ||
+        options.suppressHeadlessViewer === true,
+    }
+    if (shouldUseHeadlessTransport(startIntent)) {
       const now = timestamp()
       this.db.sessions.updateIntent(session.hostSessionId, normalizedIntent, now)
 
@@ -305,15 +319,15 @@ export async function startRuntimeForSession(
       // HarnessBrokerController (parent acceptance: "Codex headless sessions
       // start through HarnessBrokerController") — never exec.ts. SDK start
       // still hard-fails; legacy-exec still fails closed.
-      const headlessRoute = decideHeadlessExecutionRoute(intent, {
+      const headlessRoute = decideHeadlessExecutionRoute(startIntent, {
         brokerFlagEnabled: this.headlessCodexBrokerEnabled,
       })
       if (headlessRoute === 'broker') {
         const reusableBrokerRuntime = getReusableHeadlessRuntimeForSession(
           this.db,
           session.hostSessionId,
-          intent.harness.provider,
-          intent.harness.id
+          startIntent.harness.provider,
+          startIntent.harness.id
         )
         // Idempotent reuse ONLY for a real broker headless runtime that has a
         // continuation. A legacy (non-broker) or continuation-less runtime is
@@ -324,6 +338,7 @@ export async function startRuntimeForSession(
           !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
           (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
         ) {
+          await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime, viewerSpawnOptions)
           return reusableBrokerRuntime
         }
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
@@ -339,13 +354,14 @@ export async function startRuntimeForSession(
         // flips headless intents to interactive:true for tmux provisioning,
         // which would compile the broker plan in interactive mode.
         const startRunId = `run-${randomUUID()}`
-        const initialPrompt = intent.initialPrompt ?? ''
+        const initialPrompt = startIntent.initialPrompt ?? ''
         const brokerRuntime = await this.startHeadlessBrokerRuntime(
           session,
-          intent,
+          startIntent,
           initialPrompt,
           startRunId
         )
+        await this.spawnBrokerHeadlessViewer(brokerRuntime, viewerSpawnOptions)
         // Explicit start WITH an initial prompt: wait for the startup turn to
         // complete (continuation established) via broker events, as the old
         // exec.ts start did. With NO initial user turn there is no run to wait
@@ -360,8 +376,8 @@ export async function startRuntimeForSession(
       const reusableRuntime = getReusableHeadlessRuntimeForSession(
         this.db,
         session.hostSessionId,
-        intent.harness.provider,
-        intent.harness.id
+        startIntent.harness.provider,
+        startIntent.harness.id
       )
       if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
         return reusableRuntime
@@ -388,6 +404,7 @@ export async function startRuntimeForSession(
           interactiveBrokerOptions.allowedBrokerDriver
         )
       ) {
+        await this.spawnBrokerHeadlessViewer(existingRuntime, viewerSpawnOptions)
         return existingRuntime
       }
       if (existingRuntime && !isRuntimeUnavailableStatus(existingRuntime.status)) {
@@ -399,15 +416,21 @@ export async function startRuntimeForSession(
 
       // T-01757 (Wave C): the route is hardcoded 'broker', so the legacyTmux
       // closure was dead. Dropped — only the broker executor is reachable.
-      return await runInteractiveTmuxRoute('broker', {
+      const startRunId = `run-${randomUUID()}`
+      const runtime = await runInteractiveTmuxRoute('broker', {
         broker: async () =>
-          this.startInteractiveTmuxBrokerRuntime(session, normalizedIntent, `run-${randomUUID()}`, {
+          this.startInteractiveTmuxBrokerRuntime(session, normalizedIntent, startRunId, {
             ...interactiveBrokerOptions,
             ...(options.attachBeforeInvocationStart
               ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
               : {}),
           }),
       })
+      await this.spawnBrokerHeadlessViewer(runtime, viewerSpawnOptions)
+      if ((normalizedIntent.initialPrompt ?? '').length > 0) {
+        await this.waitForInteractiveBrokerRunCompletion(startRunId, runtime.runtimeId)
+      }
+      return runtime
     }
 
     // T-01757 (Wave C) reachability note: the headless branch above always
@@ -637,7 +660,14 @@ export async function attachRuntimeEffectfully(
       })
     }
 
-    const brokerRuntime = await this.startRuntimeForSession(session, interactiveIntent, 'reuse_pty')
+    const brokerRuntime = await this.startRuntimeForSession(
+      session,
+      interactiveIntent,
+      'reuse_pty',
+      {
+        suppressHeadlessViewer: true,
+      }
+    )
     return this.attachRuntime(requireKnownRuntime(this.db, brokerRuntime.runtimeId))
   })().finally(() => {
     this.runtimeAttachOperations.delete(refreshedRuntime.runtimeId)

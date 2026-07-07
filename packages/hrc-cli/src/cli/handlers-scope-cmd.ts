@@ -37,7 +37,7 @@ function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
     ? '\n  By default, rerunning the same scope reattaches to the existing\n  runtime and preserves the PTY/context. Use --force-restart to\n  replace the runtime with a fresh PTY.\n'
     : ''
   const noAttachOption = isRunLike
-    ? '  --no-attach          Start/ensure without attaching to the tmux session\n  --attach-only        Reattach to the existing runtime without starting one\n'
+    ? '  --attach-only        Reattach to the existing runtime without starting one\n'
     : ''
   const newSessionOption =
     command === 'start'
@@ -82,9 +82,14 @@ export async function cmdRun(
     return
   }
 
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    fatal(
+      'hrc run is interactive-only (no TTY detected). To provision a non-interactive agent runtime use: hrc start <scope> [-p <prompt>]'
+    )
+  }
+
   const scopeInput = requireArg(args, 0, '<scope>')
   const forceRestart = hasFlag(args, '--force-restart')
-  const noAttach = hasFlag(args, '--no-attach')
   const dryRun = hasFlag(args, '--dry-run')
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
@@ -95,7 +100,6 @@ export async function cmdRun(
     command: 'run',
     passthroughFlags: [
       '--force-restart',
-      '--no-attach',
       '--dry-run',
       '--debug',
       '--no-register',
@@ -126,8 +130,7 @@ export async function cmdRun(
     // Launch-timing instrumentation (diagnostic). `--dry-run` returns above before
     // any of this server round-trip work; these per-RPC durations localize where a
     // real launch spends its wall time. Gated behind HRC_LAUNCH_TIMING (or --debug)
-    // so normal interactive runs keep a clean terminal. Emitted to stderr so it
-    // never pollutes the --no-attach JSON on stdout.
+    // so normal interactive runs keep a clean terminal. Emitted to stderr.
     const launchTiming = debug || process.env['HRC_LAUNCH_TIMING'] === '1'
     const launchT0 = performance.now()
     const markLaunch = (phase: string, sinceMs: number): void => {
@@ -148,37 +151,6 @@ export async function cmdRun(
       throw new Error(`failed to create session for "${scopeInput}"`)
     }
     const hasPrompt = prompt !== undefined && prompt.length > 0
-
-    if (noAttach) {
-      const runtime = await (async () => {
-        if (!hasPrompt) {
-          const tRuntime = performance.now()
-          const started = await client.startRuntime({
-            hostSessionId: resolved.hostSessionId,
-            intent,
-            restartStyle,
-          })
-          markLaunch('startRuntime', tRuntime)
-          return started
-        }
-
-        const tDispatch = performance.now()
-        const dispatched = await client.dispatchTurn({
-          hostSessionId: resolved.hostSessionId,
-          prompt,
-          runtimeIntent: intent,
-        })
-        markLaunch('dispatchTurn', tDispatch)
-        return dispatched
-      })()
-      printJson({
-        sessionRef,
-        hostSessionId: runtime.hostSessionId,
-        created: resolved.created,
-        runtime,
-      })
-      return
-    }
 
     const tPrepare = performance.now()
     const prepared = await client.prepareAttachedRun({

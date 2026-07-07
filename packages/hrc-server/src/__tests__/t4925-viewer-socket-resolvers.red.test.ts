@@ -314,4 +314,31 @@ describe('spawnBrokerHeadlessViewer integration', () => {
     expect(attachCommand as string).toContain(BTMUX_SOCKET)
     expect(attachCommand as string).toContain(`${SESSION_NAME}:tui`)
   })
+
+  it('skips viewer spawn when an operator attach is already pending', async () => {
+    const runtime = makeViewerRuntime()
+    const ensureHeadlessViewerCalls: Array<Record<string, unknown>> = []
+
+    const mockThis = {
+      ghostmux: {
+        ensureHeadlessViewer: async (opts: Record<string, unknown>) => {
+          ensureHeadlessViewerCalls.push(opts)
+          return { status: 'created', surfaceId: 'surface-t05881-test' }
+        },
+      },
+      db: {
+        surfaceBindings: {
+          bind: (_opts: unknown) => {},
+        },
+      },
+    }
+
+    await spawnBrokerHeadlessViewer.call(
+      mockThis as Parameters<typeof spawnBrokerHeadlessViewer.call>[0],
+      runtime,
+      { operatorAttachPending: true }
+    )
+
+    expect(ensureHeadlessViewerCalls).toEqual([])
+  })
 })

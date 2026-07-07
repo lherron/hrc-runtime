@@ -81,7 +81,7 @@ function shouldUseSubprocess(args: string[]): boolean {
     case 'start':
       return false
     case 'run':
-      return !(args.includes('--no-attach') || args.includes('--dry-run'))
+      return !args.includes('--dry-run')
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
     case 'turn':
@@ -932,8 +932,16 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--force-restart')
-    expect(result.stdout).toContain('--no-attach')
+    expect(result.stdout).not.toContain('--no-attach')
+    expect(result.stdout).toContain('--attach-only')
     expect(result.stdout).toContain('--dry-run')
+  })
+
+  it('hrc run from a non-TTY fails before resolving or starting a runtime', async () => {
+    const result = await runCli(['run', 'rex@agent-spaces', '--dry-run'])
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('hrc run is interactive-only (no TTY detected)')
+    expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
   })
 
   it('hrc top --help exits 0 with Usage and project scope options', async () => {
@@ -2290,7 +2298,7 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.apiHealth).toEqual({ ok: false, error: 'daemon not running' })
     })
 
-    it('does not hang on a btmux socket that accepts but is not a tmux server', async () => {
+    it('does not probe btmux lease sockets during server status', async () => {
       const btmuxDir = join(runtimeRoot, 'btmux')
       await mkdir(btmuxDir, { recursive: true })
       const badLeaseSocket = join(btmuxDir, 'codex-app-server-renderer-control.test.sock')
@@ -2309,24 +2317,32 @@ describe('Phase 6 diagnostics CLI', () => {
         const result = await runCli(['server', 'status', '--json'], cliEnv())
         const elapsedMs = performance.now() - startedAt
 
-        expect(elapsedMs).toBeLessThan(3_000)
+        expect(elapsedMs).toBeLessThan(1_000)
         expect(result.exitCode).toBe(1)
         const body = JSON.parse(result.stdout.trim())
         expect(body.status).toBe('not-running')
-        const lease = body.tmux.leases.find(
-          (item: { socketPath: string }) => item.socketPath === badLeaseSocket
-        )
-        expect(lease).toMatchObject({
-          socketPath: badLeaseSocket,
-          running: false,
-          sessions: [],
-          error: expect.stringContaining('unresponsive'),
-        })
+        expect(body.tmux.leases).toEqual([])
+        expect(body.tmux.leaseDiagnostics).toEqual({ total: 0, probed: 0, skipped: 0 })
+        expect(acceptedSockets.size).toBe(0)
       } finally {
         for (const socket of acceptedSockets) socket.destroy()
         await new Promise<void>((resolve) => fakeLease.close(() => resolve()))
         await rm(badLeaseSocket, { force: true })
       }
+    })
+
+    it('caps explicit btmux lease diagnostics', async () => {
+      const btmuxDir = join(runtimeRoot, 'btmux')
+      await mkdir(btmuxDir, { recursive: true })
+      for (let i = 0; i < 70; i += 1) {
+        await writeFile(join(btmuxDir, `zz-stale-${String(i).padStart(3, '0')}.sock`), '')
+      }
+
+      const result = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
+      expect(result.exitCode).toBe(0)
+      const body = JSON.parse(result.stdout.trim())
+      expect(body.leaseDiagnostics).toEqual({ total: 70, probed: 64, skipped: 6 })
+      expect(body.leases).toHaveLength(64)
     })
 
     it('exits 2 for usage errors before probing daemon state', async () => {

@@ -178,6 +178,7 @@ export type { InteractiveRuntimeSelectionView } from './runtime-select.js'
 
 export {
   decideHeadlessExecutionRoute,
+  decideCodexAppServerPresentation,
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerContinuation,
   decideInteractiveTmuxBrokerStartRoute,
@@ -185,12 +186,14 @@ export {
   decideLegacyRuntimeStartupDisposition,
   filterBrokerDispatchEnvForLockedEnv,
   normalizeClaudeInteractiveBrokerIntent,
+  parseGhosttyViewerLingerSeconds,
   runHeadlessRoute,
   runInteractiveTmuxRoute,
   shouldBlockForBrokerTurnCompletion,
   shouldConsiderClaudeCodeTmuxBrokerDispatch,
   shouldDeferHeadlessToInteractiveBrokerReuse,
   shouldRedirectClaudeToInteractiveBroker,
+  shouldSpawnGhosttyViewer,
   shouldUseHeadlessSdkExecutor,
   shouldUseHeadlessTransport,
   shouldUseSdkTransport,
@@ -748,6 +751,7 @@ class HrcServerInstance implements HrcServer {
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
     this.turnResponseFinalizers.clear()
+    this.headlessViewerStatus.dispose()
     // Stop in-flight broker event consumers from projecting before the backing
     // DB closes underneath them (avoids closed-DB teardown crashes).
     this.harnessBrokerController?.shutdown?.()

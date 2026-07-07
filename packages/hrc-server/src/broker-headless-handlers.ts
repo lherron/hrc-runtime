@@ -20,7 +20,7 @@ import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
   decideCodexAppServerPresentation,
   filterBrokerDispatchEnvForLockedEnv,
-  isTruthyFeatureFlag,
+  shouldSpawnGhosttyViewer,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
@@ -38,7 +38,6 @@ import {
 } from './require-helpers.js'
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
-  HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -160,9 +159,7 @@ export async function startHeadlessBrokerRuntime(
     const operatorPresentation = decideCodexAppServerPresentation({
       operatorPresentation: process.env[HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV],
       brokerDriver: compiled.profile.brokerDriver,
-      killSwitchEnabled: isTruthyFeatureFlag(
-        process.env[HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV]
-      ),
+      ghosttyViewersEnabled: shouldSpawnGhosttyViewer(),
     })
     const result = await controller.start({
       plan: compiled.plan,

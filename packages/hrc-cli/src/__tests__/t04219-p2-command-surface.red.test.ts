@@ -160,11 +160,7 @@ function shouldUseSubprocess(args: string[]): boolean {
     case 'server':
       return true
     case 'run':
-      return !(
-        args.includes('--no-attach') ||
-        args.includes('--dry-run') ||
-        args.includes('--attach-only')
-      )
+      return !(args.includes('--dry-run') || args.includes('--attach-only'))
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
     case 'resume':
@@ -1000,10 +996,11 @@ describe('hrc start --new-session — §6 lifecycle (pin existing behavior)', ()
 describe('existing lifecycle preserved — §6 regression guards', () => {
   // ── no-server: --help ──
 
-  it('hrc run --help still contains --no-attach (unchanged)', async () => {
+  it('hrc run --help no longer contains --no-attach', async () => {
     const result = await runCli(['run', '--help'])
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--no-attach')
+    expect(result.stdout).not.toContain('--no-attach')
+    expect(result.stdout).toContain('--attach-only')
   })
 
   it('hrc run --help still contains --force-restart (unchanged)', async () => {
@@ -1038,16 +1035,17 @@ describe('existing lifecycle preserved — §6 regression guards', () => {
       expect(result.stdout).toContain('local plan preview')
     })
 
-    it('hrc run --no-attach rex@agent-spaces --dry-run still exits 0 (unchanged)', async () => {
+    it('hrc run rex@agent-spaces --dry-run fails in a non-TTY and points to start', async () => {
       const result = await runCli(
-        ['run', 'rex@agent-spaces', '--no-attach', '--dry-run'],
+        ['run', 'rex@agent-spaces', '--dry-run'],
         cliEnv({
           ASP_AGENTS_ROOT: agentsRoot,
           ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
         })
       )
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('local plan preview')
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toContain('hrc run is interactive-only (no TTY detected)')
+      expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
     })
 
     it('hrc attach rex@agent-spaces --dry-run still exits 0 (unchanged)', async () => {

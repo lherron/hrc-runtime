@@ -66,12 +66,12 @@ const NOW = '2026-06-18T10:00:00.000Z'
 
 /**
  * T-04921: pure route-decision function.
- * Inputs: { operatorPresentation?: 'tmux-tui' | 'none'; brokerDriver: string; killSwitchEnabled: boolean }
+ * Inputs: { operatorPresentation?: 'tmux-tui' | 'none'; brokerDriver: string; ghosttyViewersEnabled: boolean }
  * Output: 'tmux-tui' | 'none'
  *
  * HARD CONSTRAINT: trigger is the POLICY (operatorPresentation), NOT the driver
  * name alone. A codex-app-server profile with no policy → 'none'. A codex-app-server
- * profile with policy='tmux-tui' + no kill switch → 'tmux-tui'. A non-codex-app-server
+ * profile with policy='tmux-tui' + viewers enabled → 'tmux-tui'. A non-codex-app-server
  * driver with policy='tmux-tui' → 'none' (policy applicable only when driver can present).
  */
 const decideCodexAppServerPresentation = (
@@ -79,10 +79,22 @@ const decideCodexAppServerPresentation = (
     decideCodexAppServerPresentation?: (input: {
       operatorPresentation: string | undefined
       brokerDriver: string
-      killSwitchEnabled: boolean
+      ghosttyViewersEnabled: boolean
     }) => 'tmux-tui' | 'none'
+    shouldSpawnGhosttyViewer?: (value?: string | undefined) => boolean
+    parseGhosttyViewerLingerSeconds?: (value: string | undefined, defaultSeconds: number) => number
   }
 ).decideCodexAppServerPresentation
+const shouldSpawnGhosttyViewer = (
+  brokerDecisions as unknown as {
+    shouldSpawnGhosttyViewer?: (value?: string | undefined) => boolean
+  }
+).shouldSpawnGhosttyViewer
+const parseGhosttyViewerLingerSeconds = (
+  brokerDecisions as unknown as {
+    parseGhosttyViewerLingerSeconds?: (value: string | undefined, defaultSeconds: number) => number
+  }
+).parseGhosttyViewerLingerSeconds
 
 /**
  * T-04921: viewer substrate allocator factory.
@@ -359,7 +371,7 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'codex-app-server',
-      killSwitchEnabled: false,
+      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('tmux-tui')
   })
@@ -369,16 +381,16 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: undefined,
       brokerDriver: 'codex-app-server',
-      killSwitchEnabled: false,
+      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('none')
   })
 
-  it('kill switch enabled → "none" regardless of policy (RED)', () => {
+  it('viewer gate disabled → "none" regardless of policy (RED)', () => {
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'codex-app-server',
-      killSwitchEnabled: true,
+      ghosttyViewersEnabled: false,
     })
     expect(result).toBe('none')
   })
@@ -388,9 +400,27 @@ describe('T-04921 Test 1 — pure route decision: decideCodexAppServerPresentati
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: 'tmux-tui',
       brokerDriver: 'claude-code-tmux',
-      killSwitchEnabled: false,
+      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('none')
+  })
+
+  it('HRC_GHOSTTY_VIEWERS defaults on and honors falsy values (RED)', () => {
+    expect(typeof shouldSpawnGhosttyViewer).toBe('function')
+    expect(shouldSpawnGhosttyViewer!(undefined)).toBe(true)
+    expect(shouldSpawnGhosttyViewer!('0')).toBe(false)
+    expect(shouldSpawnGhosttyViewer!('false')).toBe(false)
+    expect(shouldSpawnGhosttyViewer!('off')).toBe(false)
+    expect(shouldSpawnGhosttyViewer!('1')).toBe(true)
+  })
+
+  it('parses HRC_GHOSTTY_VIEWER_LINGER_SECONDS with default fallback (RED)', () => {
+    expect(typeof parseGhosttyViewerLingerSeconds).toBe('function')
+    expect(parseGhosttyViewerLingerSeconds!(undefined, 300)).toBe(300)
+    expect(parseGhosttyViewerLingerSeconds!('', 300)).toBe(300)
+    expect(parseGhosttyViewerLingerSeconds!('0', 300)).toBe(0)
+    expect(parseGhosttyViewerLingerSeconds!('12.9', 300)).toBe(12)
+    expect(parseGhosttyViewerLingerSeconds!('-1', 300)).toBe(300)
   })
 
   it('profile/spec/startRequest hashes are UNCHANGED for viewer vs ordinary headless (RED via symbol)', () => {
@@ -577,7 +607,7 @@ describe('T-04921 Test 3 — negative: ordinary headless codex-app-server (RED)'
     const result = decideCodexAppServerPresentation!({
       operatorPresentation: undefined,
       brokerDriver: 'codex-app-server',
-      killSwitchEnabled: false,
+      ghosttyViewersEnabled: true,
     })
     expect(result).toBe('none')
   })

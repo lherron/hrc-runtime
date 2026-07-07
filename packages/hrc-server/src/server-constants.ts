@@ -36,9 +36,9 @@ export const HRC_BROKER_DURABLE_IPC_ENABLED_ENV = 'HRC_BROKER_DURABLE_IPC_ENABLE
 // an env policy source; the route decision still gates on driver applicability.
 export const HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV =
   'HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION'
-// T-04921 — kill switch for the codex-app-server headless-viewer route. Truthy
-// disables the viewer regardless of the presentation policy.
-export const HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH_ENV = 'HRC_CODEX_APP_SERVER_VIEWER_KILL_SWITCH'
+export const HRC_GHOSTTY_VIEWERS_ENV = 'HRC_GHOSTTY_VIEWERS'
+export const HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV = 'HRC_GHOSTTY_VIEWER_LINGER_SECONDS'
+export const DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS = 300
 
 export const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
 export const DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES = 15

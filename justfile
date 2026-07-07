@@ -63,14 +63,40 @@ rebuild:
     bun run rebuild
 
 # Install dependencies
-install:
+# Pass no-sync=1 to skip ASP sync. Linked Git worktrees auto-disable ASP sync
+# and wrapper linking unless force-sync=1 and/or force-link=1 is passed explicitly.
+# Linked worktrees publish HRC packages to the isolated worktree tag/channel.
+install no-sync="" force-sync="" force-link="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(bun scripts/install-policy.ts shell --no-sync="{{ no-sync }}" --force-sync="{{ force-sync }}" --force-link="{{ force-link }}")"
+    echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
     bun run clean
     rm -rf node_modules packages/*/node_modules
-    bun run sync:asp
+    if [ "$PRAESIDIUM_INSTALL_SYNC_MODE" != "off" ]; then
+      if [ "$PRAESIDIUM_INSTALL_SYNC_MODE" = "forced" ]; then
+        echo "[install] WARNING: force-sync enabled from ${PRAESIDIUM_INSTALL_CONTEXT}; running ASP sync from this worktree"
+      fi
+      bun run sync:asp
+    else
+      echo "[install] skipping ASP sync (${PRAESIDIUM_INSTALL_CONTEXT}, sync=${PRAESIDIUM_INSTALL_SYNC_MODE})"
+      bun install --frozen-lockfile
+    fi
     bun run build
-    just publish-dev
-    cd packages/hrc-cli && bun link
-    cd packages/hrcchat-cli && bun link
+    if [ "$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" = "worktree" ]; then
+      just publish-worktree
+    else
+      just publish-dev
+    fi
+    if [ "$PRAESIDIUM_INSTALL_LINK_MODE" != "off" ]; then
+      if [ "$PRAESIDIUM_INSTALL_LINK_MODE" = "forced" ]; then
+        echo "[install] WARNING: force-link enabled from ${PRAESIDIUM_INSTALL_CONTEXT}; updating local HRC wrappers"
+      fi
+      ( cd packages/hrc-cli && bun link )
+      ( cd packages/hrcchat-cli && bun link )
+    else
+      echo "[install] skipping bun link; linked worktree installs must not update local HRC wrappers"
+    fi
 
 # Publish timestamped dev package set to local Verdaccio
 publish-dev:
@@ -79,6 +105,14 @@ publish-dev:
 # Validate timestamped dev package set without publishing
 publish-dev-dry-run:
     bun scripts/publish-local-verdaccio.ts --dry-run
+
+# Publish isolated linked-worktree package set to local Verdaccio
+publish-worktree:
+    bun scripts/publish-local-verdaccio.ts --channel worktree
+
+# Validate isolated linked-worktree package set without publishing
+publish-worktree-dry-run:
+    bun scripts/publish-local-verdaccio.ts --channel worktree --dry-run
 
 # Publish exact semver package set to local Verdaccio
 publish-semver version tag="latest" force="":
