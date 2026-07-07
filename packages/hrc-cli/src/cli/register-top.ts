@@ -80,7 +80,6 @@ export function registerTopLevelCommands(program: Command): void {
     .allowExcessArguments(true)
     .allowUnknownOption(true)
     .option('--force-restart', 'replace existing runtime with a fresh PTY')
-    .option('--no-attach', 'start/ensure without attaching to the tmux session')
     .option(
       '--attach-only',
       'reattach to the existing runtime without starting one (like `hrc attach`)'
@@ -126,7 +125,7 @@ export function registerTopLevelCommands(program: Command): void {
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
         booleans: ['force-restart', 'attach-only', 'dry-run', 'debug', 'json'],
-        negatedBooleans: ['attach', 'register'],
+        negatedBooleans: ['register'],
       })
       await cmdRun(args)
     })

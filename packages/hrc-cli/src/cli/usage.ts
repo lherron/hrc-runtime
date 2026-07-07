@@ -102,7 +102,7 @@ COMMON CONTROL FLOWS
     hrc run --attach-only cody@agent-spaces   (or: hrc attach cody@agent-spaces)
 
   Start detached without attaching:
-    hrc start cody@agent-spaces               (or: hrc run --no-attach …)
+    hrc start cody@agent-spaces
 
   Send a turn to an agent (alias for hrcchat turn):
     hrc turn <target> "Continue."
@@ -210,7 +210,7 @@ Commands:
   runtime adopt <runtimeId>           Adopt a dead/stale runtime
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
-  run <scope> [prompt] [--force-restart] [--no-attach] [--dry-run]
+  run <scope> [prompt] [--force-restart] [--attach-only] [--dry-run]
   top [--project <id>] [--all-projects] [--pi]  Open the HRC session navigator
   run sweep-zombies [--older-than <duration>] [--dry-run|--yes] [--json]
   run reconcile-active [--older-than <duration>] [--dry-run|--yes] [--json]

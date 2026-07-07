@@ -655,15 +655,6 @@ export async function dispatchTurnForSession(
     this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
       : inputIntent
-  // Capture whether this is a headless/non-interactive claude coerced into the
-  // interactive broker BEFORE normalization rewrites preferredMode to
-  // 'interactive'. Such a runtime has no operator terminal of its own, so on a
-  // fresh broker-start we pop a best-effort ghostmux viewer attached to its TUI.
-  const isHeadlessClaudeRedirect =
-    this.claudeCodeTmuxBrokerEnabled &&
-    shouldRedirectClaudeToInteractiveBroker(inputIntent) &&
-    (inputIntent.execution?.preferredMode === 'headless' ||
-      inputIntent.execution?.preferredMode === 'nonInteractive')
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
   // T-01873: route the durable-tmux liveness gate through the runtime-hosting
   // choke point. hasLeasedBrokerSubstrate replaces the `transport==='tmux' &&
@@ -843,7 +834,6 @@ export async function dispatchTurnForSession(
           ...(options.attachBeforeInvocationStart
             ? { attachBeforeInvocationStart: options.attachBeforeInvocationStart }
             : {}),
-          spawnHeadlessViewer: isHeadlessClaudeRedirect,
           waitForCompletion:
             admission.allowedBrokerDriver === 'codex-cli-tmux' ||
             admission.allowedBrokerDriver === 'pi-tui-tmux'

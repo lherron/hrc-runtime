@@ -15,6 +15,7 @@ import {
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CLAUDE_GHOSTTY_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
+  HRC_GHOSTTY_VIEWERS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import { isRecord } from './server-parsers.js'
@@ -184,19 +185,39 @@ export type OperatorPresentation = 'tmux-tui' | 'none'
 export function decideCodexAppServerPresentation(input: {
   operatorPresentation: string | undefined
   brokerDriver: string
-  killSwitchEnabled: boolean
+  ghosttyViewersEnabled: boolean
 }): OperatorPresentation {
   // Applicability gate: only the codex-app-server driver can host a viewer. A
   // policy aimed at any other driver is inert (the policy is not APPLICABLE).
   if (input.brokerDriver !== 'codex-app-server') {
     return 'none'
   }
-  // Kill switch wins over any policy.
-  if (input.killSwitchEnabled) {
+  // The global viewer gate wins over any policy.
+  if (!input.ghosttyViewersEnabled) {
     return 'none'
   }
   // The policy is the trigger: only an explicit `tmux-tui` selects the viewer.
   return input.operatorPresentation === 'tmux-tui' ? 'tmux-tui' : 'none'
+}
+
+export function shouldSpawnGhosttyViewer(
+  value: string | undefined = process.env[HRC_GHOSTTY_VIEWERS_ENV]
+): boolean {
+  return !isFalsyFeatureFlag(value)
+}
+
+export function parseGhosttyViewerLingerSeconds(
+  value: string | undefined,
+  defaultSeconds: number
+): number {
+  if (value === undefined || value.trim().length === 0) {
+    return defaultSeconds
+  }
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return defaultSeconds
+  }
+  return Math.floor(parsed)
 }
 
 export type InteractiveTmuxBrokerDriver = 'claude-code-tmux' | 'codex-cli-tmux' | 'pi-tui-tmux'

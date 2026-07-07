@@ -10,6 +10,8 @@ import {
   getBrokerRuntimeTmuxAttachTarget,
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
+  parseGhosttyViewerLingerSeconds,
+  shouldSpawnGhosttyViewer,
 } from '../broker-decisions.js'
 import { type BrokerTmuxAllocator, HarnessBrokerController } from '../broker/controller.js'
 import { BrokerEventMapper } from '../broker/event-mapper.js'
@@ -17,6 +19,10 @@ import { canOperatorAttach, hasLeasedBrokerSubstrate } from '../broker/runtime-h
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { renderStatusBar, viewerTerminalBg } from '../headless-viewer-status.js'
 import { resolveBrokerDurableIpcEnabled } from '../option-resolvers.js'
+import {
+  DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS,
+  HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV,
+} from '../server-constants.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
@@ -222,6 +228,13 @@ export async function spawnBrokerHeadlessViewer(
   runtime: HrcRuntimeSnapshot
 ): Promise<void> {
   try {
+    if (!shouldSpawnGhosttyViewer()) {
+      writeServerLog('INFO', 'broker_headless_viewer.skipped_disabled', {
+        runtimeId: runtime.runtimeId,
+        scopeRef: runtime.scopeRef,
+      })
+      return
+    }
     const socketPath = getBrokerRuntimeTmuxSocketPath(runtime)
     if (!socketPath) {
       writeServerLog('INFO', 'broker_headless_viewer.skipped_no_socket', {
@@ -248,11 +261,13 @@ export async function spawnBrokerHeadlessViewer(
     // shell errors and the window closes (today's behaviour) — graceful fallback.
     // `session-report` is best-effort and always reaches the keypress gate, so a
     // missing/slow summary never closes the window early or hangs it silently.
-    // `--wait-timeout 30` bounds the post-/quit keypress hold (T-05237, C3): a
-    // consolidated viewer pane self-closes after a 30s grace so it cannot keep a
-    // pty alive indefinitely. The runtime-fenced reaper (C4) also kills it on
-    // termination — belt and suspenders.
-    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout 30; exit`
+    // The linger timeout bounds the post-/quit keypress hold. Termination also
+    // honors the same value before force-reaping the pane; set 0 for instant close.
+    const lingerSeconds = parseGhosttyViewerLingerSeconds(
+      process.env[HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV],
+      DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS
+    )
+    const attachCommand = `tmux -S ${socketPath} attach-session -t ${attachTarget}; hrc session-report --runtime ${runtime.runtimeId} --scope '${runtime.scopeRef}' --wait-key --wait-timeout ${lingerSeconds}; exit`
     // Best-effort wrkq task-slug enrichment for the status-bar center field
     // (T-04977). Cosmetic only: a missing/slow/broken wrkq read resolves to null
     // and must never delay or fail viewer creation or dispatch.

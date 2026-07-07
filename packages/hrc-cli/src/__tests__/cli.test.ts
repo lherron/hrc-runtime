@@ -81,7 +81,7 @@ function shouldUseSubprocess(args: string[]): boolean {
     case 'start':
       return false
     case 'run':
-      return !(args.includes('--no-attach') || args.includes('--dry-run'))
+      return !args.includes('--dry-run')
     case 'attach':
       return !(args.includes('--dry-run') || args[1]?.startsWith('rt-'))
     case 'turn':
@@ -932,8 +932,16 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--force-restart')
-    expect(result.stdout).toContain('--no-attach')
+    expect(result.stdout).not.toContain('--no-attach')
+    expect(result.stdout).toContain('--attach-only')
     expect(result.stdout).toContain('--dry-run')
+  })
+
+  it('hrc run from a non-TTY fails before resolving or starting a runtime', async () => {
+    const result = await runCli(['run', 'rex@agent-spaces', '--dry-run'])
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toContain('hrc run is interactive-only (no TTY detected)')
+    expect(result.stderr).toContain('hrc start <scope> [-p <prompt>]')
   })
 
   it('hrc top --help exits 0 with Usage and project scope options', async () => {

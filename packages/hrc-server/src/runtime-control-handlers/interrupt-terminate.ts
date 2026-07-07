@@ -9,6 +9,7 @@ import {
 import {
   getBrokerRuntimeTmuxSessionName,
   getBrokerRuntimeTmuxSocketPath,
+  parseGhosttyViewerLingerSeconds,
 } from '../broker-decisions.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
@@ -19,6 +20,10 @@ import {
   requireSession,
   requireTmuxPane,
 } from '../require-helpers.js'
+import {
+  DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS,
+  HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV,
+} from '../server-constants.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
@@ -484,11 +489,52 @@ async function reapHeadlessViewerPane(
       .findByRuntime(runtime.runtimeId)
       .find((record) => record.surfaceKind === HEADLESS_VIEWER_SURFACE_KIND)
     if (!binding) return
-    const result = await this.ghostmux.reapHeadlessAgentPane(binding.surfaceId, runtime.runtimeId)
+    const lingerSeconds = parseGhosttyViewerLingerSeconds(
+      process.env[HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV],
+      DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS
+    )
+    if (lingerSeconds > 0) {
+      writeServerLog('INFO', 'headless_viewer_reap.linger_scheduled', {
+        runtimeId: runtime.runtimeId,
+        scopeRef: runtime.scopeRef,
+        surfaceId: binding.surfaceId,
+        lingerSeconds,
+      })
+      const timer = setTimeout(() => {
+        void reapHeadlessViewerSurface.call(this, runtime, binding.surfaceId, timestamp())
+      }, lingerSeconds * 1000)
+      if (
+        typeof timer === 'object' &&
+        timer !== null &&
+        'unref' in timer &&
+        typeof timer.unref === 'function'
+      ) {
+        timer.unref()
+      }
+      return
+    }
+    await reapHeadlessViewerSurface.call(this, runtime, binding.surfaceId, now)
+  } catch (error) {
+    writeServerLog('WARN', 'headless_viewer_reap.unexpected_error', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function reapHeadlessViewerSurface(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  surfaceId: string,
+  now: string
+): Promise<void> {
+  try {
+    const result = await this.ghostmux.reapHeadlessAgentPane(surfaceId, runtime.runtimeId)
     if (result.status === 'reaped') {
       this.db.surfaceBindings.unbind(
         HEADLESS_VIEWER_SURFACE_KIND,
-        binding.surfaceId,
+        surfaceId,
         now,
         'runtime_terminated'
       )
@@ -496,7 +542,7 @@ async function reapHeadlessViewerPane(
     writeServerLog('INFO', `headless_viewer_reap.${result.status}`, {
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
-      surfaceId: binding.surfaceId,
+      surfaceId,
       ...(result.status === 'reaped' ? { tabCollapsed: result.tabCollapsed } : {}),
       ...(result.status === 'skipped' ? { reason: result.reason } : {}),
       ...(result.status === 'failed' ? { error: result.error } : {}),

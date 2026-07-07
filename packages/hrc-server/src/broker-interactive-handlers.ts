@@ -403,7 +403,6 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     waitForCompletion?: boolean | undefined
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
-    spawnHeadlessViewer?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
@@ -418,15 +417,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     responseFormat: flagOptions.responseFormat,
   })
 
-  // A headless claude turn is coerced into this interactive broker runtime
-  // (normalizeClaudeInteractiveBrokerIntent) and otherwise runs in a detached
-  // tmux session nobody is watching. Pop a best-effort ghostmux viewer window
-  // attached to its TUI so the run is observable. Claude-only, deduped per scope,
-  // and fully non-blocking — a ghostmux failure must not break the turn.
-  if (
-    flagOptions.spawnHeadlessViewer === true &&
-    flagOptions.allowedBrokerDriver === 'claude-code-tmux'
-  ) {
+  // Claude broker dispatch through non-attached surfaces (hrcchat, agent-loop)
+  // starts a tmux TUI with no operator terminal watching it. Pop a best-effort
+  // viewer; spawnBrokerHeadlessViewer owns the global policy gate and dedupe.
+  if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
     await this.spawnBrokerHeadlessViewer(runtime)
   }
 
