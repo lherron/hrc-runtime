@@ -57,6 +57,7 @@ describe('runSdkTurn agent tool env', () => {
       launch: {
         env: {
           CUSTOM_SDK_ENV: 'from-launch',
+          WRKQ_CAUSATION_REF: 'jrun_hook_turn',
         },
         pathPrepend: ['/custom/bin'],
       },
@@ -112,6 +113,7 @@ describe('runSdkTurn agent tool env', () => {
       ASP_HANDLE: 'sparky@agent-spaces:tool-env-test',
       HRC_SESSION_REF: 'agent:sparky:project:agent-spaces:task:tool-env-test/lane:main',
       CUSTOM_SDK_ENV: 'from-launch',
+      WRKQ_CAUSATION_REF: 'jrun_hook_turn',
     })
     expect(captured.lockedEnv?.['PATH']?.split(delimiter).slice(0, 2)).toEqual([
       toolsBinDir,

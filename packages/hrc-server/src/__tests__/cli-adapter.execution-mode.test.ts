@@ -186,6 +186,25 @@ describe('buildCliInvocation execution mode mapping', () => {
     expect(result.env.REMOVE_ME).toBeUndefined()
   })
 
+  it('does not persist turn-scoped wrkq causation env into interactive CLI sessions', async () => {
+    const result = await buildCliInvocation(
+      makeIntent({
+        launch: {
+          env: {
+            WRKQ_CAUSATION_REF: 'jrun_hook_turn',
+            OTHER_TURN_ENV: 'preserved',
+          },
+        },
+      }),
+      {
+        specBuilder: async () => makeResponse(),
+      }
+    )
+
+    expect(result.env.WRKQ_CAUSATION_REF).toBeUndefined()
+    expect(result.env.OTHER_TURN_ENV).toBe('preserved')
+  })
+
   it('omits HRC_TASK_* env vars when taskContext is absent', async () => {
     const result = await buildCliInvocation(makeIntent(), {
       specBuilder: async () => makeResponse(),

@@ -109,6 +109,37 @@ describe('server-parsers runtime intent harness resolution', () => {
     }
   })
 
+  it('parseDispatchTurnRequest preserves turn-scoped launch env on runtimeIntent', () => {
+    const { agentRoot, cleanup } = withAgentProfile('claude-code')
+    try {
+      const parsed = parseDispatchTurnRequest({
+        hostSessionId: 'hsid-test',
+        prompt: 'ship it',
+        runtimeIntent: {
+          placement: {
+            agentRoot,
+            projectRoot: '/tmp/project',
+            cwd: '/tmp/project',
+            runMode: 'task',
+            bundle: { kind: 'agent-project', agentName: 'animata', projectRoot: '/tmp/project' },
+          },
+          execution: {
+            preferredMode: 'nonInteractive',
+          },
+          launch: {
+            env: {
+              WRKQ_CAUSATION_REF: 'jrun_event_parent',
+            },
+          },
+        },
+      })
+
+      expect(parsed.runtimeIntent?.launch?.env?.WRKQ_CAUSATION_REF).toBe('jrun_event_parent')
+    } finally {
+      cleanup()
+    }
+  })
+
   it('parseDispatchTurnRequest preserves waitForCompletion for detached dispatch', () => {
     const parsed = parseDispatchTurnRequest({
       hostSessionId: 'hsid-test',
