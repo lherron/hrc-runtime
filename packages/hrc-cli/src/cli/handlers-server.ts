@@ -296,6 +296,7 @@ export async function cmdSessionList(args: string[]): Promise<void> {
       now: new Date(),
       color: process.stdout.isTTY === true,
       all: hasFlag(args, '--all'),
+      dormant: hasFlag(args, '--dormant'),
       gens: hasFlag(args, '--gens'),
       groupBy: hasFlag(args, '--by-project') ? 'project' : 'agent',
       ...(since ? { sinceMs: parseSinceMs(since) } : {}),

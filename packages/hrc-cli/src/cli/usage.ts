@@ -186,7 +186,7 @@ Commands:
   server tmux status [--json]         Show HRC tmux socket/session state
   server tmux kill --yes              Kill the HRC tmux server and unclaimed broker-tmux leases
   session resolve --scope <ref> [--lane <ref>] [--create]  Resolve a session; create only with --create
-  session list [--scope <ref>] [--lane <ref>]   List sessions
+  session list [--scope <ref>] [--lane <ref>] [--dormant]  List sessions
   session get <hostSessionId>         Get a session by host session ID
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
