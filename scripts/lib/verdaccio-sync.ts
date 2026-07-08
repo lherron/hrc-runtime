@@ -228,7 +228,7 @@ async function installedVersion(name: string): Promise<string | undefined> {
 async function installedAreLatest(latest: Map<string, string>): Promise<boolean> {
   for (const [name, version] of latest) {
     const installed = await installedVersion(name)
-    if (installed === undefined) continue
+    if (installed === undefined) return false
     if (installed !== version) return false
   }
   return true
@@ -238,7 +238,10 @@ async function verifyInstalled(latest: Map<string, string>, label: string): Prom
   const stale: string[] = []
   for (const [name, version] of latest) {
     const installed = await installedVersion(name)
-    if (installed === undefined) continue
+    if (installed === undefined) {
+      stale.push(`${name}: missing from node_modules, latest ${version}`)
+      continue
+    }
     if (installed !== version) stale.push(`${name}: installed ${installed}, latest ${version}`)
   }
   if (stale.length > 0) {
