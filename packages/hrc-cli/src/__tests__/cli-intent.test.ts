@@ -8,7 +8,7 @@
  * harness specificity.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -25,6 +25,7 @@ describe('harnessStringToHarnessId', () => {
 
   it('maps "claude" profile harness to HrcHarness "claude-code"', () => {
     expect(harnessStringToHarnessId('claude')).toBe('claude-code')
+    expect(harnessStringToHarnessId('claude-code')).toBe('claude-code')
   })
 
   it('returns undefined for unknown / undefined harness names', () => {
@@ -86,10 +87,56 @@ describe('resolveAgentHarness', () => {
     expect(harnessStringToHarnessId(result.harness)).toBe('codex-cli')
   })
 
+  it('reads harness=claude-code from agent-profile.toml', async () => {
+    const agentRoot = join(tmp, 'claude-agent')
+    await mkdir(agentRoot, { recursive: true })
+    await writeFile(
+      join(agentRoot, 'agent-profile.toml'),
+      [
+        'schemaVersion = 2',
+        'priming_prompt = "test"',
+        '',
+        '[identity]',
+        'display = "Claude"',
+        'role = "coder"',
+        'harness = "claude-code"',
+      ].join('\n')
+    )
+
+    const result = resolveAgentHarness(agentRoot, 'claude-agent')
+    expect(result.provider).toBe('anthropic')
+    expect(result.harness).toBe('claude-code')
+    expect(harnessStringToHarnessId(result.harness)).toBe('claude-code')
+  })
+
   it('falls back gracefully when no profile exists', () => {
     const result = resolveAgentHarness(join(tmp, 'no-profile'), 'missing')
     expect(result.provider).toBe('anthropic')
     expect(result.harness).toBeUndefined()
     expect(harnessStringToHarnessId(result.harness)).toBeUndefined()
+  })
+})
+
+describe('hrc-cli resolve intent single authority', () => {
+  it('delegates profile/target harness resolution to hrc-sdk instead of owning parser and overlay logic', async () => {
+    const scopeSource = await readFile(join(import.meta.dir, '..', 'cli', 'scope.ts'), 'utf8')
+
+    // T-05127: hrc-cli keeps the positional API, but hrc-sdk owns profile parsing,
+    // project-target overlay, and provider normalization for harness resolution.
+    expect(scopeSource).toContain("from 'hrc-sdk'")
+    expect(scopeSource).toContain('resolveAgentHarness as resolveSdkAgentHarness')
+    expect(scopeSource).toContain('harnessFrontendToHrcHarness')
+
+    for (const duplicateAuthority of [
+      'parseAgentProfile',
+      'parseTargetsToml',
+      'mergeAgentWithProjectTarget',
+      'resolveAgentPrimingPrompt',
+      'resolveHarnessProvider',
+      'function loadProjectTarget',
+      'function resolveProviderForHarness',
+    ]) {
+      expect(scopeSource).not.toContain(duplicateAuthority)
+    }
   })
 })
