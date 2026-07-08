@@ -21,7 +21,7 @@ function receive(
 }
 
 function compileConsumer(source: string): string[] {
-  const rootName = `${process.cwd()}/packages/hrc-frame-render/src/tests/render-callback-contract-consumer.ts`
+  const rootName = `${import.meta.dir}/render-callback-contract-consumer.ts`
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -98,9 +98,7 @@ describe('SessionEventsManager render callback public contract', () => {
   })
 
   test('documents OnRenderCallback as deprecated in favor of RenderFrameCallback', async () => {
-    const source = await Bun.file(
-      `${process.cwd()}/packages/hrc-frame-render/src/session-events-manager.ts`
-    ).text()
+    const source = await Bun.file(`${import.meta.dir}/../session-events-manager.ts`).text()
 
     const deprecatedLegacyType = source.match(
       /\/\*\*[\s\S]*@deprecated[\s\S]*RenderFrameCallback[\s\S]*\*\/\s*export type OnRenderCallback/
