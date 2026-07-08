@@ -14,6 +14,7 @@ import {
   formatTmuxStatus,
   launchctlKickstart,
   listInFlightWork,
+  resolveOtelPreferredPortFromEnv,
   resolveServerMode,
   resolveServerPaths,
   stopServerProcess,
@@ -211,6 +212,7 @@ async function serverForeground(): Promise<void> {
     spoolDir: paths.spoolDir,
     dbPath: paths.dbPath,
     tmuxSocketPath: paths.tmuxSocketPath,
+    otelPreferredPort: resolveOtelPreferredPortFromEnv(),
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
   })
 

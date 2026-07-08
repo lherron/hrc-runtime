@@ -42,6 +42,16 @@ const getBrokerIpcSocketPath = (
   }
 ).getBrokerIpcSocketPath
 
+const getBrokerTmuxSocketPath = (
+  tmuxSocket as unknown as {
+    getBrokerTmuxSocketPath?: (
+      options: HrcServerOptionsLike,
+      brokerDriver: string,
+      runtimeId: string
+    ) => string
+  }
+).getBrokerTmuxSocketPath
+
 const preflightBrokerIpcSocketPath = (
   tmuxSocket as unknown as {
     preflightBrokerIpcSocketPath?: (socketPath: string) => void
@@ -49,6 +59,26 @@ const preflightBrokerIpcSocketPath = (
 ).preflightBrokerIpcSocketPath
 
 describe('T-01812 Phase 3 — broker Unix IPC socket-path preflight', () => {
+  it('allocates dev broker IPC and btmux sockets under the dev runtime root', () => {
+    expect(typeof getBrokerIpcSocketPath).toBe('function')
+    expect(typeof getBrokerTmuxSocketPath).toBe('function')
+    const runtimeRoot = '/Users/lherron/praesidium/var/run/hrc-dev'
+    const ipcSocketPath = getBrokerIpcSocketPath!(
+      { runtimeRoot },
+      'codex-app-server',
+      'runtime_05961'
+    )
+    const btmuxSocketPath = getBrokerTmuxSocketPath!(
+      { runtimeRoot },
+      'codex-app-server',
+      'runtime_05961'
+    )
+
+    expect(ipcSocketPath.startsWith(`${runtimeRoot}/bipc/`)).toBe(true)
+    expect(ipcSocketPath.endsWith('/b.sock')).toBe(true)
+    expect(btmuxSocketPath).toBe(`${runtimeRoot}/btmux/codex-app-se-runtime_05961.sock`)
+  })
+
   it('allocates a SHORT hashed b.sock path that fits the sockaddr_un budget (RED)', () => {
     expect(typeof getBrokerIpcSocketPath).toBe('function')
     const socketPath = getBrokerIpcSocketPath!(

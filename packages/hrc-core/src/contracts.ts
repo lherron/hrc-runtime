@@ -659,6 +659,8 @@ export type HrcCapabilityStatus = {
   ok: true
   uptime: number
   startedAt: string
+  runtimeRoot: string
+  stateRoot: string
   socketPath: string
   dbPath: string
   sessionCount: number

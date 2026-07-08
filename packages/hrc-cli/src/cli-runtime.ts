@@ -35,6 +35,8 @@ export type ServerRuntimeStatus = {
   status: 'healthy' | 'not-running' | 'degraded' | 'probe-failed'
   exitCode: 0 | 1 | 2 | 3
   running: boolean
+  runtimeRoot: string
+  stateRoot: string
   pid?: number | undefined
   pidAlive: boolean
   pidPath: string
@@ -56,7 +58,16 @@ export type ServerRuntimeStatus = {
   tmuxSocketPath: string
   apiHealth: { ok: true } | { ok: false; error: string }
   api?:
-    | Pick<HrcStatusResponse, 'startedAt' | 'uptime' | 'apiVersion' | 'socketPath' | 'dbPath'>
+    | Pick<
+        HrcStatusResponse,
+        | 'startedAt'
+        | 'uptime'
+        | 'apiVersion'
+        | 'runtimeRoot'
+        | 'stateRoot'
+        | 'socketPath'
+        | 'dbPath'
+      >
     | undefined
   tmux: TmuxStatus
   serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
@@ -321,6 +332,35 @@ export async function execProcess(
 }
 
 const DEFAULT_LAUNCHD_LABEL = 'com.praesidium.hrc-server'
+const HRC_OTLP_PREFERRED_PORT_ENV = 'HRC_OTLP_PREFERRED_PORT'
+const HRC_OTEL_PREFERRED_PORT_ENV = 'HRC_OTEL_PREFERRED_PORT'
+
+type EnvMap = Record<string, string | undefined>
+
+function readOptionalEnv(env: EnvMap, name: string): string | undefined {
+  const value = env[name]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+export function resolveOtelPreferredPortFromEnv(env: EnvMap = process.env): number | undefined {
+  const raw =
+    readOptionalEnv(env, HRC_OTLP_PREFERRED_PORT_ENV) ??
+    readOptionalEnv(env, HRC_OTEL_PREFERRED_PORT_ENV)
+  if (raw === undefined) return undefined
+
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(
+      `${HRC_OTLP_PREFERRED_PORT_ENV} must be an integer port, got ${JSON.stringify(raw)}`
+    )
+  }
+  const port = Number.parseInt(raw, 10)
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`${HRC_OTLP_PREFERRED_PORT_ENV} must be between 0 and 65535, got ${raw}`)
+  }
+  return port
+}
 
 export type LaunchdOwner = {
   label: string
@@ -395,6 +435,8 @@ export async function collectServerRuntimeStatus(
           startedAt: status.startedAt,
           uptime: status.uptime,
           apiVersion: status.apiVersion,
+          runtimeRoot: status.runtimeRoot,
+          stateRoot: status.stateRoot,
           socketPath: status.socketPath,
           dbPath: status.dbPath,
         }
@@ -419,6 +461,8 @@ export async function collectServerRuntimeStatus(
       status,
       exitCode,
       running,
+      runtimeRoot: paths.runtimeRoot,
+      stateRoot: paths.stateRoot,
       ...(pid !== undefined ? { pid } : {}),
       pidAlive,
       pidPath: paths.pidPath,
@@ -455,6 +499,8 @@ export async function collectServerRuntimeStatus(
       status: 'probe-failed',
       exitCode: 3,
       running: false,
+      runtimeRoot: paths?.runtimeRoot ?? '',
+      stateRoot: paths?.stateRoot ?? '',
       pidAlive: false,
       pidPath: paths?.pidPath ?? '',
       daemon: {
@@ -505,6 +551,8 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     `  pid:          ${status.pid ?? '(none)'}`,
     `  pid alive:    ${status.pidAlive ? 'yes' : 'no'}`,
     `  pid file:     ${status.pidPath}`,
+    `  runtime root: ${status.runtimeRoot}`,
+    `  state root:   ${status.stateRoot}`,
     `  socket:       ${status.socketPath}${status.socketResponsive ? ' (responsive)' : ' (down)'}`,
     `  api health:   ${status.apiHealth.ok ? 'ok' : `failed (${status.apiHealth.error})`}`,
     `  lock:         ${status.lockPath}${status.lockExists ? ' (present)' : ' (missing)'}`,

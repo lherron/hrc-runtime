@@ -181,6 +181,15 @@ describe('resolveStateRoot (T-00949)', () => {
 // ===================================================================
 
 describe('Derived paths from runtimeRoot (T-00949)', () => {
+  test('dev runtime root keeps all runtime-owned paths under hrc-dev', () => {
+    process.env.HRC_RUNTIME_DIR = '/Users/lherron/praesidium/var/run/hrc-dev'
+    expect(resolveRuntimeRoot()).toBe('/Users/lherron/praesidium/var/run/hrc-dev')
+    expect(resolveControlSocketPath()).toBe('/Users/lherron/praesidium/var/run/hrc-dev/hrc.sock')
+    expect(resolveTmuxSocketPath()).toBe('/Users/lherron/praesidium/var/run/hrc-dev/tmux.sock')
+    expect(resolveLaunchesDir()).toBe('/Users/lherron/praesidium/var/run/hrc-dev/launches')
+    expect(resolveSpoolDir()).toBe('/Users/lherron/praesidium/var/run/hrc-dev/spool')
+  })
+
   test('control socket is runtimeRoot/hrc.sock', () => {
     process.env.HRC_RUNTIME_DIR = '/run/hrc'
     expect(resolveControlSocketPath()).toBe('/run/hrc/hrc.sock')
@@ -203,6 +212,13 @@ describe('Derived paths from runtimeRoot (T-00949)', () => {
 })
 
 describe('Derived paths from stateRoot (T-00949)', () => {
+  test('dev state root keeps database and migrations under hrc-dev', () => {
+    process.env.HRC_STATE_DIR = '/Users/lherron/praesidium/var/state/hrc-dev'
+    expect(resolveStateRoot()).toBe('/Users/lherron/praesidium/var/state/hrc-dev')
+    expect(resolveDatabasePath()).toBe('/Users/lherron/praesidium/var/state/hrc-dev/state.sqlite')
+    expect(resolveMigrationsDir()).toBe('/Users/lherron/praesidium/var/state/hrc-dev/migrations')
+  })
+
   test('database is stateRoot/state.sqlite', () => {
     process.env.HRC_STATE_DIR = '/state/hrc'
     expect(resolveDatabasePath()).toBe('/state/hrc/state.sqlite')

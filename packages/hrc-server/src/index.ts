@@ -1163,6 +1163,8 @@ class HrcServerInstance implements HrcServer {
       ok: true,
       uptime: Math.floor(uptimeMs / 1000),
       startedAt: this.startedAt,
+      runtimeRoot: this.options.runtimeRoot,
+      stateRoot: this.options.stateRoot,
       socketPath: this.options.socketPath,
       dbPath: this.options.dbPath,
       sessionCount: sessions.length,

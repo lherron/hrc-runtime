@@ -11,7 +11,11 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectLaunchdOwner, launchctlKickstart } from '../cli-runtime'
+import {
+  detectLaunchdOwner,
+  launchctlKickstart,
+  resolveOtelPreferredPortFromEnv,
+} from '../cli-runtime'
 
 type Shim = {
   dir: string
@@ -77,6 +81,19 @@ describe('detectLaunchdOwner', () => {
     expect(log).toContain(`print ${owner?.serviceTarget}`)
   })
 
+  it.if(IS_DARWIN)('uses HRC_LAUNCHD_LABEL to select the hrc-dev service', async () => {
+    shim = await writeShim({ exitCode: 0 })
+    process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
+    process.env.HRC_LAUNCHD_LABEL = 'com.praesidium.hrc-dev'
+
+    const owner = await detectLaunchdOwner()
+    expect(owner?.label).toBe('com.praesidium.hrc-dev')
+    expect(owner?.serviceTarget).toBe(`${owner?.domain}/com.praesidium.hrc-dev`)
+
+    const log = await readFile(shim.logFile, 'utf8')
+    expect(log).toContain(`print ${owner?.serviceTarget}`)
+  })
+
   it.if(IS_DARWIN)('returns null when launchctl print exits non-zero', async () => {
     shim = await writeShim({ exitCode: 113 })
     process.env.PATH = `${shim.dir}:${originalPath ?? ''}`
@@ -84,6 +101,49 @@ describe('detectLaunchdOwner', () => {
 
     const owner = await detectLaunchdOwner()
     expect(owner).toBeNull()
+  })
+})
+
+describe('hrc-dev LaunchAgent and OTLP env', () => {
+  it('dev plist uses isolated roots, label, logs, wrapper, and OTLP preferred port', async () => {
+    const plistPath = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      'launchd',
+      'com.praesidium.hrc-dev.plist'
+    )
+    const plist = await readFile(plistPath, 'utf8')
+
+    expect(plist).toContain('<string>com.praesidium.hrc-dev</string>')
+    expect(plist).toContain('<string>/Users/lherron/.bun/bin/hrc-dev</string>')
+    expect(plist).toContain('<key>HRC_RUNTIME_DIR</key>')
+    expect(plist).toContain('<string>/Users/lherron/praesidium/var/run/hrc-dev</string>')
+    expect(plist).toContain('<key>HRC_STATE_DIR</key>')
+    expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc-dev</string>')
+    expect(plist).toContain('<key>HRC_OTLP_PREFERRED_PORT</key>')
+    expect(plist).toContain('<string>4319</string>')
+    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-dev-server.log')
+    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-dev-server.err.log')
+  })
+
+  it('parses HRC_OTLP_PREFERRED_PORT into the server otelPreferredPort option value', () => {
+    expect(resolveOtelPreferredPortFromEnv({ HRC_OTLP_PREFERRED_PORT: '4319' })).toBe(4319)
+  })
+
+  it('accepts HRC_OTEL_PREFERRED_PORT as an alias for the option name', () => {
+    expect(resolveOtelPreferredPortFromEnv({ HRC_OTEL_PREFERRED_PORT: '4320' })).toBe(4320)
+  })
+
+  it('rejects invalid OTLP preferred ports', () => {
+    expect(() => resolveOtelPreferredPortFromEnv({ HRC_OTLP_PREFERRED_PORT: 'nope' })).toThrow(
+      /integer port/
+    )
+    expect(() => resolveOtelPreferredPortFromEnv({ HRC_OTLP_PREFERRED_PORT: '65536' })).toThrow(
+      /between 0 and 65535/
+    )
   })
 })
 
