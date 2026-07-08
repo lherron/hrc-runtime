@@ -164,6 +164,7 @@ Exit codes:
     .option('--scope <scope>', 'scope reference')
     .option('--lane <lane>', 'lane reference')
     .option('--all', 'include archived sessions and drop the recency window')
+    .option('--dormant', 'include dormant resumable archived session heads')
     .option('--since <duration>', 'recency window for active heads (e.g. 12h, 7d)')
     .option('--gens', 'expand rotated generations instead of collapsing them')
     .option('--by-project', 'group rows by project instead of agent')
@@ -172,7 +173,7 @@ Exit codes:
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
         strings: ['scope', 'lane', 'since'],
-        booleans: ['all', 'gens', 'by-project', 'json', 'porcelain'],
+        booleans: ['all', 'dormant', 'gens', 'by-project', 'json', 'porcelain'],
       })
       await cmdSessionList(args)
     })
