@@ -39,6 +39,8 @@ export const SUPPORTED_CLI_HARNESSES: ReadonlySet<HrcHarness> = new Set<HrcHarne
   'pi-cli',
 ])
 
+const INTERACTIVE_TURN_SCOPED_ENV_KEYS = new Set(['WRKQ_CAUSATION_REF'])
+
 type CliFrontend = 'claude-code' | 'codex-cli' | 'pi-cli'
 
 const HARNESS_ID_TO_FRONTEND: Partial<Record<HrcHarness, CliFrontend>> = {
@@ -142,6 +144,23 @@ export function mergeEnv(
   }
 
   return merged
+}
+
+function stripInteractiveTurnScopedEnv(
+  launchConfig?: HrcLaunchEnvConfig | undefined
+): HrcLaunchEnvConfig | undefined {
+  if (launchConfig?.env === undefined) {
+    return launchConfig
+  }
+
+  const env = Object.fromEntries(
+    Object.entries(launchConfig.env).filter(([key]) => !INTERACTIVE_TURN_SCOPED_ENV_KEYS.has(key))
+  )
+  const { env: _ignored, ...rest } = launchConfig
+  return {
+    ...rest,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +359,11 @@ export async function buildCliInvocation(
 
   // Merge: agent-spaces base env → HRC correlation → launch overrides/unset/pathPrepend
   const envWithCorrelation = { ...responseSpec.env, ...correlationEnv }
-  const finalEnv = mergeEnv(envWithCorrelation, intent.launch)
+  // CLI launches are durable runtimes, including Codex headless keep-alive.
+  // Turn-scoped causation env must not persist there because later turns could
+  // inherit stale ancestry; those CLI hook targets intentionally become
+  // causation orphans. Non-CLI SDK launch paths carry turn-scoped env directly.
+  const finalEnv = mergeEnv(envWithCorrelation, stripInteractiveTurnScopedEnv(intent.launch))
 
   return {
     argv,
