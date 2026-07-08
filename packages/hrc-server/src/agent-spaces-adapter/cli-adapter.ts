@@ -359,9 +359,10 @@ export async function buildCliInvocation(
 
   // Merge: agent-spaces base env → HRC correlation → launch overrides/unset/pathPrepend
   const envWithCorrelation = { ...responseSpec.env, ...correlationEnv }
-  // Interactive CLI launches are long-lived sessions. Turn-scoped causation env
-  // must not be written into that durable process environment; one-shot SDK /
-  // headless paths keep using intent.launch.env directly.
+  // CLI launches are durable runtimes, including Codex headless keep-alive.
+  // Turn-scoped causation env must not persist there because later turns could
+  // inherit stale ancestry; those CLI hook targets intentionally become
+  // causation orphans. Non-CLI SDK launch paths carry turn-scoped env directly.
   const finalEnv = mergeEnv(envWithCorrelation, stripInteractiveTurnScopedEnv(intent.launch))
 
   return {

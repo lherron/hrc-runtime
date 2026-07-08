@@ -205,6 +205,32 @@ describe('buildCliInvocation execution mode mapping', () => {
     expect(result.env.OTHER_TURN_ENV).toBe('preserved')
   })
 
+  it('does not persist turn-scoped wrkq causation env into openai headless CLI sessions', async () => {
+    const result = await buildCliInvocation(
+      makeIntent({
+        harness: {
+          provider: 'openai',
+          interactive: true,
+        },
+        execution: { preferredMode: 'nonInteractive' },
+        launch: {
+          env: {
+            WRKQ_CAUSATION_REF: 'jrun_hook_turn',
+            OTHER_TURN_ENV: 'preserved',
+          },
+        },
+      }),
+      {
+        specBuilder: async () => makeResponse(),
+      }
+    )
+
+    expect(result.interactionMode).toBe('headless')
+    expect(result.ioMode).toBe('pipes')
+    expect(result.env.WRKQ_CAUSATION_REF).toBeUndefined()
+    expect(result.env.OTHER_TURN_ENV).toBe('preserved')
+  })
+
   it('omits HRC_TASK_* env vars when taskContext is absent', async () => {
     const result = await buildCliInvocation(makeIntent(), {
       specBuilder: async () => makeResponse(),
