@@ -1,11 +1,23 @@
 import { CliUsageError, consumeBody, parseDuration } from 'cli-kit'
-import { HrcDomainError } from 'hrc-core'
-import type { HrcMessageAddress, SemanticDmResponse, WaitMessageResponse } from 'hrc-core'
+import { HrcDomainError, splitSessionRef } from 'hrc-core'
+import type {
+  HrcMessageAddress,
+  HrcMessageRecord,
+  SemanticDmResponse,
+  WaitMessageResponse,
+} from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
-import { buildDmWaitResult } from '../wait-final.js'
+import {
+  buildDmFinalResponseResult,
+  buildDmWaitResult,
+  findCorrelatedDmFinalResponse,
+  isRuntimeDeadEvent,
+  isSuccessfulTurnTerminalEvent,
+  isTurnFailureTerminalEvent,
+} from '../wait-final.js'
 
 export type DmOptions = {
   respondTo?: string
@@ -28,6 +40,7 @@ export type DmOptions = {
 }
 
 const DM_WAIT_DEFAULT_TIMEOUT = '20m'
+const DM_FINAL_RESPONSE_POLL_MS = 50
 
 export async function cmdDm(
   client: HrcClient,
@@ -46,11 +59,10 @@ export async function cmdDm(
   }
 
   // ── Final-only Codex wait mode ──
-  // `--wait response` blocks quietly for the correlated reply, then emits one
-  // compact JSON object. The server performs the blocking wait (thread-scoped,
-  // phase=response, afterSeq cursor); the CLI stays silent until the terminal
-  // result. This is additive: --follow is intercepted in main.ts and never
-  // reaches cmdDm, so streaming semantics are untouched.
+  // `--wait response` blocks quietly for the final correlated reply, then emits
+  // one compact JSON object. Session-run targets wait for lifecycle terminal
+  // evidence before selecting the durable final reply; direct/no-run targets
+  // keep the legacy message-wait fallback.
   const waitMode = opts.wait
   if (waitMode !== undefined && waitMode !== 'response') {
     throw new CliUsageError(`unsupported --wait mode for dm: "${waitMode}" (expected: response)`)
@@ -75,8 +87,7 @@ export async function cmdDm(
   // Final-only wait does NOT use the server's coupled `wait` option: that
   // blocks on turn completion, so its timeoutMs only bounds the post-completion
   // message wait and a slow turn would blow past `--timeout`. Instead we
-  // dispatch fast (detached turn) and run a client-side bounded waitMessage
-  // below — giving `--timeout` as a true hard ceiling.
+  // dispatch fast (detached turn) and run a client-side bounded final wait.
   const sendWith = (replyToMessageId: string | undefined): Promise<SemanticDmResponse> =>
     client.semanticDm({
       from,
@@ -123,14 +134,35 @@ export async function cmdDm(
     const request = result.request
     // A dispatch that already failed (e.g. busy headless runtime) will never
     // produce a response — skip the wait and report the error immediately.
-    const waited: WaitMessageResponse | undefined = request.execution.errorCode
-      ? undefined
-      : await client.waitMessage({
-          thread: { rootMessageId: request.rootMessageId },
-          phases: ['response'],
-          afterSeq: request.messageSeq,
-          timeoutMs: waitTimeoutMs,
-        })
+    if (request.execution.errorCode) {
+      const waitResult = buildDmWaitResult({
+        request,
+        waited: undefined,
+        target: to,
+        elapsedMs: Date.now() - startedAt,
+      })
+      printJsonLine(waitResult)
+      process.exitCode = 4
+      return
+    }
+
+    if (request.execution.runId && canWatchLifecycle(client)) {
+      await runDmSessionRunWait({
+        client,
+        request,
+        target: to,
+        timeoutMs: waitTimeoutMs,
+        startedAt,
+      })
+      return
+    }
+
+    const waited: WaitMessageResponse = await client.waitMessage({
+      thread: { rootMessageId: request.rootMessageId },
+      phases: ['response'],
+      afterSeq: request.messageSeq,
+      timeoutMs: waitTimeoutMs,
+    })
     const waitResult = buildDmWaitResult({
       request,
       waited,
@@ -160,6 +192,172 @@ export async function cmdDm(
   } else {
     const toStr = formatAddress(to)
     process.stdout.write(`dm sent to ${toStr} (seq: ${result.request.messageSeq})\n`)
+  }
+}
+
+async function runDmSessionRunWait(args: {
+  client: HrcClient
+  request: HrcMessageRecord
+  target: HrcMessageAddress
+  timeoutMs: number
+  startedAt: number
+}): Promise<void> {
+  const { client, request, target, timeoutMs, startedAt } = args
+  const sentMessageId = request.messageId
+  const afterSeq = request.messageSeq
+  const deadlineMs = Date.now() + timeoutMs
+  const abortController = new AbortController()
+  let timedOut = false
+  let interrupted = false
+  let outcome: 'completed' | 'runtimeDead' | 'terminalFailure' | undefined
+
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    abortController.abort()
+  }, timeoutMs)
+  const sigintHandler = () => {
+    interrupted = true
+    abortController.abort()
+  }
+  process.on('SIGINT', sigintHandler)
+
+  try {
+    for await (const event of client.watch({
+      ...watchFencesForRequest(request, target),
+      follow: true,
+      signal: abortController.signal,
+    })) {
+      if (isSuccessfulTurnTerminalEvent(event)) {
+        outcome = 'completed'
+        abortController.abort()
+        break
+      }
+      if (isRuntimeDeadEvent(event)) {
+        outcome = 'runtimeDead'
+        abortController.abort()
+        break
+      }
+      if (isTurnFailureTerminalEvent(event)) {
+        outcome = 'terminalFailure'
+        abortController.abort()
+        break
+      }
+    }
+  } catch (err) {
+    if (!abortController.signal.aborted) {
+      throw err
+    }
+  } finally {
+    clearTimeout(timeoutTimer)
+    process.removeListener('SIGINT', sigintHandler)
+  }
+
+  const elapsedMs = Date.now() - startedAt
+  if (outcome === 'completed') {
+    const reply = await findCorrelatedDmFinalResponse({
+      client,
+      request,
+      deadlineMs,
+      pollMs: DM_FINAL_RESPONSE_POLL_MS,
+    })
+    if (reply !== undefined) {
+      printJsonLine(buildDmFinalResponseResult({ request, reply, target, elapsedMs }))
+      return
+    }
+
+    printJsonLine({
+      status: 'error',
+      sentMessageId,
+      target: formatAddress(target),
+      elapsedMs,
+      lastSeq: afterSeq,
+      errorCode: 'final_response_missing',
+      errorMessage: 'turn completed before a durable final response was available',
+    })
+    process.exitCode = 4
+    return
+  }
+
+  if (interrupted) {
+    printJsonLine({
+      status: 'cancelled',
+      sentMessageId,
+      target: formatAddress(target),
+      elapsedMs,
+      lastSeq: afterSeq,
+    })
+    process.exitCode = 130
+    return
+  }
+
+  if (timedOut) {
+    printJsonLine({
+      status: 'timeout',
+      sentMessageId,
+      target: formatAddress(target),
+      elapsedMs,
+      lastSeq: afterSeq,
+    })
+    process.exitCode = 1
+    return
+  }
+
+  printJsonLine({
+    status: 'error',
+    sentMessageId,
+    target: formatAddress(target),
+    elapsedMs,
+    lastSeq: afterSeq,
+    errorCode: outcome === 'runtimeDead' ? 'runtime_dead' : 'turn_error',
+  })
+  process.exitCode = 4
+}
+
+function canWatchLifecycle(client: HrcClient): boolean {
+  return (
+    typeof (client as HrcClient & { watch?: HrcClient['watch'] | undefined }).watch === 'function'
+  )
+}
+
+function watchFencesForRequest(
+  request: HrcMessageRecord,
+  target: HrcMessageAddress
+): {
+  runId: string
+  hostSessionId?: string | undefined
+  generation?: number | undefined
+  runtimeId?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
+} {
+  const execution = request.execution as HrcMessageRecord['execution'] & {
+    scopeRef?: string | undefined
+    laneRef?: string | undefined
+  }
+  const sessionRef =
+    execution.sessionRef ?? (target.kind === 'session' ? target.sessionRef : undefined)
+  const parsedSession = sessionRef ? safeSplitSessionRef(sessionRef) : undefined
+  return {
+    runId: execution.runId ?? '',
+    ...(execution.hostSessionId ? { hostSessionId: execution.hostSessionId } : {}),
+    ...(execution.generation !== undefined ? { generation: execution.generation } : {}),
+    ...(execution.runtimeId ? { runtimeId: execution.runtimeId } : {}),
+    ...((execution.scopeRef ?? parsedSession?.scopeRef)
+      ? { scopeRef: execution.scopeRef ?? parsedSession?.scopeRef }
+      : {}),
+    ...((execution.laneRef ?? parsedSession?.laneRef)
+      ? { laneRef: execution.laneRef ?? parsedSession?.laneRef }
+      : {}),
+  }
+}
+
+function safeSplitSessionRef(
+  sessionRef: string
+): { scopeRef: string; laneRef: string } | undefined {
+  try {
+    return splitSessionRef(sessionRef)
+  } catch {
+    return undefined
   }
 }
 

@@ -23,6 +23,9 @@ QUICK START
   Ask a worker to answer the human directly:
   hrcchat dm cody@agentchat "Summarize the current risks for the human." --respond-to human
 
+  Wait quietly for a session target's final correlated run response:
+  hrcchat dm cody@agentchat "Review this change." --wait response --timeout 20m
+
   Send literal input to a currently live runtime:
   hrcchat send cody@agentchat "continue from the last checkpoint" --enter
 

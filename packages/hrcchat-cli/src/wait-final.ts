@@ -13,7 +13,14 @@
  *   error     — the send/turn ended in an error before any response
  *   cancelled — the wait was interrupted (e.g. SIGINT)
  */
-import type { HrcMessageAddress, HrcMessageRecord, WaitMessageResponse } from 'hrc-core'
+import type {
+  HrcLifecycleEvent,
+  HrcMessageAddress,
+  HrcMessageFilter,
+  HrcMessageRecord,
+  WaitMessageResponse,
+} from 'hrc-core'
+import type { HrcClient } from 'hrc-sdk'
 
 import { formatAddress } from './normalize.js'
 
@@ -76,6 +83,83 @@ function responseFrom(reply: HrcMessageRecord): WaitFinalResponse {
   }
 }
 
+export function isSuccessfulTurnTerminalEvent(event: HrcLifecycleEvent): boolean {
+  return event.eventKind === 'turn_end' || event.eventKind === 'turn.completed'
+}
+
+export function isRuntimeDeadEvent(event: HrcLifecycleEvent): boolean {
+  return (
+    event.eventKind === 'runtime_exited' ||
+    event.eventKind === 'runtime_crashed' ||
+    event.eventKind === 'runtime_killed'
+  )
+}
+
+export function isTurnFailureTerminalEvent(event: HrcLifecycleEvent): boolean {
+  return (
+    event.eventKind === 'run_failed' ||
+    event.eventKind === 'turn.error' ||
+    event.eventKind === 'turn.zombied' ||
+    event.eventKind === 'turn.reaped'
+  )
+}
+
+export function buildDmFinalResponseResult(args: {
+  request: HrcMessageRecord
+  reply: HrcMessageRecord
+  target: HrcMessageAddress
+  elapsedMs: number
+}): WaitFinalResult {
+  const { request, reply, elapsedMs } = args
+  return {
+    status: 'responded',
+    sentMessageId: request.messageId,
+    target: formatAddress(args.target),
+    elapsedMs,
+    correlation: { mode: 'reply_to', afterSeq: request.messageSeq },
+    response: responseFrom(reply),
+  }
+}
+
+export async function findCorrelatedDmFinalResponse(args: {
+  client: HrcClient
+  request: HrcMessageRecord
+  deadlineMs: number
+  pollMs?: number | undefined
+}): Promise<HrcMessageRecord | undefined> {
+  const maybeClient = args.client as HrcClient & {
+    listMessages?: HrcClient['listMessages'] | undefined
+  }
+  if (typeof maybeClient.listMessages !== 'function') {
+    return undefined
+  }
+
+  const filter: HrcMessageFilter = {
+    thread: { rootMessageId: args.request.rootMessageId },
+    phases: ['response'],
+    afterSeq: args.request.messageSeq,
+    order: 'desc',
+  }
+  const pollMs = args.pollMs ?? 50
+
+  while (true) {
+    const result = await maybeClient.listMessages(filter)
+    const reply = result.messages.find(
+      (message) =>
+        message.phase === 'response' && message.replyToMessageId === args.request.messageId
+    )
+    if (reply !== undefined) {
+      return reply
+    }
+
+    const remainingMs = args.deadlineMs - Date.now()
+    if (remainingMs <= 0) {
+      return undefined
+    }
+    await sleep(Math.min(pollMs, remainingMs))
+  }
+}
+
 /**
  * Build the final-only result for `hrcchat dm --wait response`.
  *
@@ -131,4 +215,8 @@ export function buildDmWaitResult(args: {
     elapsedMs,
     lastSeq: afterSeq,
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

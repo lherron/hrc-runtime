@@ -111,6 +111,8 @@ export type HrcMessageExecution = {
   state: HrcMessageExecutionState
   mode?: 'headless' | 'interactive' | 'nonInteractive' | 'literal' | undefined
   sessionRef?: string | undefined
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   runtimeId?: string | undefined

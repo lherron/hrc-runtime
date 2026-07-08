@@ -198,6 +198,121 @@ async function runDm(
 }
 
 describe('hrcchat dm --wait response', () => {
+  it('waits for the session run terminal event and returns the newest direct final reply, not the preamble', async () => {
+    const request = makeRecord({
+      messageSeq: 200,
+      messageId: 'msg-request',
+      rootMessageId: 'msg-shared-root',
+      execution: {
+        state: 'running',
+        runId: 'run-request',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        scopeRef: 'agent:clod:project:hrc-runtime',
+        laneRef: 'main',
+        generation: 3,
+      },
+    })
+    const preamble = makeReply({
+      messageSeq: 201,
+      messageId: 'msg-skill-preamble',
+      rootMessageId: 'msg-shared-root',
+      replyToMessageId: 'msg-request',
+      body: 'Using `architecture-counsel`',
+      execution: {
+        state: 'running',
+        runId: 'run-request',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        generation: 3,
+      },
+    })
+    const unrelatedNewerSameRoot = makeReply({
+      messageSeq: 204,
+      messageId: 'msg-unrelated-newer-same-root',
+      rootMessageId: 'msg-shared-root',
+      replyToMessageId: 'msg-other-request',
+      body: 'newer reply in the same conversation that must not win',
+      execution: {
+        state: 'completed',
+        runId: 'run-other',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        generation: 3,
+      },
+    })
+    const finalReply = makeReply({
+      messageSeq: 203,
+      messageId: 'msg-final-answer',
+      rootMessageId: 'msg-shared-root',
+      replyToMessageId: 'msg-request',
+      body: 'APPROVE: architecture direction is sound',
+      execution: {
+        state: 'completed',
+        runId: 'run-final-response',
+        runtimeId: 'rt-test',
+        hostSessionId: 'hsid-test',
+        generation: 3,
+      },
+    })
+    const observedFilters: HrcMessageFilter[] = []
+    let waitMessageCalls = 0
+    const client = {
+      async semanticDm(_request: SemanticDmRequest): Promise<SemanticDmResponse> {
+        return { request }
+      },
+      async waitMessage(_request: WaitMessageRequest): Promise<WaitMessageResponse> {
+        waitMessageCalls += 1
+        // Regression fixture: the old first-response wait completes on the
+        // harness skill preamble before the responder run reaches terminal.
+        return { matched: true, record: preamble }
+      },
+      async listMessages(filter?: HrcMessageFilter): Promise<ListMessagesResponse> {
+        if (filter) observedFilters.push(filter)
+        return { messages: [unrelatedNewerSameRoot, finalReply, preamble] }
+      },
+      async *watch(options?: WatchOptions): AsyncIterable<HrcLifecycleEvent> {
+        expect(options).toEqual(
+          expect.objectContaining({
+            runId: 'run-request',
+            runtimeId: 'rt-test',
+            hostSessionId: 'hsid-test',
+            scopeRef: 'agent:clod:project:hrc-runtime',
+            laneRef: 'main',
+            generation: 3,
+          })
+        )
+        yield lifecycle('turn.completed')
+      },
+    } as HrcClient
+
+    const { stdout, stderr } = await runDm(
+      client,
+      { wait: 'response', timeout: '20m', quiet: true, json: true },
+      ['clod@hrc-runtime:primary', 'please review']
+    )
+
+    expect(stderr).toBe('')
+    const lines = stdout.trimEnd().split('\n')
+    expect(lines.length).toBe(1)
+    const parsed = JSON.parse(lines[0] ?? '{}') as WaitFinalResult
+    expect(parsed.status).toBe('responded')
+    expect(parsed.response).toEqual({
+      messageId: 'msg-final-answer',
+      from: 'clod@hrc-runtime',
+      text: 'APPROVE: architecture direction is sound',
+    })
+    expect(waitMessageCalls).toBe(0)
+    expect(observedFilters).toContainEqual(
+      expect.objectContaining({
+        thread: { rootMessageId: 'msg-shared-root' },
+        phases: ['response'],
+        afterSeq: 200,
+        order: 'desc',
+      })
+    )
+  })
+
   it('emits exactly one compact JSON object and no stderr on success', async () => {
     const client = createDmClient({
       response: { request: makeRecord() },
