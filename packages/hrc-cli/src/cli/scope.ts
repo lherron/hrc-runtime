@@ -1,23 +1,18 @@
-import { existsSync, readFileSync, readSync, writeFileSync } from 'node:fs'
+import { readSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve as resolvePath } from 'node:path'
 
 import { resolveQualifiedScopeInput } from 'agent-scope'
 
 import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
+import { harnessFrontendToHrcHarness, resolveAgentHarness as resolveSdkAgentHarness } from 'hrc-sdk'
+import type { ResolvedAgentHarness } from 'hrc-sdk'
 import {
   PROJECT_MARKER_FILENAME,
-  type TargetDefinition,
   buildRuntimeBundleRef,
   findProjectMarker,
   getAgentsRoot,
   inferProjectIdFromCwd,
-  mergeAgentWithProjectTarget,
-  normalizeHarnessFrontend,
-  parseAgentProfile,
-  parseTargetsToml,
   resolveAgentPlacementPaths,
-  resolveAgentPrimingPrompt,
-  resolveHarnessProvider,
 } from 'spaces-config'
 
 import { fatal, formatAgentNotFound, writePlacementWarnings } from './shared.js'
@@ -47,27 +42,10 @@ export function createDefaultRuntimeIntent(
   }
 }
 
-function loadProjectTarget(
-  projectRoot: string | undefined,
-  targetName: string
-): TargetDefinition | undefined {
-  if (!projectRoot) return undefined
-  const targetsPath = join(projectRoot, 'asp-targets.toml')
-  if (!existsSync(targetsPath)) return undefined
-  return parseTargetsToml(readFileSync(targetsPath, 'utf8'), targetsPath).targets[targetName]
-}
-
-function resolveProviderForHarness(harness: string | undefined): 'anthropic' | 'openai' {
-  return resolveHarnessProvider(harness) ?? 'anthropic'
-}
-
-type AgentHarnessResolution = {
-  provider: 'anthropic' | 'openai'
-  harness: string | undefined
-}
+type AgentHarnessResolution = ResolvedAgentHarness
 
 export function harnessStringToHarnessId(harness: string | undefined): HrcHarness | undefined {
-  return normalizeHarnessFrontend(harness) as HrcHarness | undefined
+  return harnessFrontendToHrcHarness(harness)
 }
 
 export function resolveAgentHarness(
@@ -75,40 +53,7 @@ export function resolveAgentHarness(
   agentName: string,
   projectRoot?: string
 ): AgentHarnessResolution {
-  const projectTarget = loadProjectTarget(projectRoot, agentName)
-  const profilePath = join(agentRoot, 'agent-profile.toml')
-  if (!existsSync(profilePath)) {
-    return {
-      provider: resolveProviderForHarness(projectTarget?.harness),
-      harness: projectTarget?.harness,
-    }
-  }
-  try {
-    const source = readFileSync(profilePath, 'utf8').replace(
-      /^(\s*)schema_version(\s*=)/m,
-      '$1schemaVersion$2'
-    )
-    const profile = parseAgentProfile(source, profilePath)
-    const primingPrompt = resolveAgentPrimingPrompt(profile, agentRoot)
-    const effective = mergeAgentWithProjectTarget(
-      {
-        ...profile,
-        ...(primingPrompt !== undefined ? { priming_prompt: primingPrompt } : {}),
-      },
-      projectTarget,
-      'task'
-    )
-    return {
-      provider: resolveProviderForHarness(effective.harness),
-      harness: effective.harness,
-    }
-  } catch {
-    // Profile parse failed — fall back to default
-  }
-  return {
-    provider: resolveProviderForHarness(projectTarget?.harness),
-    harness: projectTarget?.harness,
-  }
+  return resolveSdkAgentHarness({ agentRoot, agentId: agentName, projectRoot })
 }
 
 export type ManagedScopeContext = {
