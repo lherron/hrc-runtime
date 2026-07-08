@@ -239,7 +239,7 @@ const dmCmd = program
   )
   .option(
     '--wait <mode>',
-    'FINAL-ONLY (Codex): block quietly for the correlated reply, then emit one compact JSON object (mode: response)'
+    'FINAL-ONLY (Codex): block quietly for the final correlated run response, then emit one compact JSON object (mode: response)'
   )
   .option('--timeout <duration>', 'wait budget for --wait response (default 20m)')
   .option(
@@ -274,7 +274,7 @@ const dmCmd = program
 
 dmCmd.addHelpText(
   'before',
-  "Send a durable DM/status note.\n\nSTREAMING (human/debug): --follow <duration> dispatches as a tracked turn and streams turn_stacked\nndjson progress on that interval (suitable for Claude Code's Monitor tool).\n\nFINAL-ONLY (Codex token-efficient): --wait response [--timeout 20m] [--quiet] blocks quietly with no\nprogress output, then emits ONE compact JSON object {status, sentMessageId, target, elapsedMs,\ncorrelation, response|lastSeq}. status is responded|timeout|error|cancelled.\n"
+  "Send a durable DM/status note.\n\nSTREAMING (human/debug): --follow <duration> dispatches as a tracked turn and streams turn_stacked\nndjson progress on that interval (suitable for Claude Code's Monitor tool).\n\nFINAL-ONLY (Codex token-efficient): --wait response [--timeout 20m] [--quiet] blocks quietly with no\nprogress output. For session targets with a dispatched run, it waits for the run to finish and returns\nthe newest durable response directly replying to the outgoing request. It then emits ONE compact JSON\nobject {status, sentMessageId, target, elapsedMs, correlation, response|lastSeq}. status is\nresponded|timeout|error|cancelled.\n"
 )
 
 // -- send ---------------------------------------------------------------------
