@@ -696,7 +696,7 @@ describe('T-05095 finding 2 — repair correlation is write-time envelope author
 })
 
 describe('T-05095 dispatch DTO — malformed whenBusy is rejected at parse time', () => {
-  it('rejects whenBusy:queue with malformed_request before run, broker input, or prompt events', async () => {
+  it('rejects whenBusy:queue with unsupported_when_busy before run, broker input, or prompt events', async () => {
     const scopeRef = `${SCOPE_REF}:role:malformed-when-busy`
     const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
     const runtimeId = 'rt-t05095-malformed-when-busy'
@@ -724,8 +724,8 @@ describe('T-05095 dispatch DTO — malformed whenBusy is rejected at parse time'
     const res = await fixture.postJson('/v1/turns', req)
     const body = (await res.json()) as any
 
-    // RED today: whenBusy is ignored, so the request dispatches successfully
-    // and creates the very side effects parse-time validation must prevent.
+    // T-05097: keep the T-05095 no-side-effects guard, but require the
+    // 422-native unsupported_when_busy code instead of malformed_request.
     expect({
       status: res.status,
       errorCode: body.error?.code,
@@ -734,7 +734,7 @@ describe('T-05095 dispatch DTO — malformed whenBusy is rejected at parse time'
       turnUserPromptCount: turnUserPromptEventsForRuntime(runtimeId).length,
     }).toEqual({
       status: 422,
-      errorCode: HrcErrorCode.MALFORMED_REQUEST,
+      errorCode: 'unsupported_when_busy',
       runIds: runIdsBefore,
       dispatchInputCalls: 0,
       turnUserPromptCount: userPromptsBefore.length,

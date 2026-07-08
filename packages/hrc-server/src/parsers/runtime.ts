@@ -481,13 +481,11 @@ function parseOptionalDispatchTurnWhenBusy(
     return 'reject'
   }
 
-  const error = new HrcBadRequestError(
-    HrcErrorCode.MALFORMED_REQUEST,
+  throw new HrcUnprocessableEntityError(
+    HrcErrorCode.UNSUPPORTED_WHEN_BUSY,
     'whenBusy must be "reject"',
     { field: 'whenBusy', value: input }
   )
-  Object.defineProperty(error, 'status', { value: 422 })
-  throw error
 }
 
 function parseOptionalDispatchTurnRepair(
