@@ -60,6 +60,9 @@ describe('HrcErrorCode completeness (T-00949)', () => {
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBeDefined()
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBeDefined()
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBeDefined()
+    // T-05097: public /v1/turns whenBusy validation is semantic 422,
+    // not malformed-request-with-a-patched-status.
+    expect((HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY).toBeDefined()
   })
 
   test('defines 503 runtime_unavailable', () => {
@@ -89,6 +92,9 @@ describe('HrcErrorCode values are string constants (T-00949)', () => {
     expect(HrcErrorCode.MISSING_RUNTIME_INTENT).toBe('missing_runtime_intent')
     expect(HrcErrorCode.PROVIDER_MISMATCH).toBe('provider_mismatch')
     expect(HrcErrorCode.INFLIGHT_UNSUPPORTED).toBe('inflight_unsupported')
+    expect((HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY).toBe(
+      'unsupported_when_busy'
+    )
     expect(HrcErrorCode.RUNTIME_UNAVAILABLE).toBe('runtime_unavailable')
     expect(HrcErrorCode.INTERNAL_ERROR).toBe('internal_error')
   })
@@ -121,6 +127,7 @@ describe('httpStatusForErrorCode (T-00949)', () => {
     expect(httpStatusForErrorCode(HrcErrorCode.MISSING_RUNTIME_INTENT)).toBe(422)
     expect(httpStatusForErrorCode(HrcErrorCode.PROVIDER_MISMATCH)).toBe(422)
     expect(httpStatusForErrorCode(HrcErrorCode.INFLIGHT_UNSUPPORTED)).toBe(422)
+    expect(httpStatusForErrorCode('unsupported_when_busy' as HrcErrorCode)).toBe(422)
   })
 
   test('503 for runtime_unavailable', () => {
@@ -301,9 +308,14 @@ describe('HrcConflictError (n-31 / T-00985)', () => {
 
 describe('HrcUnprocessableEntityError (n-31 / T-00985)', () => {
   test('sets name and status 422 for each code', () => {
-    const codes = ['missing_runtime_intent', 'provider_mismatch', 'inflight_unsupported'] as const
+    const codes = [
+      'missing_runtime_intent',
+      'provider_mismatch',
+      'inflight_unsupported',
+      'unsupported_when_busy',
+    ] as const
     for (const code of codes) {
-      const err = new HrcUnprocessableEntityError(code, `${code} invalid`)
+      const err = new HrcUnprocessableEntityError(code as never, `${code} invalid`)
       expect(err.name).toBe('HrcUnprocessableEntityError')
       expect(err.status).toBe(422)
       expect(err.code).toBe(code)

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 
+import { HrcErrorCode, HrcUnprocessableEntityError } from 'hrc-core'
+
 import { parseSemanticDmRequest } from '../messages.js'
 import { parseDispatchTurnRequest, parseEnsureRuntimeRequest } from '../server-parsers.js'
 
@@ -115,6 +117,30 @@ describe('server-parsers runtime intent harness resolution', () => {
     })
 
     expect(parsed.waitForCompletion).toBe(false)
+  })
+
+  it('parseDispatchTurnRequest rejects unsupported whenBusy with a 422-native domain error', () => {
+    let thrown: unknown
+    try {
+      parseDispatchTurnRequest({
+        hostSessionId: 'hsid-test',
+        prompt: 'ship it',
+        whenBusy: 'queue',
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    // T-05097: this branch must throw a real 422 error class/code, not
+    // HrcBadRequestError with status patched after construction.
+    expect(thrown).toBeInstanceOf(HrcUnprocessableEntityError)
+    expect(thrown).toMatchObject({
+      name: 'HrcUnprocessableEntityError',
+      status: 422,
+      code: (HrcErrorCode as Record<string, string>).UNSUPPORTED_WHEN_BUSY,
+      message: 'whenBusy must be "reject"',
+      detail: { field: 'whenBusy', value: 'queue' },
+    })
   })
 
   it('parseDispatchTurnRequest accepts json_schema responseFormat', () => {
