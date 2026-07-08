@@ -11,6 +11,7 @@ export {
   type AssistantSegment,
   type OnRenderCallback,
   type OnRunQueuedCallback,
+  type RenderFrameCallback,
   type RunState,
 } from './session-events-manager.js'
 export type {

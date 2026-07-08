@@ -794,6 +794,17 @@ export function runStateToFrame(run: RunState): RenderFrame {
   }
 }
 
+export type RenderFrameCallback = (
+  sessionRef: string,
+  projectId: string,
+  runId: string,
+  frame: RenderFrame
+) => void
+
+/**
+ * @deprecated Use RenderFrameCallback for new render sinks. The legacy callback
+ * receives the mutable RunState as its fifth argument for compatibility.
+ */
 export type OnRenderCallback = (
   sessionRef: string,
   projectId: string,
@@ -809,7 +820,9 @@ export class SessionEventsManager {
   private readonly onRender: OnRenderCallback
   private readonly sessions = new Map<string, ProjectState>()
 
-  constructor(gatewayId: string, onRender: OnRenderCallback) {
+  constructor(gatewayId: string, onRender: RenderFrameCallback)
+  constructor(gatewayId: string, onRender: OnRenderCallback)
+  constructor(gatewayId: string, onRender: RenderFrameCallback | OnRenderCallback) {
     this.gatewayId = gatewayId
     this.onRender = onRender
   }
