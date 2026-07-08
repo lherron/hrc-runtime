@@ -112,6 +112,36 @@ describe('agent action render helpers', () => {
     expect(getHrcEventIcon('runtime.dead')).toBe('💀')
   })
 
+  test('keeps deprecated tool emoji compatibility exports public', async () => {
+    const mod = await import('../index.js')
+
+    expect(mod.TOOL_EMOJI.Read).toBe('📖')
+    expect(mod.PRIMARY_ARG_KEY.Read).toBe('file_path')
+    expect(mod.DEFAULT_TOOL_EMOJI).toBe('⚙️')
+    expect(mod.getToolEmoji('UnknownTool')).toBe('⚙️')
+  })
+
+  test('resolves HRC tool event icons from the presenter registry without input', () => {
+    // T-04710: these event icon branches must use resolveToolPresenter(toolName, {}).emoji,
+    // while deprecated getToolEmoji compatibility exports remain available for downstreams.
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'Bash' })).toBe('💻')
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'exec_command' })).toBe('💻')
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'command_execution' })).toBe('⚙️')
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'mcp:github.search' })).toBe('⚙️')
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'UnknownTool' })).toBe('⚙️')
+    expect(getHrcEventIcon('tool_execution_start')).toBe('⚙️')
+    expect(getHrcEventIcon('tool_execution_start', { toolName: 'Bash', failed: true })).toBe('❌')
+    expect(getHrcEventIcon('notice', { level: 'warn' })).toBe('⚠️')
+    expect(getHrcEventIcon('codex.user_prompt', { toolName: 'Bash' })).toBe('💬')
+  })
+
+  test('does not route HRC event icon rendering through deprecated getToolEmoji', async () => {
+    const source = await Bun.file(new URL('../hrc-kind-icons.ts', import.meta.url)).text()
+
+    expect(source).not.toContain('getToolEmoji')
+    expect(source).toContain('resolveToolPresenter')
+  })
+
   test('formats narrative event previews from primary payload fields', () => {
     expect(
       formatEventPreviewLine({

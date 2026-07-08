@@ -31,6 +31,14 @@
     },
     {
       "package": "agent-action-render",
+      "symbol": "DEFAULT_TOOL_EMOJI",
+      "kind": "value",
+      "file": "packages/agent-action-render/src/tool-formatters.ts",
+      "hash": "agent-action-render|DEFAULT_TOOL_EMOJI|value",
+      "count": 1
+    },
+    {
+      "package": "agent-action-render",
       "symbol": "extractEventPreview",
       "kind": "value",
       "file": "packages/agent-action-render/src/event-previews.ts",

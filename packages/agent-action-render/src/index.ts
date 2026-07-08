@@ -9,6 +9,7 @@ export { getHrcEventIcon } from './hrc-kind-icons.js'
 export { renderMarkdownBlock } from './markdown-block.js'
 export { NOTICE_ICON, formatNoticeLine } from './notice-formatters.js'
 export {
+  DEFAULT_TOOL_EMOJI,
   PRIMARY_ARG_KEY,
   TOOL_EMOJI,
   extractToolPreview,
