@@ -331,4 +331,10 @@ export function adaptHrcLifecycleEvent(
   }
 }
 
+/**
+ * Retained for published API compatibility. New code should prefer `adaptHrcLifecycleEvent`;
+ * removal requires a coordinated contract change.
+ *
+ * @deprecated Prefer `adaptHrcLifecycleEvent` for new code.
+ */
 export const hrcLifecycleEventToSessionEnvelope = adaptHrcLifecycleEvent
