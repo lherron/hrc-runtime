@@ -15,6 +15,7 @@ export const HrcErrorCode = {
   MISSING_RUNTIME_INTENT: 'missing_runtime_intent',
   PROVIDER_MISMATCH: 'provider_mismatch',
   INFLIGHT_UNSUPPORTED: 'inflight_unsupported',
+  UNSUPPORTED_WHEN_BUSY: 'unsupported_when_busy',
   BROKER_DESCRIPTOR_ABSENT: 'broker_descriptor_absent',
   ASK_CLIENT_UNSUPPORTED: 'ask_client_unsupported',
   RUNTIME_UNAVAILABLE: 'runtime_unavailable',
@@ -66,6 +67,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.MISSING_RUNTIME_INTENT]: 422,
   [HrcErrorCode.PROVIDER_MISMATCH]: 422,
   [HrcErrorCode.INFLIGHT_UNSUPPORTED]: 422,
+  [HrcErrorCode.UNSUPPORTED_WHEN_BUSY]: 422,
   [HrcErrorCode.BROKER_DESCRIPTOR_ABSENT]: 422,
   [HrcErrorCode.ASK_CLIENT_UNSUPPORTED]: 422,
   [HrcErrorCode.RUNTIME_UNAVAILABLE]: 503,
@@ -179,6 +181,7 @@ export class HrcUnprocessableEntityError extends HrcDomainError {
       | 'missing_runtime_intent'
       | 'provider_mismatch'
       | 'inflight_unsupported'
+      | 'unsupported_when_busy'
       | 'broker_descriptor_absent'
       | 'ask_client_unsupported'
       | 'session_kind_mismatch'
