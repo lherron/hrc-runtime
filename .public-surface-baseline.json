@@ -2647,6 +2647,14 @@
     },
     {
       "package": "hrc-frame-render",
+      "symbol": "RenderFrameCallback",
+      "kind": "type",
+      "file": "packages/hrc-frame-render/src/session-events-manager.ts",
+      "hash": "hrc-frame-render|RenderFrameCallback|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-frame-render",
       "symbol": "RunId",
       "kind": "type",
       "file": "packages/hrc-frame-render/src/types.ts",
