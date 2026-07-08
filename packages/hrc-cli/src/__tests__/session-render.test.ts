@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import type { HrcSessionRecord } from 'hrc-core'
 
+import { toLegacyArgv } from '../cli/argv'
+import { buildProgram } from '../cli/build-program'
 import {
   parseScopeRef,
   parseSinceMs,
@@ -28,6 +30,17 @@ function session(over: Partial<HrcSessionRecord>): HrcSessionRecord {
 }
 
 const baseOpts = { now: NOW, color: false, all: false, gens: false }
+
+function dormantSession(over: Partial<HrcSessionRecord> = {}): HrcSessionRecord {
+  return session({
+    hostSessionId: 'hsid-d0d0d0d0-0000',
+    scopeRef: 'agent:ariadne:project:hrc-runtime:task:T-04834',
+    status: 'archived',
+    updatedAt: '2026-05-10T08:00:00.000Z',
+    continuation: { provider: 'anthropic', key: 'claude-resume-token' },
+    ...over,
+  })
+}
 
 describe('parseScopeRef', () => {
   it('splits agent and project:task label', () => {
@@ -205,6 +218,113 @@ describe('renderSessions', () => {
     )
     expect(out).toContain('No active sessions')
   })
+
+  it('hides dormant heads by default but reports them with the narrow --dormant widener', () => {
+    // Dormant sessions are archived rows with a continuation key: hidden by
+    // default, but not silent because they are valid resume targets.
+    const out = renderSessions(
+      [
+        session({ hostSessionId: 'hsid-active11-0000' }),
+        dormantSession({ hostSessionId: 'hsid-dormant1-0000' }),
+      ],
+      baseOpts
+    )
+
+    expect(out).toContain('active11')
+    expect(out).not.toContain('dormant1')
+    expect(out).toContain('1 dormant')
+    expect(out).toContain('widen: --dormant')
+    expect(out.indexOf('--dormant')).toBeLessThan(out.indexOf('--all'))
+  })
+
+  it('--dormant includes resumable archived heads and keeps non-dormant archived heads hidden', () => {
+    const out = renderSessions(
+      [
+        session({
+          hostSessionId: 'hsid-active-recent-0000',
+          scopeRef: 'agent:clod:project:hrc-runtime:task:recent',
+          updatedAt: '2026-06-15T11:58:00.000Z',
+        }),
+        session({
+          hostSessionId: 'hsid-active-stale-0000',
+          scopeRef: 'agent:clod:project:hrc-runtime:task:stale',
+          updatedAt: '2026-06-10T00:00:00.000Z',
+        }),
+        dormantSession({ hostSessionId: 'hsid-resum222-0000' }),
+        session({
+          hostSessionId: 'hsid-archived2-0000',
+          scopeRef: 'agent:ariadne:project:hrc-runtime:task:archived',
+          status: 'archived',
+          updatedAt: '2026-05-10T08:00:00.000Z',
+        }),
+      ],
+      { ...baseOpts, dormant: true }
+    )
+
+    expect(out).toContain('hrc-runtime:recent')
+    expect(out).not.toContain('hrc-runtime:stale')
+    expect(out).toContain('resum222')
+    expect(out).toMatch(/\bdormant\b/)
+    expect(out).not.toContain('archived2')
+  })
+
+  it('--all labels dormant and non-dormant archived heads distinctly from active heads', () => {
+    const out = renderSessions(
+      [
+        session({ hostSessionId: 'hsid-actv3333-0000' }),
+        dormantSession({ hostSessionId: 'hsid-resum333-0000' }),
+        session({
+          hostSessionId: 'hsid-archv333-0000',
+          scopeRef: 'agent:ariadne:project:hrc-runtime:task:archived',
+          status: 'archived',
+          updatedAt: '2026-05-10T08:00:00.000Z',
+        }),
+      ],
+      { ...baseOpts, all: true }
+    )
+
+    expect(out).toContain('actv3333')
+    expect(out).toContain('resum333')
+    expect(out).toContain('archv333')
+    expect(out).toMatch(/\bdormant\b/)
+    expect(out).toMatch(/\barchived\b/)
+  })
+
+  it('keeps dormant lineages to one head with older generations collapsed unless --gens expands them', () => {
+    const head = dormantSession({
+      hostSessionId: 'hsid-resmhead-0000',
+      generation: 3,
+      updatedAt: '2026-05-10T08:00:00.000Z',
+    })
+    const older = [
+      dormantSession({
+        hostSessionId: 'hsid-resmold2-0000',
+        generation: 2,
+        updatedAt: '2026-05-09T08:00:00.000Z',
+      }),
+      dormantSession({
+        hostSessionId: 'hsid-resmold1-0000',
+        generation: 1,
+        updatedAt: '2026-05-08T08:00:00.000Z',
+      }),
+    ]
+
+    const collapsed = renderSessions([head, ...older], { ...baseOpts, dormant: true })
+    expect(collapsed).toContain('resmhead')
+    expect(collapsed).toContain('2 older generations')
+    expect(collapsed).not.toContain('resmold2')
+    expect(collapsed).not.toContain('resmold1')
+
+    const expanded = renderSessions([head, ...older], {
+      ...baseOpts,
+      dormant: true,
+      gens: true,
+    })
+    expect(expanded).toContain('resmhead')
+    expect(expanded).toContain('resmold2')
+    expect(expanded).toContain('resmold1')
+    expect(expanded).not.toContain('older generations')
+  })
 })
 
 describe('renderPorcelain', () => {
@@ -219,5 +339,18 @@ describe('renderPorcelain', () => {
   })
   it('emits nothing for no sessions', () => {
     expect(renderPorcelain([])).toBe('')
+  })
+})
+
+describe('session list --dormant CLI plumbing', () => {
+  it('exposes --dormant on the commander session list command and preserves it for legacy handlers', () => {
+    const program = buildProgram()
+    const session = program.commands.find((cmd) => cmd.name() === 'session')
+    const list = session?.commands.find((cmd) => cmd.name() === 'list')
+
+    expect(list?.options.some((option) => option.long === '--dormant')).toBe(true)
+    expect(toLegacyArgv([], { dormant: true }, { strings: [], booleans: ['dormant'] })).toContain(
+      '--dormant'
+    )
   })
 })
