@@ -38,6 +38,7 @@ import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
+  assertBrokerRuntimeReusableAdmission,
   assertRuntimeNotBusy,
   isBrokerRuntimeInputDispatchable,
   isBrokerRuntimeQueueCapable,
@@ -240,7 +241,7 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (reusableRuntime) {
-    assertRuntimeNotBusy(this.db, reusableRuntime)
+    assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime)
     return reusableRuntime
   }
 
@@ -259,7 +260,7 @@ export async function openHeadlessBrokerSessionForSession(
     })
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
-      assertRuntimeNotBusy(this.db, recovered)
+      assertBrokerRuntimeReusableAdmission(this.db, recovered)
       return recovered
     }
 

@@ -292,6 +292,21 @@ export function assertRuntimeNotBusy(db: HrcDatabase, runtime: HrcRuntimeSnapsho
   }
 }
 
+export function assertBrokerRuntimeReusableAdmission(
+  db: HrcDatabase,
+  runtime: HrcRuntimeSnapshot,
+  options: { whenBusy?: 'reject' | undefined } = {}
+): void {
+  if (isCorruptAwaitingRuntime(runtime)) {
+    assertRuntimeNotBusy(db, runtime)
+    return
+  }
+
+  if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(db, runtime)) {
+    assertRuntimeNotBusy(db, runtime)
+  }
+}
+
 // Reads the composed input.queue capability off the runtime's active broker
 // invocation. True iff the broker reported (post-start) that this invocation
 // accepts FIFO queueing — driverCaps.input.queue && driverCaps.input.user &&

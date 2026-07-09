@@ -32,6 +32,7 @@ import {
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
 import {
+  assertBrokerRuntimeReusableAdmission,
   assertRuntimeNotBusy,
   classifyBrokerInputFailure,
   isBrokerRuntimeQueueCapable,
@@ -311,16 +312,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       reusableRuntime.controllerKind === 'harness-broker' &&
       reusableRuntime.activeInvocationId !== undefined
     ) {
-      // Broker FIFO queue support: when the active broker invocation's composed
-      // capabilities.input.queue is true, a busy runtime can accept a second
-      // concurrent turn — the broker queues it (whenBusy:'queue') and drains
-      // FIFO after the active turn completes. Skip assertRuntimeNotBusy in
-      // that case; the queued path inside executeHeadlessBrokerInputTurn keeps
-      // the active run's pointers intact and relies on the event-mapper to
-      // flip invocation.runId on input.accepted for the drained input.
-      if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(this.db, reusableRuntime)) {
-        assertRuntimeNotBusy(this.db, reusableRuntime)
-      }
+      assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime, options)
       return await this.executeHeadlessBrokerInputTurn(
         session,
         reusableRuntime,
@@ -365,9 +357,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         hostSessionId: session.hostSessionId,
         runtimeId: recovered.runtimeId,
       })
-      if (options.whenBusy === 'reject' || !isBrokerRuntimeQueueCapable(this.db, recovered)) {
-        assertRuntimeNotBusy(this.db, recovered)
-      }
+      assertBrokerRuntimeReusableAdmission(this.db, recovered, options)
       return await this.executeHeadlessBrokerInputTurn(session, recovered, prompt, runId, options)
     }
     // Reattach failed or the persisted invocation is gone: terminate the cold
