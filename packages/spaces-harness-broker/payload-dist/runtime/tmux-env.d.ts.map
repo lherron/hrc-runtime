@@ -1,0 +1,1 @@
+{"version":3,"file":"tmux-env.d.ts","sourceRoot":"","sources":["../../src/runtime/tmux-env.ts"],"names":[],"mappings":"AAAA;;;;;;GAMG;AA4BH,wBAAgB,2BAA2B,CAAC,GAAG,EAAE,MAAM,CAAC,UAAU,GAAG,MAAM,EAAE,CAQ5E;AAED,wBAAgB,qBAAqB,CAAC,GAAG,EAAE,MAAM,CAAC,UAAU,GAAG,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,CASpF;AAUD,wBAAgB,sBAAsB,CAAC,IAAI,EAAE,MAAM,GAAG,SAAS,GAAG,MAAM,GAAG,SAAS,CAanF"}

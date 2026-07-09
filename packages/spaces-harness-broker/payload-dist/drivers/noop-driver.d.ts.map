@@ -1,0 +1,1 @@
+{"version":3,"file":"noop-driver.d.ts","sourceRoot":"","sources":["../../src/drivers/noop-driver.ts"],"names":[],"mappings":"AAcA,OAAO,KAAK,EAAoB,MAAM,EAAoC,MAAM,UAAU,CAAA;AAE1F,MAAM,WAAW,iBAAiB;IAChC,mEAAmE;IACnE,QAAQ,CAAC,EAAE,QAAQ,GAAG,QAAQ,GAAG,SAAS,CAAA;CAC3C;AA+BD,wBAAgB,gBAAgB,CAAC,OAAO,GAAE,iBAAsB,GAAG,MAAM,CAwCxE"}

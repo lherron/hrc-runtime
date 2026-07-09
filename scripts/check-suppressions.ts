@@ -47,6 +47,8 @@ const ignoredDirectories = new Set([
   'tmp',
 ])
 
+const ignoredRelativeDirectories = new Set(['packages/spaces-harness-broker/payload-dist'])
+
 const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'])
 
 const baselineMeta = {
@@ -124,7 +126,8 @@ async function collectSourceFiles(root: string): Promise<string[]> {
       const path = join(directory, entry.name)
 
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) {
+        const relativePath = toSlash(relative(root, path))
+        if (!ignoredDirectories.has(entry.name) && !ignoredRelativeDirectories.has(relativePath)) {
           await walk(path)
         }
         continue

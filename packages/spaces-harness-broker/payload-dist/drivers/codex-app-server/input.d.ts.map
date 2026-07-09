@@ -1,0 +1,1 @@
+{"version":3,"file":"input.d.ts","sourceRoot":"","sources":["../../../src/drivers/codex-app-server/input.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,wBAAwB,EAAE,eAAe,EAAE,MAAM,gCAAgC,CAAA;AAE/F,wBAAgB,oBAAoB,CAAC,OAAO,EAAE;IAC5C,QAAQ,EAAE,MAAM,CAAA;IAChB,GAAG,EAAE,MAAM,CAAA;IACX,KAAK,EAAE,eAAe,CAAA;IACtB,MAAM,EAAE,wBAAwB,CAAA;CACjC,GAAG,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,CAkB1B"}

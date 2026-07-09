@@ -1,0 +1,1 @@
+{"version":3,"file":"tmux-parse.d.ts","sourceRoot":"","sources":["../../src/runtime/tmux-parse.ts"],"names":[],"mappings":"AAMA,eAAO,MAAM,oBAAoB,4CAA4C,CAAA;AAE7E,wBAAgB,iBAAiB,CAAC,MAAM,EAAE,MAAM,GAAG;IACjD,SAAS,EAAE,MAAM,CAAA;IACjB,QAAQ,EAAE,MAAM,CAAA;IAChB,MAAM,EAAE,MAAM,CAAA;CACf,CAsBA"}

@@ -70,6 +70,7 @@
       "dist",
       "*.json",
       "asp-lock.json",
+      "packages/spaces-harness-broker/payload-dist",
       "refactor-analysis/.workflow.js",
       "refactor-analysis/.apply-workflow.js"
     ]
