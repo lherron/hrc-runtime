@@ -68,6 +68,20 @@ export function emitLifecycleEvent(
   ctx: ProjectionContext,
   now: string
 ): HrcLifecycleEvent | undefined {
+  if (shouldSurfaceDiagnostic(envelope)) {
+    return appendHrcEvent(db, 'broker.diagnostic', {
+      ts: now,
+      hostSessionId: ctx.hostSessionId,
+      scopeRef: ctx.scopeRef,
+      laneRef: ctx.laneRef,
+      generation: ctx.generation,
+      runtimeId: ctx.runtimeId,
+      ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+      transport: ctx.transport,
+      payload: diagnosticLifecyclePayload(envelope, ctx),
+    })
+  }
+
   const eventKind = BROKER_TO_HRC_KIND[envelope.type]
   if (eventKind === undefined) {
     return undefined
@@ -133,6 +147,37 @@ function userPromptPayloadContent(payload: unknown): string | undefined {
   }
   const content = message['content']
   return typeof content === 'string' ? content : undefined
+}
+
+export function shouldSurfaceDiagnostic(envelope: InvocationEventEnvelope): boolean {
+  const payload = envelope.payload as unknown
+  if (envelope.type !== 'diagnostic' || !isRecord(payload)) {
+    return false
+  }
+  if (payload['level'] === 'error') {
+    return true
+  }
+  const data = payload['data']
+  return isRecord(data) && data['code'] === 'api_error'
+}
+
+function diagnosticLifecyclePayload(
+  envelope: InvocationEventEnvelope,
+  ctx: ProjectionContext
+): Record<string, unknown> {
+  const payload = isRecord(envelope.payload) ? envelope.payload : {}
+  return {
+    ...payload,
+    invocationId: envelope.invocationId,
+    seq: envelope.seq,
+    time: envelope.time,
+    ...(envelope.turnId !== undefined ? { turnId: envelope.turnId } : {}),
+    ...(envelope.inputId !== undefined ? { inputId: envelope.inputId } : {}),
+    ...(envelope.itemId !== undefined ? { itemId: envelope.itemId } : {}),
+    ...(envelope.correlation !== undefined ? { correlation: envelope.correlation } : {}),
+    ...(envelope.driver !== undefined ? { driver: envelope.driver } : {}),
+    ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+  }
 }
 
 /** Build the legacy-shaped lifecycle payload for a mapped broker event. */

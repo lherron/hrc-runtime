@@ -817,6 +817,155 @@ describe('auxiliary projections', () => {
       expect(event.source).toBe('broker')
     }
   })
+
+  it('projects only error/api diagnostics into non-terminal monitor lifecycle rows', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    // T-05096 guard: info/warn diagnostics remain provenance-only so monitor
+    // visibility does not broaden into noisy broker health chatter.
+    const warn = mapper.apply(
+      envelope('diagnostic', 50, {
+        level: 'warn',
+        source: 'harness',
+        message: 'background warning',
+        data: { code: 'ordinary_warning' },
+      })
+    )
+    expect(warn.events.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
+    expect(warn.lifecycleEvents).toEqual([])
+    expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'broker.diagnostic' })).toEqual([])
+
+    const beforeRun = db.runs.getByRunId(RUN_ID)!
+    const beforeRuntime = db.runtimes.getByRuntimeId(RUNTIME_ID)!
+
+    const diagnosticEnvelope = {
+      ...envelope(
+        'diagnostic',
+        51,
+        {
+          level: 'error',
+          source: 'harness',
+          message: 'API Error: overloaded upstream',
+          data: {
+            code: 'api_error',
+            rawType: 'assistant',
+            isApiErrorMessage: true,
+            requestId: 'req_05096',
+            apiErrorStatus: 529,
+          },
+        },
+        {
+          turnId: 'turn_api_error' as TurnId,
+          inputId: 'input_api_error' as never,
+          itemId: 'item_api_error',
+        }
+      ),
+      correlation: { requestId: 'req_05096', spanId: 'span_05096' },
+      driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+    }
+
+    const result = mapper.apply(diagnosticEnvelope)
+
+    expect(result.events.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
+    expect(result.lifecycleEvents.map((event) => event.eventKind)).toEqual(['broker.diagnostic'])
+    expect(result.lifecycleEvents).toHaveLength(1)
+
+    const lifecycle = result.lifecycleEvents[0]!
+    expect(lifecycle.category).toBe('runtime')
+    expect(lifecycle.runId).toBe(RUN_ID)
+    expect(lifecycle.payload).toMatchObject({
+      level: 'error',
+      source: 'harness',
+      message: 'API Error: overloaded upstream',
+      data: {
+        code: 'api_error',
+        rawType: 'assistant',
+        isApiErrorMessage: true,
+        requestId: 'req_05096',
+        apiErrorStatus: 529,
+      },
+      invocationId: INVOCATION_ID,
+      seq: 51,
+      time: ts(51),
+      turnId: 'turn_api_error',
+      inputId: 'input_api_error',
+      itemId: 'item_api_error',
+      correlation: { requestId: 'req_05096', spanId: 'span_05096' },
+      driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+      runId: RUN_ID,
+    })
+
+    const hrcRows = db.hrcEvents.listByRun(RUN_ID, { eventKind: 'broker.diagnostic' })
+    expect(hrcRows).toHaveLength(1)
+    expect(hrcRows[0]!.category).toBe('runtime')
+    expect(hrcRows[0]!.payload).toMatchObject({
+      message: 'API Error: overloaded upstream',
+      data: { code: 'api_error' },
+      invocationId: INVOCATION_ID,
+      seq: 51,
+      runId: RUN_ID,
+    })
+
+    expect(db.runs.getByRunId(RUN_ID)).toMatchObject({
+      status: beforeRun.status,
+      completedAt: beforeRun.completedAt,
+    })
+    expect(db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
+      status: beforeRuntime.status,
+    })
+    expect(
+      db.hrcEvents
+        .listByRun(RUN_ID)
+        .filter((event) =>
+          ['turn.failed', 'turn.finished', 'turn.completed', 'invocation.failed'].includes(
+            event.eventKind
+          )
+        )
+    ).toEqual([])
+
+    // T-05096 idempotency guard: replaying the same broker sequence must not
+    // duplicate the monitor-visible diagnostic.
+    const replay = mapper.apply(diagnosticEnvelope)
+    expect(replay.idempotent).toBe(true)
+    expect(replay.lifecycleEvents).toEqual([])
+    expect(db.hrcEvents.listByRun(RUN_ID, { eventKind: 'broker.diagnostic' })).toHaveLength(1)
+    expect(
+      db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).map((event) => event.seq)
+    ).toContain(51)
+  })
+
+  it('does not expose fabricated terminal-state fields on public run/runtime records', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    mapper.apply(
+      envelope(
+        'diagnostic',
+        52,
+        {
+          level: 'error',
+          source: 'harness',
+          message: 'API Error: rate limited',
+          data: { code: 'api_error' },
+        },
+        {
+          turnId: 'turn_x' as TurnId,
+          inputId: 'input_rate_limit',
+          driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+        }
+      )
+    )
+
+    const run = db.runs.getByRunId(RUN_ID)!
+    const runtime = db.runtimes.getByRuntimeId(RUNTIME_ID)!
+
+    // T-05096 gate addendum: these fields never existed on the public DTOs.
+    // Non-terminal behavior is covered by real status/completedAt/event-kind
+    // assertions; adding undefined placeholders would pollute every consumer.
+    expect('failureKind' in run).toBe(false)
+    expect('lastError' in runtime).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
