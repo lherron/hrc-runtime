@@ -936,6 +936,38 @@ describe('auxiliary projections', () => {
       db.brokerInvocationEvents.listByInvocationId(INVOCATION_ID).map((event) => event.seq)
     ).toContain(51)
   })
+
+  it('does not expose fabricated terminal-state fields on public run/runtime records', () => {
+    const mapper = makeMapper()
+    const db = fixture.db
+
+    mapper.apply(
+      envelope(
+        'diagnostic',
+        52,
+        {
+          level: 'error',
+          source: 'harness',
+          message: 'API Error: rate limited',
+          data: { code: 'api_error' },
+        },
+        {
+          turnId: 'turn_x' as TurnId,
+          inputId: 'input_rate_limit',
+          driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+        }
+      )
+    )
+
+    const run = db.runs.getByRunId(RUN_ID)!
+    const runtime = db.runtimes.getByRuntimeId(RUNTIME_ID)!
+
+    // T-05096 gate addendum: these fields never existed on the public DTOs.
+    // Non-terminal behavior is covered by real status/completedAt/event-kind
+    // assertions; adding undefined placeholders would pollute every consumer.
+    expect('failureKind' in run).toBe(false)
+    expect('lastError' in runtime).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
