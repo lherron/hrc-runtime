@@ -363,6 +363,11 @@ export type HrcRunRecord = {
   // input.accepted (contract guarantee) and the event-mapper looks the run up
   // by it to flip invocation.runId before downstream turn.* events project.
   dispatchedInputId?: string | undefined
+  // Durable projection fence for broker inputs that timed out at dispatch. Late
+  // broker events for this input are retained as raw provenance but cannot mutate
+  // canonical run/runtime state.
+  brokerInputFencedAt?: string | undefined
+  brokerInputFenceReason?: string | undefined
 }
 
 export type HrcLaunchRecord = {

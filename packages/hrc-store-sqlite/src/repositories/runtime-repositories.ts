@@ -335,6 +335,8 @@ const RUN_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RunUpdatePatch>> = [
   { key: 'operationId', column: 'operation_id' },
   { key: 'invocationId', column: 'invocation_id' },
   { key: 'dispatchedInputId', column: 'dispatched_input_id' },
+  { key: 'brokerInputFencedAt', column: 'broker_input_fenced_at' },
+  { key: 'brokerInputFenceReason', column: 'broker_input_fence_reason' },
 ]
 
 export class RunRepository {
@@ -361,8 +363,10 @@ export class RunRepository {
           error_message,
           operation_id,
           invocation_id,
-          dispatched_input_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          dispatched_input_id,
+          broker_input_fenced_at,
+          broker_input_fence_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runId,
       record.hostSessionId,
@@ -380,7 +384,9 @@ export class RunRepository {
       record.errorMessage ?? null,
       record.operationId ?? null,
       record.invocationId ?? null,
-      record.dispatchedInputId ?? null
+      record.dispatchedInputId ?? null,
+      record.brokerInputFencedAt ?? null,
+      record.brokerInputFenceReason ?? null
     )
 
     return requireRecord(this.getByRunId(record.runId), `failed to reload run ${record.runId}`)
@@ -489,6 +495,17 @@ export class RunRepository {
 
   updateStatus(runId: string, status: string, updatedAt: string): HrcRunRecord | null {
     return this.update(runId, { status, updatedAt })
+  }
+
+  fenceBrokerInput(
+    runId: string,
+    updates: { fencedAt: string; reason: string }
+  ): HrcRunRecord | null {
+    return this.update(runId, {
+      brokerInputFencedAt: updates.fencedAt,
+      brokerInputFenceReason: updates.reason,
+      updatedAt: updates.fencedAt,
+    })
   }
 
   markCompleted(

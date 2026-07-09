@@ -93,6 +93,8 @@ export type RunRow = {
   operation_id: string | null
   invocation_id: string | null
   dispatched_input_id: string | null
+  broker_input_fenced_at: string | null
+  broker_input_fence_reason: string | null
 }
 
 export type LaunchRow = {

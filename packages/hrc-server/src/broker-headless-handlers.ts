@@ -420,6 +420,8 @@ export async function executeHeadlessBrokerInputTurn(
     const errorMessage = result.ok
       ? (result.response.reason ?? 'broker rejected invocation input')
       : result.error.message
+    const brokerErrorCode = result.ok ? undefined : result.error.code
+    const brokerInputTimeout = brokerErrorCode === 'broker_input_timeout'
     const invocation = this.db.brokerInvocations.getByInvocationId(invocationId)
     const brokerBindingMissing = !result.ok && result.error.code === 'broker_runtime_not_active'
     // T-04297: the lazy reattach above may have just STALED this runtime (lease
@@ -438,8 +440,15 @@ export async function executeHeadlessBrokerInputTurn(
       runtimeReapedByReattach ||
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTransitionalBrokerInvocationState(invocation?.invocationState) ||
+      brokerInputTimeout ||
       isTerminalBrokerInputFailure(errorMessage) ||
       isTransientBrokerInputStateFailure(errorMessage)
+    if (brokerInputTimeout) {
+      this.db.runs.fenceBrokerInput(runId, {
+        fencedAt: completedAt,
+        reason: brokerErrorCode,
+      })
+    }
     this.db.runs.markCompleted(runId, {
       status: 'failed',
       completedAt,
@@ -464,6 +473,7 @@ export async function executeHeadlessBrokerInputTurn(
               terminalInvocation: {
                 invocationId,
                 reason: errorMessage,
+                ...(brokerInputTimeout ? { code: 'broker_input_timeout', inputId } : {}),
               },
             },
           }
