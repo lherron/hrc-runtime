@@ -572,6 +572,95 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       policy: { whenBusy: 'queue' },
     })
   }, 15_000)
+
+  it('T-05177: explicit false interactive-surface reuse veto keeps same-session headless dispatch on the headless broker route', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-live-tui-veto'
+    const headlessRuntimeId = 'rt-t05177-headless-veto'
+
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-live-tui-veto',
+      transport: 'tmux',
+      capabilitiesJson: { input: { queue: true } },
+    })
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: headlessRuntimeId,
+      invocationId: 'inv-t05177-headless-veto',
+      transport: 'headless',
+      capabilitiesJson: { input: { queue: true } },
+    })
+    const dispatchSpy = installDispatchInputSpy()
+
+    const vetoedIntent: HrcRuntimeIntent = {
+      ...codexHeadlessIntent(),
+      execution: {
+        preferredMode: 'nonInteractive',
+        allowInteractiveSurfaceReuse: false,
+      },
+    }
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'autonomous verifier must not land in the live TUI',
+      runtimeIntent: vetoedIntent,
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as any
+    expect(body.runtimeId).toBe(headlessRuntimeId)
+    expect(dispatchSpy.calls).toHaveLength(1)
+    expect(dispatchSpy.calls[0]).toMatchObject({
+      runtimeId: headlessRuntimeId,
+    })
+    expect(dispatchSpy.calls[0]).not.toMatchObject({
+      runtimeId: interactiveRuntimeId,
+    })
+  }, 15_000)
+
+  it('T-05177 guard: omitted reuse flag still delivers a same-session headless-preferred DM into the live TUI', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-live-tui-default'
+    const headlessRuntimeId = 'rt-t05177-headless-default'
+
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-live-tui-default',
+      transport: 'tmux',
+      capabilitiesJson: { input: { queue: true } },
+    })
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: headlessRuntimeId,
+      invocationId: 'inv-t05177-headless-default',
+      transport: 'headless',
+      capabilitiesJson: { input: { queue: true } },
+    })
+    const dispatchSpy = installDispatchInputSpy()
+
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'operator DM should still land in the live TUI',
+      runtimeIntent: codexHeadlessIntent(),
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as any
+    expect(body.runtimeId).toBe(interactiveRuntimeId)
+    expect(dispatchSpy.calls).toHaveLength(1)
+    expect(dispatchSpy.calls[0]).toMatchObject({
+      runtimeId: interactiveRuntimeId,
+      policy: { whenBusy: 'queue' },
+    })
+  }, 15_000)
 })
 
 describe('T-05095 finding 2 — /v1/broker-events wire authority is persisted envelope JSON', () => {
