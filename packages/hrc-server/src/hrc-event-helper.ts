@@ -35,6 +35,7 @@ const KIND_CATEGORIES: Record<string, HrcEventCategory> = {
   'runtime.stale': 'runtime',
   'runtime.reassociated': 'runtime',
   'runtime.adopted': 'runtime',
+  'broker.diagnostic': 'runtime',
   'launch.wrapper_started': 'launch',
   'launch.child_started': 'launch',
   'launch.continuation_captured': 'launch',
