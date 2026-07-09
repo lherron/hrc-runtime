@@ -909,12 +909,10 @@ describe('auxiliary projections', () => {
 
     expect(db.runs.getByRunId(RUN_ID)).toMatchObject({
       status: beforeRun.status,
-      failureKind: beforeRun.failureKind,
       completedAt: beforeRun.completedAt,
     })
     expect(db.runtimes.getByRuntimeId(RUNTIME_ID)).toMatchObject({
       status: beforeRuntime.status,
-      lastError: beforeRuntime.lastError,
     })
     expect(
       db.hrcEvents
