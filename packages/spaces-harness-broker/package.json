@@ -1,0 +1,44 @@
+{
+  "name": "spaces-harness-broker",
+  "version": "0.1.1-dev.20260708161441",
+  "description": "Harness Broker process and JSON-RPC NDJSON server",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "harness-broker": "./bin/harness-broker.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./protocol-server": {
+      "types": "./dist/protocol-server.d.ts",
+      "import": "./dist/protocol-server.js"
+    },
+    "./broker": {
+      "types": "./dist/broker.d.ts",
+      "import": "./dist/broker.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "import": "./dist/events.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun ./scripts/build.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "spaces-harness-broker-protocol": "0.1.1-dev.20260708161441"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

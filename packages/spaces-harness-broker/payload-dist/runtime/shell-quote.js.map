@@ -1,0 +1,1 @@
+{"version":3,"file":"shell-quote.js","sourceRoot":"","sources":["../../src/runtime/shell-quote.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,MAAM,UAAU,UAAU,CAAC,KAAa;IACtC,IAAI,sBAAsB,CAAC,IAAI,CAAC,KAAK,CAAC,EAAE,CAAC;QACvC,OAAO,KAAK,CAAA;IACd,CAAC;IACD,OAAO,IAAI,KAAK,CAAC,OAAO,CAAC,IAAI,EAAE,OAAO,CAAC,GAAG,CAAA;AAC5C,CAAC"}
