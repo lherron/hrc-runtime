@@ -296,8 +296,6 @@ export type HrcRuntimeSnapshot = {
   harness: HrcHarness
   provider: HrcProvider
   status: string
-  /** Legacy read-model field retained for non-terminal state checks. */
-  lastError?: string | undefined
   /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
   /** Opaque interactive surface metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
@@ -356,8 +354,6 @@ export type HrcRunRecord = {
   updatedAt: string
   errorCode?: HrcErrorCode | undefined
   errorMessage?: string | undefined
-  /** Legacy read-model discriminator retained for non-terminal state checks. */
-  failureKind?: string | undefined
   // ── Harness-broker run linkage (T-01690 W1B). Nullable/additive; set only by
   // the harness-broker controller/mapper. Legacy runs leave these unset.
   operationId?: string | undefined
