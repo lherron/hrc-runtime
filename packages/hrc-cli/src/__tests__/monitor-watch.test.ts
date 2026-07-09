@@ -25,6 +25,7 @@ type MonitorWatchArgs = {
   maxLines?: number | undefined
   scopeWidth?: number | undefined
   signal?: AbortSignal | undefined
+  kind?: string | undefined
 }
 
 type MonitorFixtureState = {
@@ -322,6 +323,35 @@ function event(
   }
 }
 
+function apiDiagnosticEvent(seq = 205): MonitorFixtureEvent {
+  return event(seq, 'broker.diagnostic', {
+    category: 'runtime',
+    runId: TURN_ID,
+    turnId: 'turn-api-error',
+    transport: 'tmux',
+    payload: {
+      level: 'error',
+      source: 'harness',
+      message: 'API Error: overloaded upstream',
+      data: {
+        code: 'api_error',
+        rawType: 'assistant',
+        isApiErrorMessage: true,
+        requestId: 'req_05096',
+      },
+      invocationId: 'invocation-05096',
+      seq: 51,
+      time: '2026-04-27T17:01:00.000Z',
+      turnId: 'turn-api-error',
+      inputId: 'input-api-error',
+      itemId: 'item-api-error',
+      correlation: { requestId: 'req_05096' },
+      driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+      runId: TURN_ID,
+    },
+  })
+}
+
 function parseJsonLines(stdout: string): Array<Record<string, unknown>> {
   return stdout
     .split('\n')
@@ -400,6 +430,57 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
       launchId: 'launch-xyz',
       payload: { kind: 'tmux-pane', surfaceId: '%0', paneId: '%0' },
     })
+  })
+
+  test('shows surfaced API diagnostics in default replay and --kind broker.diagnostic', async () => {
+    const diagnostic = apiDiagnosticEvent()
+    const state = createFixtureState({
+      events: [event(204, 'turn.started', { turnId: TURN_ID }), diagnostic],
+    })
+
+    // T-05096: hrc monitor consumes projected hrc_events rows. A surfaced
+    // broker.diagnostic must appear in the ordinary JSON stream without making
+    // monitor-watch read raw broker provenance.
+    const defaultReplay = await invokeWatch({ selector: SELECTOR }, state)
+    expect(defaultReplay.exitCode).toBe(0)
+    expect(defaultReplay.events).toContainEqual(
+      expect.objectContaining({
+        event: 'broker.diagnostic',
+        category: 'runtime',
+        runId: TURN_ID,
+        payload: expect.objectContaining({
+          message: 'API Error: overloaded upstream',
+          data: expect.objectContaining({ code: 'api_error' }),
+          invocationId: 'invocation-05096',
+          turnId: 'turn-api-error',
+          inputId: 'input-api-error',
+          itemId: 'item-api-error',
+          driver: { kind: 'claude-code-tmux', rawType: 'assistant' },
+        }),
+      })
+    )
+
+    const filtered = await invokeWatch(
+      { selector: SELECTOR, kind: 'broker.diagnostic' },
+      createFixtureState({
+        events: [event(203, 'turn.started', { turnId: TURN_ID }), diagnostic],
+      })
+    )
+    expect(filtered.exitCode).toBe(0)
+    expect(filtered.events.map((payload) => payload.event)).toEqual(['broker.diagnostic'])
+  })
+
+  test('pretty monitor output renders API diagnostics as non-terminal rows', async () => {
+    const cli = await invokeWatchText(
+      { selector: SELECTOR, pretty: true },
+      createFixtureState({ events: [apiDiagnosticEvent()] })
+    )
+
+    expect(cli.exitCode).toBe(0)
+    expect(cli.stdout).toContain('diagnostic')
+    expect(cli.stdout).toContain('API Error: overloaded upstream')
+    expect(cli.stdout).not.toContain('turn failed')
+    expect(cli.stdout).not.toContain('turn completed')
   })
 
   test('--last replays the last n matching events and marks them replayed', async () => {
