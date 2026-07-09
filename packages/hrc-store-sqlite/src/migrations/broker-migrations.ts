@@ -529,6 +529,28 @@ const runtimeArtifactOperationKindMigration: HrcMigration = {
   },
 }
 
+const runsBrokerInputFenceMigration: HrcMigration = {
+  id: '0025_runs_broker_input_fence',
+  apply(db) {
+    const runColumns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runs)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!runColumns.has('broker_input_fenced_at')) {
+      db.exec('ALTER TABLE runs ADD COLUMN broker_input_fenced_at TEXT')
+    }
+    if (!runColumns.has('broker_input_fence_reason')) {
+      db.exec('ALTER TABLE runs ADD COLUMN broker_input_fence_reason TEXT')
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_runs_broker_input_fenced_at
+        ON runs(broker_input_fenced_at);
+    `)
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -539,4 +561,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   brokerEventIdentityMigration,
   brokerFullEnvelopeMigration,
   runtimeArtifactOperationKindMigration,
+  runsBrokerInputFenceMigration,
 ]

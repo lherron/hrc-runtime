@@ -99,6 +99,7 @@ const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 // wedged/unresponsive broker (notably a durable broker-tmux runtime reattached
 // after an hrc-server restart that no longer answers control RPCs).
 const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
+const DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS = 20_000
 
 // T-05358: the broker socket can close mid-dispose. The durable unix/stdio
 // transport rejects the in-flight RPC with `Broker transport closed`, while a
@@ -164,6 +165,17 @@ function resolveBrokerDisposeTimeoutMs(depsValue?: number, envValue?: string): n
     if (Number.isFinite(parsed) && parsed >= 0) return parsed
   }
   return DEFAULT_BROKER_DISPOSE_TIMEOUT_MS
+}
+
+function resolveBrokerActiveRpcTimeoutMs(depsValue?: number, envValue?: string): number {
+  if (typeof depsValue === 'number' && Number.isFinite(depsValue) && depsValue >= 0) {
+    return depsValue
+  }
+  if (envValue !== undefined) {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  }
+  return DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS
 }
 
 export { BrokerControllerError } from './controller/errors'
@@ -260,6 +272,7 @@ export class HarnessBrokerController {
   private readonly reapBrokerTmuxLease: ((runtimeId: string) => Promise<void>) | undefined
   private readonly brokerTmuxSummaryReapGraceMs: number
   private readonly brokerDisposeTimeoutMs: number
+  private readonly brokerActiveRpcTimeoutMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -321,6 +334,10 @@ export class HarnessBrokerController {
     this.brokerDisposeTimeoutMs = resolveBrokerDisposeTimeoutMs(
       deps.brokerDisposeTimeoutMs,
       deps.env?.['HRC_BROKER_DISPOSE_TIMEOUT_MS']
+    )
+    this.brokerActiveRpcTimeoutMs = resolveBrokerActiveRpcTimeoutMs(
+      deps.brokerActiveRpcTimeoutMs,
+      deps.env?.['HRC_BROKER_ACTIVE_RPC_TIMEOUT_MS']
     )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
@@ -499,12 +516,19 @@ export class HarnessBrokerController {
   async dispatchInput(
     input: BrokerControllerDispatchInput
   ): Promise<BrokerControllerDispatchResult> {
-    return this.withActive(input.runtimeId, 'broker_input_failed', (active) =>
-      active.client.input({
-        invocationId: active.invocationId as InvocationId,
-        input: input.input,
-        ...(input.policy ? { policy: input.policy } : {}),
-      })
+    return this.withActive(
+      input.runtimeId,
+      {
+        failureCode: 'broker_input_failed',
+        timeoutCode: 'broker_input_timeout',
+        retireOnTimeout: true,
+      },
+      (active) =>
+        active.client.input({
+          invocationId: active.invocationId as InvocationId,
+          input: input.input,
+          ...(input.policy ? { policy: input.policy } : {}),
+        })
     )
   }
 
@@ -634,11 +658,14 @@ export class HarnessBrokerController {
     runtimeId: string,
     options: Omit<InvocationInterruptRequest, 'invocationId'>
   ): Promise<BrokerControllerRpcResult<InvocationInterruptResponse>> {
-    return this.withActive(runtimeId, 'broker_interrupt_failed', (active) =>
-      active.client.interrupt({
-        invocationId: active.invocationId as InvocationId,
-        ...options,
-      })
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_interrupt_failed', timeoutCode: 'broker_interrupt_timeout' },
+      (active) =>
+        active.client.interrupt({
+          invocationId: active.invocationId as InvocationId,
+          ...options,
+        })
     )
   }
 
@@ -646,11 +673,14 @@ export class HarnessBrokerController {
     runtimeId: string,
     options: Omit<InvocationStopRequest, 'invocationId'> = {}
   ): Promise<BrokerControllerRpcResult<InvocationStopResponse>> {
-    return this.withActive(runtimeId, 'broker_stop_failed', (active) =>
-      active.client.stop({
-        invocationId: active.invocationId as InvocationId,
-        ...options,
-      })
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_stop_failed', timeoutCode: 'broker_stop_timeout' },
+      (active) =>
+        active.client.stop({
+          invocationId: active.invocationId as InvocationId,
+          ...options,
+        })
     )
   }
 
@@ -663,19 +693,23 @@ export class HarnessBrokerController {
       invocation?: InvocationStatusResponse | undefined
     }>
   > {
-    return this.withActive(runtimeId, 'broker_status_failed', async (active) => {
-      const health = await active.client.health({ probeDrivers: true })
-      // T-01855 tri-state gating: pass probeLiveness ONLY when the caller asked
-      // AND the broker does not explicitly forbid a live probe (liveness
-      // 'cached'/'none'). The returned status carries the extended
-      // InvocationInspectionSummary fields (lifecycle/liveness) for free.
-      const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
-      const invocation = await active.client.status({
-        invocationId: active.invocationId as InvocationId,
-        ...(probeLiveness ? { probeLiveness: true } : {}),
-      })
-      return { health, invocation }
-    })
+    return this.withActive(
+      runtimeId,
+      { failureCode: 'broker_status_failed', timeoutCode: 'broker_status_timeout' },
+      async (active) => {
+        const health = await active.client.health({ probeDrivers: true })
+        // T-01855 tri-state gating: pass probeLiveness ONLY when the caller asked
+        // AND the broker does not explicitly forbid a live probe (liveness
+        // 'cached'/'none'). The returned status carries the extended
+        // InvocationInspectionSummary fields (lifecycle/liveness) for free.
+        const probeLiveness = !!opts?.probeLiveness && livenessProbeAllowed(active.inspection)
+        const invocation = await active.client.status({
+          invocationId: active.invocationId as InvocationId,
+          ...(probeLiveness ? { probeLiveness: true } : {}),
+        })
+        return { health, invocation }
+      }
+    )
   }
 
   /**
@@ -1230,7 +1264,11 @@ export class HarnessBrokerController {
    */
   private async withActive<T>(
     runtimeId: string,
-    code: string,
+    operation: {
+      failureCode: string
+      timeoutCode: string
+      retireOnTimeout?: boolean | undefined
+    },
     fn: (active: ActiveBrokerRuntime) => Promise<T>
   ): Promise<BrokerControllerRpcResult<T>> {
     const active = this.active.get(runtimeId)
@@ -1238,9 +1276,41 @@ export class HarnessBrokerController {
       return { ok: false, error: this.notActive(runtimeId) }
     }
     try {
-      return { ok: true, response: await fn(active) }
+      return {
+        ok: true,
+        response: await withBrokerRpcTimeout(
+          fn(active),
+          this.brokerActiveRpcTimeoutMs,
+          () =>
+            new BrokerControllerError(
+              operation.timeoutCode,
+              `broker ${operation.timeoutCode} after ${this.brokerActiveRpcTimeoutMs}ms for ${runtimeId}`,
+              { runtimeId, timeoutMs: this.brokerActiveRpcTimeoutMs }
+            )
+        ),
+      }
     } catch (error) {
-      return { ok: false, error: toControllerError(code, error) }
+      const controllerError = toControllerError(operation.failureCode, error)
+      if (controllerError.code === operation.timeoutCode && operation.retireOnTimeout) {
+        this.retireActiveBindingAfterTimeout(runtimeId, active, operation.timeoutCode)
+      }
+      return { ok: false, error: controllerError }
     }
+  }
+
+  private retireActiveBindingAfterTimeout(
+    runtimeId: string,
+    active: ActiveBrokerRuntime,
+    reason: string
+  ): void {
+    this.markBrokerClosing(runtimeId, reason)
+    this.active.delete(runtimeId)
+    void active.client.close().catch((error: unknown) => {
+      this.logger.warn?.('broker close after active RPC timeout failed', {
+        runtimeId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 }

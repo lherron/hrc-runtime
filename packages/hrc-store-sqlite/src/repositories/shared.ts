@@ -295,7 +295,9 @@ export const RUN_COLUMNS = `
   error_message,
   operation_id,
   invocation_id,
-  dispatched_input_id`
+  dispatched_input_id,
+  broker_input_fenced_at,
+  broker_input_fence_reason`
 
 export const LAUNCH_COLUMNS = `
   launch_id,
@@ -722,6 +724,8 @@ export function mapRunRow(row: RunRow): HrcRunRecord {
     operationId: row.operation_id ?? undefined,
     invocationId: row.invocation_id ?? undefined,
     dispatchedInputId: row.dispatched_input_id ?? undefined,
+    brokerInputFencedAt: row.broker_input_fenced_at ?? undefined,
+    brokerInputFenceReason: row.broker_input_fence_reason ?? undefined,
   }
 }
 

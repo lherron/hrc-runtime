@@ -347,6 +347,13 @@ export type HarnessBrokerControllerDeps = {
    */
   brokerDisposeTimeoutMs?: number | undefined
   /**
+   * Per-call ceiling for active broker RPCs (input/status/interrupt/stop). A
+   * wedged reused broker must not hang dispatch forever; 0 disables the bound.
+   * Defaults to the controller active-RPC default and can be overridden with
+   * `HRC_BROKER_ACTIVE_RPC_TIMEOUT_MS`.
+   */
+  brokerActiveRpcTimeoutMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.

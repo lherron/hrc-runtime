@@ -468,6 +468,132 @@ describe('HarnessBrokerController', () => {
     if (!again.ok) expect(again.error.code).toBe('broker_runtime_not_active')
   })
 
+  it('times out a wedged active input RPC, closes the client, and drops the binding (T-05176)', async () => {
+    // T-05176 red: reused broker input delivery must be bounded at the generic
+    // active RPC boundary. The local watchdog keeps the current unbounded code
+    // from hanging this test; green is the controller returning broker_input_timeout.
+    class HangingInputBrokerClient extends FakeBrokerClient {
+      closeCalls = 0
+
+      override async input(): Promise<never> {
+        this.callOrder.push('input')
+        return new Promise<never>(() => {})
+      }
+
+      override async close(): Promise<void> {
+        this.closeCalls++
+        await super.close()
+      }
+    }
+    const fake = new HangingInputBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+      brokerActiveRpcTimeoutMs: 25,
+    } as any)
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    const startedAt = Date.now()
+    const result = await resolveWithin(
+      controller.dispatchInput({
+        runtimeId: 'runtime_w2',
+        input: { kind: 'user', content: [{ type: 'text', text: 'wedged reuse input' }] },
+      }),
+      200
+    )
+
+    expect(result).not.toBe('test_watchdog_timeout')
+    if (result === 'test_watchdog_timeout') return
+    expect(Date.now() - startedAt).toBeLessThan(200)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('broker_input_timeout')
+    expect(fake.closeCalls).toBe(1)
+
+    const again = await controller.status('runtime_w2')
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.error.code).toBe('broker_runtime_not_active')
+  })
+
+  it('times out status interrupt and stop with operation codes without dropping the active binding (T-05176)', async () => {
+    // Negative guard for the shared helper: only input timeouts retire the
+    // wedged binding. Other active RPC timeout codes are typed but non-terminal.
+    class HangingControlBrokerClient extends FakeBrokerClient {
+      override async status(req: InvocationStatusRequest): Promise<never> {
+        this.callOrder.push('status')
+        this.statusCalls.push(req)
+        return new Promise<never>(() => {})
+      }
+
+      override async interrupt(): Promise<never> {
+        this.callOrder.push('interrupt')
+        return new Promise<never>(() => {})
+      }
+
+      override async stop(req: InvocationStopRequest): Promise<never> {
+        this.callOrder.push('stop')
+        this.stopReasons.push(req.reason)
+        return new Promise<never>(() => {})
+      }
+    }
+    const fake = new HangingControlBrokerClient()
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+      brokerActiveRpcTimeoutMs: 25,
+    } as any)
+
+    const started = await controller.start({ ...makeStartInput(), brokerClient: fake })
+    expect(started.ok).toBe(true)
+
+    const status = await resolveWithin(controller.status('runtime_w2'), 200)
+    expect(status).not.toBe('test_watchdog_timeout')
+    if (status === 'test_watchdog_timeout') return
+    expect(status.ok).toBe(false)
+    if (!status.ok) expect(status.error.code).toBe('broker_status_timeout')
+
+    const inputAfterStatusTimeout = await controller.dispatchInput({
+      runtimeId: 'runtime_w2',
+      input: { kind: 'user', content: [{ type: 'text', text: 'still active after status' }] },
+    })
+    expect(inputAfterStatusTimeout.ok).toBe(true)
+
+    const interrupt = await resolveWithin(
+      controller.interrupt('runtime_w2', { runId: 'run_w2', generation: 1 }),
+      200
+    )
+    expect(interrupt).not.toBe('test_watchdog_timeout')
+    if (interrupt === 'test_watchdog_timeout') return
+    expect(interrupt.ok).toBe(false)
+    if (!interrupt.ok) expect(interrupt.error.code).toBe('broker_interrupt_timeout')
+
+    const inputAfterInterruptTimeout = await controller.dispatchInput({
+      runtimeId: 'runtime_w2',
+      input: { kind: 'user', content: [{ type: 'text', text: 'still active after interrupt' }] },
+    })
+    expect(inputAfterInterruptTimeout.ok).toBe(true)
+
+    const stop = await resolveWithin(
+      controller.stop('runtime_w2', { reason: 'operator_reap' }),
+      200
+    )
+    expect(stop).not.toBe('test_watchdog_timeout')
+    if (stop === 'test_watchdog_timeout') return
+    expect(stop.ok).toBe(false)
+    if (!stop.ok) expect(stop.error.code).toBe('broker_stop_timeout')
+
+    const inputAfterStopTimeout = await controller.dispatchInput({
+      runtimeId: 'runtime_w2',
+      input: { kind: 'user', content: [{ type: 'text', text: 'still active after stop' }] },
+    })
+    expect(inputAfterStopTimeout.ok).toBe(true)
+  })
+
   it('allocates and persists an HRC-owned tmux socket on interactive broker-tmux dispatch', async () => {
     const fake = new FakeBrokerClient()
     const identity = makeIdentity({
@@ -1838,4 +1964,16 @@ function capabilityRequirements(
 
 async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function resolveWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<T | 'test_watchdog_timeout'> {
+  return await Promise.race([
+    promise,
+    new Promise<'test_watchdog_timeout'>((resolve) =>
+      setTimeout(() => resolve('test_watchdog_timeout'), timeoutMs)
+    ),
+  ])
 }

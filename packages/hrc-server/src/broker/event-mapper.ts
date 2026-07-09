@@ -217,6 +217,24 @@ export class BrokerEventMapper {
       return { idempotent: true, brokerEvent: appended.record, events: [], lifecycleEvents: [] }
     }
 
+    const fencedRun = ctx.runId !== undefined ? db.runs.getByRunId(ctx.runId) : null
+    if (fencedRun?.brokerInputFencedAt !== undefined) {
+      const emitted = emitBrokerEvent(db, persistedEnvelope, ctx, now)
+      db.brokerInvocationEvents.updateProjection(envelope.invocationId, envelope.seq, {
+        hrcEventSeq: emitted.seq,
+        projectionStatus: 'skipped_fenced',
+        projectionError:
+          fencedRun.brokerInputFenceReason ??
+          `broker input fenced at ${fencedRun.brokerInputFencedAt}`,
+      })
+      return {
+        idempotent: false,
+        brokerEvent: appended.record,
+        events: [emitted],
+        lifecycleEvents: [],
+      }
+    }
+
     // (b) Project state into HRC, then emit the raw provenance mirror plus the
     // canonical lifecycle event (the latter is what clients/notifyEvent see).
     // `derivedDescriptors` records HRC-side lifecycle events the mapper synthesizes
@@ -393,6 +411,11 @@ export class BrokerEventMapper {
         const run = this.db.runs.getByDispatchedInputId(bracketInput.inputId)
         if (run?.runId) return run.runId
       }
+      const fencedInput = this.findPriorFencedInputAccepted(
+        envelope.invocationId,
+        openTurnStartedSeq
+      )
+      if (fencedInput) return fencedInput.runId
       return fallbackRunId
     }
 
@@ -407,6 +430,8 @@ export class BrokerEventMapper {
     if (priorInput) {
       return this.resolveNoBracketOwner(envelope, priorInput, invocation, runtime)
     }
+    const fencedInput = this.findPriorFencedInputAccepted(envelope.invocationId, envelope.seq)
+    if (fencedInput) return fencedInput.runId
     return fallbackRunId
   }
 
@@ -500,11 +525,43 @@ export class BrokerEventMapper {
         `SELECT seq, json_extract(broker_event_json, '$.inputId') AS inputId
            FROM broker_invocation_events
           WHERE invocation_id = ? AND type = 'input.accepted' AND seq <= ?
+            AND NOT EXISTS (
+              SELECT 1
+                FROM runs
+               WHERE runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId')
+                 AND runs.broker_input_fenced_at IS NOT NULL
+            )
           ORDER BY seq DESC
           LIMIT 1`
       )
       .get(invocationId, seq)
     return row?.inputId ? { inputId: row.inputId, seq: row.seq } : undefined
+  }
+
+  private findPriorFencedInputAccepted(
+    invocationId: string,
+    seq: number
+  ): { inputId: string; runId: string; seq: number } | undefined {
+    const row = this.db.sqlite
+      .query<{ inputId: string | null; runId: string | null; seq: number }, [string, number]>(
+        `SELECT
+            broker_invocation_events.seq AS seq,
+            json_extract(broker_invocation_events.broker_event_json, '$.inputId') AS inputId,
+            runs.run_id AS runId
+           FROM broker_invocation_events
+           JOIN runs
+             ON runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId')
+            AND runs.broker_input_fenced_at IS NOT NULL
+          WHERE broker_invocation_events.invocation_id = ?
+            AND broker_invocation_events.type = 'input.accepted'
+            AND broker_invocation_events.seq <= ?
+          ORDER BY broker_invocation_events.seq DESC
+          LIMIT 1`
+      )
+      .get(invocationId, seq)
+    return row?.inputId && row.runId
+      ? { inputId: row.inputId, runId: row.runId, seq: row.seq }
+      : undefined
   }
 
   private findOpenTurnStartedSeqForAttribution(

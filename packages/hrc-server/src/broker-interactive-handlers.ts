@@ -567,6 +567,8 @@ export async function executeInteractiveBrokerInputTurn(
     const errorMessage = result.ok
       ? (result.response.reason ?? 'broker rejected invocation input')
       : result.error.message
+    const brokerErrorCode = result.ok ? undefined : result.error.code
+    const brokerInputTimeout = brokerErrorCode === 'broker_input_timeout'
     if (
       !result.ok &&
       result.error.code === 'broker_runtime_not_active' &&
@@ -599,9 +601,16 @@ export async function executeInteractiveBrokerInputTurn(
       runtimeReapedByReattach ||
       isTerminalBrokerInvocationState(invocation?.invocationState) ||
       isTransitionalBrokerInvocationState(invocation?.invocationState) ||
+      brokerInputTimeout ||
       isTerminalBrokerInputFailure(errorMessage) ||
       isTransientBrokerInputStateFailure(errorMessage)
 
+    if (brokerInputTimeout) {
+      this.db.runs.fenceBrokerInput(runId, {
+        fencedAt: completedAt,
+        reason: brokerErrorCode,
+      })
+    }
     this.db.runs.markCompleted(runId, {
       status: 'failed',
       completedAt,
@@ -609,7 +618,7 @@ export async function executeInteractiveBrokerInputTurn(
       errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
       errorMessage,
     })
-    if (!queuedMode) {
+    if (brokerInputTimeout || !queuedMode) {
       this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
     }
     this.db.runtimes.update(runtime.runtimeId, {
@@ -627,6 +636,7 @@ export async function executeInteractiveBrokerInputTurn(
               terminalInvocation: {
                 invocationId,
                 reason: errorMessage,
+                ...(brokerInputTimeout ? { code: 'broker_input_timeout', inputId } : {}),
               },
             },
           }
