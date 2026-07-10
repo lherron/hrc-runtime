@@ -7,7 +7,7 @@
  * the T-01946 awaiting-input park/resume, the run-mismatch unwedge, and the
  * HRC-derived turn lifecycle event emission.
  */
-import type { HrcLifecycleEvent } from 'hrc-core'
+import { HrcErrorCode, type HrcLifecycleEvent } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
@@ -221,12 +221,30 @@ export function markRuntimeTurnTerminal(
       !hasOpenTurnBracketAtSeq(db, envelope.invocationId, envelope.seq) &&
       !runtimeHasAnyOpenAskBracket(db, runtime)
     if (canUnwedge) {
+      // T-06088: the unwedge must never leave the active run's caller blind.
+      // Reaching this branch proves the owning run's turn is over (another
+      // run's terminal closed every turn bracket on the invocation) yet its
+      // own terminal never projected — the caller would otherwise wait until
+      // its dispatch timeout. Fail the run so the caller gets a terminal
+      // result now; ownership is cleared either way.
+      const activeRun = db.runs.getByRunId(runtime.activeRunId)
+      const failedActiveRun = activeRun != null && activeRun.completedAt === undefined
+      if (failedActiveRun) {
+        db.runs.markCompleted(runtime.activeRunId, {
+          status: 'failed',
+          completedAt: now,
+          updatedAt: now,
+          errorCode: HrcErrorCode.RUN_MISMATCH,
+          errorMessage: `run ${runId} reached its turn terminal (seq ${envelope.seq}) while this run still owned runtime ${ctx.runtimeId}; this run's own turn terminal was never projected`,
+        })
+      }
       writeServerLog('WARN', 'broker.event_mapper.runtime_unwedged_on_run_mismatch', {
         runtimeId: ctx.runtimeId,
         invocationId: envelope.invocationId,
         seq: envelope.seq,
         activeRunId: runtime.activeRunId,
         terminalRunId: runId,
+        failedActiveRun,
       })
       clearRuntimeTurnOwnership(db, runtime, now)
     }
