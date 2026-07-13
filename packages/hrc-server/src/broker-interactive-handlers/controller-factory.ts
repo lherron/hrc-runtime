@@ -292,13 +292,15 @@ export async function spawnBrokerHeadlessViewer(
     // A turn is being dispatched into this viewer, so the bar opens at `running`;
     // the lifecycle projector takes over the right field from here (T-04439).
     // Title is computed inside ensureHeadlessViewer as `<tab label> · <agent>`
-    // (e.g. `T-05177 · clod`) and set as the LAST write after the attach command
-    // (T-05237), so we no longer pass one here.
+    // (e.g. `T-05177 · clod`), plus ` · <role>` for a role-qualified scope
+    // (T-06321), and set as the LAST write after the attach command (T-05237), so
+    // we no longer pass one here.
     const result = await this.ghostmux.ensureHeadlessViewer({
       scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
       runtimeId: runtime.runtimeId,
       attachCommand,
-      statusBar: renderStatusBar(runtime.scopeRef, 'running', slug),
+      statusBar: renderStatusBar(runtime.scopeRef, 'running', slug, runtime.laneRef),
       terminalBg: viewerTerminalBg(runtime.scopeRef),
     })
     // Bind the viewer surface to the CURRENT runtime as the projector's primary

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { GhostmuxManager, deriveHeadlessTabIdentity, parseGhostmuxSurfaceState } from '../ghostmux'
+import {
+  GhostmuxManager,
+  deriveHeadlessSessionIdentity,
+  deriveHeadlessTabIdentity,
+  parseGhostmuxSurfaceState,
+} from '../ghostmux'
 
 /**
  * A metadata-modeling fake ghostmux (T-05237). Tracks live surfaces with both
@@ -314,6 +319,53 @@ describe('deriveHeadlessTabIdentity', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// T-06321: canonical pane key from normalized (scopeRef, laneRef)
+// ---------------------------------------------------------------------------
+describe('deriveHeadlessSessionIdentity', () => {
+  it('keeps the shared tab but distinguishes the pane key by role', () => {
+    const tester = deriveHeadlessSessionIdentity(
+      'agent:cody:project:agent-loop:task:T-06319:role:tester'
+    )
+    const impl = deriveHeadlessSessionIdentity(
+      'agent:cody:project:agent-loop:task:T-06319:role:implementer'
+    )
+    // Same task tab...
+    expect(tester.tab.tabKey).toBe('task:T-06319')
+    expect(impl.tab.tabKey).toBe('task:T-06319')
+    // ...but distinct pane keys and role names.
+    expect(tester.paneKey).not.toBe(impl.paneKey)
+    expect(tester.roleName).toBe('tester')
+    expect(impl.roleName).toBe('implementer')
+    expect(tester.laneRef).toBe('main')
+  })
+
+  it('distinguishes the pane key by lane for one scope', () => {
+    const scope = 'agent:cody:project:agent-loop:task:T-06319'
+    const main = deriveHeadlessSessionIdentity(scope)
+    const forked = deriveHeadlessSessionIdentity(scope, 'lane:forked')
+    expect(main.tab.tabKey).toBe(forked.tab.tabKey)
+    expect(main.paneKey).not.toBe(forked.paneKey)
+    expect(main.laneRef).toBe('main')
+    expect(forked.laneRef).toBe('lane:forked')
+  })
+
+  it('an omitted lane normalizes to main; explicit main is identical', () => {
+    const scope = 'agent:clod:project:hrc-runtime:task:T-06321'
+    expect(deriveHeadlessSessionIdentity(scope).paneKey).toBe(
+      deriveHeadlessSessionIdentity(scope, 'main').paneKey
+    )
+    expect(deriveHeadlessSessionIdentity(scope).roleName).toBeUndefined()
+  })
+
+  it('falls back to an unparsed pane key for a malformed ref (never throws)', () => {
+    const id = deriveHeadlessSessionIdentity('::::garbage::::', 'lane:x')
+    expect(id.paneKey.startsWith('unparsed:')).toBe(true)
+    expect(id.paneKey.endsWith('#lane:x')).toBe(true)
+    expect(id.tab.tabKey.startsWith('unparsed:')).toBe(true)
+  })
+})
+
 describe('GhostmuxManager.ensureHeadlessViewer (consolidated window/tab/pane)', () => {
   const cloRef = 'agent:clod:project:hrc-runtime:task:T-05237'
   const curlyRef = 'agent:curly:project:hrc-runtime:task:T-05237'
@@ -481,6 +533,116 @@ describe('GhostmuxManager.ensureHeadlessViewer (consolidated window/tab/pane)', 
     const paneId = fake.agentPanes()[0]?.[0]
     expect(fake.calls).toContainEqual(['set-bg', '-t', paneId, '#1e1631', '--json'])
     expect(fake.calls.some((c) => c[0] === 'statusbar')).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // T-06321: pane identity is (scopeRef, laneRef), not (tabKey, agentId).
+  // -------------------------------------------------------------------------
+  const codyBase = 'agent:cody:project:agent-loop:task:T-06319'
+  const attachSends = (fake: ReturnType<typeof makeFakeGhostmux>) =>
+    fake.calls.filter((c) => c[0] === 'send-keys' && c.length === 4 && c[1] === '-t')
+
+  it('same agent+task across THREE roles: one window, one tab, three panes, three attaches', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: `${codyBase}:role:tester`,
+      runtimeId: 'rt-tester',
+      attachCommand: 'attach-tester',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: `${codyBase}:role:implementer`,
+      runtimeId: 'rt-impl',
+      attachCommand: 'attach-impl',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: `${codyBase}:role:observer`,
+      runtimeId: 'rt-obs',
+      attachCommand: 'attach-obs',
+    })
+
+    // One window, one tab (one `new --tab`), two extra splits ⇒ three panes.
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--window'))).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--tab'))).toHaveLength(1)
+    const panes = fake.agentPanes()
+    expect(panes).toHaveLength(3)
+    // All share one tab key; each pane has a DISTINCT canonical pane key.
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key']))).toEqual(
+      new Set(['task:T-06319'])
+    )
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_pane_key'])).size).toBe(3)
+    // Same agent id on every pane (presentation, not uniqueness authority).
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_agent_id']))).toEqual(new Set(['cody']))
+    // Distinct role names + role-distinguishable titles + distinct runtime bindings.
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_role_name']))).toEqual(
+      new Set(['tester', 'implementer', 'observer'])
+    )
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_runtime_id']))).toEqual(
+      new Set(['rt-tester', 'rt-impl', 'rt-obs'])
+    )
+    const titles = panes.map(([id]) => fake.surfaces.get(id)?.title)
+    expect(titles).toContain('loop · T-06319 · cody · tester')
+    expect(titles).toContain('loop · T-06319 · cody · implementer')
+    expect(titles).toContain('loop · T-06319 · cody · observer')
+    // Three distinct attach-command sends, one per seat.
+    expect(attachSends(fake).map((c) => c[3])).toEqual(
+      expect.arrayContaining(['attach-tester', 'attach-impl', 'attach-obs'])
+    )
+    expect(attachSends(fake)).toHaveLength(3)
+  })
+
+  it('distinct HRC lanes for one scope produce distinct panes in one tab', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: codyBase,
+      laneRef: 'main',
+      runtimeId: 'rt-main',
+      attachCommand: 'attach-main',
+    })
+    await manager.ensureHeadlessViewer({
+      scopeRef: codyBase,
+      laneRef: 'lane:forked',
+      runtimeId: 'rt-forked',
+      attachCommand: 'attach-forked',
+    })
+
+    expect(fake.anchors()).toHaveLength(1)
+    expect(fake.calls.filter((c) => c[0] === 'new' && c.includes('--tab'))).toHaveLength(1)
+    const panes = fake.agentPanes()
+    expect(panes).toHaveLength(2)
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_tab_key']))).toEqual(
+      new Set(['task:T-06319'])
+    )
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_lane_ref']))).toEqual(
+      new Set(['main', 'lane:forked'])
+    )
+    expect(new Set(panes.map(([, s]) => s.surfaceMeta['hrc_pane_key'])).size).toBe(2)
+  })
+
+  it('a newer runtime of the exact same (scope, lane) REUSES its pane (AC7 unchanged)', async () => {
+    const fake = makeFakeGhostmux()
+    const manager = new GhostmuxManager('ghostmux', fake.runner)
+
+    await manager.ensureHeadlessViewer({
+      scopeRef: `${codyBase}:role:tester`,
+      runtimeId: 'rt-1',
+      attachCommand: 'a1',
+    })
+    const before = fake.liveIds().length
+    const result = await manager.ensureHeadlessViewer({
+      scopeRef: `${codyBase}:role:tester`,
+      runtimeId: 'rt-2',
+      attachCommand: 'a2',
+    })
+
+    expect(result.status).toBe('reused')
+    expect(fake.liveIds().length).toBe(before)
+    expect(fake.agentPanes()).toHaveLength(1)
+    expect(fake.agentPanes()[0]?.[1].surfaceMeta['hrc_runtime_id']).toBe('rt-2')
   })
 })
 

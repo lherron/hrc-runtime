@@ -34,13 +34,30 @@ describe('viewerStateForEventKind', () => {
 })
 
 describe('renderStatusBar', () => {
-  it('renders the full triplet from a scope ref', () => {
+  it('renders the full triplet from a scope ref (lane in the center)', () => {
     const spec = renderStatusBar('agent:clod:project:hrc-runtime:task:T-04297', 'running')
     expect(spec.left).toBe('◆ CLOD')
-    expect(spec.center).toBe('hrc · T-04297')
+    expect(spec.center).toBe('hrc · T-04297/main')
     expect(spec.right).toBe('▶ running')
     expect(spec.bg).toBe('#6B4FB0')
     expect(spec.fg).toBe('#F2EEE6')
+  })
+
+  it('surfaces a fork lane in the center field as <task>/<lane> (T-06321)', () => {
+    const spec = renderStatusBar(
+      'agent:clod:project:hrc-runtime:task:T-02341',
+      'running',
+      null,
+      'lane:forked'
+    )
+    expect(spec.center).toBe('hrc · T-02341/forked')
+  })
+
+  it('an omitted lane normalizes to main in the center field', () => {
+    expect(
+      renderStatusBar('agent:clod:project:hrc-runtime:task:T-02341', 'running', null, undefined)
+        .center
+    ).toBe('hrc · T-02341/main')
   })
 
   it('drops the primary task from the center field', () => {
@@ -52,7 +69,7 @@ describe('renderStatusBar', () => {
   it('always emits all three fields (never blanks left/center)', () => {
     const spec = renderStatusBar('agent:smokey:project:wrkq:task:T-1', 'exited')
     expect(spec.left).toBe('◆ SMOKEY')
-    expect(spec.center).toBe('wrkq · T-1')
+    expect(spec.center).toBe('wrkq · T-1/main')
     expect(spec.right).toBe('■ exited')
   })
 
@@ -68,19 +85,19 @@ describe('renderStatusBar', () => {
       'running',
       'add-task-slug-to-ghostmux-status-bar'
     )
-    expect(spec.center).toBe('hrc · T-04977 · add-task-slug-to-ghostmux-status-bar')
+    expect(spec.center).toBe('hrc · T-04977/main · add-task-slug-to-ghostmux-status-bar')
   })
 
-  it('falls back to project · T-id when no slug is provided', () => {
+  it('falls back to project · T-id/lane when no slug is provided', () => {
     expect(renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running').center).toBe(
-      'hrc · T-04977'
+      'hrc · T-04977/main'
     )
     expect(
       renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', null).center
-    ).toBe('hrc · T-04977')
+    ).toBe('hrc · T-04977/main')
     expect(
       renderStatusBar('agent:clod:project:hrc-runtime:task:T-04977', 'running', '   ').center
-    ).toBe('hrc · T-04977')
+    ).toBe('hrc · T-04977/main')
   })
 
   it('never appends a slug to a primary (taskless) scope', () => {
@@ -218,7 +235,21 @@ describe('HeadlessViewerStatusProjector', () => {
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
     expect(applied).toHaveLength(1)
-    expect(applied[0]?.spec.center).toBe('hrc · T-04977 · add-task-slug-to-ghostmux-status-bar')
+    expect(applied[0]?.spec.center).toBe(
+      'hrc · T-04977/main · add-task-slug-to-ghostmux-status-bar'
+    )
+  })
+
+  it('surfaces the lane from the lifecycle event in the center field (T-06321)', async () => {
+    const { projector, applied, flushAll } = makeHarness()
+    projector.observe({
+      eventKind: 'turn.started',
+      runtimeId: 'rt-1',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-04977',
+      laneRef: 'lane:forked',
+    })
+    await flushAll()
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977/forked')
   })
 
   it('falls back to project · T-id when the slug resolver returns null', async () => {
@@ -228,7 +259,7 @@ describe('HeadlessViewerStatusProjector', () => {
     )
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
-    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977/main')
   })
 
   it('still writes the bar when the slug resolver throws (best-effort)', async () => {
@@ -241,7 +272,7 @@ describe('HeadlessViewerStatusProjector', () => {
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
     expect(applied).toHaveLength(1)
-    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977/main')
     expect(errors).toHaveLength(1)
   })
 
@@ -249,7 +280,7 @@ describe('HeadlessViewerStatusProjector', () => {
     const { projector, applied, flushAll } = makeHarness()
     projector.observe(ev('turn.started', 'rt-1', 'agent:clod:project:hrc-runtime:task:T-04977'))
     await flushAll()
-    expect(applied[0]?.spec.center).toBe('hrc · T-04977')
+    expect(applied[0]?.spec.center).toBe('hrc · T-04977/main')
   })
 
   it('never repaints terminal color — the projector only writes the status bar', async () => {

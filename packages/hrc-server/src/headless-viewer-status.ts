@@ -12,7 +12,7 @@
  * left/center and changing only the right (state) field.
  */
 
-import { parseScopeRef } from 'agent-scope'
+import { laneIdFromRef, normalizeLaneRef, parseScopeRef } from 'agent-scope'
 
 import { agentTheme } from './agent-theme.js'
 import type { GhostmuxStatusBarSpec } from './ghostmux.js'
@@ -58,19 +58,24 @@ export function viewerStateForEventKind(eventKind: string): ViewerState | null {
  *
  * `slug` is the optional best-effort wrkq task slug (T-04977). When present (and
  * the scope carries a real task), it is appended to the center field; when
- * null/undefined the center falls back to today's `project · T-id` rendering.
+ * null/undefined the center falls back to the `project · T-id/<lane>` rendering.
+ *
+ * `laneRef` surfaces the HRC lane in the center field as `<task>/<lane>` (T-06321):
+ * an omitted/undefined lane normalizes to `main`, so a task viewer always shows its
+ * lane and a fork lane is visibly distinct from `main`.
  */
 export function renderStatusBar(
   scopeRef: string,
   state: ViewerState,
-  slug?: string | null
+  slug?: string | null,
+  laneRef?: string | null
 ): GhostmuxStatusBarSpec {
   const parsed = safeParseScopeRef(scopeRef)
   const agentId = parsed?.agentId ?? 'unknown'
   const theme = agentTheme(agentId)
   return {
     left: `◆ ${agentId.toUpperCase()}`,
-    center: renderCenter(parsed, slug),
+    center: renderCenter(parsed, slug, laneRef),
     right: STATE_RIGHT[state],
     fg: theme.fg,
     bg: theme.bg,
@@ -83,18 +88,25 @@ export function viewerTerminalBg(scopeRef: string): string {
   return agentTheme(parsed?.agentId ?? 'unknown').terminalBg
 }
 
-function renderCenter(parsed: ReturnType<typeof safeParseScopeRef>, slug?: string | null): string {
+function renderCenter(
+  parsed: ReturnType<typeof safeParseScopeRef>,
+  slug?: string | null,
+  laneRef?: string | null
+): string {
   if (!parsed) return ''
   // Short project prefix to match the tab title (presentation only, T-05237).
   const project = shortenProjectId(parsed.projectId)
   // `primary` is the default task scope and carries no information — drop it.
   const task = parsed.taskId && parsed.taskId !== 'primary' ? parsed.taskId : ''
+  // Surface the lane alongside a real task as `<task>/<lane>` (T-06321). Bare lane
+  // id (`main`, or the fork name) — an omitted lane normalizes to `main`.
+  const taskLane = task ? `${task}/${laneIdFromRef(normalizeLaneRef(laneRef ?? undefined))}` : ''
   // The slug labels a real task; only meaningful alongside a task id.
   const label = typeof slug === 'string' && slug.trim().length > 0 ? slug.trim() : ''
-  if (project && task) {
-    return label ? `${project} · ${task} · ${label}` : `${project} · ${task}`
+  if (project && taskLane) {
+    return label ? `${project} · ${taskLane} · ${label}` : `${project} · ${taskLane}`
   }
-  return project || task || ''
+  return project || taskLane || ''
 }
 
 function safeParseScopeRef(scopeRef: string): ReturnType<typeof parseScopeRef> | null {
@@ -128,6 +140,7 @@ export type HeadlessViewerStatusProjectorDeps = {
 
 type ProjectorEntry = {
   scopeRef: string
+  laneRef: string | undefined
   pending: ViewerState
   /** True once any terminal event has been observed — exited is sticky. */
   exited: boolean
@@ -138,6 +151,7 @@ type LifecycleLike = {
   eventKind: string
   runtimeId?: string | undefined
   scopeRef?: string | undefined
+  laneRef?: string | undefined
 }
 
 /**
@@ -167,6 +181,7 @@ export class HeadlessViewerStatusProjector {
 
       const entry = this.entries.get(runtimeId) ?? {
         scopeRef,
+        laneRef: event.laneRef,
         pending: state,
         exited: false,
         timer: undefined,
@@ -175,6 +190,7 @@ export class HeadlessViewerStatusProjector {
       // later running/awaiting/idle, even if it arrives out of order.
       if (entry.exited) return
       entry.scopeRef = scopeRef
+      entry.laneRef = event.laneRef
       if (state === 'exited') entry.exited = true
       entry.pending = state
       this.entries.set(runtimeId, entry)
@@ -193,12 +209,12 @@ export class HeadlessViewerStatusProjector {
     const entry = this.entries.get(runtimeId)
     if (!entry) return
     entry.timer = undefined
-    const { pending: state, scopeRef, exited } = entry
+    const { pending: state, scopeRef, laneRef, exited } = entry
     try {
       const surfaceId = await this.deps.resolveSurfaceId(runtimeId)
       if (surfaceId) {
         const slug = await this.resolveSlugBestEffort(scopeRef)
-        await this.deps.applyStatusBar(surfaceId, renderStatusBar(scopeRef, state, slug))
+        await this.deps.applyStatusBar(surfaceId, renderStatusBar(scopeRef, state, slug, laneRef))
       }
     } catch (error) {
       this.deps.onError?.(error)

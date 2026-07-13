@@ -1,4 +1,4 @@
-import { parseScopeRef } from 'agent-scope'
+import { buildScopeRef, normalizeLaneRef, parseScopeRef } from 'agent-scope'
 
 import { shortenProjectId } from './project-prefix.js'
 
@@ -47,10 +47,12 @@ const CLAUDE_TAB_ROLE = 'claude-surfaces'
 const CLAUDE_RUNTIME_ROLE = 'claude-runtime'
 
 /**
- * Consolidated headless-viewer presentation (T-05237). Replaces the old
+ * Consolidated headless-viewer presentation (T-05237, T-06321). Replaces the old
  * one-standalone-window-per-scope model (role `hrc-headless-viewer`): a single
  * global "Headless Sessions" window holds one tab per canonical `hrc_tab_key`,
- * and one agent pane per `(tabKey, agentId)`.
+ * and one agent pane per canonical `hrc_pane_key` — the normalized
+ * `(scopeRef, laneRef)` HRC session identity, so same-agent role/lane seats on one
+ * task get distinct panes (T-06321).
  *
  * INVARIANT (daedalus #10810): HRC owns this topology ONLY through Ghostty
  * metadata — never via `list-surfaces` topology, window titles, tab labels, cwd,
@@ -69,7 +71,7 @@ export const HEADLESS_VIEWER_SURFACE_KIND = 'ghostty-headless-viewer'
 
 /** Decomposition of a scope ref into the canonical headless tab grouping (T-05237). */
 export type HeadlessTabIdentity = {
-  /** Canonical grouping key — the ONLY value matching may key on. */
+  /** Canonical grouping key — the ONLY value the TAB grouping may key on. */
   tabKey: string
   agentId: string
   taskId?: string | undefined
@@ -78,15 +80,34 @@ export type HeadlessTabIdentity = {
   label: string
 }
 
-function safeParseScopeRef(
-  scopeRef: string
-): { agentId?: string; projectId?: string; taskId?: string } | null {
+/**
+ * Full HRC-session identity for a headless viewer PANE (T-06321). A task still
+ * owns one tab (`tab.tabKey`), but distinct role-qualified scopes or distinct
+ * lanes under that task get distinct panes keyed by `paneKey`, derived from the
+ * normalized `(scopeRef, laneRef)` pair. `agentId` is presentation metadata, not
+ * uniqueness authority.
+ */
+export type HeadlessSessionIdentity = {
+  /** Tab grouping — one tab per canonical task/project key (unchanged). */
+  tab: HeadlessTabIdentity
+  /** Canonical pane uniqueness key from normalized `(scopeRef, laneRef)`. */
+  paneKey: string
+  /** Normalized lane ref (`main` or `lane:<id>`). */
+  laneRef: string
+  /** Role name when the scope is role-qualified (title + operator diagnosis). */
+  roleName?: string | undefined
+}
+
+type ParsedScope = {
+  agentId?: string
+  projectId?: string
+  taskId?: string
+  roleName?: string
+}
+
+function safeParseScopeRef(scopeRef: string): ParsedScope | null {
   try {
-    return parseScopeRef(scopeRef) as {
-      agentId?: string
-      projectId?: string
-      taskId?: string
-    }
+    return parseScopeRef(scopeRef) as ParsedScope
   } catch {
     return null
   }
@@ -141,6 +162,52 @@ export function deriveHeadlessTabIdentity(scopeRef: string): HeadlessTabIdentity
     agentId,
     ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
     label: `${prefix} · primary`,
+  }
+}
+
+/**
+ * Canonical pane uniqueness key from the full normalized HRC session identity
+ * `(scopeRef, laneRef)` (T-06321). A role-qualified scope keeps its `role:` segment
+ * and distinct lanes append distinct `lane` refs, so tester/implementer/observer
+ * scopes for the same agent+task — and distinct lanes for one scope — never collapse
+ * to one pane. Falls back to the sanitized raw ref for an unparseable scope so it
+ * never throws.
+ */
+function deriveHeadlessPaneKey(
+  parsed: ParsedScope | null,
+  laneRef: string,
+  rawScopeRef: string
+): string {
+  if (!parsed?.agentId) {
+    return `unparsed:${sanitizeKeyFragment(rawScopeRef)}#${laneRef}`
+  }
+  const canonicalScope = buildScopeRef({
+    agentId: parsed.agentId,
+    ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+    ...(parsed.taskId ? { taskId: parsed.taskId } : {}),
+    ...(parsed.roleName ? { roleName: parsed.roleName } : {}),
+  })
+  return `${canonicalScope}#${laneRef}`
+}
+
+/**
+ * Derive the full headless-viewer session identity (T-06321): the tab grouping
+ * (unchanged from T-05237) plus the canonical pane key and normalized lane. Lane
+ * identity is threaded from the caller rather than reconstructed/defaulted inside
+ * the presentation layer; an omitted lane normalizes to `main`.
+ */
+export function deriveHeadlessSessionIdentity(
+  scopeRef: string,
+  laneRef?: string | undefined
+): HeadlessSessionIdentity {
+  const parsed = safeParseScopeRef(scopeRef)
+  const tab = deriveHeadlessTabIdentity(scopeRef)
+  const lane = normalizeLaneRef(laneRef)
+  return {
+    tab,
+    paneKey: deriveHeadlessPaneKey(parsed, lane, scopeRef),
+    laneRef: lane,
+    ...(parsed?.roleName ? { roleName: parsed.roleName } : {}),
   }
 }
 
@@ -279,9 +346,9 @@ function metadataIsAgentPaneForTab(metadata: unknown, tabKey: string): boolean {
   return metadata['hrc_tab_key'] === tabKey
 }
 
-function metadataIsAgentPaneFor(metadata: unknown, tabKey: string, agentId: string): boolean {
+function metadataIsAgentPaneWithKey(metadata: unknown, tabKey: string, paneKey: string): boolean {
   if (!metadataIsAgentPaneForTab(metadata, tabKey)) return false
-  return (metadata as Record<string, unknown>)['hrc_agent_id'] === agentId
+  return (metadata as Record<string, unknown>)['hrc_pane_key'] === paneKey
 }
 
 function unwrapGhostmuxMetadata(value: unknown): unknown {
@@ -470,21 +537,32 @@ export class GhostmuxManager {
   /**
    * Best-effort: place a headless broker runtime's TUI viewer as a PANE inside the
    * single global "Headless Sessions" window — one tab per canonical `hrc_tab_key`,
-   * one pane per `(tabKey, agentId)` (T-05237). Replaces the prior
-   * one-standalone-window-per-scope model that proliferated windows and exhausted
-   * the pty pool. Reuse rebinds the pane's `hrc_runtime_id` to the CURRENT runtime
-   * (daedalus C5) BEFORE the caller's lifecycle projection can target it. Never
-   * throws: any ghostmux failure is surfaced as { status: 'failed' } so the caller
-   * logs and continues headless.
+   * one pane per canonical `hrc_pane_key`, the normalized `(scopeRef, laneRef)` HRC
+   * session identity (T-05237, T-06321). Same-agent tester/implementer/observer
+   * seats — or distinct lanes — on one task therefore get distinct panes in the same
+   * task tab. Replaces the prior one-standalone-window-per-scope model that
+   * proliferated windows and exhausted the pty pool. Reuse rebinds the pane's
+   * `hrc_runtime_id` to the CURRENT runtime (daedalus C5) BEFORE the caller's
+   * lifecycle projection can target it. Never throws: any ghostmux failure is
+   * surfaced as { status: 'failed' } so the caller logs and continues headless.
    *
    * Topology authority is Ghostty metadata ONLY (daedalus invariant): titles, tab
    * labels, cwd, and focus are presentation and are never read for decisions.
    */
   async ensureHeadlessViewer(options: {
     scopeRef: string
+    /**
+     * HRC lane ref for this session (`main` or `lane:<id>`). Threaded from the
+     * runtime rather than defaulted here so distinct lanes get distinct panes
+     * (T-06321). Omitted/undefined normalizes to `main`.
+     */
+    laneRef?: string | undefined
     runtimeId: string
     attachCommand: string
-    /** Optional explicit pane-title override; default is `<label> · <agent>`. */
+    /**
+     * Optional explicit pane-title override; default is `<label> · <agent>`, plus
+     * ` · <role>` for a role-qualified scope.
+     */
     title?: string | undefined
     /**
      * Optional initial status-bar triplet. Applied best-effort and OFF the
@@ -499,14 +577,19 @@ export class GhostmuxManager {
      */
     terminalBg?: string | undefined
   }): Promise<HeadlessViewerResult> {
-    const identity = deriveHeadlessTabIdentity(options.scopeRef)
-    const paneTitle = options.title ?? `${identity.label} · ${identity.agentId}`
+    const identity = deriveHeadlessSessionIdentity(options.scopeRef, options.laneRef)
+    const tab = identity.tab
+    const baseTitle = `${tab.label} · ${tab.agentId}`
+    const paneTitle =
+      options.title ?? (identity.roleName ? `${baseTitle} · ${identity.roleName}` : baseTitle)
     // Serialize per tab key: concurrent same-task dispatches must not both
     // miss-then-create a duplicate tab. The critical section re-checks live
-    // metadata AFTER acquiring the lock (daedalus concurrency condition).
-    return this.withHeadlessLock(`tab:${identity.tabKey}`, async () => {
+    // metadata AFTER acquiring the lock (daedalus concurrency condition). Distinct
+    // panes within one tab still serialize under this key, which is correct: the
+    // first create makes the tab, later ones split the existing tab pane.
+    return this.withHeadlessLock(`tab:${tab.tabKey}`, async () => {
       try {
-        const existing = await this.findAgentPane(identity.tabKey, identity.agentId)
+        const existing = await this.findAgentPaneByKey(tab.tabKey, identity.paneKey)
         if (existing) {
           // Reuse: rebind the pane to the CURRENT runtime (daedalus C5) so a stale
           // terminal event for a prior runtime cannot reap this pane, then repaint.
@@ -523,14 +606,14 @@ export class GhostmuxManager {
           return {
             status: 'reused' as const,
             surfaceId: existing.surfaceId,
-            tabKey: identity.tabKey,
+            tabKey: tab.tabKey,
           }
         }
 
         const anchor = await this.ensureHeadlessWindow()
         // An existing pane for this tab key is a valid split target — any live
         // pane in the tab puts the new pane in the same Ghostty tab.
-        const tabPane = await this.findTaskTab(identity.tabKey)
+        const tabPane = await this.findTaskTab(tab.tabKey)
 
         // `ghostmux new`/`new-pane` transiently hit the libghostty surface_not_realize
         // race under load; ghostmux's guidance is bounded backoff (clears in 1-2 tries).
@@ -574,7 +657,7 @@ export class GhostmuxManager {
         await this.equalizePanes(created.surfaceId)
         this.applyStatusBarBestEffort(created.surfaceId, options.statusBar)
         this.applyTerminalBackgroundBestEffort(created.surfaceId, options.terminalBg)
-        return { status: 'created' as const, surfaceId: created.surfaceId, tabKey: identity.tabKey }
+        return { status: 'created' as const, surfaceId: created.surfaceId, tabKey: tab.tabKey }
       } catch (error) {
         return {
           status: 'failed' as const,
@@ -775,33 +858,42 @@ export class GhostmuxManager {
     return null
   }
 
-  /** The live agent pane for `(tabKey, agentId)`, if one exists. */
-  private async findAgentPane(
+  /** The live agent pane for `(tabKey, paneKey)`, if one exists (T-06321). */
+  private async findAgentPaneByKey(
     tabKey: string,
-    agentId: string
+    paneKey: string
   ): Promise<GhostmuxSurfaceState | null> {
     const surfaces = parseGhostmuxSurfaceList((await this.exec(['list-surfaces', '--json'])).stdout)
     for (const surface of surfaces) {
       const metadata = await this.getMetadata(surface.surfaceId, false).catch(() => undefined)
-      if (metadataIsAgentPaneFor(metadata, tabKey, agentId)) return surface
+      if (metadataIsAgentPaneWithKey(metadata, tabKey, paneKey)) return surface
     }
     return null
   }
 
-  /** Stamp/refresh the canonical agent-pane metadata (surface-level). */
+  /**
+   * Stamp/refresh the canonical agent-pane metadata (surface-level). The uniqueness
+   * authority is `hrc_pane_key` (normalized `(scopeRef, laneRef)`); `hrc_agent_id`
+   * and `hrc_role_name` are presentation/diagnosis metadata. Also records the exact
+   * session identity (scope/lane/role) and the current runtime binding (T-06321).
+   */
   private async stampAgentPaneMetadata(
     surfaceId: string,
-    identity: HeadlessTabIdentity,
+    identity: HeadlessSessionIdentity,
     binding: { scopeRef: string; runtimeId: string }
   ): Promise<void> {
+    const tab = identity.tab
     await this.setMetadata(
       surfaceId,
       {
         hrc_role: HEADLESS_AGENT_PANE_ROLE,
-        hrc_tab_key: identity.tabKey,
-        hrc_agent_id: identity.agentId,
-        ...(identity.projectId ? { hrc_project: identity.projectId } : {}),
-        ...(identity.taskId ? { hrc_task_id: identity.taskId } : {}),
+        hrc_tab_key: tab.tabKey,
+        hrc_pane_key: identity.paneKey,
+        hrc_agent_id: tab.agentId,
+        hrc_lane_ref: identity.laneRef,
+        ...(identity.roleName ? { hrc_role_name: identity.roleName } : {}),
+        ...(tab.projectId ? { hrc_project: tab.projectId } : {}),
+        ...(tab.taskId ? { hrc_task_id: tab.taskId } : {}),
         hrc_scope_ref: binding.scopeRef,
         hrc_runtime_id: binding.runtimeId,
       },
