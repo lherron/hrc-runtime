@@ -72,6 +72,42 @@ describe('isQuitEligible (operator reap predicate)', () => {
     expect(isQuitEligible(eligibleStatus({ turnStatus: 'failed' }))).toBe(false)
     expect(isQuitEligible(eligibleStatus({ turnStatus: 'none' }))).toBe(false)
   })
+
+  it('requires the latest activity to be strictly more than 30 minutes old', () => {
+    const realDateNow = Date.now
+    const now = Date.parse('2026-07-14T15:00:00.000Z')
+    Date.now = () => now
+    try {
+      expect(
+        isQuitEligible(
+          eligibleStatus({
+            lastEventUtc: new Date(now - 29 * 60 * 1000).toISOString(),
+          })
+        )
+      ).toBe(false)
+      expect(
+        isQuitEligible(
+          eligibleStatus({
+            lastEventUtc: new Date(now - 30 * 60 * 1000).toISOString(),
+          })
+        )
+      ).toBe(false)
+      expect(
+        isQuitEligible(
+          eligibleStatus({
+            lastEventUtc: new Date(now - 30 * 60 * 1000 - 1).toISOString(),
+          })
+        )
+      ).toBe(true)
+    } finally {
+      Date.now = realDateNow
+    }
+  })
+
+  it('skips when latest activity time is missing or invalid', () => {
+    expect(isQuitEligible(eligibleStatus({ lastEventUtc: '' }))).toBe(false)
+    expect(isQuitEligible(eligibleStatus({ lastEventUtc: 'not-a-timestamp' }))).toBe(false)
+  })
 })
 
 describe('skipReasons (per-pane skip explanations)', () => {
@@ -127,6 +163,15 @@ describe('skipReasons (per-pane skip explanations)', () => {
     expect(skipReasons(eligibleStatus({ turnStatus: 'none' }))[0]).toMatch(/nothing has run/i)
   })
 
+  it('explains when the latest activity is not more than 30 minutes old', () => {
+    const reasons = skipReasons(
+      eligibleStatus({
+        lastEventUtc: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      })
+    )
+    expect(reasons.some((reason) => /more than 30 minutes idle/i.test(reason))).toBe(true)
+  })
+
   it('lists every failed guard when several are wrong at once', () => {
     const reasons = skipReasons(
       eligibleStatus({ transport: 'sdk', activeRunId: 'run-x', turnStatus: 'none' })
@@ -160,6 +205,17 @@ describe('isLeftoverViewer (already-dead pane to close)', () => {
   it('is false when a run is still active (never key-close an in-flight pane)', () => {
     expect(
       isLeftoverViewer(eligibleStatus({ runtimeStatus: 'terminated', activeRunId: 'run-live' }))
+    ).toBe(false)
+  })
+
+  it('is false when the leftover pane has not been idle for more than 30 minutes', () => {
+    expect(
+      isLeftoverViewer(
+        eligibleStatus({
+          runtimeStatus: 'terminated',
+          lastEventUtc: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        })
+      )
     ).toBe(false)
   })
 

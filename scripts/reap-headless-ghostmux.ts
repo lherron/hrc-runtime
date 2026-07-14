@@ -33,6 +33,8 @@ type DiscoveredPane = Pane & {
 // "Headless Sessions" window (T-05237). The window anchor itself carries
 // `headless-window-anchor` and is intentionally excluded.
 const HEADLESS_PANE_ROLE = 'headless-agent-pane'
+const MIN_IDLE_MINUTES = 30
+const MIN_IDLE_MS = MIN_IDLE_MINUTES * 60 * 1000
 
 type PaneStatus = Pane & {
   agent: string
@@ -79,7 +81,8 @@ title regex no longer matched. TITLE_REGEX remains an OPTIONAL secondary filter.
 Eligible = surface resolves to one runtime with controllerKind=harness-broker,
 a tmux TUI window (transport=tmux, OR transport=headless with a leased-tmux
 substrate + presentation.kind=tmux-tui — the codex app-server viewer pane),
-status=ready, NO active run, latest turn=completed.
+status=ready, NO active run, latest turn=completed, and latest HRC activity
+strictly more than ${MIN_IDLE_MINUTES} minutes ago.
 
 Environment:
   PANE_ROLE            Default: ${HEADLESS_PANE_ROLE} (ghostmux hrc_role metadata)
@@ -250,9 +253,15 @@ function eventKindColor(eventKind: string): string {
   return color.yellow(eventKind)
 }
 
+function isIdleLongerThanThreshold(lastEventUtc: string): boolean {
+  const lastEventMs = Date.parse(lastEventUtc)
+  return Number.isFinite(lastEventMs) && Date.now() - lastEventMs > MIN_IDLE_MS
+}
+
 // Operator idle-viewer reap invariant (T-04423, daedalus ruling): a reap is
 // valid iff the surface metadata resolves to exactly ONE broker-tmux runtime
-// that is idle-and-complete with NO active run. The `activeRunId` guard is the
+// that is idle-and-complete with NO active run and has seen no HRC activity for
+// strictly more than 30 minutes. The `activeRunId` guard is the
 // HIGH-severity one: without it, terminating a `ready`-with-active-run runtime
 // makes `finalizeRuntimeTermination` fail the live run. The transport/controller
 // guards keep us off true headless/sdk runtimes (where `/v1/terminate` only
@@ -379,6 +388,15 @@ function skipReasons(status: PaneStatus): string[] {
     }
   }
 
+  const lastEventMs = Date.parse(status.lastEventUtc)
+  if (!Number.isFinite(lastEventMs)) {
+    reasons.push('latest activity time is missing or invalid — cannot confirm 30 minutes idle')
+  } else if (!isIdleLongerThanThreshold(status.lastEventUtc)) {
+    reasons.push(
+      `latest activity was ${formatDurationAgo(status.lastEventUtc)} — requires more than ${MIN_IDLE_MINUTES} minutes idle`
+    )
+  }
+
   return reasons
 }
 
@@ -392,11 +410,13 @@ function isQuitEligible(status: PaneStatus): boolean {
 // NOT reap-eligible (no live broker), yet we still want to send Enter to close
 // the dead terminal. The actual keystroke stays gated by the close-prompt regex
 // at send time, so a runtime-gone pane that is NOT showing the prompt is left
-// untouched. A pane with an active run is never a leftover viewer.
+// untouched. A pane with an active run is never a leftover viewer, and the same
+// strict 30-minute idle threshold used for live reaps applies before closing it.
 function isLeftoverViewer(status: PaneStatus): boolean {
   return (
     status.runtimeId !== '' &&
     status.activeRunId === '' &&
+    isIdleLongerThanThreshold(status.lastEventUtc) &&
     (status.runtimeStatus === 'terminated' || status.runtimeStatus === 'stale')
   )
 }
@@ -896,7 +916,7 @@ async function main(): Promise<void> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed, idle>${MIN_IDLE_MINUTES}m).`
       )
     )
     if (leftoverStatuses.length > 0) {
