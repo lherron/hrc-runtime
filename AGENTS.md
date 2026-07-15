@@ -180,7 +180,7 @@ End-to-end order for a cross-repo change:
 
 ```bash
 # 1. edit ../agent-spaces source
-cd ../agent-spaces && just install        # build + publish-dev + sync hrc & acp
+cd ../agent-spaces && just install        # build + publish-dev; downstream checks stay read-only
 # then, with an explicit consumer owner:
 cd ../hrc-runtime && just pull-deps
 bun run build && launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
