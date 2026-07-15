@@ -196,14 +196,14 @@ export function buildDmWaitResult(args: {
   // reason the response will never come).
   const errorCode = request.execution.errorCode
   const errorMessage = request.execution.errorMessage
-  if (errorCode) {
+  if (errorCode || request.execution.state === 'failed') {
     return {
       status: 'error',
       sentMessageId,
       target,
       elapsedMs,
       lastSeq: afterSeq,
-      errorCode,
+      errorCode: errorCode ?? 'delivery_not_guaranteed',
       ...(errorMessage ? { errorMessage } : {}),
     }
   }
