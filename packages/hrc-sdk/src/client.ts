@@ -18,6 +18,8 @@ import type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BridgeListFilter,
+  BrokerForensicsOptions,
+  BrokerForensicsResponse,
   BrokerInspectRequest,
   BrokerInspectResponse,
   CaptureBySelectorRequest,
@@ -382,6 +384,12 @@ export class HrcClient {
    */
   async brokerInspect(request: BrokerInspectRequest): Promise<BrokerInspectResponse> {
     return this.postJson<BrokerInspectResponse>('/v1/runtimes/broker/inspect', request)
+  }
+
+  /** Read-only access to durable, including terminated, broker ledger rows. */
+  async brokerForensics(options: BrokerForensicsOptions): Promise<BrokerForensicsResponse> {
+    const path = buildPath('/v1/broker-forensics', { targetId: options.targetId })
+    return this.getJson<BrokerForensicsResponse>(path)
   }
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {

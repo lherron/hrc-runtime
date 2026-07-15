@@ -196,7 +196,7 @@ Commands:
   monitor wait <selector> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
-  runtime list [--host-session-id <id>] [--transport <transport>] [--status <csv>] [--stale] [--older-than <duration>] [--scope <prefix>] [--json]
+  runtime list [--host-session-id <id>|--session <id>] [--transport <transport>] [--status <csv>] [--stale] [--older-than <duration>] [--scope <selector>] [--json]
                                      List runtimes
   runtime inspect <runtimeId> [--json] Inspect one runtime
   runtime sweep [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--drop-continuation] [--dry-run|--yes] [--json]
@@ -208,6 +208,12 @@ Commands:
   runtime terminate <runtimeId> [--drop-continuation|--no-drop-continuation]
                                      Terminate a runtime session
   runtime adopt <runtimeId>           Adopt a dead/stale runtime
+  broker events <target> [--type <csv>] [--seq <a>..<b>] [--latest] [--json|--ndjson]
+                                     List durable broker ledger events
+  broker transcript <target> [--seq <a>..<b>] [--kinds <csv>] [--full] [--latest]
+                                     Render interleaved exec/assistant/notice history
+  broker stats <target> [--latest] [--json]
+                                     Summarize durable broker activity
   launch list [--host-session-id <id>] [--runtime-id <id>]  List launches
   start <scope> [prompt] [--force-restart] [--new-session] [--dry-run]
   run <scope> [prompt] [--force-restart] [--attach-only] [--dry-run]

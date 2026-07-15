@@ -491,6 +491,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/events')]: (request, url) => this.handleEvents(url, request),
     [exactRouteKey('GET', '/v1/broker-events')]: (request, url) =>
       this.handleBrokerEvents(url, request),
+    [exactRouteKey('GET', '/v1/broker-forensics')]: (_request, url) =>
+      this.handleBrokerForensics(url),
     [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
       this.handleEventsLatestBySession(url),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),

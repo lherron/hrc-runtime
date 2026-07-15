@@ -594,6 +594,32 @@ export type BrokerInspectRequest = {
   recoverFinalSummary?: { timeoutMs?: number | undefined } | undefined
 }
 
+/**
+ * Durable broker-ledger row exposed by the read-only post-mortem API.
+ * `parseError` is present when the historical payload cannot be decoded; the
+ * row itself is still returned so one damaged event never hides later events.
+ */
+export type BrokerForensicsEvent = {
+  invocationId: string
+  runtimeId: string
+  runId?: string | undefined
+  seq: number
+  time: string
+  type: string
+  turnId?: string | undefined
+  payload?: unknown
+  parseError?: string | undefined
+  rawPayload?: string | undefined
+}
+
+export type BrokerForensicsResponse = {
+  targetKind: 'runtime' | 'invocation'
+  targetId: string
+  runtimeIds: string[]
+  invocationIds: string[]
+  events: BrokerForensicsEvent[]
+}
+
 export type FinalSummaryRecoveryState =
   | 'not_needed'
   | 'recovered'

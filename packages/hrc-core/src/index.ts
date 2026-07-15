@@ -149,6 +149,8 @@ export type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BrokerInspectRequest,
+  BrokerForensicsEvent,
+  BrokerForensicsResponse,
   BrokerInspectResponse,
   FinalSummaryRecoveryResult,
   FinalSummaryRecoveryState,

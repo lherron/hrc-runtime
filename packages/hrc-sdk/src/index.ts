@@ -15,6 +15,8 @@ export type {
   AttachRuntimeRequest,
   AttachRuntimeResponse,
   BridgeListFilter,
+  BrokerForensicsOptions,
+  BrokerForensicsResponse,
   BindSurfaceRequest,
   CaptureResponse,
   ClearContextRequest,

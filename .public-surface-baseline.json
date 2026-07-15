@@ -295,6 +295,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "BrokerForensicsEvent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerForensicsEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "BrokerForensicsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|BrokerForensicsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BrokerInspectRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -2739,6 +2755,22 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|BridgeListFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "BrokerForensicsOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|BrokerForensicsOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "BrokerForensicsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|BrokerForensicsResponse|type",
       "count": 1
     },
     {

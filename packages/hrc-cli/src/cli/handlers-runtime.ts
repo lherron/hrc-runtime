@@ -10,6 +10,7 @@ import type {
   SweepZombieRunsRequest,
   SweepZombieRunsResponse,
 } from 'hrc-core'
+import { parseSelector } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
 import { printJson } from '../print.js'
@@ -29,11 +30,17 @@ import { cmdSessionList } from './handlers-server.js'
 import { createClient, fatal } from './shared.js'
 
 export async function cmdRuntimeList(args: string[]): Promise<void> {
-  const hostSessionId = parseFlag(args, '--host-session-id')
+  const hostSessionIdFlag = parseFlag(args, '--host-session-id')
+  const sessionFlag = parseFlag(args, '--session')
+  if (hostSessionIdFlag && sessionFlag && hostSessionIdFlag !== sessionFlag) {
+    fatal('--session and --host-session-id must name the same host session when used together')
+  }
+  const hostSessionId = sessionFlag ?? hostSessionIdFlag
   const transport = parseTransportFlag(args)
   const status = parseFlag(args, '--status')
   const olderThan = parseFlag(args, '--older-than')
-  const scope = parseFlag(args, '--scope')
+  const scopeInput = parseFlag(args, '--scope')
+  const scope = scopeInput ? canonicalScopeFilter(scopeInput) : undefined
   const jsonOutput = hasFlag(args, '--json')
   const client = createClient()
   const runtimes = await client.listRuntimes({
@@ -46,6 +53,18 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(jsonOutput ? { json: true } : {}),
   })
   printJson(runtimes)
+}
+
+function canonicalScopeFilter(raw: string): string {
+  const selector = parseSelector(raw.startsWith('agent:') ? `scope:${raw}` : raw)
+  switch (selector.kind) {
+    case 'scope':
+    case 'session':
+    case 'target':
+      return selector.scopeRef
+    default:
+      fatal(`--scope requires a scope ref or target handle, not a ${selector.kind} selector`)
+  }
 }
 
 export async function cmdRuntimeInspect(args: string[]): Promise<void> {

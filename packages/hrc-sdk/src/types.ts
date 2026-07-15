@@ -6,6 +6,7 @@ export type {
   AttachRuntimeResponse,
   BindSurfaceRequest,
   BrokerInspectRequest,
+  BrokerForensicsResponse,
   BrokerInspectResponse,
   CaptureResponse,
   ClearContextRequest,
@@ -107,6 +108,11 @@ export type WatchBrokerEventsOptions = {
   afterSeq?: number | undefined
   follow?: boolean | undefined
   signal?: AbortSignal | undefined
+}
+
+export type BrokerForensicsOptions = {
+  /** Exact persisted runtimeId or invocationId. Scope resolution stays in the CLI. */
+  targetId: string
 }
 
 /**

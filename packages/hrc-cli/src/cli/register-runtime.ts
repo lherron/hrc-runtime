@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 
+import { cmdBrokerEvents, cmdBrokerStats, cmdBrokerTranscript } from '../broker-forensics.js'
 import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { cmdCapture, cmdInterrupt, cmdRuntimeEnsure, cmdTerminate } from './handlers-control.js'
@@ -30,6 +31,53 @@ export function registerRuntimeCommands(program: Command): void {
         booleans: ['probe', 'json'],
       })
       await cmdBrokerInspect(args)
+    })
+
+  broker
+    .command('events')
+    .description('list durable broker events for post-mortem analysis')
+    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--type <types>', 'comma-separated event types')
+    .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
+    .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .option('--json', 'output as a JSON array')
+    .option('--ndjson', 'output one complete event per NDJSON line')
+    .action(async (target, _opts, cmd: Command) => {
+      const args = toLegacyArgv([target], cmd.opts(), {
+        strings: ['type', 'seq'],
+        booleans: ['latest', 'json', 'ndjson'],
+      })
+      await cmdBrokerEvents(args)
+    })
+
+  broker
+    .command('transcript')
+    .description('render an interleaved broker exec, assistant, and notice stream')
+    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
+    .option('--kinds <kinds>', 'comma-separated exec,cot,notice kinds', 'exec,cot,notice')
+    .option('--full', 'do not clip long event text')
+    .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .action(async (target, _opts, cmd: Command) => {
+      const args = toLegacyArgv([target], cmd.opts(), {
+        strings: ['seq', 'kinds'],
+        booleans: ['full', 'latest'],
+      })
+      await cmdBrokerTranscript(args)
+    })
+
+  broker
+    .command('stats')
+    .description('summarize durable broker activity for post-mortem analysis')
+    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--latest', 'select the newest runtime when a scope is ambiguous')
+    .option('--json', 'output as JSON')
+    .action(async (target, _opts, cmd: Command) => {
+      const args = toLegacyArgv([target], cmd.opts(), {
+        strings: [],
+        booleans: ['latest', 'json'],
+      })
+      await cmdBrokerStats(args)
     })
 
   const brokerVerify = broker.command('verify').description('verify broker capture and projection')
@@ -84,6 +132,7 @@ export function registerRuntimeCommands(program: Command): void {
     .command('list')
     .description('list runtimes')
     .option('--host-session-id <id>', 'filter by host session')
+    .option('--session <id>', 'filter by host session (post-mortem discovery alias)')
     .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
     .option('--status <status>', 'filter by status')
     .option('--older-than <duration>', 'filter by age')
@@ -92,7 +141,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--stale', 'show only stale runtimes')
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['host-session-id', 'transport', 'status', 'older-than', 'scope'],
+        strings: ['host-session-id', 'session', 'transport', 'status', 'older-than', 'scope'],
         booleans: ['json', 'stale'],
       })
       await cmdRuntimeList(args)

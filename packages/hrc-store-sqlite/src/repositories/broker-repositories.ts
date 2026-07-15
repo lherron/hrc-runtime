@@ -652,6 +652,18 @@ export class BrokerInvocationEventRepository {
     return rows.map(mapBrokerInvocationEventRow)
   }
 
+  listByRuntimeId(runtimeId: string): HrcBrokerInvocationEventRecord[] {
+    const rows = this.db
+      .query<BrokerInvocationEventRow, [string]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE runtime_id = ?
+          ORDER BY time ASC, invocation_id ASC, seq ASC`
+      )
+      .all(runtimeId)
+
+    return rows.map(mapBrokerInvocationEventRow)
+  }
+
   maxBrokerSeq(invocationId: string): number {
     const row = this.db
       .query<{ max_seq: number | null }, [string]>(

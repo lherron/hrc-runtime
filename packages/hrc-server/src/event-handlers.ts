@@ -1,5 +1,11 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
-import type { HrcBrokerInvocationEventRecord, HrcEventCategory, HrcLifecycleEvent } from 'hrc-core'
+import type {
+  BrokerForensicsEvent,
+  BrokerForensicsResponse,
+  HrcBrokerInvocationEventRecord,
+  HrcEventCategory,
+  HrcLifecycleEvent,
+} from 'hrc-core'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import { HRC_EVENTS_KEEPALIVE_MS, NDJSON_HEADERS } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
@@ -330,6 +336,89 @@ export function handleBrokerEvents(
   })
 }
 
+function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensicsEvent {
+  let turnId: string | undefined
+  if (row.brokerEnvelopeJson) {
+    try {
+      const envelope = JSON.parse(row.brokerEnvelopeJson) as Record<string, unknown>
+      if (typeof envelope['turnId'] === 'string') turnId = envelope['turnId']
+    } catch {
+      // The payload row remains useful even if optional envelope metadata is damaged.
+    }
+  }
+
+  const base = {
+    invocationId: row.invocationId,
+    runtimeId: row.runtimeId,
+    ...(row.runId !== undefined ? { runId: row.runId } : {}),
+    seq: row.seq,
+    time: row.time,
+    type: row.type,
+    ...(turnId !== undefined ? { turnId } : {}),
+  }
+
+  try {
+    const decoded = JSON.parse(row.brokerEventJson) as unknown
+    // Both shapes exist in persisted ledgers: the current payload-only form and
+    // an older envelope-like `{ payload: ... }` form.
+    const payload =
+      decoded !== null &&
+      typeof decoded === 'object' &&
+      !Array.isArray(decoded) &&
+      Object.hasOwn(decoded, 'payload')
+        ? (decoded as Record<string, unknown>)['payload']
+        : decoded
+    return { ...base, payload }
+  } catch (error) {
+    return {
+      ...base,
+      parseError: error instanceof Error ? error.message : String(error),
+      rawPayload: row.brokerEventJson,
+    }
+  }
+}
+
+/** Read-only post-mortem projection of persisted broker rows. */
+export function handleBrokerForensics(this: HrcServerInstanceForHandlers, url: URL): Response {
+  const targetId = requireQuery(url.searchParams, 'targetId')
+  const invocation = this.db.brokerInvocations.getByInvocationId(targetId)
+
+  let targetKind: BrokerForensicsResponse['targetKind']
+  let rows: HrcBrokerInvocationEventRecord[]
+  let runtimeIds: string[]
+  let invocationIds: string[]
+
+  if (invocation) {
+    targetKind = 'invocation'
+    rows = this.db.brokerInvocationEvents.listByInvocationId(invocation.invocationId)
+    runtimeIds = [invocation.runtimeId]
+    invocationIds = [invocation.invocationId]
+  } else {
+    const runtime = this.db.runtimes.getByRuntimeId(targetId)
+    if (!runtime) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.INVALID_SELECTOR,
+        `no persisted broker runtime or invocation matched "${targetId}"`,
+        { targetId }
+      )
+    }
+    targetKind = 'runtime'
+    rows = this.db.brokerInvocationEvents.listByRuntimeId(runtime.runtimeId)
+    runtimeIds = [runtime.runtimeId]
+    invocationIds = this.db.brokerInvocations
+      .listByRuntimeId(runtime.runtimeId)
+      .map((entry) => entry.invocationId)
+  }
+
+  return json({
+    targetKind,
+    targetId,
+    runtimeIds,
+    invocationIds,
+    events: rows.map(parseForensicsRow),
+  } satisfies BrokerForensicsResponse)
+}
+
 export function handleEventsLatestBySession(
   this: HrcServerInstanceForHandlers,
   url: URL
@@ -345,6 +434,7 @@ export const eventHandlersMethods = {
   assertBrokerEventsRuntimeFence,
   handleEvents,
   handleBrokerEvents,
+  handleBrokerForensics,
   handleEventsLatestBySession,
 }
 

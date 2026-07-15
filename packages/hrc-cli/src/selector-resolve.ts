@@ -4,7 +4,9 @@ import type { HrcClient } from 'hrc-sdk'
 
 export type SelectorTargetKind = 'runtime' | 'host-session' | 'message' | 'bridge'
 
-export type RuntimeSnapshot = Pick<HrcRuntimeSnapshot, 'runtimeId' | 'scopeRef' | 'laneRef'>
+export type RuntimeSnapshot = Pick<HrcRuntimeSnapshot, 'runtimeId' | 'scopeRef' | 'laneRef'> & {
+  createdAt?: string | undefined
+}
 
 export type SessionSnapshot = Pick<HrcSessionRecord, 'hostSessionId' | 'scopeRef' | 'laneRef'>
 
@@ -88,7 +90,10 @@ function ambiguous(
 
 function parseCliSelector(rawArg: string): HrcSelector {
   try {
-    return parseSelector(rawArg)
+    // A canonical ScopeRef starts with `agent:`. The generic monitor parser
+    // otherwise treats `agent` as an unknown selector prefix, while operator
+    // commands have historically accepted both scope:<ref> and the bare ref.
+    return parseSelector(rawArg.startsWith('agent:') ? `scope:${rawArg}` : rawArg)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new SelectorResolutionError('parse-error', `invalid selector "${rawArg}": ${message}`)
@@ -133,7 +138,8 @@ function resolveUniqueRuntime(
   rawArg: string,
   expect: SelectorTargetKind,
   snapshot: SelectorSnapshot,
-  predicate: (entry: RuntimeSnapshot) => boolean
+  predicate: (entry: RuntimeSnapshot) => boolean,
+  latest = false
 ): ResolvedRuntime {
   if (expect !== 'runtime') {
     typeMismatch(rawArg, expect, 'scope/session target')
@@ -143,10 +149,16 @@ function resolveUniqueRuntime(
   if (matches.length === 0) {
     notFound(rawArg, expect)
   }
-  if (matches.length > 1) {
+  if (matches.length > 1 && !latest) {
     ambiguous(rawArg, expect, matches)
   }
-  const match = matches[0]
+  const match = latest
+    ? [...matches].sort(
+        (left, right) =>
+          Date.parse(right.createdAt ?? '') - Date.parse(left.createdAt ?? '') ||
+          right.runtimeId.localeCompare(left.runtimeId)
+      )[0]
+    : matches[0]
   if (!match) {
     notFound(rawArg, expect)
   }
@@ -185,10 +197,17 @@ function resolveScopeTarget(
   rawArg: string,
   expect: SelectorTargetKind,
   snapshot: SelectorSnapshot,
-  scopeRef: string
+  scopeRef: string,
+  latest = false
 ): ResolvedRuntime | ResolvedSession {
   if (expect === 'runtime') {
-    return resolveUniqueRuntime(rawArg, expect, snapshot, (entry) => entry.scopeRef === scopeRef)
+    return resolveUniqueRuntime(
+      rawArg,
+      expect,
+      snapshot,
+      (entry) => entry.scopeRef === scopeRef,
+      latest
+    )
   }
   if (expect === 'host-session') {
     return resolveUniqueSession(rawArg, expect, snapshot, (entry) => entry.scopeRef === scopeRef)
@@ -201,14 +220,16 @@ function resolveSessionTarget(
   expect: SelectorTargetKind,
   snapshot: SelectorSnapshot,
   scopeRef: string,
-  laneRef: string
+  laneRef: string,
+  latest = false
 ): ResolvedRuntime | ResolvedSession {
   if (expect === 'runtime') {
     return resolveUniqueRuntime(
       rawArg,
       expect,
       snapshot,
-      (entry) => entry.scopeRef === scopeRef && entry.laneRef === laneRef
+      (entry) => entry.scopeRef === scopeRef && entry.laneRef === laneRef,
+      latest
     )
   }
   if (expect === 'host-session') {
@@ -227,6 +248,7 @@ export function resolveSelectorTarget(
   opts: {
     expect: SelectorTargetKind
     snapshot: SelectorSnapshot
+    latest?: boolean | undefined
   }
 ): ResolvedTarget {
   const raw = rawArg.trim()
@@ -257,19 +279,19 @@ export function resolveSelectorTarget(
       return { kind: 'message-seq', seq: selector.messageSeq }
 
     case 'scope':
-      return resolveScopeTarget(raw, opts.expect, opts.snapshot, selector.scopeRef)
+      return resolveScopeTarget(raw, opts.expect, opts.snapshot, selector.scopeRef, opts.latest)
 
     case 'session': {
       const { scopeRef, laneRef } = splitSessionRef(selector.sessionRef)
-      return resolveSessionTarget(raw, opts.expect, opts.snapshot, scopeRef, laneRef)
+      return resolveSessionTarget(raw, opts.expect, opts.snapshot, scopeRef, laneRef, opts.latest)
     }
 
     case 'target':
       if (hasExplicitLane(selector.raw)) {
         const { scopeRef, laneRef } = splitSessionRef(selector.sessionRef)
-        return resolveSessionTarget(raw, opts.expect, opts.snapshot, scopeRef, laneRef)
+        return resolveSessionTarget(raw, opts.expect, opts.snapshot, scopeRef, laneRef, opts.latest)
       }
-      return resolveScopeTarget(raw, opts.expect, opts.snapshot, selector.scopeRef)
+      return resolveScopeTarget(raw, opts.expect, opts.snapshot, selector.scopeRef, opts.latest)
 
     case 'stable':
     case 'concrete':
@@ -284,6 +306,7 @@ export async function fetchSelectorSnapshot(client: HrcClient): Promise<Selector
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
       laneRef: runtime.laneRef,
+      createdAt: runtime.createdAt,
     })),
     sessions: sessions.map((session) => ({
       hostSessionId: session.hostSessionId,
@@ -293,10 +316,15 @@ export async function fetchSelectorSnapshot(client: HrcClient): Promise<Selector
   }
 }
 
-export async function resolveRuntimeArg(rawArg: string, client: HrcClient): Promise<string> {
+export async function resolveRuntimeArg(
+  rawArg: string,
+  client: HrcClient,
+  options: { latest?: boolean | undefined } = {}
+): Promise<string> {
   const target = resolveSelectorTarget(rawArg, {
     expect: 'runtime',
     snapshot: await fetchSelectorSnapshot(client),
+    latest: options.latest,
   })
   if (target.kind !== 'runtime') {
     typeMismatch(rawArg, 'runtime', target.kind)

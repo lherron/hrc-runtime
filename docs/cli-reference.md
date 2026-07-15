@@ -146,13 +146,26 @@ Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kil
 ```bash
 hrc runtime list
 hrc runtime list --host-session-id <id> --json
+hrc ls runtimes --session <hostSessionId> --json
 hrc runtime list --transport tmux --status busy
-hrc runtime list --scope agent:clod:project:agent-spaces --stale
+hrc ls runtimes --scope clod@agent-spaces:T-123 --json
 ```
 
-`runtime list` filters: `--host-session-id <id>`, `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`, `--scope <prefix>`, `--stale`, `--json`.
+`runtime list` filters: `--host-session-id <id>` (or `--session <id>`), `--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`, `--scope <scopeRef|handle>`, `--stale`, `--json`. The `hrc ls runtimes` orientation alias accepts the same filters.
 
 Sibling commands: `runtime ensure <hostSessionId>`, `runtime inspect <runtimeId> [--json]`, `runtime sweep [...]`, `runtime capture|interrupt|terminate|adopt <runtimeId>`. Low-level broker read model: `hrc broker inspect <runtimeId> [--probe] [--json]`.
+
+### Broker post-mortem forensics
+
+The broker forensics commands read the durable event ledger through the HRC daemon and include terminated runtimes:
+
+```bash
+hrc broker events <runtimeId|invocationId|scope> --type tool.call.started,driver.notice --seq 20..80 --ndjson
+hrc broker transcript <runtimeId|invocationId|scope> --kinds exec,cot,notice
+hrc broker stats <runtimeId|invocationId|scope> --json
+```
+
+A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest. Human event and transcript output clips large payloads with an explicit marker. `broker events --ndjson` and `broker transcript --full` preserve complete content.
 
 ### `hrcchat dm` (and the hrcchat surface)
 
