@@ -433,7 +433,7 @@ if (cmd === 'app-server') {
   async function waitForCondition(
     predicate: () => boolean,
     description: string,
-    timeoutMs = 5_000
+    timeoutMs = 2_500
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
