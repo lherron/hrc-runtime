@@ -665,6 +665,17 @@ describe('no args / help', () => {
     expect(result.stdout).not.toContain('\n  info              ')
     expect(result.stderr).toBe('')
   })
+
+  it('prints parseable first-contact orientation for info --json', async () => {
+    const result = await runCli(['info', '--json'])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: 'hrc',
+      text: expect.stringContaining('COMMON CONTROL FLOWS'),
+    })
+  })
 })
 
 // ===========================================================================
