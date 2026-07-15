@@ -186,6 +186,14 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     expect(JSON.parse(result.stdout)).toEqual([])
   })
 
+  it('runtime list --help enumerates accepted status values', async () => {
+    const result = await runCli(['runtime', 'list', '--help'], cliEnv())
+    const output = result.stdout + result.stderr
+
+    expect(result.exitCode).toBe(0)
+    expect(output).toContain('busy|dead|ready|stale|terminated')
+  })
+
   it('bad integer flags exit non-zero with the usage error message intact', async () => {
     const result = await runCli(['server', 'stop', '--timeout-ms', '0'], cliEnv())
 
