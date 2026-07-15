@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import type { HrcRuntimeIntent } from 'hrc-core'
+import type { HrcClient } from 'hrc-sdk'
 import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
 import { displayPrompts, formatDisplayCommand, renderKeyValueSection } from 'spaces-execution'
 
@@ -24,6 +25,42 @@ import {
   resolveManagedScopeContext,
 } from './scope.js'
 import { createClient, fatal } from './shared.js'
+
+type ManagedStartClient = Pick<HrcClient, 'dispatchTurn' | 'startRuntime'>
+
+export async function executeManagedStart(
+  client: ManagedStartClient,
+  input: {
+    hostSessionId: string
+    intent: HrcRuntimeIntent
+    prompt?: string | undefined
+    restartStyle: 'reuse_pty' | 'fresh_pty'
+  }
+) {
+  const prompt = input.prompt
+  if (prompt === undefined || prompt.length === 0) {
+    return client.startRuntime({
+      hostSessionId: input.hostSessionId,
+      intent: input.intent,
+      restartStyle: input.restartStyle,
+    })
+  }
+
+  if (input.restartStyle === 'fresh_pty') {
+    await client.startRuntime({
+      hostSessionId: input.hostSessionId,
+      intent: { ...input.intent, initialPrompt: undefined },
+      restartStyle: input.restartStyle,
+    })
+  }
+
+  return client.dispatchTurn({
+    hostSessionId: input.hostSessionId,
+    prompt,
+    runtimeIntent: input.intent,
+    waitForCompletion: true,
+  })
+}
 
 function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {
   // `resume` is an exact alias of `run`; it renders run's option surface but
@@ -391,9 +428,10 @@ export async function cmdStart(args: string[]): Promise<void> {
             dropContinuation: true,
           })
         : resolved
-    const runtime = await client.startRuntime({
+    const runtime = await executeManagedStart(client, {
       hostSessionId: targetSession.hostSessionId,
       intent,
+      prompt,
       restartStyle,
     })
 

@@ -478,8 +478,9 @@ if (cmd === 'app-server') {
   function installHeadlessBrokerStartStub(
     hostSessionId: string,
     options: { continuationKey?: string; gate?: Promise<unknown> } = {}
-  ): { calls: any[]; runtimeIds: string[] } {
+  ): { calls: any[]; inputCalls: any[]; runtimeIds: string[] } {
     const calls: any[] = []
+    const inputCalls: any[] = []
     const runtimeIds: string[] = []
     ;(server as any).getHarnessBrokerController = () => ({
       start: async (input: any) => {
@@ -543,8 +544,27 @@ if (cmd === 'app-server') {
           db.close()
         }
       },
+      dispatchInput: async (input: any) => {
+        inputCalls.push(input)
+        const db = openHrcDatabase(dbPath)
+        try {
+          const runId = input.input.metadata?.runId
+          if (typeof runId !== 'string') {
+            throw new Error('broker-input stub: input metadata has no runId')
+          }
+          const completedAt = new Date().toISOString()
+          db.runs.markCompleted(runId, {
+            status: 'completed',
+            completedAt,
+            updatedAt: completedAt,
+          })
+          return { ok: true, response: { accepted: true } }
+        } finally {
+          db.close()
+        }
+      },
     })
-    return { calls, runtimeIds }
+    return { calls, inputCalls, runtimeIds }
   }
 
   it('interactive ensure fails closed when no broker-admissible route exists', async () => {
@@ -661,6 +681,33 @@ if (cmd === 'app-server') {
     )
     const launches = (await launchesRes.json()) as any[]
     expect(launches).toHaveLength(0)
+  })
+
+  it('POST /v1/runtimes/start delivers initialPrompt when reusing a headless broker runtime', async () => {
+    await restartServerWithHeadlessCodexBroker()
+    const hsid = await resolveSession('lifecycle-start-existing-prompt')
+    const stub = installHeadlessBrokerStartStub(hsid)
+
+    const firstRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: headlessCodexIntent({}),
+    })
+    expect(firstRes.status).toBe(200)
+    const firstData = (await firstRes.json()) as { runtimeId: string }
+
+    const secondRes = await postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: headlessCodexIntent({ initialPrompt: 'wake the existing session' }),
+    })
+    expect(secondRes.status).toBe(200)
+    const secondData = (await secondRes.json()) as { runtimeId: string }
+
+    expect(secondData.runtimeId).toBe(firstData.runtimeId)
+    expect(stub.calls).toHaveLength(1)
+    expect(stub.inputCalls).toHaveLength(1)
+    expect(stub.inputCalls[0].input.content).toEqual([
+      { type: 'text', text: 'wake the existing session' },
+    ])
   })
 
   it('POST /v1/clear-context can rotate to a fresh session without inheriting continuation', async () => {

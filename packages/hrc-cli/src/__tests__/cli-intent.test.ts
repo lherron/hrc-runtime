@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { harnessStringToHarnessId, resolveAgentHarness } from '../cli'
+import { executeManagedStart } from '../cli/handlers-scope-cmd'
+import { buildManagedStartIntent } from '../cli/scope'
 
 describe('harnessStringToHarnessId', () => {
   it('maps "pi" profile harness to HrcHarness "pi-cli"', () => {
@@ -140,3 +142,111 @@ describe('hrc-cli resolve intent single authority', () => {
     }
   })
 })
+
+describe('buildManagedStartIntent', () => {
+  let projectRoot: string
+
+  beforeEach(async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), 'hrc-cli-start-intent-'))
+    await mkdir(join(projectRoot, 'agents', 'codex-agent'), { recursive: true })
+    await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
+    await writeFile(
+      join(projectRoot, 'agents', 'codex-agent', 'agent-profile.toml'),
+      'schemaVersion = 2\n\n[identity]\nharness = "codex"\n'
+    )
+  })
+
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true })
+  })
+
+  const scope = () => ({
+    agentId: 'codex-agent',
+    scopeRef: 'agent:codex-agent',
+    laneRef: 'main',
+    sessionRef: 'agent:codex-agent/lane:main',
+    projectRootOverride: projectRoot,
+  })
+
+  it('classifies prompt-bearing detached start as non-interactive headless', () => {
+    const intent = buildManagedStartIntent(scope(), { prompt: 'wake up' })
+
+    expect(intent.harness).toMatchObject({
+      provider: 'openai',
+      id: 'codex-cli',
+      interactive: false,
+    })
+    expect(intent.execution?.preferredMode).toBe('headless')
+    expect(intent.initialPrompt).toBe('wake up')
+  })
+
+  it('leaves promptless detached start classification unchanged', () => {
+    expect(buildManagedStartIntent(scope()).harness.interactive).toBe(true)
+  })
+})
+
+describe('executeManagedStart', () => {
+  const intent = {
+    harness: { provider: 'openai' as const, id: 'codex-cli' as const, interactive: false },
+    initialPrompt: 'wake up',
+  }
+
+  it('uses semantic turn dispatch and waits when a prompt is present', async () => {
+    const startCalls: unknown[] = []
+    const dispatchCalls: unknown[] = []
+    const client = {
+      startRuntime: async (input: unknown) => {
+        startCalls.push(input)
+        return { runtimeId: 'rt-start' }
+      },
+      dispatchTurn: async (input: unknown) => {
+        dispatchCalls.push(input)
+        return { runtimeId: 'rt-turn', runId: 'run-turn' }
+      },
+    } as unknown as ManagedStartClientForTest
+
+    const result = await executeManagedStart(client, {
+      hostSessionId: 'hs-test',
+      intent,
+      prompt: 'wake up',
+      restartStyle: 'reuse_pty',
+    })
+
+    expect(startCalls).toHaveLength(0)
+    expect(dispatchCalls).toEqual([
+      {
+        hostSessionId: 'hs-test',
+        prompt: 'wake up',
+        runtimeIntent: intent,
+        waitForCompletion: true,
+      },
+    ])
+    expect(result).toEqual({ runtimeId: 'rt-turn', runId: 'run-turn' })
+  })
+
+  it('keeps promptless start on the lifecycle API', async () => {
+    const startCalls: unknown[] = []
+    const dispatchCalls: unknown[] = []
+    const client = {
+      startRuntime: async (input: unknown) => {
+        startCalls.push(input)
+        return { runtimeId: 'rt-start' }
+      },
+      dispatchTurn: async (input: unknown) => {
+        dispatchCalls.push(input)
+        return { runtimeId: 'rt-turn' }
+      },
+    } as unknown as ManagedStartClientForTest
+
+    await executeManagedStart(client, {
+      hostSessionId: 'hs-test',
+      intent: { ...intent, initialPrompt: undefined },
+      restartStyle: 'reuse_pty',
+    })
+
+    expect(startCalls).toHaveLength(1)
+    expect(dispatchCalls).toHaveLength(0)
+  })
+})
+
+type ManagedStartClientForTest = Parameters<typeof executeManagedStart>[0]

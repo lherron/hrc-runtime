@@ -360,10 +360,20 @@ export function buildManagedStartIntent(
     debug?: boolean | undefined
   } = {}
 ): HrcRuntimeIntent {
-  return buildManagedRuntimeIntent(scope, {
+  const intent = buildManagedRuntimeIntent(scope, {
     ...options,
     preferredMode: 'headless',
   })
+  return {
+    ...intent,
+    harness: {
+      ...intent.harness,
+      interactive:
+        options.prompt !== undefined && options.prompt.length > 0
+          ? false
+          : intent.harness.interactive,
+    },
+  }
 }
 
 export function buildManagedAttachIntent(scope: ManagedScopeContext): HrcRuntimeIntent {

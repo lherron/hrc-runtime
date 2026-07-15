@@ -339,6 +339,17 @@ export async function startRuntimeForSession(
           (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
         ) {
           await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime, viewerSpawnOptions)
+          const initialPrompt = startIntent.initialPrompt ?? ''
+          if (initialPrompt.length > 0) {
+            await this.executeHeadlessBrokerInputTurn(
+              session,
+              reusableBrokerRuntime,
+              initialPrompt,
+              `run-${randomUUID()}`,
+              { waitForCompletion: true }
+            )
+            return requireRuntime(this.db, reusableBrokerRuntime.runtimeId)
+          }
           return reusableBrokerRuntime
         }
         if (reusableBrokerRuntime && !isRuntimeUnavailableStatus(reusableBrokerRuntime.status)) {
