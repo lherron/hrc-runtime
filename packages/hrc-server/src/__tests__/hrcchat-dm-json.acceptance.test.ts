@@ -67,7 +67,7 @@ done
     await seedBusyRuntime()
 
     const result = await runDmJson('cody@agent-spaces:T-01303', 'line 1\nline 2\nline 3\n')
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode).toBe(4)
     expect(result.stderr).toBe('')
     expect(result.stdout.endsWith('\n')).toBe(true)
 
@@ -87,7 +87,7 @@ done
     await seedBusyRuntime({ agentHarness: 'codex' })
 
     const result = await runDmJson('cody@agent-spaces:T-01303', 'line 1\nline 2\nline 3\n')
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode).toBe(4)
     expect(result.stderr).toBe('')
     expect(countRuntimesForScope('agent:cody:project:agent-spaces:task:T-01303')).toBe(1)
 
