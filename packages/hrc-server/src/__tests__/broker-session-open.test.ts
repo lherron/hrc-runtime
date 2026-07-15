@@ -59,6 +59,7 @@ function seedReusableBrokerRuntime(
   options: {
     activeRunId?: string | undefined
     capabilitiesJson?: { input?: { queue?: boolean } } | undefined
+    durable?: boolean | undefined
     status?: string | undefined
   } = {}
 ) {
@@ -82,6 +83,38 @@ function seedReusableBrokerRuntime(
       activeOperationId: OPERATION_ID,
       activeInvocationId: INVOCATION_ID,
       activeRunId,
+      ...(options.durable
+        ? {
+            runtimeStateJson: {
+              schemaVersion: 'runtime-state/v1',
+              kind: 'harness-broker',
+              runtimeId: RUNTIME_ID,
+              hostSessionId,
+              generation,
+              status: options.status ?? 'ready',
+              broker: {
+                protocolVersion: 'harness-broker/0.2',
+                generation,
+                endpoint: {
+                  kind: 'unix-jsonrpc-ndjson',
+                  socketPath: `${fixture.tmpDir}/broker.sock`,
+                  attachTokenRef: {
+                    kind: 'file',
+                    path: `${fixture.tmpDir}/attach.token`,
+                    redacted: true,
+                  },
+                },
+                brokerWindow: {
+                  socketPath: `${fixture.tmpDir}/btmux.sock`,
+                  sessionName: `hrc-codex-app-server-${RUNTIME_ID}`,
+                  sessionId: '$0',
+                  windowId: '@0',
+                  paneId: '%0',
+                },
+              },
+            },
+          }
+        : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -147,10 +180,19 @@ function installDispatchInputFailFast() {
   return calls
 }
 
+function installHeadlessViewerSpy() {
+  const runtimeIds: string[] = []
+  ;(server as any).spawnBrokerHeadlessViewer = async (runtime: { runtimeId: string }) => {
+    runtimeIds.push(runtime.runtimeId)
+  }
+  return runtimeIds
+}
+
 describe('POST /v1/broker-sessions/open', () => {
   it('opens an invocation-level broker session without creating a turn run', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
+    const viewerRuntimeIds = installHeadlessViewerSpy()
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
       hostSessionId: resolved.hostSessionId,
@@ -174,6 +216,7 @@ describe('POST /v1/broker-sessions/open', () => {
       generation: resolved.generation,
     })
     expect(body.observation.broker.selector.runId).toBeUndefined()
+    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
@@ -184,6 +227,42 @@ describe('POST /v1/broker-sessions/open', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('ensures the viewer after recovering a durable broker session', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
+      durable: true,
+      status: 'stale',
+    })
+    const viewerRuntimeIds = installHeadlessViewerSpy()
+    ;(server as any).reattachDurableBrokerSessionForOpen = async (runtime: {
+      runtimeId: string
+      runtimeStateJson?: Record<string, unknown>
+    }) => {
+      ;(server as any).db.runtimes.update(runtime.runtimeId, {
+        status: 'ready',
+        updatedAt: new Date().toISOString(),
+        runtimeStateJson: { ...runtime.runtimeStateJson, status: 'ready' },
+      })
+      return true
+    }
+    ;(server as any).startHeadlessBrokerRuntime = async () => {
+      throw new Error('durable recovery must not provision a replacement runtime')
+    }
+
+    const res = await fixture.postJson('/v1/broker-sessions/open', {
+      hostSessionId: resolved.hostSessionId,
+      runtimeIntent: headlessBrokerIntent(),
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      runtimeId: RUNTIME_ID,
+      status: 'ready',
+      startIdentity: { kind: 'broker', invocationId: INVOCATION_ID },
+    })
+    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
   })
 
   it('reuses a busy queue-capable broker session without turn side effects', async () => {
@@ -228,6 +307,7 @@ describe('POST /v1/broker-sessions/open', () => {
       capabilitiesJson: { input: { queue: false } },
     })
     const dispatchInputCalls = installDispatchInputFailFast()
+    const viewerRuntimeIds = installHeadlessViewerSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
@@ -247,6 +327,7 @@ describe('POST /v1/broker-sessions/open', () => {
       sideEffects: before,
       dispatchInputCalls: 0,
     })
+    expect(viewerRuntimeIds).toEqual([])
   })
 
   it('still rejects corrupt awaiting_input broker session reuse before queue capability is considered', async () => {
@@ -255,6 +336,7 @@ describe('POST /v1/broker-sessions/open', () => {
       status: 'awaiting_input',
     })
     const dispatchInputCalls = installDispatchInputFailFast()
+    const viewerRuntimeIds = installHeadlessViewerSpy()
     const before = runtimeSideEffects(resolved.hostSessionId)
 
     const res = await fixture.postJson('/v1/broker-sessions/open', {
@@ -274,10 +356,12 @@ describe('POST /v1/broker-sessions/open', () => {
       sideEffects: before,
       dispatchInputCalls: 0,
     })
+    expect(viewerRuntimeIds).toEqual([])
   })
 
   it('starts a new broker invocation with profile priming allowed and no HRC run', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
+    const viewerRuntimeIds = installHeadlessViewerSpy()
     const captured: {
       intentInitialPrompt?: unknown
       prompt?: string
@@ -317,6 +401,7 @@ describe('POST /v1/broker-sessions/open', () => {
     expect(captured.prompt).toBe('')
     expect(captured.runId?.startsWith('broker-session-open-')).toBe(true)
     expect(captured.allowCompilerInitialInputWithoutIdentity).toBe(true)
+    expect(viewerRuntimeIds).toEqual([RUNTIME_ID])
 
     const db = openHrcDatabase(fixture.dbPath)
     try {
