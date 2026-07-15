@@ -58,6 +58,12 @@ export type SyncSpec = {
   tmpPrefix?: string
 }
 
+export type VerdaccioFreshness = {
+  fresh: boolean
+  summary: string
+  stale: string[]
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
 }
@@ -123,6 +129,101 @@ async function resolveLatest(groups: readonly CoherenceGroup[]): Promise<Map<str
     for (const [name, version] of entries) latest.set(name, version)
   }
   return latest
+}
+
+function summaryForGroups(
+  groups: readonly CoherenceGroup[],
+  versions: ReadonlyMap<string, string>
+): string {
+  return groups
+    .map((group) => {
+      const first = group.packages[0]
+      return `${group.label}@${first ? versions.get(first) : '?'}`
+    })
+    .join('  ')
+}
+
+async function usedPackageNames(
+  discover: (root: string) => Promise<string[]>,
+  candidates: ReadonlyMap<string, string>
+): Promise<Set<string>> {
+  const used = new Set<string>()
+  for (const path of await discover(ROOT)) {
+    const manifest = JSON.parse(await readFile(path, 'utf8')) as Manifest
+    for (const dependencies of [
+      manifest.dependencies,
+      manifest.devDependencies,
+      manifest.peerDependencies,
+      manifest.optionalDependencies,
+    ]) {
+      if (!dependencies) continue
+      for (const name of candidates.keys()) {
+        if (dependencies[name] !== undefined) used.add(name)
+      }
+    }
+  }
+  return used
+}
+
+async function lockfileVersions(): Promise<Map<string, string>> {
+  const lock = await readFile(join(ROOT, 'bun.lock'), 'utf8')
+  const versions = new Map<string, string>()
+  for (const line of lock.split(/\r?\n/)) {
+    const match = line.match(/^\s*("(?:\\.|[^"\\])*"):\s*\[("(?:\\.|[^"\\])*")/)
+    if (!match?.[1] || !match[2]) continue
+    const name = JSON.parse(match[1]) as string
+    const resolution = JSON.parse(match[2]) as string
+    const prefix = `${name}@`
+    if (resolution.startsWith(prefix)) versions.set(name, resolution.slice(prefix.length))
+  }
+  return versions
+}
+
+async function lockfileIsLatest(
+  discover: (root: string) => Promise<string[]>,
+  latest: ReadonlyMap<string, string>
+): Promise<boolean> {
+  const used = await usedPackageNames(discover, latest)
+  const locked = await lockfileVersions()
+  return [...used].every((name) => locked.get(name) === latest.get(name))
+}
+
+export async function checkVerdaccioFreshness(spec: SyncSpec): Promise<VerdaccioFreshness> {
+  const discover = spec.manifestPaths ?? packagesManifestPaths
+  const latest = await resolveLatest(spec.groups)
+  const used = await usedPackageNames(discover, latest)
+  const locked = await lockfileVersions()
+  const stale: string[] = []
+  for (const name of used) {
+    const expected = latest.get(name)
+    const actual = locked.get(name)
+    if (actual !== expected)
+      stale.push(`${name}: locked ${actual ?? 'missing'}, latest ${expected}`)
+  }
+  return { fresh: stale.length === 0, summary: summaryForGroups(spec.groups, latest), stale }
+}
+
+export async function runVerdaccioSyncCli(
+  spec: SyncSpec,
+  argv: readonly string[] = Bun.argv.slice(2)
+): Promise<void> {
+  if (argv.includes('--pull')) {
+    await syncFromVerdaccio(spec)
+    return
+  }
+  try {
+    const freshness = await checkVerdaccioFreshness(spec)
+    if (freshness.fresh) console.log(`VERDACCIO_FRESH  ${freshness.summary}`)
+    else {
+      console.warn(
+        `VERDACCIO_STALE  ${freshness.summary}; run just pull-deps\n${freshness.stale.join('\n')}`
+      )
+    }
+  } catch (error) {
+    console.warn(
+      `VERDACCIO_UNKNOWN  ${spec.label}: ${String(error)}; run just pull-deps explicitly`
+    )
+  }
 }
 
 /** Default discovery: repo root + every packages/* member manifest. */
@@ -315,6 +416,11 @@ function commitLockfile(label: string, summary: string): void {
   }
 }
 
+export async function commitSyncedLockfile(groups: readonly CoherenceGroup[]): Promise<void> {
+  const locked = await lockfileVersions()
+  commitLockfile('dependency', summaryForGroups(groups, locked))
+}
+
 /**
  * Sync a set of locally-published Verdaccio dev packages into this repo.
  *
@@ -338,12 +444,7 @@ export async function syncFromVerdaccio(spec: SyncSpec): Promise<void> {
   const tmpPrefix = spec.tmpPrefix ?? 'verdaccio-sync-'
   await withLock(join(ROOT, spec.lockName), async () => {
     const latest = await resolveLatest(spec.groups)
-    const summary = spec.groups
-      .map((group) => {
-        const first = group.packages[0]
-        return `${group.label}@${first ? latest.get(first) : '?'}`
-      })
-      .join('  ')
+    const summary = summaryForGroups(spec.groups, latest)
 
     // Enforce the stable tag specifier (also migrates any stray exact pins).
     const normalized = await rewriteManifests(discover, latest, () => TAG_SPECIFIER)
@@ -352,7 +453,7 @@ export async function syncFromVerdaccio(spec: SyncSpec): Promise<void> {
       return
     }
 
-    const stale = !(await installedAreLatest(latest))
+    const stale = !(await installedAreLatest(latest)) || !(await lockfileIsLatest(discover, latest))
     if (stale) {
       await rewriteManifests(discover, latest, (_name, version) => version)
       await bunInstallFromVerdaccio(spec.label, tmpPrefix)

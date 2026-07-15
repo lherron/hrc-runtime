@@ -60,7 +60,9 @@ describe('worktree enablement manifest', () => {
     // deleting publish/link/sync behavior from the documented main install.
     const installRecipe = recipeBody('install')
 
-    expect(installRecipe).toContain('bun run sync:asp')
+    expect(installRecipe).not.toContain('bun run sync:asp')
+    expect(recipeBody('pull-deps')).toContain('sync-asp-from-verdaccio.ts --pull')
+    expect(recipeBody('pull-deps')).toContain('sync-wrkq-from-verdaccio.ts --pull')
     expect(installRecipe).toContain('just publish-dev')
     expect(installRecipe).toContain('bun link')
   })

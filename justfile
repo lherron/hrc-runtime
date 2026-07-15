@@ -20,7 +20,6 @@ info:
 
 # Build all packages
 build:
-    bun run sync:asp
     bun run build
 
 # Run tests
@@ -63,8 +62,8 @@ rebuild:
     bun run rebuild
 
 # Install dependencies
-# Pass no-sync=1 to skip ASP sync. Linked Git worktrees auto-disable ASP sync
-# and wrapper linking unless force-sync=1 and/or force-link=1 is passed explicitly.
+# Dependency pulls are explicit via `just pull-deps`; install never advances bun.lock.
+# Linked Git worktrees auto-disable wrapper linking unless force-link=1 is passed explicitly.
 # Linked worktrees publish HRC packages to the isolated worktree tag/channel.
 install no-sync="" force-sync="" force-link="":
     #!/usr/bin/env bash
@@ -73,15 +72,8 @@ install no-sync="" force-sync="" force-link="":
     echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
     bun run clean
     rm -rf node_modules packages/*/node_modules
-    if [ "$PRAESIDIUM_INSTALL_SYNC_MODE" != "off" ]; then
-      if [ "$PRAESIDIUM_INSTALL_SYNC_MODE" = "forced" ]; then
-        echo "[install] WARNING: force-sync enabled from ${PRAESIDIUM_INSTALL_CONTEXT}; running ASP sync from this worktree"
-      fi
-      bun run sync:asp
-    else
-      echo "[install] skipping ASP sync (${PRAESIDIUM_INSTALL_CONTEXT}, sync=${PRAESIDIUM_INSTALL_SYNC_MODE})"
-      bun install --frozen-lockfile
-    fi
+    echo "[install] dependency pulls are explicit; preserving bun.lock"
+    bun install --frozen-lockfile
     bun run build
     if [ "$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" = "worktree" ]; then
       just publish-worktree
@@ -97,6 +89,18 @@ install no-sync="" force-sync="" force-link="":
     else
       echo "[install] skipping bun link; linked worktree installs must not update local HRC wrappers"
     fi
+
+pull-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git diff --quiet -- bun.lock && git diff --cached --quiet -- bun.lock || { echo "pull-deps: bun.lock must be clean before pulling" >&2; exit 1; }
+    PRAESIDIUM_SYNC_NO_COMMIT=1 bun scripts/sync-asp-from-verdaccio.ts --pull
+    PRAESIDIUM_SYNC_NO_COMMIT=1 bun scripts/sync-wrkq-from-verdaccio.ts --pull
+    bun scripts/commit-verdaccio-lock.ts
+
+check-deps:
+    bun scripts/sync-asp-from-verdaccio.ts --check
+    bun scripts/sync-wrkq-from-verdaccio.ts --check
 
 # Publish timestamped dev package set to local Verdaccio
 publish-dev:

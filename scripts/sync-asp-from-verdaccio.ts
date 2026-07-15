@@ -1,8 +1,8 @@
-import { syncFromVerdaccio } from './lib/verdaccio-sync'
+import { type SyncSpec, runVerdaccioSyncCli } from './lib/verdaccio-sync'
 
 // ASP publishes as one coherent dev-timestamp stream (0.1.1-dev.*). hrc-runtime
 // consumes it but publishes its own HRC stream, so there is no HRC group here.
-await syncFromVerdaccio({
+export const aspSyncSpec: SyncSpec = {
   label: 'ASP',
   lockName: '.asp-sync.lock',
   tmpPrefix: 'hrc-asp-sync-',
@@ -29,4 +29,6 @@ await syncFromVerdaccio({
       ],
     },
   ],
-})
+}
+
+if (import.meta.main) await runVerdaccioSyncCli(aspSyncSpec)
