@@ -242,7 +242,7 @@ export async function openHeadlessBrokerSessionForSession(
   )
   if (reusableRuntime) {
     assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime)
-    return reusableRuntime
+    return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
 
   const durableHeadless = getDurableHeadlessRuntimeForReattach(
@@ -252,16 +252,11 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (durableHeadless) {
-    const reattached = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
-      controller: this.getHarnessBrokerController(),
-      brokerUnixClientFactory:
-        this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
-    })
+    const reattached = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
       assertBrokerRuntimeReusableAdmission(this.db, recovered)
-      return recovered
+      return await finalizeHeadlessBrokerSessionOpen(this, recovered)
     }
 
     await this.terminateRuntime(durableHeadless, { dropContinuation: true }).catch(
@@ -301,7 +296,31 @@ export async function openHeadlessBrokerSessionForSession(
       route: 'broker-session-open',
     })
   }
-  return await this.waitForBrokerSessionOpenReady(runtime.runtimeId, invocationId)
+  const readyRuntime = await this.waitForBrokerSessionOpenReady(runtime.runtimeId, invocationId)
+  return await finalizeHeadlessBrokerSessionOpen(this, readyRuntime)
+}
+
+async function finalizeHeadlessBrokerSessionOpen(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): Promise<HrcRuntimeSnapshot> {
+  // Session-open is a provisioning surface just like managed start and first-turn
+  // dispatch. Keep the viewer observational: the existing helper owns feature,
+  // socket, presentation, and Ghostmux failure gates and never fails the session.
+  await server.spawnBrokerHeadlessViewer(runtime)
+  return runtime
+}
+
+export async function reattachDurableBrokerSessionForOpen(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): Promise<boolean> {
+  return await reattachDurableBrokerForDispatch(this.db, runtime, {
+    controller: this.getHarnessBrokerController(),
+    brokerUnixClientFactory:
+      this.brokerUnixClientFactory ??
+      ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+  })
 }
 
 export async function waitForBrokerSessionOpenReady(
@@ -935,6 +954,7 @@ export const turnDispatchHandlersMethods = {
   handleResumeAttachedRun,
   dispatchTurnForSession,
   openHeadlessBrokerSessionForSession,
+  reattachDurableBrokerSessionForOpen,
   waitForBrokerSessionOpenReady,
   markRuntimeStaleForBrokerReprovision,
 }
