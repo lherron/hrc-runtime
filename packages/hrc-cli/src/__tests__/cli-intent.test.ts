@@ -224,6 +224,40 @@ describe('executeManagedStart', () => {
     expect(result).toEqual({ runtimeId: 'rt-turn', runId: 'run-turn' })
   })
 
+  it('fails loudly when prompt dispatch reports that the start input was not delivered', async () => {
+    const prompt = 'wake up exactly once'
+    const client = {
+      startRuntime: async () => ({ runtimeId: 'rt-start' }),
+      dispatchTurn: async () => ({
+        runtimeId: 'rt-failed-delivery',
+        runId: 'run-failed-delivery',
+        execution: {
+          state: 'failed',
+          errorCode: 'delivery_not_guaranteed',
+          errorMessage: `input "${prompt}" was not delivered: forced broker rejection`,
+        },
+      }),
+    } as unknown as ManagedStartClientForTest
+
+    let result: unknown
+    let failure: unknown
+    try {
+      result = await executeManagedStart(client, {
+        hostSessionId: 'hs-failed-delivery',
+        intent: { ...intent, initialPrompt: prompt },
+        prompt,
+        restartStyle: 'reuse_pty',
+      })
+    } catch (error) {
+      failure = error
+    }
+
+    expect(result).toBeUndefined()
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain(prompt)
+    expect((failure as Error).message).toContain('not delivered')
+  })
+
   it('keeps promptless start on the lifecycle API', async () => {
     const startCalls: unknown[] = []
     const dispatchCalls: unknown[] = []
