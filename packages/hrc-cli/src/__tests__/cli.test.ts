@@ -665,6 +665,17 @@ describe('no args / help', () => {
     expect(result.stdout).not.toContain('\n  info              ')
     expect(result.stderr).toBe('')
   })
+
+  it('prints parseable first-contact orientation for info --json', async () => {
+    const result = await runCli(['info', '--json'])
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: 'hrc',
+      text: expect.stringContaining('COMMON CONTROL FLOWS'),
+    })
+  })
 })
 
 // ===========================================================================
@@ -2274,6 +2285,9 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.exitCode).toBe(0)
       expect(body.runtimeRoot).toBe(runtimeRoot)
       expect(body.stateRoot).toBe(stateRoot)
+      expect(body.cwd).toBe(process.cwd())
+      expect(existsSync(body.binaryPath)).toBe(true)
+      expect(body.packagePath).toEndWith('/packages/hrc-server')
       expect(body.daemon.running).toBe(true)
       expect(typeof body.daemon.pidAlive).toBe('boolean')
       expect(body.daemon.pidPath).toBe(join(runtimeRoot, 'server.pid'))
@@ -2284,6 +2298,9 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(typeof body.api.uptime).toBe('number')
       expect(body.api.runtimeRoot).toBe(runtimeRoot)
       expect(body.api.stateRoot).toBe(stateRoot)
+      expect(body.api.cwd).toBe(process.cwd())
+      expect(body.api.binaryPath).toBe(body.binaryPath)
+      expect(body.api.packagePath).toBe(body.packagePath)
       expect(body.tmux.socketPath).toBe(tmuxSocketPath)
     })
 
@@ -2415,6 +2432,9 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(statusHuman.stdout).toMatch(/api health:\s+ok/i)
       expect(statusHuman.stdout).toContain(`runtime root: ${runtimeRoot}`)
       expect(statusHuman.stdout).toContain(`state root:   ${stateRoot}`)
+      expect(statusHuman.stdout).toContain(`cwd:          ${process.cwd()}`)
+      expect(statusHuman.stdout).toContain('binary:')
+      expect(statusHuman.stdout).toContain('package:')
       expect(statusHuman.stdout).toMatch(/running:\s+yes/i)
     })
   })
@@ -2431,6 +2451,114 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(typeof body.daemon.socketPath).toBe('string')
     expect(typeof body.counts.sessions).toBe('number')
     expect(typeof body.counts.runtimes).toBe('number')
+  })
+
+  it('hrc monitor wait resolves a recent hrcchat message beyond the monitor history cap', async () => {
+    const messageId = 'msg-f596049d-a688-4832-8296-9e7b23de31fb'
+    const hostSessionId = 'hsid-monitor-message-cap'
+    const runtimeId = 'rt-monitor-message-cap'
+    const scopeRef = testProjectScope('monitor-message-cap')
+    const sessionRef = `${scopeRef}/lane:main`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.sessions.insert({
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        createdAt: now,
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+      db.sqlite.exec(`
+        WITH RECURSIVE counter(n) AS (
+          SELECT 1
+          UNION ALL
+          SELECT n + 1 FROM counter WHERE n < 10000
+        )
+        INSERT INTO messages (
+          message_id, created_at, kind, phase,
+          from_kind, from_ref, to_kind, to_ref,
+          reply_to_message_id, root_message_id,
+          body, body_format, execution_state
+        )
+        SELECT
+          printf('msg-decoy-%05d', n), datetime('now'), 'dm', 'request',
+          'entity', 'human', 'entity', 'system',
+          NULL, printf('msg-decoy-%05d', n),
+          'decoy', 'text/plain', 'not_applicable'
+        FROM counter
+      `)
+      db.messages.insert({
+        messageId,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'entity', entity: 'system' },
+        body: 'monitor this request',
+        execution: {
+          state: 'started',
+          mode: 'headless',
+          sessionRef,
+          hostSessionId,
+          generation: 1,
+          runtimeId,
+          transport: 'headless',
+        },
+      })
+      db.messages.insert({
+        messageId: 'msg-response-to-f596',
+        kind: 'dm',
+        phase: 'response',
+        from: { kind: 'entity', entity: 'system' },
+        to: { kind: 'entity', entity: 'human' },
+        replyToMessageId: messageId,
+        rootMessageId: messageId,
+        body: 'done',
+        execution: {
+          state: 'completed',
+          mode: 'headless',
+          sessionRef,
+          hostSessionId,
+          generation: 1,
+          runtimeId,
+          transport: 'headless',
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(
+      ['monitor', 'wait', `msg:${messageId}`, '--until', 'response', '--timeout', '50ms', '--json'],
+      cliEnv()
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      selector: `msg:${messageId}`,
+      condition: 'response',
+      result: 'response',
+    })
   })
 
   it('hrc runtime list prints empty JSON array and exits 0', async () => {

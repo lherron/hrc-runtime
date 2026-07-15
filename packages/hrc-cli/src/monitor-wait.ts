@@ -235,12 +235,10 @@ function readLiveMonitorState(): HrcMonitorState {
       )
       .all()
     const runtimes = db.runtimes.listAll()
+    const messages = db.messages.query({ order: 'desc', limit: 10_000 }).reverse()
     const events = [
       ...db.hrcEvents.listFromHrcSeq(1).map(toMonitorEvent),
-      ...db.messages
-        .query({ order: 'asc', limit: 10_000 })
-        .filter((message) => message.phase === 'response')
-        .map(toMessageResponseEvent),
+      ...messages.filter((message) => message.phase === 'response').map(toMessageResponseEvent),
     ].sort((a, b) => a.seq - b.seq)
 
     return {
@@ -273,7 +271,7 @@ function readLiveMonitorState(): HrcMonitorState {
         transport: runtime.transport,
         activeTurnId: runtime.activeRunId ?? null,
       })),
-      messages: db.messages.query({ order: 'asc', limit: 10_000 }).map(toMonitorMessage),
+      messages: messages.map(toMonitorMessage),
       events,
     }
   } finally {

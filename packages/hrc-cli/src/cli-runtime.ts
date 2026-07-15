@@ -37,6 +37,9 @@ export type ServerRuntimeStatus = {
   running: boolean
   runtimeRoot: string
   stateRoot: string
+  cwd?: string | undefined
+  binaryPath?: string | undefined
+  packagePath?: string | undefined
   pid?: number | undefined
   pidAlive: boolean
   pidPath: string
@@ -67,6 +70,9 @@ export type ServerRuntimeStatus = {
         | 'stateRoot'
         | 'socketPath'
         | 'dbPath'
+        | 'cwd'
+        | 'binaryPath'
+        | 'packagePath'
       >
     | undefined
   tmux: TmuxStatus
@@ -439,6 +445,9 @@ export async function collectServerRuntimeStatus(
           stateRoot: status.stateRoot,
           socketPath: status.socketPath,
           dbPath: status.dbPath,
+          cwd: status.cwd,
+          binaryPath: status.binaryPath,
+          packagePath: status.packagePath,
         }
         serverStatus = {
           startedAt: status.startedAt,
@@ -463,6 +472,7 @@ export async function collectServerRuntimeStatus(
       running,
       runtimeRoot: paths.runtimeRoot,
       stateRoot: paths.stateRoot,
+      ...(api ? { cwd: api.cwd, binaryPath: api.binaryPath, packagePath: api.packagePath } : {}),
       ...(pid !== undefined ? { pid } : {}),
       pidAlive,
       pidPath: paths.pidPath,
@@ -565,6 +575,10 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
     }`,
     `  tmux socket:  ${status.tmuxSocketPath}`,
   ]
+
+  if (status.cwd) lines.push(`  cwd:          ${status.cwd}`)
+  if (status.binaryPath) lines.push(`  binary:       ${status.binaryPath}`)
+  if (status.packagePath) lines.push(`  package:      ${status.packagePath}`)
 
   if (status.api) {
     lines.push(`  uptime:       ${status.api.uptime}s`)

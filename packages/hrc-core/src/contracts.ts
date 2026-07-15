@@ -668,6 +668,9 @@ export type HrcCapabilityStatus = {
   stateRoot: string
   socketPath: string
   dbPath: string
+  cwd: string
+  binaryPath: string
+  packagePath: string
   sessionCount: number
   runtimeCount: number
   apiVersion: string

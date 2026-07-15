@@ -134,7 +134,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--host-session-id <id>', 'filter by host session')
     .option('--session <id>', 'filter by host session (post-mortem discovery alias)')
     .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
-    .option('--status <status>', 'filter by status')
+    .option('--status <status>', 'filter by status (busy|dead|ready|stale|terminated)')
     .option('--older-than <duration>', 'filter by age')
     .option('--scope <scope>', 'filter by scope')
     .option('--json', 'output as JSON')

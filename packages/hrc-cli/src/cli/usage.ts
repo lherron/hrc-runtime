@@ -166,8 +166,13 @@ ${renderCommandRoster(program)}
 ${INFO_TAIL}`
 }
 
-export function printInfo(program: Command): void {
-  process.stdout.write(buildInfoText(program))
+export function printInfo(program: Command, options: { json?: boolean } = {}): void {
+  const text = buildInfoText(program)
+  if (options.json === true) {
+    process.stdout.write(`${JSON.stringify({ command: 'hrc', text }, null, 2)}\n`)
+    return
+  }
+  process.stdout.write(text)
 }
 
 // Curated usage reference. Hand-written (richer than the auto --help), so every command path and
@@ -177,7 +182,7 @@ export const USAGE_TEXT = `hrc — HRC operator CLI
 Usage: hrc <command> [options]
 
 Commands:
-  info                                Show HRC orientation and first-contact guidance
+  info [--json]                       Show HRC orientation and first-contact guidance
   server [start] [--foreground|--daemon]     Start the HRC server (foreground by default)
   server serve                               Run the server in the foreground (for launchd/systemd)
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
