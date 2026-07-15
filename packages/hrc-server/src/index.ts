@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import {
   HRC_API_VERSION,
@@ -166,6 +168,9 @@ import {
   turnDispatchHandlersMethods,
 } from './turn-dispatch-handlers.js'
 import { defaultTaskSlugResolver } from './wrkq-task-label.js'
+
+const HRC_SERVER_PACKAGE_PATH = realpathSync(resolve(import.meta.dir, '..'))
+const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.execPath))
 
 export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
@@ -1170,6 +1175,9 @@ class HrcServerInstance implements HrcServer {
       stateRoot: this.options.stateRoot,
       socketPath: this.options.socketPath,
       dbPath: this.options.dbPath,
+      cwd: process.cwd(),
+      binaryPath: HRC_SERVER_BINARY_PATH,
+      packagePath: HRC_SERVER_PACKAGE_PATH,
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
