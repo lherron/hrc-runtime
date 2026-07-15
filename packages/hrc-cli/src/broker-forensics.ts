@@ -232,7 +232,10 @@ function buildStats(result: BrokerForensicsResponse): BrokerStats {
 
   for (const event of result.events) {
     histogram.set(event.type, (histogram.get(event.type) ?? 0) + 1)
-    if (event.turnId) turnIds.add(event.turnId)
+    if (event.turnId) {
+      turnIds.add(event.turnId)
+      if (!perTurn.has(event.turnId)) perTurn.set(event.turnId, 0)
+    }
     if (!event.turnId && event.type === 'turn.started') anonymousTurnCount += 1
     if (event.type === 'tool.call.started' && event.turnId) {
       perTurn.set(event.turnId, (perTurn.get(event.turnId) ?? 0) + 1)

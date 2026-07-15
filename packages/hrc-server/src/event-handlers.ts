@@ -359,16 +359,22 @@ function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensics
 
   try {
     const decoded = JSON.parse(row.brokerEventJson) as unknown
+    const decodedRecord =
+      decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)
+        ? (decoded as Record<string, unknown>)
+        : undefined
     // Both shapes exist in persisted ledgers: the current payload-only form and
     // an older envelope-like `{ payload: ... }` form.
-    const payload =
-      decoded !== null &&
-      typeof decoded === 'object' &&
-      !Array.isArray(decoded) &&
-      Object.hasOwn(decoded, 'payload')
-        ? (decoded as Record<string, unknown>)['payload']
-        : decoded
-    return { ...base, payload }
+    const envelopeLike =
+      decodedRecord !== undefined &&
+      Object.hasOwn(decodedRecord, 'payload') &&
+      (Object.keys(decodedRecord).length === 1 ||
+        ['invocationId', 'seq', 'time', 'type'].some((key) => Object.hasOwn(decodedRecord, key)))
+    if (turnId === undefined && envelopeLike && typeof decodedRecord['turnId'] === 'string') {
+      turnId = decodedRecord['turnId']
+    }
+    const payload = envelopeLike && decodedRecord !== undefined ? decodedRecord['payload'] : decoded
+    return { ...base, ...(turnId !== undefined ? { turnId } : {}), payload }
   } catch (error) {
     return {
       ...base,
