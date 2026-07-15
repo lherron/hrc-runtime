@@ -2433,6 +2433,114 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(typeof body.counts.runtimes).toBe('number')
   })
 
+  it('hrc monitor wait resolves a recent hrcchat message beyond the monitor history cap', async () => {
+    const messageId = 'msg-f596049d-a688-4832-8296-9e7b23de31fb'
+    const hostSessionId = 'hsid-monitor-message-cap'
+    const runtimeId = 'rt-monitor-message-cap'
+    const scopeRef = testProjectScope('monitor-message-cap')
+    const sessionRef = `${scopeRef}/lane:main`
+    const now = new Date().toISOString()
+    const db = openHrcDatabase(dbPath)
+    try {
+      db.sessions.insert({
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.insert({
+        runtimeId,
+        hostSessionId,
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        controllerKind: 'harness-broker',
+        createdAt: now,
+        updatedAt: now,
+        lastActivityAt: now,
+      })
+      db.sqlite.exec(`
+        WITH RECURSIVE counter(n) AS (
+          SELECT 1
+          UNION ALL
+          SELECT n + 1 FROM counter WHERE n < 10000
+        )
+        INSERT INTO messages (
+          message_id, created_at, kind, phase,
+          from_kind, from_ref, to_kind, to_ref,
+          reply_to_message_id, root_message_id,
+          body, body_format, execution_state
+        )
+        SELECT
+          printf('msg-decoy-%05d', n), datetime('now'), 'dm', 'request',
+          'entity', 'human', 'entity', 'system',
+          NULL, printf('msg-decoy-%05d', n),
+          'decoy', 'text/plain', 'not_applicable'
+        FROM counter
+      `)
+      db.messages.insert({
+        messageId,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'entity', entity: 'system' },
+        body: 'monitor this request',
+        execution: {
+          state: 'started',
+          mode: 'headless',
+          sessionRef,
+          hostSessionId,
+          generation: 1,
+          runtimeId,
+          transport: 'headless',
+        },
+      })
+      db.messages.insert({
+        messageId: 'msg-response-to-f596',
+        kind: 'dm',
+        phase: 'response',
+        from: { kind: 'entity', entity: 'system' },
+        to: { kind: 'entity', entity: 'human' },
+        replyToMessageId: messageId,
+        rootMessageId: messageId,
+        body: 'done',
+        execution: {
+          state: 'completed',
+          mode: 'headless',
+          sessionRef,
+          hostSessionId,
+          generation: 1,
+          runtimeId,
+          transport: 'headless',
+        },
+      })
+    } finally {
+      db.close()
+    }
+
+    const result = await runCli(
+      ['monitor', 'wait', `msg:${messageId}`, '--until', 'response', '--timeout', '50ms', '--json'],
+      cliEnv()
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      selector: `msg:${messageId}`,
+      condition: 'response',
+      result: 'response',
+    })
+  })
+
   it('hrc runtime list prints empty JSON array and exits 0', async () => {
     // RED: 'runtime list' subcommand does not exist in CLI dispatch
     const result = await runCli(['runtime', 'list'], cliEnv())
