@@ -430,6 +430,19 @@ if (cmd === 'app-server') {
     )
   }
 
+  async function waitForCondition(
+    predicate: () => boolean,
+    description: string,
+    timeoutMs = 5_000
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (predicate()) return
+      await Bun.sleep(25)
+    }
+    throw new Error(`timed out waiting for ${description}`)
+  }
+
   // T-01757 (Wave C, A2): codex headless START provisions THROUGH the
   // HarnessBrokerController, which requires the headless codex broker flag ON.
   // The default beforeEach server runs with the flag OFF (to exercise the
@@ -709,6 +722,99 @@ if (cmd === 'app-server') {
       { type: 'text', text: 'wake the existing session' },
     ])
   })
+
+  it('keeps a fresh-session prompt in the broker start after the waiting client exits', async () => {
+    await restartServerWithHeadlessCodexBroker()
+    const hsid = await resolveSession('lifecycle-start-fresh-prompt-client-exit')
+    let releaseGate: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve
+    })
+    const stub = installHeadlessBrokerStartStub(hsid, { gate })
+    const controller = new AbortController()
+
+    const request = fetchSocket('/v1/turns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hostSessionId: hsid,
+        prompt: 'fresh prompt must survive caller timeout',
+        runtimeIntent: headlessCodexIntent({}),
+        waitForCompletion: true,
+      }),
+      signal: controller.signal,
+    })
+
+    try {
+      await waitForCondition(
+        () => stub.calls.length === 1,
+        'fresh prompt to reach durable broker start'
+      )
+      controller.abort()
+      await request.catch(() => undefined)
+
+      expect(stub.calls).toHaveLength(1)
+      expect(stub.calls[0].startRequest.initialInput?.content).toEqual([
+        { type: 'text', text: 'fresh prompt must survive caller timeout' },
+      ])
+    } finally {
+      releaseGate()
+    }
+
+    await waitForCondition(() => stub.runtimeIds.length === 1, 'fresh broker runtime persistence')
+  })
+
+  it('queues an existing-session prompt behind boot and delivers it after the client exits', async () => {
+    await restartServerWithHeadlessCodexBroker()
+    const hsid = await resolveSession('lifecycle-start-existing-boot-prompt-client-exit')
+    let releaseGate: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve
+    })
+    const stub = installHeadlessBrokerStartStub(hsid, { gate })
+
+    const bootRequest = postJson('/v1/runtimes/start', {
+      hostSessionId: hsid,
+      intent: headlessCodexIntent({}),
+    })
+    await waitForCondition(() => stub.calls.length === 1, 'existing session boot to begin')
+
+    const controller = new AbortController()
+    const promptRequest = fetchSocket('/v1/turns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hostSessionId: hsid,
+        prompt: 'queued prompt must survive boot timeout',
+        runtimeIntent: headlessCodexIntent({}),
+        waitForCompletion: true,
+      }),
+      signal: controller.signal,
+    })
+
+    // Give the accepting handler time to durably record the prompt while the
+    // lifecycle start remains gated, then model the CLI wait timing out.
+    await Bun.sleep(250)
+    controller.abort()
+    await promptRequest.catch(() => undefined)
+    releaseGate()
+
+    const bootResponse = await bootRequest
+    expect(bootResponse.status).toBe(200)
+    await waitForCondition(() => stub.runtimeIds.length >= 1, 'boot runtime persistence')
+
+    // A boot-racing prompt belongs to the one booting runtime. Starting a
+    // second broker invocation is not queueing and can split the session.
+    expect(stub.calls).toHaveLength(1)
+    await waitForCondition(
+      () => stub.inputCalls.length === 1,
+      'boot-racing prompt delivery after runtime readiness',
+      1_000
+    )
+    expect(stub.inputCalls[0].input.content).toEqual([
+      { type: 'text', text: 'queued prompt must survive boot timeout' },
+    ])
+  }, 10_000)
 
   it('POST /v1/clear-context can rotate to a fresh session without inheriting continuation', async () => {
     // A2: seed a broker headless runtime + continuation via the broker start,

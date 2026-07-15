@@ -237,7 +237,7 @@ describe('hrcchat CLI smoke fixture', () => {
         cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01301', 'line one\nline two\n'])
       )
 
-      expect(result.exitCode).toBe(0)
+      expect(result.exitCode).toBe(execution.state === 'failed' ? 4 : 0)
       expect(result.stderr).toBe('')
       expect(result.stdout.endsWith('\n')).toBe(true)
       expect(result.stdout.slice(0, -1)).not.toContain('\n')
@@ -267,7 +267,7 @@ describe('hrcchat CLI smoke fixture', () => {
       cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01573', 'hello'])
     )
 
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode).toBe(4)
     expect(result.stderr).toBe('')
     expect(result.json).toMatchObject({
       errorCode: 'runtime_busy_dm_rejected',
@@ -275,6 +275,30 @@ describe('hrcchat CLI smoke fixture', () => {
       runtimeId: 'rt-busy-headless',
       turnId: 'run-busy-headless',
     })
+  })
+
+  it('hrcchat dm exits nonzero and names an input the server could not deliver', async () => {
+    const sessionRef = 'agent:cody:project:hrc-runtime:task:T-06408/lane:main'
+    const client = createDmClient({
+      requestExecution: {
+        state: 'failed',
+        sessionRef,
+        errorCode: 'delivery_not_guaranteed',
+        errorMessage: 'input msg-request was not delivered: forced broker rejection',
+      },
+    })
+
+    const result = await runCommand(() =>
+      cmdDm(client.client, {}, [
+        'cody@hrc-runtime:T-06408',
+        'this exact input must not be reported as sent',
+      ])
+    )
+
+    expect(result.exitCode).toBe(4)
+    expect(result.stdout).not.toContain('dm sent')
+    expect(result.stderr).toContain('msg-request')
+    expect(result.stderr).toContain('not delivered')
   })
 
   it('hrcchat dm with no args exits 2 (usage error) and reports usage context', async () => {
@@ -409,6 +433,9 @@ async function runCommand(fn: () => Promise<void> | void): Promise<CliResult> {
   const originalStdoutWrite = process.stdout.write
   const originalStderrWrite = process.stderr.write
   const originalExit = process.exit
+  const originalExitCode = process.exitCode
+
+  process.exitCode = undefined
 
   process.env['ASP_PROJECT'] = 'agent-spaces'
   Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
@@ -441,9 +468,13 @@ async function runCommand(fn: () => Promise<void> | void): Promise<CliResult> {
       throw err
     }
   } finally {
+    if (typeof process.exitCode === 'number' && exitCode === 0) {
+      exitCode = process.exitCode
+    }
     process.stdout.write = originalStdoutWrite
     process.stderr.write = originalStderrWrite
     process.exit = originalExit
+    process.exitCode = originalExitCode
   }
 
   return withJson({ exitCode, stdout, stderr })
