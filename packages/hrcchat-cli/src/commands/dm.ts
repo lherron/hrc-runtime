@@ -126,6 +126,21 @@ export async function cmdDm(
     }
   }
 
+  if (result.request.execution.state === 'failed') {
+    if (opts.json) {
+      printJsonLine(buildHandoffEnvelope(result, to))
+    } else {
+      const inputName = result.request.messageId
+      const detail =
+        result.request.execution.errorMessage ??
+        `input ${inputName} was not delivered by the target runtime`
+      process.stderr.write(`hrcchat: ${detail}\n`)
+    }
+    process.exitCode = 4
+    return
+  }
+  process.exitCode = 0
+
   // Final-only wait: block quietly (client-side, hard `--timeout` ceiling) for
   // the correlated response, then emit exactly one compact result object. Exit
   // codes are set silently (no stderr) so scripts can branch on $? while the

@@ -120,6 +120,7 @@ type HrcServerInstanceDataForHandlers = {
   readonly attachedRunOperations: Map<string, Promise<unknown>>
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
+  readonly queuedTurnInputDrains: Set<string>
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined

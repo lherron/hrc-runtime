@@ -832,7 +832,6 @@ export async function handleSemanticDm(
   // If target is a session, attempt semantic turn execution
   let execution: DispatchTurnBySelectorResponse | undefined
   let reply: HrcMessageRecord | undefined
-  let rejected = false
 
   // T-05161: a DM to a Codex.app-owned address (task segment `codex-<uuid7>`)
   // must be persisted (Cody-in-codex.app live-polls the DM list) but must NOT
@@ -889,8 +888,47 @@ export async function handleSemanticDm(
 
       const busyHeadlessRuntime = findBusyHeadlessRuntimeForSession(this.db, session.hostSessionId)
       if (busyHeadlessRuntime) {
-        this.rejectBusyHeadlessSemanticDm(session, record, busyHeadlessRuntime)
-        rejected = true
+        if (
+          busyHeadlessRuntime.controllerKind !== 'harness-broker' ||
+          busyHeadlessRuntime.activeInvocationId === undefined
+        ) {
+          // A legacy headless process has no durable broker endpoint HRC can
+          // target after the active turn. Fail honestly instead of accepting
+          // an input whose eventual delivery cannot be guaranteed.
+          this.rejectBusyHeadlessSemanticDm(session, record, busyHeadlessRuntime)
+        } else {
+          const runId = `run-${randomUUID()}`
+          const payload = formatDmPayload(
+            body.from,
+            body.to,
+            body.body,
+            record.messageSeq,
+            record.messageId
+          )
+          this.enqueueDurableHeadlessTurnInput(session, payload, runId, {
+            source: 'semantic_dm',
+            runtimeId: busyHeadlessRuntime.runtimeId,
+            sourceMessageId: record.messageId,
+            responseFormat: body.responseFormat,
+          })
+          this.db.messages.updateExecution(record.messageId, {
+            state: 'accepted',
+            mode: 'headless',
+            sessionRef: formatSessionRef(session.scopeRef, session.laneRef),
+            hostSessionId: session.hostSessionId,
+            generation: session.generation,
+            runtimeId: busyHeadlessRuntime.runtimeId,
+            runId,
+            transport: 'headless',
+          })
+          writeServerLog('INFO', 'semantic_dm.busy_headless_queued', {
+            messageId: record.messageId,
+            hostSessionId: session.hostSessionId,
+            runtimeId: busyHeadlessRuntime.runtimeId,
+            activeRunId: busyHeadlessRuntime.activeRunId,
+            queuedRunId: runId,
+          })
+        }
       } else {
         // Semantic DMs are harness input. During broker cutover they must not
         // literal-deliver into legacy tmux/ghostty runtimes; dispatch below
@@ -921,7 +959,7 @@ export async function handleSemanticDm(
 
   // Handle --wait
   let waited: WaitMessageResponse | undefined
-  if (body.wait?.enabled && record.phase === 'request' && !rejected) {
+  if (body.wait?.enabled && record.phase === 'request') {
     const timeoutMs = body.wait.timeoutMs ?? 30_000
     waited = await this.waitForMessage(
       {

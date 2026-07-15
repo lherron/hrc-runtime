@@ -35,6 +35,7 @@ import {
   isTerminalBrokerInvocationState,
   isTransientBrokerInputStateFailure,
   isTransitionalBrokerInvocationState,
+  requireSession,
 } from './require-helpers.js'
 import {
   HRC_CODEX_APP_SERVER_OPERATOR_PRESENTATION_ENV,
@@ -56,6 +57,193 @@ type JsonRepairRunCorrelation = {
   sourceRunId: string
   failedValidationRunId: string
   repairRunId: string
+}
+
+type DurableHeadlessTurnInput = {
+  kind: 'durable_headless_turn_input'
+  prompt: string
+  source: 'boot' | 'semantic_dm'
+  sourceMessageId?: string | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+}
+
+function parseDurableHeadlessTurnInput(value: string | null): DurableHeadlessTurnInput | undefined {
+  if (value === null) return undefined
+  try {
+    const parsed = JSON.parse(value) as Partial<DurableHeadlessTurnInput>
+    if (parsed.kind !== 'durable_headless_turn_input' || typeof parsed.prompt !== 'string') {
+      return undefined
+    }
+    if (parsed.source !== 'boot' && parsed.source !== 'semantic_dm') return undefined
+    return parsed as DurableHeadlessTurnInput
+  } catch {
+    return undefined
+  }
+}
+
+export function enqueueDurableHeadlessTurnInput(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  prompt: string,
+  runId: string,
+  options: {
+    source: DurableHeadlessTurnInput['source']
+    runtimeId?: string | undefined
+    sourceMessageId?: string | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
+  }
+): void {
+  if (this.db.runs.getByRunId(runId)) return
+
+  const now = timestamp()
+  this.db.runs.insert({
+    runId,
+    hostSessionId: session.hostSessionId,
+    ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    generation: session.generation,
+    transport: 'headless',
+    status: 'queued',
+    acceptedAt: now,
+    updatedAt: now,
+    dispatchedInputId: `input-${randomUUID()}`,
+  })
+  this.db.runs.setCorrelationJson(
+    runId,
+    JSON.stringify({
+      kind: 'durable_headless_turn_input',
+      prompt,
+      source: options.source,
+      ...(options.sourceMessageId !== undefined
+        ? { sourceMessageId: options.sourceMessageId }
+        : {}),
+      ...(options.responseFormat !== undefined ? { responseFormat: options.responseFormat } : {}),
+    } satisfies DurableHeadlessTurnInput)
+  )
+}
+
+export async function dispatchQueuedHeadlessTurnInput(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot,
+  prompt: string,
+  runId: string,
+  options: {
+    waitForCompletion?: boolean | undefined
+    whenBusy?: 'reject' | undefined
+    repairCorrelation?: JsonRepairRunCorrelation | undefined
+    responseFormat?: HrcTurnResponseFormat | undefined
+  }
+): Promise<Response> {
+  const invocationId = runtime.activeInvocationId
+  if (invocationId === undefined) {
+    throw new HrcRuntimeUnavailableError('queued turn runtime has no broker invocation', {
+      runtimeId: runtime.runtimeId,
+      runId,
+      route: 'broker-queued-input',
+    })
+  }
+
+  const queued = this.db.runs.getByRunId(runId)
+  const inputId = queued?.dispatchedInputId
+  if (queued?.status !== 'queued' || inputId === undefined) {
+    throw new HrcRuntimeUnavailableError('queued turn input is no longer dispatchable', {
+      runtimeId: runtime.runtimeId,
+      runId,
+      status: queued?.status,
+      route: 'broker-queued-input',
+    })
+  }
+
+  const claimed = this.db.runs.claimQueued(runId, {
+    runtimeId: runtime.runtimeId,
+    invocationId,
+    operationId: runtime.activeOperationId,
+    dispatchedInputId: inputId,
+    updatedAt: timestamp(),
+  })
+  if (!claimed) {
+    throw new HrcRuntimeUnavailableError('queued turn input was already claimed', {
+      runtimeId: runtime.runtimeId,
+      runId,
+      route: 'broker-queued-input',
+    })
+  }
+
+  return await this.executeHeadlessBrokerInputTurn(session, runtime, prompt, runId, options)
+}
+
+export async function drainDurableHeadlessTurnInputs(
+  this: HrcServerInstanceForHandlers,
+  hostSessionId: string
+): Promise<void> {
+  if (this.queuedTurnInputDrains.has(hostSessionId)) return
+  this.queuedTurnInputDrains.add(hostSessionId)
+  const queued = this.db.runs.listQueuedByHostSessionId(hostSessionId)[0]
+  const delivery = queued
+    ? parseDurableHeadlessTurnInput(this.db.runs.getCorrelationJson(queued.runId))
+    : undefined
+
+  try {
+    if (!queued) return
+    if (!delivery) return
+
+    const session = requireSession(this.db, hostSessionId)
+    const intent = session.lastAppliedIntentJson
+    if (!intent) {
+      throw new HrcRuntimeUnavailableError('queued turn has no runtime intent', {
+        hostSessionId,
+        runId: queued.runId,
+        route: 'broker-queued-input',
+      })
+    }
+
+    const response = await this.dispatchTurnForSession(session, intent, delivery.prompt, {
+      runId: queued.runId,
+      waitForCompletion: false,
+      responseFormat: delivery.responseFormat,
+    })
+    const result = (await response.json()) as DispatchTurnResponse
+    if (delivery.sourceMessageId !== undefined) {
+      this.db.messages.updateExecution(delivery.sourceMessageId, {
+        state: result.status === 'completed' ? 'completed' : 'started',
+        mode: 'headless',
+        sessionRef: `${session.scopeRef}/lane:${session.laneRef}`,
+        hostSessionId: result.hostSessionId,
+        generation: result.generation,
+        runtimeId: result.runtimeId,
+        runId: result.runId,
+        transport: 'headless',
+      })
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (queued) {
+      const now = timestamp()
+      this.db.runs.markCompleted(queued.runId, {
+        status: 'failed',
+        completedAt: now,
+        updatedAt: now,
+        errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage: message,
+      })
+    }
+    if (delivery?.sourceMessageId !== undefined) {
+      this.db.messages.updateExecution(delivery.sourceMessageId, {
+        state: 'failed',
+        errorCode: 'delivery_not_guaranteed',
+        errorMessage: `input ${delivery.sourceMessageId} was not delivered: ${message}`,
+      })
+    }
+    writeServerLog('WARN', 'turn_input_queue.drain_failed', {
+      hostSessionId,
+      runId: queued?.runId,
+      error: message,
+    })
+  } finally {
+    this.queuedTurnInputDrains.delete(hostSessionId)
+  }
 }
 
 function assertBrokerPermissionPolicyAdmitted(input: {
@@ -307,27 +495,47 @@ export async function executeHeadlessBrokerInputTurn(
   }
   const queueCapable = isBrokerRuntimeQueueCapable(this.db, runtime)
 
-  const inputId = `input-${randomUUID()}` as InvocationInput['inputId']
+  const preacceptedRun = this.db.runs.getByRunId(runId)
+  const inputId = (preacceptedRun?.dispatchedInputId ??
+    `input-${randomUUID()}`) as InvocationInput['inputId']
   const now = timestamp()
-  this.db.runs.insert({
-    runId,
-    hostSessionId: session.hostSessionId,
-    runtimeId: runtime.runtimeId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    transport: 'headless',
-    status: 'accepted',
-    acceptedAt: now,
-    updatedAt: now,
-    invocationId,
-    operationId: runtime.activeOperationId,
-    // Persist HRC's inputId on the run row so the broker event-mapper can
-    // correlate a drained input.accepted envelope back to this run and flip
-    // invocation.runId before turn.* events project. Set on every dispatch
-    // (immediate and queued) for uniform reasoning; a no-op flip is harmless.
-    dispatchedInputId: inputId,
-  })
+  if (preacceptedRun) {
+    if (preacceptedRun.status !== 'accepted') {
+      throw new HrcRuntimeUnavailableError('preaccepted broker input is not dispatchable', {
+        runtimeId: runtime.runtimeId,
+        runId,
+        status: preacceptedRun.status,
+        route: 'broker',
+      })
+    }
+    this.db.runs.update(runId, {
+      runtimeId: runtime.runtimeId,
+      invocationId,
+      operationId: runtime.activeOperationId,
+      dispatchedInputId: inputId,
+      updatedAt: now,
+    })
+  } else {
+    this.db.runs.insert({
+      runId,
+      hostSessionId: session.hostSessionId,
+      runtimeId: runtime.runtimeId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      transport: 'headless',
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+      invocationId,
+      operationId: runtime.activeOperationId,
+      // Persist HRC's inputId on the run row so the broker event-mapper can
+      // correlate a drained input.accepted envelope back to this run and flip
+      // invocation.runId before turn.* events project. Set on every dispatch
+      // (immediate and queued) for uniform reasoning; a no-op flip is harmless.
+      dispatchedInputId: inputId,
+    })
+  }
   if (options.repairCorrelation !== undefined) {
     this.db.runs.setCorrelationJson(runId, JSON.stringify(options.repairCorrelation))
   }
@@ -655,6 +863,9 @@ export const brokerHeadlessHandlersMethods = {
   startHeadlessBrokerRuntime,
   executeHeadlessBrokerStartTurn,
   executeHeadlessBrokerInputTurn,
+  enqueueDurableHeadlessTurnInput,
+  dispatchQueuedHeadlessTurnInput,
+  drainDurableHeadlessTurnInputs,
   waitForInteractiveBrokerRunCompletion,
   waitForHeadlessBrokerRunCompletion,
   recordDetachedHeadlessTurnFailure,

@@ -460,6 +460,7 @@ class HrcServerInstance implements HrcServer {
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
+  readonly queuedTurnInputDrains = new Set<string>()
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined

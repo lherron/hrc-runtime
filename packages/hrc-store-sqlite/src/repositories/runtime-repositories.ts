@@ -446,6 +446,56 @@ export class RunRepository {
     return rows.map(mapRunRow)
   }
 
+  /**
+   * FIFO turn inputs accepted by HRC but not yet handed to a runtime.
+   *
+   * A queued row is deliberately separate from runtime.activeRunId: the
+   * currently executing turn keeps ownership until its terminal event, while
+   * this row durably survives the accepting client (and daemon) exiting.
+   */
+  listQueuedByHostSessionId(hostSessionId: string): HrcRunRecord[] {
+    const rows = this.db
+      .query<RunRow, [string]>(
+        `SELECT ${RUN_COLUMNS} FROM runs
+          WHERE host_session_id = ? AND status = 'queued'
+          ORDER BY accepted_at ASC, run_id ASC`
+      )
+      .all(hostSessionId)
+
+    return rows.map(mapRunRow)
+  }
+
+  /** Atomically claim one queued input for broker dispatch. */
+  claimQueued(
+    runId: string,
+    patch: Pick<
+      HrcRunRecord,
+      'runtimeId' | 'invocationId' | 'operationId' | 'dispatchedInputId' | 'updatedAt'
+    >
+  ): boolean {
+    const result = this.db
+      .query(
+        `UPDATE runs
+            SET status = 'accepted',
+                runtime_id = ?,
+                invocation_id = ?,
+                operation_id = ?,
+                dispatched_input_id = ?,
+                updated_at = ?
+          WHERE run_id = ? AND status = 'queued'`
+      )
+      .run(
+        patch.runtimeId ?? null,
+        patch.invocationId ?? null,
+        patch.operationId ?? null,
+        patch.dispatchedInputId ?? null,
+        patch.updatedAt,
+        runId
+      ) as { changes?: number }
+
+    return (result.changes ?? 0) === 1
+  }
+
   listRuns(filters: RunListFilters = {}): HrcRunRecord[] {
     const predicates: string[] = []
     const values: Array<string | number> = []

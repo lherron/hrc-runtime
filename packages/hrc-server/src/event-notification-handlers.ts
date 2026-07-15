@@ -77,6 +77,19 @@ export function notifyEvent(
   if (
     'hrcSeq' in event &&
     (event.eventKind === 'turn.completed' ||
+      event.eventKind === 'turn.failed' ||
+      event.eventKind === 'turn.interrupted' ||
+      event.eventKind === 'turn.zombied' ||
+      event.eventKind === 'turn.reaped')
+  ) {
+    // The durable row is claimed atomically by the drain. Do not await here:
+    // notification fan-out must remain synchronous, and duplicate terminal
+    // projections are harmless because only one drain per session can run.
+    void this.drainDurableHeadlessTurnInputs(event.hostSessionId)
+  }
+  if (
+    'hrcSeq' in event &&
+    (event.eventKind === 'turn.completed' ||
       event.eventKind === 'turn.zombied' ||
       event.eventKind === 'turn.reaped') &&
     event.runId

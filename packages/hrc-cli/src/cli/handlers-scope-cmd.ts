@@ -54,12 +54,23 @@ export async function executeManagedStart(
     })
   }
 
-  return client.dispatchTurn({
+  const result = await client.dispatchTurn({
     hostSessionId: input.hostSessionId,
     prompt,
     runtimeIntent: input.intent,
     waitForCompletion: true,
   })
+  const execution = (
+    result as typeof result & {
+      execution?: { state?: string; errorMessage?: string | undefined } | undefined
+    }
+  ).execution
+  if (execution?.state === 'failed') {
+    throw new Error(
+      execution.errorMessage ?? `input "${prompt}" was not delivered by the target runtime`
+    )
+  }
+  return result
 }
 
 function printManagedScopeUsage(command: 'run' | 'start' | 'resume'): void {

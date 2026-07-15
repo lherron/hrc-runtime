@@ -285,6 +285,27 @@ export async function handleHeadlessBrokerDispatchTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
+  // A lifecycle-only `hrc start` may still be provisioning this session when
+  // a prompt-bearing start/turn arrives. Admit the prompt durably before
+  // waiting for boot so aborting the client only stops its wait, never the
+  // delivery. Reuse the one boot operation; a second broker start would split
+  // the session.
+  const bootOperation = this.runtimeStartOperations.get(session.hostSessionId)
+  if (bootOperation) {
+    this.enqueueDurableHeadlessTurnInput(session, prompt, runId, {
+      source: 'boot',
+      responseFormat: options.responseFormat,
+    })
+    const bootedRuntime = await bootOperation
+    return await this.dispatchQueuedHeadlessTurnInput(
+      session,
+      bootedRuntime,
+      prompt,
+      runId,
+      options
+    )
+  }
+
   const reusableRuntime = getReusableHeadlessRuntimeForSession(
     this.db,
     session.hostSessionId,
@@ -313,6 +334,15 @@ export async function handleHeadlessBrokerDispatchTurn(
       reusableRuntime.activeInvocationId !== undefined
     ) {
       assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime, options)
+      if (this.db.runs.getByRunId(runId)?.status === 'queued') {
+        return await this.dispatchQueuedHeadlessTurnInput(
+          session,
+          reusableRuntime,
+          prompt,
+          runId,
+          options
+        )
+      }
       return await this.executeHeadlessBrokerInputTurn(
         session,
         reusableRuntime,
