@@ -394,10 +394,18 @@ export async function startRuntimeForSession(
         return reusableRuntime
       }
 
-      // Legacy CLI execution is retired. Fail before allocating a runtime row:
-      // the first broker dispatch turn owns provisioning, while an explicit
-      // start on this route is operator error. Continuation-backed reuse above
-      // remains valid and does not allocate anything.
+      // Retired SDK and legacy CLI starts fail before allocating a runtime row.
+      // Continuation-backed reuse above remains valid and does not allocate
+      // anything.
+      if (headlessRoute === 'sdk') {
+        this.failSdkHarnessPath(
+          'runHeadlessSdkStartLaunch',
+          session,
+          normalizedIntent,
+          `run-${randomUUID()}`
+        )
+      }
+
       if (headlessRoute === 'legacy-exec') {
         this.failCliStartPath(
           'runHeadlessStartLaunch',
