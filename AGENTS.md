@@ -27,6 +27,7 @@ bun run build     # Build all HRC packages in order
   `bun scripts/find-entry-points.ts <topic>` finds entry points for a topic
   from the source graph, and `bun scripts/explain-area.ts <file|dir>` explains
   exports, imports, importers, and specs for a package area.
+- Isolated-daemon smoke validation: [docs/isolated-daemon-smoke-recipe.md](docs/isolated-daemon-smoke-recipe.md)
 
 ## HTML Specs
 
