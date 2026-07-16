@@ -1088,7 +1088,7 @@ class HrcServerInstance implements HrcServer {
   async handleAttach(url: URL): Promise<Response> {
     const runtimeId = parseRuntimeIdQuery(url)
     const runtime = await this.reconcileTmuxRuntimeLiveness(requireKnownRuntime(this.db, runtimeId))
-    return await this.attachRuntimeEffectfully(runtime)
+    return await this.attachRuntimeEffectfully(runtime, { strictRuntimeId: true })
   }
 
   async handleInterrupt(request: Request): Promise<Response> {

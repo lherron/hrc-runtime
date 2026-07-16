@@ -394,6 +394,19 @@ export async function startRuntimeForSession(
         return reusableRuntime
       }
 
+      // Legacy CLI execution is retired. Fail before allocating a runtime row:
+      // the first broker dispatch turn owns provisioning, while an explicit
+      // start on this route is operator error. Continuation-backed reuse above
+      // remains valid and does not allocate anything.
+      if (headlessRoute === 'legacy-exec') {
+        this.failCliStartPath(
+          'runHeadlessStartLaunch',
+          session,
+          normalizedIntent,
+          `run-${randomUUID()}`
+        )
+      }
+
       const runtime =
         reusableRuntime ?? this.createHeadlessRuntimeForSession(session, normalizedIntent)
       if (runtime.continuation?.key ?? session.continuation?.key) {
@@ -588,7 +601,8 @@ export function attachRuntime(
 
 export async function attachRuntimeEffectfully(
   this: HrcServerInstanceForHandlers,
-  runtime: HrcRuntimeSnapshot
+  runtime: HrcRuntimeSnapshot,
+  options: { strictRuntimeId?: boolean } = {}
 ): Promise<Response> {
   if (runtime.transport === 'sdk') {
     throw new HrcRuntimeUnavailableError('attach is only available for interactive runtimes', {
@@ -663,6 +677,17 @@ export async function attachRuntimeEffectfully(
     }
     if (admission.decision === 'broker-reuse') {
       return this.attachRuntime(latestRuntime)
+    }
+    if (options.strictRuntimeId === true) {
+      throw new HrcRuntimeUnavailableError(
+        'explicit runtime attach cannot reprovision to a different runtime',
+        {
+          runtimeId: latestRuntime.runtimeId,
+          hostSessionId: latestRuntime.hostSessionId,
+          admissionDecision: admission.decision,
+          route: 'interactive-broker-attach-by-id',
+        }
+      )
     }
     if (admission.decision === 'stale-and-reprovision') {
       this.markRuntimeStaleForBrokerReprovision(session, latestRuntime, {
