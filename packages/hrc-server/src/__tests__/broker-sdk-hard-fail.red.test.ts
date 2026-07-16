@@ -36,6 +36,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { HrcErrorCode } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServer } from '../index'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -70,6 +71,15 @@ function sdkIntent(
       ...(id ? { id } : {}),
     },
     ...(options.preferredMode ? { execution: { preferredMode: options.preferredMode } } : {}),
+  }
+}
+
+function runtimeRowsForHostSession(hostSessionId: string) {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.runtimes.listByHostSessionId(hostSessionId)
+  } finally {
+    db.close()
   }
 }
 
@@ -156,7 +166,12 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
   }
 
   it('POST /v1/runtimes/start hard-fails for an SDK harness before SDK execution', async () => {
+    const control = await fixture.ensureRuntime('sdk-hard-fail-start-query-control')
+    expect(runtimeRowsForHostSession(control.hostSessionId)).toHaveLength(1)
+
     const hsid = await resolveSession('sdk-hard-fail-start')
+    const runtimeCountBefore = runtimeRowsForHostSession(hsid).length
+    expect(runtimeCountBefore).toBe(0)
 
     const res = await fixture.postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
@@ -175,5 +190,6 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
     const serializedError = JSON.stringify(data.error ?? {})
     expect(serializedError).toContain('agent-sdk')
     expect(serializedError).toContain('anthropic')
+    expect(runtimeRowsForHostSession(hsid)).toHaveLength(runtimeCountBefore)
   })
 })
