@@ -116,6 +116,7 @@
       "name": "hrc-sdk",
       "version": "0.1.0",
       "dependencies": {
+        "agent-scope": "latest",
         "hrc-core": "*",
         "spaces-config": "latest",
       },
