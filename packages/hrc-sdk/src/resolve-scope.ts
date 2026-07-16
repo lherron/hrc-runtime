@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { type ResolvedScopeInput, resolveQualifiedScopeInput, resolveScopeInput } from 'agent-scope'
+import { type ResolvedScopeInput, resolveQualifiedScopeInput } from 'agent-scope'
 import {
   type ResolveAgentPlacementPathsOptions,
   type ResolvedAgentPlacementPaths,
@@ -50,18 +50,25 @@ export function resolveProfileAwareScopeInput(
   input: string,
   options: ResolveProfileAwareScopeInputOptions = {}
 ): ProfileAwareResolvedScopeInput {
-  const initial = resolveScopeInput(input, options.scope?.defaultLaneId)
-  const projectId = initial.parsed.projectId ?? options.scope?.projectId
+  // Extract agentId/projectId for profile placement by resolving WITH the
+  // caller's scope defaults (projectId fallback, lane). Using the bare
+  // `resolveScopeInput` here would re-throw on the project-deferred shorthand
+  // (`mable:BLAH`) before the projectId fallback is ever applied — the fallback
+  // is exactly what makes that shorthand legal. If no project is resolvable this
+  // still throws with the actionable "requires a project" message, as intended.
+  const scopeDefaults = options.scope ?? {}
+  const initial = resolveQualifiedScopeInput(input, scopeDefaults)
+  const projectId = initial.parsed.projectId ?? scopeDefaults.projectId
   const placement = resolveAgentPlacementPaths({
     ...options.placement,
     agentId: initial.parsed.agentId,
     ...(projectId !== undefined ? { projectId } : {}),
   })
   const defaultRoleName = readDefaultScopeRole(placement.agentRoot)
-  const resolved = resolveQualifiedScopeInput(input, {
-    ...options.scope,
-    ...(defaultRoleName !== undefined ? { defaultRoleName } : {}),
-  })
+  const resolved =
+    defaultRoleName !== undefined
+      ? resolveQualifiedScopeInput(input, { ...scopeDefaults, defaultRoleName })
+      : initial
 
   return {
     ...resolved,
