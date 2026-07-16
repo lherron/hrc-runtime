@@ -25,13 +25,13 @@ import {
   canonicalCorrelationJson,
   correlationConflicts,
   normalizeCorrelation,
-  parseSelector,
   resolveDatabasePath,
 } from 'hrc-core'
 import { type HrcDatabase, openHrcDatabase } from 'hrc-store-sqlite'
 import { CliStatusExit } from './cli/shared.js'
 import { matchStringFlag } from './monitor-args.js'
 import { printJson } from './print.js'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 // -- export -------------------------------------------------------------------
 
@@ -255,7 +255,7 @@ function resolveRun(db: HrcDatabase, target: string): HrcRunRecord {
 
   let selector: HrcSelector
   try {
-    selector = parseSelector(target)
+    selector = parseProfileAwareSelector(target)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`no run "${target}" and not a valid selector: ${message}`)

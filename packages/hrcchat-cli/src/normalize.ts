@@ -1,10 +1,11 @@
 /**
  * Address normalization and resolution for hrcchat CLI.
  */
-import { formatSessionHandle, resolveQualifiedScopeInput } from 'agent-scope'
-import type { ResolvedScopeInput } from 'agent-scope'
+import { formatSessionHandle } from 'agent-scope'
 import { splitSessionRef } from 'hrc-core'
 import type { HrcMessageAddress } from 'hrc-core'
+import { resolveProfileAwareScopeInput } from 'hrc-sdk'
+import type { ProfileAwareResolvedScopeInput } from 'hrc-sdk'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { taskIdFromSessionRef } from './taskId.js'
@@ -32,14 +33,16 @@ function inferTaskIdFromCallerSession(): string | undefined {
 export function resolveScope(
   input: string,
   options?: { withCallerTaskId?: boolean }
-): ResolvedScopeInput {
+): ProfileAwareResolvedScopeInput {
   const fallbackProjectId = process.env['ASP_PROJECT'] ?? inferProjectIdFromCwd()
   const fallbackTaskId = options?.withCallerTaskId ? inferTaskIdFromCallerSession() : undefined
 
-  return resolveQualifiedScopeInput(input, {
-    defaultLaneId: 'main',
-    ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
-    ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
+  return resolveProfileAwareScopeInput(input, {
+    scope: {
+      defaultLaneId: 'main',
+      ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
+      ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
+    },
   })
 }
 

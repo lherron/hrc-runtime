@@ -1959,6 +1959,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ParseSelectorOptions",
+      "kind": "type",
+      "file": "packages/hrc-core/src/selectors.ts",
+      "hash": "hrc-core|ParseSelectorOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "PrepareAttachedRunRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3063,6 +3071,22 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "ProfileAwareResolvedScopeInput",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/resolve-scope.ts",
+      "hash": "hrc-sdk|ProfileAwareResolvedScopeInput|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ProfileAwareScopeDefaults",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/resolve-scope.ts",
+      "hash": "hrc-sdk|ProfileAwareScopeDefaults|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "RegisterBridgeTargetRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -3091,6 +3115,22 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/resolve-intent.ts",
       "hash": "hrc-sdk|ResolvedAgentHarness|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "resolveProfileAwareScopeInput",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/resolve-scope.ts",
+      "hash": "hrc-sdk|resolveProfileAwareScopeInput|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ResolveProfileAwareScopeInputOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/resolve-scope.ts",
+      "hash": "hrc-sdk|ResolveProfileAwareScopeInputOptions|type",
       "count": 1
     },
     {

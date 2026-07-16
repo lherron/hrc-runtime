@@ -11,7 +11,6 @@ import {
   createMonitorConditionEngine,
   createMonitorReader,
   formatSelector,
-  parseSelector,
   resolveDatabasePath,
 } from 'hrc-core'
 import { discoverSocket } from 'hrc-sdk'
@@ -23,6 +22,7 @@ import {
   assertValidUntilCondition,
 } from './monitor-conditions.js'
 import { numberField, stringField } from './monitor-fields.js'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 type MonitorWaitOptions = {
   selectorRaw?: string | undefined
@@ -65,7 +65,7 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
 
   let selector: HrcSelector
   try {
-    selector = parseSelector(options.selectorRaw)
+    selector = parseProfileAwareSelector(options.selectorRaw)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`invalid selector: ${message}`)

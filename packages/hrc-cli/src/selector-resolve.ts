@@ -1,6 +1,7 @@
-import { parseSelector, splitSessionRef } from 'hrc-core'
+import { splitSessionRef } from 'hrc-core'
 import type { HrcRuntimeSnapshot, HrcSelector, HrcSessionRecord } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 export type SelectorTargetKind = 'runtime' | 'host-session' | 'message' | 'bridge'
 
@@ -93,7 +94,7 @@ function parseCliSelector(rawArg: string): HrcSelector {
     // A canonical ScopeRef starts with `agent:`. The generic monitor parser
     // otherwise treats `agent` as an unknown selector prefix, while operator
     // commands have historically accepted both scope:<ref> and the bare ref.
-    return parseSelector(rawArg.startsWith('agent:') ? `scope:${rawArg}` : rawArg)
+    return parseProfileAwareSelector(rawArg.startsWith('agent:') ? `scope:${rawArg}` : rawArg)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new SelectorResolutionError('parse-error', `invalid selector "${rawArg}": ${message}`)

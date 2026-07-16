@@ -9,6 +9,12 @@ export type {
   BuildHrcRuntimeIntentInput,
   ResolvedAgentHarness,
 } from './resolve-intent.js'
+export { resolveProfileAwareScopeInput } from './resolve-scope.js'
+export type {
+  ProfileAwareScopeDefaults,
+  ProfileAwareResolvedScopeInput,
+  ResolveProfileAwareScopeInputOptions,
+} from './resolve-scope.js'
 export type {
   AdoptRuntimeRequest,
   AttachDescriptor,

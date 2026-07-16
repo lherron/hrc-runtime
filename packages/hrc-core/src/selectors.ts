@@ -83,6 +83,10 @@ export type HrcMonitorSelector =
 
 export type HrcSelector = HrcStableSelector | HrcConcreteSelector | HrcMonitorSelector
 
+export type ParseSelectorOptions = {
+  defaultRoleName?: string | undefined
+}
+
 type SessionRefParts = {
   scopeRef: string
   laneRef: string
@@ -315,7 +319,10 @@ function parseSessionMonitorSelector(
   }
 }
 
-function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
+function parseTargetMonitorSelector(
+  raw: string,
+  options: ParseSelectorOptions = {}
+): HrcTargetSelector {
   // Validate the input shape first via parseSessionHandle so we surface a
   // clear "invalid selector" error. Then re-resolve through the qualifying
   // resolver so the scope honors the always-qualified invariant (project
@@ -330,7 +337,11 @@ function parseTargetMonitorSelector(raw: string): HrcTargetSelector {
 
   let sessionRef: HrcSessionRef
   try {
-    const qualified = resolveQualifiedScopeInput(raw)
+    const qualified = resolveQualifiedScopeInput(raw, {
+      ...(options.defaultRoleName !== undefined
+        ? { defaultRoleName: options.defaultRoleName }
+        : {}),
+    })
     sessionRef = formatCanonicalSessionRef({
       scopeRef: qualified.scopeRef,
       laneRef: parsed.laneRef,
@@ -401,7 +412,10 @@ function parsePrefixedMonitorSelector(
   }
 }
 
-function parseMonitorSelector(input: string): HrcMonitorSelector {
+function parseMonitorSelector(
+  input: string,
+  options: ParseSelectorOptions = {}
+): HrcMonitorSelector {
   const raw = input.trim()
   if (raw.length === 0) {
     invalidMonitorSelector('selector', 0, 'selector must not be empty')
@@ -416,7 +430,7 @@ function parseMonitorSelector(input: string): HrcMonitorSelector {
     return parsePrefixedMonitorSelector(raw, prefix, value)
   }
 
-  return parseTargetMonitorSelector(raw)
+  return parseTargetMonitorSelector(raw, options)
 }
 
 export function formatSelector(selector: HrcSelector): string {
@@ -441,9 +455,9 @@ export function formatSelector(selector: HrcSelector): string {
   }
 }
 
-export function parseSelector(input: unknown): HrcSelector {
+export function parseSelector(input: unknown, options: ParseSelectorOptions = {}): HrcSelector {
   if (typeof input === 'string') {
-    return parseMonitorSelector(input)
+    return parseMonitorSelector(input, options)
   }
 
   if (input === null || typeof input !== 'object') {

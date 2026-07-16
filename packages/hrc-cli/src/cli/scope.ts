@@ -1,11 +1,13 @@
 import { readSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve as resolvePath } from 'node:path'
 
-import { resolveQualifiedScopeInput } from 'agent-scope'
-
 import type { HrcHarness, HrcRuntimeIntent } from 'hrc-core'
-import { harnessFrontendToHrcHarness, resolveAgentHarness as resolveSdkAgentHarness } from 'hrc-sdk'
-import type { ResolvedAgentHarness } from 'hrc-sdk'
+import {
+  harnessFrontendToHrcHarness,
+  resolveProfileAwareScopeInput,
+  resolveAgentHarness as resolveSdkAgentHarness,
+} from 'hrc-sdk'
+import type { ProfileAwareResolvedScopeInput, ResolvedAgentHarness } from 'hrc-sdk'
 import {
   PROJECT_MARKER_FILENAME,
   buildRuntimeBundleRef,
@@ -62,6 +64,8 @@ export type ManagedScopeContext = {
   scopeRef: string
   laneRef: string
   sessionRef: string
+  /** Placement selected before the authoritative profile was read. */
+  placement?: ProfileAwareResolvedScopeInput['placement'] | undefined
   /** Explicit projectRoot override (from --project-root or inferred from --project-id + cwd). */
   projectRootOverride?: string | undefined
 }
@@ -174,19 +178,22 @@ export function resolveManagedScopeContext(
     }
   }
 
-  const resolved = resolveQualifiedScopeInput(
-    scopeInput,
-    projectIdHint !== undefined ? { projectId: projectIdHint } : {}
-  )
-
-  const { parsed, scopeRef, laneRef } = resolved
-
   // If user explicitly overrode projectId (via --project-id) without also
   // giving --project-root, treat cwd as the project root. This matches the
   // intent of "I'm declaring cwd is project X".
   const projectRootOverride =
     options.projectRootOverride ??
     (options.projectIdOverride ? resolvePath(process.cwd()) : undefined)
+
+  const resolved = resolveProfileAwareScopeInput(scopeInput, {
+    scope: projectIdHint !== undefined ? { projectId: projectIdHint } : {},
+    placement:
+      projectRootOverride !== undefined
+        ? { projectRoot: projectRootOverride, cwd: projectRootOverride }
+        : {},
+  })
+
+  const { parsed, scopeRef, laneRef, placement } = resolved
 
   const laneId = laneRef === 'main' ? 'main' : laneRef.slice(5)
   return {
@@ -195,6 +202,7 @@ export function resolveManagedScopeContext(
     scopeRef,
     laneRef: laneId === 'main' ? 'main' : `lane:${laneId}`,
     sessionRef: `${scopeRef}/lane:${laneId}`,
+    placement,
     ...(projectRootOverride ? { projectRootOverride } : {}),
   }
 }
@@ -285,13 +293,15 @@ function buildManagedRuntimeIntent(
     debug?: boolean | undefined
   } = {}
 ): HrcRuntimeIntent {
-  const paths = resolveAgentPlacementPaths({
-    agentId: scope.agentId,
-    ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
-    ...(scope.projectRootOverride !== undefined
-      ? { projectRoot: scope.projectRootOverride, cwd: scope.projectRootOverride }
-      : {}),
-  })
+  const paths =
+    scope.placement ??
+    resolveAgentPlacementPaths({
+      agentId: scope.agentId,
+      ...(scope.projectId !== undefined ? { projectId: scope.projectId } : {}),
+      ...(scope.projectRootOverride !== undefined
+        ? { projectRoot: scope.projectRootOverride, cwd: scope.projectRootOverride }
+        : {}),
+    })
   writePlacementWarnings(paths.warnings)
   const agentRoot = paths.agentRoot
   if (!agentRoot) {

@@ -12,10 +12,10 @@ import {
   type HrcSelector,
   type HrcStatusResponse,
   createMonitorReader,
-  parseSelector,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 type MonitorShowOptions = {
   json: boolean
@@ -80,7 +80,7 @@ export async function cmdMonitorShow(args: string[]): Promise<void> {
 
   if (options.selectorInput !== undefined) {
     try {
-      selector = parseSelector(options.selectorInput)
+      selector = parseProfileAwareSelector(options.selectorInput)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CliUsageError(`invalid selector: ${message}`)

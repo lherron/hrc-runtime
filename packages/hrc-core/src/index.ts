@@ -33,6 +33,7 @@ export type {
   HrcMessageSelector,
   HrcMessageSeqSelector,
   HrcMonitorSelector,
+  ParseSelectorOptions,
   HrcRuntimeSelector,
   HrcScopeSelector,
   HrcSelector,

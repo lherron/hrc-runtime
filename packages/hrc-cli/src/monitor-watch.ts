@@ -32,7 +32,6 @@ import {
   createMonitorConditionEngine,
   createMonitorReader,
   formatSelector,
-  parseSelector,
   resolveDatabasePath,
 } from 'hrc-core'
 import { MonitorResult } from 'hrc-events'
@@ -53,6 +52,7 @@ import {
   resolveMonitorOutputFormat,
   toMonitorJsonEvent,
 } from './monitor-render.js'
+import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 // -- Types -------------------------------------------------------------------
 
@@ -188,7 +188,7 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   let selector: HrcSelector | undefined
   if (args.selector) {
     try {
-      selector = parseSelector(args.selector)
+      selector = parseProfileAwareSelector(args.selector)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CliUsageError(`invalid selector: ${message}`)

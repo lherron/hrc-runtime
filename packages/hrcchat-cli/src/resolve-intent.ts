@@ -10,7 +10,6 @@
 import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import { buildHrcRuntimeIntent } from 'hrc-sdk'
-import { resolveAgentPlacementPaths } from 'spaces-config'
 
 import { resolveScope } from './normalize.js'
 
@@ -32,10 +31,7 @@ export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIn
   const resolved = resolveScope(targetInput)
   const scope = resolved.parsed
 
-  const paths = resolveAgentPlacementPaths({
-    agentId: scope.agentId,
-    projectId: scope.projectId,
-  })
+  const paths = resolved.placement
   writePlacementWarnings(paths.warnings)
   const agentRoot = paths.agentRoot
   if (!agentRoot) {

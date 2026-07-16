@@ -23,6 +23,7 @@
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
+    "agent-scope": "latest",
     "hrc-core": "*",
     "spaces-config": "latest"
   },
