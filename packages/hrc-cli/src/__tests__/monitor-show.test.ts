@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formatScopeHandle, formatSessionHandle, resolveScopeInput } from 'agent-scope'
@@ -280,6 +280,54 @@ describe('hrc monitor show acceptance (T-01289)', () => {
     expect(result.stdout).toContain(`session: ${session.sessionHandle}`)
     expect(result.stdout).toContain(session.hostSessionId)
     expect(result.stdout).toContain(`runtime: ${runtimeId}`)
+  })
+
+  it('enriches a target handle from the project-local profile before monitor resolution', async () => {
+    server = await createHrcServer(serverOpts())
+    const session = await resolveSession('clod@proj:T-12345/tester')
+    const runtimeId = seedHeadlessRuntime(session)
+    const projectRoot = join(tmpDir, 'project')
+    const localAgentRoot = join(projectRoot, 'agents', 'clod')
+    const canonicalAgentsRoot = join(tmpDir, 'canonical-agents')
+    const canonicalAgentRoot = join(canonicalAgentsRoot, 'clod')
+    const profile = (defaultScopeRole: string) =>
+      [
+        'schemaVersion = 2',
+        '',
+        '[identity]',
+        'display = "Monitor Fixture"',
+        'role = "tester"',
+        'harness = "codex"',
+        `default_scope_role = "${defaultScopeRole}"`,
+        '',
+      ].join('\n')
+
+    await mkdir(localAgentRoot, { recursive: true })
+    await mkdir(canonicalAgentRoot, { recursive: true })
+    await writeFile(join(projectRoot, 'asp-targets.toml'), 'schema = 1\nagents-root = "agents"\n')
+    await writeFile(join(localAgentRoot, 'agent-profile.toml'), profile('tester'))
+    await writeFile(join(canonicalAgentRoot, 'agent-profile.toml'), profile('coordinator'))
+
+    const result = await runCli(
+      ['monitor', 'show', 'clod@proj:T-12345', '--json'],
+      cliEnv({
+        ASP_AGENTS_ROOT: canonicalAgentsRoot,
+        ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
+      })
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    const body = JSON.parse(result.stdout) as {
+      scope: { scopeRef: string }
+      session: { sessionRef: string }
+      runtime: { runtimeId: string }
+    }
+    expect(body.scope.scopeRef).toBe('agent:clod:project:proj:task:T-12345:role:tester')
+    expect(body.session.sessionRef).toBe(
+      'agent:clod:project:proj:task:T-12345:role:tester/lane:main'
+    )
+    expect(body.runtime.runtimeId).toBe(runtimeId)
   })
 
   it('emits JSON with canonical scope/session refs plus display handles', async () => {
