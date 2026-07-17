@@ -63,6 +63,15 @@ export {
   resolveTmuxSocketPath,
 } from './paths.js'
 export {
+  getHrcCliRpcMetricsHook,
+  installCliMetricsRecorder,
+} from './cli-metrics.js'
+export type {
+  CliMetricsRecorder,
+  HrcCliRpcMetric,
+  HrcCliRpcMetricsHook,
+} from './cli-metrics.js'
+export {
   BROKER_TO_HRC_LIFECYCLE_POLICY_HASH,
   BROKER_TO_HRC_LIFECYCLE_POLICY_ID,
   BROKER_TO_HRC_LIFECYCLE_KIND,

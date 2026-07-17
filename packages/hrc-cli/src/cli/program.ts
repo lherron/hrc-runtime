@@ -43,13 +43,17 @@ function handleCliError(err: unknown, program: Command): never {
   exitWithError(err, { json, binName: 'hrc' })
 }
 
-export async function runProgram(argv: string[]): Promise<void> {
+export async function runProgram(
+  argv: string[],
+  configureProgram?: ((program: Command) => void) | undefined
+): Promise<void> {
   if (argv.length <= 2) {
     printUsage()
     process.exit(1)
   }
 
   const program = buildProgram()
+  configureProgram?.(program)
   try {
     await program.parseAsync(argv)
   } catch (err) {

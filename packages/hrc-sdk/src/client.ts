@@ -10,7 +10,7 @@ import type {
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
-import { HrcDomainError } from 'hrc-core'
+import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
 
 import type {
   AttachDescriptor,
@@ -207,7 +207,31 @@ export class HrcClient {
    * `Response` so streaming callers can consume `res.body` directly.
    */
   private unixFetch(path: string, init: BunRequestInit = {}): Promise<Response> {
-    return fetch(`${BASE_URL}${path}`, { ...init, unix: this.socketPath })
+    const metrics = getHrcCliRpcMetricsHook()
+    if (!metrics) {
+      return fetch(`${BASE_URL}${path}`, { ...init, unix: this.socketPath })
+    }
+
+    const span = metrics.start(path, (init.method ?? 'GET').toUpperCase())
+    const headers = new Headers(init.headers)
+    headers.set('x-hrc-request-id', span.id)
+    return fetch(`${BASE_URL}${path}`, { ...init, headers, unix: this.socketPath }).then(
+      (response) => {
+        span.finish(response.status, Number(response.headers.get('content-length')) || 0)
+        void response
+          .clone()
+          .arrayBuffer()
+          .then(
+            (body) => span.finish(response.status, body.byteLength),
+            () => undefined
+          )
+        return response
+      },
+      (error: unknown) => {
+        span.finish(0, 0)
+        throw error
+      }
+    )
   }
 
   private async postJson<T>(path: string, body: unknown): Promise<T> {

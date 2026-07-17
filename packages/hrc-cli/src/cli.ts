@@ -2,6 +2,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { installCliMetricsRecorder } from 'hrc-core'
+
 import { runProgram } from './cli/program.js'
 
 // -- .env.local loading -------------------------------------------------------
@@ -70,5 +72,6 @@ export { explainScopeCommandError } from './cli/errors.js'
 export { main } from './cli/program.js'
 
 if (import.meta.main) {
-  await runProgram(process.argv)
+  const metrics = installCliMetricsRecorder({ bin: 'hrc', argv: process.argv })
+  await runProgram(process.argv, metrics.setCommandTree)
 }

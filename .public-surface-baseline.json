@@ -415,6 +415,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "CliMetricsRecorder",
+      "kind": "type",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|CliMetricsRecorder|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "CloseBridgeRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -679,6 +687,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "getHrcCliRpcMetricsHook",
+      "kind": "value",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|getHrcCliRpcMetricsHook|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "GetTargetRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -915,6 +931,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcCapabilityStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCliRpcMetric",
+      "kind": "type",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|HrcCliRpcMetric|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCliRpcMetricsHook",
+      "kind": "type",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|HrcCliRpcMetricsHook|type",
       "count": 1
     },
     {
@@ -1779,6 +1811,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|InspectRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "installCliMetricsRecorder",
+      "kind": "value",
+      "file": "packages/hrc-core/src/cli-metrics.ts",
+      "hash": "hrc-core|installCliMetricsRecorder|value",
       "count": 1
     },
     {

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 import { CliUsageError, attachJsonOption, exitWithError } from 'cli-kit'
 import { Command, CommanderError } from 'commander'
-import { HrcDomainError } from 'hrc-core'
+import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
 import { cmdDm } from './commands/dm.js'
@@ -428,6 +428,8 @@ UTILITY
 export { program }
 
 if (import.meta.main) {
+  const metrics = installCliMetricsRecorder({ bin: 'hrcchat', argv: process.argv })
+  metrics.setCommandTree(program)
   try {
     await program.parseAsync(process.argv)
   } catch (err) {
