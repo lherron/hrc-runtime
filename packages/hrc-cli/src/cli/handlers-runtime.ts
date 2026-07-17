@@ -56,7 +56,13 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(task ? { task } : {}),
     ...(jsonOutput ? { json: true } : {}),
   })
-  printJson(runtimes)
+  const body = `${JSON.stringify(runtimes, null, 2)}\n`
+  process.stdout.write(body)
+  if (runtimes.length > 100) {
+    process.stderr.write(
+      `hrc: runtime list returned ${runtimes.length} runtimes (${Buffer.byteLength(body)} bytes) — narrow with --task/--scope/--agent/--status/--transport/--session\n`
+    )
+  }
 }
 
 function canonicalScopeFilter(raw: string): string {
