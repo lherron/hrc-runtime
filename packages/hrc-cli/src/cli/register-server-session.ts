@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 
+import { VALID_CONDITIONS } from '../monitor-conditions.js'
 import { cmdMonitorShow } from '../monitor-show.js'
 import { cmdMonitorWait } from '../monitor-wait.js'
 import { cmdMonitorWatch } from '../monitor-watch.js'
@@ -20,6 +21,10 @@ import {
 } from './handlers-server.js'
 import { cmdSessionReport } from './runtime-select.js'
 import { fatal } from './shared.js'
+
+const MONITOR_CONDITIONS_HELP = [...VALID_CONDITIONS].join(', ')
+const MONITOR_EXIT_CODES_HELP =
+  'Exit codes: 0 satisfied/replay-complete; 1 timeout/stall; 2 usage/invalid selector; 3 monitor infra failure; 4 condition impossible; 130 SIGINT.'
 
 export function registerServerSessionCommands(program: Command): void {
   // -- server group (commander, Phase 6 T1) -----------------------------------
@@ -246,7 +251,9 @@ Exit codes:
 
   monitor
     .command('show')
-    .description('show current HRC monitor snapshot')
+    .description(
+      'show the current monitor-state snapshot and counters, unlike hrc ls or hrc runtime list inventory'
+    )
     .argument('[selector]', 'monitor selector')
     .option('--json', 'output structured JSON')
     .action(async (selector, _opts, cmd: Command) => {
@@ -260,12 +267,13 @@ Exit codes:
 
   monitor
     .command('wait')
-    .description('wait for a monitor condition')
+    .description('watch --until without the event stream, using the same condition engine')
     .argument('[selectors...]', 'one or more exact, scope-prefix, or task-id selectors')
-    .option('--until <condition>', 'condition to wait for')
+    .option('--until <condition>', `condition to wait for: ${MONITOR_CONDITIONS_HELP}`)
     .option('--timeout <duration>', 'maximum wait duration')
     .option('--stall-after <duration>', 'stall threshold duration')
     .option('--json', 'output structured JSON')
+    .addHelpText('after', `\n${MONITOR_EXIT_CODES_HELP}\n`)
     .action(async (selectors: string[], _opts, cmd: Command) => {
       const positionals = selectors ?? []
       const args = toLegacyArgv(positionals, cmd.opts(), {
@@ -286,7 +294,10 @@ Exit codes:
       '--forever',
       'keep a single concrete --follow watch open instead of defaulting to --until terminal'
     )
-    .option('--until <condition>', 'exit when condition is met (requires --follow)')
+    .option(
+      '--until <condition>',
+      `exit when condition is met (requires --follow): ${MONITOR_CONDITIONS_HELP}`
+    )
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
     .option('--json', 'output JSON lines')
@@ -307,7 +318,11 @@ Exit codes:
     )
     .addHelpText(
       'after',
-      '\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.\n'
+      `\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.
+--until requires --follow. response and response-or-idle require a msg: selector.
+--stall-after exits the stream (it is not a pause signal).
+Default output format is tree when stdout is a TTY and ndjson when stdout is not a TTY.
+${MONITOR_EXIT_CODES_HELP}\n`
     )
     .action(async (selectors: string[], _opts, cmd: Command) => {
       const args = toLegacyArgv(selectors ?? [], cmd.opts(), {

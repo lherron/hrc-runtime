@@ -168,11 +168,14 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   const follow = args.follow ?? false
   const until = args.until
   const signal = args.signal
-  const format = resolveMonitorOutputFormat({
-    format: args.format,
-    pretty: args.pretty,
-    json: args.json,
-  })
+  const format = resolveMonitorOutputFormat(
+    {
+      format: args.format,
+      pretty: args.pretty,
+      json: args.json,
+    },
+    process.stdout.isTTY === true
+  )
 
   // Validate condition
   assertValidUntilCondition(until)

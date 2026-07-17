@@ -121,6 +121,20 @@ COMMON CONTROL FLOWS
     (the old 'hrc run sweep-zombies|reconcile-active' still work but are
      deprecated — they print the 'admin runs' replacement to stderr.)
 
+MONITOR
+  Supervise a room and follow its event stream:
+    hrc monitor watch T-XXXXX --follow
+
+  Block on completion without printing the event stream:
+    hrc monitor wait T-XXXXX --until terminal
+
+  Replay what happened, either by count or sequence:
+    hrc monitor watch T-XXXXX --last N
+    hrc monitor watch T-XXXXX --from-seq N
+
+  hrc conditions are runtime-centric: terminal, idle, and turn-finished.
+  wrkq conditions are task-state: state=completed and all-terminal.
+
 SAFETY RULES
   Prefer stable target handles first.
   Prefer inspection before mutation.

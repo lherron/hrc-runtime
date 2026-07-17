@@ -69,15 +69,18 @@ export function parseMonitorOutputFormat(raw: string): MonitorOutputFormat {
   }
 }
 
-export function resolveMonitorOutputFormat(options: {
-  format?: MonitorOutputFormat | undefined
-  pretty?: boolean | undefined
-  json?: boolean | undefined
-}): MonitorOutputFormat {
+export function resolveMonitorOutputFormat(
+  options: {
+    format?: MonitorOutputFormat | undefined
+    pretty?: boolean | undefined
+    json?: boolean | undefined
+  },
+  isTTY = false
+): MonitorOutputFormat {
   if (options.format) return options.format
   if (options.pretty) return 'tree'
   if (options.json) return 'ndjson'
-  return 'ndjson'
+  return isTTY ? 'tree' : 'ndjson'
 }
 
 export function createMonitorRenderer(
