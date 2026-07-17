@@ -226,6 +226,7 @@ describe('GET /v1/runtimes list filters', () => {
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-06486',
       transport: 'headless',
       status: 'ready',
+      createdAt: '2026-01-01T00:00:00.001Z',
     })
     seedRuntime({
       runtimeId: 'rt-identity-cody-other',
@@ -233,6 +234,7 @@ describe('GET /v1/runtimes list filters', () => {
       scopeRef: 'agent:cody:project:hrc-runtime:task:T-00001',
       transport: 'headless',
       status: 'ready',
+      createdAt: '2026-01-01T00:00:00.002Z',
     })
     seedRuntime({
       runtimeId: 'rt-identity-clod-task',
@@ -240,6 +242,7 @@ describe('GET /v1/runtimes list filters', () => {
       scopeRef: 'agent:clod:project:hrc-runtime:task:T-06486',
       transport: 'headless',
       status: 'ready',
+      createdAt: '2026-01-01T00:00:00.003Z',
     })
 
     expect(runtimeIds(await listRuntimes('agent=cody'))).toEqual([
