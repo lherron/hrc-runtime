@@ -12,18 +12,18 @@ const WORKER_SCOPE = `agent:worker:project:hrc-runtime:task:${TASK_ID}:role:test
 const OTHER_SCOPE = 'agent:worker:project:hrc-runtime:task:T-99999:role:tester'
 
 let tempDir: string
-let databasePath: string
+let databaseOrdinal: number
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'hrc-events-multiscope-red-'))
-  databasePath = join(tempDir, 'state.sqlite')
+  databaseOrdinal = 0
 })
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true })
 })
 
-function seed(scopeRefs: string[]): ReturnType<typeof openHrcDatabase> {
+function seed(scopeRefs: string[], databasePath: string): ReturnType<typeof openHrcDatabase> {
   const db = openHrcDatabase(databasePath)
   for (const [index, scopeRef] of scopeRefs.entries()) {
     const hostSessionId = `host-${index}`
@@ -53,7 +53,9 @@ function seed(scopeRefs: string[]): ReturnType<typeof openHrcDatabase> {
 }
 
 function scopesFor(filters: HrcLifecycleMonitorFilters): string[] {
-  const db = seed([COORD_SCOPE, WORKER_SCOPE, OTHER_SCOPE])
+  const databasePath = join(tempDir, `state-${databaseOrdinal}.sqlite`)
+  databaseOrdinal += 1
+  const db = seed([COORD_SCOPE, WORKER_SCOPE, OTHER_SCOPE], databasePath)
   try {
     return db.hrcEvents.listFromHrcSeqFiltered(1, filters).map((event) => event.scopeRef)
   } finally {
