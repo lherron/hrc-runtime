@@ -60,6 +60,12 @@ export type HrcLifecycleQueryFilters = {
  */
 export type HrcLifecycleMonitorFilters = {
   scopeRef?: string | undefined
+  /** Match any event whose scopeRef is exactly one of these values. */
+  scopeRefs?: string[] | undefined
+  /** Match any event whose scopeRef begins with one of these values. */
+  scopeRefPrefixes?: string[] | undefined
+  /** Match complete `:task:<id>:` scopeRef segments. */
+  taskIds?: string[] | undefined
   laneRef?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined

@@ -29,6 +29,10 @@ const MILESTONE_KINDS = [
   'runtime.dead',
 ] as const
 
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+}
+
 /**
  * SQL predicate for the milestone preset. The `?` placeholders bind to
  * {@link MILESTONE_KINDS}; the tool-name / Bash-command predicates are
@@ -305,6 +309,26 @@ export class HrcLifecycleEventRepository {
       runId: filters.runId,
     }
     const { where, values } = buildLifecycleWhere(baseFilters, { includeSeqPredicates: true })
+
+    const scopeSetPredicates: string[] = []
+    if (filters.scopeRefs && filters.scopeRefs.length > 0) {
+      scopeSetPredicates.push(`scope_ref IN (${filters.scopeRefs.map(() => '?').join(', ')})`)
+      values.push(...filters.scopeRefs)
+    }
+    if (filters.scopeRefPrefixes && filters.scopeRefPrefixes.length > 0) {
+      scopeSetPredicates.push(...filters.scopeRefPrefixes.map(() => "scope_ref LIKE ? ESCAPE '\\'"))
+      values.push(...filters.scopeRefPrefixes.map((prefix) => `${escapeLike(prefix)}%`))
+    }
+    if (filters.taskIds && filters.taskIds.length > 0) {
+      for (const taskId of filters.taskIds) {
+        scopeSetPredicates.push("(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')")
+        const segment = escapeLike(`:task:${taskId}`)
+        values.push(`%${segment}:%`, `%${segment}`)
+      }
+    }
+    if (scopeSetPredicates.length > 0) {
+      where.push(`(${scopeSetPredicates.join(' OR ')})`)
+    }
 
     if (filters.milestone) {
       where.push(MILESTONE_PREDICATE_SQL)

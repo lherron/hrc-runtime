@@ -52,7 +52,14 @@ import {
   resolveMonitorOutputFormat,
   toMonitorJsonEvent,
 } from './monitor-render.js'
-import { parseProfileAwareSelector } from './profile-aware-selector.js'
+import {
+  type MonitorSelectorSpec,
+  eventMatchesSelectorSet,
+  isFanInSelectorSet,
+  parseMonitorSelectors,
+  scopeMatchesSelectorSpec,
+  selectorSetLabel,
+} from './monitor-selectors.js'
 
 // -- Types -------------------------------------------------------------------
 
@@ -70,6 +77,7 @@ type FilterSpec =
 /** Structured args accepted when invoked directly (e.g. from tests). */
 export type MonitorWatchArgs = {
   selector?: string | undefined
+  selectors?: string[] | undefined
   json?: boolean | undefined
   pretty?: boolean | undefined
   format?: MonitorOutputFormat | undefined
@@ -87,6 +95,10 @@ export type MonitorWatchArgs = {
   tool?: string | undefined // comma-separated toolName list (turn.tool_call only)
   grep?: string | undefined // payload substring match
   milestone?: boolean | undefined // curated preset (supersedes kind/tool/grep)
+  allEvents?: boolean | undefined // opt out of the fan-in milestone default
+  forever?: boolean | undefined // opt out of single-runtime implicit terminal exit
+  /** Internal marker: preserve normal follow/replay behavior while stopping at terminal. */
+  implicitTerminal?: boolean | undefined
 }
 
 /** Injectable dependencies for testing. */
@@ -117,7 +129,8 @@ export async function cmdMonitorWatch(
   argsOrArgv: string[] | MonitorWatchArgs,
   deps?: MonitorWatchDeps
 ): Promise<number | undefined> {
-  const args = Array.isArray(argsOrArgv) ? parseArgv(argsOrArgv) : argsOrArgv
+  const parsedArgs = Array.isArray(argsOrArgv) ? parseArgv(argsOrArgv) : argsOrArgv
+  const args = applyFanInDefaults(parsedArgs)
   const io = deps ?? defaultDeps(args)
 
   try {
@@ -184,20 +197,26 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
     }
   }
 
-  // Parse selector
-  let selector: HrcSelector | undefined
-  if (args.selector) {
-    try {
-      selector = parseProfileAwareSelector(args.selector)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new CliUsageError(`invalid selector: ${message}`)
-    }
+  const rawSelectors = selectorArgs(args)
+  let selectorSpecs: MonitorSelectorSpec[]
+  try {
+    selectorSpecs = parseMonitorSelectors(rawSelectors)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new CliUsageError(`invalid selector: ${message}`)
   }
+  const selector =
+    selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
+      ? selectorSpecs[0].selector
+      : undefined
 
   // Q4 FROZEN: response/response-or-idle REQUIRE msg: selector
   if (until && MSG_REQUIRED_CONDITIONS.has(until)) {
-    if (!selector || (selector.kind !== 'message' && selector.kind !== 'message-seq')) {
+    if (
+      selectorSpecs.length !== 1 ||
+      !selector ||
+      (selector.kind !== 'message' && selector.kind !== 'message-seq')
+    ) {
       throw new CliUsageError(`${until} requires a msg: selector`)
     }
   }
@@ -210,15 +229,59 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   // Apply server-side-equivalent event filtering (T-04232). In live mode the
   // SQL layer already narrowed the firehose; this wrapper enforces the same
   // predicate for injected/test state and preserves the global high-water.
-  const filteredIo = wrapWithEventFilter(io, args)
+  const filteredIo = wrapWithMonitorFilters(io, args, selectorSpecs)
 
   // Build state
   const state = await filteredIo.buildMonitorState()
 
-  if (until && follow) {
+  const implicitTerminal =
+    follow &&
+    until === undefined &&
+    args.forever !== true &&
+    selector !== undefined &&
+    resolvesToConcreteRuntime(state, selector)
+  if (implicitTerminal) {
+    return runReplayOrFollow(
+      state,
+      { ...args, implicitTerminal: true },
+      selector,
+      filteredIo,
+      format
+    )
+  }
+
+  if (args.until && follow) {
+    if (isFanInSelectorSet(selectorSpecs)) {
+      return runSelectorSetConditionWatch(state, args, selectorSpecs, filteredIo, format)
+    }
     return runConditionWatch(state, args, selector, filteredIo, format)
   }
   return runReplayOrFollow(state, args, selector, filteredIo, format)
+}
+
+function selectorArgs(args: MonitorWatchArgs): string[] {
+  if (args.selectors && args.selectors.length > 0) return args.selectors
+  return args.selector ? [args.selector] : []
+}
+
+function resolvesToConcreteRuntime(state: HrcMonitorState, selector: HrcSelector): boolean {
+  if (selector.kind === 'runtime') {
+    return state.runtimes.some((runtime) => runtime.runtimeId === selector.runtimeId)
+  }
+  if (selector.kind === 'host' || selector.kind === 'concrete') {
+    return state.sessions.some(
+      (session) =>
+        session.hostSessionId === selector.hostSessionId && session.runtimeId !== undefined
+    )
+  }
+  if (selector.kind === 'scope' || selector.kind === 'target' || selector.kind === 'session') {
+    return state.sessions.some((session) => {
+      if (session.runtimeId === undefined) return false
+      if (selector.kind === 'session') return session.sessionRef === selector.sessionRef
+      return session.scopeRef === selector.scopeRef
+    })
+  }
+  return false
 }
 
 // -- Condition-based watch (--follow --until) ---------------------------------
@@ -236,6 +299,7 @@ async function runConditionWatch(
 
   const condition = args.until as HrcMonitorCondition
   const selectorStr = formatSelector(selector)
+  const selectedScopeRef = scopeRefForSelector(state, selector)
 
   // Use polling reader only when a timeout or stall-after is set, so new events
   // arriving after the initial snapshot can be observed. Without any deadline the
@@ -292,6 +356,9 @@ async function runConditionWatch(
         // Enrich with runtimeId/turnId if not already present
         if (lastRuntimeId && !stringField(event, 'runtimeId')) enriched['runtimeId'] = lastRuntimeId
         if (lastTurnId && !stringField(event, 'turnId')) enriched['turnId'] = lastTurnId
+        if (selectedScopeRef && !stringField(event, 'scopeRef')) {
+          enriched['scopeRef'] = selectedScopeRef
+        }
       }
       writer.write(enriched)
     }
@@ -299,6 +366,193 @@ async function runConditionWatch(
   }
 
   return outcome.exitCode
+}
+
+type SelectorConditionCandidate = {
+  key: string
+  selector: HrcSelector
+  scopeRef: string
+}
+
+export type AnyMonitorConditionResult = {
+  outcome: HrcMonitorConditionOutcome
+  selector: HrcSelector
+  scopeRef: string
+}
+
+function runtimeSelector(runtimeId: string): HrcSelector {
+  return { kind: 'runtime', raw: `runtime:${runtimeId}`, runtimeId }
+}
+
+function hostSelector(hostSessionId: string): HrcSelector {
+  return { kind: 'host', raw: `host:${hostSessionId}`, hostSessionId }
+}
+
+function scopeRefForSelector(state: HrcMonitorState, selector: HrcSelector): string | undefined {
+  if (selector.kind === 'scope' || selector.kind === 'target' || selector.kind === 'session') {
+    return selector.scopeRef
+  }
+  if (selector.kind === 'runtime') {
+    const runtime = state.runtimes.find((candidate) => candidate.runtimeId === selector.runtimeId)
+    return state.sessions.find((session) => session.hostSessionId === runtime?.hostSessionId)
+      ?.scopeRef
+  }
+  if (selector.kind === 'host' || selector.kind === 'concrete') {
+    return state.sessions.find((session) => session.hostSessionId === selector.hostSessionId)
+      ?.scopeRef
+  }
+  if (selector.kind === 'stable') {
+    return state.sessions.find((session) => session.sessionRef === selector.sessionRef)?.scopeRef
+  }
+  return undefined
+}
+
+function selectorConditionCandidates(
+  state: HrcMonitorState,
+  specs: readonly MonitorSelectorSpec[]
+): SelectorConditionCandidate[] {
+  const candidates = new Map<string, SelectorConditionCandidate>()
+  for (const spec of specs) {
+    if (spec.kind === 'exact') {
+      const scopeRef = scopeRefForSelector(state, spec.selector)
+      candidates.set(spec.raw, {
+        key: spec.raw,
+        selector: spec.selector,
+        scopeRef: scopeRef ?? '',
+      })
+      continue
+    }
+    for (const session of state.sessions) {
+      if (!scopeMatchesSelectorSpec(session.scopeRef, spec)) continue
+      const selector = session.runtimeId
+        ? runtimeSelector(session.runtimeId)
+        : hostSelector(session.hostSessionId)
+      candidates.set(session.hostSessionId, {
+        key: session.hostSessionId,
+        selector,
+        scopeRef: session.scopeRef,
+      })
+    }
+  }
+  return [...candidates.values()]
+}
+
+function isDecisiveConditionOutcome(outcome: HrcMonitorConditionOutcome): boolean {
+  return (
+    outcome.result !== 'timeout' &&
+    outcome.result !== 'stalled' &&
+    outcome.result !== 'monitor_error'
+  )
+}
+
+export async function waitForAnyMonitorCondition(
+  initialState: HrcMonitorState,
+  args: Pick<MonitorWatchArgs, 'until' | 'timeoutMs' | 'stallAfterMs' | 'signal'>,
+  specs: readonly MonitorSelectorSpec[],
+  io: Pick<MonitorWatchDeps, 'buildMonitorState'>
+): Promise<AnyMonitorConditionResult> {
+  const condition = args.until as HrcMonitorCondition
+  const startedAt = Date.now()
+  const deadline = args.timeoutMs === undefined ? undefined : startedAt + args.timeoutMs
+  const controller = new AbortController()
+  const seen = new Set<string>()
+  let fallback: AnyMonitorConditionResult | undefined
+
+  return await new Promise<AnyMonitorConditionResult>((resolve) => {
+    let settled = false
+    const finish = (result: AnyMonitorConditionResult): void => {
+      if (settled) return
+      settled = true
+      controller.abort()
+      resolve(result)
+    }
+    const startCandidate = (
+      candidate: SelectorConditionCandidate,
+      state: HrcMonitorState
+    ): void => {
+      if (seen.has(candidate.key)) return
+      seen.add(candidate.key)
+      const remaining = deadline === undefined ? undefined : Math.max(1, deadline - Date.now())
+      const engine = createMonitorConditionEngine(
+        createPollingConditionReader(state, io, controller.signal)
+      )
+      void engine
+        .wait({
+          selector: candidate.selector,
+          condition,
+          timeoutMs: remaining,
+          stallAfterMs: args.stallAfterMs,
+        })
+        .then((outcome) => {
+          const result = { outcome, selector: candidate.selector, scopeRef: candidate.scopeRef }
+          fallback ??= result
+          if (isDecisiveConditionOutcome(outcome)) finish(result)
+        })
+    }
+
+    void (async () => {
+      let state = initialState
+      while (!settled && !controller.signal.aborted) {
+        for (const candidate of selectorConditionCandidates(state, specs)) {
+          startCandidate(candidate, state)
+        }
+        if (args.signal?.aborted) {
+          finish({
+            outcome: { result: 'monitor_error', exitCode: 130 },
+            selector: runtimeSelector('aborted'),
+            scopeRef: '',
+          })
+          return
+        }
+        if (deadline !== undefined && Date.now() >= deadline) {
+          finish(
+            fallback ?? {
+              outcome: { result: 'timeout', exitCode: 1 },
+              selector: runtimeSelector('unresolved'),
+              scopeRef: '',
+            }
+          )
+          return
+        }
+        await sleep(POLL_MS)
+        state = await io.buildMonitorState()
+      }
+    })()
+  })
+}
+
+async function runSelectorSetConditionWatch(
+  state: HrcMonitorState,
+  args: MonitorWatchArgs,
+  specs: readonly MonitorSelectorSpec[],
+  io: MonitorWatchDeps,
+  format: MonitorOutputFormat
+): Promise<number> {
+  const winner = await waitForAnyMonitorCondition(state, args, specs, io)
+  const writer = createEventWriter(io.stdout, selectorSetLabel(specs), args, format)
+  for (const event of winner.outcome.eventStream ?? []) {
+    const name = stringField(event, 'event')
+    const enriched: Record<string, unknown> = { ...event, replayed: false }
+    if (name === 'monitor.completed' || name === 'monitor.stalled') {
+      enriched['scopeRef'] = winner.scopeRef
+      enriched['condition'] = args.until
+      enriched['exitCode'] = winner.outcome.exitCode
+    }
+    writer.write(enriched)
+  }
+  if (!winner.outcome.eventStream || winner.outcome.eventStream.length === 0) {
+    writer.write({
+      event: winner.outcome.result === 'stalled' ? 'monitor.stalled' : 'monitor.completed',
+      condition: args.until,
+      scopeRef: winner.scopeRef,
+      result: winner.outcome.result,
+      exitCode: winner.outcome.exitCode,
+      replayed: false,
+      ts: new Date().toISOString(),
+    })
+  }
+  writer.flush()
+  return winner.outcome.exitCode
 }
 
 // -- Replay / follow without condition ----------------------------------------
@@ -368,6 +622,14 @@ async function runPollingFollow(
     replayed: false,
     snapshot,
   })
+  const initialTerminalResult = args.implicitTerminal
+    ? terminalSnapshotResult(initialState, selector)
+    : undefined
+  if (initialTerminalResult !== undefined) {
+    writeImplicitTerminalCompletion(writer, args, selector, initialState, initialTerminalResult)
+    writer.flush()
+    return 0
+  }
 
   // When a filter is active, replay the curated set already matched on attach so
   // the grader sees recent milestones — but keep the poll cursor global so we do
@@ -422,6 +684,18 @@ async function runPollingFollow(
       if (seq !== undefined) {
         nextSeq = Math.max(nextSeq, seq + 1)
       }
+      if (args.implicitTerminal && isTerminalMonitorEvent(enriched)) {
+        writeImplicitTerminalCompletion(
+          writer,
+          args,
+          selector,
+          state,
+          stringField(enriched, 'result') ?? 'turn_succeeded',
+          stringField(enriched, 'scopeRef')
+        )
+        writer.flush()
+        return 0
+      }
     }
     if (!yielded) {
       await sleep(POLL_MS)
@@ -430,6 +704,67 @@ async function runPollingFollow(
 
   writer.flush()
   return 130
+}
+
+function terminalSnapshotResult(
+  state: HrcMonitorState,
+  selector: HrcSelector | undefined
+): string | undefined {
+  if (!selector) return undefined
+  const scopeRef = scopeRefForSelector(state, selector)
+  const session = state.sessions.find((candidate) => {
+    if (scopeRef !== undefined) return candidate.scopeRef === scopeRef
+    if (selector.kind === 'runtime') return candidate.runtimeId === selector.runtimeId
+    if (selector.kind === 'host' || selector.kind === 'concrete') {
+      return candidate.hostSessionId === selector.hostSessionId
+    }
+    return false
+  })
+  const runtime = state.runtimes.find((candidate) =>
+    selector.kind === 'runtime'
+      ? candidate.runtimeId === selector.runtimeId
+      : candidate.hostSessionId === session?.hostSessionId
+  )
+  if (
+    runtime?.status === 'dead' ||
+    runtime?.status === 'crashed' ||
+    runtime?.status === 'terminated'
+  ) {
+    return 'already_dead'
+  }
+  return runtime?.activeTurnId === null ? 'no_active_turn' : undefined
+}
+
+function isTerminalMonitorEvent(event: MonitorOutputEvent): boolean {
+  const name = eventKindOf(event)
+  return (
+    name === 'turn.finished' ||
+    name === 'turn.completed' ||
+    name === 'turn.failed' ||
+    name === 'runtime.dead' ||
+    name === 'runtime.crashed'
+  )
+}
+
+function writeImplicitTerminalCompletion(
+  writer: EventWriter,
+  args: MonitorWatchArgs,
+  selector: HrcSelector | undefined,
+  state: HrcMonitorState,
+  result: string,
+  eventScopeRef?: string
+): void {
+  writer.write({
+    event: 'monitor.completed',
+    selector: selector ? formatSelector(selector) : '',
+    condition: 'terminal',
+    scopeRef: eventScopeRef ?? (selector ? scopeRefForSelector(state, selector) : undefined),
+    result,
+    exitCode: 0,
+    replayed: false,
+    ts: new Date().toISOString(),
+    ...(args.format ? { format: args.format } : {}),
+  })
 }
 
 // -- Event output -------------------------------------------------------------
@@ -498,7 +833,8 @@ async function drainStdout(stdout: MonitorWatchDeps['stdout']): Promise<void> {
  */
 function createPollingConditionReader(
   initialState: HrcMonitorState,
-  io: MonitorWatchDeps
+  io: Pick<MonitorWatchDeps, 'buildMonitorState'>,
+  signal?: AbortSignal
 ): HrcMonitorConditionEngineReader {
   return {
     snapshot(selector) {
@@ -508,14 +844,15 @@ function createPollingConditionReader(
       return createMonitorReader(initialState).captureStart(selector, options)
     },
     watch(request) {
-      return pollingWatch(request, io)
+      return pollingWatch(request, io, signal)
     },
   }
 }
 
 async function* pollingWatch(
   request: HrcMonitorWatchRequest,
-  io: MonitorWatchDeps
+  io: Pick<MonitorWatchDeps, 'buildMonitorState'>,
+  signal?: AbortSignal
 ): AsyncIterable<HrcMonitorEvent | Record<string, unknown>> {
   // Yield the initial snapshot from the first state read
   const firstState = await io.buildMonitorState()
@@ -537,7 +874,7 @@ async function* pollingWatch(
 
   // Poll for new events
   if (!request.follow) return
-  while (true) {
+  while (!signal?.aborted) {
     const state = await io.buildMonitorState()
     const reader = createMonitorReader(state)
     let yielded = false
@@ -724,52 +1061,62 @@ async function loadMessages(client: HrcClient): Promise<HrcMonitorState['message
 
 // -- Arg parsing (CLI argv mode) -----------------------------------------------
 
+type SimpleBooleanFlag = 'follow' | 'json' | 'pretty' | 'milestone' | 'forever' | 'allEvents'
+
+function simpleBooleanFlag(arg: string): SimpleBooleanFlag | undefined {
+  switch (arg) {
+    case '--follow':
+      return 'follow'
+    case '--json':
+      return 'json'
+    case '--pretty':
+      return 'pretty'
+    case '--milestone':
+      return 'milestone'
+    case '--forever':
+      return 'forever'
+    case '--all-events':
+      return 'allEvents'
+    default:
+      return undefined
+  }
+}
+
 function parseArgv(args: string[]): MonitorWatchArgs {
-  let selector: string | undefined
+  const selectors: string[] = []
   let fromSeq: number | undefined
   let last: number | undefined
-  let follow = false
   let until: string | undefined
   let timeout: string | undefined
   let stallAfter: string | undefined
-  let json = false
-  let pretty = false
   let format: MonitorOutputFormat | undefined
   let maxLines: number | undefined
   let scopeWidth: number | undefined
   let kind: string | undefined
   let tool: string | undefined
   let grep: string | undefined
-  let milestone = false
+  const booleanFlags: Partial<Record<SimpleBooleanFlag, true>> = {}
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
     if (arg === undefined) continue
 
-    if (arg === '--from-seq') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--from-seq requires a value')
-      const parsed = Number.parseInt(val, 10)
-      if (!Number.isFinite(parsed) || parsed < 1) {
-        throw new CliUsageError('--from-seq must be a positive integer')
-      }
-      fromSeq = parsed
-      i += 1
+    const booleanFlag = simpleBooleanFlag(arg)
+    if (booleanFlag !== undefined) {
+      booleanFlags[booleanFlag] = true
       continue
     }
-    if (arg === '--last') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--last requires a value')
-      last = parsePositiveInteger('--last', val)
-      i += 1
+
+    const fromSeqMatch = matchStringFlag(arg, '--from-seq', args, i)
+    if (fromSeqMatch) {
+      fromSeq = parsePositiveInteger('--from-seq', fromSeqMatch.value)
+      i = fromSeqMatch.next
       continue
     }
-    if (arg.startsWith('--last=')) {
-      last = parsePositiveInteger('--last', arg.slice('--last='.length))
-      continue
-    }
-    if (arg === '--follow') {
-      follow = true
+    const lastMatch = matchStringFlag(arg, '--last', args, i)
+    if (lastMatch) {
+      last = parsePositiveInteger('--last', lastMatch.value)
+      i = lastMatch.next
       continue
     }
     const untilMatch = matchStringFlag(arg, '--until', args, i)
@@ -788,14 +1135,6 @@ function parseArgv(args: string[]): MonitorWatchArgs {
     if (stallMatch) {
       stallAfter = stallMatch.value
       i = stallMatch.next
-      continue
-    }
-    if (arg === '--json') {
-      json = true
-      continue
-    }
-    if (arg === '--pretty') {
-      pretty = true
       continue
     }
     if (arg === '--format') {
@@ -819,26 +1158,16 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       }
       continue
     }
-    if (arg === '--max-lines') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--max-lines requires a value')
-      maxLines = parseNonNegativeInteger('--max-lines', val)
-      i += 1
+    const maxLinesMatch = matchStringFlag(arg, '--max-lines', args, i)
+    if (maxLinesMatch) {
+      maxLines = parseNonNegativeInteger('--max-lines', maxLinesMatch.value)
+      i = maxLinesMatch.next
       continue
     }
-    if (arg.startsWith('--max-lines=')) {
-      maxLines = parseNonNegativeInteger('--max-lines', arg.slice('--max-lines='.length))
-      continue
-    }
-    if (arg === '--scope-width') {
-      const val = args[i + 1]
-      if (val === undefined) throw new CliUsageError('--scope-width requires a value')
-      scopeWidth = parseNonNegativeInteger('--scope-width', val)
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--scope-width=')) {
-      scopeWidth = parseNonNegativeInteger('--scope-width', arg.slice('--scope-width='.length))
+    const scopeWidthMatch = matchStringFlag(arg, '--scope-width', args, i)
+    if (scopeWidthMatch) {
+      scopeWidth = parseNonNegativeInteger('--scope-width', scopeWidthMatch.value)
+      i = scopeWidthMatch.next
       continue
     }
     const kindMatch = matchStringFlag(arg, '--kind', args, i)
@@ -859,34 +1188,30 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       i = grepMatch.next
       continue
     }
-    if (arg === '--milestone') {
-      milestone = true
-      continue
-    }
     if (arg.startsWith('-')) {
       throw new CliUsageError(`unknown option: ${arg}`)
     }
-    if (selector !== undefined) {
-      throw new CliUsageError(`unexpected argument: ${arg}`)
-    }
-    selector = arg
+    selectors.push(arg)
   }
 
   return {
-    selector,
+    selector: selectors[0],
+    selectors,
     fromSeq,
     last,
-    follow,
+    follow: booleanFlags.follow ?? false,
     until,
-    json,
-    pretty,
+    json: booleanFlags.json ?? false,
+    pretty: booleanFlags.pretty ?? false,
     format,
     maxLines,
     scopeWidth,
     kind,
     tool,
     grep,
-    ...(milestone ? { milestone: true } : {}),
+    ...(booleanFlags.milestone ? { milestone: true } : {}),
+    ...(booleanFlags.forever ? { forever: true } : {}),
+    ...(booleanFlags.allEvents ? { allEvents: true } : {}),
     // Convert duration strings to ms for the internal API
     ...(timeout ? { timeoutMs: parseDuration(timeout) } : {}),
     ...(stallAfter ? { stallAfterMs: parseDuration(stallAfter) } : {}),
@@ -913,6 +1238,7 @@ const MILESTONE_BASH_NEEDLES = [
 ]
 
 function normalizeEventFilterSpec(args: MonitorWatchArgs): FilterSpec | undefined {
+  if (args.allEvents === true) return undefined
   if (args.milestone === true) return { milestone: true }
 
   const spec: FilterSpec = {}
@@ -1000,13 +1326,41 @@ function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) 
  */
 function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters | undefined {
   const spec = normalizeEventFilterSpec(args)
-  if (spec === undefined) return undefined
-  if (spec.milestone === true) return { milestone: true }
-  return {
-    ...(spec.kinds !== undefined ? { eventKinds: spec.kinds } : {}),
-    ...(spec.tools !== undefined ? { toolNames: spec.tools } : {}),
-    ...(spec.grep !== undefined ? { payloadContains: spec.grep } : {}),
+  const selectorSpecs = parseMonitorSelectors(selectorArgs(args))
+  const canNarrowByScope = selectorSpecs.every(
+    (selector) => selector.kind !== 'exact' || selector.selector.kind === 'scope'
+  )
+  const scopeFilters: HrcLifecycleMonitorFilters = canNarrowByScope
+    ? {
+        scopeRefs: selectorSpecs.flatMap((selector) =>
+          selector.kind === 'exact' && selector.selector.kind === 'scope'
+            ? [selector.selector.scopeRef]
+            : []
+        ),
+        scopeRefPrefixes: selectorSpecs.flatMap((selector) =>
+          selector.kind === 'scope-prefix' ? [selector.prefix] : []
+        ),
+        taskIds: selectorSpecs.flatMap((selector) =>
+          selector.kind === 'task' ? [selector.taskId] : []
+        ),
+      }
+    : {}
+  const eventFilters: HrcLifecycleMonitorFilters =
+    spec?.milestone === true
+      ? { milestone: true }
+      : {
+          ...(spec?.kinds !== undefined ? { eventKinds: spec.kinds } : {}),
+          ...(spec?.tools !== undefined ? { toolNames: spec.tools } : {}),
+          ...(spec?.grep !== undefined ? { payloadContains: spec.grep } : {}),
+        }
+  const filters = {
+    ...scopeFilters,
+    ...eventFilters,
   }
+  const hasFilter = Object.values(filters).some(
+    (value) => value !== undefined && (!Array.isArray(value) || value.length > 0)
+  )
+  return hasFilter ? filters : undefined
 }
 
 function eventsHighWater(events: HrcMonitorEvent[]): number {
@@ -1021,9 +1375,13 @@ function eventsHighWater(events: HrcMonitorEvent[]): number {
  * preserves the global event high-water (so the follow cursor stays global).
  * Returns the deps unchanged when no filter is active.
  */
-function wrapWithEventFilter(io: MonitorWatchDeps, args: MonitorWatchArgs): MonitorWatchDeps {
-  const predicate = buildEventFilter(args)
-  if (!predicate) return io
+function wrapWithMonitorFilters(
+  io: MonitorWatchDeps,
+  args: MonitorWatchArgs,
+  specs: readonly MonitorSelectorSpec[]
+): MonitorWatchDeps {
+  const eventPredicate = buildEventFilter(args)
+  if (!eventPredicate && specs.length === 0) return io
   return {
     ...io,
     buildMonitorState: async () => {
@@ -1031,11 +1389,30 @@ function wrapWithEventFilter(io: MonitorWatchDeps, args: MonitorWatchArgs): Moni
       const globalHighWater = state.eventGlobalHighWaterSeq ?? eventsHighWater(state.events)
       return {
         ...state,
-        events: state.events.filter((event) => predicate(event)),
+        events: state.events.filter(
+          (event) =>
+            eventMatchesSelectorSet(state, event, specs) &&
+            (eventPredicate === null || eventPredicate(event))
+        ),
         eventGlobalHighWaterSeq: globalHighWater,
       }
     },
   }
+}
+
+function applyFanInDefaults(args: MonitorWatchArgs): MonitorWatchArgs {
+  const rawSelectors = selectorArgs(args)
+  const fanIn =
+    rawSelectors.length > 1 ||
+    rawSelectors.some((selector) => /^T-\d+$/.test(selector) || selector.endsWith(':*'))
+  const explicitFilter =
+    args.kind !== undefined ||
+    args.tool !== undefined ||
+    args.grep !== undefined ||
+    args.milestone === true ||
+    args.allEvents === true
+  if (!fanIn || explicitFilter) return args
+  return { ...args, milestone: true }
 }
 
 // -- Helpers ------------------------------------------------------------------

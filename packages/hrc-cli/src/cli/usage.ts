@@ -196,9 +196,9 @@ Commands:
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
   monitor show [selector] [--json]    Show current HRC monitor snapshot
-  monitor watch [selector] [--from-seq <n>|--last <n>] [--follow] [--json|--pretty]
-                                     Watch HRC monitor event stream
-  monitor wait <selector> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
+  monitor watch [selector...] [--from-seq <n>|--last <n>] [--follow] [--forever] [--all-events] [--json|--pretty]
+                                     Watch exact, scope:<prefix>:*, or bare T-XXXXX selectors
+  monitor wait <selector...> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--status <csv>] [--scope <selector>] [--agent <id>] [--task <id>] [--host-session-id <id>|--session <id>] [--transport <transport>] [--stale] [--older-than <duration>] [--json]

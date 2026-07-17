@@ -22,10 +22,16 @@ import {
   assertValidUntilCondition,
 } from './monitor-conditions.js'
 import { numberField, stringField } from './monitor-fields.js'
-import { parseProfileAwareSelector } from './profile-aware-selector.js'
+import {
+  type MonitorSelectorSpec,
+  isFanInSelectorSet,
+  parseMonitorSelectors,
+  selectorSetLabel,
+} from './monitor-selectors.js'
+import { waitForAnyMonitorCondition } from './monitor-watch.js'
 
 type MonitorWaitOptions = {
-  selectorRaw?: string | undefined
+  selectorRaws: string[]
   until?: string | undefined
   timeout?: string | undefined
   stallAfter?: string | undefined
@@ -63,24 +69,54 @@ export async function cmdMonitorWait(args: string[]): Promise<void> {
 async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   validateOptions(options)
 
-  let selector: HrcSelector
+  let selectorSpecs: MonitorSelectorSpec[]
   try {
-    selector = parseProfileAwareSelector(options.selectorRaw)
+    selectorSpecs = parseMonitorSelectors(options.selectorRaws)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`invalid selector: ${message}`)
   }
+  const selector =
+    selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
+      ? selectorSpecs[0].selector
+      : undefined
 
   const condition = options.until as HrcMonitorCondition
   if (
     MSG_REQUIRED_CONDITIONS.has(condition) &&
-    selector.kind !== 'message' &&
-    selector.kind !== 'message-seq'
+    (!selector || (selector.kind !== 'message' && selector.kind !== 'message-seq'))
   ) {
     throw new CliUsageError(`${condition} requires a msg: selector`)
   }
 
-  const reader = await createWaitReader()
+  const fixtureState = readFixtureState()
+  if (isFanInSelectorSet(selectorSpecs)) {
+    const initialState = fixtureState ?? readLiveMonitorState()
+    const winner = await waitForAnyMonitorCondition(
+      initialState,
+      {
+        until: condition,
+        ...(options.timeout ? { timeoutMs: parseDuration(options.timeout) } : {}),
+        ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
+      },
+      selectorSpecs,
+      {
+        buildMonitorState: async () => fixtureState ?? readLiveMonitorState(),
+      }
+    )
+    const finalEvent = {
+      ...finalOutcomeEvent(winner.outcome),
+      selector: selectorSetLabel(selectorSpecs),
+      condition,
+      scopeRef: winner.scopeRef,
+      exitCode: winner.outcome.exitCode,
+    }
+    writeFinalEvent(finalEvent, options.json)
+    return winner.outcome.exitCode
+  }
+  if (!selector) throw new CliUsageError('missing required argument: <selector>')
+
+  const reader = fixtureState ? createMonitorReader(fixtureState) : createPollingReader()
   const engine = createMonitorConditionEngine(reader)
   let outcome: HrcMonitorConditionOutcome
   try {
@@ -104,7 +140,7 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
 }
 
 function parseWaitArgs(args: string[]): MonitorWaitOptions {
-  let selectorRaw: string | undefined
+  const selectorRaws: string[] = []
   let until: string | undefined
   let timeout: string | undefined
   let stallAfter: string | undefined
@@ -139,31 +175,20 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
     if (arg.startsWith('-')) {
       throw new CliUsageError(`unknown option: ${arg}`)
     }
-    if (selectorRaw !== undefined) {
-      throw new CliUsageError(`unexpected argument: ${arg}`)
-    }
-    selectorRaw = arg
+    selectorRaws.push(arg)
   }
 
-  return { selectorRaw, until, timeout, stallAfter, json }
+  return { selectorRaws, until, timeout, stallAfter, json }
 }
 
 function validateOptions(options: MonitorWaitOptions): void {
-  if (options.selectorRaw === undefined) {
+  if (options.selectorRaws.length === 0) {
     throw new CliUsageError('missing required argument: <selector>')
   }
   if (options.until === undefined) {
     throw new CliUsageError('--until is required')
   }
   assertValidUntilCondition(options.until)
-}
-
-async function createWaitReader(): Promise<HrcMonitorConditionEngineReader> {
-  const fixtureState = readFixtureState()
-  if (fixtureState) {
-    return createMonitorReader(fixtureState)
-  }
-  return createPollingReader()
 }
 
 function readFixtureState(): HrcMonitorState | undefined {
@@ -475,7 +500,15 @@ function writeFinalEvent(event: MonitorOutputEvent, json: boolean): void {
   }
 
   const parts = [stringField(event, 'event') ?? 'monitor.completed']
-  for (const key of ['selector', 'condition', 'result', 'reason', 'failureKind', 'exitCode']) {
+  for (const key of [
+    'selector',
+    'condition',
+    'scopeRef',
+    'result',
+    'reason',
+    'failureKind',
+    'exitCode',
+  ]) {
     const value = event[key]
     if (value !== undefined) {
       parts.push(`${key}=${String(value)}`)

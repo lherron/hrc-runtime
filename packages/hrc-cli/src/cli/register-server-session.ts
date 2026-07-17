@@ -261,13 +261,13 @@ Exit codes:
   monitor
     .command('wait')
     .description('wait for a monitor condition')
-    .argument('[selector]', 'monitor selector')
+    .argument('[selectors...]', 'one or more exact, scope-prefix, or task-id selectors')
     .option('--until <condition>', 'condition to wait for')
     .option('--timeout <duration>', 'maximum wait duration')
     .option('--stall-after <duration>', 'stall threshold duration')
     .option('--json', 'output structured JSON')
-    .action(async (selector, _opts, cmd: Command) => {
-      const positionals = selector !== undefined ? [selector] : []
+    .action(async (selectors: string[], _opts, cmd: Command) => {
+      const positionals = selectors ?? []
       const args = toLegacyArgv(positionals, cmd.opts(), {
         strings: ['until', 'timeout', 'stall-after'],
         booleans: ['json'],
@@ -278,10 +278,14 @@ Exit codes:
   monitor
     .command('watch')
     .description('stream monitor events')
-    .argument('[selector]', 'target selector')
+    .argument('[selectors...]', 'exact selectors, scope:<prefix>:*, or a bare T-XXXXX')
     .option('--from-seq <n>', 'replay from sequence number')
     .option('--last <n>', 'replay the last n matching events')
     .option('--follow', 'stream live events after replay')
+    .option(
+      '--forever',
+      'keep a single concrete --follow watch open instead of defaulting to --until terminal'
+    )
     .option('--until <condition>', 'exit when condition is met (requires --follow)')
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
@@ -297,8 +301,16 @@ Exit codes:
     .option('--tool <names>', 'filter to turn.tool_call events for comma-separated toolName list')
     .option('--grep <substr>', 'filter to events whose payload contains the substring')
     .option('--milestone', 'curated preset: turn/runtime lifecycle + operator tool calls')
-    .action(async (selector, _opts, cmd: Command) => {
-      const args = toLegacyArgv(selector ? [selector] : [], cmd.opts(), {
+    .option(
+      '--all-events',
+      'disable the milestone default for multi/prefix/task-id selectors (raw firehose)'
+    )
+    .addHelpText(
+      'after',
+      '\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.\n'
+    )
+    .action(async (selectors: string[], _opts, cmd: Command) => {
+      const args = toLegacyArgv(selectors ?? [], cmd.opts(), {
         strings: [
           'from-seq',
           'last',
@@ -312,7 +324,7 @@ Exit codes:
           'tool',
           'grep',
         ],
-        booleans: ['follow', 'json', 'pretty', 'milestone'],
+        booleans: ['follow', 'json', 'pretty', 'milestone', 'forever', 'all-events'],
       })
       await cmdMonitorWatch(args)
     })
