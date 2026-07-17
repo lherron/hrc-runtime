@@ -149,4 +149,5 @@ type HrcServerInstanceDataForHandlers = {
   readonly followSubscribers: Set<(event: HrcEventEnvelope | HrcLifecycleEvent) => void>
   readonly rawBrokerSubscribers: Set<RawBrokerSubscriber>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
+  readonly activeStreamClosers: Set<() => void>
 }

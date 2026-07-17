@@ -191,6 +191,7 @@ export function handleEvents(
 
   this.followSubscribers.add(subscriber)
   const close = () => {
+    this.activeStreamClosers.delete(close)
     this.followSubscribers.delete(subscriber)
     bufferedEvents.length = 0
     if (keepaliveTimer) {
@@ -205,6 +206,7 @@ export function handleEvents(
       controllerRef = null
     }
   }
+  this.activeStreamClosers.add(close)
 
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null
   const keepaliveBytes = new TextEncoder().encode('\n')
@@ -286,6 +288,7 @@ export function handleBrokerEvents(
 
   this.rawBrokerSubscribers.add(subscriber)
   const close = () => {
+    this.activeStreamClosers.delete(close)
     this.rawBrokerSubscribers.delete(subscriber)
     bufferedEvents.length = 0
     if (keepaliveTimer) {
@@ -300,6 +303,7 @@ export function handleBrokerEvents(
       controllerRef = null
     }
   }
+  this.activeStreamClosers.add(close)
 
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null
   const keepaliveBytes = new TextEncoder().encode('\n')

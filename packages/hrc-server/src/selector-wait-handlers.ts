@@ -115,6 +115,7 @@ export async function handleWatchMessages(
 
   this.messageSubscribers.add(subscriber)
   const close = () => {
+    this.activeStreamClosers.delete(close)
     if (closed) return
     closed = true
     if (timeoutTimer) clearTimeout(timeoutTimer)
@@ -128,6 +129,7 @@ export async function handleWatchMessages(
       controllerRef = null
     }
   }
+  this.activeStreamClosers.add(close)
 
   const stream = new ReadableStream<Uint8Array>({
     start: (controller) => {

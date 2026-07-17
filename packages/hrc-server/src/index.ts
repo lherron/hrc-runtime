@@ -459,6 +459,7 @@ class HrcServerInstance implements HrcServer {
   readonly followSubscribers = new Set<FollowSubscriber>()
   readonly rawBrokerSubscribers = new Set<RawBrokerSubscriber>()
   readonly messageSubscribers = new Set<MessageSubscriber>()
+  readonly activeStreamClosers = new Set<() => void>()
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
   readonly otelListener: OtlpListenerControl | undefined
@@ -759,6 +760,14 @@ class HrcServerInstance implements HrcServer {
         writeServerLog('WARN', 'server.stop.idle_cleanup_wait_failed', { error })
       }
     }
+    for (const close of [...this.activeStreamClosers]) {
+      try {
+        close()
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.stream_close_failed', { error })
+      }
+    }
+    this.activeStreamClosers.clear()
     this.followSubscribers.clear()
     this.rawBrokerSubscribers.clear()
     this.messageSubscribers.clear()
