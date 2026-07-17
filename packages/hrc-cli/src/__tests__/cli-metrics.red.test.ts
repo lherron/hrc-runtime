@@ -345,9 +345,9 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
   test('records hrcchat RPC latency, status, bytes, and request ID', async () => {
     const sandbox = await createSandbox()
     const responseBody = { messages: [] }
-    let capturedRequest: Request | undefined
+    let requestId: string | null = null
     const server = await startStubServer(sandbox, (request) => {
-      capturedRequest = request
+      requestId = request.headers.get('x-hrc-request-id')
       return Response.json(responseBody)
     })
 
@@ -364,7 +364,6 @@ describe('T-06511 CLI metrics recorder [RED]', () => {
       })
       expect(line.record.flags).toEqual(['--json'])
       expect(line.record.rpc).toHaveLength(1)
-      const requestId = capturedRequest?.headers.get('x-hrc-request-id')
       expect(requestId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       )
