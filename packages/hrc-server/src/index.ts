@@ -80,6 +80,7 @@ import {
   startOtlpListener,
 } from './otel-ingest.js'
 import { replaySpool } from './replay-spool.js'
+import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
 import {
   findManagedAppSessionForSession,
   requireKnownRuntime,
@@ -174,6 +175,8 @@ const HRC_SERVER_BINARY_PATH = realpathSync(resolve(process.argv[1] ?? process.e
 
 export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
+export type { ServerMetricRecord } from './request-metrics.js'
+export { parseDurationMs } from './parsers/common.js'
 
 export {
   selectDispatchInteractiveRuntime,
@@ -487,6 +490,7 @@ class HrcServerInstance implements HrcServer {
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
+  readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
@@ -796,6 +800,41 @@ class HrcServerInstance implements HrcServer {
   }
 
   async handleRequest(request: Request): Promise<Response> {
+    if (!this.requestMetricsEnabled) {
+      return this.dispatchRequest(request)
+    }
+
+    const started = process.hrtime.bigint()
+    const method = request.method
+    const pathname = new URL(request.url).pathname
+    const response = await this.dispatchRequest(request)
+    const handlerMs = Number(process.hrtime.bigint() - started) / 1_000_000
+    try {
+      const measurement = await measureResponseBytes(response)
+      const reqId = request.headers.get('x-hrc-request-id')
+      const now = new Date()
+      writeServerMetric(
+        {
+          v: 1,
+          kind: 'server',
+          ts: now.toISOString(),
+          route: normalizeRoute(method, pathname, new Set(Object.keys(this.exactRouteHandlers))),
+          method,
+          ms: handlerMs,
+          status: response.status,
+          ...measurement,
+          ...(reqId && reqId.trim().length > 0 ? { reqId } : {}),
+        },
+        now,
+        this.options.stateRoot
+      )
+    } catch {
+      // Metrics are observational and must never alter request handling.
+    }
+    return response
+  }
+
+  private async dispatchRequest(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url)
       const pathname = url.pathname

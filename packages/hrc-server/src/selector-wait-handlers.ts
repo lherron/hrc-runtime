@@ -1,6 +1,6 @@
 import type { HrcMessageFilter, HrcMessageRecord, WaitMessageResponse } from 'hrc-core'
 import { matchesMessageFilter, parseMessageFilter } from './messages.js'
-import { NDJSON_HEADERS } from './server-constants.js'
+import { NDJSON_HEADERS, STREAMING_NDJSON_HEADERS } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { isRecord, parseJsonBody } from './server-parsers.js'
 import type { MessageSubscriber } from './server-types.js'
@@ -157,7 +157,7 @@ export async function handleWatchMessages(
 
   return new Response(stream, {
     status: 200,
-    headers: NDJSON_HEADERS,
+    headers: STREAMING_NDJSON_HEADERS,
   })
 }
 

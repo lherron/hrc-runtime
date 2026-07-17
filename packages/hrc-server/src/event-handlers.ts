@@ -7,7 +7,11 @@ import type {
   HrcLifecycleEvent,
 } from 'hrc-core'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
-import { HRC_EVENTS_KEEPALIVE_MS, NDJSON_HEADERS } from './server-constants.js'
+import {
+  HRC_EVENTS_KEEPALIVE_MS,
+  NDJSON_HEADERS,
+  STREAMING_NDJSON_HEADERS,
+} from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { matchesHrcLifecycleEventFilter, parseOptionalIntegerQuery } from './server-misc.js'
 import { normalizeOptionalQuery, parseFromSeq } from './server-parsers.js'
@@ -237,7 +241,7 @@ export function handleEvents(
 
   return new Response(stream, {
     status: 200,
-    headers: NDJSON_HEADERS,
+    headers: STREAMING_NDJSON_HEADERS,
   })
 }
 
@@ -332,7 +336,7 @@ export function handleBrokerEvents(
 
   return new Response(stream, {
     status: 200,
-    headers: NDJSON_HEADERS,
+    headers: STREAMING_NDJSON_HEADERS,
   })
 }
 

@@ -19,6 +19,11 @@ export const NDJSON_HEADERS = {
   'content-type': 'application/x-ndjson; charset=utf-8',
 }
 
+export const STREAMING_NDJSON_HEADERS = {
+  ...NDJSON_HEADERS,
+  'x-hrc-streaming': '1',
+}
+
 export const HRC_EVENTS_KEEPALIVE_MS = 5_000
 
 export const HRC_CLAUDE_GHOSTTY_ENV = 'HRC_CLAUDE_GHOSTTY'
