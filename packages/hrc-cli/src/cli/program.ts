@@ -10,7 +10,8 @@ import { CliStatusExit } from './shared.js'
 import { printUsage } from './usage.js'
 
 function handleCliError(err: unknown, program: Command): never {
-  const json = program.opts<{ json?: boolean | undefined }>().json ?? false
+  const rootOptions = program.opts<{ json?: boolean | undefined; output?: string | undefined }>()
+  const json = rootOptions.json === true || rootOptions.output === 'json'
 
   if (err instanceof CommanderError) {
     if (

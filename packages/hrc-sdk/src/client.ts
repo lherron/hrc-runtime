@@ -487,6 +487,8 @@ export class HrcClient {
       stale: filter?.stale,
       olderThan: emptyToUndefined(filter?.olderThan),
       scope: emptyToUndefined(filter?.scope),
+      agent: emptyToUndefined(filter?.agent),
+      task: emptyToUndefined(filter?.task),
       json: filter?.json,
     })
     return this.getJson<RuntimeRecord[]>(path)

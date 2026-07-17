@@ -176,6 +176,8 @@ export type RuntimeListFilter = {
   stale?: boolean | undefined
   olderThan?: string | undefined
   scope?: string | undefined
+  agent?: string | undefined
+  task?: string | undefined
   json?: boolean | undefined
 }
 

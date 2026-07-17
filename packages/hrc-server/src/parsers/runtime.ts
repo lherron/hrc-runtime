@@ -51,6 +51,8 @@ export type ListRuntimesFilter = {
   transport?: 'tmux' | 'headless' | 'sdk' | undefined
   status?: string[] | undefined
   scope?: string | undefined
+  agent?: string | undefined
+  task?: string | undefined
   stale?: boolean | undefined
   olderThan?: string | undefined
   olderThanMs?: number | undefined
@@ -92,6 +94,8 @@ export function parseListRuntimesFilter(url: URL): ListRuntimesFilter {
     ...(transport !== undefined ? { transport } : {}),
     ...(status !== undefined && status.length > 0 ? { status } : {}),
     ...pickOptionalQuery(url, 'scope'),
+    ...pickOptionalQuery(url, 'agent'),
+    ...pickOptionalQuery(url, 'task'),
     ...(stale !== undefined ? { stale } : {}),
     ...(olderThan !== undefined ? { olderThan, olderThanMs: parseDurationMs(olderThan) } : {}),
     ...(json !== undefined ? { json } : {}),

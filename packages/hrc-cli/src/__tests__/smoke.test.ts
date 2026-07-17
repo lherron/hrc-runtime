@@ -186,12 +186,37 @@ describe('hrc-cli commander migration smoke fixtures', () => {
     expect(JSON.parse(result.stdout)).toEqual([])
   })
 
-  it('runtime list --help enumerates accepted status values', async () => {
+  it('runtime list accepts --output json as a --json alias', async () => {
+    server = await createHrcServer(serverOpts())
+
+    const result = await runCli(['runtime', 'list', '--output', 'json'], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(JSON.parse(result.stdout)).toEqual([])
+  })
+
+  it('runtime list --help documents bounded filters and single-target queries', async () => {
     const result = await runCli(['runtime', 'list', '--help'], cliEnv())
     const output = result.stdout + result.stderr
 
     expect(result.exitCode).toBe(0)
     expect(output).toContain('busy|dead|ready|stale|terminated')
+    expect(output).toContain('--scope <scope>')
+    expect(output).toContain('--agent <agent>')
+    expect(output).toContain('--task <task>')
+    expect(output).toContain('hrc show <scope>')
+    expect(output).toContain('hrc runtime inspect <runtimeId>')
+  })
+
+  it('unknown command and option errors suggest the nearest valid spelling', async () => {
+    const commandResult = await runCli(['runtime', 'show'], cliEnv())
+    const optionResult = await runCli(['runtime', 'list', '--outpt', 'json'], cliEnv())
+
+    expect(commandResult.exitCode).toBe(2)
+    expect(commandResult.stderr).toContain("did you mean 'inspect'")
+    expect(optionResult.exitCode).toBe(2)
+    expect(optionResult.stderr).toContain("did you mean '--output'")
   })
 
   it('bad integer flags exit non-zero with the usage error message intact', async () => {

@@ -41,6 +41,8 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
   const olderThan = parseFlag(args, '--older-than')
   const scopeInput = parseFlag(args, '--scope')
   const scope = scopeInput ? canonicalScopeFilter(scopeInput) : undefined
+  const agent = parseFlag(args, '--agent')
+  const task = parseFlag(args, '--task')
   const jsonOutput = hasFlag(args, '--json')
   const client = createClient()
   const runtimes = await client.listRuntimes({
@@ -50,6 +52,8 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(hasFlag(args, '--stale') ? { stale: true } : {}),
     ...(olderThan ? { olderThan } : {}),
     ...(scope ? { scope } : {}),
+    ...(agent ? { agent } : {}),
+    ...(task ? { task } : {}),
     ...(jsonOutput ? { json: true } : {}),
   })
   printJson(runtimes)

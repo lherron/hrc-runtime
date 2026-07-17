@@ -1,3 +1,4 @@
+import { parseScopeRef } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRunRecord,
@@ -161,6 +162,20 @@ export function filterRuntimes(
     }
     if (filter.scope !== undefined && !runtime.scopeRef.startsWith(filter.scope)) {
       return false
+    }
+    if (filter.agent !== undefined || filter.task !== undefined) {
+      let parsed: ReturnType<typeof parseScopeRef>
+      try {
+        parsed = parseScopeRef(runtime.scopeRef)
+      } catch {
+        return false
+      }
+      if (filter.agent !== undefined && parsed.agentId !== filter.agent) {
+        return false
+      }
+      if (filter.task !== undefined && parsed.taskId !== filter.task) {
+        return false
+      }
     }
     if (filter.stale === true) {
       if (!explicitStatuses && (runtime.status === 'terminated' || runtime.status === 'dead')) {

@@ -219,6 +219,42 @@ describe('GET /v1/runtimes list filters', () => {
     ])
   })
 
+  it('filters by exact agent and task identity', async () => {
+    seedRuntime({
+      runtimeId: 'rt-identity-cody-task',
+      hostSessionId: 'hsid-identity-cody-task',
+      scopeRef: 'agent:cody:project:hrc-runtime:task:T-06486',
+      transport: 'headless',
+      status: 'ready',
+    })
+    seedRuntime({
+      runtimeId: 'rt-identity-cody-other',
+      hostSessionId: 'hsid-identity-cody-other',
+      scopeRef: 'agent:cody:project:hrc-runtime:task:T-00001',
+      transport: 'headless',
+      status: 'ready',
+    })
+    seedRuntime({
+      runtimeId: 'rt-identity-clod-task',
+      hostSessionId: 'hsid-identity-clod-task',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-06486',
+      transport: 'headless',
+      status: 'ready',
+    })
+
+    expect(runtimeIds(await listRuntimes('agent=cody'))).toEqual([
+      'rt-identity-cody-task',
+      'rt-identity-cody-other',
+    ])
+    expect(runtimeIds(await listRuntimes('task=T-06486'))).toEqual([
+      'rt-identity-cody-task',
+      'rt-identity-clod-task',
+    ])
+    expect(runtimeIds(await listRuntimes('agent=cody&task=T-06486'))).toEqual([
+      'rt-identity-cody-task',
+    ])
+  })
+
   it('filters stale runtimes with an explicit olderThan duration', async () => {
     seedRuntime({
       runtimeId: 'rt-stale-explicit-old-ready',

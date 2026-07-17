@@ -20,6 +20,19 @@ function collectVisibleCommandNames(command: Command | undefined): string[] {
   return Array.from(new Set(names))
 }
 
+function collectVisibleOptionFlags(command: Command | undefined): string[] {
+  const flags: string[] = []
+  let current = command
+  while (current) {
+    for (const option of current.createHelp().visibleOptions(current)) {
+      if (option.short) flags.push(option.short)
+      if (option.long) flags.push(option.long)
+    }
+    current = current.parent ?? undefined
+  }
+  return Array.from(new Set(flags))
+}
+
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0
 
@@ -45,6 +58,14 @@ function suggestSimilarCommand(unknownName: string, candidates: string[]): strin
   const uniqueCandidates = Array.from(new Set(candidates)).filter(
     (candidate) => candidate.length > 1
   )
+
+  // `show` is the documented noun-query vocabulary at the top level, while
+  // runtime and broker keep the more precise `inspect` verb. Make that common
+  // namespace slip useful even though the words are not edit-distance peers.
+  if (unknownName === 'show' && uniqueCandidates.includes('inspect')) {
+    return 'inspect'
+  }
+
   let bestDistance = 4
   let best: string[] = []
 
@@ -68,6 +89,18 @@ function suggestSimilarCommand(unknownName: string, candidates: string[]): strin
   return best[0]
 }
 
+function suggestSimilarOption(
+  unknownFlag: string,
+  command: Command | undefined
+): string | undefined {
+  const candidates = collectVisibleOptionFlags(command)
+  const suggestion = suggestSimilarCommand(
+    unknownFlag.replace(/^-+/, ''),
+    candidates.map((flag) => flag.replace(/^-+/, ''))
+  )
+  return suggestion ? candidates.find((flag) => flag.replace(/^-+/, '') === suggestion) : undefined
+}
+
 function formatUnknownCommandError(
   unknownName: string,
   command: Command | undefined
@@ -81,6 +114,13 @@ export function normalizeCommanderError(err: CommanderError): Error {
   const unknownCommandMatch = err.message.match(/^error: unknown command '([^']+)'/)
   if (unknownCommandMatch?.[1]) {
     return formatUnknownCommandError(unknownCommandMatch[1], commanderErrorCommands.get(err))
+  }
+  const unknownOptionMatch = err.message.match(/^error: unknown option '([^']+)'/)
+  if (unknownOptionMatch?.[1]) {
+    const unknownFlag = unknownOptionMatch[1]
+    const suggestion = suggestSimilarOption(unknownFlag, commanderErrorCommands.get(err))
+    const hint = suggestion ? ` — did you mean '${suggestion}'?` : ''
+    return new CliUsageError(`unknown option: ${unknownFlag}${hint}`)
   }
   return new CliUsageError(err.message)
 }

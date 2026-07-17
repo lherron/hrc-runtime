@@ -130,18 +130,33 @@ export function registerRuntimeCommands(program: Command): void {
 
   runtime
     .command('list')
-    .description('list runtimes')
+    .description('list runtimes (use `hrc show <scope>` or `runtime inspect <id>` for one target)')
     .option('--host-session-id <id>', 'filter by host session')
     .option('--session <id>', 'filter by host session (post-mortem discovery alias)')
     .option('--transport <transport>', 'filter by transport (tmux|headless|sdk)')
     .option('--status <status>', 'filter by status (busy|dead|ready|stale|terminated)')
+    .option('--scope <scope>', 'filter by scope ref or target handle')
+    .option('--agent <agent>', 'filter by exact agent ID')
+    .option('--task <task>', 'filter by exact task ID')
     .option('--older-than <duration>', 'filter by age')
-    .option('--scope <scope>', 'filter by scope')
     .option('--json', 'output as JSON')
     .option('--stale', 'show only stale runtimes')
+    .addHelpText(
+      'after',
+      '\nSingle-target queries:\n  hrc show <scope>\n  hrc runtime inspect <runtimeId>\n'
+    )
     .action(async (_opts, cmd: Command) => {
       const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['host-session-id', 'session', 'transport', 'status', 'older-than', 'scope'],
+        strings: [
+          'host-session-id',
+          'session',
+          'transport',
+          'status',
+          'scope',
+          'agent',
+          'task',
+          'older-than',
+        ],
         booleans: ['json', 'stale'],
       })
       await cmdRuntimeList(args)
