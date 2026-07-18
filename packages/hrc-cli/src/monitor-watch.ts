@@ -107,7 +107,7 @@ export type MonitorWatchArgs = {
 
 /** Injectable dependencies for testing. */
 export type MonitorWatchDeps = {
-  buildMonitorState: () => Promise<HrcMonitorState>
+  buildMonitorState: (signal?: AbortSignal) => Promise<HrcMonitorState>
   stdout: { write(chunk: string): boolean; drain?: () => Promise<void> }
   stderr: { write(chunk: string): boolean }
 }
@@ -239,7 +239,7 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   const filteredIo = wrapWithMonitorFilters(io, args, selectorSpecs)
 
   // Build state
-  const state = await filteredIo.buildMonitorState()
+  const state = await filteredIo.buildMonitorState(args.signal)
 
   const implicitTerminal =
     follow &&
@@ -482,12 +482,38 @@ export async function waitForAnyMonitorCondition(
 
   return await new Promise<AnyMonitorConditionResult>((resolve) => {
     let settled = false
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+    const onAbort = (): void => {
+      finish({
+        outcome: { result: 'monitor_error', exitCode: 130 },
+        selector: runtimeSelector('aborted'),
+        scopeRef: '',
+      })
+    }
     const finish = (result: AnyMonitorConditionResult): void => {
       if (settled) return
       settled = true
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
+      args.signal?.removeEventListener('abort', onAbort)
       controller.abort()
       resolve(result)
     }
+    if (deadline !== undefined) {
+      deadlineTimer = setTimeout(
+        () => {
+          finish(
+            fallback ?? {
+              outcome: { result: 'timeout', exitCode: 1 },
+              selector: runtimeSelector('unresolved'),
+              scopeRef: '',
+            }
+          )
+        },
+        Math.max(0, deadline - Date.now())
+      )
+    }
+    args.signal?.addEventListener('abort', onAbort, { once: true })
+    if (args.signal?.aborted) onAbort()
     const startCandidate = (
       candidate: SelectorConditionCandidate,
       state: HrcMonitorState
@@ -538,9 +564,18 @@ export async function waitForAnyMonitorCondition(
           return
         }
         await sleep(POLL_MS)
-        state = await io.buildMonitorState()
+        if (settled || controller.signal.aborted) return
+        state = await io.buildMonitorState(controller.signal)
       }
-    })()
+    })().catch((error: unknown) => {
+      if (settled || controller.signal.aborted) return
+      finish({
+        outcome: { result: 'monitor_error', exitCode: 3 },
+        selector: runtimeSelector('unresolved'),
+        scopeRef: '',
+      })
+      void error
+    })
   })
 }
 
@@ -704,7 +739,7 @@ async function runPollingFollow(
   }
 
   while (!args.signal?.aborted) {
-    const state = await io.buildMonitorState()
+    const state = await io.buildMonitorState(args.signal)
     const reader = createMonitorReader(state)
     let yielded = false
     for await (const event of reader.watch({
@@ -872,7 +907,9 @@ async function* pollingWatch(
   signal?: AbortSignal
 ): AsyncIterable<HrcMonitorEvent | Record<string, unknown>> {
   // Yield the initial snapshot from the first state read
-  const firstState = await io.buildMonitorState()
+  if (signal?.aborted || request.signal?.aborted) return
+  const firstState = await io.buildMonitorState(signal ?? request.signal)
+  if (signal?.aborted || request.signal?.aborted) return
   const firstReader = createMonitorReader(firstState)
   const snapshotRequest: HrcMonitorWatchRequest = {
     selector: request.selector,
@@ -892,7 +929,8 @@ async function* pollingWatch(
   // Poll for new events
   if (!request.follow) return
   while (!signal?.aborted && !request.signal?.aborted) {
-    const state = await io.buildMonitorState()
+    const state = await io.buildMonitorState(signal ?? request.signal)
+    if (signal?.aborted || request.signal?.aborted) return
     const reader = createMonitorReader(state)
     let yielded = false
     for await (const event of reader.watch({
@@ -923,7 +961,7 @@ function sleep(ms: number): Promise<void> {
 function defaultDeps(args: MonitorWatchArgs): MonitorWatchDeps {
   const storeFilters = deriveStoreFilters(args)
   return {
-    buildMonitorState: () => buildLiveMonitorState(storeFilters),
+    buildMonitorState: (signal) => buildLiveMonitorState(storeFilters, signal),
     stdout: createDrainableStdout(process.stdout),
     stderr: process.stderr,
   }
@@ -958,12 +996,15 @@ function createDrainableStdout(stream: {
 }
 
 async function buildLiveMonitorState(
-  storeFilters?: HrcLifecycleMonitorFilters | undefined
+  storeFilters?: HrcLifecycleMonitorFilters | undefined,
+  signal?: AbortSignal | undefined
 ): Promise<HrcMonitorState> {
+  signal?.throwIfAborted()
   const socketPath = discoverSocket()
   const client = new HrcClient(socketPath)
 
   const status = await client.getStatus()
+  signal?.throwIfAborted()
 
   // Build sessions from status
   const sessions = status.sessions.map((view) => ({
@@ -999,6 +1040,7 @@ async function buildLiveMonitorState(
   let events: HrcMonitorEvent[]
   let eventGlobalHighWaterSeq: number | undefined
   try {
+    signal?.throwIfAborted()
     const rawEvents = storeFilters
       ? db.hrcEvents.listFromHrcSeqFiltered(1, storeFilters)
       : db.hrcEvents.listFromHrcSeq(1)
@@ -1035,12 +1077,14 @@ async function buildLiveMonitorState(
           : {}),
       }
     })
+    signal?.throwIfAborted()
   } finally {
     db.close()
   }
 
   // Load messages from database if available
   const messages = await loadMessages(client)
+  signal?.throwIfAborted()
 
   return {
     daemon: {
@@ -1409,8 +1453,8 @@ function wrapWithMonitorFilters(
   if (!eventPredicate && specs.length === 0) return io
   return {
     ...io,
-    buildMonitorState: async () => {
-      const state = await io.buildMonitorState()
+    buildMonitorState: async (signal) => {
+      const state = await io.buildMonitorState(signal)
       const globalHighWater = state.eventGlobalHighWaterSeq ?? eventsHighWater(state.events)
       return {
         ...state,

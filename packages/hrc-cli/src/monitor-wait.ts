@@ -14,7 +14,7 @@ import {
   resolveDatabasePath,
 } from 'hrc-core'
 import { discoverSocket } from 'hrc-sdk'
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
 import { matchStringFlag } from './monitor-args.js'
 import {
   MSG_REQUIRED_CONDITIONS,
@@ -96,7 +96,8 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
 
   const fixtureState = readFixtureState()
   if (isFanInSelectorSet(selectorSpecs)) {
-    const initialState = fixtureState ?? readLiveMonitorState()
+    const storeFilters = deriveFanInStoreFilters(selectorSpecs, condition)
+    const initialState = fixtureState ?? readLiveMonitorState(storeFilters)
     const terminalFence =
       condition === 'terminal' ? resolveTerminalFence(initialState, options.since) : undefined
     const winner = await waitForAnyMonitorCondition(
@@ -109,7 +110,8 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
       },
       selectorSpecs,
       {
-        buildMonitorState: async () => fixtureState ?? readLiveMonitorState(),
+        buildMonitorState: async (signal) =>
+          fixtureState ?? readLiveMonitorState(storeFilters, signal),
       }
     )
     const finalEvent = {
@@ -261,10 +263,49 @@ function createPollingReader(initialState: HrcMonitorState): HrcMonitorCondition
   }
 }
 
-function readLiveMonitorState(): HrcMonitorState {
+function deriveFanInStoreFilters(
+  specs: readonly MonitorSelectorSpec[],
+  condition: HrcMonitorCondition
+): HrcLifecycleMonitorFilters | undefined {
+  const canNarrowByScope = specs.every(
+    (spec) => spec.kind !== 'exact' || spec.selector.kind === 'scope'
+  )
+  if (!canNarrowByScope) return undefined
+  const filters: HrcLifecycleMonitorFilters = {
+    scopeRefs: specs.flatMap((spec) =>
+      spec.kind === 'exact' && spec.selector.kind === 'scope' ? [spec.selector.scopeRef] : []
+    ),
+    scopeRefPrefixes: specs.flatMap((spec) => (spec.kind === 'scope-prefix' ? [spec.prefix] : [])),
+    taskIds: specs.flatMap((spec) => (spec.kind === 'task' ? [spec.taskId] : [])),
+    ...(condition === 'terminal'
+      ? {
+          eventKinds: [
+            'turn.finished',
+            'turn.completed',
+            'turn.failed',
+            'runtime.dead',
+            'runtime.crashed',
+            'runtime.terminated',
+          ],
+        }
+      : {}),
+  }
+  return Object.values(filters).some(
+    (value) => value !== undefined && (!Array.isArray(value) || value.length > 0)
+  )
+    ? filters
+    : undefined
+}
+
+function readLiveMonitorState(
+  storeFilters?: HrcLifecycleMonitorFilters | undefined,
+  signal?: AbortSignal | undefined
+): HrcMonitorState {
+  signal?.throwIfAborted()
   const socketPath = discoverSocket()
   const db = openHrcDatabase(resolveDatabasePath())
   try {
+    signal?.throwIfAborted()
     const sessions = db.sqlite
       .query<
         {
@@ -282,11 +323,26 @@ function readLiveMonitorState(): HrcMonitorState {
       )
       .all()
     const runtimes = db.runtimes.listAll()
-    const messages = db.messages.query({ order: 'desc', limit: 10_000 }).reverse()
+    const includeMessages = storeFilters?.eventKinds === undefined
+    const messages = includeMessages
+      ? db.messages.query({ order: 'desc', limit: 10_000 }).reverse()
+      : []
+    const latestRuntimeByHost = new Map(
+      runtimes.map((runtime) => [runtime.hostSessionId, runtime] as const)
+    )
+    signal?.throwIfAborted()
+    const rawEvents = storeFilters
+      ? db.hrcEvents.listFromHrcSeqFiltered(1, storeFilters)
+      : db.hrcEvents.listFromHrcSeq(1)
+    const eventGlobalHighWaterSeq = storeFilters ? db.hrcEvents.maxHrcSeq() : undefined
+    const includeMessageResponseEvents = storeFilters?.eventKinds === undefined
     const events = [
-      ...db.hrcEvents.listFromHrcSeq(1).map(toMonitorEvent),
-      ...messages.filter((message) => message.phase === 'response').map(toMessageResponseEvent),
+      ...rawEvents.map(toMonitorEvent),
+      ...(includeMessageResponseEvents
+        ? messages.filter((message) => message.phase === 'response').map(toMessageResponseEvent)
+        : []),
     ].sort((a, b) => a.seq - b.seq)
+    signal?.throwIfAborted()
 
     return {
       daemon: {
@@ -297,9 +353,7 @@ function readLiveMonitorState(): HrcMonitorState {
         responsive: true,
       },
       sessions: sessions.map((session) => {
-        const runtime = runtimes
-          .filter((candidate) => candidate.hostSessionId === session.host_session_id)
-          .at(-1)
+        const runtime = latestRuntimeByHost.get(session.host_session_id)
         return {
           sessionRef: `${session.scope_ref}/lane:${session.lane_ref}`,
           scopeRef: session.scope_ref,
@@ -320,6 +374,7 @@ function readLiveMonitorState(): HrcMonitorState {
       })),
       messages: messages.map(toMonitorMessage),
       events,
+      ...(eventGlobalHighWaterSeq !== undefined ? { eventGlobalHighWaterSeq } : {}),
     }
   } finally {
     db.close()
