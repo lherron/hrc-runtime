@@ -16,6 +16,7 @@ import {
   deriveSemanticTurnEventFromSdkEvent,
 } from '../hrc-event-helper.js'
 import { isRunActive } from '../require-helpers.js'
+import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findLatestSessionRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { writeServerLog } from '../server-log.js'
@@ -66,9 +67,12 @@ function resolveSdkDispatchTarget(
     supportsInflightInput: getSdkInflightCapability(sdkHarness),
     adopted: false,
     activeRunId: runId,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
     createdAt: now,
-    updatedAt: now,
   })
 
   const run = this.db.runs.insert({
@@ -132,7 +136,14 @@ function resolveSdkDispatchTarget(
     startedAt,
     updatedAt: startedAt,
   })
-  this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: startedAt,
+      updatedAt: startedAt,
+    })
+  )
 
   const startedEvent = appendHrcEvent(this.db, 'turn.started', {
     ts: startedAt,
@@ -200,7 +211,14 @@ export async function handleSdkDispatchTurn(
           })
           this.notifyEvent(appendedSemanticEvent)
         }
-        this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+        this.db.runtimes.update(
+          runtime.runtimeId,
+          runtimeActivityPatch(this.db, runtime.runtimeId, {
+            source: 'agent-message',
+            occurredAt: event.ts,
+            updatedAt: timestamp(),
+          })
+        )
       },
       onBuffer: (text) => {
         this.db.runtimeBuffers.append({
@@ -232,8 +250,11 @@ export async function handleSdkDispatchTurn(
 
     this.db.runtimes.update(runtime.runtimeId, {
       status: 'ready',
-      lastActivityAt: completedAt,
-      updatedAt: completedAt,
+      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: completedAt,
+        updatedAt: completedAt,
+      }),
       harnessSessionJson: result.harnessSessionJson,
       continuation: result.continuation,
     })
@@ -352,8 +373,11 @@ export function recordDetachedSemanticTurnFailure(
     this.db.runtimes.updateRunId(runtimeId, undefined, now)
     this.db.runtimes.update(runtimeId, {
       status: 'ready',
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
     })
   }
 

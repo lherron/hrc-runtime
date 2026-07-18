@@ -183,7 +183,7 @@ export async function handleBrokerInspect(
 
   // Non-broker fallback — HRC-runtime-derived, NEVER broker-reported.
   const note = 'HRC-runtime-derived, not broker-reported'
-  const lastActivityAt = runtime.lastActivityAt ?? runtime.updatedAt
+  const lastActivityAt = runtime.lastActivityAt ?? runtime.createdAt
 
   // ghostty + claude-code: synthesize the HRC-side idle-cleanup lifecycle
   // (cleanupIdleClaudeGhosttyRuntimes policy; computedRetireAt = lastActivityAt

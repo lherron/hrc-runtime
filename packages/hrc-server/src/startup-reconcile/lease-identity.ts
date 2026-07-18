@@ -10,6 +10,7 @@ import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { extractBrokerEndpoint } from '../broker/runtime-state.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { requireSession } from '../require-helpers.js'
+import { runtimeActivityPatch } from '../runtime-activity.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
 import {
@@ -400,8 +401,7 @@ export function markBrokerReattachStale(
       },
       updatedAt: now,
     },
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
   return {
     runtimeId: runtime.runtimeId,

@@ -8,6 +8,7 @@ import type {
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import { isTerminalBrokerInvocationState } from '../require-helpers.js'
+import { runtimeActivityPatch } from '../runtime-activity.js'
 import { writeServerLog } from '../server-log.js'
 import { timestamp } from '../server-util.js'
 import { USER_INITIATED_CONTINUATION_CLEAR_REASONS } from './types.js'
@@ -142,8 +143,7 @@ export function markRuntimeDead(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'dead',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
   db.events.append({
     ts: now,
@@ -176,8 +176,7 @@ export function markRuntimeStale(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
       status: 'stale',
@@ -265,8 +264,7 @@ export function markRuntimeTerminatedAfterUserExit(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
       status: 'terminated',

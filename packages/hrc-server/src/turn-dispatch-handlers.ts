@@ -47,6 +47,7 @@ import {
   requireKnownRuntime,
   requireSession,
 } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   findDispatchInteractiveRuntime,
   getDurableHeadlessRuntimeForReattach,
@@ -917,8 +918,10 @@ export function markRuntimeStaleForBrokerReprovision(
 
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'housekeeping',
+      updatedAt: now,
+    }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
       status: 'stale',

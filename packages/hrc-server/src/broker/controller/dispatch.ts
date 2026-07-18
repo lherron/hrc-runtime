@@ -20,6 +20,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { deriveRuntimeStatusWithAwaiting } from '../../ask-bracket'
+import { runtimeActivityPatch } from '../../runtime-activity'
 import { preflightDriverSupportsResponseFormat } from '../../turn-response-format'
 import {
   type ExpectedBrokerNegotiation,
@@ -453,7 +454,11 @@ export async function startController(
       activeInvocationId: startResult.invocationId,
       activeOperationId: String(identity.operationId),
       activeRunId: identity.runId !== undefined ? String(identity.runId) : undefined,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(ctx.db, String(identity.runtimeId), {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
       runtimeStateJson: buildRuntimeStateJson(
         ctx.persistenceContext(),
         input,
@@ -462,7 +467,6 @@ export async function startController(
         now,
         tmuxAllocation
       ),
-      updatedAt: now,
     })
 
     ctx.db.runtimeOperations.update(String(identity.operationId), {
@@ -632,7 +636,10 @@ export async function attachAndReplay(
     ctx.db.runtimes.update(runtime.runtimeId, {
       status,
       activeInvocationId: invocation.invocationId,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(ctx.db, runtime.runtimeId, {
+        source: 'housekeeping',
+        updatedAt: now,
+      }),
       runtimeStateJson: {
         ...(runtime.runtimeStateJson ?? {}),
         status,
@@ -651,7 +658,6 @@ export async function attachAndReplay(
           retentionFloorSeq: Math.max(retentionFloorSeq, replay.retentionFloorSeq),
         },
       },
-      updatedAt: now,
     })
 
     input.client.onClose((error) => {

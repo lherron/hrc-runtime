@@ -10,6 +10,7 @@ import {
   deriveSemanticTurnUserPromptFromHookPayload,
 } from './hrc-event-helper.js'
 import { isRuntimeUnavailableStatus, requireSession } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestRunForRuntime, findLatestSessionRuntime } from './runtime-select.js'
 import { isRecord } from './server-parsers.js'
 import type {
@@ -192,8 +193,11 @@ export function finalizeRunOnStopHook(
   db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, {
+      source: 'agent-hook',
+      occurredAt: now,
+      updatedAt: timestamp(),
+    }),
   })
   return appendHrcEvent(db, 'turn.completed', {
     ts: now,
@@ -329,8 +333,11 @@ export function applyHookLifecycleEnvelope(
           ...(piResult.continuation.sessionFile
             ? { harnessSessionJson: { sessionFile: piResult.continuation.sessionFile } }
             : {}),
-          updatedAt: now,
-          lastActivityAt: now,
+          ...runtimeActivityPatch(db, envelope.runtimeId, {
+            source: 'agent-hook',
+            occurredAt: now,
+            updatedAt: timestamp(),
+          }),
         })
         db.sessions.updateContinuation(session.hostSessionId, continuationRef, now)
         events.push(
@@ -452,8 +459,11 @@ export function applyHookLifecycleEnvelope(
 
   db.runtimes.update(runtime.runtimeId, {
     status: nextStatus,
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, {
+      source: 'agent-hook',
+      occurredAt: now,
+      updatedAt: timestamp(),
+    }),
   })
 
   events.push(

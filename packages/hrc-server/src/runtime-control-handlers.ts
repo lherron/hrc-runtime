@@ -18,6 +18,7 @@ import {
 import { joinShellCommand, shellIdentifier, shellQuote } from './dispatch-invocation.js'
 import { appendHrcEvent, deriveSemanticTurnEventFromSdkEvent } from './hrc-event-helper.js'
 import { requireRuntime } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   interruptGhosttyRuntime,
   interruptHeadlessRuntime,
@@ -94,8 +95,11 @@ export async function runHeadlessSdkStartLaunch(
   const now = timestamp()
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'starting',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
   })
 
   const prompt = intent.initialPrompt ?? 'hello'
@@ -160,7 +164,14 @@ export async function runHeadlessSdkStartLaunch(
         })
         this.notifyEvent(appendedSemanticEvent)
       }
-      this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+      this.db.runtimes.update(
+        runtime.runtimeId,
+        runtimeActivityPatch(this.db, runtime.runtimeId, {
+          source: 'agent-message',
+          occurredAt: event.ts,
+          updatedAt: timestamp(),
+        })
+      )
     },
   })
 
@@ -172,8 +183,11 @@ export async function runHeadlessSdkStartLaunch(
   })
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
-    lastActivityAt: completedAt,
-    updatedAt: completedAt,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: completedAt,
+      updatedAt: completedAt,
+    }),
     harnessSessionJson: result.harnessSessionJson,
     continuation: result.continuation,
   })
@@ -235,8 +249,9 @@ export function createHeadlessRuntimeForSession(
   const harness = shouldUseHeadlessSdkExecutor(intent.harness)
     ? deriveSdkHarness(intent.harness)
     : deriveInteractiveHarness(intent.harness)
+  const runtimeId = `rt-${randomUUID()}`
   const runtime = this.db.runtimes.insert({
-    runtimeId: `rt-${randomUUID()}`,
+    runtimeId,
     runtimeKind: 'harness',
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
@@ -249,9 +264,11 @@ export function createHeadlessRuntimeForSession(
     continuation: session.continuation,
     supportsInflightInput: false,
     adopted: false,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtimeId, {
+      source: 'housekeeping',
+      updatedAt: now,
+    }),
     createdAt: now,
-    updatedAt: now,
   })
 
   const event = appendHrcEvent(this.db, 'runtime.created', {
@@ -303,8 +320,9 @@ export async function ensureCommandRuntimeForSession(
     this.db.runtimes.updateStatus(existingRuntime.runtimeId, 'terminated', now)
   }
 
+  const runtimeId = `rt-${randomUUID()}`
   const runtime = this.db.runtimes.insert({
-    runtimeId: `rt-${randomUUID()}`,
+    runtimeId,
     runtimeKind: 'command',
     hostSessionId: session.hostSessionId,
     scopeRef: session.scopeRef,
@@ -318,9 +336,12 @@ export async function ensureCommandRuntimeForSession(
     commandSpec: spec,
     supportsInflightInput: false,
     adopted: false,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
     createdAt: now,
-    updatedAt: now,
   })
 
   const event = appendHrcEvent(this.db, forceRestart ? 'runtime.restarted' : 'runtime.created', {

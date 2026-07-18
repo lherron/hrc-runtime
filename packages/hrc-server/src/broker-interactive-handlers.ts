@@ -15,6 +15,7 @@ import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -171,8 +172,11 @@ export async function handleHeadlessDispatchTurn(
     activeRunId: run.runId,
     status: 'busy',
     continuation,
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
   })
 
   const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
@@ -208,7 +212,14 @@ export async function handleHeadlessDispatchTurn(
     startedAt,
     updatedAt: startedAt,
   })
-  this.db.runtimes.updateActivity(runtime.runtimeId, startedAt, startedAt)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: startedAt,
+      updatedAt: startedAt,
+    })
+  )
 
   const startedEvent = appendHrcEvent(this.db, 'turn.started', {
     ts: startedAt,
@@ -534,8 +545,11 @@ export async function executeInteractiveBrokerInputTurn(
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
       status: 'busy',
-      lastActivityAt: now,
-      updatedAt: now,
+      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
     })
     this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
   }
@@ -653,8 +667,11 @@ export async function executeInteractiveBrokerInputTurn(
     }
     this.db.runtimes.update(runtime.runtimeId, {
       status: reprovisionRequired ? 'stale' : 'ready',
-      lastActivityAt: completedAt,
-      updatedAt: completedAt,
+      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: completedAt,
+        updatedAt: completedAt,
+      }),
       ...(reprovisionRequired
         ? {
             runtimeStateJson: {
@@ -783,8 +800,11 @@ export async function deliverReassociatedBrokerTmuxInput(
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'busy',
     activeRunId: runId,
-    lastActivityAt: startedAt,
-    updatedAt: startedAt,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: startedAt,
+      updatedAt: startedAt,
+    }),
     runtimeStateJson: withDirectTmuxDegradedControlState(latestRuntime.runtimeStateJson),
   })
   this.notifyEvent(

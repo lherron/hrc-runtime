@@ -20,6 +20,7 @@ import {
   requireSession,
   requireTmuxPane,
 } from '../require-helpers.js'
+import { runtimeActivityPatch } from '../runtime-activity.js'
 import {
   DEFAULT_GHOSTTY_VIEWER_LINGER_SECONDS,
   HRC_GHOSTTY_VIEWER_LINGER_SECONDS_ENV,
@@ -115,8 +116,10 @@ function settleBrokerRuntimeDisposed(
   }
   this.db.runtimes.update(runtime.runtimeId, {
     activeInvocationId: null as unknown as HrcRuntimeSnapshot['activeInvocationId'],
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'housekeeping',
+      updatedAt: now,
+    }),
   })
 }
 
@@ -178,7 +181,14 @@ export async function interruptGhosttyRuntime(
   await this.ghostmux.interrupt(surface.surfaceId)
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
@@ -217,7 +227,14 @@ export async function interruptTmuxRuntime(
   await this.tmuxForPane(tmux).interrupt(tmux.paneId)
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
@@ -275,7 +292,14 @@ export async function interruptHeadlessRuntime(
     }
 
     const now = timestamp()
-    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    this.db.runtimes.update(
+      runtime.runtimeId,
+      runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      })
+    )
     const event = appendHrcEvent(this.db, 'runtime.interrupted', {
       ...sessionEventBase(session, now),
       runtimeId: runtime.runtimeId,
@@ -305,8 +329,11 @@ export async function interruptHeadlessRuntime(
   this.db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
   })
   const event = appendHrcEvent(this.db, 'runtime.interrupted', {
     ...sessionEventBase(session, now),

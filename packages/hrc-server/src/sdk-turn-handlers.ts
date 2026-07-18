@@ -24,6 +24,7 @@ import {
   requireSession,
   requireTmuxPane,
 } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestRunForRuntime, findLatestSessionRuntime } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -122,7 +123,14 @@ export async function executeHeadlessSdkTurn(
         })
         this.notifyEvent(appendedSemanticEvent)
       }
-      this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+      this.db.runtimes.update(
+        runtime.runtimeId,
+        runtimeActivityPatch(this.db, runtime.runtimeId, {
+          source: 'agent-message',
+          occurredAt: event.ts,
+          updatedAt: timestamp(),
+        })
+      )
     },
     onBuffer: (text) => {
       this.db.runtimeBuffers.append({
@@ -151,8 +159,11 @@ export async function executeHeadlessSdkTurn(
 
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
-    lastActivityAt: completedAt,
-    updatedAt: completedAt,
+    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'turn',
+      occurredAt: completedAt,
+      updatedAt: completedAt,
+    }),
     harnessSessionJson: result.harnessSessionJson,
     // Only propagate continuation on success — a failed session's sdkSessionId
     // points to a non-existent conversation file. Passing undefined here is
@@ -568,13 +579,27 @@ export async function deliverInFlightInputToRuntime(
           onHrcEvent: (event) => {
             const appended = this.db.events.append(event)
             this.notifyEvent(appended)
-            this.db.runtimes.updateActivity(runtime.runtimeId, event.ts, event.ts)
+            this.db.runtimes.update(
+              runtime.runtimeId,
+              runtimeActivityPatch(this.db, runtime.runtimeId, {
+                source: 'agent-message',
+                occurredAt: event.ts,
+                updatedAt: timestamp(),
+              })
+            )
           },
         })
       : { accepted: true, pendingTurns: 0 }
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
 
   const acceptedEvent = appendHrcEvent(this.db, 'inflight.accepted', {
     ts: now,
@@ -650,7 +675,14 @@ export async function deliverTmuxQuestionAnswer(
   await tmux.sendKeys(pane.paneId, body.prompt)
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
   const acceptedEvent = appendHrcEvent(this.db, 'inflight.accepted', {
     ts: now,
     hostSessionId: session.hostSessionId,

@@ -359,7 +359,7 @@ export async function handleArchiveAbandonedSessions(
         if (!isRuntimeUnavailableStatus(runtime.status)) {
           return false
         }
-        const lastActivityMs = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+        const lastActivityMs = Date.parse(runtime.lastActivityAt ?? runtime.createdAt)
         return Number.isFinite(lastActivityMs) && lastActivityMs <= cutoffMs
       })
     if (!abandonedRuntime) {

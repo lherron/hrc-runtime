@@ -15,6 +15,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { appendHrcEvent } from '../../hrc-event-helper'
+import { runtimeActivityPatch } from '../../runtime-activity'
 import type { BrokerProjectionResult } from '../event-mapper'
 import type { BrokerControllerError } from './errors'
 import { isActiveBrokerRun } from './internal'
@@ -56,14 +57,16 @@ function applyTerminalRuntimeState(
 ): void {
   db.runtimes.update(runtime.runtimeId, {
     status: params.status,
-    lastActivityAt: params.now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, {
+      source: 'housekeeping',
+      updatedAt: params.now,
+    }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
       status: params.status,
       updatedAt: params.now,
       ...params.diagnostic,
     },
-    updatedAt: params.now,
   })
 }
 
@@ -114,8 +117,11 @@ export function markBrokerInvocationTerminal(
   }
   ctx.db.runtimes.update(runtimeId, {
     status: terminalStatus,
-    lastActivityAt: now,
-    updatedAt: now,
+    ...runtimeActivityPatch(ctx.db, runtimeId, {
+      source: 'broker-event',
+      occurredAt: envelope.time ?? now,
+      updatedAt: now,
+    }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
       status: terminalStatus,

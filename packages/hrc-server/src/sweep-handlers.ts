@@ -64,21 +64,15 @@ export async function handleSweepRuntimes(
   )
 
   const results: SweepRuntimeResult[] = []
+  const claimed: HrcRuntimeSnapshot[] = []
   if (body.dryRun !== true) {
     for (const runtime of matched) {
       const droppedContinuation =
         body.dropContinuation ?? (runtime.transport !== 'tmux' && runtime.activeRunId != null)
       if (!this.claimRuntimeForSweep(runtime.runtimeId, statuses, timestamp())) {
-        results.push({
-          type: 'runtime',
-          runtimeId: runtime.runtimeId,
-          hostSessionId: runtime.hostSessionId,
-          transport: runtime.transport as SweepRuntimeTransport,
-          status: 'skipped',
-          droppedContinuation: false,
-        })
         continue
       }
+      claimed.push(runtime)
 
       try {
         const session = requireSession(this.db, runtime.hostSessionId)
@@ -129,7 +123,7 @@ export async function handleSweepRuntimes(
 
   const summary: SweepRuntimesSummary = {
     type: 'summary',
-    matched: matched.length,
+    matched: body.dryRun === true ? matched.length : claimed.length,
     stale: results.filter((result) => result.status === 'stale').length,
     terminated: 0,
     skipped: results.filter((result) => result.status === 'skipped').length,
@@ -137,7 +131,7 @@ export async function handleSweepRuntimes(
   }
 
   if (body.dryRun !== true) {
-    this.appendSweepCompletedEvent(summary, matched)
+    this.appendSweepCompletedEvent(summary, claimed)
   }
 
   return json({

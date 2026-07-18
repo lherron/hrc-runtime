@@ -29,6 +29,7 @@ import {
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { isRunActive, requireSession } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { isLiveProcess } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { isRuntimeUnavailableStatus, timestamp } from './server-util.js'
@@ -471,8 +472,7 @@ export async function reconcileDurableBrokerRuntimeReattach(
         status: runtime.status,
         updatedAt: now,
       },
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(db, runtimeId, { source: 'housekeeping', updatedAt: now }),
     })
     return {
       runtimeId,
@@ -765,8 +765,7 @@ function reapStartupHeadlessOrphan(
   db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
 
   return appendHrcEvent(db, 'turn.reaped', {

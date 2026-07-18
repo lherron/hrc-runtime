@@ -38,6 +38,7 @@ import {
   requireSession,
   requireTmuxPane,
 } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestSessionRuntime, getReusableHeadlessRuntimeForSession } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
@@ -78,7 +79,14 @@ export async function captureRuntime(
   }
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
 
   return json({
     text,

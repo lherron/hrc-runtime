@@ -14,6 +14,7 @@ import {
 import { appendHrcEvent, deriveSemanticTurnEventFromLaunchEvent } from './hrc-event-helper.js'
 import { readSpoolEntries } from './launch/index.js'
 import { requireSession } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestRunForRuntime } from './runtime-select.js'
 import { isRecord } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'
@@ -129,8 +130,11 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         wrapperPid: replayedLaunch.wrapperPid,
         launchId,
         status: 'busy',
-        updatedAt: now,
-        lastActivityAt: now,
+        ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
+          source: 'agent-hook',
+          occurredAt: now,
+          updatedAt: timestamp(),
+        }),
       })
     }
     appendHrcEvent(db, 'launch.wrapper_started', {
@@ -172,8 +176,11 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       db.runtimes.update(replayedLaunch.runtimeId, {
         childPid: replayedLaunch.childPid,
         status: 'busy',
-        updatedAt: now,
-        lastActivityAt: now,
+        ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
+          source: 'agent-hook',
+          occurredAt: now,
+          updatedAt: timestamp(),
+        }),
       })
     }
     appendHrcEvent(db, 'launch.child_started', {
@@ -209,8 +216,11 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       db.runtimes.update(replayedLaunch.runtimeId, {
         continuation: body.continuation,
         ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-        updatedAt: now,
-        lastActivityAt: now,
+        ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
+          source: 'agent-hook',
+          occurredAt: now,
+          updatedAt: timestamp(),
+        }),
       })
     }
     appendHrcEvent(db, 'launch.continuation_captured', {
@@ -259,7 +269,14 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       eventJson: body,
     })
     if (runtime) {
-      db.runtimes.updateActivity(runtime.runtimeId, now, now)
+      db.runtimes.update(
+        runtime.runtimeId,
+        runtimeActivityPatch(db, runtime.runtimeId, {
+          source: 'agent-hook',
+          occurredAt: now,
+          updatedAt: timestamp(),
+        })
+      )
     }
     const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
     if (semanticEvent) {
@@ -299,8 +316,11 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       db.runtimes.updateRunId(replayedLaunch.runtimeId, undefined, now)
       db.runtimes.update(replayedLaunch.runtimeId, {
         status: 'ready',
-        updatedAt: now,
-        lastActivityAt: now,
+        ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
+          source: 'agent-hook',
+          occurredAt: now,
+          updatedAt: timestamp(),
+        }),
       })
       if (activeRunId) {
         appendMissingHeadlessTurnCompleted(db, {

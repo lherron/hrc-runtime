@@ -306,7 +306,7 @@ export async function cleanupIdleClaudeGhosttyRuntimes(ctx: ServerContext): Prom
       continue
     }
 
-    const activityMs = Date.parse(runtime.lastActivityAt ?? runtime.updatedAt)
+    const activityMs = Date.parse(runtime.lastActivityAt ?? runtime.createdAt)
     if (!Number.isFinite(activityMs) || activityMs > cutoffMs) continue
 
     const latest = ctx.db.runtimes.getByRuntimeId(runtime.runtimeId)

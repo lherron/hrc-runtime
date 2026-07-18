@@ -14,6 +14,7 @@ import {
 import { readLaunchArtifact } from './launch/index.js'
 import { upsertLaunch } from './replay-spool.js'
 import { requireRuntime, requireSession } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { findLatestRunForRuntime } from './runtime-select.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { parseJsonBody } from './server-parsers.js'
@@ -58,8 +59,11 @@ export async function handleWrapperStarted(
       wrapperPid: launch.wrapperPid,
       launchId,
       status: 'busy',
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, launch.runtimeId, {
+        source: 'agent-hook',
+        occurredAt: now,
+        updatedAt: timestamp(),
+      }),
     })
   }
   this.notifyEvent(event)
@@ -103,8 +107,11 @@ export async function handleChildStarted(
     this.db.runtimes.update(launch.runtimeId, {
       childPid: body.childPid,
       status: 'busy',
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, launch.runtimeId, {
+        source: 'agent-hook',
+        occurredAt: now,
+        updatedAt: timestamp(),
+      }),
     })
   }
   this.notifyEvent(event)
@@ -137,8 +144,11 @@ export async function handleContinuation(
     this.db.runtimes.update(launch.runtimeId, {
       continuation: body.continuation,
       ...(body.harnessSessionJson ? { harnessSessionJson: body.harnessSessionJson } : {}),
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, launch.runtimeId, {
+        source: 'agent-hook',
+        occurredAt: now,
+        updatedAt: timestamp(),
+      }),
     })
   }
 
@@ -196,7 +206,14 @@ export async function handleLaunchEvent(
     eventJson: body,
   })
   if (runtime) {
-    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    this.db.runtimes.update(
+      runtime.runtimeId,
+      runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'agent-hook',
+        occurredAt: now,
+        updatedAt: timestamp(),
+      })
+    )
   }
   this.notifyEvent(appendedEvent)
   const semanticEvent = deriveSemanticTurnEventFromLaunchEvent(body)
@@ -278,8 +295,11 @@ export async function handleExited(
     const nextStatus = runtime.transport === 'headless' ? 'ready' : 'terminated'
     this.db.runtimes.update(launch.runtimeId, {
       status: nextStatus,
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, launch.runtimeId, {
+        source: 'agent-hook',
+        occurredAt: now,
+        updatedAt: timestamp(),
+      }),
     })
     if (activeRunId) {
       appendMissingHeadlessTurnCompleted(this.db, {

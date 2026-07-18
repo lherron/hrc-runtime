@@ -13,6 +13,7 @@ import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 
 import { runtimeHasAnyOpenAskBracket } from '../../ask-bracket'
 import { appendHrcEvent } from '../../hrc-event-helper'
+import { runtimeActivityPatch } from '../../runtime-activity'
 import { writeServerLog } from '../../server-log.js'
 import {
   type ProjectionContext,
@@ -31,7 +32,8 @@ export function claimRuntimeTurnOwnership(
   db: HrcDatabase,
   ctx: ProjectionContext,
   runId: string,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
@@ -44,15 +46,18 @@ export function claimRuntimeTurnOwnership(
   db.runtimes.update(ctx.runtimeId, {
     status: 'busy',
     activeRunId: runId,
-    lastActivityAt: now,
-    updatedAt: now,
+    ...runtimeActivityPatch(db, ctx.runtimeId, {
+      source: 'broker-event',
+      occurredAt,
+      updatedAt,
+    }),
     ...(runtimeStateJson !== undefined
       ? {
           runtimeStateJson: {
             ...runtimeStateJson,
             status: 'busy',
             activeRunId: runId,
-            updatedAt: now,
+            updatedAt,
           },
         }
       : {}),
@@ -64,13 +69,14 @@ export function markRuntimeAwaitingInput(
   db: HrcDatabase,
   ctx: ProjectionContext,
   invocationId: string,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
   db.brokerInvocations.update(invocationId, {
     invocationState: 'awaiting_input',
-    updatedAt: now,
+    updatedAt,
   })
-  setRuntimeStatus(db, ctx.runtimeId, 'awaiting_input', now)
+  setRuntimeStatus(db, ctx.runtimeId, 'awaiting_input', occurredAt, updatedAt)
 }
 
 /**
@@ -81,13 +87,14 @@ export function markRuntimeInputResumed(
   db: HrcDatabase,
   ctx: ProjectionContext,
   invocationId: string,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
   db.brokerInvocations.update(invocationId, {
     invocationState: 'turn_active',
-    updatedAt: now,
+    updatedAt,
   })
-  setRuntimeStatus(db, ctx.runtimeId, 'busy', now)
+  setRuntimeStatus(db, ctx.runtimeId, 'busy', occurredAt, updatedAt)
 }
 
 /** Update runtime.status (and the mirrored runtimeStateJson.status) in lockstep. */
@@ -95,17 +102,21 @@ export function setRuntimeStatus(
   db: HrcDatabase,
   runtimeId: string,
   status: string,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
   const runtime = db.runtimes.getByRuntimeId(runtimeId)
   if (!runtime) return
   const runtimeStateJson = isRecord(runtime.runtimeStateJson) ? runtime.runtimeStateJson : undefined
   db.runtimes.update(runtimeId, {
     status,
-    lastActivityAt: now,
-    updatedAt: now,
+    ...runtimeActivityPatch(db, runtimeId, {
+      source: 'broker-event',
+      occurredAt,
+      updatedAt,
+    }),
     ...(runtimeStateJson !== undefined
-      ? { runtimeStateJson: { ...runtimeStateJson, status, updatedAt: now } }
+      ? { runtimeStateJson: { ...runtimeStateJson, status, updatedAt } }
       : {}),
   })
 }
@@ -149,22 +160,26 @@ export function emitDerivedTurnEvent(
 export function clearRuntimeTurnOwnership(
   db: HrcDatabase,
   runtime: RuntimeRecord,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
-  db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
+  db.runtimes.updateRunId(runtime.runtimeId, undefined, updatedAt)
   const runtimeStateJson = isRecord(runtime.runtimeStateJson)
     ? omitRuntimeStateActiveRun(runtime.runtimeStateJson)
     : runtime.runtimeStateJson
   db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
-    lastActivityAt: now,
-    updatedAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, {
+      source: 'broker-event',
+      occurredAt,
+      updatedAt,
+    }),
     ...(runtimeStateJson !== undefined
       ? {
           runtimeStateJson: {
             ...runtimeStateJson,
             status: 'ready',
-            updatedAt: now,
+            updatedAt,
           },
         }
       : {}),
@@ -211,7 +226,8 @@ export function markRuntimeTurnTerminal(
   ctx: ProjectionContext,
   envelope: InvocationEventEnvelope,
   runId: string,
-  now: string
+  occurredAt: string,
+  updatedAt: string
 ): void {
   const runtime = db.runtimes.getByRuntimeId(ctx.runtimeId)
   if (!runtime) return
@@ -232,8 +248,8 @@ export function markRuntimeTurnTerminal(
       if (failedActiveRun) {
         db.runs.markCompleted(runtime.activeRunId, {
           status: 'failed',
-          completedAt: now,
-          updatedAt: now,
+          completedAt: occurredAt,
+          updatedAt,
           errorCode: HrcErrorCode.RUN_MISMATCH,
           errorMessage: `run ${runId} reached its turn terminal (seq ${envelope.seq}) while this run still owned runtime ${ctx.runtimeId}; this run's own turn terminal was never projected`,
         })
@@ -246,7 +262,7 @@ export function markRuntimeTurnTerminal(
         terminalRunId: runId,
         failedActiveRun,
       })
-      clearRuntimeTurnOwnership(db, runtime, now)
+      clearRuntimeTurnOwnership(db, runtime, occurredAt, updatedAt)
     }
     return
   }
@@ -261,5 +277,5 @@ export function markRuntimeTurnTerminal(
     return
   }
 
-  clearRuntimeTurnOwnership(db, runtime, now)
+  clearRuntimeTurnOwnership(db, runtime, occurredAt, updatedAt)
 }

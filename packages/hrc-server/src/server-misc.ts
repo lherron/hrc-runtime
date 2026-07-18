@@ -2,6 +2,7 @@ import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { HrcLifecycleEvent, HrcRuntimeSnapshot, HrcSessionRecord } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { runtimeActivityPatch } from './runtime-activity.js'
 import { normalizeOptionalQuery } from './server-parsers.js'
 import type { HrcEventsRouteFilters, SessionRow } from './server-types.js'
 
@@ -40,8 +41,7 @@ export function finalizeRuntimeTermination(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
-    updatedAt: now,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
 }
 

@@ -87,6 +87,7 @@ import {
   requireRuntime,
   requireSession,
 } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   type RuntimeControlHandlersMethods,
   runtimeControlHandlersMethods,
@@ -992,9 +993,12 @@ class HrcServerInstance implements HrcServer {
       supportsInflightInput: false,
       adopted: false,
       activeRunId: runId,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
       createdAt: now,
-      updatedAt: now,
     })
 
     this.db.runs.insert({

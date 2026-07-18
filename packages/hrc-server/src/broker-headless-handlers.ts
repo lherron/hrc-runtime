@@ -14,6 +14,7 @@ import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-ada
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 
 import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -543,8 +544,11 @@ export async function executeHeadlessBrokerInputTurn(
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
       status: 'busy',
-      lastActivityAt: now,
-      updatedAt: now,
+      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
     })
     this.db.brokerInvocations.update(invocationId, { runId, updatedAt: now })
   }
@@ -667,8 +671,11 @@ export async function executeHeadlessBrokerInputTurn(
     this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
     this.db.runtimes.update(runtime.runtimeId, {
       status: reprovisionRequired ? 'stale' : 'ready',
-      lastActivityAt: completedAt,
-      updatedAt: completedAt,
+      ...runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'turn',
+        occurredAt: completedAt,
+        updatedAt: completedAt,
+      }),
       ...(reprovisionRequired
         ? {
             runtimeStateJson: {
@@ -778,8 +785,10 @@ export async function waitForHeadlessBrokerRunCompletion(
         this.db.runtimes.updateRunId(runtimeId, undefined, now)
         this.db.runtimes.update(runtimeId, {
           status: 'ready',
-          lastActivityAt: now,
-          updatedAt: now,
+          ...runtimeActivityPatch(this.db, runtimeId, {
+            source: 'housekeeping',
+            updatedAt: now,
+          }),
         })
       }
       if (run.status !== 'completed') {
@@ -837,8 +846,11 @@ export function recordDetachedHeadlessTurnFailure(
     this.db.runtimes.updateRunId(runtimeId, undefined, now)
     this.db.runtimes.update(runtimeId, {
       status: 'ready',
-      updatedAt: now,
-      lastActivityAt: now,
+      ...runtimeActivityPatch(this.db, runtimeId, {
+        source: 'turn',
+        occurredAt: now,
+        updatedAt: now,
+      }),
     })
   }
 

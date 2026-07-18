@@ -20,6 +20,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import type { BrokerHelloResponse, InvocationStartResponse } from 'spaces-harness-broker-protocol'
 import { canonicalLifecyclePolicyJson } from 'spaces-harness-broker-protocol'
 
+import { runtimeActivityPatch } from '../../runtime-activity'
 import { BROKER_TRANSPORT } from '../constants'
 import {
   extractRuntimeStateTmux,
@@ -345,7 +346,11 @@ export function markStartedInvocationFailed(
     activeInvocationId: invocationId,
     activeOperationId: operationId,
     activeRunId: runId,
-    lastActivityAt: now,
+    ...runtimeActivityPatch(ctx.db, runtimeId, {
+      source: 'turn',
+      occurredAt: now,
+      updatedAt: now,
+    }),
     runtimeStateJson: {
       schemaVersion: 'runtime-state/v1',
       kind: 'harness-broker',
@@ -356,7 +361,6 @@ export function markStartedInvocationFailed(
       admissionFailure: detail,
       updatedAt: now,
     },
-    updatedAt: now,
   })
 }
 

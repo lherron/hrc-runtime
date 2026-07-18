@@ -33,6 +33,7 @@ import {
   resolveManagedHarnessIntent,
   validateAppSessionFence,
 } from './require-helpers.js'
+import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   findLatestRuntime,
   requireLatestRuntime,
@@ -806,7 +807,14 @@ export async function handleAppSessionLiteralInput(
   }
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
   const event = appendHrcEvent(this.db, 'app-session.literal-input', {
     ts: now,
     hostSessionId: session.hostSessionId,

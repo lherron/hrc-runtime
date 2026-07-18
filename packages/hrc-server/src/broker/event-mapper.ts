@@ -69,6 +69,7 @@ import type {
 } from 'spaces-harness-broker-protocol'
 
 import { hasOpenAskBracket, isAskUserTool, runtimeHasAnyOpenAskBracket } from '../ask-bracket'
+import { runtimeActivityPatch } from '../runtime-activity'
 import {
   type BrokerEventMapperDeps,
   type BrokerProjectionResult,
@@ -693,8 +694,11 @@ export class BrokerEventMapper {
         db.runtimes.update(ctx.runtimeId, {
           activeInvocationId: invocationId,
           activeOperationId: ctx.operationId,
-          lastActivityAt: now,
-          updatedAt: now,
+          ...runtimeActivityPatch(db, ctx.runtimeId, {
+            source: 'broker-event',
+            occurredAt: envelope.time ?? now,
+            updatedAt: now,
+          }),
         })
         db.brokerInvocations.update(invocationId, { invocationState: 'starting', updatedAt: now })
         break
@@ -761,8 +765,11 @@ export class BrokerEventMapper {
         }
         db.runtimes.update(ctx.runtimeId, {
           lifecyclePolicyHash: payload.policyHash,
-          lastActivityAt: now,
-          updatedAt: now,
+          ...runtimeActivityPatch(db, ctx.runtimeId, {
+            source: 'broker-event',
+            occurredAt: envelope.time ?? now,
+            updatedAt: now,
+          }),
         })
         db.brokerInvocations.update(invocationId, {
           lifecyclePolicyHash: payload.policyHash,
@@ -790,7 +797,7 @@ export class BrokerEventMapper {
       }
       case 'harness.started': {
         const payload = envelope.payload as HarnessStartedPayload
-        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, envelope.time ?? now, now, {
           currentHarnessGeneration: payload.generation,
         })
         break
@@ -809,7 +816,7 @@ export class BrokerEventMapper {
       }
       case 'harness.recovery.completed': {
         const payload = envelope.payload as HarnessRecoveryCompletedPayload
-        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, envelope.time ?? now, now, {
           currentHarnessGeneration: payload.toGeneration,
         })
         break
@@ -851,9 +858,10 @@ export class BrokerEventMapper {
         break
       }
       case 'turn.started': {
+        const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.update(runId, { status: 'running', startedAt: now, updatedAt: now })
-          claimRuntimeTurnOwnership(db, ctx, runId, now)
+          db.runs.update(runId, { status: 'running', startedAt: occurredAt, updatedAt: now })
+          claimRuntimeTurnOwnership(db, ctx, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, {
           invocationState: 'turn_active',
@@ -862,31 +870,42 @@ export class BrokerEventMapper {
         break
       }
       case 'turn.completed': {
+        const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.markCompleted(runId, { status: 'completed', completedAt: now, updatedAt: now })
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
+          db.runs.markCompleted(runId, {
+            status: 'completed',
+            completedAt: occurredAt,
+            updatedAt: now,
+          })
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
       }
       case 'turn.failed': {
         const payload = envelope.payload as TurnFailedPayload
+        const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
           db.runs.markCompleted(runId, {
             status: 'failed',
-            completedAt: now,
+            completedAt: occurredAt,
             updatedAt: now,
             errorMessage: payload.message,
           })
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
       }
       case 'turn.interrupted': {
+        const occurredAt = envelope.time ?? now
         if (runId !== undefined) {
-          db.runs.markCompleted(runId, { status: 'cancelled', completedAt: now, updatedAt: now })
-          markRuntimeTurnTerminal(db, ctx, envelope, runId, now)
+          db.runs.markCompleted(runId, {
+            status: 'cancelled',
+            completedAt: occurredAt,
+            updatedAt: now,
+          })
+          markRuntimeTurnTerminal(db, ctx, envelope, runId, occurredAt, now)
         }
         db.brokerInvocations.update(invocationId, { invocationState: 'ready', updatedAt: now })
         break
@@ -897,7 +916,7 @@ export class BrokerEventMapper {
       }
       case 'turn.retry': {
         const payload = envelope.payload as TurnRetryPayload
-        this.updateLifecyclePosition(invocationId, ctx.runtimeId, now, {
+        this.updateLifecyclePosition(invocationId, ctx.runtimeId, envelope.time ?? now, now, {
           currentHarnessGeneration: payload.toHarnessGeneration,
           currentTurnAttempt: payload.toAttempt,
         })
@@ -953,7 +972,7 @@ export class BrokerEventMapper {
       case 'tool.call.started': {
         const payload = envelope.payload as ToolCallStartedPayload
         if (runId !== undefined && isAskUserTool(payload.name)) {
-          markRuntimeAwaitingInput(db, ctx, invocationId, now)
+          markRuntimeAwaitingInput(db, ctx, invocationId, envelope.time ?? now, now)
           derived.push({
             eventKind: 'turn.awaiting_input',
             toolUseId: payload.toolCallId,
@@ -975,7 +994,7 @@ export class BrokerEventMapper {
           isRuntimeAwaitingInput(db, ctx.runtimeId) &&
           !hasOpenAskBracket(db, invocationId, runId)
         ) {
-          markRuntimeInputResumed(db, ctx, invocationId, now)
+          markRuntimeInputResumed(db, ctx, invocationId, envelope.time ?? now, now)
           derived.push({
             eventKind: 'turn.input_resumed',
             toolUseId: payload.toolCallId,
@@ -1019,8 +1038,11 @@ export class BrokerEventMapper {
         }
         db.runtimes.update(ctx.runtimeId, {
           continuation,
-          lastActivityAt: now,
-          updatedAt: now,
+          ...runtimeActivityPatch(db, ctx.runtimeId, {
+            source: 'broker-event',
+            occurredAt: envelope.time ?? now,
+            updatedAt: now,
+          }),
         })
         db.sessions.updateContinuation(ctx.hostSessionId, continuation, now)
         break
@@ -1085,14 +1107,22 @@ export class BrokerEventMapper {
   private updateLifecyclePosition(
     invocationId: string,
     runtimeId: string,
-    now: string,
+    occurredAt: string,
+    updatedAt: string,
     patch: {
       currentHarnessGeneration?: number | undefined
       currentTurnAttempt?: number | undefined
     }
   ): void {
-    this.db.runtimes.update(runtimeId, { ...patch, lastActivityAt: now, updatedAt: now })
-    this.db.brokerInvocations.update(invocationId, { ...patch, updatedAt: now })
+    this.db.runtimes.update(runtimeId, {
+      ...patch,
+      ...runtimeActivityPatch(this.db, runtimeId, {
+        source: 'broker-event',
+        occurredAt,
+        updatedAt,
+      }),
+    })
+    this.db.brokerInvocations.update(invocationId, { ...patch, updatedAt })
   }
 
   private isStaleLifecycleEnvelope(

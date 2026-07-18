@@ -20,6 +20,7 @@ import { normalizeDispatchIntent } from '../dispatch-invocation.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
 import { requireGhosttySurface, requireTmuxPane } from '../require-helpers.js'
+import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { isRecord, parseJsonBody, parseOptionalTurnResponseFormat } from '../server-parsers.js'
@@ -121,7 +122,14 @@ export async function handleCaptureBySelector(
   }
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
 
   return json({
     text,
@@ -198,7 +206,14 @@ export async function handleLiteralInputBySelector(
   }
 
   const now = timestamp()
-  this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+  this.db.runtimes.update(
+    runtime.runtimeId,
+    runtimeActivityPatch(this.db, runtime.runtimeId, {
+      source: 'agent-message',
+      occurredAt: now,
+      updatedAt: now,
+    })
+  )
 
   const event = appendHrcEvent(this.db, 'target.literal-input', {
     ts: now,
@@ -293,7 +308,14 @@ export async function handleBrokerLiteralInputBySelector(
       generation: session.generation,
       text: buffered,
     })
-    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    this.db.runtimes.update(
+      runtime.runtimeId,
+      runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'agent-message',
+        occurredAt: now,
+        updatedAt: now,
+      })
+    )
     return emitLiteralInputAndRespond({
       ts: now,
       payloadLength: text.length,
@@ -307,7 +329,14 @@ export async function handleBrokerLiteralInputBySelector(
     this.pendingBrokerLiteralInputs.delete(runtime.runtimeId)
     const pane = requireTmuxPane(runtime)
     await this.tmuxForPane(pane).sendEnter(pane.paneId)
-    this.db.runtimes.updateActivity(runtime.runtimeId, now, now)
+    this.db.runtimes.update(
+      runtime.runtimeId,
+      runtimeActivityPatch(this.db, runtime.runtimeId, {
+        source: 'agent-message',
+        occurredAt: now,
+        updatedAt: now,
+      })
+    )
     return emitLiteralInputAndRespond({
       ts: now,
       payloadLength: 0,
