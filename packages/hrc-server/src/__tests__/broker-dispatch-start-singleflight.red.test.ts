@@ -22,7 +22,7 @@ let fixture: HrcServerTestFixture
 let server: HrcServer | undefined
 
 beforeEach(async () => {
-  fixture = await createHrcTestFixture('hrc-broker-dispatch-singleflight-')
+  fixture = await createHrcTestFixture('h63-')
   server = await createHrcServer(
     fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
   )
