@@ -32,6 +32,7 @@ import {
 } from './broker-decisions.js'
 import type { InteractiveTmuxBrokerDriver } from './broker-decisions.js'
 import { resolveBrokerDurableIpcEnabled, startAspcFacadeBrokerClient } from './option-resolvers.js'
+import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
   assertBrokerRuntimeReusableAdmission,
   assertRuntimeNotBusy,
@@ -863,9 +864,11 @@ export async function startInteractiveTmuxBrokerRuntime(
   }
 ): Promise<HrcRuntimeSnapshot> {
   const now = timestamp()
-  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
+  const runtimeId = `rt-${randomUUID()}`
+  const timing = createPrecompileLaunchTimingContext('interactive', runtimeId)
+  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
 
-  const client = await startAspcFacadeBrokerClient()
+  const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
   const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
   try {
@@ -897,10 +900,11 @@ export async function startInteractiveTmuxBrokerRuntime(
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+        timing,
         ids: {
           requestId: () => `req-${randomUUID()}`,
           operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => `rt-${randomUUID()}`,
+          runtimeId: () => runtimeId,
           invocationId: () => `inv-${randomUUID()}`,
           initialInputId: () => `input-${randomUUID()}`,
           runId: () => diagnosticRunId,

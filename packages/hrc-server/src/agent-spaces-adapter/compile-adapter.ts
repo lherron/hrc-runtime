@@ -54,6 +54,10 @@ import type {
 } from 'spaces-runtime-contracts'
 
 import {
+  type PrecompileLaunchTimingContext,
+  observePrecompileLaunchSpan,
+} from '../precompile-launch-timing.js'
+import {
   type BrokerProfileRejectionCode,
   selectBrokerExecutionProfile,
 } from './compile-profile-selector'
@@ -81,6 +85,7 @@ export type BrokerCompileAdapterDeps = {
   /** Compiles through the ASPC facade. W3B binds this to aspc.compileHarnessInvocation. */
   compileHarnessInvocation: CompileHarnessInvocationFn
   ids: RuntimeIdAllocator
+  timing?: PrecompileLaunchTimingContext | undefined
 }
 
 export type BrokerCompileAdapterInput = {
@@ -446,11 +451,15 @@ export async function compileBrokerRuntimePlan(
   //     still verifies the selected startRequest/hash/identity contract before
   //     trusting it.
   const profileSelector = toProfileSelector(intent)
-  const response = await deps.compileHarnessInvocation({
-    compileRequest: request,
-    ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
-    ...(profileSelector ? { profileSelector } : {}),
-  })
+  const compile = () =>
+    deps.compileHarnessInvocation({
+      compileRequest: request,
+      ...(input.dispatchEnv ? { dispatchEnv: input.dispatchEnv } : {}),
+      ...(profileSelector ? { profileSelector } : {}),
+    })
+  const response = deps.timing
+    ? await observePrecompileLaunchSpan('precompile-compile-rpc', deps.timing, compile)
+    : await compile()
   if (!response.ok) {
     return {
       admitted: false,

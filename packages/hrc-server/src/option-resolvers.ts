@@ -5,6 +5,10 @@ import { HrcRuntimeUnavailableError } from 'hrc-core'
 import { AspcFacadeBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { isFalsyFeatureFlag, isTruthyFeatureFlag } from './broker-decisions.js'
 import {
+  type PrecompileLaunchTimingContext,
+  observePrecompileLaunchSpan,
+} from './precompile-launch-timing.js'
+import {
   DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
   HRC_BROKER_DURABLE_IPC_ENABLED_ENV,
@@ -123,13 +127,21 @@ export function resolveAspcFacadeStartOptions(): { command: string; args: string
   return { command, args }
 }
 
-export async function startAspcFacadeBrokerClient(): Promise<AspcFacadeBrokerClient> {
-  const client = await AspcFacadeBrokerClient.start({
-    ...resolveAspcFacadeStartOptions(),
-    env: process.env as Record<string, string>,
-  })
+export async function startAspcFacadeBrokerClient(
+  timing?: PrecompileLaunchTimingContext | undefined
+): Promise<AspcFacadeBrokerClient> {
+  const startClient = () =>
+    AspcFacadeBrokerClient.start({
+      ...resolveAspcFacadeStartOptions(),
+      env: process.env as Record<string, string>,
+    })
+  const client = timing
+    ? await observePrecompileLaunchSpan('precompile-facade-spawn', timing, startClient)
+    : await startClient()
   try {
-    const hello = await client.hello()
+    const hello = timing
+      ? await observePrecompileLaunchSpan('precompile-facade-hello', timing, () => client.hello())
+      : await client.hello()
     if (!hello.capabilities.compileHarnessInvocation) {
       throw new HrcRuntimeUnavailableError(
         'ASPC facade does not support harness invocation compilation',

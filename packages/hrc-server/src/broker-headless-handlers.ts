@@ -27,6 +27,7 @@ import {
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
+import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 import {
   assertRuntimeNotBusy,
   classifyBrokerInputFailure,
@@ -281,9 +282,11 @@ export async function startHeadlessBrokerRuntime(
   const turnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
   const now = timestamp()
-  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now)
+  const runtimeId = `rt-${randomUUID()}`
+  const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
+  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
 
-  const client = await startAspcFacadeBrokerClient()
+  const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
   const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
   try {
@@ -299,10 +302,11 @@ export async function startHeadlessBrokerRuntime(
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+        timing,
         ids: {
           requestId: () => `req-${randomUUID()}`,
           operationId: () => `op-${randomUUID()}`,
-          runtimeId: () => `rt-${randomUUID()}`,
+          runtimeId: () => runtimeId,
           invocationId: () => `inv-${randomUUID()}`,
           initialInputId: () => `input-${randomUUID()}`,
           runId: () => runId,

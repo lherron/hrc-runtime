@@ -1,4 +1,6 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { endianness } from 'node:os'
 import type {
   HrcAppSessionRecord,
   HrcAppSessionSpec,
@@ -34,6 +36,88 @@ import {
   serializeJson,
   toSessionRef,
 } from './shared.js'
+
+type SessionWriteTimingContext = {
+  transport: 'headless' | 'interactive' | 'preview'
+  runtimeId: string
+  boundMs?: number | undefined
+  logger: {
+    info(message: string, fields: Record<string, unknown>): void
+    warn(message: string, fields: Record<string, unknown>): void
+  }
+}
+
+type WalObservation = {
+  bytes: number
+  checkpointSequence?: number | undefined
+  maxFrame?: number | undefined
+  backfilledFrames?: number | undefined
+  backfillAttemptedFrames?: number | undefined
+}
+
+function readWalObservation(db: Database): WalObservation {
+  const walPath = `${db.filename}-wal`
+  const shmPath = `${db.filename}-shm`
+  const observation: WalObservation = { bytes: 0 }
+  let fd: number | undefined
+  try {
+    observation.bytes = statSync(walPath).size
+    if (observation.bytes >= 16) {
+      fd = openSync(walPath, 'r')
+      const header = Buffer.alloc(16)
+      if (readSync(fd, header, 0, header.length, 0) === header.length) {
+        observation.checkpointSequence = header.readUInt32BE(12)
+      }
+      closeSync(fd)
+      fd = undefined
+    }
+
+    fd = openSync(shmPath, 'r')
+    const walIndex = Buffer.alloc(132)
+    if (readSync(fd, walIndex, 0, walIndex.length, 0) === walIndex.length) {
+      const readUint32 = (offset: number) =>
+        endianness() === 'LE' ? walIndex.readUInt32LE(offset) : walIndex.readUInt32BE(offset)
+      observation.maxFrame = readUint32(16)
+      observation.backfilledFrames = readUint32(96)
+      observation.backfillAttemptedFrames = readUint32(128)
+    }
+  } catch {
+    // Sidecars can disappear between stat/open when another connection checkpoints.
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+  return observation
+}
+
+function readSynchronous(db: Database): number {
+  try {
+    const row = db.query<{ synchronous: number }, []>('PRAGMA synchronous').get()
+    return row?.synchronous ?? -1
+  } catch {
+    return -1
+  }
+}
+
+function readWalAutocheckpointPages(db: Database): number {
+  try {
+    const row = db.query<{ wal_autocheckpoint: number }, []>('PRAGMA wal_autocheckpoint').get()
+    return row?.wal_autocheckpoint ?? 0
+  } catch {
+    return 0
+  }
+}
+
+function emitSessionTiming(
+  timing: SessionWriteTimingContext,
+  level: 'info' | 'warn',
+  fields: Record<string, unknown>
+): void {
+  try {
+    timing.logger[level]('broker.timing', fields)
+  } catch {
+    // Timing diagnostics must never alter a session write outcome.
+  }
+}
 
 export class ContinuityRepository {
   constructor(private readonly db: Database) {}
@@ -204,21 +288,104 @@ export class SessionRepository {
   updateIntent(
     hostSessionId: string,
     lastAppliedIntentJson: HrcRuntimeIntent | undefined,
-    updatedAt: string
+    updatedAt: string,
+    timing?: SessionWriteTimingContext | undefined
   ): HrcSessionRecord | null {
-    execute(
-      this.db,
-      `
-        UPDATE sessions
-        SET last_applied_intent_json = ?, updated_at = ?
-        WHERE host_session_id = ?
-      `,
-      serializeJson(lastAppliedIntentJson),
-      updatedAt,
-      hostSessionId
-    )
+    const update = () => {
+      execute(
+        this.db,
+        `
+          UPDATE sessions
+          SET last_applied_intent_json = ?, updated_at = ?
+          WHERE host_session_id = ?
+        `,
+        serializeJson(lastAppliedIntentJson),
+        updatedAt,
+        hostSessionId
+      )
 
-    return this.getByHostSessionId(hostSessionId)
+      return this.getByHostSessionId(hostSessionId)
+    }
+
+    if (!timing) return update()
+
+    const phase = 'precompile-update-intent'
+    const startedAt = performance.now()
+    const walBefore = readWalObservation(this.db)
+    const synchronous = readSynchronous(this.db)
+    const walAutocheckpointPages = readWalAutocheckpointPages(this.db)
+    let boundWarningEmitted = false
+    let boundTimer: ReturnType<typeof setTimeout> | undefined
+    if (timing.boundMs !== undefined) {
+      boundTimer = setTimeout(() => {
+        boundWarningEmitted = true
+        emitSessionTiming(timing, 'warn', {
+          phase,
+          transport: timing.transport,
+          runtimeId: timing.runtimeId,
+          boundMs: timing.boundMs,
+          durMs: performance.now() - startedAt,
+        })
+      }, timing.boundMs)
+    }
+
+    try {
+      return update()
+    } finally {
+      if (boundTimer !== undefined) clearTimeout(boundTimer)
+      const durMs = performance.now() - startedAt
+      if (!boundWarningEmitted && timing.boundMs !== undefined && durMs >= timing.boundMs) {
+        emitSessionTiming(timing, 'warn', {
+          phase,
+          transport: timing.transport,
+          runtimeId: timing.runtimeId,
+          boundMs: timing.boundMs,
+          durMs,
+        })
+      }
+
+      const walAfter = readWalObservation(this.db)
+      const checkpointRestarted =
+        walBefore.checkpointSequence !== undefined &&
+        walAfter.checkpointSequence !== undefined &&
+        walBefore.checkpointSequence !== walAfter.checkpointSequence
+      const checkpointTruncated = walAfter.bytes < walBefore.bytes
+      const walFramesChanged =
+        walAfter.maxFrame !== undefined && walAfter.maxFrame !== walBefore.maxFrame
+      const passiveAutocheckpointRan =
+        walFramesChanged &&
+        walAutocheckpointPages > 0 &&
+        walAfter.maxFrame !== undefined &&
+        walAfter.maxFrame >= walAutocheckpointPages
+      const checkpointProgressed =
+        (walAfter.backfilledFrames ?? 0) > (walBefore.backfilledFrames ?? 0) ||
+        (walAfter.backfillAttemptedFrames ?? 0) > (walBefore.backfillAttemptedFrames ?? 0)
+      const checkpointRan =
+        passiveAutocheckpointRan ||
+        checkpointProgressed ||
+        checkpointRestarted ||
+        checkpointTruncated
+      const checkpointMode = passiveAutocheckpointRan
+        ? 'passive'
+        : checkpointTruncated
+          ? 'truncate'
+          : checkpointRestarted
+            ? 'restart'
+            : checkpointProgressed
+              ? 'unknown'
+              : 'none'
+      emitSessionTiming(timing, 'info', {
+        phase,
+        transport: timing.transport,
+        runtimeId: timing.runtimeId,
+        durMs,
+        walBytesBefore: walBefore.bytes,
+        walBytesAfter: walAfter.bytes,
+        checkpointRan,
+        checkpointMode,
+        synchronous,
+      })
+    }
   }
 
   updateParsedScope(

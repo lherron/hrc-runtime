@@ -5,6 +5,7 @@ import type { HrcRuntimeIntent, RestartStyle } from 'hrc-core'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { isInteractiveTmuxBrokerIntent, shouldUseHeadlessTransport } from './broker-decisions.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
+import { createPrecompileLaunchTimingContext } from './precompile-launch-timing.js'
 
 export type BrokerRunPreview = {
   controllerKind: 'harness-broker'
@@ -39,7 +40,9 @@ export async function buildBrokerRunPreview(
     return undefined
   }
 
-  const client = await startAspcFacadeBrokerClient()
+  const runtimeId = `dry-rt-${randomUUID()}`
+  const timing = createPrecompileLaunchTimingContext('preview', runtimeId)
+  const client = await startAspcFacadeBrokerClient(timing)
 
   try {
     const compiled = await compileBrokerRuntimePlan(
@@ -51,10 +54,11 @@ export async function buildBrokerRunPreview(
       },
       {
         compileHarnessInvocation: (request) => client.compileHarnessInvocation(request),
+        timing,
         ids: {
           requestId: () => `dry-req-${randomUUID()}`,
           operationId: () => `dry-op-${randomUUID()}`,
-          runtimeId: () => `dry-rt-${randomUUID()}`,
+          runtimeId: () => runtimeId,
           invocationId: () => `dry-inv-${randomUUID()}`,
           initialInputId: () => `dry-input-${randomUUID()}`,
           runId: () => `dry-run-${randomUUID()}`,
