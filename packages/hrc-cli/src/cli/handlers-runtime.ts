@@ -344,9 +344,10 @@ function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
 
 /**
  * Record-level GC for orphaned runtime store rows (T-05441). Distinct from
- * `runtime sweep` (which terminates live processes/tmux): prune DELETES the
- * store row for genuinely orphaned records. Dry-run by default; mutation
- * requires `--yes`, mirroring the sweep mutation gate.
+ * `runtime sweep`, which marks aged ready/busy rows stale without terminating
+ * processes or tmux: prune DELETES the store row for genuinely orphaned
+ * records. Dry-run by default; mutation requires `--yes`, mirroring the sweep
+ * mutation gate.
  */
 export async function cmdRuntimePrune(args: string[]): Promise<void> {
   const transport = parseTransportFlag(args)

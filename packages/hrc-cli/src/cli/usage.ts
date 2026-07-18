@@ -219,7 +219,7 @@ Commands:
                                      List runtimes; for one target use hrc show <scope> or runtime inspect <id>
   runtime inspect <runtimeId> [--json] Inspect one runtime
   runtime sweep [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--drop-continuation] [--dry-run|--yes] [--json]
-                                     Sweep stale runtimes
+                                     Mark aged ready,busy runtimes stale; use runtime prune to delete stale rows
   runtime prune [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--dry-run|--yes] [--json]
                                      Prune orphaned stale runtime records (deletes rows)
   runtime capture <runtimeId>         Capture tmux pane text

@@ -121,7 +121,7 @@ export async function handleSweepRuntimes(
         runtimeId: runtime.runtimeId,
         hostSessionId: runtime.hostSessionId,
         transport: runtime.transport as SweepRuntimeTransport,
-        status: 'skipped',
+        status: 'stale',
         droppedContinuation: false,
       })
     }
