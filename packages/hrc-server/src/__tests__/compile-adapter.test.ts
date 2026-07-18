@@ -462,6 +462,83 @@ describe('compileBrokerRuntimePlan (W2 compile adapter)', () => {
     expect(Object.isFrozen(result.startRequest)).toBe(true)
   })
 
+  it('reports a bounded, redacted field diff when dispatch and CLI startRequests differ', async () => {
+    const compileHarnessInvocation = async (request: {
+      compileRequest: RuntimeCompileRequest
+    }): Promise<AspcCompileHarnessInvocationResponse> => {
+      const identity = request.compileRequest.identity as RuntimeIdentityAllocation
+      const { profile } = makeBrokerProfile(identity)
+      const response = makeAspcCompileResponse(identity, [profile])
+      if (!response.ok) return response
+
+      const cliStartRequest = {
+        ...response.startRequest,
+        spec: {
+          ...response.startRequest.spec,
+          process: {
+            ...response.startRequest.spec.process,
+            cwd: '/tmp/cli-work',
+            lockedEnv: {
+              ...response.startRequest.spec.process.lockedEnv,
+              API_TOKEN: 'cli-secret-value',
+            },
+          },
+        },
+        initialInput: {
+          ...response.startRequest.initialInput,
+          content: [{ type: 'text', text: `cli-${'x'.repeat(20_000)}` }],
+        },
+      } as unknown as typeof response.startRequest
+      const daemonStartRequest = {
+        ...cliStartRequest,
+        spec: {
+          ...cliStartRequest.spec,
+          process: {
+            ...cliStartRequest.spec.process,
+            cwd: '/tmp/daemon-work',
+            lockedEnv: {
+              ...cliStartRequest.spec.process.lockedEnv,
+              API_TOKEN: 'daemon-secret-value',
+            },
+          },
+        },
+        initialInput: {
+          ...cliStartRequest.initialInput,
+          content: [{ type: 'text', text: `daemon-${'y'.repeat(20_000)}` }],
+        },
+      } as unknown as typeof response.startRequest
+
+      return {
+        ...response,
+        startRequest: cliStartRequest,
+        dispatchRequest: {
+          ...response.dispatchRequest,
+          startRequest: daemonStartRequest,
+        },
+      }
+    }
+
+    const result = await compileBrokerRuntimePlan(STANDARD_INPUT(), {
+      compileHarnessInvocation,
+      ids: makeIdAllocator(),
+    })
+
+    expect(result.admitted).toBe(false)
+    if (result.admitted) return
+    expect(result.code).toBe('start-request-hash-mismatch')
+    const diagnosticText = result.diagnostics.map((diagnostic) => diagnostic.message).join('\n')
+    expect(diagnosticText).toContain('/spec/process/cwd')
+    expect(diagnosticText).toContain('/tmp/daemon-work')
+    expect(diagnosticText).toContain('/tmp/cli-work')
+    expect(diagnosticText).toContain('/spec/process/lockedEnv/API_TOKEN')
+    expect(diagnosticText).not.toContain('daemon-secret-value')
+    expect(diagnosticText).not.toContain('cli-secret-value')
+    expect(diagnosticText).toMatch(/redact/i)
+    expect(diagnosticText).toContain('/initialInput/content/0/text')
+    expect(diagnosticText).toMatch(/truncat|omitt|limit|cap/i)
+    expect(diagnosticText.length).toBeLessThan(10_000)
+  })
+
   it('propagates a selector rejection without falling back (ok:false compile)', async () => {
     const compileHarnessInvocation = async (): Promise<AspcCompileHarnessInvocationResponse> =>
       makeAspcFailedCompileResponse()

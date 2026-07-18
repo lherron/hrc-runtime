@@ -62,4 +62,22 @@ describe('explainScopeCommandError — RUNTIME_UNAVAILABLE rendering', () => {
     expect(out).toContain('• error E_DRIVER: driver unavailable')
     expect(out).not.toContain('cause:')
   })
+
+  it('prints start-request field-diff paths from admission diagnostics', () => {
+    const err = domainError('interactive broker compile/admission rejected', {
+      code: 'start-request-hash-mismatch',
+      route: 'interactive-broker',
+      diagnostics: [
+        {
+          level: 'error',
+          code: 'start-request-field-diff',
+          message: '/spec/process/cwd: daemon="/tmp/daemon-work", CLI="/tmp/cli-work"',
+        },
+      ],
+    })
+
+    const out = explainScopeCommandError('start', err, 'room-coordinator').message
+
+    expect(out).toContain('/spec/process/cwd')
+  })
 })
