@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { createSubscriberDeliveryRegistry } from '../subscriber-delivery-accounting'
+import { createSubscriberAdmissionRegistry } from '../subscriber-admission-accounting'
 
-describe('follow-stream subscriber delivery accounting', () => {
-  it('advances delivery gauges only when enqueued events drain', () => {
+describe('follow-stream subscriber admission accounting', () => {
+  it('reports equal enqueue and stream-acceptance gauges when every event is admitted', () => {
     let now = '2026-07-18T12:00:00.000Z'
-    const registry = createSubscriberDeliveryRegistry({
+    const registry = createSubscriberAdmissionRegistry({
       recentlyClosedLimit: 2,
       now: () => now,
     })
@@ -17,9 +17,9 @@ describe('follow-stream subscriber delivery accounting', () => {
     })
 
     for (let seq = 1; seq <= 3; seq += 1) {
-      subscription.recordEnqueued(seq)
+      subscription.recordEnqueued(seq, 1)
       now = `2026-07-18T12:00:0${seq}.000Z`
-      subscription.recordDrained()
+      subscription.recordStreamAccepted(seq, 1)
     }
 
     expect(registry.snapshot().active).toEqual([
@@ -28,38 +28,54 @@ describe('follow-stream subscriber delivery accounting', () => {
         selector: { fromSeq: 1, scopeRef: 'agent:test:project:hrc-runtime' },
         remoteInfo: 'unix:hrc-test.sock',
         openedAt: '2026-07-18T12:00:00.000Z',
-        lastDeliveredSeq: 3,
-        deliveredCount: 3,
-        lastWriteAt: '2026-07-18T12:00:03.000Z',
+        lastEnqueuedSeq: 3,
+        lastStreamAcceptedSeq: 3,
+        enqueuedCount: 3,
+        streamAcceptedCount: 3,
+        pendingCount: 0,
+        desiredSize: 1,
+        pendingSince: null,
+        lastStreamAcceptedAt: '2026-07-18T12:00:03.000Z',
         keepaliveOnlySince: null,
       }),
     ])
   })
 
-  it('keeps lastDeliveredSeq behind ledger head while the sink is wedged', () => {
-    const registry = createSubscriberDeliveryRegistry({
+  it('counts one pending sparse event when only the first event is stream-accepted', () => {
+    let now = '2026-07-18T12:01:00.000Z'
+    const registry = createSubscriberAdmissionRegistry({
       recentlyClosedLimit: 2,
-      now: () => '2026-07-18T12:01:00.000Z',
+      now: () => now,
     })
     const subscription = registry.open({
       route: 'events',
       selector: { fromSeq: 1 },
-      openedAt: '2026-07-18T12:01:00.000Z',
+      openedAt: now,
     })
 
-    subscription.recordEnqueued(1)
-    subscription.recordDrained()
-    for (let seq = 2; seq <= 5; seq += 1) subscription.recordEnqueued(seq)
+    subscription.recordEnqueued(10, 1)
+    now = '2026-07-18T12:01:01.000Z'
+    subscription.recordStreamAccepted(10, 0)
+    now = '2026-07-18T12:01:02.000Z'
+    subscription.recordEnqueued(20, 0)
 
-    const ledgerHead = 5
-    const active = registry.snapshot().active[0]
-    expect(active?.lastDeliveredSeq).toBe(1)
-    expect(active?.lastDeliveredSeq).toBeLessThan(ledgerHead)
-    expect(active?.deliveredCount).toBe(1)
+    // Admission telemetry is not a consumer-wedge oracle: an OS-stopped client may
+    // remain at pendingCount=0 until Bun/kernel buffers saturate.
+    expect(registry.snapshot().active[0]).toEqual(
+      expect.objectContaining({
+        lastEnqueuedSeq: 20,
+        lastStreamAcceptedSeq: 10,
+        enqueuedCount: 2,
+        streamAcceptedCount: 1,
+        pendingCount: 1,
+        desiredSize: 0,
+        pendingSince: '2026-07-18T12:01:02.000Z',
+      })
+    )
   })
 
-  it('moves closed subscriptions into a bounded recently-closed ring with final seq', () => {
-    const registry = createSubscriberDeliveryRegistry({
+  it('moves closed subscriptions into a bounded ring with their final admission gauges', () => {
+    const registry = createSubscriberAdmissionRegistry({
       recentlyClosedLimit: 2,
       now: () => '2026-07-18T12:02:00.000Z',
     })
@@ -70,15 +86,17 @@ describe('follow-stream subscriber delivery accounting', () => {
         selector: { invocationId: `inv-${seq}`, afterSeq: 0 },
         openedAt: '2026-07-18T12:02:00.000Z',
       })
-      subscription.recordEnqueued(seq)
-      subscription.recordDrained()
+      subscription.recordEnqueued(seq, 1)
+      subscription.recordStreamAccepted(seq, 1)
       subscription.close()
     }
 
     const snapshot = registry.snapshot()
     expect(snapshot.active).toEqual([])
     expect(snapshot.recentlyClosed).toHaveLength(2)
-    expect(snapshot.recentlyClosed.map((entry) => entry.lastDeliveredSeq).sort()).toEqual([2, 3])
+    expect(snapshot.recentlyClosed.map((entry) => entry.lastStreamAcceptedSeq).sort()).toEqual([
+      2, 3,
+    ])
     expect(snapshot.recentlyClosed.every((entry) => entry.closedAt !== null)).toBe(true)
   })
 })
