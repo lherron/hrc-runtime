@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { main } from '../cli'
-import { cmdMonitorWatch } from '../monitor-watch'
+import { parseMonitorSelectors } from '../monitor-selectors'
+import { cmdMonitorWatch, waitForAnyMonitorCondition } from '../monitor-watch'
 
 const TASK_ID = 'T-06515'
 const OTHER_TASK_ID = 'T-99999'
@@ -24,6 +25,7 @@ type FixtureEvent = {
   generation: number
   runtimeId: string
   turnId: string
+  runId: string
   result?: string | undefined
 }
 
@@ -43,7 +45,7 @@ type FixtureState = {
   runtimes: Array<{
     runtimeId: string
     hostSessionId: string
-    status: 'busy' | 'idle'
+    status: 'busy' | 'idle' | 'dead'
     transport: 'tmux'
     activeTurnId: string | null
   }>
@@ -75,7 +77,8 @@ function fixtureEvent(
   seq: number,
   scopeRef: string,
   eventKind = 'turn.started',
-  result?: string
+  result?: string,
+  runId = ids(scopeRef).turnId
 ): FixtureEvent {
   const identity = ids(scopeRef)
   return {
@@ -92,9 +95,38 @@ function fixtureEvent(
     hostSessionId: identity.hostSessionId,
     generation: 1,
     runtimeId: identity.runtimeId,
-    turnId: identity.turnId,
+    turnId: runId,
+    runId,
     ...(result ? { result } : {}),
   }
+}
+
+function deadFixtureState(
+  scopes: string[],
+  events: FixtureEvent[],
+  deadScope: string
+): FixtureState {
+  const state = fixtureState(scopes, events, new Set([deadScope]))
+  const runtime = state.runtimes.find(
+    (candidate) => candidate.runtimeId === ids(deadScope).runtimeId
+  )
+  if (!runtime) throw new Error(`missing runtime for ${deadScope}`)
+  runtime.status = 'dead'
+  return state
+}
+
+async function waitForAny(
+  initialState: FixtureState,
+  selectorRaws: string[],
+  buildMonitorState: () => Promise<FixtureState>,
+  timeoutMs = 800
+): Promise<{ outcome: Record<string, unknown>; scopeRef: string }> {
+  return (await waitForAnyMonitorCondition(
+    initialState as never,
+    { until: 'terminal', timeoutMs },
+    parseMonitorSelectors(selectorRaws),
+    { buildMonitorState: buildMonitorState as never }
+  )) as { outcome: Record<string, unknown>; scopeRef: string }
 }
 
 function fixtureState(
@@ -263,7 +295,11 @@ describe('T-06515 monitor selector-set grammar', () => {
 
 describe('T-06515 any-match and default terminal gating', () => {
   test('first terminal stream wins and the final ndjson event names its scopeRef', async () => {
-    const state = fixtureState(
+    const initial = fixtureState(
+      [COORD_SCOPE, WORKER_SCOPE],
+      [fixtureEvent(1, COORD_SCOPE), fixtureEvent(2, WORKER_SCOPE)]
+    )
+    const finished = fixtureState(
       [COORD_SCOPE, WORKER_SCOPE],
       [
         fixtureEvent(1, COORD_SCOPE),
@@ -283,7 +319,13 @@ describe('T-06515 any-match and default terminal gating', () => {
         '--format',
         'ndjson',
       ],
-      async () => state
+      (() => {
+        let reads = 0
+        return async () => {
+          reads += 1
+          return reads === 1 ? initial : finished
+        }
+      })()
     )
 
     expect(result.exitCode).toBe(0)
@@ -296,20 +338,24 @@ describe('T-06515 any-match and default terminal gating', () => {
   })
 
   test('single concrete runtime follow defaults to terminal while --forever overrides it', async () => {
-    const state = fixtureState([COORD_SCOPE], [], new Set([COORD_SCOPE]))
-    const controller = new AbortController()
+    const initial = fixtureState([COORD_SCOPE], [fixtureEvent(1, COORD_SCOPE)])
+    const finished = fixtureState(
+      [COORD_SCOPE],
+      [
+        fixtureEvent(1, COORD_SCOPE),
+        fixtureEvent(2, COORD_SCOPE, 'turn.completed', 'turn_succeeded'),
+      ]
+    )
     let reads = 0
     const defaultResult = await invokeWatch(
       {
         selector: `runtime:${ids(COORD_SCOPE).runtimeId}`,
         follow: true,
         format: 'ndjson',
-        signal: controller.signal,
       },
       async () => {
         reads += 1
-        if (reads > 1) controller.abort()
-        return state
+        return reads === 1 ? initial : finished
       }
     )
 
@@ -326,7 +372,7 @@ describe('T-06515 any-match and default terminal gating', () => {
       async () => {
         foreverReads += 1
         if (foreverReads > 1) foreverController.abort()
-        return state
+        return foreverReads === 1 ? initial : finished
       }
     )
 
@@ -360,6 +406,123 @@ describe('T-06515 any-match and default terminal gating', () => {
     )
 
     expect(result.exitCode).toBe(130)
+  })
+
+  test('AC1: a late idle scope cannot win fan-in before a real terminal event', async () => {
+    const initial = fixtureState([COORD_SCOPE], [fixtureEvent(1, COORD_SCOPE)])
+    const lateIdle = fixtureState(
+      [COORD_SCOPE, WORKER_SCOPE],
+      [fixtureEvent(1, COORD_SCOPE)],
+      new Set([WORKER_SCOPE])
+    )
+    const finished = fixtureState(
+      [COORD_SCOPE, WORKER_SCOPE],
+      [
+        fixtureEvent(1, COORD_SCOPE),
+        fixtureEvent(2, COORD_SCOPE, 'turn.completed', 'turn_succeeded', 'run-coordinator'),
+      ],
+      new Set([WORKER_SCOPE])
+    )
+    let reads = 0
+
+    const winner = await waitForAny(initial, [TASK_ID], async () => {
+      reads += 1
+      return reads <= 4 ? lateIdle : finished
+    })
+
+    expect(winner.scopeRef).toBe(COORD_SCOPE)
+    expect(winner.outcome).toMatchObject({
+      result: 'turn_succeeded',
+      exitCode: 0,
+      runId: 'run-coordinator',
+    })
+  })
+
+  test.each(['initial', 'late'] as const)(
+    'AC5: %s never-ran candidates are non-terminal',
+    async (discovery) => {
+      const initial = fixtureState(
+        discovery === 'initial' ? [COORD_SCOPE, WORKER_SCOPE] : [COORD_SCOPE],
+        [fixtureEvent(1, COORD_SCOPE)],
+        discovery === 'initial' ? new Set([WORKER_SCOPE]) : new Set()
+      )
+      const discovered = fixtureState(
+        [COORD_SCOPE, WORKER_SCOPE],
+        [fixtureEvent(1, COORD_SCOPE)],
+        new Set([WORKER_SCOPE])
+      )
+
+      const winner = await waitForAny(initial, [TASK_ID], async () => discovered, 250)
+
+      expect(winner.outcome).toMatchObject({ result: 'timeout', exitCode: 1 })
+    }
+  )
+
+  test.each(['initial', 'late'] as const)(
+    'AC5/AC6: %s stillborn candidates resolve from replayable runtime death',
+    async (discovery) => {
+      const scopes = discovery === 'initial' ? [COORD_SCOPE, WORKER_SCOPE] : [COORD_SCOPE]
+      const initial = fixtureState(
+        scopes,
+        [fixtureEvent(1, COORD_SCOPE)],
+        discovery === 'initial' ? new Set([WORKER_SCOPE]) : new Set()
+      )
+      const dead = deadFixtureState(
+        [COORD_SCOPE, WORKER_SCOPE],
+        [
+          fixtureEvent(1, COORD_SCOPE),
+          fixtureEvent(2, WORKER_SCOPE, 'runtime.dead', 'runtime_dead'),
+        ],
+        WORKER_SCOPE
+      )
+      let reads = 0
+
+      const winner = await waitForAny(initial, [TASK_ID], async () => {
+        reads += 1
+        return discovery === 'initial' && reads < 3 ? initial : dead
+      })
+
+      expect(winner.scopeRef).toBe(WORKER_SCOPE)
+      expect(winner.outcome).toMatchObject({ result: 'runtime_dead', exitCode: 0 })
+    }
+  )
+
+  test('AC10/AC11: implicit follow ignores pre-fence terminal history and reports the next run', async () => {
+    const initial = fixtureState(
+      [COORD_SCOPE],
+      [fixtureEvent(1, COORD_SCOPE, 'turn.completed', 'turn_succeeded', 'run-prior')],
+      new Set([COORD_SCOPE])
+    )
+    const finished = fixtureState(
+      [COORD_SCOPE],
+      [
+        fixtureEvent(1, COORD_SCOPE, 'turn.completed', 'turn_succeeded', 'run-prior'),
+        fixtureEvent(2, COORD_SCOPE, 'turn.started', undefined, 'run-next'),
+        fixtureEvent(3, COORD_SCOPE, 'turn.completed', 'turn_succeeded', 'run-next'),
+      ]
+    )
+    let reads = 0
+
+    const result = await invokeWatch(
+      {
+        selector: `runtime:${ids(COORD_SCOPE).runtimeId}`,
+        follow: true,
+        format: 'ndjson',
+      },
+      async () => {
+        reads += 1
+        return reads === 1 ? initial : finished
+      }
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(jsonLines(result.stdout).at(-1)).toMatchObject({
+      event: 'monitor.completed',
+      condition: 'terminal',
+      scopeRef: COORD_SCOPE,
+      runId: 'run-next',
+      exitCode: 0,
+    })
   })
 })
 
@@ -439,6 +602,8 @@ test('monitor wait accepts multiple selectors and reports the first terminal sco
       `scope:${WORKER_SCOPE}`,
       '--until',
       'terminal',
+      '--since',
+      '1',
       '--timeout',
       '25ms',
       '--json',
@@ -460,6 +625,7 @@ test('monitor wait accepts multiple selectors and reports the first terminal sco
     event: 'monitor.completed',
     condition: 'terminal',
     scopeRef: WORKER_SCOPE,
+    runId: ids(WORKER_SCOPE).turnId,
     exitCode: 0,
   })
 })

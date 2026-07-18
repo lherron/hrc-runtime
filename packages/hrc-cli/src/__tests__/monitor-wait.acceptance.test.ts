@@ -68,6 +68,7 @@ type MonitorFixtureEvent = {
   hostSessionId: string
   generation: number
   runtimeId: string
+  runId?: string | undefined
   turnId?: string | undefined
   messageId?: string | undefined
   messageSeq?: number | undefined
@@ -328,6 +329,52 @@ describe('monitor wait CLI acceptance (T-01291 / F2c)', () => {
       })
     }
   )
+
+  test('AC3/AC11: --since replays only eligible terminal evidence and reports its runId', async () => {
+    const state = createFixtureState({
+      activeTurnId: null,
+      runtimeStatus: 'idle',
+      events: [
+        event(100, 'turn.finished', {
+          turnId: 'turn-prior',
+          runId: 'run-prior',
+          result: 'turn_failed',
+        }),
+        event(101, 'turn.started', { turnId: 'turn-target', runId: 'run-target' }),
+        event(102, 'turn.finished', {
+          turnId: 'turn-target',
+          runId: 'run-target',
+          result: 'turn_succeeded',
+        }),
+      ],
+    })
+
+    const cli = await runCli(
+      [
+        'monitor',
+        'wait',
+        `session:${SESSION_REF}`,
+        '--until',
+        'terminal',
+        '--since',
+        '101',
+        '--timeout',
+        '25ms',
+        '--json',
+      ],
+      fixtureEnv(state)
+    )
+
+    expect(cli.exitCode).toBe(0)
+    expect(parseSingleJsonLine(cli.stdout)).toMatchObject({
+      event: 'monitor.completed',
+      condition: 'terminal',
+      result: 'turn_succeeded',
+      runId: 'run-target',
+      scopeRef: SCOPE_REF,
+      exitCode: 0,
+    })
+  })
 
   test.each(['response', 'response-or-idle'] as const)(
     'rejects session selectors for --until %s with cli-kit usage exit 2',

@@ -14,6 +14,7 @@ type MonitorCondition =
 type MonitorOutcome = {
   result: string
   exitCode: number
+  runId?: string | undefined
   reason?: string | undefined
   failureKind?: string | undefined
   eventStream?: unknown[] | undefined
@@ -102,6 +103,7 @@ type MonitorFixtureEvent = {
   hostSessionId: string
   generation: number
   runtimeId: string
+  runId?: string | undefined
   turnId?: string | undefined
   messageId?: string | undefined
   replyToMessageId?: string | undefined
@@ -222,18 +224,49 @@ async function waitForCondition(
   })
 }
 
+async function waitForTerminalAfterCapture(
+  state: MonitorFixtureState,
+  appendedEvents: MonitorFixtureEvent[]
+): Promise<MonitorOutcome> {
+  const [{ createMonitorReader }, { createMonitorConditionEngine }] = await Promise.all([
+    loadMonitorReaderModule(),
+    loadMonitorConditionEngineModule(),
+  ])
+  const reader = createMonitorReader(state)
+  const originalCaptureStart = reader.captureStart
+  reader.captureStart = async (selector, options) =>
+    originalCaptureStart(selector, {
+      ...options,
+      afterSnapshot: () => {
+        options?.afterSnapshot?.()
+        state.events.push(...appendedEvents)
+      },
+    })
+
+  return createMonitorConditionEngine(reader).wait({
+    selector: parseSelector('session:agent:cody:project:agent-spaces:task:T-01288/lane:main'),
+    condition: 'terminal',
+    timeoutMs: 25,
+  })
+}
+
 // H-00104 Node C (C-0004): `--until terminal` — the wait the Invocation-DAG
 // coordinator uses to close out one attempt. ANY terminal state satisfies it
 // (exit 0); only timeout/stall is non-zero.
 describe('terminal condition (C-0004)', () => {
   test('resolves on turn.finished success with exit 0', async () => {
     const state = createFixtureState({
-      events: [
-        event(100, 'turn.started', { turnId: 'turn-captured' }),
-        event(101, 'turn.finished', { turnId: 'turn-captured', result: 'turn_succeeded' }),
-      ],
+      events: [event(100, 'turn.started', { turnId: 'turn-captured' })],
     })
-    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+    await expect(
+      waitForTerminalAfterCapture(state, [
+        event(101, 'turn.finished', {
+          turnId: 'turn-captured',
+          runId: 'run-captured',
+          result: 'turn_succeeded',
+        }),
+      ])
+    ).resolves.toMatchObject({
       result: 'turn_succeeded',
       exitCode: 0,
     })
@@ -241,16 +274,18 @@ describe('terminal condition (C-0004)', () => {
 
   test('resolves on a FAILED turn with exit 0 (reaching terminal is the success)', async () => {
     const state = createFixtureState({
-      events: [
-        event(100, 'turn.started', { turnId: 'turn-captured' }),
+      events: [event(100, 'turn.started', { turnId: 'turn-captured' })],
+    })
+    await expect(
+      waitForTerminalAfterCapture(state, [
         event(101, 'turn.finished', {
           turnId: 'turn-captured',
+          runId: 'run-captured',
           result: 'turn_failed',
           failureKind: 'tool',
         }),
-      ],
-    })
-    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      ])
+    ).resolves.toMatchObject({
       result: 'turn_failed',
       exitCode: 0,
     })
@@ -258,27 +293,83 @@ describe('terminal condition (C-0004)', () => {
 
   test('resolves on runtime death with exit 0 (not a failure code)', async () => {
     const state = createFixtureState({
-      events: [
-        event(100, 'turn.started', { turnId: 'turn-captured' }),
+      events: [event(100, 'turn.started', { turnId: 'turn-captured' })],
+    })
+    await expect(
+      waitForTerminalAfterCapture(state, [
         event(101, 'runtime.dead', {
           turnId: 'turn-captured',
+          runId: 'run-captured',
           result: 'runtime_dead',
           failureKind: 'process',
         }),
-      ],
-    })
-    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      ])
+    ).resolves.toMatchObject({
       result: 'runtime_dead',
       exitCode: 0,
     })
   })
 
-  test('resolves immediately when there is no active turn', async () => {
-    const state = createFixtureState({ activeTurnId: null, runtimeStatus: 'idle' })
-    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
-      result: 'no_active_turn',
-      exitCode: 0,
+  test('AC2: a warm idle scope ignores prior terminal history and resolves on the next run', async () => {
+    const state = createFixtureState({
+      activeTurnId: null,
+      runtimeStatus: 'idle',
+      events: [
+        event(100, 'turn.finished', {
+          turnId: 'turn-prior',
+          runId: 'run-prior',
+          result: 'turn_succeeded',
+        }),
+      ],
     })
+    await expect(waitForCondition(state, 'terminal')).resolves.toMatchObject({
+      result: 'timeout',
+      exitCode: 1,
+    })
+
+    await expect(
+      waitForTerminalAfterCapture(state, [
+        event(101, 'turn.started', { turnId: 'turn-next', runId: 'run-next' }),
+        event(102, 'turn.finished', {
+          turnId: 'turn-next',
+          runId: 'run-next',
+          result: 'turn_succeeded',
+        }),
+      ])
+    ).resolves.toMatchObject({ result: 'turn_succeeded', exitCode: 0, runId: 'run-next' })
+  })
+
+  test('AC4: an active run resolves from its post-fence terminal event, not older history', async () => {
+    const state = createFixtureState({
+      events: [
+        event(99, 'turn.finished', {
+          turnId: 'turn-prior',
+          runId: 'run-prior',
+          result: 'turn_failed',
+        }),
+        event(100, 'turn.started', { turnId: 'turn-captured', runId: 'run-captured' }),
+      ],
+    })
+
+    await expect(
+      waitForTerminalAfterCapture(state, [
+        event(101, 'turn.finished', {
+          turnId: 'turn-captured',
+          runId: 'run-captured',
+          result: 'turn_succeeded',
+        }),
+      ])
+    ).resolves.toMatchObject({ result: 'turn_succeeded', exitCode: 0, runId: 'run-captured' })
+  })
+
+  test('AC6: a runtime killed before its first turn resolves from death evidence', async () => {
+    const state = createFixtureState({ activeTurnId: null, runtimeStatus: 'idle', events: [] })
+
+    await expect(
+      waitForTerminalAfterCapture(state, [
+        event(1, 'runtime.dead', { result: 'runtime_dead', failureKind: 'process' }),
+      ])
+    ).resolves.toMatchObject({ result: 'runtime_dead', exitCode: 0 })
   })
 
   test('times out (exit 1) while a turn is still in flight', async () => {

@@ -80,6 +80,28 @@ describe('hrc monitor surface polish', () => {
     expectConditionAndExitCodeHelp(help)
   })
 
+  test('AC9: terminal help and monitor docs explain fences, fan-in, and duration risk', async () => {
+    const waitHelp = commandHelp('monitor', 'wait')
+    const watchHelp = commandHelp('monitor', 'watch')
+    const monitorDocs = await Bun.file(
+      new URL('../../../../docs/monitor-spec.md', import.meta.url)
+    ).text()
+    const cliDocs = await Bun.file(
+      new URL('../../../../docs/cli-reference.md', import.meta.url)
+    ).text()
+    const documented = `${monitorDocs}\n${cliDocs}`
+
+    for (const help of [waitHelp, watchHelp]) {
+      expect(help).toContain('--since <seq|duration>')
+      expect(help).toMatch(/first terminal.*any matching scope.*not room.*completion/i)
+    }
+    expect(documented).toMatch(/--since.*post-finish/i)
+    expect(documented).toMatch(/exact cursor.*scripts/i)
+    expect(documented).toMatch(/duration.*human convenience/i)
+    expect(documented).toMatch(/duration.*prior attempt/i)
+    expect(documented).toMatch(/wrkq monitor wait --until all-terminal/i)
+  })
+
   test('hrc info includes monitor supervision, completion, replay, and dialect guidance', () => {
     const info = buildInfoText(buildProgram())
 
