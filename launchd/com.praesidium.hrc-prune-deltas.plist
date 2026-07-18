@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/lherron</string>
+		<key>HRC_STATE_DIR</key>
+		<string>/Users/lherron/praesidium/var/state/hrc</string>
+		<key>LANG</key>
+		<string>en_US.UTF-8</string>
+		<key>PATH</key>
+		<string>/Users/lherron/.local/bin:/Users/lherron/.bun/bin:/Users/lherron/.tooling/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.praesidium.hrc-prune-deltas</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/lherron/.bun/bin/bun</string>
+		<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>
+		<string>--apply</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lherron/praesidium/var/logs/hrc-prune-deltas.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>4</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/lherron/praesidium/hrc-runtime</string>
+</dict>
+</plist>
