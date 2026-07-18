@@ -1695,6 +1695,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSubscriberAdmissionEntry",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberAdmissionEntry|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberAdmissionRoute",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberAdmissionRoute|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberAdmissionSnapshot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberAdmissionSnapshot|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSurfaceBindingRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -3027,6 +3051,14 @@
       "kind": "value",
       "file": "packages/hrc-sdk/src/client.ts",
       "hash": "hrc-sdk|HrcClient|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcSubscriberAdmissionSnapshot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|HrcSubscriberAdmissionSnapshot|type",
       "count": 1
     },
     {

@@ -17,6 +17,87 @@ import { matchesHrcLifecycleEventFilter, parseOptionalIntegerQuery } from './ser
 import { normalizeOptionalQuery, parseFromSeq } from './server-parsers.js'
 import type { FollowSubscriber, HrcEventsRouteFilters } from './server-types.js'
 import { encodeNdjson, json, serializeEvent } from './server-util.js'
+import type { SubscriberAdmissionHandle } from './subscriber-admission-accounting.js'
+
+type AdmissionQueueItem =
+  | { kind: 'event'; bytes: Uint8Array; seq: number }
+  | { kind: 'keepalive'; bytes: Uint8Array }
+
+type AdmissionQueueNode = {
+  item: AdmissionQueueItem
+  next: AdmissionQueueNode | null
+}
+
+function createStreamAdmissionQueue(admission: SubscriberAdmissionHandle): {
+  attach(controller: ReadableStreamDefaultController<Uint8Array>): void
+  enqueueEvent(bytes: Uint8Array, seq: number): void
+  enqueueKeepalive(bytes: Uint8Array): void
+  drain(): void
+  close(): void
+} {
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  let first: AdmissionQueueNode | null = null
+  let last: AdmissionQueueNode | null = null
+  let closed = false
+
+  const append = (item: AdmissionQueueItem): void => {
+    const node: AdmissionQueueNode = { item, next: null }
+    if (last) last.next = node
+    else first = node
+    last = node
+  }
+
+  const drain = (): void => {
+    while (!closed && controller !== null && (controller.desiredSize ?? 0) > 0 && first) {
+      const node = first
+      first = node.next
+      if (first === null) last = null
+      controller.enqueue(node.item.bytes)
+      const desiredSize = controller.desiredSize
+      if (node.item.kind === 'event') {
+        admission.recordStreamAccepted(node.item.seq, desiredSize)
+      } else {
+        admission.recordKeepalive(desiredSize)
+      }
+    }
+  }
+
+  return {
+    attach(nextController) {
+      if (closed) {
+        nextController.close()
+        return
+      }
+      controller = nextController
+      drain()
+    },
+    enqueueEvent(bytes, seq) {
+      if (closed) return
+      admission.recordEnqueued(seq, controller?.desiredSize ?? null)
+      append({ kind: 'event', bytes, seq })
+      drain()
+    },
+    enqueueKeepalive(bytes) {
+      if (closed) return
+      append({ kind: 'keepalive', bytes })
+      drain()
+    },
+    drain,
+    close() {
+      if (closed) return
+      closed = true
+      first = null
+      last = null
+      try {
+        controller?.close()
+      } catch {
+        // Stream may already be closed by Bun on disconnect.
+      } finally {
+        controller = null
+      }
+    },
+  }
+}
 
 export type BrokerEventsRouteSelector = {
   invocationId: string
@@ -169,8 +250,14 @@ export function handleEvents(
   }
 
   const bufferedEvents: HrcLifecycleEvent[] = []
-  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null
   let replayHighWater = fromSeq - 1
+  const admission = this.subscriberAdmissions.open({
+    route: 'events',
+    selector: { fromSeq, ...filters },
+    openedAt: new Date().toISOString(),
+  })
+  const admissionQueue = createStreamAdmissionQueue(admission)
+  let streamStarted = false
   const subscriber: FollowSubscriber = (event) => {
     if (!('hrcSeq' in event) || event.hrcSeq < fromSeq) {
       return
@@ -179,9 +266,9 @@ export function handleEvents(
       return
     }
 
-    if (controllerRef) {
+    if (streamStarted) {
       if (event.hrcSeq > replayHighWater) {
-        controllerRef.enqueue(encodeNdjson(event))
+        admissionQueue.enqueueEvent(encodeNdjson(event), event.hrcSeq)
       }
       return
     }
@@ -193,18 +280,13 @@ export function handleEvents(
   const close = () => {
     this.activeStreamClosers.delete(close)
     this.followSubscribers.delete(subscriber)
+    admission.close()
     bufferedEvents.length = 0
     if (keepaliveTimer) {
       clearInterval(keepaliveTimer)
       keepaliveTimer = null
     }
-    try {
-      controllerRef?.close()
-    } catch {
-      // Stream may already be closed by Bun on disconnect.
-    } finally {
-      controllerRef = null
-    }
+    admissionQueue.close()
   }
   this.activeStreamClosers.add(close)
 
@@ -215,22 +297,23 @@ export function handleEvents(
     start: (controller) => {
       const replayEvents = this.db.hrcEvents.listFromHrcSeq(fromSeq, filters)
       replayHighWater = replayEvents.at(-1)?.hrcSeq ?? replayHighWater
-      controllerRef = controller
-      controller.enqueue(keepaliveBytes)
+      streamStarted = true
+      admissionQueue.attach(controller)
+      admissionQueue.enqueueKeepalive(keepaliveBytes)
 
       for (const event of replayEvents) {
-        controller.enqueue(encodeNdjson(event))
+        admissionQueue.enqueueEvent(encodeNdjson(event), event.hrcSeq)
       }
 
       for (const event of bufferedEvents) {
         if (event.hrcSeq > replayHighWater) {
-          controller.enqueue(encodeNdjson(event))
+          admissionQueue.enqueueEvent(encodeNdjson(event), event.hrcSeq)
         }
       }
 
       keepaliveTimer = setInterval(() => {
         try {
-          controller.enqueue(keepaliveBytes)
+          admissionQueue.enqueueKeepalive(keepaliveBytes)
         } catch {
           // Stream closed
         }
@@ -238,6 +321,7 @@ export function handleEvents(
 
       request.signal.addEventListener('abort', close, { once: true })
     },
+    pull: () => admissionQueue.drain(),
     cancel: () => close(),
   })
 
@@ -265,8 +349,14 @@ export function handleBrokerEvents(
   }
 
   const bufferedEvents: InvocationEventEnvelope[] = []
-  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null
   let replayHighWater = selector.afterSeq
+  const admission = this.subscriberAdmissions.open({
+    route: 'broker-events',
+    selector: { ...selector },
+    openedAt: new Date().toISOString(),
+  })
+  const admissionQueue = createStreamAdmissionQueue(admission)
+  let streamStarted = false
   const subscriber = (notification: {
     envelope: InvocationEventEnvelope
     record: HrcBrokerInvocationEventRecord
@@ -276,9 +366,9 @@ export function handleBrokerEvents(
     }
     const envelope = parseBrokerEnvelopeRow(notification.record)
 
-    if (controllerRef) {
+    if (streamStarted) {
       if (envelope.seq > replayHighWater) {
-        controllerRef.enqueue(encodeNdjson(envelope))
+        admissionQueue.enqueueEvent(encodeNdjson(envelope), envelope.seq)
       }
       return
     }
@@ -290,18 +380,13 @@ export function handleBrokerEvents(
   const close = () => {
     this.activeStreamClosers.delete(close)
     this.rawBrokerSubscribers.delete(subscriber)
+    admission.close()
     bufferedEvents.length = 0
     if (keepaliveTimer) {
       clearInterval(keepaliveTimer)
       keepaliveTimer = null
     }
-    try {
-      controllerRef?.close()
-    } catch {
-      // Stream may already be closed by Bun on disconnect.
-    } finally {
-      controllerRef = null
-    }
+    admissionQueue.close()
   }
   this.activeStreamClosers.add(close)
 
@@ -312,22 +397,23 @@ export function handleBrokerEvents(
     start: (controller) => {
       const replayEvents = listBrokerEventsFromAfterSeq(this, selector)
       replayHighWater = replayEvents.at(-1)?.seq ?? replayHighWater
-      controllerRef = controller
-      controller.enqueue(keepaliveBytes)
+      streamStarted = true
+      admissionQueue.attach(controller)
+      admissionQueue.enqueueKeepalive(keepaliveBytes)
 
       for (const event of replayEvents) {
-        controller.enqueue(encodeNdjson(event))
+        admissionQueue.enqueueEvent(encodeNdjson(event), event.seq)
       }
 
       for (const event of bufferedEvents) {
         if (event.seq > replayHighWater) {
-          controller.enqueue(encodeNdjson(event))
+          admissionQueue.enqueueEvent(encodeNdjson(event), event.seq)
         }
       }
 
       keepaliveTimer = setInterval(() => {
         try {
-          controller.enqueue(keepaliveBytes)
+          admissionQueue.enqueueKeepalive(keepaliveBytes)
         } catch {
           // Stream closed
         }
@@ -335,6 +421,7 @@ export function handleBrokerEvents(
 
       request.signal.addEventListener('abort', close, { once: true })
     },
+    pull: () => admissionQueue.drain(),
     cancel: () => close(),
   })
 

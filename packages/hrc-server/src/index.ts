@@ -153,6 +153,7 @@ import {
 } from './server-util.js'
 import { reconcileStartupState, warmDurableBrokerBindings } from './startup-reconcile.js'
 import { toStatusSessionView } from './status-views.js'
+import { createSubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 import { type SweepHandlersMethods, sweepHandlersMethods } from './sweep-handlers.js'
 import {
   type TargetMessageHandlersMethods,
@@ -461,6 +462,7 @@ class HrcServerInstance implements HrcServer {
   readonly rawBrokerSubscribers = new Set<RawBrokerSubscriber>()
   readonly messageSubscribers = new Set<MessageSubscriber>()
   readonly activeStreamClosers = new Set<() => void>()
+  readonly subscriberAdmissions = createSubscriberAdmissionRegistry()
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
   readonly otelListener: OtlpListenerControl | undefined
@@ -507,6 +509,8 @@ class HrcServerInstance implements HrcServer {
       this.handleBrokerForensics(url),
     [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
       this.handleEventsLatestBySession(url),
+    [exactRouteKey('GET', '/v1/server/subscribers')]: () =>
+      Response.json(this.subscriberAdmissions.snapshot()),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>

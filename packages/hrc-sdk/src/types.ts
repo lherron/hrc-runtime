@@ -23,6 +23,7 @@ export type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  HrcSubscriberAdmissionSnapshot,
   HrcBridgeDeliverTextRequest,
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetSelector,

@@ -904,6 +904,30 @@ export type HealthResponse = {
 
 export type StatusResponse = HrcStatusResponse
 
+export type HrcSubscriberAdmissionRoute = 'events' | 'broker-events'
+
+export type HrcSubscriberAdmissionEntry = {
+  route: HrcSubscriberAdmissionRoute
+  selector: Record<string, unknown>
+  remoteInfo?: string | undefined
+  openedAt: string
+  lastEnqueuedSeq: number | null
+  lastStreamAcceptedSeq: number | null
+  enqueuedCount: number
+  streamAcceptedCount: number
+  pendingCount: number
+  desiredSize: number | null
+  pendingSince: string | null
+  lastStreamAcceptedAt: string | null
+  keepaliveOnlySince: string | null
+  closedAt: string | null
+}
+
+export type HrcSubscriberAdmissionSnapshot = {
+  active: HrcSubscriberAdmissionEntry[]
+  recentlyClosed: HrcSubscriberAdmissionEntry[]
+}
+
 // -- Surface binding ----------------------------------------------------------
 
 export type BindSurfaceRequest = {

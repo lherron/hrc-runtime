@@ -9,6 +9,7 @@ import type {
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
+import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
 import type { AppSessionHandlersMethods } from './app-session-handlers.js'
 import type { BridgeSurfaceHandlersMethods } from './bridge-surface-handlers.js'
@@ -150,4 +151,5 @@ type HrcServerInstanceDataForHandlers = {
   readonly rawBrokerSubscribers: Set<RawBrokerSubscriber>
   readonly messageSubscribers: Set<(record: HrcMessageRecord) => void>
   readonly activeStreamClosers: Set<() => void>
+  readonly subscriberAdmissions: SubscriberAdmissionRegistry
 }

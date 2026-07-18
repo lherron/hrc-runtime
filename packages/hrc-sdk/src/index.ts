@@ -35,6 +35,7 @@ export type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  HrcSubscriberAdmissionSnapshot,
   LatestEventBySessionFilter,
   LaunchListFilter,
   RegisterBridgeTargetRequest,

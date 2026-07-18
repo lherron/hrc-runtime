@@ -12,6 +12,7 @@ import {
   cmdServerStart,
   cmdServerStatus,
   cmdServerStop,
+  cmdServerSubscribers,
   cmdSessionDropContinuation,
   cmdSessionGet,
   cmdSessionList,
@@ -95,6 +96,18 @@ export function registerServerSessionCommands(program: Command): void {
         booleans: ['force', 'wait', 'daemon', 'foreground'],
       })
       await cmdServerRestart(args)
+    })
+
+  server
+    .command('subscribers')
+    .description('show follow-stream response-admission accounting')
+    .option('--json', 'output as JSON')
+    .action(async (_opts, cmd: Command) => {
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: [],
+        booleans: ['json'],
+      })
+      await cmdServerSubscribers(args)
     })
 
   server

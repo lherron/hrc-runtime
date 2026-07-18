@@ -203,6 +203,7 @@ Commands:
   server stop [--timeout-ms <n>] [--force]   Stop the HRC daemon only
   server restart [--foreground|--daemon]     Restart the HRC daemon only (daemon by default)
   server status [--json]                     Show daemon/socket/API health state
+  server subscribers [--json]                Show follow-stream response-admission accounting
   server tmux status [--json]         Show HRC tmux socket/session state
   server tmux kill --yes              Kill the HRC tmux server and unclaimed broker-tmux leases
   session resolve --scope <ref> [--lane <ref>] [--create]  Resolve a session; create only with --create

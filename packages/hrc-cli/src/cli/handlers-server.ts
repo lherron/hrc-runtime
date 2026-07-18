@@ -190,6 +190,27 @@ export async function cmdServerStatus(args: string[]): Promise<void> {
   }
 }
 
+export async function cmdServerSubscribers(args: string[]): Promise<void> {
+  const snapshot = await createClient().getSubscribers()
+  if (hasFlag(args, '--json')) {
+    printJson(snapshot)
+    return
+  }
+
+  const rows = [...snapshot.active, ...snapshot.recentlyClosed]
+  if (rows.length === 0) {
+    process.stdout.write('No active or recently closed follow-stream admissions.\n')
+    return
+  }
+
+  for (const entry of rows) {
+    const state = entry.closedAt === null ? 'active' : 'closed'
+    process.stdout.write(
+      `${state}\t${entry.route}\tenqueued=${entry.enqueuedCount}\taccepted=${entry.streamAcceptedCount}\tpending=${entry.pendingCount}\tdesiredSize=${entry.desiredSize ?? '-'}\tselector=${JSON.stringify(entry.selector)}\n`
+    )
+  }
+}
+
 async function serverForeground(): Promise<void> {
   // Refuse to boot as a child of a coding-agent harness: the server would leak
   // the harness's recursion-guard env into every child harness it launches,

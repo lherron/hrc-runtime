@@ -50,6 +50,7 @@ import type {
   HrcBridgeDeliverTextResponse,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
+  HrcSubscriberAdmissionSnapshot,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvocationEventEnvelope,
@@ -501,6 +502,10 @@ export class HrcClient {
       includeArchived: boolField(options?.includeArchived),
     })
     return this.getJson<StatusResponse>(path)
+  }
+
+  async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {
+    return this.getJson<HrcSubscriberAdmissionSnapshot>('/v1/server/subscribers')
   }
 
   async listRuntimes(filter?: RuntimeListFilter): Promise<RuntimeRecord[]> {
