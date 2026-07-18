@@ -50,6 +50,7 @@ export type HrcMonitorFailureKind =
 export type HrcMonitorConditionOutcome = {
   result: HrcMonitorConditionResult
   exitCode: number
+  runId?: string | undefined
   reason?: HrcMonitorContextChangedReason | undefined
   failureKind?: HrcMonitorFailureKind | undefined
   eventStream?: MonitorOutputEvent[] | undefined
@@ -60,6 +61,8 @@ export type HrcMonitorConditionWaitRequest = {
   condition: HrcMonitorCondition
   timeoutMs?: number | undefined
   stallAfterMs?: number | undefined
+  /** Terminal evidence fence. Omitted means an exclusive arm-time high-water fence. */
+  terminalFence?: { seq: number; inclusive: boolean } | undefined
 }
 
 export type HrcMonitorConditionEngineReader = {
@@ -89,6 +92,7 @@ type EvaluationContext = {
   condition: HrcMonitorCondition
   selector: HrcSelector
   capture: HrcMonitorCapture
+  terminalFence: { seq: number; inclusive: boolean }
 }
 
 const DEAD_RUNTIME_STATUSES = new Set(['dead', 'stopped', 'crashed', 'exited', 'terminated'])
@@ -150,6 +154,10 @@ export function createMonitorConditionEngine(
         condition: request.condition,
         selector: request.selector,
         capture,
+        terminalFence: request.terminalFence ?? {
+          seq: capture.eventHighWaterSeq,
+          inclusive: false,
+        },
       }
       const eventStream: MonitorOutputEvent[] = []
 
@@ -158,45 +166,54 @@ export function createMonitorConditionEngine(
         return withCompletedEvent(context, startOutcome, eventStream)
       }
 
+      const watchController = new AbortController()
       const iterable = reader.watch({
         selector: request.selector,
         follow: true,
-        fromSeq: capture.streamCursorSeq,
+        fromSeq:
+          request.condition === 'terminal'
+            ? Math.max(1, context.terminalFence.seq)
+            : capture.streamCursorSeq,
         includeCorrelatedMessageResponses:
           request.condition === 'response' || request.condition === 'response-or-idle',
+        signal: watchController.signal,
       })
       const iterator = iterable[Symbol.asyncIterator]()
       let stallDeadline = deadlineFromNow(request.stallAfterMs)
       const timeoutDeadline = deadlineFromNow(request.timeoutMs)
 
-      while (true) {
-        const next = await nextStreamResult(iterator, timeoutDeadline, stallDeadline)
+      try {
+        while (true) {
+          const next = await nextStreamResult(iterator, timeoutDeadline, stallDeadline)
 
-        if (next.kind === 'timeout') {
-          return withCompletedEvent(
-            context,
-            { result: 'timeout', exitCode: EXIT_CODE.timeout },
-            eventStream
-          )
-        }
-        if (next.kind === 'stalled') {
-          return withCompletedEvent(
-            context,
-            { result: 'stalled', exitCode: EXIT_CODE.timeout },
-            eventStream
-          )
-        }
-        if (next.kind === 'done') {
-          return await waitForEndTimer(context, eventStream, timeoutDeadline, stallDeadline)
-        }
+          if (next.kind === 'timeout') {
+            return withCompletedEvent(
+              context,
+              { result: 'timeout', exitCode: EXIT_CODE.timeout },
+              eventStream
+            )
+          }
+          if (next.kind === 'stalled') {
+            return withCompletedEvent(
+              context,
+              { result: 'stalled', exitCode: EXIT_CODE.timeout },
+              eventStream
+            )
+          }
+          if (next.kind === 'done') {
+            return await waitForEndTimer(context, eventStream, timeoutDeadline, stallDeadline)
+          }
 
-        eventStream.push(next.value)
-        stallDeadline = deadlineFromNow(request.stallAfterMs)
+          eventStream.push(next.value)
+          stallDeadline = deadlineFromNow(request.stallAfterMs)
 
-        const outcome = evaluateEvent(context, next.value)
-        if (outcome) {
-          return withCompletedEvent(context, outcome, eventStream)
+          const outcome = evaluateEvent(context, next.value)
+          if (outcome) {
+            return withCompletedEvent(context, outcome, eventStream)
+          }
         }
+      } finally {
+        watchController.abort()
       }
     },
   }
@@ -286,15 +303,7 @@ const CONDITION_STRATEGIES = {
   // terminal outcome exits 0; only timeout/stall yields a non-zero code. This is
   // the wait the Invocation-DAG coordinator uses to close out one attempt.
   terminal: {
-    start: (context, snapshot) => {
-      if (isDeadRuntimeStatus(snapshot.runtime?.status)) {
-        return { result: 'already_dead', exitCode: EXIT_CODE.ok }
-      }
-      if (context.capture.activeTurnId === null) {
-        return { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
-      }
-      return null
-    },
+    start: () => null,
     event: (context, event) => evaluateTerminal(context, event),
   },
 } satisfies Record<HrcMonitorCondition, ConditionStrategy>
@@ -345,23 +354,49 @@ function evaluateTerminal(
   context: EvaluationContext,
   event: MonitorOutputEvent
 ): HrcMonitorConditionOutcome | null {
-  if (eventKind(event) === 'turn.finished' && sameCapturedTurn(context, event)) {
+  if (!isAtOrAfterTerminalFence(context, event) || !sameRuntime(context, event)) {
+    return null
+  }
+
+  const kind = eventKind(event)
+  const runId = unknownString(event, 'runId') ?? unknownString(event, 'turnId')
+  if (kind === 'turn.finished' || kind === 'turn.completed' || kind === 'turn.failed') {
     const result = resultValue(event, 'turn_succeeded')
-    return result === 'turn_failed'
-      ? { result, exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
-      : { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
+    if (kind === 'turn.failed' || result === 'turn_failed') {
+      return {
+        result: 'turn_failed',
+        exitCode: EXIT_CODE.ok,
+        failureKind: failureKindValue(event),
+        ...(runId ? { runId } : {}),
+      }
+    }
+    return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok, ...(runId ? { runId } : {}) }
   }
-  if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
-    return { result: 'runtime_dead', exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
+  if (kind === 'runtime.dead') {
+    return {
+      result: 'runtime_dead',
+      exitCode: EXIT_CODE.ok,
+      failureKind: failureKindValue(event),
+      ...(runId ? { runId } : {}),
+    }
   }
-  if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
+  if (kind === 'runtime.crashed') {
     return {
       result: 'runtime_crashed',
       exitCode: EXIT_CODE.ok,
       failureKind: failureKindValue(event),
+      ...(runId ? { runId } : {}),
     }
   }
   return null
+}
+
+function isAtOrAfterTerminalFence(context: EvaluationContext, event: MonitorOutputEvent): boolean {
+  const seq = unknownNumber(event, 'seq')
+  if (seq === undefined) return false
+  return context.terminalFence.inclusive
+    ? seq >= context.terminalFence.seq
+    : seq > context.terminalFence.seq
 }
 
 function evaluateResponse(
@@ -513,8 +548,10 @@ function withCompletedEvent(
   eventStream.push({
     event: outcome.result === 'stalled' ? 'monitor.stalled' : 'monitor.completed',
     selector: context.capture.selector.canonical,
+    scopeRef: context.capture.scopeRef,
     condition: context.condition,
     result: outcome.result,
+    ...(outcome.runId !== undefined ? { runId: outcome.runId } : {}),
     ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     ...(outcome.failureKind !== undefined ? { failureKind: outcome.failureKind } : {}),
     exitCode: outcome.exitCode,

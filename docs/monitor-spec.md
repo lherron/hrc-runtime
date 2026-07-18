@@ -96,7 +96,7 @@ The `seq:` value must match `^[0-9]+$` and be a safe integer; otherwise `message
 
 Defined in `condition-engine.ts` (`createMonitorConditionEngine(reader).wait(request)`).
 
-**Conditions** (`HrcMonitorCondition`): `turn-finished`, `idle`, `busy`, `response`, `response-or-idle`, `runtime-dead`.
+**Conditions** (`HrcMonitorCondition`): `turn-finished`, `idle`, `busy`, `response`, `response-or-idle`, `runtime-dead`, `terminal`.
 
 **Selector constraints** (`assertConditionSelector`): `response` and `response-or-idle` require a `msg:` / `seq:` selector (`message` or `message-seq` kind). Any other selector kind is `INVALID_SELECTOR`.
 
@@ -109,6 +109,7 @@ Defined in `condition-engine.ts` (`createMonitorConditionEngine(reader).wait(req
    - `busy` while runtime status is `busy` → `already_busy` (exit 0).
    - `runtime-dead` while status ∈ `{dead, stopped, crashed, exited, terminated}` → `already_dead` (exit 0).
    - `response` / `response-or-idle` never short-circuit on the snapshot.
+   - `terminal` never short-circuits from idle or dead snapshot state. It requires durable terminal evidence after its cursor fence.
 3. Otherwise `watch(follow:true, fromSeq:capture.streamCursorSeq)`, including correlated message responses for the `response` conditions, and evaluate each event via `evaluateEvent`.
 
 **Per-event evaluation** (`evaluateEvent`), in order:
@@ -123,6 +124,15 @@ Defined in `condition-engine.ts` (`createMonitorConditionEngine(reader).wait(req
   - `response` → `message.response` matching the msg/seq selector → `response` exit 0; if instead the captured turn finishes or the runtime goes idle first → `turn_finished_without_response` exit 4.
   - `response-or-idle` → `message.response` → `response` exit 0; else turn-finished/idle → `idle_no_response` exit 0.
   - `runtime-dead` → `runtime.dead` → exit 2; `runtime.crashed` → exit 2.
+  - `terminal` → `turn.finished` / `turn.completed` / `turn.failed` or `runtime.dead` / `runtime.crashed` at the cursor fence → exit 0, carrying the satisfying event's `runId` when present.
+
+### Cursor-fenced terminal waits
+
+`--since <seq|duration>` moves the terminal evidence fence back for post-finish close-out. For example, capture the event cursor before dispatch, then run `hrc monitor wait <selector> --until terminal --since <cursor>` after the run finishes; durable evidence at or after that cursor is replayed immediately. Without `--since`, the fence is the arm-time event high-water and only later terminal evidence can satisfy the wait. The same rule applies to `monitor watch --follow`, including its implicit terminal behavior.
+
+Use an exact cursor for scripts and coordinators. A duration is a human convenience: an over-wide duration can reach back to a prior attempt on a multi-attempt scope and let that stale terminal event win.
+
+Fan-in `--until terminal` is any-match, per-attempt liveness: the first terminal on any matching scope wins. It is not room or task completion; use `wrkq monitor wait --until all-terminal` for room completion.
 
 **Stall / timeout** (`nextStreamResult`, `waitForEndTimer`): each loop races the next stream event against the `timeoutMs` and `stallAfterMs` deadlines. The stall deadline resets on every event. Timeout → `timeout` exit 1; stall → `stalled` exit 1. If the stream ends with no terminal and no remaining timer, → `monitor_error` exit 3.
 

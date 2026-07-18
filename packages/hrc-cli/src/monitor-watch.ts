@@ -60,6 +60,7 @@ import {
   scopeMatchesSelectorSpec,
   selectorSetLabel,
 } from './monitor-selectors.js'
+import { type TerminalFence, resolveTerminalFence } from './monitor-terminal-fence.js'
 
 // -- Types -------------------------------------------------------------------
 
@@ -87,6 +88,7 @@ export type MonitorWatchArgs = {
   until?: string | undefined
   timeoutMs?: number | undefined
   stallAfterMs?: number | undefined
+  since?: string | undefined
   maxLines?: number | undefined
   scopeWidth?: number | undefined
   signal?: AbortSignal | undefined
@@ -99,6 +101,8 @@ export type MonitorWatchArgs = {
   forever?: boolean | undefined // opt out of single-runtime implicit terminal exit
   /** Internal marker: preserve normal follow/replay behavior while stopping at terminal. */
   implicitTerminal?: boolean | undefined
+  /** Resolved once at arm time and shared by every initial/late candidate. */
+  terminalFence?: TerminalFence | undefined
 }
 
 /** Injectable dependencies for testing. */
@@ -243,10 +247,17 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
     args.forever !== true &&
     selector !== undefined &&
     resolvesToConcreteRuntime(state, selector)
+  const terminalMode = until === 'terminal' || implicitTerminal
+  if (args.since !== undefined && !terminalMode) {
+    throw new CliUsageError('--since requires terminal monitoring')
+  }
+  const effectiveArgs = terminalMode
+    ? { ...args, terminalFence: resolveTerminalFence(state, args.since) }
+    : args
   if (implicitTerminal) {
     return runReplayOrFollow(
       state,
-      { ...args, implicitTerminal: true },
+      { ...effectiveArgs, implicitTerminal: true },
       selector,
       filteredIo,
       format
@@ -255,9 +266,9 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
 
   if (args.until && follow) {
     if (isFanInSelectorSet(selectorSpecs)) {
-      return runSelectorSetConditionWatch(state, args, selectorSpecs, filteredIo, format)
+      return runSelectorSetConditionWatch(state, effectiveArgs, selectorSpecs, filteredIo, format)
     }
-    return runConditionWatch(state, args, selector, filteredIo, format)
+    return runConditionWatch(state, effectiveArgs, selector, filteredIo, format)
   }
   return runReplayOrFollow(state, args, selector, filteredIo, format)
 }
@@ -318,6 +329,7 @@ async function runConditionWatch(
       condition,
       timeoutMs: args.timeoutMs,
       stallAfterMs: args.stallAfterMs,
+      terminalFence: args.terminalFence,
     })
   } catch (error) {
     if (error instanceof HrcDomainError) {
@@ -450,11 +462,18 @@ function isDecisiveConditionOutcome(outcome: HrcMonitorConditionOutcome): boolea
 
 export async function waitForAnyMonitorCondition(
   initialState: HrcMonitorState,
-  args: Pick<MonitorWatchArgs, 'until' | 'timeoutMs' | 'stallAfterMs' | 'signal'>,
+  args: Pick<
+    MonitorWatchArgs,
+    'until' | 'timeoutMs' | 'stallAfterMs' | 'signal' | 'since' | 'terminalFence'
+  >,
   specs: readonly MonitorSelectorSpec[],
   io: Pick<MonitorWatchDeps, 'buildMonitorState'>
 ): Promise<AnyMonitorConditionResult> {
   const condition = args.until as HrcMonitorCondition
+  const terminalFence =
+    condition === 'terminal'
+      ? (args.terminalFence ?? resolveTerminalFence(initialState, args.since))
+      : undefined
   const startedAt = Date.now()
   const deadline = args.timeoutMs === undefined ? undefined : startedAt + args.timeoutMs
   const controller = new AbortController()
@@ -485,6 +504,7 @@ export async function waitForAnyMonitorCondition(
           condition,
           timeoutMs: remaining,
           stallAfterMs: args.stallAfterMs,
+          ...(terminalFence ? { terminalFence } : {}),
         })
         .then((outcome) => {
           const result = { outcome, selector: candidate.selector, scopeRef: candidate.scopeRef }
@@ -540,6 +560,7 @@ async function runSelectorSetConditionWatch(
       enriched['scopeRef'] = winner.scopeRef
       enriched['condition'] = args.until
       enriched['exitCode'] = winner.outcome.exitCode
+      if (winner.outcome.runId !== undefined) enriched['runId'] = winner.outcome.runId
     }
     writer.write(enriched)
   }
@@ -550,6 +571,7 @@ async function runSelectorSetConditionWatch(
       scopeRef: winner.scopeRef,
       result: winner.outcome.result,
       exitCode: winner.outcome.exitCode,
+      ...(winner.outcome.runId !== undefined ? { runId: winner.outcome.runId } : {}),
       replayed: false,
       ts: new Date().toISOString(),
     })
@@ -625,27 +647,32 @@ async function runPollingFollow(
     replayed: false,
     snapshot,
   })
-  const initialTerminalResult = args.implicitTerminal
-    ? terminalSnapshotResult(initialState, selector)
+  const terminalFence = args.implicitTerminal
+    ? (args.terminalFence ?? { seq: snapshot.eventHighWaterSeq, inclusive: false })
     : undefined
-  if (initialTerminalResult !== undefined) {
-    writeImplicitTerminalCompletion(writer, args, selector, initialState, initialTerminalResult)
-    writer.flush()
-    return 0
-  }
 
   // When a filter is active, replay the curated set already matched on attach so
   // the grader sees recent milestones — but keep the poll cursor global so we do
   // not re-scan non-matching events (T-04232 daedalus high-water invariant).
   const filterActive = isFilterActive(args)
-  let nextSeq = Math.max(1, snapshot.eventHighWaterSeq + 1)
-  if (args.fromSeq !== undefined || args.last !== undefined || filterActive) {
+  let nextSeq = Math.max(
+    1,
+    terminalFence
+      ? terminalFence.seq + (terminalFence.inclusive ? 0 : 1)
+      : snapshot.eventHighWaterSeq + 1
+  )
+  if (
+    args.fromSeq !== undefined ||
+    args.last !== undefined ||
+    filterActive ||
+    terminalFence?.inclusive === true
+  ) {
     let replayHighWater = snapshot.eventHighWaterSeq
     const replayEvents: MonitorOutputEvent[] = []
     for await (const event of initialReader.watch({
       selector,
       follow: false,
-      fromSeq: args.fromSeq,
+      fromSeq: args.fromSeq ?? (terminalFence?.inclusive ? terminalFence.seq : undefined),
     })) {
       replayEvents.push(event)
     }
@@ -658,6 +685,11 @@ async function runPollingFollow(
       writer.write(enriched)
       const seq = numberField(enriched, 'seq')
       if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
+      if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
+        writeImplicitTerminalCompletion(writer, args, selector, initialState, enriched)
+        writer.flush()
+        return 0
+      }
     }
     // Filtered follow keeps the global cursor (snapshot high-water); explicit
     // --from-seq/--last windows advance past the replayed tail as before.
@@ -687,15 +719,8 @@ async function runPollingFollow(
       if (seq !== undefined) {
         nextSeq = Math.max(nextSeq, seq + 1)
       }
-      if (args.implicitTerminal && isTerminalMonitorEvent(enriched)) {
-        writeImplicitTerminalCompletion(
-          writer,
-          args,
-          selector,
-          state,
-          stringField(enriched, 'result') ?? 'turn_succeeded',
-          stringField(enriched, 'scopeRef')
-        )
+      if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
+        writeImplicitTerminalCompletion(writer, args, selector, state, enriched)
         writer.flush()
         return 0
       }
@@ -709,36 +734,9 @@ async function runPollingFollow(
   return 130
 }
 
-function terminalSnapshotResult(
-  state: HrcMonitorState,
-  selector: HrcSelector | undefined
-): string | undefined {
-  if (!selector) return undefined
-  const scopeRef = scopeRefForSelector(state, selector)
-  const session = state.sessions.find((candidate) => {
-    if (scopeRef !== undefined) return candidate.scopeRef === scopeRef
-    if (selector.kind === 'runtime') return candidate.runtimeId === selector.runtimeId
-    if (selector.kind === 'host' || selector.kind === 'concrete') {
-      return candidate.hostSessionId === selector.hostSessionId
-    }
-    return false
-  })
-  const runtime = state.runtimes.find((candidate) =>
-    selector.kind === 'runtime'
-      ? candidate.runtimeId === selector.runtimeId
-      : candidate.hostSessionId === session?.hostSessionId
-  )
-  if (
-    runtime?.status === 'dead' ||
-    runtime?.status === 'crashed' ||
-    runtime?.status === 'terminated'
-  ) {
-    return 'already_dead'
-  }
-  return runtime?.activeTurnId === null ? 'no_active_turn' : undefined
-}
-
-function isTerminalMonitorEvent(event: MonitorOutputEvent): boolean {
+function isTerminalMonitorEvent(event: MonitorOutputEvent, fence: TerminalFence): boolean {
+  const seq = numberField(event, 'seq')
+  if (seq === undefined || (fence.inclusive ? seq < fence.seq : seq <= fence.seq)) return false
   const name = eventKindOf(event)
   return (
     name === 'turn.finished' ||
@@ -754,14 +752,30 @@ function writeImplicitTerminalCompletion(
   args: MonitorWatchArgs,
   selector: HrcSelector | undefined,
   state: HrcMonitorState,
-  result: string,
-  eventScopeRef?: string
+  satisfyingEvent: MonitorOutputEvent
 ): void {
+  const eventName = eventKindOf(satisfyingEvent)
+  const result =
+    stringField(satisfyingEvent, 'result') ??
+    (eventName === 'turn.failed'
+      ? 'turn_failed'
+      : eventName === 'runtime.dead'
+        ? 'runtime_dead'
+        : eventName === 'runtime.crashed'
+          ? 'runtime_crashed'
+          : 'turn_succeeded')
   writer.write({
     event: 'monitor.completed',
     selector: selector ? formatSelector(selector) : '',
     condition: 'terminal',
-    scopeRef: eventScopeRef ?? (selector ? scopeRefForSelector(state, selector) : undefined),
+    scopeRef:
+      stringField(satisfyingEvent, 'scopeRef') ??
+      (selector ? scopeRefForSelector(state, selector) : undefined),
+    ...(stringField(satisfyingEvent, 'runId') || stringField(satisfyingEvent, 'turnId')
+      ? {
+          runId: stringField(satisfyingEvent, 'runId') ?? stringField(satisfyingEvent, 'turnId'),
+        }
+      : {}),
     result,
     exitCode: 0,
     replayed: false,
@@ -877,7 +891,7 @@ async function* pollingWatch(
 
   // Poll for new events
   if (!request.follow) return
-  while (!signal?.aborted) {
+  while (!signal?.aborted && !request.signal?.aborted) {
     const state = await io.buildMonitorState()
     const reader = createMonitorReader(state)
     let yielded = false
@@ -1092,6 +1106,7 @@ function parseArgv(args: string[]): MonitorWatchArgs {
   let until: string | undefined
   let timeout: string | undefined
   let stallAfter: string | undefined
+  let since: string | undefined
   let format: MonitorOutputFormat | undefined
   let maxLines: number | undefined
   let scopeWidth: number | undefined
@@ -1138,6 +1153,12 @@ function parseArgv(args: string[]): MonitorWatchArgs {
     if (stallMatch) {
       stallAfter = stallMatch.value
       i = stallMatch.next
+      continue
+    }
+    const sinceMatch = matchStringFlag(arg, '--since', args, i)
+    if (sinceMatch) {
+      since = sinceMatch.value
+      i = sinceMatch.next
       continue
     }
     if (arg === '--format') {
@@ -1204,6 +1225,7 @@ function parseArgv(args: string[]): MonitorWatchArgs {
     last,
     follow: booleanFlags.follow ?? false,
     until,
+    since,
     json: booleanFlags.json ?? false,
     pretty: booleanFlags.pretty ?? false,
     format,

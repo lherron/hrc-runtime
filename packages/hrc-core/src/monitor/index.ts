@@ -47,6 +47,7 @@ export type HrcMonitorEvent = {
   hostSessionId?: string | undefined
   generation?: number | undefined
   runtimeId?: string | undefined
+  runId?: string | undefined
   turnId?: string | undefined
   messageId?: string | undefined
   replyToMessageId?: string | undefined
@@ -115,6 +116,7 @@ export type HrcMonitorWatchRequest = {
   follow?: boolean | undefined
   fromSeq?: number | undefined
   includeCorrelatedMessageResponses?: boolean | undefined
+  signal?: AbortSignal | undefined
 }
 
 export type HrcMonitorCaptureOptions = {

@@ -28,6 +28,7 @@ import {
   parseMonitorSelectors,
   selectorSetLabel,
 } from './monitor-selectors.js'
+import { resolveTerminalFence } from './monitor-terminal-fence.js'
 import { waitForAnyMonitorCondition } from './monitor-watch.js'
 
 type MonitorWaitOptions = {
@@ -35,6 +36,7 @@ type MonitorWaitOptions = {
   until?: string | undefined
   timeout?: string | undefined
   stallAfter?: string | undefined
+  since?: string | undefined
   json: boolean
 }
 
@@ -82,6 +84,9 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
       : undefined
 
   const condition = options.until as HrcMonitorCondition
+  if (options.since !== undefined && condition !== 'terminal') {
+    throw new CliUsageError('--since requires --until terminal')
+  }
   if (
     MSG_REQUIRED_CONDITIONS.has(condition) &&
     (!selector || (selector.kind !== 'message' && selector.kind !== 'message-seq'))
@@ -92,12 +97,15 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   const fixtureState = readFixtureState()
   if (isFanInSelectorSet(selectorSpecs)) {
     const initialState = fixtureState ?? readLiveMonitorState()
+    const terminalFence =
+      condition === 'terminal' ? resolveTerminalFence(initialState, options.since) : undefined
     const winner = await waitForAnyMonitorCondition(
       initialState,
       {
         until: condition,
         ...(options.timeout ? { timeoutMs: parseDuration(options.timeout) } : {}),
         ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
+        ...(terminalFence ? { terminalFence } : {}),
       },
       selectorSpecs,
       {
@@ -116,7 +124,10 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   }
   if (!selector) throw new CliUsageError('missing required argument: <selector>')
 
-  const reader = fixtureState ? createMonitorReader(fixtureState) : createPollingReader()
+  const initialState = fixtureState ?? readLiveMonitorState()
+  const reader = fixtureState
+    ? createMonitorReader(initialState)
+    : createPollingReader(initialState)
   const engine = createMonitorConditionEngine(reader)
   let outcome: HrcMonitorConditionOutcome
   try {
@@ -125,6 +136,9 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
       condition,
       ...(options.timeout ? { timeoutMs: parseDuration(options.timeout) } : {}),
       ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
+      ...(condition === 'terminal'
+        ? { terminalFence: resolveTerminalFence(initialState, options.since) }
+        : {}),
     })
   } catch (error) {
     if (error instanceof HrcDomainError) {
@@ -144,6 +158,7 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
   let until: string | undefined
   let timeout: string | undefined
   let stallAfter: string | undefined
+  let since: string | undefined
   let json = false
 
   for (let i = 0; i < args.length; i += 1) {
@@ -172,13 +187,19 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
       i = stallMatch.next
       continue
     }
+    const sinceMatch = matchStringFlag(arg, '--since', args, i)
+    if (sinceMatch) {
+      since = sinceMatch.value
+      i = sinceMatch.next
+      continue
+    }
     if (arg.startsWith('-')) {
       throw new CliUsageError(`unknown option: ${arg}`)
     }
     selectorRaws.push(arg)
   }
 
-  return { selectorRaws, until, timeout, stallAfter, json }
+  return { selectorRaws, until, timeout, stallAfter, since, json }
 }
 
 function validateOptions(options: MonitorWaitOptions): void {
@@ -204,17 +225,18 @@ function readFixtureState(): HrcMonitorState | undefined {
   }
 }
 
-function createPollingReader(): HrcMonitorConditionEngineReader {
+function createPollingReader(initialState: HrcMonitorState): HrcMonitorConditionEngineReader {
   return {
     snapshot(selector) {
-      return createMonitorReader(readLiveMonitorState()).snapshot(selector)
+      return createMonitorReader(initialState).snapshot(selector)
     },
     captureStart(selector, options) {
-      return createMonitorReader(readLiveMonitorState()).captureStart(selector, options)
+      return createMonitorReader(initialState).captureStart(selector, options)
     },
     async *watch(request) {
       let nextSeq = request.fromSeq ?? 1
       while (true) {
+        if (request.signal?.aborted) return
         const reader = createMonitorReader(readLiveMonitorState())
         let yielded = false
         for await (const event of reader.watch({
@@ -330,7 +352,7 @@ function toMonitorEvent(event: {
     hostSessionId: event.hostSessionId,
     generation: event.generation,
     ...(event.runtimeId ? { runtimeId: event.runtimeId } : {}),
-    ...(event.runId ? { turnId: event.runId } : {}),
+    ...(event.runId ? { turnId: event.runId, runId: event.runId } : {}),
     ...(event.replayed ? { replayed: true } : {}),
     ...monitorResultFields(monitorEvent, event.errorCode, payload),
   }
@@ -507,6 +529,7 @@ function writeFinalEvent(event: MonitorOutputEvent, json: boolean): void {
     'result',
     'reason',
     'failureKind',
+    'runId',
     'exitCode',
   ]) {
     const value = event[key]

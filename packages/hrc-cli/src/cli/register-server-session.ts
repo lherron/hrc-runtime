@@ -272,12 +272,19 @@ Exit codes:
     .option('--until <condition>', `condition to wait for: ${MONITOR_CONDITIONS_HELP}`)
     .option('--timeout <duration>', 'maximum wait duration')
     .option('--stall-after <duration>', 'stall threshold duration')
+    .option(
+      '--since <seq|duration>',
+      'terminal evidence fence; exact cursors are safest for scripts, durations are a human convenience'
+    )
     .option('--json', 'output structured JSON')
-    .addHelpText('after', `\n${MONITOR_EXIT_CODES_HELP}\n`)
+    .addHelpText(
+      'after',
+      `\nFor fan-in terminal waits, the first terminal on any matching scope is per-attempt liveness, not room completion.\n${MONITOR_EXIT_CODES_HELP}\n`
+    )
     .action(async (selectors: string[], _opts, cmd: Command) => {
       const positionals = selectors ?? []
       const args = toLegacyArgv(positionals, cmd.opts(), {
-        strings: ['until', 'timeout', 'stall-after'],
+        strings: ['until', 'timeout', 'stall-after', 'since'],
         booleans: ['json'],
       })
       await cmdMonitorWait(args)
@@ -300,6 +307,10 @@ Exit codes:
     )
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
+    .option(
+      '--since <seq|duration>',
+      'terminal evidence fence; exact cursors are safest for scripts, durations are a human convenience'
+    )
     .option('--json', 'output JSON lines')
     .option(
       '--format <mode>',
@@ -321,6 +332,7 @@ Exit codes:
       `\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.
 --until requires --follow. response and response-or-idle require a msg: selector.
 --stall-after exits the stream (it is not a pause signal).
+For fan-in terminal watches, the first terminal on any matching scope is per-attempt liveness, not room completion.
 Default output format is tree when stdout is a TTY and ndjson when stdout is not a TTY.
 ${MONITOR_EXIT_CODES_HELP}\n`
     )
@@ -332,6 +344,7 @@ ${MONITOR_EXIT_CODES_HELP}\n`
           'until',
           'timeout',
           'stall-after',
+          'since',
           'format',
           'max-lines',
           'scope-width',

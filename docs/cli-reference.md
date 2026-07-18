@@ -111,15 +111,19 @@ hrc monitor watch                                   # replay last 100 events
 hrc monitor watch clod@agent-spaces --follow
 hrc monitor watch <selector> --from-seq <n> --follow
 hrc monitor watch <selector> --follow --until idle --timeout 10s
+hrc monitor watch <selector> --follow --since <pre-dispatch-cursor>
 
 # Wait for a condition and exit with its result code:
 hrc monitor wait clod@agent-spaces --until turn-finished --timeout 5s
 hrc monitor wait msg:<messageId> --until response-or-idle --timeout 5m
+hrc monitor wait <selector> --until terminal --since <pre-dispatch-cursor>
 ```
 
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
-- **`monitor watch`** — `[selector]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, `--until <condition>` (requires `--follow`), `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Without `--follow` it replays then exits; an explicit `--from-seq` window is uncapped (the documented full-dump path), otherwise replay is capped (default last-100).
-- **`monitor wait`** — `<selector>`, `--until <condition>` (required), `--timeout <duration>`, `--stall-after <duration>`, `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `response-or-idle`, `runtime-dead`. The `response` and `response-or-idle` conditions **require a `msg:<messageId>` selector**. Exits with the condition's result code (see exit-code table).
+- **`monitor watch`** — `[selector]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, `--until <condition>` (requires `--follow`), `--since <seq|duration>` for terminal evidence, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Without `--follow` it replays then exits; an explicit `--from-seq` window is uncapped (the documented full-dump path), otherwise replay is capped (default last-100).
+- **`monitor wait`** — `<selector>`, `--until <condition>` (required), `--since <seq|duration>` for terminal evidence, `--timeout <duration>`, `--stall-after <duration>`, `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `response-or-idle`, `runtime-dead`, `terminal`. The `response` and `response-or-idle` conditions **require a `msg:<messageId>` selector**. Exits with the condition's result code (see exit-code table).
+
+`--since` supports post-finish close-out by replaying durable terminal evidence at or after a pre-dispatch cursor. Use an exact cursor for scripts and coordinators; duration is a human convenience. On a multi-attempt scope, an over-wide duration can reach back to a prior attempt and admit stale terminal evidence. Fan-in terminal monitoring is any-match per-attempt liveness—the first terminal on any matching scope wins—not room completion. Use `wrkq monitor wait --until all-terminal` for room completion.
 
 Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 
