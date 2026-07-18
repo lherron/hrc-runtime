@@ -191,7 +191,7 @@ describe('executeManagedStart', () => {
     initialPrompt: 'wake up',
   }
 
-  it('uses semantic turn dispatch and waits when a prompt is present', async () => {
+  it('uses semantic turn dispatch and acknowledges once a prompt turn starts', async () => {
     const startCalls: unknown[] = []
     const dispatchCalls: unknown[] = []
     const client = {
@@ -218,7 +218,7 @@ describe('executeManagedStart', () => {
         hostSessionId: 'hs-test',
         prompt: 'wake up',
         runtimeIntent: intent,
-        waitForCompletion: true,
+        waitForCompletion: false,
       },
     ])
     expect(result).toEqual({ runtimeId: 'rt-turn', runId: 'run-turn' })
