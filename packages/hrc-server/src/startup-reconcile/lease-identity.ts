@@ -25,12 +25,137 @@ import type {
   BrokerTmuxLeaseSweepOptions,
   BrokerTmuxLeaseSweepResult,
   BrokerWindowObservation,
+  RendererControlSocketSweepOptions,
+  RendererControlSocketSweepResult,
 } from './types.js'
 
 const LEASE_SOCKET_INSPECT_TIMEOUT_MS = 750
+const RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS = 10_000
+const RENDERER_CONTROL_SOCKET_PREFIX = 'codex-app-server-renderer-control.'
 // The btmux directory also contains Codex app renderer-control Unix sockets.
 // They are not tmux servers, so the orphan lease sweeper must not probe them.
-const NON_LEASE_BTMUX_SOCKET_PREFIXES = ['codex-app-server-renderer-control.']
+const NON_LEASE_BTMUX_SOCKET_PREFIXES = [RENDERER_CONTROL_SOCKET_PREFIX]
+
+/**
+ * Reap stale Codex app renderer-control sockets under `<runtimeRoot>/btmux/`.
+ * Holder discovery is a single `lsof` enumeration and never connects to the
+ * socket. A candidate is removed only when it is both unheld and past grace.
+ */
+export async function sweepOrphanedRendererControlSockets(
+  runtimeRoot: string,
+  options: RendererControlSocketSweepOptions
+): Promise<RendererControlSocketSweepResult> {
+  const result: RendererControlSocketSweepResult = {
+    scanned: 0,
+    removed: 0,
+    skippedHeld: 0,
+    skippedWithinGrace: 0,
+    errors: 0,
+  }
+  const dir = join(runtimeRoot, 'btmux')
+  let entries: string[]
+  try {
+    entries = (await readdir(dir)).filter(isRendererControlSocketEntry)
+  } catch {
+    writeRendererControlSweepSummary(result, options.graceMs)
+    return result
+  }
+  result.scanned = entries.length
+  if (entries.length === 0) {
+    writeRendererControlSweepSummary(result, options.graceMs)
+    return result
+  }
+
+  let heldPaths: Set<string>
+  try {
+    heldPaths = await enumerateHeldUnixSocketPaths()
+  } catch (error) {
+    // Holder state is mandatory evidence for removal. If it cannot be collected,
+    // preserve every candidate rather than falling back to age-only cleanup.
+    result.errors = entries.length
+    writeServerLog('WARN', 'broker.renderer_control_socket_holder_enumeration_failed', {
+      error,
+      scanned: result.scanned,
+    })
+    writeRendererControlSweepSummary(result, options.graceMs)
+    return result
+  }
+
+  const now = Date.now()
+  for (const entry of entries) {
+    const socketPath = join(dir, entry)
+    if (heldPaths.has(socketPath)) {
+      result.skippedHeld += 1
+      continue
+    }
+
+    try {
+      const stats = await stat(socketPath)
+      const ageMs = now - stats.mtimeMs
+      if (ageMs < options.graceMs) {
+        result.skippedWithinGrace += 1
+        continue
+      }
+      if (!stats.isSocket()) {
+        result.errors += 1
+        writeServerLog('WARN', 'broker.renderer_control_socket_invalid_entry', { socketPath })
+        continue
+      }
+
+      await rm(socketPath, { force: true })
+      result.removed += 1
+      writeServerLog('INFO', 'broker.renderer_control_socket_removed', {
+        socketPath,
+        ageMs,
+        graceMs: options.graceMs,
+      })
+    } catch (error) {
+      result.errors += 1
+      writeServerLog('WARN', 'broker.renderer_control_socket_sweep_failed', {
+        socketPath,
+        error,
+      })
+    }
+  }
+
+  writeRendererControlSweepSummary(result, options.graceMs)
+  return result
+}
+
+async function enumerateHeldUnixSocketPaths(): Promise<Set<string>> {
+  const proc = Bun.spawn(['lsof', '-U', '-Fn'], {
+    env: process.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    signal: AbortSignal.timeout(RENDERER_CONTROL_HOLDER_ENUMERATION_TIMEOUT_MS),
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `lsof exited with status ${exitCode}`)
+  }
+
+  const heldPaths = new Set<string>()
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('n/')) {
+      heldPaths.add(line.slice(1))
+    }
+  }
+  return heldPaths
+}
+
+function writeRendererControlSweepSummary(
+  result: RendererControlSocketSweepResult,
+  graceMs: number
+): void {
+  writeServerLog('INFO', 'broker.renderer_control_socket_sweep_complete', {
+    ...result,
+    graceMs,
+  })
+}
 
 /**
  * Sweep leaked broker-tmux lease sockets under `<runtimeRoot>/btmux/`. A socket
@@ -163,6 +288,10 @@ function isBrokerTmuxLeaseSocketEntry(entry: string): boolean {
     return false
   }
   return !NON_LEASE_BTMUX_SOCKET_PREFIXES.some((prefix) => entry.startsWith(prefix))
+}
+
+function isRendererControlSocketEntry(entry: string): boolean {
+  return entry.startsWith(RENDERER_CONTROL_SOCKET_PREFIX) && entry.endsWith('.sock')
 }
 
 /** Outcome of inspecting one unclaimed lease socket during the orphan sweep. */

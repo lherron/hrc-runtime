@@ -32,7 +32,11 @@ import {
   parseSweepZombieRunsRequest,
 } from './server-parsers.js'
 import { json, timestamp } from './server-util.js'
-import { markRuntimeStale, sweepOrphanedBrokerTmuxLeases } from './startup-reconcile.js'
+import {
+  markRuntimeStale,
+  sweepOrphanedBrokerTmuxLeases,
+  sweepOrphanedRendererControlSockets,
+} from './startup-reconcile.js'
 import {
   evaluatePruneDisposition,
   parseSweepDurationMs,
@@ -243,6 +247,7 @@ export async function handlePruneRuntimes(
 export async function handleKillBrokerTmuxLeases(
   this: HrcServerInstanceForHandlers
 ): Promise<Response> {
+  await sweepOrphanedRendererControlSockets(this.options.runtimeRoot, { graceMs: 0 })
   const result = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
     graceMs: 0,
     removeDeadSocketFiles: true,

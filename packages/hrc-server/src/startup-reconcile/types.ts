@@ -22,6 +22,18 @@ export type BrokerTmuxLeaseSweepOptions = {
 
 export type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
 
+export type RendererControlSocketSweepOptions = {
+  graceMs: number
+}
+
+export type RendererControlSocketSweepResult = {
+  scanned: number
+  removed: number
+  skippedHeld: number
+  skippedWithinGrace: number
+  errors: number
+}
+
 /**
  * Application-level broker liveness, observed via a `broker.health` round-trip
  * (NOT a raw socket connect). `ok`/`degraded` are both IPC-live and attach-

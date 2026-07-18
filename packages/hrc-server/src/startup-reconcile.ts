@@ -46,6 +46,7 @@ import {
   markBrokerReattachStale,
   reassociateBrokerTmuxLease,
   sweepOrphanedBrokerTmuxLeases,
+  sweepOrphanedRendererControlSockets,
 } from './startup-reconcile/lease-identity.js'
 import {
   getObservedTmuxSessionName,
@@ -88,6 +89,7 @@ export {
 } from './startup-reconcile/runtime-mutations.js'
 export {
   sweepOrphanedBrokerTmuxLeases,
+  sweepOrphanedRendererControlSockets,
   reassociateBrokerTmuxLease,
   reassociateBrokerTmuxWindows,
   brokerLeaseWindowsMatch,
@@ -327,6 +329,9 @@ export async function reconcileStartupState(
     graceMs: resolveBrokerOrphanSweepGraceMs(),
     removeDeadSocketFiles: true,
     killLiveLeaseServers: true,
+  })
+  await sweepOrphanedRendererControlSockets(options.runtimeRoot, {
+    graceMs: resolveBrokerOrphanSweepGraceMs(),
   })
 
   // T-01760 (Wave C): legacy runtime sweep. The broker passes above
