@@ -423,9 +423,13 @@ export async function executeHeadlessBrokerStartTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
-  const runtime = await this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
+  const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
+  }).finally(() => {
+    this.runtimeStartOperations.delete(session.hostSessionId)
   })
+  this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
+  const runtime = await bootOperation
   if (canOperatorAttach(runtime)) {
     await this.spawnBrokerHeadlessViewer(runtime)
   }
