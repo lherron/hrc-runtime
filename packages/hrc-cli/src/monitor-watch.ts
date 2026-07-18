@@ -103,6 +103,8 @@ export type MonitorWatchArgs = {
   implicitTerminal?: boolean | undefined
   /** Resolved once at arm time and shared by every initial/late candidate. */
   terminalFence?: TerminalFence | undefined
+  /** Internal absolute deadline shared by initial capture and follow polling. */
+  deadlineAt?: number | undefined
 }
 
 /** Injectable dependencies for testing. */
@@ -172,6 +174,8 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   const follow = args.follow ?? false
   const until = args.until
   const signal = args.signal
+  const deadlineAt =
+    follow && args.timeoutMs !== undefined ? Date.now() + args.timeoutMs : undefined
   const format = resolveMonitorOutputFormat(
     {
       format: args.format,
@@ -238,8 +242,22 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   // predicate for injected/test state and preserves the global high-water.
   const filteredIo = wrapWithMonitorFilters(io, args, selectorSpecs)
 
-  // Build state
-  const state = await filteredIo.buildMonitorState(args.signal)
+  // Build state within the same timeout budget used by follow polling.
+  const initialBuild = await buildMonitorStateBeforeDeadline(filteredIo, signal, deadlineAt)
+  if (initialBuild.kind === 'timeout') {
+    const selectorLabel = selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs)
+    const writer = createEventWriter(io.stdout, selectorLabel, args, format)
+    writeFollowTimeoutCompletion(
+      writer,
+      args,
+      selector,
+      until ?? (selector ? 'terminal' : undefined)
+    )
+    writer.flush()
+    return 1
+  }
+  if (initialBuild.kind === 'aborted') return 130
+  const state = initialBuild.state
 
   const implicitTerminal =
     follow &&
@@ -251,9 +269,13 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   if (args.since !== undefined && !terminalMode) {
     throw new CliUsageError('--since requires terminal monitoring')
   }
+  const armedArgs =
+    deadlineAt === undefined
+      ? args
+      : { ...args, deadlineAt, timeoutMs: Math.max(0, deadlineAt - Date.now()) }
   const effectiveArgs = terminalMode
-    ? { ...args, terminalFence: resolveTerminalFence(state, args.since) }
-    : args
+    ? { ...armedArgs, terminalFence: resolveTerminalFence(state, args.since) }
+    : armedArgs
   if (implicitTerminal) {
     return runReplayOrFollow(
       state,
@@ -270,7 +292,7 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
     }
     return runConditionWatch(state, effectiveArgs, selector, filteredIo, format)
   }
-  return runReplayOrFollow(state, args, selector, filteredIo, format)
+  return runReplayOrFollow(state, armedArgs, selector, filteredIo, format)
 }
 
 function selectorArgs(args: MonitorWatchArgs): string[] {
@@ -674,99 +696,216 @@ async function runPollingFollow(
   io: MonitorWatchDeps,
   writer: EventWriter
 ): Promise<number> {
-  const initialReader = createMonitorReader(initialState)
-  const snapshot = initialReader.snapshot(selector)
-  writer.write({
-    seq: snapshot.eventHighWaterSeq,
-    event: 'monitor.snapshot',
-    replayed: false,
-    snapshot,
+  const controller = new AbortController()
+  const timeoutToken = Symbol('polling-follow-timeout')
+  let timedOut = false
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+  let resolveDeadline!: (value: typeof timeoutToken) => void
+  const deadlineReached = new Promise<typeof timeoutToken>((resolve) => {
+    resolveDeadline = resolve
   })
-  const terminalFence = args.implicitTerminal
-    ? (args.terminalFence ?? { seq: snapshot.eventHighWaterSeq, inclusive: false })
-    : undefined
-
-  // When a filter is active, replay the curated set already matched on attach so
-  // the grader sees recent milestones — but keep the poll cursor global so we do
-  // not re-scan non-matching events (T-04232 daedalus high-water invariant).
-  const filterActive = isFilterActive(args)
-  let nextSeq = Math.max(
-    1,
-    terminalFence
-      ? terminalFence.seq + (terminalFence.inclusive ? 0 : 1)
-      : snapshot.eventHighWaterSeq + 1
-  )
-  if (
-    args.fromSeq !== undefined ||
-    args.last !== undefined ||
-    filterActive ||
-    terminalFence?.inclusive === true
-  ) {
-    let replayHighWater = snapshot.eventHighWaterSeq
-    const replayEvents: MonitorOutputEvent[] = []
-    for await (const event of initialReader.watch({
-      selector,
-      follow: false,
-      fromSeq: args.fromSeq ?? (terminalFence?.inclusive ? terminalFence.seq : undefined),
-    })) {
-      replayEvents.push(event)
+  const onAbort = (): void => controller.abort()
+  const finishAbortedFollow = (): number => {
+    if (timedOut) {
+      writeFollowTimeoutCompletion(
+        writer,
+        args,
+        selector,
+        args.implicitTerminal ? 'terminal' : args.until
+      )
+      writer.flush()
+      return 1
     }
-    const output =
-      args.last !== undefined && replayEvents.length > args.last
-        ? replayEvents.slice(-args.last)
-        : replayEvents
-    for (const event of output) {
-      const enriched: Record<string, unknown> = { ...event, replayed: true }
-      writer.write(enriched)
-      const seq = numberField(enriched, 'seq')
-      if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
-      if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
-        writeImplicitTerminalCompletion(writer, args, selector, initialState, enriched)
-        writer.flush()
-        return 0
-      }
-    }
-    // Filtered follow keeps the global cursor (snapshot high-water); explicit
-    // --from-seq/--last windows advance past the replayed tail as before.
-    if (!filterActive) {
-      nextSeq = replayHighWater + 1
-    }
-  }
-
-  if (args.signal?.aborted) {
     writer.flush()
     return 130
   }
 
-  while (!args.signal?.aborted) {
-    const state = await io.buildMonitorState(args.signal)
-    const reader = createMonitorReader(state)
-    let yielded = false
-    for await (const event of reader.watch({
-      selector,
-      follow: false,
-      fromSeq: nextSeq,
-    })) {
-      yielded = true
-      const enriched: Record<string, unknown> = { ...event, replayed: false }
-      writer.write(enriched)
-      const seq = numberField(enriched, 'seq')
-      if (seq !== undefined) {
-        nextSeq = Math.max(nextSeq, seq + 1)
-      }
-      if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
-        writeImplicitTerminalCompletion(writer, args, selector, state, enriched)
-        writer.flush()
-        return 0
-      }
-    }
-    if (!yielded) {
-      await sleep(POLL_MS)
-    }
+  args.signal?.addEventListener('abort', onAbort, { once: true })
+  if (args.signal?.aborted) onAbort()
+  const deadlineAt =
+    args.deadlineAt ??
+    (args.timeoutMs === undefined ? undefined : Date.now() + Math.max(0, args.timeoutMs))
+  if (deadlineAt !== undefined) {
+    deadlineTimer = setTimeout(
+      () => {
+        timedOut = true
+        controller.abort()
+        resolveDeadline(timeoutToken)
+      },
+      Math.max(0, deadlineAt - Date.now())
+    )
   }
 
-  writer.flush()
-  return 130
+  try {
+    const initialReader = createMonitorReader(initialState)
+    const snapshot = initialReader.snapshot(selector)
+    writer.write({
+      seq: snapshot.eventHighWaterSeq,
+      event: 'monitor.snapshot',
+      replayed: false,
+      snapshot,
+    })
+    const terminalFence = args.implicitTerminal
+      ? (args.terminalFence ?? { seq: snapshot.eventHighWaterSeq, inclusive: false })
+      : undefined
+
+    // When a filter is active, replay the curated set already matched on attach so
+    // the grader sees recent milestones — but keep the poll cursor global so we do
+    // not re-scan non-matching events (T-04232 daedalus high-water invariant).
+    const filterActive = isFilterActive(args)
+    let nextSeq = Math.max(
+      1,
+      terminalFence
+        ? terminalFence.seq + (terminalFence.inclusive ? 0 : 1)
+        : snapshot.eventHighWaterSeq + 1
+    )
+    if (
+      args.fromSeq !== undefined ||
+      args.last !== undefined ||
+      filterActive ||
+      terminalFence?.inclusive === true
+    ) {
+      let replayHighWater = snapshot.eventHighWaterSeq
+      const replayEvents: MonitorOutputEvent[] = []
+      for await (const event of initialReader.watch({
+        selector,
+        follow: false,
+        fromSeq: args.fromSeq ?? (terminalFence?.inclusive ? terminalFence.seq : undefined),
+      })) {
+        replayEvents.push(event)
+      }
+      const output =
+        args.last !== undefined && replayEvents.length > args.last
+          ? replayEvents.slice(-args.last)
+          : replayEvents
+      for (const event of output) {
+        const enriched: Record<string, unknown> = { ...event, replayed: true }
+        writer.write(enriched)
+        const seq = numberField(enriched, 'seq')
+        if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
+        if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
+          writeImplicitTerminalCompletion(writer, args, selector, initialState, enriched)
+          writer.flush()
+          return 0
+        }
+      }
+      // Filtered follow keeps the global cursor (snapshot high-water); explicit
+      // --from-seq/--last windows advance past the replayed tail as before.
+      if (!filterActive) {
+        nextSeq = replayHighWater + 1
+      }
+    }
+
+    if (controller.signal.aborted) return finishAbortedFollow()
+
+    while (!controller.signal.aborted) {
+      const stateOrTimeout = await Promise.race([
+        io.buildMonitorState(controller.signal),
+        deadlineReached,
+      ])
+      if (stateOrTimeout === timeoutToken) return finishAbortedFollow()
+      const state = stateOrTimeout
+      const reader = createMonitorReader(state)
+      let yielded = false
+      for await (const event of reader.watch({
+        selector,
+        follow: false,
+        fromSeq: nextSeq,
+      })) {
+        yielded = true
+        const enriched: Record<string, unknown> = { ...event, replayed: false }
+        writer.write(enriched)
+        const seq = numberField(enriched, 'seq')
+        if (seq !== undefined) {
+          nextSeq = Math.max(nextSeq, seq + 1)
+        }
+        if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
+          writeImplicitTerminalCompletion(writer, args, selector, state, enriched)
+          writer.flush()
+          return 0
+        }
+      }
+      if (!yielded) {
+        const sleepResult = await Promise.race([sleep(POLL_MS), deadlineReached])
+        if (sleepResult === timeoutToken) return finishAbortedFollow()
+      }
+    }
+
+    return finishAbortedFollow()
+  } catch (error) {
+    if (controller.signal.aborted) return finishAbortedFollow()
+    throw error
+  } finally {
+    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
+    args.signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+type MonitorStateBuildResult =
+  | { kind: 'state'; state: HrcMonitorState }
+  | { kind: 'timeout' }
+  | { kind: 'aborted' }
+
+async function buildMonitorStateBeforeDeadline(
+  io: Pick<MonitorWatchDeps, 'buildMonitorState'>,
+  signal: AbortSignal | undefined,
+  deadlineAt: number | undefined
+): Promise<MonitorStateBuildResult> {
+  if (signal?.aborted) return { kind: 'aborted' }
+  if (deadlineAt === undefined) {
+    return { kind: 'state', state: await io.buildMonitorState(signal) }
+  }
+
+  const controller = new AbortController()
+  let resolveAborted!: (value: MonitorStateBuildResult) => void
+  const aborted = new Promise<MonitorStateBuildResult>((resolve) => {
+    resolveAborted = resolve
+  })
+  const onAbort = (): void => {
+    controller.abort()
+    resolveAborted({ kind: 'aborted' })
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
+  const timeout = new Promise<MonitorStateBuildResult>((resolve) => {
+    const timer = setTimeout(
+      () => {
+        controller.abort()
+        resolve({ kind: 'timeout' })
+      },
+      Math.max(0, deadlineAt - Date.now())
+    )
+    controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
+  })
+  try {
+    return await Promise.race([
+      io
+        .buildMonitorState(controller.signal)
+        .then((state): MonitorStateBuildResult => ({ kind: 'state', state })),
+      timeout,
+      aborted,
+    ])
+  } finally {
+    controller.abort()
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+function writeFollowTimeoutCompletion(
+  writer: EventWriter,
+  args: MonitorWatchArgs,
+  selector: HrcSelector | undefined,
+  condition: string | undefined
+): void {
+  writer.write({
+    event: 'monitor.completed',
+    selector: selector ? formatSelector(selector) : '',
+    ...(condition ? { condition } : {}),
+    result: 'timeout',
+    exitCode: 1,
+    replayed: false,
+    ts: new Date().toISOString(),
+    ...(args.format ? { format: args.format } : {}),
+  })
 }
 
 function isTerminalMonitorEvent(event: MonitorOutputEvent, fence: TerminalFence): boolean {
@@ -1396,6 +1535,12 @@ function buildEventFilter(args: MonitorWatchArgs): ((event: MonitorOutputEvent) 
 function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters | undefined {
   const spec = normalizeEventFilterSpec(args)
   const selectorSpecs = parseMonitorSelectors(selectorArgs(args))
+  const exactSelector =
+    selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
+      ? selectorSpecs[0].selector
+      : undefined
+  const identityFilters: HrcLifecycleMonitorFilters =
+    exactSelector?.kind === 'runtime' ? { runtimeId: exactSelector.runtimeId } : {}
   const canNarrowByScope = selectorSpecs.every(
     (selector) => selector.kind !== 'exact' || selector.selector.kind === 'scope'
   )
@@ -1423,6 +1568,7 @@ function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters 
           ...(spec?.grep !== undefined ? { payloadContains: spec.grep } : {}),
         }
   const filters = {
+    ...identityFilters,
     ...scopeFilters,
     ...eventFilters,
   }
