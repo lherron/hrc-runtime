@@ -63,9 +63,13 @@ describe('hrc monitor surface polish', () => {
     }
   })
 
-  test('monitor watch help documents conditions, coupling, exits, and its dynamic default', () => {
+  test('monitor watch help documents replay cap, conditions, coupling, exits, and defaults', () => {
     const help = commandHelp('monitor', 'watch')
 
+    expect(help).toContain('100')
+    expect(help).toContain('default')
+    expect(help).toContain('--last')
+    expect(help).toContain('--from-seq')
     expectConditionAndExitCodeHelp(help)
     expect(help).toContain('--until requires --follow')
     expect(help).toMatch(/response.*response-or-idle.*require.*msg: selector/i)

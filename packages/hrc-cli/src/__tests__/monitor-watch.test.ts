@@ -524,20 +524,22 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(terminalRow).toContain('code=api_error')
   })
 
-  test('--last replays the last n matching events and marks them replayed', async () => {
-    const events = Array.from({ length: 12 }, (_, index) =>
+  test('--last replays more than the default 100-event tail when requested', async () => {
+    const events = Array.from({ length: 150 }, (_, index) =>
       event(index + 1, index % 2 === 0 ? 'runtime.idle' : 'runtime.busy', {
         result: index % 2 === 0 ? 'idle' : 'busy',
       })
     )
     const result = await invokeWatch(
-      { selector: SELECTOR, last: 3 },
+      { selector: SELECTOR, last: 150 },
       createFixtureState({ events })
     )
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.events.map((payload) => payload.seq)).toEqual([10, 11, 12])
+    expect(result.events).toHaveLength(150)
+    expect(result.events[0]).toMatchObject({ seq: 1, replayed: true })
+    expect(result.events.at(-1)).toMatchObject({ seq: 150, replayed: true })
     expect(result.events.every((payload) => payload.replayed === true)).toBe(true)
   })
 
