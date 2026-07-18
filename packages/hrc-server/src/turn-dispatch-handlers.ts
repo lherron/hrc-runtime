@@ -308,7 +308,7 @@ async function finalizeHeadlessBrokerSessionOpen(
   // Session-open is a provisioning surface just like managed start and first-turn
   // dispatch. Keep the viewer observational: the existing helper owns feature,
   // socket, presentation, and Ghostmux failure gates and never fails the session.
-  await server.spawnBrokerHeadlessViewer(runtime)
+  void server.spawnBrokerHeadlessViewer(runtime)
   return runtime
 }
 

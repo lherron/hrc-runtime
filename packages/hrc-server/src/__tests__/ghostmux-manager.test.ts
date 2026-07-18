@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
+  GhostmuxCommandTimeoutError,
   GhostmuxManager,
   deriveHeadlessSessionIdentity,
   deriveHeadlessTabIdentity,
@@ -517,6 +521,91 @@ describe('GhostmuxManager.ensureHeadlessViewer (consolidated window/tab/pane)', 
       attachCommand: 'a',
     })
     expect(result.status).toBe('failed')
+  })
+
+  it('bounds a hung command and settles the tab lock for the next viewer attempt', async () => {
+    let calls = 0
+    const manager = new GhostmuxManager(
+      'ghostmux',
+      async () => {
+        calls += 1
+        if (calls === 1) {
+          return await new Promise<never>(() => undefined)
+        }
+        throw new Error('second viewer attempt reached ghostmux')
+      },
+      10
+    )
+
+    const first = await manager.ensureHeadlessViewer({
+      scopeRef: cloRef,
+      runtimeId: 'rt-timeout-1',
+      attachCommand: 'a1',
+    })
+    const second = await manager.ensureHeadlessViewer({
+      scopeRef: cloRef,
+      runtimeId: 'rt-timeout-2',
+      attachCommand: 'a2',
+    })
+
+    expect(first).toEqual({
+      status: 'failed',
+      error: new GhostmuxCommandTimeoutError(['list-surfaces', '--json'], 10).message,
+    })
+    expect(second).toEqual({
+      status: 'failed',
+      error: 'second viewer attempt reached ghostmux',
+    })
+    expect(calls).toBe(2)
+  })
+
+  it('surfaces a typed failure when a direct ghostmux command times out', async () => {
+    const manager = new GhostmuxManager(
+      'ghostmux',
+      async () => await new Promise<never>(() => undefined),
+      10
+    )
+
+    const error = await manager.initialize().catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(GhostmuxCommandTimeoutError)
+    expect(error).toMatchObject({
+      code: 'ghostmux_command_timeout',
+      args: ['status', '--json'],
+      timeoutMs: 10,
+    })
+  })
+
+  it('kills and reaps a real ghostmux child when the command times out', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hrc-ghostmux-timeout-'))
+    const pidFile = join(dir, 'child.pid')
+    const bashEnv = join(dir, 'bash-env')
+    await Bun.write(bashEnv, `printf '%s' "$$" > '${pidFile}'\nexec /bin/sleep 60\n`)
+    const previousBashEnv = process.env.BASH_ENV
+    process.env.BASH_ENV = bashEnv
+
+    try {
+      // Bash sources BASH_ENV before it tries to open the manager's fixed
+      // `status` argument, giving this real child a deterministic hung body.
+      const manager = new GhostmuxManager('/bin/bash', undefined, 100)
+      const error = await manager.initialize().catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(GhostmuxCommandTimeoutError)
+      const pid = Number(await Bun.file(pidFile).text())
+      expect(Number.isInteger(pid)).toBe(true)
+
+      let childIsAlive = true
+      try {
+        process.kill(pid, 0)
+      } catch {
+        childIsAlive = false
+      }
+      expect(childIsAlive).toBe(false)
+    } finally {
+      if (previousBashEnv === undefined) process.env.BASH_ENV = undefined
+      else process.env.BASH_ENV = previousBashEnv
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('applies the status bar + tint on the created path', async () => {

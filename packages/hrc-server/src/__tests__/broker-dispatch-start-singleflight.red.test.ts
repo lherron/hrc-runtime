@@ -58,6 +58,63 @@ function headlessBrokerIntent() {
 }
 
 describe('headless broker dispatch start single-flight', () => {
+  it('returns a detached dispatch without waiting for an observational viewer', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    const db = openHrcDatabase(fixture.dbPath)
+    const session = db.sessions.getByHostSessionId(resolved.hostSessionId)
+    db.close()
+    expect(session).toBeDefined()
+
+    const now = new Date().toISOString()
+    ;(server as any).startHeadlessBrokerRuntime = async () => ({
+      runtimeId: 'rt-t06313-viewer-timeout',
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      runtimeStateJson: {
+        broker: {
+          endpoint: { kind: 'stdio-jsonrpc-ndjson' },
+          substrate: { kind: 'daemon-child' },
+          presentation: {
+            kind: 'tmux-tui',
+            tuiWindow: { sessionId: '$1', windowId: '@1', paneId: '%1' },
+          },
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    })
+    let viewerStarted = false
+    ;(server as any).spawnBrokerHeadlessViewer = async () => {
+      viewerStarted = true
+      return await new Promise(() => undefined)
+    }
+
+    const response = await Promise.race([
+      (server as any).executeHeadlessBrokerStartTurn(
+        session,
+        headlessBrokerIntent(),
+        'detached turn',
+        'run-t06313-viewer-timeout',
+        { waitForCompletion: false }
+      ) as Promise<Response>,
+      Bun.sleep(250).then(() => {
+        throw new Error('detached dispatch waited for the observational viewer')
+      }),
+    ])
+
+    expect(response.status).toBe(200)
+    expect(viewerStarted).toBe(true)
+  })
+
   it('converges crossing dispatches for one empty host session onto one broker start', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     const db = openHrcDatabase(fixture.dbPath)

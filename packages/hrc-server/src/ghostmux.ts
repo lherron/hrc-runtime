@@ -7,6 +7,7 @@ export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 export type GhostmuxManagerOptions = {
   ghostmuxBin?: string | undefined
   runner?: GhostmuxRunner | undefined
+  commandTimeoutMs?: number | undefined
 }
 
 export type GhostmuxExecResult = {
@@ -15,6 +16,20 @@ export type GhostmuxExecResult = {
 }
 
 export type GhostmuxRunner = (args: string[]) => Promise<GhostmuxExecResult>
+
+export const DEFAULT_GHOSTMUX_COMMAND_TIMEOUT_MS = 5_000
+
+export class GhostmuxCommandTimeoutError extends Error {
+  override readonly name = 'GhostmuxCommandTimeoutError'
+  readonly code = 'ghostmux_command_timeout'
+
+  constructor(
+    readonly args: readonly string[],
+    readonly timeoutMs: number
+  ) {
+    super(`ghostmux ${args.join(' ')} timed out after ${timeoutMs}ms`)
+  }
+}
 
 export type GhostmuxSurfaceState = {
   kind: 'ghostty'
@@ -389,8 +404,13 @@ export class GhostmuxManager {
 
   constructor(
     private readonly ghostmuxBinary = 'ghostmux',
-    private readonly runner?: GhostmuxRunner | undefined
-  ) {}
+    private readonly runner?: GhostmuxRunner | undefined,
+    commandTimeoutMs = DEFAULT_GHOSTMUX_COMMAND_TIMEOUT_MS
+  ) {
+    this.commandTimeoutMs = Math.max(1, Math.trunc(commandTimeoutMs))
+  }
+
+  private readonly commandTimeoutMs: number
 
   async initialize(): Promise<void> {
     await this.exec(['status', '--json'])
@@ -971,7 +991,7 @@ export class GhostmuxManager {
 
   private async exec(args: string[]): Promise<GhostmuxExecResult> {
     if (this.runner) {
-      return this.runner(args)
+      return await this.withCommandTimeout(args, this.runner(args))
     }
 
     const proc = Bun.spawn([this.ghostmuxBinary, ...args], {
@@ -980,21 +1000,67 @@ export class GhostmuxManager {
       stderr: 'pipe',
     })
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
+    const stdout = new Response(proc.stdout).text()
+    const stderr = new Response(proc.stderr).text()
+    const exitCode = this.withCommandTimeout(args, proc.exited, async () => {
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        // The process may have exited concurrently with the deadline.
+      }
+      await proc.exited.catch(() => undefined)
+    })
+    const [renderedStdout, renderedStderr, renderedExitCode] = await Promise.all([
+      stdout,
+      stderr,
+      exitCode,
     ])
 
-    if (exitCode !== 0) {
-      const rendered = stderr.trim() || stdout.trim() || `ghostmux exited with status ${exitCode}`
+    if (renderedExitCode !== 0) {
+      const rendered =
+        renderedStderr.trim() ||
+        renderedStdout.trim() ||
+        `ghostmux exited with status ${renderedExitCode}`
       throw new Error(rendered)
     }
 
-    return { stdout, stderr }
+    return { stdout: renderedStdout, stderr: renderedStderr }
+  }
+
+  private withCommandTimeout<T>(
+    args: string[],
+    operation: Promise<T>,
+    onTimeout?: (() => void | Promise<void>) | undefined
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        void Promise.resolve()
+          .then(() => onTimeout?.())
+          .catch(() => undefined)
+          .finally(() => {
+            // The timeout is authoritative. Cleanup errors and a concurrent
+            // process exit must never replace the typed deadline failure.
+            reject(new GhostmuxCommandTimeoutError(args, this.commandTimeoutMs))
+          })
+      }, this.commandTimeoutMs)
+      operation.then(
+        (value) => {
+          if (timedOut) return
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error) => {
+          if (timedOut) return
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
   }
 }
 
 export function createGhostmuxManager(options: GhostmuxManagerOptions = {}): GhostmuxManager {
-  return new GhostmuxManager(options.ghostmuxBin, options.runner)
+  return new GhostmuxManager(options.ghostmuxBin, options.runner, options.commandTimeoutMs)
 }

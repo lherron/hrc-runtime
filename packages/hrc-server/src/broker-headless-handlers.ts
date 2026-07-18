@@ -433,7 +433,7 @@ export async function executeHeadlessBrokerStartTurn(
   this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
   const runtime = await bootOperation
   if (canOperatorAttach(runtime)) {
-    await this.spawnBrokerHeadlessViewer(runtime)
+    void this.spawnBrokerHeadlessViewer(runtime)
   }
 
   if (options.waitForCompletion === false) {

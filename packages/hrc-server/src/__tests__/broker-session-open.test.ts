@@ -229,6 +229,29 @@ describe('POST /v1/broker-sessions/open', () => {
     }
   })
 
+  it('returns without waiting for an observational viewer that never settles', async () => {
+    const resolved = await fixture.resolveSession(SCOPE_REF)
+    seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation)
+    let viewerStarted = false
+    ;(server as any).spawnBrokerHeadlessViewer = async () => {
+      viewerStarted = true
+      return await new Promise(() => undefined)
+    }
+
+    const res = await Promise.race([
+      fixture.postJson('/v1/broker-sessions/open', {
+        hostSessionId: resolved.hostSessionId,
+        runtimeIntent: headlessBrokerIntent(),
+      }),
+      Bun.sleep(250).then(() => {
+        throw new Error('broker session open waited for the observational viewer')
+      }),
+    ])
+
+    expect(res.status).toBe(200)
+    expect(viewerStarted).toBe(true)
+  })
+
   it('ensures the viewer after recovering a durable broker session', async () => {
     const resolved = await fixture.resolveSession(SCOPE_REF)
     seedReusableBrokerRuntime(resolved.hostSessionId, resolved.generation, {
