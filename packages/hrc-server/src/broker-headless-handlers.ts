@@ -423,6 +423,8 @@ export async function executeHeadlessBrokerStartTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
+  // Publish the runtime-producing promise before yielding so crossing dispatches
+  // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
   }).finally(() => {
