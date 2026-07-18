@@ -240,7 +240,16 @@ export function lifecyclePayload(
       return { success: true, transport, source: 'broker' }
     case 'turn.failed': {
       const payload = envelope.payload as TurnFailedPayload
-      return { success: false, transport, source: 'broker', message: payload.message }
+      return {
+        success: false,
+        transport,
+        source: 'broker',
+        message: payload.message,
+        ...(payload.code !== undefined ? { code: payload.code } : {}),
+        ...(payload.data !== undefined ? { data: payload.data } : {}),
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        ...(payload.retryable !== undefined ? { retryable: payload.retryable } : {}),
+      }
     }
     case 'turn.interrupted':
       return { success: false, interrupted: true, transport, source: 'broker' }
