@@ -221,9 +221,10 @@ describe('prune-hrc-event-deltas', () => {
 
   test('dry-run reports both tables without deletion and apply loops batches without vacuuming', () => {
     const { path, db } = makeStore()
+    const cliOld = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
     for (let index = 0; index < 3; index += 1) {
-      insertEvent(db, 'broker.tool.call.delta', OLD, 'x'.repeat(64 * 1024))
-      insertBrokerInvocationEvent(db, 'tool.call.delta', OLD)
+      insertEvent(db, 'broker.tool.call.delta', cliOld, 'x'.repeat(64 * 1024))
+      insertBrokerInvocationEvent(db, 'tool.call.delta', cliOld)
     }
     db.close()
 
