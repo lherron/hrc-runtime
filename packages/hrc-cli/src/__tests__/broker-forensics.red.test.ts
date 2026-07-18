@@ -5,7 +5,7 @@
  * persisted broker ledger. They intentionally avoid importing proposed
  * implementation helpers so the contract remains the CLI behavior described
  * by the task: filtered raw events, interleaved transcripts, stats, runtime
- * discovery, and scope-selector resolution (including terminated runtimes).
+ * discovery, explicit post-mortem access, and live scope-selector resolution.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -593,9 +593,9 @@ describe('hrc broker stats and selector convenience', () => {
   })
 
   it('reports histogram, turn/tool counts, activity bounds, and per-turn tool breakdown', async () => {
-    // This runtime is terminated; post-mortem selectors must not be limited to
-    // the live broker controller registry.
-    const result = await runCli(['broker', 'stats', SCOPE_HANDLE], cliEnv(fixture))
+    // This runtime is terminated. Explicit runtime IDs preserve post-mortem
+    // access without allowing unavailable history to shadow implicit selectors.
+    const result = await runCli(['broker', 'stats', RUNTIME_ID], cliEnv(fixture))
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
@@ -611,6 +611,12 @@ describe('hrc broker stats and selector convenience', () => {
   it('lists every ambiguous runtime candidate and --latest selects the newest', async () => {
     const latestRuntimeId = 'rt-forensics-latest'
     const latestInvocationId = 'inv-forensics-latest'
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.runtimes.updateStatus(RUNTIME_ID, 'ready', '2026-07-01T00:00:00.000Z')
+    } finally {
+      db.close()
+    }
     seedRuntimeGraph(fixture, {
       hostSessionId: HOST_SESSION_ID,
       runtimeId: latestRuntimeId,
@@ -618,6 +624,7 @@ describe('hrc broker stats and selector convenience', () => {
       invocationId: latestInvocationId,
       scopeRef: SCOPE_REF,
       laneRef: 'repair',
+      status: 'ready',
       createdAt: '2026-07-02T00:00:00.000Z',
     })
     appendEvent(fixture, {
