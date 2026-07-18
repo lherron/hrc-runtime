@@ -19,6 +19,7 @@ bun run build     # Build all HRC packages in order
 
 - Tests: `bun run test`
 - Typecheck: `bun run typecheck`
+- Run `bun run build` before `bun run typecheck` because the packages use TypeScript project references.
 - Lint: `bun run lint` (fix with `bun run lint:fix`)
 - Boundary checks: `bun run check:boundaries`, `bun run check:manifests`
 - Agent enablement changelog / retro step: see

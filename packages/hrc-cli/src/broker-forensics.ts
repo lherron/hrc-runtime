@@ -128,6 +128,7 @@ function transcriptKind(type: string): TranscriptKind | undefined {
   if (type === 'tool.call.started') return 'exec'
   if (type === 'assistant.message.completed') return 'cot'
   if (type === 'driver.notice') return 'notice'
+  // tool.call.completed duration/outcome pairing is welcome-but-optional and intentionally absent today.
   return undefined
 }
 
