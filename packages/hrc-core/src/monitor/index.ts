@@ -115,6 +115,7 @@ export type HrcMonitorWatchRequest = {
   selector?: HrcSelector | undefined
   follow?: boolean | undefined
   fromSeq?: number | undefined
+  replayTail?: number | undefined
   includeCorrelatedMessageResponses?: boolean | undefined
   signal?: AbortSignal | undefined
 }
@@ -383,7 +384,7 @@ async function* watchEvents(
         )
       : follow
         ? []
-        : matching.slice(-DEFAULT_REPLAY_TAIL)
+        : matching.slice(-(request.replayTail ?? DEFAULT_REPLAY_TAIL))
 
   for (const event of replay) {
     yield {

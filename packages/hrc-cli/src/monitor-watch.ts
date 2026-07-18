@@ -660,6 +660,7 @@ async function runReplayOrFollow(
     selector,
     follow,
     fromSeq: args.fromSeq,
+    replayTail: args.last,
   }
 
   const events: MonitorOutputEvent[] = []
@@ -670,10 +671,8 @@ async function runReplayOrFollow(
   // Non-follow replay caps (T-01740 Fix B): an explicit --from-seq window is
   // UNCAPPED so a full event dump is possible (the reader's fromSeq branch is
   // likewise uncapped — see hrc-core watchEvents). Without --from-seq the default
-  // last-N cap still applies; --last overrides the count. NB: the bare-selector
-  // default cap also lives in the reader (matching.slice(-100)), so widening it
-  // beyond --from-seq would need the reader to surface the matched total — left as
-  // a follow-up; --from-seq is the documented full-dump path.
+  // last-N cap still applies; --last overrides the count in both the reader and
+  // this final output guard.
   const explicitWindow = args.fromSeq !== undefined
   const replayLimit = args.last ?? (explicitWindow ? undefined : DEFAULT_REPLAY_LIMIT)
   const output =
@@ -771,6 +770,7 @@ async function runPollingFollow(
         selector,
         follow: false,
         fromSeq: args.fromSeq ?? (terminalFence?.inclusive ? terminalFence.seq : undefined),
+        replayTail: args.last,
       })) {
         replayEvents.push(event)
       }

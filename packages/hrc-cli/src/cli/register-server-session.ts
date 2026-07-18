@@ -330,6 +330,7 @@ Exit codes:
     .addHelpText(
       'after',
       `\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.
+Default replay is capped at 100 events; use --last N or --from-seq N to retrieve more.
 --until requires --follow. response and response-or-idle require a msg: selector.
 --stall-after exits the stream (it is not a pause signal).
 For fan-in terminal watches, the first terminal on any matching scope is per-attempt liveness, not room completion.

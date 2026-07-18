@@ -131,6 +131,7 @@ MONITOR
   Replay what happened, either by count or sequence:
     hrc monitor watch T-XXXXX --last N
     hrc monitor watch T-XXXXX --from-seq N
+    The default replay is capped at 100 events; use --last N or --from-seq N for more.
 
   hrc conditions are runtime-centric: terminal, idle, and turn-finished.
   wrkq conditions are task-state: state=completed and all-terminal.
