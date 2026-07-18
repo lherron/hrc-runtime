@@ -238,6 +238,140 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
+const START_REQUEST_DIFF_MAX_ENTRIES = 8
+const START_REQUEST_DIFF_MAX_PATH_CHARS = 256
+const START_REQUEST_DIFF_MAX_VALUE_CHARS = 256
+const START_REQUEST_SECRET_KEY_PATTERN =
+  /token|secret|key|password|passwd|pwd|authorization|auth|credential|bearer|cookie/i
+
+type StartRequestFieldDiff = {
+  path: string
+  daemonValue: string
+  cliValue: string
+  redacted: boolean
+  truncated: boolean
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function escapeJsonPointerSegment(segment: string): string {
+  return segment.replaceAll('~', '~0').replaceAll('/', '~1')
+}
+
+function renderDiffPath(segments: string[]): { value: string; truncated: boolean } {
+  const pointer = `/${segments.map(escapeJsonPointerSegment).join('/')}`
+  if (pointer.length <= START_REQUEST_DIFF_MAX_PATH_CHARS) {
+    return { value: pointer, truncated: false }
+  }
+  return {
+    value: `${pointer.slice(0, START_REQUEST_DIFF_MAX_PATH_CHARS)}… [path truncated]`,
+    truncated: true,
+  }
+}
+
+function renderDiffValue(value: unknown): { value: string; truncated: boolean } {
+  let rendered: string
+  try {
+    const json = JSON.stringify(value)
+    rendered = json === undefined ? String(value) : json
+  } catch {
+    rendered = String(value)
+  }
+
+  if (rendered.length <= START_REQUEST_DIFF_MAX_VALUE_CHARS) {
+    return { value: rendered, truncated: false }
+  }
+  return {
+    value: `${rendered.slice(0, START_REQUEST_DIFF_MAX_VALUE_CHARS)}… [value truncated]`,
+    truncated: true,
+  }
+}
+
+function collectStartRequestDiffs(
+  daemonValue: unknown,
+  cliValue: unknown,
+  path: string[],
+  diffs: StartRequestFieldDiff[],
+  state: { entryCapReached: boolean }
+): void {
+  if (jsonEqual(daemonValue, cliValue)) return
+  if (diffs.length >= START_REQUEST_DIFF_MAX_ENTRIES) {
+    state.entryCapReached = true
+    return
+  }
+
+  const renderedPath = renderDiffPath(path)
+  if (path.some((segment) => START_REQUEST_SECRET_KEY_PATTERN.test(segment))) {
+    diffs.push({
+      path: renderedPath.value,
+      daemonValue: '[REDACTED]',
+      cliValue: '[REDACTED]',
+      redacted: true,
+      truncated: renderedPath.truncated,
+    })
+    return
+  }
+
+  if (Array.isArray(daemonValue) && Array.isArray(cliValue)) {
+    const length = Math.max(daemonValue.length, cliValue.length)
+    for (let index = 0; index < length; index += 1) {
+      collectStartRequestDiffs(
+        daemonValue[index],
+        cliValue[index],
+        [...path, String(index)],
+        diffs,
+        state
+      )
+    }
+    return
+  }
+
+  if (isJsonObject(daemonValue) && isJsonObject(cliValue)) {
+    const keys = [...new Set([...Object.keys(daemonValue), ...Object.keys(cliValue)])].sort()
+    for (const key of keys) {
+      collectStartRequestDiffs(daemonValue[key], cliValue[key], [...path, key], diffs, state)
+    }
+    return
+  }
+
+  const daemon = renderDiffValue(daemonValue)
+  const cli = renderDiffValue(cliValue)
+  diffs.push({
+    path: renderedPath.value,
+    daemonValue: daemon.value,
+    cliValue: cli.value,
+    redacted: false,
+    truncated: renderedPath.truncated || daemon.truncated || cli.truncated,
+  })
+}
+
+function describeStartRequestDiff(daemonStartRequest: unknown, cliStartRequest: unknown): string {
+  const diffs: StartRequestFieldDiff[] = []
+  const state = { entryCapReached: false }
+  collectStartRequestDiffs(daemonStartRequest, cliStartRequest, [], diffs, state)
+
+  const lines = diffs.map((diff) => {
+    const flags = [diff.redacted ? 'values redacted' : '', diff.truncated ? 'output truncated' : '']
+      .filter(Boolean)
+      .join('; ')
+    const suffix = flags.length > 0 ? ` (${flags})` : ''
+    return `${diff.path}: daemon=${diff.daemonValue}, CLI=${diff.cliValue}${suffix}`
+  })
+  if (state.entryCapReached) {
+    lines.push(
+      `Additional differences omitted; output capped at ${START_REQUEST_DIFF_MAX_ENTRIES} paths.`
+    )
+  }
+  if (lines.length === 0) {
+    lines.push(
+      'Start requests have different JSON serialization but no differing leaf value was found.'
+    )
+  }
+  return `Start request field diff (daemon-recompiled vs CLI-compiled):\n${lines.join('\n')}`
+}
+
 /**
  * Allocate identities, build a RuntimeCompileRequest, compile, select+verify the
  * broker profile, and return a verified/frozen plan. Does not execute anything.
@@ -344,7 +478,18 @@ export async function compileBrokerRuntimePlan(
       admitted: false,
       code: 'start-request-hash-mismatch',
       identity,
-      diagnostics: response.diagnostics,
+      diagnostics: [
+        ...response.diagnostics,
+        {
+          level: 'error',
+          code: 'start-request-field-diff',
+          message: describeStartRequestDiff(
+            response.dispatchRequest.startRequest,
+            response.startRequest
+          ),
+          plane: 'asp-compiler',
+        },
+      ],
     }
   }
 
