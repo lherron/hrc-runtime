@@ -513,9 +513,85 @@ describe('hrc broker transcript', () => {
     expect(empty.stderr).toBe('')
     expect(empty.stdout).toBe('')
   })
+
+  it('selects SAYS rows for --kinds cot and rejects unadvertised kinds', async () => {
+    const cot = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '2..4', '--kinds', 'cot'],
+      cliEnv(fixture)
+    )
+    const invalid = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--kinds', 'reasoning'],
+      cliEnv(fixture)
+    )
+
+    expect(cot.exitCode).toBe(0)
+    expect(cot.stderr).toBe('')
+    expect(cot.stdout).toMatch(/^3 SAYS \| nested assistant message$/m)
+    expect(cot.stdout).not.toMatch(/ EXEC | NOTE /)
+    expect(invalid.exitCode).not.toBe(0)
+    expect(invalid.stderr).toContain('--kinds accepts only exec,cot,notice')
+  })
+
+  it('drops tool.call.completed duration and outcome details from the transcript', async () => {
+    appendEvent(fixture, {
+      seq: 13,
+      type: 'tool.call.completed',
+      turnId: 'turn-2',
+      payload: {
+        toolCallId: 'tool-4',
+        durationMs: 1250,
+        outcome: 'success',
+      },
+    })
+
+    const result = await runCli(
+      ['broker', 'transcript', RUNTIME_ID, '--seq', '13..13'],
+      cliEnv(fixture)
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toBe('')
+  })
 })
 
 describe('hrc broker stats and selector convenience', () => {
+  it('resolves a live runtime from its scope selector', async () => {
+    const liveRuntimeId = 'rt-forensics-live'
+    const liveInvocationId = 'inv-forensics-live'
+    const liveScopeRef = 'agent:room-live:project:hrc-runtime:task:T-09999'
+    const liveScopeHandle = 'room-live@hrc-runtime:T-09999'
+    seedRuntimeGraph(fixture, {
+      hostSessionId: 'hs-forensics-live',
+      runtimeId: liveRuntimeId,
+      runId: 'run-forensics-live',
+      invocationId: liveInvocationId,
+      scopeRef: liveScopeRef,
+      status: 'ready',
+    })
+    appendEvent(fixture, {
+      invocationId: liveInvocationId,
+      runtimeId: liveRuntimeId,
+      runId: 'run-forensics-live',
+      seq: 1,
+      type: 'live.only',
+      payload: {},
+    })
+
+    const result = await runCli(['broker', 'stats', liveScopeHandle, '--json'], cliEnv(fixture))
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    const stats = JSON.parse(result.stdout) as {
+      runtimeIds: string[]
+      invocationIds: string[]
+      eventTypes: Record<string, number>
+    }
+    expect(stats.runtimeIds).toEqual([liveRuntimeId])
+    expect(stats.invocationIds).toEqual([liveInvocationId])
+    expect(stats.eventTypes).toEqual({ 'live.only': 1 })
+  })
+
   it('reports histogram, turn/tool counts, activity bounds, and per-turn tool breakdown', async () => {
     // This runtime is terminated; post-mortem selectors must not be limited to
     // the live broker controller registry.
