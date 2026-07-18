@@ -196,6 +196,57 @@ describe('RED (GAP 1): broker-tmux orphan-session sweep on restart', () => {
     expect(existsSync(socketPath)).toBe(false)
   })
 
+  it('removes an unheld codex-app-server renderer-control socket past grace', async () => {
+    const tmpRoot = await mkdtemp('/tmp/hbo-')
+    const runtimeRoot = join(tmpRoot, 'r')
+    const stateRoot = join(tmpRoot, 's')
+    const spoolDir = join(runtimeRoot, 'spool')
+    const btmuxDir = join(runtimeRoot, 'btmux')
+    const socketPath = join(btmuxDir, 'codex-app-server-renderer-control.orphan.sock')
+    let server: HrcServer | undefined
+    await mkdir(btmuxDir, { recursive: true })
+    await mkdir(stateRoot, { recursive: true })
+    await mkdir(spoolDir, { recursive: true })
+
+    try {
+      const child = Bun.spawn(
+        [
+          'node',
+          '-e',
+          `const { createServer } = require('node:net')
+const server = createServer()
+server.listen(process.env.RENDERER_SOCKET_PATH, () => process.abort())`,
+        ],
+        {
+          env: { ...process.env, RENDERER_SOCKET_PATH: socketPath },
+          stdout: 'ignore',
+          stderr: 'ignore',
+        }
+      )
+      await child.exited
+      expect(existsSync(socketPath)).toBe(true)
+
+      process.env[GRACE_ENV] = '0'
+
+      server = await createHrcServer(
+        fixture.serverOpts({
+          runtimeRoot,
+          stateRoot,
+          socketPath: join(runtimeRoot, 'hrc.sock'),
+          lockPath: join(runtimeRoot, 'server.lock'),
+          spoolDir,
+          dbPath: join(stateRoot, 'state.sqlite'),
+          tmuxSocketPath: join(runtimeRoot, 'tmux.sock'),
+        })
+      )
+
+      expect(existsSync(socketPath)).toBe(false)
+    } finally {
+      await server?.stop()
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  })
+
   it('does NOT hang on codex-app-server renderer-control sockets in btmux', async () => {
     const tmpRoot = await mkdtemp('/tmp/hbo-')
     const runtimeRoot = join(tmpRoot, 'r')
