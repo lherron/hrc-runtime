@@ -1,4 +1,4 @@
-import type { Command } from 'commander'
+import { type Command, Option } from 'commander'
 import { runHrcPiTop } from 'hrc-pi-top'
 import { runHrcTop } from 'hrc-top'
 
@@ -58,6 +58,11 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--project-root <path>', 'override project root')
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')
+    .addOption(
+      new Option('--wait [mode]', 'wait for the prompt turn to complete')
+        .choices(['completed'])
+        .preset('completed')
+    )
     .action(async (_scope, _opts, cmd: Command) => {
       // cmdStart/cmdRun use parseScopePrompt which handles positional
       // prompts, -p, and --prompt-file.  Reconstruct the full legacy
@@ -67,7 +72,7 @@ export function registerTopLevelCommands(program: Command): void {
       const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
         strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json', 'wait'],
         negatedBooleans: ['register'],
       })
       await cmdStart(args)

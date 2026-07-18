@@ -28,6 +28,43 @@ import { createClient, fatal } from './shared.js'
 
 type ManagedStartClient = Pick<HrcClient, 'dispatchTurn' | 'startRuntime'>
 
+export type StartFollowCommand = {
+  purpose: string
+  cmd: string
+}
+
+/** Build copy-pasteable supervision commands from the authoritative resolved scope. */
+export function buildStartFollowCommands(scopeRef: string): StartFollowCommand[] {
+  const taskId = /:task:([^:]+)(?::role:|$)/.exec(scopeRef)?.[1]
+  if (taskId !== undefined && taskId !== 'primary') {
+    return [
+      {
+        purpose: 'live room feed (milestone cadence)',
+        cmd: `hrc monitor watch ${taskId} --follow`,
+      },
+      {
+        purpose: 'block until the task lands',
+        cmd: `wrkq monitor wait ${taskId} --until all-terminal`,
+      },
+    ]
+  }
+
+  return [
+    {
+      purpose: 'live room feed (milestone cadence)',
+      cmd: `hrc monitor watch scope:${scopeRef} --follow`,
+    },
+  ]
+}
+
+function printStartFollowHint(follow: readonly StartFollowCommand[]): void {
+  process.stderr.write(
+    `started detached â€” follow with:\n${follow
+      .map(({ purpose, cmd }) => `  ${cmd}  # ${purpose}`)
+      .join('\n')}\n`
+  )
+}
+
 export async function executeManagedStart(
   client: ManagedStartClient,
   input: {
@@ -35,6 +72,7 @@ export async function executeManagedStart(
     intent: HrcRuntimeIntent
     prompt?: string | undefined
     restartStyle: 'reuse_pty' | 'fresh_pty'
+    waitForCompletion?: boolean | undefined
   }
 ) {
   const prompt = input.prompt
@@ -58,7 +96,7 @@ export async function executeManagedStart(
     hostSessionId: input.hostSessionId,
     prompt,
     runtimeIntent: input.intent,
-    waitForCompletion: true,
+    waitForCompletion: input.waitForCompletion === true,
   })
   const execution = (
     result as typeof result & {
@@ -109,6 +147,7 @@ ${noAttachOption}${newSessionOption}  --dry-run            Local plan preview â€
   --no-register        Don't prompt to register cwd as a project marker
   -p <text>            Initial prompt to send to the harness
   --prompt-file <path> Read initial prompt from a file
+  --wait[=completed]   Wait for the prompt turn to complete
 `)
 }
 
@@ -391,6 +430,7 @@ export async function cmdStart(args: string[]): Promise<void> {
   const debug = hasFlag(args, '--debug')
   const noRegister = hasFlag(args, '--no-register')
   const jsonOutput = hasFlag(args, '--json')
+  const waitForCompletion = hasFlag(args, '--wait')
   const projectIdOverride = parseFlag(args, '--project-id')
   const projectRootOverride = parseFlag(args, '--project-root')
   const prompt = await parseScopePrompt(args, {
@@ -402,6 +442,7 @@ export async function cmdStart(args: string[]): Promise<void> {
       '--debug',
       '--no-register',
       '--json',
+      '--wait',
       '--project-id',
       '--project-root',
     ],
@@ -444,14 +485,20 @@ export async function cmdStart(args: string[]): Promise<void> {
       intent,
       prompt,
       restartStyle,
+      waitForCompletion,
     })
 
+    const follow = prompt === undefined ? undefined : buildStartFollowCommands(scope.scopeRef)
     printJson({
       sessionRef,
       hostSessionId: targetSession.hostSessionId,
       created: resolved.created || newSession,
       runtime,
+      ...(jsonOutput && follow !== undefined ? { follow } : {}),
     })
+    if (!jsonOutput && follow !== undefined) {
+      printStartFollowHint(follow)
+    }
   } catch (err) {
     if (jsonOutput) {
       emitScopeCommandErrorJson('start', err, scopeInput, sessionRef)
