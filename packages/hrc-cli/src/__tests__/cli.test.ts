@@ -814,6 +814,31 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stdout).toContain('--transport')
   })
 
+  it('describes runtime sweep as ready/busy aging and directs stale-row GC to prune', async () => {
+    const help = await runCli(['runtime', 'sweep', '--help'])
+    const usage = await runCli([])
+    const helpText = help.stdout.toLowerCase()
+    const usageLines = usage.stderr.split('\n')
+    const sweepUsageIndex = usageLines.findIndex((line) => line.includes('runtime sweep '))
+    const sweepUsage = usageLines
+      .slice(sweepUsageIndex, sweepUsageIndex + 2)
+      .join(' ')
+      .toLowerCase()
+    const handlersSource = await readFile(
+      join(import.meta.dir, '..', 'cli', 'handlers-runtime.ts'),
+      'utf8'
+    )
+
+    expect(help.exitCode).toBe(0)
+    expect(usage.exitCode).toBe(1)
+    expect(sweepUsageIndex).toBeGreaterThanOrEqual(0)
+    for (const token of ['ready', 'busy', 'stale', 'prune']) {
+      expect(helpText).toContain(token)
+      expect(sweepUsage).toContain(token)
+    }
+    expect(handlersSource).not.toContain('terminates live processes/tmux')
+  })
+
   it('hrc run sweep-zombies --help exits 0 with Usage and flags', async () => {
     const result = await runCli(['run', 'sweep-zombies', '--help'])
     expect(result.exitCode).toBe(0)

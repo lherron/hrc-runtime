@@ -186,6 +186,35 @@ describe('POST /v1/runtimes/sweep', () => {
     })
   })
 
+  it('reports aged ready and busy runtimes as planned stale transitions in dry-run', async () => {
+    seedRuntime({
+      runtimeId: 'rt-dry-run-ready',
+      hostSessionId: 'hsid-dry-run-ready',
+      scopeRef: 'sweep-dry-run-ready',
+      status: 'ready',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedRuntime({
+      runtimeId: 'rt-dry-run-busy',
+      hostSessionId: 'hsid-dry-run-busy',
+      scopeRef: 'sweep-dry-run-busy',
+      activeRunId: 'run-dry-run-busy',
+      createdAt: isoMinutesAgo(180),
+    })
+
+    const body = await sweep({ olderThan: '1h', dryRun: true })
+
+    expect(body.summary).toMatchObject({
+      matched: 2,
+      stale: 2,
+      terminated: 0,
+      skipped: 0,
+      errors: 0,
+    })
+    expect(getRuntime('rt-dry-run-ready')?.status).toBe('ready')
+    expect(getRuntime('rt-dry-run-busy')?.status).toBe('busy')
+  })
+
   it('marks three stale headless runtimes stale and emits per-runtime plus summary events', async () => {
     for (const suffix of ['one', 'two', 'three']) {
       seedRuntime({
