@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
-import { HrcErrorCode, HrcRuntimeUnavailableError, HrcUnprocessableEntityError } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  HrcUnprocessableEntityError,
+} from 'hrc-core'
 import type {
   DispatchTurnResponse,
   HrcProvider,
@@ -15,7 +20,11 @@ import {
   createUserPromptPayload,
   deriveSemanticTurnEventFromSdkEvent,
 } from '../hrc-event-helper.js'
-import { isRunActive } from '../require-helpers.js'
+import {
+  assertRuntimeNotBusy,
+  isRunActive,
+  isRuntimeUnavailableStatus,
+} from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findLatestSessionRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -45,35 +54,78 @@ function resolveSdkDispatchTarget(
   const existingProvider =
     findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
     session.continuation?.provider
-  const runtimeId = `rt-${randomUUID()}`
   const now = timestamp()
+  const sdkHarness = deriveSdkHarness(intent.harness)
+  const matchingRuntimes = this.db.runtimes
+    .listByHostSessionId(session.hostSessionId)
+    .filter(
+      (runtime) =>
+        runtime.transport === 'sdk' &&
+        runtime.provider === intent.harness.provider &&
+        runtime.harness === sdkHarness
+    )
+    .filter((runtime) => !isRuntimeUnavailableStatus(runtime.status))
+
+  for (const runtime of matchingRuntimes) {
+    assertRuntimeNotBusy(this.db, runtime)
+  }
+
+  const reusableRuntimes = matchingRuntimes.filter((runtime) => runtime.status === 'ready')
+  if (
+    matchingRuntimes.length > 1 ||
+    (matchingRuntimes.length === 1 && reusableRuntimes.length === 0)
+  ) {
+    throw new HrcConflictError(
+      HrcErrorCode.RUNTIME_BUSY,
+      'SDK session does not have exactly one reusable runtime',
+      {
+        hostSessionId: session.hostSessionId,
+        runtimeIds: matchingRuntimes.map((runtime) => runtime.runtimeId),
+      }
+    )
+  }
 
   this.db.sessions.updateIntent(session.hostSessionId, intent, now)
 
-  const sdkHarness = deriveSdkHarness(intent.harness)
+  const reusableRuntime = reusableRuntimes[0]
+  const runtimeId = reusableRuntime?.runtimeId ?? `rt-${randomUUID()}`
+  const runtime = reusableRuntime
+    ? this.db.runtimes.update(runtimeId, {
+        status: 'busy',
+        continuation: session.continuation,
+        activeRunId: runId,
+        ...runtimeActivityPatch(this.db, runtimeId, {
+          source: 'turn',
+          occurredAt: now,
+          updatedAt: now,
+        }),
+      })
+    : this.db.runtimes.insert({
+        runtimeId,
+        runtimeKind: 'harness',
+        hostSessionId: session.hostSessionId,
+        scopeRef: session.scopeRef,
+        laneRef: session.laneRef,
+        generation: session.generation,
+        transport: 'sdk',
+        harness: sdkHarness,
+        provider: intent.harness.provider,
+        status: 'busy',
+        continuation: session.continuation,
+        supportsInflightInput: getSdkInflightCapability(sdkHarness),
+        adopted: false,
+        activeRunId: runId,
+        ...runtimeActivityPatch(this.db, runtimeId, {
+          source: 'turn',
+          occurredAt: now,
+          updatedAt: now,
+        }),
+        createdAt: now,
+      })
 
-  const runtime = this.db.runtimes.insert({
-    runtimeId,
-    runtimeKind: 'harness',
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    transport: 'sdk',
-    harness: sdkHarness,
-    provider: intent.harness.provider,
-    status: 'busy',
-    continuation: session.continuation,
-    supportsInflightInput: getSdkInflightCapability(sdkHarness),
-    adopted: false,
-    activeRunId: runId,
-    ...runtimeActivityPatch(this.db, runtimeId, {
-      source: 'turn',
-      occurredAt: now,
-      updatedAt: now,
-    }),
-    createdAt: now,
-  })
+  if (!runtime) {
+    throw new Error(`failed to update SDK runtime ${runtimeId}`)
+  }
 
   const run = this.db.runs.insert({
     runId,
@@ -88,19 +140,21 @@ function resolveSdkDispatchTarget(
     updatedAt: now,
   })
 
-  const runtimeCreatedEvent = appendHrcEvent(this.db, 'runtime.created', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: runtime.runtimeId,
-    transport: 'sdk',
-    payload: {
-      harness: runtime.harness,
-    },
-  })
-  this.notifyEvent(runtimeCreatedEvent)
+  if (!reusableRuntime) {
+    const runtimeCreatedEvent = appendHrcEvent(this.db, 'runtime.created', {
+      ts: now,
+      hostSessionId: session.hostSessionId,
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      generation: session.generation,
+      runtimeId: runtime.runtimeId,
+      transport: 'sdk',
+      payload: {
+        harness: runtime.harness,
+      },
+    })
+    this.notifyEvent(runtimeCreatedEvent)
+  }
 
   const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
     ts: now,

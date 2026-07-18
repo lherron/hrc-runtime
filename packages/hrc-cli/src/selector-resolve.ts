@@ -5,7 +5,10 @@ import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 export type SelectorTargetKind = 'runtime' | 'host-session' | 'message' | 'bridge'
 
-export type RuntimeSnapshot = Pick<HrcRuntimeSnapshot, 'runtimeId' | 'scopeRef' | 'laneRef'> & {
+export type RuntimeSnapshot = Pick<
+  HrcRuntimeSnapshot,
+  'runtimeId' | 'scopeRef' | 'laneRef' | 'status'
+> & {
   createdAt?: string | undefined
 }
 
@@ -146,7 +149,12 @@ function resolveUniqueRuntime(
     typeMismatch(rawArg, expect, 'scope/session target')
   }
 
-  const matches = snapshot.runtimes.filter(predicate)
+  const matches = snapshot.runtimes
+    .filter(
+      (runtime) =>
+        runtime.status !== 'terminated' && runtime.status !== 'dead' && runtime.status !== 'stale'
+    )
+    .filter(predicate)
   if (matches.length === 0) {
     notFound(rawArg, expect)
   }
@@ -307,6 +315,7 @@ export async function fetchSelectorSnapshot(client: HrcClient): Promise<Selector
       runtimeId: runtime.runtimeId,
       scopeRef: runtime.scopeRef,
       laneRef: runtime.laneRef,
+      status: runtime.status,
       createdAt: runtime.createdAt,
     })),
     sessions: sessions.map((session) => ({
