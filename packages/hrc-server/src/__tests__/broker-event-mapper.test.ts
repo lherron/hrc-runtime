@@ -228,6 +228,47 @@ describe('emitted HRC events', () => {
     expect(hrcCompleted.length).toBe(1)
   })
 
+  it('preserves optional provider details on failed turns and omits absent fields', () => {
+    const mapper = makeMapper()
+    const detailed = mapper.apply(
+      envelope('turn.failed', 7, {
+        message: 'API Error: overloaded upstream',
+        code: 'api_error',
+        data: { status: 529, requestId: 'req_failed_turn' },
+        reason: 'serverOverloaded',
+        retryable: true,
+      })
+    )
+
+    expect(detailed.lifecycleEvents).toHaveLength(1)
+    expect(detailed.lifecycleEvents[0]).toMatchObject({
+      eventKind: 'turn.completed',
+      payload: {
+        success: false,
+        transport: 'headless',
+        source: 'broker',
+        message: 'API Error: overloaded upstream',
+        code: 'api_error',
+        data: { status: 529, requestId: 'req_failed_turn' },
+        reason: 'serverOverloaded',
+        retryable: true,
+      },
+    })
+
+    const minimal = mapper.apply(envelope('turn.failed', 8, { message: 'provider request failed' }))
+    const minimalPayload = minimal.lifecycleEvents[0]!.payload
+    expect(minimalPayload).toMatchObject({
+      success: false,
+      transport: 'headless',
+      source: 'broker',
+      message: 'provider request failed',
+    })
+    expect(minimalPayload).not.toHaveProperty('code')
+    expect(minimalPayload).not.toHaveProperty('data')
+    expect(minimalPayload).not.toHaveProperty('reason')
+    expect(minimalPayload).not.toHaveProperty('retryable')
+  })
+
   it('uses the runtime transport when projecting broker lifecycle events', () => {
     const db = fixture.db
     db.runtimes.update(RUNTIME_ID, {

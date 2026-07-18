@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { MonitorEventSchema } from 'hrc-events'
 
+import { lifecyclePayload } from '../../../hrc-server/src/broker/event-mapper/lifecycle-payload'
 import { cmdMonitorWatch } from '../monitor-watch'
 
 type MonitorCondition =
@@ -481,6 +482,46 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(cli.stdout).toContain('API Error: overloaded upstream')
     expect(cli.stdout).not.toContain('turn failed')
     expect(cli.stdout).not.toContain('turn completed')
+  })
+
+  test('default pretty replay shows the provider diagnostic and failed terminal details', async () => {
+    const failedPayload = lifecyclePayload(
+      {
+        invocationId: 'invocation-provider-error',
+        seq: 52,
+        time: TS,
+        type: 'turn.failed',
+        payload: {
+          message: 'API Error: overloaded upstream',
+          code: 'api_error',
+        },
+      } as Parameters<typeof lifecyclePayload>[0],
+      'tmux'
+    )
+    const cli = await invokeWatchText(
+      { selector: SELECTOR, pretty: true },
+      createFixtureState({
+        events: [
+          event(204, 'turn.started', { turnId: TURN_ID }),
+          apiDiagnosticEvent(205),
+          event(206, 'turn.completed', {
+            turnId: TURN_ID,
+            runId: TURN_ID,
+            transport: 'tmux',
+            payload: failedPayload,
+          }),
+        ],
+      })
+    )
+
+    expect(cli.exitCode).toBe(0)
+    expect(cli.stdout).toContain('diagnostic')
+    expect(cli.stdout).toContain('API Error: overloaded upstream')
+    expect(cli.stdout).toContain('turn failed')
+    expect(cli.stdout).not.toContain('turn completed')
+    const terminalRow = cli.stdout.split('\n').find((line) => line.includes('turn failed'))
+    expect(terminalRow).toContain('message=API Error: overloaded upstream')
+    expect(terminalRow).toContain('code=api_error')
   })
 
   test('--last replays the last n matching events and marks them replayed', async () => {
