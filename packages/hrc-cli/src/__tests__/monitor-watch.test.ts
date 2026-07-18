@@ -525,7 +525,7 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
   })
 
   test('--last replays more than the default 100-event tail when requested', async () => {
-    const events = Array.from({ length: 150 }, (_, index) =>
+    const events = Array.from({ length: 200 }, (_, index) =>
       event(index + 1, index % 2 === 0 ? 'runtime.idle' : 'runtime.busy', {
         result: index % 2 === 0 ? 'idle' : 'busy',
       })
@@ -538,8 +538,8 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
     expect(result.events).toHaveLength(150)
-    expect(result.events[0]).toMatchObject({ seq: 1, replayed: true })
-    expect(result.events.at(-1)).toMatchObject({ seq: 150, replayed: true })
+    expect(result.events[0]).toMatchObject({ seq: 51, replayed: true })
+    expect(result.events.at(-1)).toMatchObject({ seq: 200, replayed: true })
     expect(result.events.every((payload) => payload.replayed === true)).toBe(true)
   })
 
