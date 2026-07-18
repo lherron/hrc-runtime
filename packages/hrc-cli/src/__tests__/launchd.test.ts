@@ -147,6 +147,35 @@ describe('hrc-dev LaunchAgent and OTLP env', () => {
   })
 })
 
+describe('hrc delta-prune LaunchAgent', () => {
+  it('schedules the honest delta prune nightly without vacuum or KeepAlive', async () => {
+    const plistPath = join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      'launchd',
+      'com.praesidium.hrc-prune-deltas.plist'
+    )
+    const plist = await readFile(plistPath, 'utf8')
+
+    expect(plist).toContain('<string>com.praesidium.hrc-prune-deltas</string>')
+    expect(plist).toContain('<string>/Users/lherron/.bun/bin/bun</string>')
+    expect(plist).toContain(
+      '<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>'
+    )
+    expect(plist).toContain('<string>--apply</string>')
+    expect(plist).toContain('<key>StartCalendarInterval</key>')
+    expect(plist).toContain('<key>HRC_STATE_DIR</key>')
+    expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc</string>')
+    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-prune-deltas.log')
+    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-prune-deltas.err.log')
+    expect(plist).not.toContain('--vacuum')
+    expect(plist).not.toContain('<key>KeepAlive</key>')
+  })
+})
+
 describe('launchctlKickstart', () => {
   let originalPath: string | undefined
   let shim: Shim | null = null
