@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { main } from '../cli'
+import { cmdMonitorWatch } from '../monitor-watch'
 
 type CliResult = {
   stdout: string
@@ -235,7 +236,163 @@ function parseSingleJsonLine(stdout: string): Record<string, unknown> {
   return JSON.parse(lines[0]!) as Record<string, unknown>
 }
 
+function parseJsonLines(stdout: string): Array<Record<string, unknown>> {
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+async function runConditionVerb(
+  verb: 'watch' | 'wait',
+  selector: string,
+  condition: string,
+  state: MonitorFixtureState
+): Promise<{ cli: CliResult; completed: Record<string, unknown> }> {
+  let cli: CliResult
+  if (verb === 'watch') {
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const exitCode = await (
+      cmdMonitorWatch as unknown as (
+        args: string[],
+        deps: {
+          buildMonitorState: () => Promise<MonitorFixtureState>
+          stdout: { write(chunk: string): boolean }
+          stderr: { write(chunk: string): boolean }
+        }
+      ) => Promise<number>
+    )([selector, '--follow', '--until', condition, '--timeout', '10ms', '--format', 'ndjson'], {
+      buildMonitorState: async () => state,
+      stdout: {
+        write(chunk) {
+          stdout.push(chunk)
+          return true
+        },
+      },
+      stderr: {
+        write(chunk) {
+          stderr.push(chunk)
+          return true
+        },
+      },
+    })
+    cli = { stdout: stdout.join(''), stderr: stderr.join(''), exitCode }
+  } else {
+    cli = await runCli(
+      ['monitor', 'wait', selector, '--until', condition, '--timeout', '10ms', '--json'],
+      fixtureEnv(state)
+    )
+  }
+  const completed = parseJsonLines(cli.stdout).at(-1)
+  expect(completed).toBeDefined()
+  return { cli, completed: completed! }
+}
+
 describe('monitor wait CLI acceptance (T-01291 / F2c)', () => {
+  test.each([
+    [
+      'turn-finished',
+      `session:${SESSION_REF}`,
+      createFixtureState({ activeTurnId: null, events: [] }),
+      'no_active_turn',
+      0,
+    ],
+    [
+      'idle',
+      `session:${SESSION_REF}`,
+      createFixtureState({ activeTurnId: null, runtimeStatus: 'idle', events: [] }),
+      'already_idle',
+      0,
+    ],
+    [
+      'busy',
+      `session:${SESSION_REF}`,
+      createFixtureState({ runtimeStatus: 'busy', events: [] }),
+      'already_busy',
+      0,
+    ],
+    [
+      'response',
+      `msg:${MESSAGE_ID}`,
+      createFixtureState({
+        events: [
+          event(100, 'turn.started', { turnId: TURN_ID }),
+          event(101, 'message.response', {
+            turnId: TURN_ID,
+            messageId: MESSAGE_ID,
+            messageSeq: 1291,
+            result: 'response',
+          }),
+        ],
+      }),
+      'response',
+      0,
+    ],
+    [
+      'response-or-idle',
+      `msg:${MESSAGE_ID}`,
+      createFixtureState({ activeTurnId: null, runtimeStatus: 'idle', events: [] }),
+      'timeout',
+      1,
+    ],
+    [
+      'runtime-dead',
+      `session:${SESSION_REF}`,
+      createFixtureState({ activeTurnId: null, runtimeStatus: 'dead', events: [] }),
+      'already_dead',
+      0,
+    ],
+    [
+      'terminal',
+      `session:${SESSION_REF}`,
+      createFixtureState({
+        activeTurnId: null,
+        runtimeStatus: 'idle',
+        events: [event(101, 'turn.finished', { turnId: TURN_ID, result: 'turn_succeeded' })],
+      }),
+      'timeout',
+      1,
+    ],
+  ] as const)(
+    'keeps watch/wait arm-time parity for --until %s',
+    async (condition, selector, state, result, exitCode) => {
+      for (const verb of ['watch', 'wait'] as const) {
+        const observed = await runConditionVerb(verb, selector, condition, state)
+
+        expect(observed.cli.stderr).toBe('')
+        expect(observed.cli.exitCode).toBe(exitCode)
+        expect(observed.completed).toMatchObject({
+          event: 'monitor.completed',
+          selector,
+          condition,
+          result,
+          exitCode,
+        })
+      }
+    }
+  )
+
+  test('routes exact and set-shaped selectors to the same candidate in both verbs', async () => {
+    const state = createFixtureState({ activeTurnId: null, runtimeStatus: 'idle', events: [] })
+
+    for (const verb of ['watch', 'wait'] as const) {
+      for (const selector of [`session:${SESSION_REF}`, 'T-01291']) {
+        const observed = await runConditionVerb(verb, selector, 'idle', state)
+
+        expect(observed.cli.exitCode).toBe(0)
+        expect(observed.completed).toMatchObject({
+          event: 'monitor.completed',
+          condition: 'idle',
+          result: 'already_idle',
+          scopeRef: SCOPE_REF,
+          exitCode: 0,
+        })
+      }
+    }
+  })
+
   test.each([
     ['turn-finished', createFixtureState({ activeTurnId: null, events: [] }), 0, 'no_active_turn'],
     [

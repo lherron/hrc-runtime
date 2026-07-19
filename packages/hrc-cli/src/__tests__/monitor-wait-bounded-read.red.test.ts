@@ -229,6 +229,14 @@ afterEach(() => {
 })
 
 describe('Bundle 1 — monitor wait bounded live reads', () => {
+  it('applies --timeout as a hard ceiling to the initial daemon read', async () => {
+    track(spyOn(HrcClient.prototype, 'getStatus').mockImplementation(() => new Promise(() => {})))
+    const startedAt = performance.now()
+
+    expect(await runWait([`runtime:${RUNTIME_ID}`, '--until', 'idle', '--timeout', '20ms'])).toBe(1)
+    expect(performance.now() - startedAt).toBeLessThan(250)
+  })
+
   it('uses targeted message state and a high-water-anchored filtered read', async () => {
     const targeted = installTargetedSpies()
     const forbidden = captureForbiddenReads()
