@@ -35,11 +35,14 @@ import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
 import { splitCsv } from '../cli/argv.js'
 import { matchStringFlag, parseNonNegativeInteger, parsePositiveInteger } from '../monitor-args.js'
-import { MSG_REQUIRED_CONDITIONS, assertValidUntilCondition } from '../monitor-conditions.js'
 import { numberField, stringField } from '../monitor-fields.js'
 import { resolveTerminalFence } from '../monitor-terminal-fence.js'
 import { buildMonitorStateBeforeDeadline, createArmPhaseReader } from './arm-phase.js'
-import { waitForAnyMonitorCondition, waitForMonitorCondition } from './engine.js'
+import {
+  runMonitorUntilPlan,
+  waitForAnyMonitorCondition,
+  waitForMonitorCondition,
+} from './engine.js'
 import {
   type MonitorOutputFormat,
   parseMonitorOutputFormat,
@@ -58,6 +61,7 @@ import {
   scopeRefForSelector,
   selectorSetLabel,
 } from './selector-shape.js'
+import { appendUntilValue, resolveMonitorUntilPlan } from './until-args.js'
 import { type LiveMonitorStateSource, createLiveMonitorStateSource } from './wait-command.js'
 import { runReplayOrFollow, writeFollowTimeoutCompletion } from './watch-stream.js'
 
@@ -150,9 +154,6 @@ async function runWatch(
     process.stdout.isTTY === true
   )
 
-  // Validate condition
-  assertValidUntilCondition(until)
-
   // Validate event-filter flags (T-04232)
   if (args.kind !== undefined && args.kind.trim() === '') {
     throw new CliUsageError('--kind requires a non-empty value')
@@ -168,7 +169,7 @@ async function runWatch(
     if (args.fromSeq !== undefined) {
       throw new CliUsageError('--last cannot be used with --from-seq')
     }
-    if (until !== undefined) {
+    if (until !== undefined || args.untilAny !== undefined || args.untilAll !== undefined) {
       throw new CliUsageError('--last cannot be used with --until')
     }
   }
@@ -185,16 +186,13 @@ async function runWatch(
     selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
       ? selectorSpecs[0].selector
       : undefined
-
-  // Q4 FROZEN: response/response-or-idle REQUIRE msg: selector
-  if (until && MSG_REQUIRED_CONDITIONS.has(until)) {
-    if (
-      selectorSpecs.length !== 1 ||
-      !selector ||
-      (selector.kind !== 'message' && selector.kind !== 'message-seq')
-    ) {
-      throw new CliUsageError(`${until} requires a msg: selector`)
-    }
+  const untilPlan = resolveMonitorUntilPlan(
+    { until: args.untilConditions ?? until, untilAny: args.untilAny, untilAll: args.untilAll },
+    selectorSpecs,
+    { defaultWhenBlocking: follow && args.forever !== true }
+  )
+  if (args.since !== undefined) {
+    throw new CliUsageError('--since is not supported by the explicit condition grammar')
   }
 
   // Handle SIGINT
@@ -206,8 +204,13 @@ async function runWatch(
   // SQL layer already narrowed the firehose; this wrapper enforces the same
   // predicate for injected/test state and preserves the global high-water.
   const conditionIo =
-    liveMode && follow && until !== undefined && !isFanInSelectorSet(selectorSpecs)
-      ? withTargetedConditionSource(io, selectorSpecs, until as HrcMonitorCondition, args.since)
+    liveMode && untilPlan !== undefined && untilPlan.quantifier === 'exact'
+      ? withTargetedConditionSource(
+          io,
+          selectorSpecs,
+          untilPlan.conditions[0] as HrcMonitorCondition,
+          undefined
+        )
       : io
   const filteredIo = wrapWithMonitorFilters(conditionIo, args, selectorSpecs)
 
@@ -231,6 +234,23 @@ async function runWatch(
   }
   if (initialBuild.kind === 'aborted') return 130
   const state = initialBuild.state
+
+  if (untilPlan !== undefined) {
+    const result = await runMonitorUntilPlan(state, untilPlan, selectorSpecs, filteredIo, {
+      timeoutMs: args.timeoutMs,
+      stallAfterMs: args.stallAfterMs,
+      signal,
+    })
+    const writer = createMonitorEventWriter(
+      io.stdout,
+      selector ? formatSelector(selector) : selectorSetLabel(selectorSpecs),
+      args,
+      format
+    )
+    writer.write(result.event)
+    writer.flush()
+    return result.exitCode
+  }
 
   const implicitTerminal =
     follow &&
@@ -510,7 +530,10 @@ async function buildLiveMonitorState(
       {
         runtimeId: rt.runtimeId,
         hostSessionId: rt.hostSessionId,
+        scopeRef: rt.scopeRef,
+        laneRef: rt.laneRef,
         status: rt.status,
+        statusChangedAt: rt.statusChangedAt,
         transport: rt.transport,
         activeTurnId: rt.activeRunId ?? null,
       },
@@ -631,7 +654,7 @@ function parseArgv(args: string[]): MonitorWatchArgs {
   const selectors: string[] = []
   let fromSeq: number | undefined
   let last: number | undefined
-  let until: string | undefined
+  const untilFamilies: Partial<Record<'until' | 'until-any' | 'until-all', string[]>> = {}
   let timeout: string | undefined
   let stallAfter: string | undefined
   let since: string | undefined
@@ -665,9 +688,21 @@ function parseArgv(args: string[]): MonitorWatchArgs {
       i = lastMatch.next
       continue
     }
+    const untilAnyMatch = matchStringFlag(arg, '--until-any', args, i)
+    if (untilAnyMatch) {
+      appendUntilValue(untilFamilies, 'until-any', untilAnyMatch.value)
+      i = untilAnyMatch.next
+      continue
+    }
+    const untilAllMatch = matchStringFlag(arg, '--until-all', args, i)
+    if (untilAllMatch) {
+      appendUntilValue(untilFamilies, 'until-all', untilAllMatch.value)
+      i = untilAllMatch.next
+      continue
+    }
     const untilMatch = matchStringFlag(arg, '--until', args, i)
     if (untilMatch) {
-      until = untilMatch.value
+      appendUntilValue(untilFamilies, 'until', untilMatch.value)
       i = untilMatch.next
       continue
     }
@@ -752,7 +787,10 @@ function parseArgv(args: string[]): MonitorWatchArgs {
     fromSeq,
     last,
     follow: booleanFlags.follow ?? false,
-    until,
+    until: untilFamilies.until?.[0],
+    untilConditions: untilFamilies.until,
+    untilAny: untilFamilies['until-any'],
+    untilAll: untilFamilies['until-all'],
     since,
     json: booleanFlags.json ?? false,
     pretty: booleanFlags.pretty ?? false,

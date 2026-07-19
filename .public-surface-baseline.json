@@ -1967,6 +1967,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "MONITOR_EXIT_CODES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/exit-codes.ts",
+      "hash": "hrc-core|MONITOR_EXIT_CODES|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "MonitorExitCode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/exit-codes.ts",
+      "hash": "hrc-core|MonitorExitCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "normalizeCorrelation",
       "kind": "value",
       "file": "packages/hrc-core/src/invocation-exposure.ts",

@@ -14,12 +14,10 @@ export const VALID_CONDITIONS = new Set<string>([
   'idle',
   'busy',
   'response',
-  'response-or-idle',
   'runtime-dead',
-  'terminal',
 ])
 
-export const MSG_REQUIRED_CONDITIONS = new Set<string>(['response', 'response-or-idle'])
+export const MSG_REQUIRED_CONDITIONS = new Set<string>(['response'])
 
 export const POLL_MS = 100
 

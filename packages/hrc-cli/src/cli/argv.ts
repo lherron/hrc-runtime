@@ -175,7 +175,9 @@ export function toLegacyArgv(
   for (const flag of schema.strings) {
     const key = camelCase(flag)
     const value = opts[key]
-    if (value !== undefined && value !== null) {
+    if (Array.isArray(value)) {
+      for (const entry of value) out.push(`--${flag}`, String(entry))
+    } else if (value !== undefined && value !== null) {
       out.push(`--${flag}`, String(value))
     }
   }

@@ -21,7 +21,10 @@ export type HrcMonitorSessionState = {
 export type HrcMonitorRuntimeState = {
   runtimeId: string
   hostSessionId: string
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
   status: string
+  statusChangedAt?: string | undefined
   transport: string
   activeTurnId?: string | null | undefined
 }

@@ -115,15 +115,15 @@ hrc monitor watch <selector> --follow --since <pre-dispatch-cursor>
 
 # Wait for a condition and exit with its result code:
 hrc monitor wait clod@agent-spaces --until turn-finished --timeout 5s
-hrc monitor wait msg:<messageId> --until response-or-idle --timeout 5m
-hrc monitor wait <selector> --until terminal --since <pre-dispatch-cursor>
+hrc monitor wait msg:<messageId> --until response --timeout 5m
+hrc monitor wait <selector> --until turn-finished --until runtime-dead
 ```
 
 - **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
-- **`monitor watch`** — `[selector]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, `--until <condition>` (requires `--follow`), `--since <seq|duration>` for terminal evidence, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Without `--follow` it replays then exits; an explicit `--from-seq` window is uncapped (the documented full-dump path), otherwise replay is capped (default last-100).
-- **`monitor wait`** — `<selector>`, `--until <condition>` (required), `--since <seq|duration>` for terminal evidence, `--timeout <duration>`, `--stall-after <duration>`, `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `response-or-idle`, `runtime-dead`, `terminal`. The `response` and `response-or-idle` conditions **require a `msg:<messageId>` selector**. Exits with the condition's result code (see exit-code table).
+- **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson>`, `--max-lines <n>`, `--scope-width <n>`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
+- **`monitor wait`** — `<selector...>` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
 
-`--since` supports post-finish close-out by replaying durable terminal evidence at or after a pre-dispatch cursor. Use an exact cursor for scripts and coordinators; duration is a human convenience. On a multi-attempt scope, an over-wide duration can reach back to a prior attempt and admit stale terminal evidence. Fan-in terminal monitoring is any-match per-attempt liveness—the first terminal on any matching scope wins—not room completion. Use `wrkq monitor wait --until all-terminal` for room completion.
+Blocking/follow mode without explicit conditions uses the visible OR pair `--until turn-finished --until runtime-dead`; plain replay has no implicit conditions. Level truth that predates the arm returns exit 10. Quantified `ANY` admits later members, while `ALL` freezes membership at arm and reports one daemon-owned observation cut.
 
 Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
 
@@ -206,7 +206,7 @@ The legacy `hrc status` / `hrc events` / `hrc server health` commands and the `h
 | `hrcchat status` | `hrc monitor show` | Per-target status moves to monitor selectors. |
 | `hrcchat watch` | `hrc monitor watch` | Use monitor selectors + conditions. |
 | `hrcchat wait` | `hrc monitor wait` | Message waits use `msg:<messageId>` selectors. |
-| `hrcchat dm --wait` | `hrcchat dm --json` then `hrc monitor wait msg:<id> --until response-or-idle` | Split request creation from response/idle waiting (see below). |
+| `hrcchat dm --wait` | `hrcchat dm --json` then `hrc monitor wait msg:<id> --until response` | Split request creation from response waiting (see below). |
 
 ### The `dm --wait` replacement flow (canonical handoff)
 
@@ -216,7 +216,7 @@ Please handle the requested task.
 EOF
 )"
 message_id="$(printf '%s\n' "$envelope" | jq -r '.messageId')"
-hrc monitor wait "msg:${message_id}" --until response-or-idle --timeout 30m
+hrc monitor wait "msg:${message_id}" --until response --timeout 30m
 ```
 
 For scripts that need full dispatch context, persist the envelope and extract `messageId`/`seq`/`sessionRef`/`runtimeId`/`turnId` before waiting:
@@ -227,7 +227,7 @@ Please handle the requested task.
 EOF
 jq '{messageId, seq, sessionRef, runtimeId, turnId}' /tmp/dm-envelope.json
 hrc monitor wait "msg:$(jq -r '.messageId' /tmp/dm-envelope.json)" \
-  --until response-or-idle --timeout 30m
+  --until response --timeout 30m
 ```
 
 ---

@@ -4,7 +4,6 @@ import {
   HrcDomainError,
   type HrcMessageRecord,
   type HrcMonitorCondition,
-  type HrcMonitorConditionOutcome,
   type HrcMonitorEvent,
   type HrcMonitorMessageState,
   type HrcMonitorRuntimeState,
@@ -14,8 +13,6 @@ import {
   type HrcSelector,
   type HrcSessionRecord,
   type InspectRuntimeResponse,
-  createMonitorReader,
-  formatSelector,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import {
@@ -24,26 +21,20 @@ import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 import { matchStringFlag } from '../monitor-args.js'
-import { MSG_REQUIRED_CONDITIONS, assertValidUntilCondition } from '../monitor-conditions.js'
-import { resolveTerminalFence } from '../monitor-terminal-fence.js'
-import { createArmPhaseReader } from './arm-phase.js'
-import { waitForAnyMonitorCondition, waitForMonitorCondition } from './engine.js'
-import {
-  finalWaitOutcomeEvent,
-  normalizeWaitOutcome,
-  writeWaitFinalEvent,
-  writeWaitUsageError,
-} from './render/wait-output.js'
+import { runMonitorUntilPlan } from './engine.js'
+import { writeWaitFinalEvent, writeWaitUsageError } from './render/wait-output.js'
 import {
   type MonitorSelectorSpec,
-  isFanInSelectorSet,
   parseMonitorSelectors,
   selectorSetLabel,
 } from './selector-shape.js'
+import { appendUntilValue, resolveMonitorUntilPlan } from './until-args.js'
 
 type MonitorWaitOptions = {
   selectorRaws: string[]
-  until?: string | undefined
+  until?: string[] | undefined
+  untilAny?: string[] | undefined
+  untilAll?: string[] | undefined
   timeout?: string | undefined
   stallAfter?: string | undefined
   since?: string | undefined
@@ -88,116 +79,55 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
     const message = error instanceof Error ? error.message : String(error)
     throw new CliUsageError(`invalid selector: ${message}`)
   }
-  const selector =
-    selectorSpecs.length === 1 && selectorSpecs[0]?.kind === 'exact'
-      ? selectorSpecs[0].selector
-      : undefined
-
-  const condition = options.until as HrcMonitorCondition
-  if (options.since !== undefined && condition !== 'terminal') {
-    throw new CliUsageError('--since requires --until terminal')
+  const plan = resolveMonitorUntilPlan(
+    { until: options.until, untilAny: options.untilAny, untilAll: options.untilAll },
+    selectorSpecs,
+    { defaultWhenBlocking: true }
+  )
+  if (!plan) throw new CliUsageError('monitor wait requires a condition plan')
+  const primaryCondition = plan.conditions[0]
+  if (!primaryCondition) throw new CliUsageError('at least one monitor condition is required')
+  if (options.since !== undefined) {
+    throw new CliUsageError('--since is not supported by the explicit condition grammar')
   }
-  if (
-    MSG_REQUIRED_CONDITIONS.has(condition) &&
-    (!selector || (selector.kind !== 'message' && selector.kind !== 'message-seq'))
-  ) {
-    throw new CliUsageError(`${condition} requires a msg: selector`)
-  }
-
   const fixtureState = readFixtureState()
-  if (isFanInSelectorSet(selectorSpecs)) {
-    let liveSource: LiveMonitorStateSource | undefined
-    if (!fixtureState) {
-      try {
-        liveSource = await createLiveSourceBeforeDeadline(
-          { selectorSpecs, condition, since: options.since },
-          deadlineAt
-        )
-      } catch (error) {
-        if (error instanceof MonitorWaitDeadlineError) {
-          return writeEarlyTimeout(selectorSetLabel(selectorSpecs), condition, options.json)
-        }
-        throw error
-      }
-    }
-    const initialState = fixtureState ?? liveSource?.initialState
-    if (!initialState) throw new Error('monitor wait failed to build initial state')
-    const terminalFence =
-      condition === 'terminal' ? resolveTerminalFence(initialState, options.since) : undefined
-    const winner = await waitForAnyMonitorCondition(
-      initialState,
-      {
-        until: condition,
-        ...(deadlineAt !== undefined ? { timeoutMs: remainingDeadlineMs(deadlineAt) } : {}),
-        ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
-        ...(terminalFence ? { terminalFence } : {}),
-      },
-      selectorSpecs,
-      {
-        buildMonitorState: async (signal) =>
-          fixtureState ?? liveSource?.buildMonitorState(signal) ?? initialState,
-      }
-    )
-    const finalEvent = {
-      ...finalWaitOutcomeEvent(winner.outcome),
-      selector: selectorSetLabel(selectorSpecs),
-      condition,
-      scopeRef: winner.scopeRef,
-      exitCode: winner.outcome.exitCode,
-    }
-    writeWaitFinalEvent(finalEvent, options.json)
-    return winner.outcome.exitCode
-  }
-  if (!selector) throw new CliUsageError('missing required argument: <selector>')
-
   let liveSource: LiveMonitorStateSource | undefined
   if (!fixtureState) {
     try {
       liveSource = await createLiveSourceBeforeDeadline(
-        { selectorSpecs, condition, since: options.since },
+        { selectorSpecs, condition: primaryCondition as HrcMonitorCondition },
         deadlineAt
       )
     } catch (error) {
       if (error instanceof MonitorWaitDeadlineError) {
-        return writeEarlyTimeout(formatSelector(selector), condition, options.json)
+        return writeEarlyTimeout(selectorSetLabel(selectorSpecs), primaryCondition, options.json)
       }
       throw error
     }
   }
   const initialState = fixtureState ?? liveSource?.initialState
   if (!initialState) throw new Error('monitor wait failed to build initial state')
-  const reader = fixtureState
-    ? createMonitorReader(initialState)
-    : createArmPhaseReader(initialState, (liveSource as LiveMonitorStateSource).buildMonitorState, {
-        firstRead: 'initial',
-      })
-  let outcome: HrcMonitorConditionOutcome
-  try {
-    outcome = await waitForMonitorCondition(reader, {
-      selector,
-      condition,
+  const result = await runMonitorUntilPlan(
+    initialState,
+    plan,
+    selectorSpecs,
+    {
+      buildMonitorState: async (signal) =>
+        fixtureState ?? liveSource?.buildMonitorState(signal) ?? initialState,
+      stderr: process.stderr,
+    },
+    {
       ...(deadlineAt !== undefined ? { timeoutMs: remainingDeadlineMs(deadlineAt) } : {}),
       ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
-      ...(condition === 'terminal'
-        ? { terminalFence: resolveTerminalFence(initialState, options.since) }
-        : {}),
-    })
-  } catch (error) {
-    if (error instanceof HrcDomainError) {
-      throw new CliUsageError(error.message)
     }
-    throw error
-  }
-
-  outcome = normalizeWaitOutcome(outcome, selector, condition)
-  const finalEvent = finalWaitOutcomeEvent(outcome)
-  writeWaitFinalEvent(finalEvent, options.json)
-  return outcome.exitCode
+  )
+  writeWaitFinalEvent(result.event, options.json)
+  return result.exitCode
 }
 
 function parseWaitArgs(args: string[]): MonitorWaitOptions {
   const selectorRaws: string[] = []
-  let until: string | undefined
+  const untilFamilies: Partial<Record<'until' | 'until-any' | 'until-all', string[]>> = {}
   let timeout: string | undefined
   let stallAfter: string | undefined
   let since: string | undefined
@@ -211,9 +141,21 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
       json = true
       continue
     }
+    const untilAnyMatch = matchStringFlag(arg, '--until-any', args, i)
+    if (untilAnyMatch) {
+      appendUntilValue(untilFamilies, 'until-any', untilAnyMatch.value)
+      i = untilAnyMatch.next
+      continue
+    }
+    const untilAllMatch = matchStringFlag(arg, '--until-all', args, i)
+    if (untilAllMatch) {
+      appendUntilValue(untilFamilies, 'until-all', untilAllMatch.value)
+      i = untilAllMatch.next
+      continue
+    }
     const untilMatch = matchStringFlag(arg, '--until', args, i)
     if (untilMatch) {
-      until = untilMatch.value
+      appendUntilValue(untilFamilies, 'until', untilMatch.value)
       i = untilMatch.next
       continue
     }
@@ -241,17 +183,22 @@ function parseWaitArgs(args: string[]): MonitorWaitOptions {
     selectorRaws.push(arg)
   }
 
-  return { selectorRaws, until, timeout, stallAfter, since, json }
+  return {
+    selectorRaws,
+    until: untilFamilies.until,
+    untilAny: untilFamilies['until-any'],
+    untilAll: untilFamilies['until-all'],
+    timeout,
+    stallAfter,
+    since,
+    json,
+  }
 }
 
 function validateOptions(options: MonitorWaitOptions): void {
   if (options.selectorRaws.length === 0) {
     throw new CliUsageError('missing required argument: <selector>')
   }
-  if (options.until === undefined) {
-    throw new CliUsageError('--until is required')
-  }
-  assertValidUntilCondition(options.until)
 }
 
 function readFixtureState(): HrcMonitorState | undefined {
@@ -283,7 +230,10 @@ type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
 type MonitorRuntimeSource = {
   runtimeId: string
   hostSessionId: string
+  scopeRef?: string | undefined
+  laneRef?: string | undefined
   status: string
+  statusChangedAt?: string | undefined
   transport: string
   activeRunId?: string | null | undefined
 }
@@ -461,16 +411,9 @@ function initialEventFromSeq(
   since: string | undefined,
   highWater: number
 ): number {
-  if (condition !== 'terminal' || since === undefined) return Math.max(1, highWater)
-  if (/^\d+$/.test(since)) {
-    const seq = Number(since)
-    if (!Number.isSafeInteger(seq) || seq < 1) {
-      throw new CliUsageError('--since sequence must be a positive safe integer')
-    }
-    return seq
-  }
-  parseDuration(since)
-  return 1
+  void condition
+  void since
+  return Math.max(1, highWater)
 }
 
 function readFilteredEvents(
@@ -720,7 +663,10 @@ function toMonitorRuntimeState(runtime: MonitorRuntimeSource): HrcMonitorRuntime
   return {
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
+    ...(runtime.scopeRef !== undefined ? { scopeRef: runtime.scopeRef } : {}),
+    ...(runtime.laneRef !== undefined ? { laneRef: runtime.laneRef } : {}),
     status: normalizeRuntimeStatus(runtime.status, runtime.activeRunId),
+    statusChangedAt: runtime.statusChangedAt ?? 'unknown',
     transport: runtime.transport,
     activeTurnId: runtime.activeRunId ?? null,
   }
@@ -774,6 +720,7 @@ function applyLifecycleProjection(
 
     if (event.eventKind === 'turn.started') {
       if (runtime) {
+        if (runtime.status !== 'busy') runtime.statusChangedAt = event.ts
         runtime.activeTurnId = event.runId ?? null
         runtime.status = 'busy'
       }
@@ -786,6 +733,7 @@ function applyLifecycleProjection(
       event.eventKind === 'turn.failed'
     ) {
       if (runtime && (!event.runId || runtime.activeTurnId === event.runId)) {
+        if (runtime.status !== 'idle') runtime.statusChangedAt = event.ts
         runtime.activeTurnId = null
         runtime.status = 'idle'
       }
@@ -795,7 +743,10 @@ function applyLifecycleProjection(
       continue
     }
     if (event.eventKind === 'runtime.ready') {
-      if (runtime) runtime.status = 'idle'
+      if (runtime) {
+        if (runtime.status !== 'idle') runtime.statusChangedAt = event.ts
+        runtime.status = 'idle'
+      }
       continue
     }
     if (
@@ -803,7 +754,11 @@ function applyLifecycleProjection(
       event.eventKind === 'runtime.crashed' ||
       event.eventKind === 'runtime.terminated'
     ) {
-      if (runtime) runtime.status = event.eventKind === 'runtime.crashed' ? 'crashed' : 'dead'
+      if (runtime) {
+        const status = event.eventKind === 'runtime.crashed' ? 'crashed' : 'dead'
+        if (runtime.status !== status) runtime.statusChangedAt = event.ts
+        runtime.status = status
+      }
     }
   }
 }

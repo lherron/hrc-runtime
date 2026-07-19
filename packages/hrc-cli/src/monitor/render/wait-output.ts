@@ -90,9 +90,6 @@ export function writeWaitFinalEvent(event: WaitOutputEvent, json: boolean): void
 }
 
 export function writeWaitUsageError(message: string, json: boolean): void {
-  if (json) {
-    process.stderr.write(`${JSON.stringify({ error: { message, usage: true } })}\n`)
-    return
-  }
-  process.stderr.write(`hrc: ${message}\n`)
+  void json
+  process.stderr.write(`error: ${message}\n`)
 }

@@ -1,5 +1,6 @@
 import { HrcBadRequestError, HrcErrorCode, HrcInternalError } from '../errors.js'
 import type { HrcSelector } from '../selectors.js'
+import { MONITOR_EXIT_CODES } from './exit-codes.js'
 import { isResolutionError, selectorMatchesMessageResponse } from './index.js'
 import type {
   HrcMonitorCapture,
@@ -9,14 +10,7 @@ import type {
   HrcMonitorWatchRequest,
 } from './index.js'
 
-export type HrcMonitorCondition =
-  | 'turn-finished'
-  | 'idle'
-  | 'busy'
-  | 'response'
-  | 'response-or-idle'
-  | 'runtime-dead'
-  | 'terminal'
+export type HrcMonitorCondition = 'turn-finished' | 'idle' | 'busy' | 'response' | 'runtime-dead'
 
 export type HrcMonitorConditionResult =
   | 'turn_succeeded'
@@ -95,7 +89,16 @@ type EvaluationContext = {
   terminalFence: { seq: number; inclusive: boolean }
 }
 
-const DEAD_RUNTIME_STATUSES = new Set(['dead', 'stopped', 'crashed', 'exited', 'terminated'])
+const DEAD_RUNTIME_STATUSES = new Set([
+  'dead',
+  'stale',
+  'terminated',
+  'stopped',
+  'failed',
+  'disposed',
+  'crashed',
+  'exited',
+])
 const CONTEXT_CHANGED_REASONS = new Set(['session_rebound', 'generation_changed', 'cleared'])
 const FAILURE_KINDS = new Set(['model', 'tool', 'process', 'runtime', 'cancelled', 'unknown'])
 const IDLE_RUNTIME_STATUSES = new Set(['idle', 'ready'])
@@ -123,18 +126,14 @@ const CONDITION_RESULTS = [
 ] as const satisfies readonly HrcMonitorConditionResult[]
 const CONDITION_RESULT_SET = new Set<string>(CONDITION_RESULTS)
 
-// Named monitor outcome exit codes (previously scattered as 0/1/2/3/4 literals).
 const EXIT_CODE = {
-  /** Condition satisfied / clean completion. */
-  ok: 0,
-  /** Timed out or stalled before the condition was met. */
-  timeout: 1,
-  /** Runtime/turn failure terminal outcome. */
-  failure: 2,
-  /** Internal monitor error (no timer to wait on). */
-  monitorError: 3,
-  /** Context changed out from under the wait, or turn finished without response. */
-  contextChanged: 4,
+  ok: MONITOR_EXIT_CODES.matchedAfterArm,
+  alreadyTrue: MONITOR_EXIT_CODES.alreadyTrueAtArm,
+  obstruction: MONITOR_EXIT_CODES.runtimeDeathObstruction,
+  timeout: MONITOR_EXIT_CODES.timeout,
+  stall: MONITOR_EXIT_CODES.stall,
+  monitorError: MONITOR_EXIT_CODES.monitorError,
+  contextChanged: MONITOR_EXIT_CODES.contextChange,
 } as const
 
 export function createMonitorConditionEngine(
@@ -170,12 +169,8 @@ export function createMonitorConditionEngine(
       const iterable = reader.watch({
         selector: request.selector,
         follow: true,
-        fromSeq:
-          request.condition === 'terminal'
-            ? Math.max(1, context.terminalFence.seq)
-            : capture.streamCursorSeq,
-        includeCorrelatedMessageResponses:
-          request.condition === 'response' || request.condition === 'response-or-idle',
+        fromSeq: capture.streamCursorSeq,
+        includeCorrelatedMessageResponses: request.condition === 'response',
         signal: watchController.signal,
       })
       const iterator = iterable[Symbol.asyncIterator]()
@@ -196,7 +191,7 @@ export function createMonitorConditionEngine(
           if (next.kind === 'stalled') {
             return withCompletedEvent(
               context,
-              { result: 'stalled', exitCode: EXIT_CODE.timeout },
+              { result: 'stalled', exitCode: EXIT_CODE.stall },
               eventStream
             )
           }
@@ -221,7 +216,7 @@ export function createMonitorConditionEngine(
 
 function assertConditionSelector(request: HrcMonitorConditionWaitRequest): void {
   if (
-    (request.condition === 'response' || request.condition === 'response-or-idle') &&
+    request.condition === 'response' &&
     request.selector.kind !== 'message' &&
     request.selector.kind !== 'message-seq'
   ) {
@@ -256,16 +251,13 @@ type ConditionStrategy = {
 // and dispatch are byte-identical to the prior switches.
 const CONDITION_STRATEGIES = {
   'turn-finished': {
-    start: (context) =>
-      context.capture.activeTurnId === null
-        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
-        : null,
+    start: (context) => (context.capture.activeTurnId === null ? null : null),
     event: (context, event) => evaluateTurnFinished(context, event),
   },
   idle: {
     start: (_context, snapshot) =>
       isIdleRuntimeStatus(snapshot.runtime?.status)
-        ? { result: 'already_idle', exitCode: EXIT_CODE.ok }
+        ? { result: 'already_idle', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) =>
       eventKind(event) === 'runtime.idle' && sameRuntime(context, event)
@@ -274,8 +266,8 @@ const CONDITION_STRATEGIES = {
   },
   busy: {
     start: (_context, snapshot) =>
-      snapshot.runtime?.status === 'busy'
-        ? { result: 'already_busy', exitCode: EXIT_CODE.ok }
+      snapshot.runtime?.status === 'busy' || snapshot.runtime?.status === 'awaiting_input'
+        ? { result: 'already_busy', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) =>
       eventKind(event) === 'runtime.busy' && sameRuntime(context, event)
@@ -285,26 +277,13 @@ const CONDITION_STRATEGIES = {
   'runtime-dead': {
     start: (_context, snapshot) =>
       isDeadRuntimeStatus(snapshot.runtime?.status)
-        ? { result: 'already_dead', exitCode: EXIT_CODE.ok }
+        ? { result: 'already_dead', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) => runtimeDeathOutcome(context, event),
   },
   response: {
     start: () => null,
     event: (context, event) => evaluateResponse(context, event),
-  },
-  'response-or-idle': {
-    start: () => null,
-    event: (context, event) => evaluateResponseOrIdle(context, event),
-  },
-  // `terminal` resolves when the run/runtime reaches ANY terminal state — turn
-  // finished (success or failure), or runtime death/crash. Unlike `turn-finished`
-  // / `runtime-dead`, reaching terminal IS the satisfied condition, so every
-  // terminal outcome exits 0; only timeout/stall yields a non-zero code. This is
-  // the wait the Invocation-DAG coordinator uses to close out one attempt.
-  terminal: {
-    start: () => null,
-    event: (context, event) => evaluateTerminal(context, event),
   },
 } satisfies Record<HrcMonitorCondition, ConditionStrategy>
 
@@ -324,10 +303,9 @@ function evaluateEvent(
   const contextChanged = evaluateContextChanged(context, event)
   if (contextChanged) return contextChanged
 
-  // The dedicated 'runtime-dead' arm below handles runtime death explicitly;
-  // 'terminal' handles it inside its own strategy (exit 0, not a failure code).
-  // For every other condition, surface a runtime death/crash as the outcome.
-  if (context.condition !== 'runtime-dead' && context.condition !== 'terminal') {
+  // Named runtime death satisfies its strategy. For every other condition it
+  // obstructs an exact wait.
+  if (context.condition !== 'runtime-dead') {
     const runtimeFailure = runtimeDeathOutcome(context, event)
     if (runtimeFailure) return runtimeFailure
   }
@@ -345,58 +323,9 @@ function evaluateTurnFinished(
 
   const result = resultValue(event, 'turn_succeeded')
   if (result === 'turn_failed' || result === 'runtime_dead' || result === 'runtime_crashed') {
-    return { result, exitCode: EXIT_CODE.failure, failureKind: failureKindValue(event) }
+    return { result, exitCode: EXIT_CODE.ok, failureKind: failureKindValue(event) }
   }
   return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok }
-}
-
-function evaluateTerminal(
-  context: EvaluationContext,
-  event: MonitorOutputEvent
-): HrcMonitorConditionOutcome | null {
-  if (!isAtOrAfterTerminalFence(context, event) || !sameRuntime(context, event)) {
-    return null
-  }
-
-  const kind = eventKind(event)
-  const runId = unknownString(event, 'runId') ?? unknownString(event, 'turnId')
-  if (kind === 'turn.finished' || kind === 'turn.completed' || kind === 'turn.failed') {
-    const result = resultValue(event, 'turn_succeeded')
-    if (kind === 'turn.failed' || result === 'turn_failed') {
-      return {
-        result: 'turn_failed',
-        exitCode: EXIT_CODE.ok,
-        failureKind: failureKindValue(event),
-        ...(runId ? { runId } : {}),
-      }
-    }
-    return { result: 'turn_succeeded', exitCode: EXIT_CODE.ok, ...(runId ? { runId } : {}) }
-  }
-  if (kind === 'runtime.dead') {
-    return {
-      result: 'runtime_dead',
-      exitCode: EXIT_CODE.ok,
-      failureKind: failureKindValue(event),
-      ...(runId ? { runId } : {}),
-    }
-  }
-  if (kind === 'runtime.crashed') {
-    return {
-      result: 'runtime_crashed',
-      exitCode: EXIT_CODE.ok,
-      failureKind: failureKindValue(event),
-      ...(runId ? { runId } : {}),
-    }
-  }
-  return null
-}
-
-function isAtOrAfterTerminalFence(context: EvaluationContext, event: MonitorOutputEvent): boolean {
-  const seq = unknownNumber(event, 'seq')
-  if (seq === undefined) return false
-  return context.terminalFence.inclusive
-    ? seq >= context.terminalFence.seq
-    : seq > context.terminalFence.seq
 }
 
 function evaluateResponse(
@@ -412,19 +341,6 @@ function evaluateResponse(
   return null
 }
 
-function evaluateResponseOrIdle(
-  context: EvaluationContext,
-  event: MonitorOutputEvent
-): HrcMonitorConditionOutcome | null {
-  if (eventKind(event) === 'message.response' && messageResponseMatchesSelector(context, event)) {
-    return { result: 'response', exitCode: EXIT_CODE.ok }
-  }
-  if (isCapturedTurnIdleOrFinished(context, event)) {
-    return { result: 'idle_no_response', exitCode: EXIT_CODE.ok }
-  }
-  return null
-}
-
 function runtimeDeathOutcome(
   context: EvaluationContext,
   event: MonitorOutputEvent
@@ -432,14 +348,14 @@ function runtimeDeathOutcome(
   if (eventKind(event) === 'runtime.dead' && sameRuntime(context, event)) {
     return {
       result: 'runtime_dead',
-      exitCode: EXIT_CODE.failure,
+      exitCode: context.condition === 'runtime-dead' ? EXIT_CODE.ok : EXIT_CODE.obstruction,
       failureKind: failureKindValue(event),
     }
   }
   if (eventKind(event) === 'runtime.crashed' && sameRuntime(context, event)) {
     return {
       result: 'runtime_crashed',
-      exitCode: EXIT_CODE.failure,
+      exitCode: context.condition === 'runtime-dead' ? EXIT_CODE.ok : EXIT_CODE.obstruction,
       failureKind: failureKindValue(event),
     }
   }

@@ -126,14 +126,14 @@ MONITOR
     hrc monitor watch T-XXXXX --follow
 
   Block on completion without printing the event stream:
-    hrc monitor wait T-XXXXX --until terminal
+    hrc monitor wait T-XXXXX --until-any runtime-dead
 
   Replay what happened, either by count or sequence:
     hrc monitor watch T-XXXXX --last N
     hrc monitor watch T-XXXXX --from-seq N
     The default replay is capped at 100 events; use --last N or --from-seq N for more.
 
-  hrc conditions are runtime-centric: terminal, idle, and turn-finished.
+  hrc conditions are runtime-centric: idle, busy, runtime-dead, turn-finished, and response.
   wrkq conditions are task-state: state=completed and all-terminal.
 
 SAFETY RULES
@@ -212,9 +212,9 @@ Commands:
   session clear-context <hostSessionId> [--relaunch]
   session drop-continuation <hostSessionId> [--reason <text>]
   monitor show [selector] [--json]    Show current HRC monitor snapshot
-  monitor watch [selector...] [--from-seq <n>|--last <n>] [--follow] [--forever] [--all-events] [--json|--pretty]
+  monitor watch [selector...] [--from-seq <n>|--last <n>] [--follow] [--until|--until-any|--until-all <condition>] [--forever] [--all-events] [--json|--pretty]
                                      Watch exact, scope:<prefix>:*, or bare T-XXXXX selectors
-  monitor wait <selector...> --until <condition> [--timeout <duration>] [--stall-after <duration>] [--json]
+  monitor wait <selector...> [--until|--until-any|--until-all <condition>] [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--status <csv>] [--scope <selector>] [--agent <id>] [--task <id>] [--host-session-id <id>|--session <id>] [--transport <transport>] [--stale] [--older-than <duration>] [--json]

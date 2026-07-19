@@ -131,6 +131,15 @@ export function toMonitorJsonEvent(
     if (value) output[key] = value
   }
 
+  for (const key of ['quantifier', 'phase', 'observedAt', 'matchedCondition']) {
+    const value = stringField(event, key)
+    if (value !== undefined) output[key] = value
+  }
+  for (const key of ['conditions', 'members']) {
+    const value = event[key]
+    if (value !== undefined) output[key] = value
+  }
+
   const messageSeq = numberField(event, 'messageSeq')
   if (messageSeq !== undefined) output['messageSeq'] = messageSeq
   const exitCode = numberField(event, 'exitCode')
@@ -646,6 +655,15 @@ function payloadFrom(event: MonitorRenderableEvent): unknown {
         'category',
         'transport',
         'replayed',
+        'condition',
+        'conditions',
+        'quantifier',
+        'phase',
+        'observedAt',
+        'matchedCondition',
+        'members',
+        'result',
+        'exitCode',
       ].includes(key)
     ) {
       continue

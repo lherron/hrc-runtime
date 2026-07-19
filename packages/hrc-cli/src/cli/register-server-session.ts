@@ -25,7 +25,11 @@ import { fatal } from './shared.js'
 
 const MONITOR_CONDITIONS_HELP = [...VALID_CONDITIONS].join(', ')
 const MONITOR_EXIT_CODES_HELP =
-  'Exit codes: 0 satisfied/replay-complete; 1 timeout/stall; 2 usage/invalid selector; 3 monitor infra failure; 4 condition impossible; 130 SIGINT.'
+  'Exit codes: 0 matched after arm/replay; 2 usage; 10 already true at arm; 11 no session ever; 12 runtime-death obstruction; 20 timeout; 21 stall; 22 context change; 23 monitor error; 130 SIGINT.'
+
+function collectMonitorCondition(value: string, previous: string[]): string[] {
+  return [...previous, value]
+}
 
 export function registerServerSessionCommands(program: Command): void {
   // -- server group (commander, Phase 6 T1) -----------------------------------
@@ -282,7 +286,24 @@ Exit codes:
     .command('wait')
     .description('watch --until without the event stream, using the same condition engine')
     .argument('[selectors...]', 'one or more exact, scope-prefix, or task-id selectors')
-    .option('--until <condition>', `condition to wait for: ${MONITOR_CONDITIONS_HELP}`)
+    .option(
+      '--until <condition>',
+      `exact selector condition (repeat for OR): ${MONITOR_CONDITIONS_HELP}`,
+      collectMonitorCondition,
+      []
+    )
+    .option(
+      '--until-any <condition>',
+      `set condition; first matching member wins (repeat for OR): ${MONITOR_CONDITIONS_HELP}`,
+      collectMonitorCondition,
+      []
+    )
+    .option(
+      '--until-all <condition>',
+      'set condition; every frozen member must match (repeat for OR; levels only)',
+      collectMonitorCondition,
+      []
+    )
     .option('--timeout <duration>', 'maximum wait duration')
     .option('--stall-after <duration>', 'stall threshold duration')
     .option(
@@ -292,12 +313,12 @@ Exit codes:
     .option('--json', 'output structured JSON')
     .addHelpText(
       'after',
-      `\nFor fan-in terminal waits, the first terminal on any matching scope is per-attempt liveness, not room completion.\n${MONITOR_EXIT_CODES_HELP}\n`
+      `\nTask, prefix, and multiple-selector waits require --until-any or --until-all. --until-all accepts levels only and freezes membership at arm.\n${MONITOR_EXIT_CODES_HELP}\n`
     )
     .action(async (selectors: string[], _opts, cmd: Command) => {
       const positionals = selectors ?? []
       const args = toLegacyArgv(positionals, cmd.opts(), {
-        strings: ['until', 'timeout', 'stall-after', 'since'],
+        strings: ['until', 'until-any', 'until-all', 'timeout', 'stall-after', 'since'],
         booleans: ['json'],
       })
       await cmdMonitorWait(args)
@@ -312,11 +333,25 @@ Exit codes:
     .option('--follow', 'stream live events after replay')
     .option(
       '--forever',
-      'keep a single concrete --follow watch open instead of defaulting to --until terminal'
+      'keep a follow watch open instead of using the default turn-finished/runtime-dead pair'
     )
     .option(
       '--until <condition>',
-      `exit when condition is met (requires --follow): ${MONITOR_CONDITIONS_HELP}`
+      `exact selector condition (repeat for OR): ${MONITOR_CONDITIONS_HELP}`,
+      collectMonitorCondition,
+      []
+    )
+    .option(
+      '--until-any <condition>',
+      `set condition; first matching member wins (repeat for OR): ${MONITOR_CONDITIONS_HELP}`,
+      collectMonitorCondition,
+      []
+    )
+    .option(
+      '--until-all <condition>',
+      'set condition; every frozen member must match (repeat for OR; levels only)',
+      collectMonitorCondition,
+      []
     )
     .option('--timeout <duration>', 'exit after duration without condition match')
     .option('--stall-after <duration>', 'exit after duration of inactivity')
@@ -342,11 +377,11 @@ Exit codes:
     )
     .addHelpText(
       'after',
-      `\nSingle concrete --follow watches default to --until terminal. Fan-in selectors default to milestone events; --kind/--tool/--grep or --all-events overrides that preset.
+      `\nBlocking watches default to --until turn-finished --until runtime-dead. Fan-in selectors require --until-any or --until-all; --kind/--tool/--grep or --all-events controls event filtering.
 Default replay is capped at 100 events; use --last N or --from-seq N to retrieve more.
---until requires --follow. response and response-or-idle require a msg: selector.
+response is legal only with exactly one msg: or seq: selector under --until.
+--until-all accepts level conditions only: idle, busy, runtime-dead.
 --stall-after exits the stream (it is not a pause signal).
-For fan-in terminal watches, the first terminal on any matching scope is per-attempt liveness, not room completion.
 Default output format is tree when stdout is a TTY and ndjson when stdout is not a TTY.
 ${MONITOR_EXIT_CODES_HELP}\n`
     )
@@ -356,6 +391,8 @@ ${MONITOR_EXIT_CODES_HELP}\n`
           'from-seq',
           'last',
           'until',
+          'until-any',
+          'until-all',
           'timeout',
           'stall-after',
           'since',

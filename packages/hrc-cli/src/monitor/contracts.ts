@@ -13,6 +13,9 @@ export type MonitorWatchArgs = {
   fromSeq?: number | undefined
   last?: number | undefined
   until?: string | undefined
+  untilConditions?: string[] | undefined
+  untilAny?: string[] | undefined
+  untilAll?: string[] | undefined
   timeoutMs?: number | undefined
   stallAfterMs?: number | undefined
   since?: string | undefined

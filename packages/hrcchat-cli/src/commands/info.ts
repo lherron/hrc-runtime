@@ -39,7 +39,7 @@ QUICK START
   hrc monitor watch cody@agentchat --follow --timeout 10m
 
   Wait for a response to a sent message:
-  hrc monitor wait msg:msg_01J... --until response-or-idle --timeout 15m
+  hrc monitor wait msg:msg_01J... --until response --timeout 15m
 
 COMMAND NAMES (avoid phantom commands)
   Query durable history with 'messages' — there is no 'msg' or 'message'.
@@ -50,7 +50,7 @@ SELECTORS
   'show' accepts a durable message seq number or a full message ID. The
   shared HRC selector grammar (scope:/session:/host:/runtime:/msg:/seq:/
   bare-handle) is documented in 'hrc info'; monitor waits accept it too,
-  e.g. 'hrc monitor wait msg:<id> --until response-or-idle'.
+  e.g. 'hrc monitor wait msg:<id> --until response'.
 
 PROJECT RESOLUTION
   hrcchat resolves project context in this order:
