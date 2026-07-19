@@ -1,6 +1,5 @@
 import { HrcBadRequestError, HrcErrorCode, HrcInternalError } from '../errors.js'
 import type { HrcSelector } from '../selectors.js'
-import { MONITOR_EXIT_CODES } from './exit-codes.js'
 import { isResolutionError, selectorMatchesMessageResponse } from './index.js'
 import type {
   HrcMonitorCapture,
@@ -86,7 +85,6 @@ type EvaluationContext = {
   condition: HrcMonitorCondition
   selector: HrcSelector
   capture: HrcMonitorCapture
-  terminalFence: { seq: number; inclusive: boolean }
 }
 
 const DEAD_RUNTIME_STATUSES = new Set([
@@ -127,13 +125,13 @@ const CONDITION_RESULTS = [
 const CONDITION_RESULT_SET = new Set<string>(CONDITION_RESULTS)
 
 const EXIT_CODE = {
-  ok: MONITOR_EXIT_CODES.matchedAfterArm,
-  alreadyTrue: MONITOR_EXIT_CODES.alreadyTrueAtArm,
-  obstruction: MONITOR_EXIT_CODES.runtimeDeathObstruction,
-  timeout: MONITOR_EXIT_CODES.timeout,
-  stall: MONITOR_EXIT_CODES.stall,
-  monitorError: MONITOR_EXIT_CODES.monitorError,
-  contextChanged: MONITOR_EXIT_CODES.contextChange,
+  ok: 0,
+  alreadyTrue: 10,
+  obstruction: 12,
+  timeout: 20,
+  stalled: 21,
+  contextChanged: 22,
+  monitorError: 23,
 } as const
 
 export function createMonitorConditionEngine(
@@ -142,6 +140,7 @@ export function createMonitorConditionEngine(
   return {
     async wait(request) {
       assertConditionSelector(request)
+      const condition = request.condition
 
       const capture = await reader.captureStart(request.selector)
       if (!isCapture(capture)) {
@@ -150,13 +149,9 @@ export function createMonitorConditionEngine(
 
       const startSnapshot = reader.snapshot(request.selector)
       const context: EvaluationContext = {
-        condition: request.condition,
+        condition,
         selector: request.selector,
         capture,
-        terminalFence: request.terminalFence ?? {
-          seq: capture.eventHighWaterSeq,
-          inclusive: false,
-        },
       }
       const eventStream: MonitorOutputEvent[] = []
 
@@ -170,7 +165,7 @@ export function createMonitorConditionEngine(
         selector: request.selector,
         follow: true,
         fromSeq: capture.streamCursorSeq,
-        includeCorrelatedMessageResponses: request.condition === 'response',
+        includeCorrelatedMessageResponses: condition === 'response',
         signal: watchController.signal,
       })
       const iterator = iterable[Symbol.asyncIterator]()
@@ -191,7 +186,7 @@ export function createMonitorConditionEngine(
           if (next.kind === 'stalled') {
             return withCompletedEvent(
               context,
-              { result: 'stalled', exitCode: EXIT_CODE.stall },
+              { result: 'stalled', exitCode: EXIT_CODE.stalled },
               eventStream
             )
           }
@@ -251,7 +246,10 @@ type ConditionStrategy = {
 // and dispatch are byte-identical to the prior switches.
 const CONDITION_STRATEGIES = {
   'turn-finished': {
-    start: (context) => (context.capture.activeTurnId === null ? null : null),
+    start: (context) =>
+      context.capture.activeTurnId === null
+        ? { result: 'no_active_turn', exitCode: EXIT_CODE.ok }
+        : null,
     event: (context, event) => evaluateTurnFinished(context, event),
   },
   idle: {
@@ -266,7 +264,7 @@ const CONDITION_STRATEGIES = {
   },
   busy: {
     start: (_context, snapshot) =>
-      snapshot.runtime?.status === 'busy' || snapshot.runtime?.status === 'awaiting_input'
+      snapshot.runtime?.status === 'busy'
         ? { result: 'already_busy', exitCode: EXIT_CODE.alreadyTrue }
         : null,
     event: (context, event) =>
@@ -510,7 +508,7 @@ async function waitForEndTimer(
   }
   return withCompletedEvent(
     context,
-    { result: 'stalled', exitCode: EXIT_CODE.timeout },
+    { result: 'stalled', exitCode: EXIT_CODE.stalled },
     eventStream
   )
 }
