@@ -554,6 +554,7 @@ export async function executeHeadlessBrokerInputTurn(
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
       status: 'busy',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, runtime.runtimeId, {
         source: 'turn',
         occurredAt: now,
@@ -681,6 +682,7 @@ export async function executeHeadlessBrokerInputTurn(
     this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
     this.db.runtimes.update(runtime.runtimeId, {
       status: reprovisionRequired ? 'stale' : 'ready',
+      statusChangedAt: completedAt,
       ...runtimeActivityPatch(this.db, runtime.runtimeId, {
         source: 'turn',
         occurredAt: completedAt,
@@ -795,6 +797,7 @@ export async function waitForHeadlessBrokerRunCompletion(
         this.db.runtimes.updateRunId(runtimeId, undefined, now)
         this.db.runtimes.update(runtimeId, {
           status: 'ready',
+          statusChangedAt: run.completedAt ?? now,
           ...runtimeActivityPatch(this.db, runtimeId, {
             source: 'housekeeping',
             updatedAt: now,
@@ -856,6 +859,7 @@ export function recordDetachedHeadlessTurnFailure(
     this.db.runtimes.updateRunId(runtimeId, undefined, now)
     this.db.runtimes.update(runtimeId, {
       status: 'ready',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, runtimeId, {
         source: 'turn',
         occurredAt: now,

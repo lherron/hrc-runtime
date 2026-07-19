@@ -918,6 +918,7 @@ export function markRuntimeStaleForBrokerReprovision(
 
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
+    statusChangedAt: now,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'housekeeping',
       updatedAt: now,

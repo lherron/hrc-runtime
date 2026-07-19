@@ -994,6 +994,7 @@ class HrcServerInstance implements HrcServer {
       harness: COMMAND_RUNTIME_COMPAT_HARNESS,
       provider: COMMAND_RUNTIME_COMPAT_PROVIDER,
       status: 'busy',
+      statusChangedAt: now,
       commandSpec: command,
       supportsInflightInput: false,
       adopted: false,

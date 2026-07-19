@@ -45,6 +45,7 @@ export function claimRuntimeTurnOwnership(
   const runtimeStateJson = isRecord(runtime.runtimeStateJson) ? runtime.runtimeStateJson : undefined
   db.runtimes.update(ctx.runtimeId, {
     status: 'busy',
+    statusChangedAt: occurredAt,
     activeRunId: runId,
     ...runtimeActivityPatch(db, ctx.runtimeId, {
       source: 'broker-event',
@@ -110,6 +111,7 @@ export function setRuntimeStatus(
   const runtimeStateJson = isRecord(runtime.runtimeStateJson) ? runtime.runtimeStateJson : undefined
   db.runtimes.update(runtimeId, {
     status,
+    statusChangedAt: occurredAt,
     ...runtimeActivityPatch(db, runtimeId, {
       source: 'broker-event',
       occurredAt,
@@ -169,6 +171,7 @@ export function clearRuntimeTurnOwnership(
     : runtime.runtimeStateJson
   db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
+    statusChangedAt: occurredAt,
     ...runtimeActivityPatch(db, runtime.runtimeId, {
       source: 'broker-event',
       occurredAt,

@@ -193,6 +193,7 @@ export function finalizeRunOnStopHook(
   db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, {
       source: 'agent-hook',
       occurredAt: now,
@@ -459,6 +460,7 @@ export function applyHookLifecycleEnvelope(
 
   db.runtimes.update(runtime.runtimeId, {
     status: nextStatus,
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, {
       source: 'agent-hook',
       occurredAt: now,

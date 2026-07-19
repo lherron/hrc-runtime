@@ -451,6 +451,7 @@ export async function startController(
     })
     const runtime = ctx.db.runtimes.update(String(identity.runtimeId), {
       status: runtimeStatusFromInvocationState(startResult.response.state),
+      statusChangedAt: now,
       activeInvocationId: startResult.invocationId,
       activeOperationId: String(identity.operationId),
       activeRunId: identity.runId !== undefined ? String(identity.runId) : undefined,

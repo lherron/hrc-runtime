@@ -329,6 +329,7 @@ export async function interruptHeadlessRuntime(
   this.db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
+    statusChangedAt: now,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
       occurredAt: now,

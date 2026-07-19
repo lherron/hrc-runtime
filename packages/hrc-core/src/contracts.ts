@@ -296,6 +296,8 @@ export type HrcRuntimeSnapshot = {
   harness: HrcHarness
   provider: HrcProvider
   status: string
+  /** Causal timestamp of the most recent runtime status transition. */
+  statusChangedAt?: string | undefined
   /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
   /** Opaque interactive surface metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */

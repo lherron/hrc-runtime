@@ -1607,6 +1607,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcRuntimeStatusLevel",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/status-levels.ts",
+      "hash": "hrc-core|HrcRuntimeStatusLevel|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRuntimeUnavailableError",
       "kind": "value",
       "file": "packages/hrc-core/src/errors.ts",
@@ -2283,6 +2291,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|ResumeContinuationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "RUNTIME_STATUS_LEVEL_BY_STATUS",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/status-levels.ts",
+      "hash": "hrc-core|RUNTIME_STATUS_LEVEL_BY_STATUS|value",
       "count": 1
     },
     {

@@ -59,6 +59,7 @@ export async function handleWrapperStarted(
       wrapperPid: launch.wrapperPid,
       launchId,
       status: 'busy',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, launch.runtimeId, {
         source: 'agent-hook',
         occurredAt: now,
@@ -107,6 +108,7 @@ export async function handleChildStarted(
     this.db.runtimes.update(launch.runtimeId, {
       childPid: body.childPid,
       status: 'busy',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, launch.runtimeId, {
         source: 'agent-hook',
         occurredAt: now,
@@ -295,6 +297,7 @@ export async function handleExited(
     const nextStatus = runtime.transport === 'headless' ? 'ready' : 'terminated'
     this.db.runtimes.update(launch.runtimeId, {
       status: nextStatus,
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, launch.runtimeId, {
         source: 'agent-hook',
         occurredAt: now,

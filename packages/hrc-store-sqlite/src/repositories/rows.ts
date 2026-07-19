@@ -48,6 +48,7 @@ export type RuntimeRow = {
   harness: HrcRuntimeSnapshot['harness']
   provider: HrcRuntimeSnapshot['provider']
   status: string
+  status_changed_at: string | null
   tmux_json: string | null
   surface_json: string | null
   wrapper_pid: number | null

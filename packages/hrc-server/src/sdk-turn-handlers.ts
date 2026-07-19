@@ -159,6 +159,7 @@ export async function executeHeadlessSdkTurn(
 
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
+    statusChangedAt: completedAt,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
       occurredAt: completedAt,

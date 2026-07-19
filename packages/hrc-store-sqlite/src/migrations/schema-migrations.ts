@@ -743,6 +743,24 @@ const runCorrelationMigration: HrcMigration = {
   },
 }
 
+const runtimeStatusChangedAtMigration: HrcMigration = {
+  id: '0017_runtime_status_changed_at',
+  apply(db) {
+    const existing = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(runtimes)')
+        .all()
+        .map((row) => row.name)
+    )
+    if (!existing.has('status_changed_at')) {
+      db.exec(`
+        ALTER TABLE runtimes
+        ADD COLUMN status_changed_at TEXT
+      `)
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -761,4 +779,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   runSessionLookupIndexesMigration,
   runEnrichmentFilterIndexesMigration,
   runCorrelationMigration,
+  runtimeStatusChangedAtMigration,
 ]

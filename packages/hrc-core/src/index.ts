@@ -319,6 +319,8 @@ export type {
 } from './invocation-exposure.js'
 export { createMonitorConditionEngine } from './monitor/condition-engine.js'
 export { createMonitorReader } from './monitor/index.js'
+export { RUNTIME_STATUS_LEVEL_BY_STATUS } from './monitor/status-levels.js'
+export type { HrcRuntimeStatusLevel } from './monitor/status-levels.js'
 export type {
   HrcMonitorCondition,
   HrcMonitorConditionEngine,

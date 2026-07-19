@@ -130,6 +130,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
         wrapperPid: replayedLaunch.wrapperPid,
         launchId,
         status: 'busy',
+        statusChangedAt: now,
         ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
           source: 'agent-hook',
           occurredAt: now,
@@ -176,6 +177,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       db.runtimes.update(replayedLaunch.runtimeId, {
         childPid: replayedLaunch.childPid,
         status: 'busy',
+        statusChangedAt: now,
         ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
           source: 'agent-hook',
           occurredAt: now,
@@ -316,6 +318,7 @@ async function replaySpoolEntry(db: HrcDatabase, payload: unknown): Promise<void
       db.runtimes.updateRunId(replayedLaunch.runtimeId, undefined, now)
       db.runtimes.update(replayedLaunch.runtimeId, {
         status: 'ready',
+        statusChangedAt: now,
         ...runtimeActivityPatch(db, replayedLaunch.runtimeId, {
           source: 'agent-hook',
           occurredAt: now,

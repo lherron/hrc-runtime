@@ -33,6 +33,7 @@ const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
   { key: 'harness', column: 'harness' },
   { key: 'provider', column: 'provider' },
   { key: 'status', column: 'status' },
+  { key: 'statusChangedAt', column: 'status_changed_at' },
   { key: 'tmuxJson', column: 'tmux_json', transform: (v) => serializeJson(v) },
   { key: 'surfaceJson', column: 'surface_json', transform: (v) => serializeJson(v) },
   { key: 'wrapperPid', column: 'wrapper_pid' },
@@ -92,6 +93,7 @@ export class RuntimeRepository {
           harness,
           provider,
           status,
+          status_changed_at,
           tmux_json,
           surface_json,
           wrapper_pid,
@@ -117,7 +119,7 @@ export class RuntimeRepository {
           last_lifecycle_escalation_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       record.runtimeId,
       record.runtimeKind ?? 'harness',
@@ -130,6 +132,9 @@ export class RuntimeRepository {
       record.harness,
       record.provider,
       record.status,
+      record.statusChangedAt && record.statusChangedAt !== 'unknown'
+        ? record.statusChangedAt
+        : null,
       serializeJson(record.tmuxJson),
       serializeJson(record.surfaceJson),
       record.wrapperPid ?? null,
@@ -208,7 +213,12 @@ export class RuntimeRepository {
   }
 
   update(runtimeId: string, patch: RuntimeUpdatePatch): HrcRuntimeSnapshot | null {
-    const entries = collectPatchEntries(patch, RUNTIME_UPDATE_SPEC)
+    const current = this.getByRuntimeId(runtimeId)
+    const statusChanged = patch.status !== undefined && current?.status !== patch.status
+    const guardedPatch = statusChanged
+      ? patch
+      : ({ ...patch, statusChangedAt: undefined } satisfies RuntimeUpdatePatch)
+    const entries = collectPatchEntries(guardedPatch, RUNTIME_UPDATE_SPEC)
 
     if (entries.length === 0) {
       return this.getByRuntimeId(runtimeId)
@@ -220,7 +230,7 @@ export class RuntimeRepository {
   }
 
   updateStatus(runtimeId: string, status: string, updatedAt: string): HrcRuntimeSnapshot | null {
-    return this.update(runtimeId, { status, updatedAt })
+    return this.update(runtimeId, { status, statusChangedAt: updatedAt, updatedAt })
   }
 
   clearContinuation(runtimeId: string, updatedAt: string): HrcRuntimeSnapshot | null {

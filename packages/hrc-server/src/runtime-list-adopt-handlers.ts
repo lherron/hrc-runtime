@@ -128,10 +128,12 @@ async function handleAdoptRuntime(
       )
     }
   }
+  const now = timestamp()
   const updated = deps.db.runtimes.update(runtimeId, {
     adopted: true,
     status: 'adopted',
-    updatedAt: timestamp(),
+    statusChangedAt: now,
+    updatedAt: now,
   })
   if (!updated) {
     throw new HrcInternalError(`failed to adopt runtime ${runtimeId}`)
@@ -139,7 +141,7 @@ async function handleAdoptRuntime(
   const session = deps.db.sessions.getByHostSessionId(runtime.hostSessionId)
   if (session) {
     const event = appendHrcEvent(deps.db, 'runtime.adopted', {
-      ts: timestamp(),
+      ts: now,
       hostSessionId: session.hostSessionId,
       scopeRef: session.scopeRef,
       laneRef: session.laneRef,

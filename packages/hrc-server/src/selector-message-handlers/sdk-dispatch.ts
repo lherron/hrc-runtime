@@ -92,6 +92,7 @@ function resolveSdkDispatchTarget(
   const runtime = reusableRuntime
     ? this.db.runtimes.update(runtimeId, {
         status: 'busy',
+        statusChangedAt: now,
         continuation: session.continuation,
         activeRunId: runId,
         ...runtimeActivityPatch(this.db, runtimeId, {
@@ -111,6 +112,7 @@ function resolveSdkDispatchTarget(
         harness: sdkHarness,
         provider: intent.harness.provider,
         status: 'busy',
+        statusChangedAt: now,
         continuation: session.continuation,
         supportsInflightInput: getSdkInflightCapability(sdkHarness),
         adopted: false,
@@ -304,6 +306,7 @@ export async function handleSdkDispatchTurn(
 
     this.db.runtimes.update(runtime.runtimeId, {
       status: 'ready',
+      statusChangedAt: completedAt,
       ...runtimeActivityPatch(this.db, runtime.runtimeId, {
         source: 'turn',
         occurredAt: completedAt,
@@ -427,6 +430,7 @@ export function recordDetachedSemanticTurnFailure(
     this.db.runtimes.updateRunId(runtimeId, undefined, now)
     this.db.runtimes.update(runtimeId, {
       status: 'ready',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, runtimeId, {
         source: 'turn',
         occurredAt: now,

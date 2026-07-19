@@ -143,6 +143,7 @@ export function markRuntimeDead(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'dead',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
   db.events.append({
@@ -176,6 +177,7 @@ export function markRuntimeStale(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),
@@ -264,6 +266,7 @@ export function markRuntimeTerminatedAfterUserExit(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
     runtimeStateJson: {
       ...(runtime.runtimeStateJson ?? {}),

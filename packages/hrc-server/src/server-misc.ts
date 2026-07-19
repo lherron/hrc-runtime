@@ -41,6 +41,7 @@ export function finalizeRuntimeTermination(
 
   db.runtimes.update(runtime.runtimeId, {
     status: 'terminated',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
 }

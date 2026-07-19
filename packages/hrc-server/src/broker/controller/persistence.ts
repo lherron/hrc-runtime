@@ -114,6 +114,7 @@ export function persistStartGraph(
     harness: runtimeHarness(input.plan.harness.runtime),
     provider: input.plan.harness.provider as HrcProvider,
     status: 'starting',
+    statusChangedAt: now,
     supportsInflightInput: true,
     adopted: false,
     ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
@@ -343,6 +344,7 @@ export function markStartedInvocationFailed(
   }
   ctx.db.runtimes.update(runtimeId, {
     status: 'failed',
+    statusChangedAt: now,
     activeInvocationId: invocationId,
     activeOperationId: operationId,
     activeRunId: runId,

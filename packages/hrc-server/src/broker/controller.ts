@@ -857,7 +857,11 @@ export class HarnessBrokerController {
       )
       this.active.delete(runtimeId)
       const now = this.now()
-      this.db.runtimes.update(runtimeId, { status: 'disposed', updatedAt: now })
+      this.db.runtimes.update(runtimeId, {
+        status: 'disposed',
+        statusChangedAt: now,
+        updatedAt: now,
+      })
       await this.agentchat?.deregisterInvocation?.({
         runtimeId,
         invocationId: active.invocationId,

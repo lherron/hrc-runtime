@@ -57,6 +57,7 @@ function applyTerminalRuntimeState(
 ): void {
   db.runtimes.update(runtime.runtimeId, {
     status: params.status,
+    statusChangedAt: params.now,
     ...runtimeActivityPatch(db, runtime.runtimeId, {
       source: 'housekeeping',
       updatedAt: params.now,
@@ -96,6 +97,7 @@ export function markBrokerInvocationTerminal(
         )
       : undefined
   const terminalStatus = userExitReason !== undefined ? 'terminated' : 'stale'
+  const occurredAt = envelope.time ?? now
   const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.stale'
   const terminalReason =
     userExitReason !== undefined ? 'user_initiated_session_end' : 'broker_invocation_terminal'
@@ -117,9 +119,10 @@ export function markBrokerInvocationTerminal(
   }
   ctx.db.runtimes.update(runtimeId, {
     status: terminalStatus,
+    statusChangedAt: occurredAt,
     ...runtimeActivityPatch(ctx.db, runtimeId, {
       source: 'broker-event',
-      occurredAt: envelope.time ?? now,
+      occurredAt,
       updatedAt: now,
     }),
     runtimeStateJson: {

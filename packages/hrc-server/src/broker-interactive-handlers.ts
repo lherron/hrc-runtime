@@ -172,6 +172,7 @@ export async function handleHeadlessDispatchTurn(
   this.db.runtimes.update(runtime.runtimeId, {
     activeRunId: run.runId,
     status: 'busy',
+    statusChangedAt: now,
     continuation,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
@@ -546,6 +547,7 @@ export async function executeInteractiveBrokerInputTurn(
     this.db.runtimes.update(runtime.runtimeId, {
       activeRunId: runId,
       status: 'busy',
+      statusChangedAt: now,
       ...runtimeActivityPatch(this.db, runtime.runtimeId, {
         source: 'turn',
         occurredAt: now,
@@ -668,6 +670,7 @@ export async function executeInteractiveBrokerInputTurn(
     }
     this.db.runtimes.update(runtime.runtimeId, {
       status: reprovisionRequired ? 'stale' : 'ready',
+      statusChangedAt: completedAt,
       ...runtimeActivityPatch(this.db, runtime.runtimeId, {
         source: 'turn',
         occurredAt: completedAt,
@@ -800,6 +803,7 @@ export async function deliverReassociatedBrokerTmuxInput(
   })
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'busy',
+    statusChangedAt: startedAt,
     activeRunId: runId,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',

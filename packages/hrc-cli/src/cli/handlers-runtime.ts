@@ -56,7 +56,14 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(task ? { task } : {}),
     ...(jsonOutput ? { json: true } : {}),
   })
-  const body = `${JSON.stringify(runtimes, null, 2)}\n`
+  const body = `${JSON.stringify(
+    runtimes.map((runtime) => ({
+      ...runtime,
+      statusChangedAt: runtime.statusChangedAt ?? 'unknown',
+    })),
+    null,
+    2
+  )}\n`
   process.stdout.write(body)
   if (runtimes.length > 100) {
     process.stderr.write(

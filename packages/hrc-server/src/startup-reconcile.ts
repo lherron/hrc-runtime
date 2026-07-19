@@ -770,6 +770,7 @@ function reapStartupHeadlessOrphan(
   db.runtimes.updateRunId(runtime.runtimeId, undefined, now)
   db.runtimes.update(runtime.runtimeId, {
     status: 'stale',
+    statusChangedAt: now,
     ...runtimeActivityPatch(db, runtime.runtimeId, { source: 'housekeeping', updatedAt: now }),
   })
 

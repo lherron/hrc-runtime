@@ -95,6 +95,7 @@ export async function runHeadlessSdkStartLaunch(
   const now = timestamp()
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'starting',
+    statusChangedAt: now,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
       occurredAt: now,
@@ -183,6 +184,7 @@ export async function runHeadlessSdkStartLaunch(
   })
   this.db.runtimes.update(runtime.runtimeId, {
     status: 'ready',
+    statusChangedAt: completedAt,
     ...runtimeActivityPatch(this.db, runtime.runtimeId, {
       source: 'turn',
       occurredAt: completedAt,
@@ -261,6 +263,7 @@ export function createHeadlessRuntimeForSession(
     harness,
     provider: intent.harness.provider,
     status: 'ready',
+    statusChangedAt: now,
     continuation: session.continuation,
     supportsInflightInput: false,
     adopted: false,
@@ -332,6 +335,7 @@ export async function ensureCommandRuntimeForSession(
     harness: COMMAND_RUNTIME_COMPAT_HARNESS,
     provider: COMMAND_RUNTIME_COMPAT_PROVIDER,
     status: 'ready',
+    statusChangedAt: now,
     tmuxJson: toTmuxJson(tmuxPane),
     commandSpec: spec,
     supportsInflightInput: false,
