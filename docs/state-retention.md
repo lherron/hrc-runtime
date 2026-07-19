@@ -1,8 +1,7 @@
 # State retention
 
 This document is the canonical retention policy for HRC's live `state.sqlite`
-database. The policy was ruled on 2026-07-18; the registry-row question below
-remains explicitly open.
+database. The policy, including registry-row retention, was ruled on 2026-07-18.
 
 ## Retention policy
 
@@ -27,22 +26,15 @@ The command split from T-06500 is intentional:
 
 `runtime prune` is the only stale-row-reaping surface.
 
-## Open registry-row question — Lance decision required
+## Registry-row retention — keep forever
 
-Whether terminated `runtimes` rows are keep-forever history or prunable residue
-is NOT ruled. Under C-10744 it is provisionally deferred: prune nothing and add
-no TTL or scheduled registry-row enforcement today.
+Terminated `runtimes` rows are keep-forever history: no TTL and no pruning, ever.
+Lance's 2026-07-18 ruling is recorded in T-06531 comment C-10793.
 
-The reason for deferral is the resume-orphan risk. Terminated rows anchor the
+The controlling reason is resume-path integrity. Terminated rows anchor the
 `scope_ref` → `host_session_id` → `harness_session_json` chain used by
-`--resume`; deleting them before the policy is settled could orphan resumable
-state.
-
-If Lance later rules these rows prunable, implementation belongs in a new
-follow-up task behind the gated `runtime prune` surface and the full-backup
-precondition. Any future TTL predicate must use created_at, NOT last_activity_at:
-housekeeping contaminated that field before the
-2026-07-18 05:46Z / T-06526 epoch.
+`--resume`; deleting them could orphan resumable state. The table is tiny, so
+there is no scale pressure that outweighs that risk.
 
 ## Index adequacy
 
