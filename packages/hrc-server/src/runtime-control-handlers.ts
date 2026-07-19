@@ -9,15 +9,13 @@ import type {
   HrcSessionRecord,
   RestartStyle,
 } from 'hrc-core'
-import { runSdkTurn } from './agent-spaces-adapter/index.js'
 import {
   deriveInteractiveHarness,
   deriveSdkHarness,
   shouldUseHeadlessSdkExecutor,
 } from './broker-decisions.js'
 import { joinShellCommand, shellIdentifier, shellQuote } from './dispatch-invocation.js'
-import { appendHrcEvent, deriveSemanticTurnEventFromSdkEvent } from './hrc-event-helper.js'
-import { requireRuntime } from './require-helpers.js'
+import { appendHrcEvent } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 import {
   interruptGhosttyRuntime,
@@ -36,7 +34,7 @@ import {
   resolveManagedSessionRuntime,
   rotateSessionContext,
 } from './runtime-control-handlers/session-rotation.js'
-import { findLatestRuntime, findLatestSessionRuntime } from './runtime-select.js'
+import { findLatestRuntime } from './runtime-select.js'
 import {
   COMMAND_RUNTIME_COMPAT_HARNESS,
   COMMAND_RUNTIME_COMPAT_PROVIDER,
@@ -63,151 +61,6 @@ export {
   maybeAutoRotateStaleSession,
   resolveManagedSessionRuntime,
   rotateSessionContext,
-}
-
-export async function runHeadlessStartLaunch(
-  this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  intent: HrcRuntimeIntent
-): Promise<HrcRuntimeSnapshot> {
-  if (shouldUseHeadlessSdkExecutor(intent.harness)) {
-    return await this.runHeadlessSdkStartLaunch(session, runtime, intent)
-  }
-
-  // T-01757 (Wave C, A2): codex headless START is broker-routed in
-  // startRuntimeForSession BEFORE reaching here. The only non-SDK case that
-  // still falls through is the 'legacy-exec' route (decideHeadlessExecutionRoute) —
-  // exec.ts is retired, so it fails closed (runtime_unavailable).
-  const runId = `run-${randomUUID()}`
-  this.failCliStartPath('runHeadlessStartLaunch', session, intent, runId, runtime.runtimeId)
-}
-
-export async function runHeadlessSdkStartLaunch(
-  this: HrcServerInstanceForHandlers,
-  session: HrcSessionRecord,
-  runtime: HrcRuntimeSnapshot,
-  intent: HrcRuntimeIntent
-): Promise<HrcRuntimeSnapshot> {
-  const runId = `run-${randomUUID()}`
-  this.failSdkHarnessPath('runHeadlessSdkStartLaunch', session, intent, runId, runtime.runtimeId)
-
-  const now = timestamp()
-  this.db.runtimes.update(runtime.runtimeId, {
-    status: 'starting',
-    statusChangedAt: now,
-    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
-      source: 'turn',
-      occurredAt: now,
-      updatedAt: now,
-    }),
-  })
-
-  const prompt = intent.initialPrompt ?? 'hello'
-  const existingProvider =
-    findLatestSessionRuntime(this.db, session.hostSessionId)?.provider ??
-    session.continuation?.provider
-
-  this.db.runs.insert({
-    runId,
-    hostSessionId: session.hostSessionId,
-    runtimeId: runtime.runtimeId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    transport: 'headless',
-    status: 'accepted',
-    acceptedAt: now,
-    updatedAt: now,
-  })
-  this.db.runtimes.update(runtime.runtimeId, {
-    activeRunId: runId,
-    updatedAt: now,
-  })
-
-  // runSdkTurn requires interactive=false and the placement needs dryRun
-  // defaulted (normalizeDispatchIntent handles this for turns but start
-  // bypasses that path).
-  const sdkIntent = {
-    ...intent,
-    placement: {
-      ...intent.placement,
-      dryRun: intent.placement.dryRun ?? true,
-    },
-    harness: { ...intent.harness, interactive: false as const },
-  }
-  const result = await runSdkTurn({
-    intent: sdkIntent,
-    hostSessionId: session.hostSessionId,
-    runId,
-    runtimeId: runtime.runtimeId,
-    prompt,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    existingProvider,
-    continuation: session.continuation,
-    onHrcEvent: (event) => {
-      const appended = this.db.events.append(event)
-      this.notifyEvent(appended)
-      const semanticEvent = deriveSemanticTurnEventFromSdkEvent(event.eventKind, event.eventJson)
-      if (semanticEvent) {
-        const appendedSemanticEvent = appendHrcEvent(this.db, semanticEvent.eventKind, {
-          ts: event.ts,
-          hostSessionId: event.hostSessionId,
-          scopeRef: event.scopeRef,
-          laneRef: event.laneRef,
-          generation: event.generation,
-          runId: event.runId,
-          runtimeId: event.runtimeId,
-          transport: 'sdk',
-          payload: semanticEvent.payload,
-        })
-        this.notifyEvent(appendedSemanticEvent)
-      }
-      this.db.runtimes.update(
-        runtime.runtimeId,
-        runtimeActivityPatch(this.db, runtime.runtimeId, {
-          source: 'agent-message',
-          occurredAt: event.ts,
-          updatedAt: timestamp(),
-        })
-      )
-    },
-  })
-
-  const completedAt = timestamp()
-  this.db.runs.markCompleted(runId, {
-    status: result.result.success ? 'completed' : 'failed',
-    completedAt,
-    updatedAt: completedAt,
-  })
-  this.db.runtimes.update(runtime.runtimeId, {
-    status: 'ready',
-    statusChangedAt: completedAt,
-    ...runtimeActivityPatch(this.db, runtime.runtimeId, {
-      source: 'turn',
-      occurredAt: completedAt,
-      updatedAt: completedAt,
-    }),
-    harnessSessionJson: result.harnessSessionJson,
-    continuation: result.continuation,
-  })
-  this.db.runtimes.updateRunId(runtime.runtimeId, undefined, completedAt)
-
-  if (result.continuation) {
-    this.db.sessions.updateContinuation(session.hostSessionId, result.continuation, completedAt)
-  }
-
-  const refreshedRuntime = requireRuntime(this.db, runtime.runtimeId)
-  if (!(refreshedRuntime.continuation?.key ?? session.continuation?.key)) {
-    throw new HrcRuntimeUnavailableError('headless runtime start did not persist continuation', {
-      runtimeId: runtime.runtimeId,
-      provider: runtime.provider,
-    })
-  }
-
-  return refreshedRuntime
 }
 
 export function failCliStartPath(
@@ -421,8 +274,6 @@ export async function launchCommandSpecInPane(
 }
 
 export const runtimeControlHandlersMethods = {
-  runHeadlessStartLaunch,
-  runHeadlessSdkStartLaunch,
   failCliStartPath,
   createHeadlessRuntimeForSession,
   interruptRuntime,

@@ -407,7 +407,7 @@ export async function startRuntimeForSession(
       // anything.
       if (headlessRoute === 'sdk') {
         this.failSdkHarnessPath(
-          'runHeadlessSdkStartLaunch',
+          'startRuntimeForSession',
           session,
           normalizedIntent,
           `run-${randomUUID()}`
@@ -416,20 +416,12 @@ export async function startRuntimeForSession(
 
       if (headlessRoute === 'legacy-exec') {
         this.failCliStartPath(
-          'runHeadlessStartLaunch',
+          'startRuntimeForSession',
           session,
           normalizedIntent,
           `run-${randomUUID()}`
         )
       }
-
-      const runtime =
-        reusableRuntime ?? this.createHeadlessRuntimeForSession(session, normalizedIntent)
-      if (runtime.continuation?.key ?? session.continuation?.key) {
-        return requireRuntime(this.db, runtime.runtimeId)
-      }
-
-      return await this.runHeadlessStartLaunch(session, runtime, normalizedIntent)
     }
 
     const interactiveBrokerOptions = this.selectInteractiveTmuxBrokerOptions(normalizedIntent)
@@ -478,8 +470,8 @@ export async function startRuntimeForSession(
     // By here the intent is therefore NOT headless, so this guard ALWAYS
     // throws RuntimeUnavailable for any non-headless, non-broker-admissible
     // interactive intent. The legacy interactive/headless START fall-through
-    // that used to follow (ensureRuntimeForSession + enqueueInteractiveStartLaunch
-    // + a second runHeadlessStartLaunch) was provably unreachable and is removed.
+    // that used to follow (ensureRuntimeForSession plus start-launch dispatch)
+    // was provably unreachable and is removed.
     throw new HrcRuntimeUnavailableError('interactive runtime is not broker-admissible', {
       hostSessionId: session.hostSessionId,
       provider: normalizedIntent.harness.provider,

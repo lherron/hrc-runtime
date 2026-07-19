@@ -10,9 +10,9 @@
  *
  * Pinned coordinator design (clod, C-02949):
  *   - Throw HrcRuntimeUnavailableError (hrc-core, code RUNTIME_UNAVAILABLE =
- *     HTTP 503) BEFORE runSdkTurn is reached, in all three SDK entry methods:
+ *     HTTP 503) BEFORE runSdkTurn is reached, in every live SDK entry method:
  *       - executeHeadlessSdkTurn      (index.ts ~3556)
- *       - runHeadlessSdkStartLaunch   (index.ts ~6310)
+ *       - startRuntimeForSession      (runtime-io-handlers.ts)
  *       - handleSdkDispatchTurn       (index.ts ~9378)
  *   - The error must name caller method, harness.id, harness.provider, and
  *     scope/sessionRef.
@@ -175,8 +175,8 @@ describe('SDK harness path is a hard fail (T-01754)', () => {
 
     const res = await fixture.postJson('/v1/runtimes/start', {
       hostSessionId: hsid,
-      // preferredMode 'headless' routes the start through runHeadlessStartLaunch
-      // → runHeadlessSdkStartLaunch (the SDK start entry method under test).
+      // preferredMode 'headless' selects the live SDK guard in
+      // startRuntimeForSession before any runtime row is allocated.
       intent: sdkIntent('anthropic', 'agent-sdk', { preferredMode: 'headless' }),
     })
 

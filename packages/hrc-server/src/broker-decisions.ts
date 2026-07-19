@@ -79,9 +79,8 @@ export function deriveSdkHarness(
 }
 
 /**
- * Decide whether a headless dispatch (or start) should run through the SDK
- * executor (executeHeadlessSdkTurn / runHeadlessSdkStartLaunch) rather than
- * the CLI executor. Explicit SDK harness ids always win. Id-less Anthropic
+ * Decide whether a headless dispatch (or start) should select the SDK route
+ * rather than the CLI route. Explicit SDK harness ids always win. Id-less Anthropic
  * intents keep the legacy SDK fallback only after the caller has already
  * selected the headless path. Normal Claude dispatch routes through Ghostty
  * only when HRC_CLAUDE_GHOSTTY=1 is set.

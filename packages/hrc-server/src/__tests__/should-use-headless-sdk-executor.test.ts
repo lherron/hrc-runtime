@@ -2,7 +2,7 @@
  * Table-driven coverage for `shouldUseHeadlessSdkExecutor`.
  *
  * This predicate is the single source of truth for routing decisions in
- * `handleHeadlessDispatchTurn`, `runHeadlessStartLaunch`,
+ * `handleHeadlessDispatchTurn`, `startRuntimeForSession`,
  * `createHeadlessRuntimeForSession` (harness label), and
  * `getReusableHeadlessRuntimeForSession` (reuse filter). If the predicate
  * drifts, runtime identity, dispatch routing, and reuse safety all decouple.

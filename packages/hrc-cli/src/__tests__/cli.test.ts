@@ -1507,7 +1507,7 @@ describe('hrc start', () => {
   // SKIP: exercises the headless CLI start path, which hrc-server deliberately
   // retired in the broker cutover. The server now hard-fails this route with
   // "headless CLI start path retired for broker cutover ... provision via the
-  // first broker dispatch turn instead" (runHeadlessStartLaunch). Making this
+  // first broker dispatch turn instead" (the startRuntimeForSession guard). Making this
   // green requires resurrecting retired hrc-server behavior; out of scope for
   // an hrc-cli-only change. Env/cross-package coupled, skipped per fully-green
   // directive.
@@ -1551,8 +1551,8 @@ describe('hrc start', () => {
     expect(result.stdout).not.toContain('--json')
   })
 
-  // SKIP: same retired headless CLI start path as above (runHeadlessStartLaunch
-  // hard-fails post broker cutover). Requires hrc-server changes to revive the
+  // SKIP: same retired headless CLI start path as above (startRuntimeForSession
+  // hard-fails it post broker cutover). Requires hrc-server changes to revive the
   // retired route; not fixable from hrc-cli. Cross-package coupled, skipped per
   // fully-green directive.
   it.skip('rotates to a fresh headless session when start uses --new-session', async () => {
@@ -1680,7 +1680,7 @@ describe('hrc attach <scope>', () => {
   })
 
   // SKIP: drives `hrc start` (headless) first, which hrc-server retired in the
-  // broker cutover (runHeadlessStartLaunch hard-fails). The start step exits 1
+  // broker cutover (startRuntimeForSession hard-fails it). The start step exits 1
   // before attach can be exercised. Requires hrc-server changes; cross-package
   // coupled, skipped per fully-green directive.
   it.skip('headless anthropic start creates resumable runtime that attach can rematerialize', async () => {
@@ -1707,7 +1707,7 @@ describe('hrc attach <scope>', () => {
   })
 
   // SKIP: drives `hrc start` (headless) first, which hrc-server retired in the
-  // broker cutover (runHeadlessStartLaunch hard-fails). The start step exits 1
+  // broker cutover (startRuntimeForSession hard-fails it). The start step exits 1
   // before the codex attach/resume can be exercised. Requires hrc-server
   // changes; cross-package coupled, skipped per fully-green directive.
   it.skip('materializes tmux and resumes codex when only a detached session exists', async () => {
