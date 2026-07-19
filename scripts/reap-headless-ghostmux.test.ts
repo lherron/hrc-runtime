@@ -545,3 +545,29 @@ describe('isAlreadyTerminatedError (benign reap-failure classifier)', () => {
     expect(isAlreadyTerminatedError('connection refused: broker socket unavailable')).toBe(false)
   })
 })
+
+describe('simulated reap outcome presentation', () => {
+  it('prints full scope handles and a sensible title-derived partial handle', () => {
+    const proc = Bun.spawnSync(
+      [
+        'bun',
+        new URL('./reap-headless-ghostmux.ts', import.meta.url).pathname,
+        '--simulate',
+        '--dry-run',
+        '--yes',
+      ],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, NO_COLOR: '1' },
+      }
+    )
+    const stdout = new TextDecoder().decode(proc.stdout)
+    const stderr = new TextDecoder().decode(proc.stderr)
+
+    expect(proc.exitCode, stderr).toBe(0)
+    expect(stdout).toContain('7BF21FAF reap sent smokey@agent-control-plane:T-02864 rt-smokey-s')
+    expect(stdout).toContain('EB834507 reap sent curly@agent-control-plane:T-02864 rt-curly-si')
+    expect(stdout).toContain('A11CE003 reap sent larry rt-larry-ti')
+  })
+})

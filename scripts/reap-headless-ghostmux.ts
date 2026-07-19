@@ -443,6 +443,16 @@ function simPanes(): DiscoveredPane[] {
       },
     },
     {
+      // Legacy title-derived scope: metadata identifies the runtime and pane
+      // role, but the title is the only available scope source.
+      id: 'A11CE003',
+      title: 'hrc headless agent:larry',
+      metadata: {
+        hrc_role: HEADLESS_PANE_ROLE,
+        hrc_runtime_id: 'rt-larry-title-sim',
+      },
+    },
+    {
       // Already-terminated leftover viewer: no live runtime to reap, but parked
       // on the close prompt — exercises the leftover-viewer close path.
       id: 'C10D0144',
@@ -950,7 +960,7 @@ async function main(): Promise<void> {
     let reapWarned = 0
     for (const status of eligibleStatuses) {
       const result = sendReap(status, options)
-      const suffix = `${color.dim(status.agent)} ${color.dim(shortRuntime(status.runtimeId))}`
+      const suffix = `${color.dim(handleFromScope(status.scopeRef))} ${color.dim(shortRuntime(status.runtimeId))}`
       if (result.kind === 'already-terminated') {
         reapWarned += 1
         console.log(`  ${color.cyan(status.id)} ${color.yellow('already terminated')} ${suffix}`)
