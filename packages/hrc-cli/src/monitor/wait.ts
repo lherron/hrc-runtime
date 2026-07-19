@@ -1,1 +1,1 @@
-export * from './wait-command.js'
+export { MonitorWaitExit, cmdMonitorWait } from './wait-command.js'

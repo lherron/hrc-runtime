@@ -267,13 +267,13 @@ function readFixtureState(): HrcMonitorState | undefined {
   }
 }
 
-type LiveMonitorSourceRequest = {
+export type LiveMonitorSourceRequest = {
   selectorSpecs: readonly MonitorSelectorSpec[]
   condition: HrcMonitorCondition
   since?: string | undefined
 }
 
-type LiveMonitorStateSource = {
+export type LiveMonitorStateSource = {
   initialState: HrcMonitorState
   buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
 }
@@ -344,7 +344,7 @@ function writeEarlyTimeout(
   return 1
 }
 
-async function createLiveMonitorStateSource(
+export async function createLiveMonitorStateSource(
   request: LiveMonitorSourceRequest,
   signal?: AbortSignal | undefined
 ): Promise<LiveMonitorStateSource> {

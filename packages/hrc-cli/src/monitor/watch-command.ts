@@ -58,6 +58,7 @@ import {
   scopeRefForSelector,
   selectorSetLabel,
 } from './selector-shape.js'
+import { type LiveMonitorStateSource, createLiveMonitorStateSource } from './wait-command.js'
 import { runReplayOrFollow, writeFollowTimeoutCompletion } from './watch-stream.js'
 
 export { type AnyMonitorConditionResult, waitForAnyMonitorCondition } from './engine.js'
@@ -100,7 +101,7 @@ export async function cmdMonitorWatch(
   const io = deps ?? defaultDeps(args)
 
   try {
-    const exitCode = await runWatch(args, io)
+    const exitCode = await runWatch(args, io, deps === undefined)
     if (!deps) {
       // CLI mode: exit the process
       await drainMonitorStdout(io.stdout)
@@ -130,7 +131,11 @@ export async function cmdMonitorWatch(
 
 // -- Core logic ---------------------------------------------------------------
 
-async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<number> {
+async function runWatch(
+  args: MonitorWatchArgs,
+  io: MonitorWatchDeps,
+  liveMode: boolean
+): Promise<number> {
   const follow = args.follow ?? false
   const until = args.until
   const signal = args.signal
@@ -200,7 +205,11 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
   // Apply server-side-equivalent event filtering (T-04232). In live mode the
   // SQL layer already narrowed the firehose; this wrapper enforces the same
   // predicate for injected/test state and preserves the global high-water.
-  const filteredIo = wrapWithMonitorFilters(io, args, selectorSpecs)
+  const conditionIo =
+    liveMode && follow && until !== undefined && !isFanInSelectorSet(selectorSpecs)
+      ? withTargetedConditionSource(io, selectorSpecs, until as HrcMonitorCondition, args.since)
+      : io
+  const filteredIo = wrapWithMonitorFilters(conditionIo, args, selectorSpecs)
 
   // Build state within the same timeout budget used by follow polling.
   const initialBuild = await buildMonitorStateBeforeDeadline(
@@ -258,6 +267,31 @@ async function runWatch(args: MonitorWatchArgs, io: MonitorWatchDeps): Promise<n
     return runConditionWatch(state, effectiveArgs, selector, filteredIo, format)
   }
   return runReplayOrFollow(state, armedArgs, selector, filteredIo, format, isFilterActive(args))
+}
+
+function withTargetedConditionSource(
+  io: MonitorWatchDeps,
+  selectorSpecs: readonly MonitorSelectorSpec[],
+  condition: HrcMonitorCondition,
+  since: string | undefined
+): MonitorWatchDeps {
+  let sourcePromise: Promise<LiveMonitorStateSource> | undefined
+  let initialStateDelivered = false
+  return {
+    ...io,
+    async buildMonitorState(signal) {
+      sourcePromise ??= createLiveMonitorStateSource(
+        { selectorSpecs, condition, ...(since !== undefined ? { since } : {}) },
+        signal
+      )
+      const source = await sourcePromise
+      if (!initialStateDelivered) {
+        initialStateDelivered = true
+        return source.initialState
+      }
+      return source.buildMonitorState(signal)
+    },
+  }
 }
 
 function selectorArgs(args: MonitorWatchArgs): string[] {
