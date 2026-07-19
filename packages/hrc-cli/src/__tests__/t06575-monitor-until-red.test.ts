@@ -583,7 +583,33 @@ describe('T-06575 suite 6 — daemon single-cut integrity', () => {
     const fixture = await makeSeededFixture()
     const writer = openHrcDatabase(fixture.dbPath)
     try {
-      fixture.db.runtimes.updateStatus(RUNTIME_ID, 'idle', ts(1))
+      const firstScope = `agent:cody:project:hrc-runtime:task:${TASK_ID}`
+      fixture.db.sessions.insert({
+        hostSessionId: 'host-cut-1',
+        scopeRef: firstScope,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: ts(),
+        updatedAt: ts(),
+        ancestorScopeRefs: [],
+      })
+      fixture.db.runtimes.insert({
+        runtimeId: 'runtime-cut-1',
+        hostSessionId: 'host-cut-1',
+        scopeRef: firstScope,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'idle',
+        statusChangedAt: ts(1),
+        supportsInflightInput: false,
+        adopted: false,
+        createdAt: ts(),
+        updatedAt: ts(),
+      })
       const secondScope = `agent:clod:project:hrc-runtime:task:${TASK_ID}`
       fixture.db.sessions.insert({
         hostSessionId: 'host-cut-2',
@@ -633,7 +659,7 @@ describe('T-06575 suite 6 — daemon single-cut integrity', () => {
       expect(cut).toMatchObject({
         observedAt: expect.any(String),
         members: expect.arrayContaining([
-          expect.objectContaining({ runtimeId: RUNTIME_ID, status: 'idle' }),
+          expect.objectContaining({ runtimeId: 'runtime-cut-1', status: 'idle' }),
           expect.objectContaining({ runtimeId: 'runtime-cut-2', status: 'busy' }),
         ]),
       })
