@@ -56,6 +56,7 @@ export type {
   PruneRuntimesResponse,
   RuntimeActionResponse,
   StatusResponse,
+  StatusSummaryResponse,
   SweepZombieRunsRequest,
   SweepZombieRunsResponse,
   SweepRuntimesRequest,

@@ -131,6 +131,7 @@ export type {
   HrcSessionRecord,
   HrcStatusActiveRuntimeView,
   HrcStatusResponse,
+  HrcStatusSummaryResponse,
   HrcStatusSessionView,
   HrcStatusTmuxView,
 } from './contracts.js'
@@ -232,6 +233,7 @@ export type {
   SendLiteralInputResponse,
   SendWindowLiteralInputRequest,
   StatusResponse,
+  StatusSummaryResponse,
   PruneRuntimeResult,
   PruneRuntimesRequest,
   PruneRuntimesResponse,

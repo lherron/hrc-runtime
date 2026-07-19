@@ -53,6 +53,7 @@ export type {
   SendInFlightInputResponse,
   SessionFilter,
   StatusResponse,
+  StatusSummaryResponse,
   SurfaceListFilter,
   UnbindSurfaceRequest,
   InvocationEventEnvelope,

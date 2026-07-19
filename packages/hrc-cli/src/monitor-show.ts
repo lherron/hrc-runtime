@@ -1,7 +1,6 @@
 import { type LaneRef, formatScopeHandle, formatSessionHandle, parseScopeRef } from 'agent-scope'
 import { CliUsageError } from 'cli-kit'
 import {
-  type HrcLifecycleEvent,
   type HrcMessageRecord,
   type HrcMonitorMessageState,
   type HrcMonitorRuntimeState,
@@ -10,11 +9,15 @@ import {
   type HrcMonitorState,
   type HrcRuntimeSnapshot,
   type HrcSelector,
+  type HrcSessionRecord,
   type HrcStatusResponse,
+  type HrcStatusSummaryResponse,
+  type InspectRuntimeResponse,
   createMonitorReader,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import { parseProfileAwareSelector } from './profile-aware-selector.js'
 
 type MonitorShowOptions = {
@@ -68,6 +71,24 @@ type MonitorShowJson = {
     activeTurnId?: string | null | undefined
   }
   runtime?: HrcMonitorRuntimeState | undefined
+}
+
+type MonitorStatus = HrcStatusSummaryResponse | HrcStatusResponse
+
+type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
+
+type MonitorRuntimeSource = {
+  runtimeId: string
+  hostSessionId: string
+  status: string
+  transport: string
+  activeRunId?: string | null | undefined
+}
+
+type MonitorRuntimeIdentitySource = MonitorRuntimeSource & {
+  scopeRef: string
+  laneRef: string
+  generation: number
 }
 
 class MonitorInfrastructureError extends Error {
@@ -142,68 +163,183 @@ async function readMonitorSnapshot(
   const socketPath = discoverSocket()
   const client = new HrcClient(socketPath)
 
-  let status: HrcStatusResponse
+  let status: HrcStatusSummaryResponse
   try {
-    status = (await client.getStatus()) as HrcStatusResponse
+    status = await client.getStatus({ includeSessions: false })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new MonitorInfrastructureError(`daemon unavailable on ${socketPath}: ${message}`)
   }
 
-  const state = await buildMonitorState(status, client)
+  const state = await buildMonitorState(status, client, selector)
   return createMonitorReader(state).snapshot(selector)
 }
 
 async function buildMonitorState(
-  status: HrcStatusResponse,
-  client: HrcClient
+  status: MonitorStatus,
+  client: HrcClient,
+  selector?: HrcSelector | undefined
 ): Promise<HrcMonitorState> {
-  const runtimes = await client.listRuntimes()
-  const messages = await readMessages(client)
-  const events = readEvents(status.dbPath)
-  const tmux = status.capabilities.backend.tmux
-
-  return {
-    daemon: {
-      status: 'healthy',
-      socketPath: status.socketPath,
-      startedAt: status.startedAt,
-      uptime: status.uptime,
-      apiVersion: status.apiVersion,
-    },
-    socket: {
-      path: status.socketPath,
-      responsive: true,
-    },
-    tmux: {
-      available: tmux.available,
-      status: tmux.available ? 'available' : 'unavailable',
-      ...(tmux.version ? { version: tmux.version } : {}),
-    },
-    sessions: status.sessions.map(toMonitorSession),
-    runtimes: runtimes.map(toMonitorRuntime),
-    messages,
-    events,
-  }
-}
-
-async function readMessages(client: HrcClient): Promise<HrcMonitorMessageState[]> {
-  const response = await client.listMessages({ order: 'asc', limit: 10_000 })
-  return response.messages.map(toMonitorMessage)
-}
-
-function readEvents(dbPath: string): HrcMonitorState['events'] {
-  const db = openHrcDatabase(dbPath)
+  const db = openHrcDatabase(status.dbPath)
   try {
-    return db.hrcEvents.listFromHrcSeq(1).map(toMonitorEvent)
+    const selected = selector
+      ? await readSelectorState(selector, status, client, db)
+      : { sessions: [], runtimes: [], messages: [] }
+    const tmux = status.capabilities.backend.tmux
+
+    return {
+      daemon: {
+        status: 'healthy',
+        socketPath: status.socketPath,
+        startedAt: status.startedAt,
+        uptime: status.uptime,
+        apiVersion: status.apiVersion,
+      },
+      socket: {
+        path: status.socketPath,
+        responsive: true,
+      },
+      tmux: {
+        available: tmux.available,
+        status: tmux.available ? 'available' : 'unavailable',
+        ...(tmux.version ? { version: tmux.version } : {}),
+      },
+      ...selected,
+      events: [],
+      eventGlobalHighWaterSeq: db.hrcEvents.maxHrcSeq(),
+      sessionGlobalCount: status.sessionCount,
+      runtimeGlobalCount: status.runtimeCount,
+    }
   } finally {
     db.close()
   }
 }
 
-function toMonitorSession(entry: HrcStatusResponse['sessions'][number]): HrcMonitorSessionState {
-  const session = entry.session
-  const activeRuntime = entry.activeRuntime?.runtime
+async function readSelectorState(
+  selector: HrcSelector,
+  status: MonitorStatus,
+  client: HrcClient,
+  db: HrcDatabase
+): Promise<SelectorState> {
+  switch (selector.kind) {
+    case 'stable':
+    case 'target':
+    case 'session':
+    case 'scope': {
+      const sessionRef =
+        selector.kind === 'scope' ? sessionRefFor(selector.scopeRef, 'main') : selector.sessionRef
+      const resolved = await client.resolveSession({ sessionRef, create: false })
+      if (!resolved.found) return emptySelectorState()
+
+      const runtime =
+        db.runtimes.getLatestByHostSessionId(resolved.hostSessionId) ??
+        compatibilityRuntime(status, resolved.hostSessionId)
+      return stateFromSession(resolved.session, runtime)
+    }
+    case 'concrete':
+    case 'host': {
+      const session = db.sessions.getByHostSessionId(selector.hostSessionId)
+      if (!session) return emptySelectorState()
+      return stateFromSession(session, db.runtimes.getLatestByHostSessionId(session.hostSessionId))
+    }
+    case 'runtime': {
+      const runtime = await client.inspectRuntime({ runtimeId: selector.runtimeId })
+      return stateFromInspectedRuntime(runtime, db)
+    }
+    case 'message':
+    case 'message-seq': {
+      const message =
+        selector.kind === 'message'
+          ? db.messages.getById(selector.messageId)
+          : db.messages.getBySeq(selector.messageSeq)
+      return message ? await stateFromMessage(message, client, db) : emptySelectorState()
+    }
+  }
+}
+
+function emptySelectorState(): SelectorState {
+  return { sessions: [], runtimes: [], messages: [] }
+}
+
+function stateFromSession(
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot | undefined | null
+): SelectorState {
+  return {
+    sessions: [toMonitorSession(session, runtime)],
+    runtimes: runtime ? [toMonitorRuntime(runtime)] : [],
+    messages: [],
+  }
+}
+
+function stateFromInspectedRuntime(
+  runtime: InspectRuntimeResponse,
+  db: HrcDatabase
+): SelectorState {
+  const session = db.sessions.getByHostSessionId(runtime.hostSessionId)
+  return {
+    sessions: [session ? toMonitorSession(session, runtime) : toMonitorSessionFromRuntime(runtime)],
+    runtimes: [toMonitorRuntime(runtime)],
+    messages: [],
+  }
+}
+
+async function stateFromMessage(
+  message: HrcMessageRecord,
+  client: HrcClient,
+  db: HrcDatabase
+): Promise<SelectorState> {
+  const runtime = message.execution.runtimeId
+    ? await client.inspectRuntime({ runtimeId: message.execution.runtimeId })
+    : message.execution.hostSessionId
+      ? db.runtimes.getLatestByHostSessionId(message.execution.hostSessionId)
+      : null
+  const session = message.execution.hostSessionId
+    ? db.sessions.getByHostSessionId(message.execution.hostSessionId)
+    : null
+
+  if (runtime) {
+    return {
+      sessions: [
+        session ? toMonitorSession(session, runtime) : toMonitorSessionFromRuntime(runtime),
+      ],
+      runtimes: [toMonitorRuntime(runtime)],
+      messages: [toMonitorMessage(message)],
+    }
+  }
+
+  if (message.execution.sessionRef) {
+    const resolved = await client.resolveSession({
+      sessionRef: message.execution.sessionRef,
+      create: false,
+    })
+    if (resolved.found) {
+      return {
+        ...stateFromSession(
+          resolved.session,
+          db.runtimes.getLatestByHostSessionId(resolved.hostSessionId)
+        ),
+        messages: [toMonitorMessage(message)],
+      }
+    }
+  }
+
+  return { sessions: [], runtimes: [], messages: [toMonitorMessage(message)] }
+}
+
+function compatibilityRuntime(
+  status: MonitorStatus,
+  hostSessionId: string
+): HrcRuntimeSnapshot | undefined {
+  if (!('sessions' in status)) return undefined
+  return status.sessions.find((entry) => entry.session.hostSessionId === hostSessionId)
+    ?.activeRuntime?.runtime
+}
+
+function toMonitorSession(
+  session: HrcSessionRecord,
+  activeRuntime?: Pick<MonitorRuntimeSource, 'runtimeId' | 'activeRunId'> | null | undefined
+): HrcMonitorSessionState {
   return {
     sessionRef: sessionRefFor(session.scopeRef, session.laneRef),
     scopeRef: session.scopeRef,
@@ -216,7 +352,22 @@ function toMonitorSession(entry: HrcStatusResponse['sessions'][number]): HrcMoni
   }
 }
 
-function toMonitorRuntime(runtime: HrcRuntimeSnapshot): HrcMonitorRuntimeState {
+function toMonitorSessionFromRuntime(
+  runtime: MonitorRuntimeIdentitySource
+): HrcMonitorSessionState {
+  return {
+    sessionRef: sessionRefFor(runtime.scopeRef, runtime.laneRef),
+    scopeRef: runtime.scopeRef,
+    laneRef: laneIdForSessionRef(runtime.laneRef),
+    hostSessionId: runtime.hostSessionId,
+    generation: runtime.generation,
+    runtimeId: runtime.runtimeId,
+    status: 'active',
+    activeTurnId: runtime.activeRunId,
+  }
+}
+
+function toMonitorRuntime(runtime: MonitorRuntimeSource): HrcMonitorRuntimeState {
   return {
     runtimeId: runtime.runtimeId,
     hostSessionId: runtime.hostSessionId,
@@ -234,22 +385,6 @@ function toMonitorMessage(message: HrcMessageRecord): HrcMonitorMessageState {
     ...(message.execution.hostSessionId ? { hostSessionId: message.execution.hostSessionId } : {}),
     ...(message.execution.runtimeId ? { runtimeId: message.execution.runtimeId } : {}),
     ...(message.execution.runId ? { runId: message.execution.runId } : {}),
-  }
-}
-
-function toMonitorEvent(event: HrcLifecycleEvent): HrcMonitorState['events'][number] {
-  return {
-    seq: event.hrcSeq,
-    ts: event.ts,
-    event: event.eventKind,
-    sessionRef: sessionRefFor(event.scopeRef, event.laneRef),
-    scopeRef: event.scopeRef,
-    laneRef: laneIdForSessionRef(event.laneRef),
-    hostSessionId: event.hostSessionId,
-    generation: event.generation,
-    ...(event.runtimeId ? { runtimeId: event.runtimeId } : {}),
-    ...(event.runId ? { turnId: event.runId } : {}),
-    payload: event.payload,
   }
 }
 

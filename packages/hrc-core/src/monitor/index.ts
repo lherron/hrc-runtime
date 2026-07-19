@@ -72,6 +72,10 @@ export type HrcMonitorState = {
    * semantics must stay global, not filtered (daedalus invariant).
    */
   eventGlobalHighWaterSeq?: number | undefined
+  /** Total durable sessions when `sessions` is a selector-bounded subset. */
+  sessionGlobalCount?: number | undefined
+  /** Total durable runtimes when `runtimes` is a selector-bounded subset. */
+  runtimeGlobalCount?: number | undefined
 }
 
 export type HrcMonitorResolvedSelector = {
@@ -344,8 +348,8 @@ function snapshotState(
     ...(state.socket ? { socket: state.socket } : {}),
     ...(state.tmux ? { tmux: state.tmux } : {}),
     counts: {
-      sessions: state.sessions.length,
-      runtimes: state.runtimes.length,
+      sessions: state.sessionGlobalCount ?? state.sessions.length,
+      runtimes: state.runtimeGlobalCount ?? state.runtimes.length,
     },
     ...(parts ? { session: parts.session, runtime: parts.runtime } : {}),
     ...(resolution ? { resolution } : {}),

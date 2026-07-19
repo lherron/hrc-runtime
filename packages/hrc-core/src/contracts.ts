@@ -729,3 +729,5 @@ export type HrcStatusSessionView = {
 export type HrcStatusResponse = HrcCapabilityStatus & {
   sessions: HrcStatusSessionView[]
 }
+
+export type HrcStatusSummaryResponse = HrcCapabilityStatus

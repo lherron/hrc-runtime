@@ -71,6 +71,11 @@ const RUNTIME_UPDATE_SPEC: ReadonlyArray<PatchEntrySpec<RuntimeUpdatePatch>> = [
 export class RuntimeRepository {
   constructor(private readonly db: Database) {}
 
+  count(): number {
+    const row = this.db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM runtimes').get()
+    return row?.count ?? 0
+  }
+
   insert(record: HrcRuntimeSnapshot): HrcRuntimeSnapshot {
     execute(
       this.db,
@@ -162,6 +167,19 @@ export class RuntimeRepository {
     const row = this.db
       .query<RuntimeRow, [string]>(`SELECT ${RUNTIME_COLUMNS} FROM runtimes WHERE runtime_id = ?`)
       .get(runtimeId)
+
+    return row ? mapRuntimeRow(row) : null
+  }
+
+  getLatestByHostSessionId(hostSessionId: string): HrcRuntimeSnapshot | null {
+    const row = this.db
+      .query<RuntimeRow, [string]>(
+        `SELECT ${RUNTIME_COLUMNS} FROM runtimes
+          WHERE host_session_id = ?
+          ORDER BY created_at DESC, runtime_id DESC
+          LIMIT 1`
+      )
+      .get(hostSessionId)
 
     return row ? mapRuntimeRow(row) : null
   }

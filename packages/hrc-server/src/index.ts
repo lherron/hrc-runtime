@@ -16,6 +16,7 @@ import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
   HrcStatusResponse,
+  HrcStatusSummaryResponse,
   LaunchCommandScopedRunResponse,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
@@ -568,7 +569,7 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/internal/hooks/ingest')]: (request) =>
       this.handleHookIngest(request),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
-    [exactRouteKey('GET', '/v1/status')]: () => this.handleStatus(),
+    [exactRouteKey('GET', '/v1/status')]: (_request, url) => this.handleStatus(url),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       this.handleGetTarget(url),
@@ -1218,7 +1219,55 @@ class HrcServerInstance implements HrcServer {
     return json({ ok: true })
   }
 
-  async handleStatus(): Promise<Response> {
+  async handleStatus(url?: URL): Promise<Response> {
+    if (url?.searchParams.get('includeSessions') === 'false') {
+      const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
+      const tmuxStatus = await detectTmuxBackend()
+      return json({
+        ok: true,
+        uptime: Math.floor(uptimeMs / 1000),
+        startedAt: this.startedAt,
+        runtimeRoot: this.options.runtimeRoot,
+        stateRoot: this.options.stateRoot,
+        socketPath: this.options.socketPath,
+        dbPath: this.options.dbPath,
+        cwd: process.cwd(),
+        binaryPath: HRC_SERVER_BINARY_PATH,
+        packagePath: HRC_SERVER_PACKAGE_PATH,
+        sessionCount: this.db.sessions.count(),
+        runtimeCount: this.db.runtimes.count(),
+        apiVersion: HRC_API_VERSION,
+        capabilities: {
+          semanticCore: {
+            sessions: true,
+            ensureRuntime: true,
+            dispatchTurn: true,
+            inFlightInput: true,
+            capture: true,
+            attach: true,
+            clearContext: true,
+          },
+          platform: {
+            appOwnedSessions: true,
+            appHarnessSessions: true,
+            commandSessions: true,
+            literalInput: true,
+            surfaceBindings: true,
+            legacyLocalBridges: ['legacy-agentchat'],
+          },
+          bridgeDelivery: {
+            actualPtyInjection: true,
+            enter: true,
+            oobSuffix: true,
+            freshnessFence: true,
+          },
+          backend: {
+            tmux: tmuxStatus,
+          },
+        },
+      } satisfies HrcStatusSummaryResponse)
+    }
+
     const sessions = this.listAllSessions()
     const runtimes = this.db.runtimes.listAll()
     const uptimeMs = Date.now() - new Date(this.startedAt).getTime()

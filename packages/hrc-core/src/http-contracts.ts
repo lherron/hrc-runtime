@@ -17,6 +17,7 @@ import type {
   HrcRuntimeIntent,
   HrcSessionRecord,
   HrcStatusResponse,
+  HrcStatusSummaryResponse,
   HrcStatusTmuxView,
   HrcTurnResponseFormat,
 } from './contracts.js'
@@ -903,6 +904,7 @@ export type HealthResponse = {
 }
 
 export type StatusResponse = HrcStatusResponse
+export type StatusSummaryResponse = HrcStatusSummaryResponse
 
 export type HrcSubscriberAdmissionRoute = 'events' | 'broker-events'
 

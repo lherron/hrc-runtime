@@ -220,6 +220,11 @@ export class ContinuityRepository {
 export class SessionRepository {
   constructor(private readonly db: Database) {}
 
+  count(): number {
+    const row = this.db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM sessions').get()
+    return row?.count ?? 0
+  }
+
   insert(record: HrcSessionRecord): HrcSessionRecord {
     execute(
       this.db,

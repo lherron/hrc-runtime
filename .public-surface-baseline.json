@@ -1687,6 +1687,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcStatusSummaryResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcStatusSummaryResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcStatusTmuxView",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2403,6 +2411,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|StatusResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StatusSummaryResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|StatusSummaryResponse|type",
       "count": 1
     },
     {
@@ -3331,6 +3347,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-sdk|StatusResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "StatusSummaryResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-sdk|StatusSummaryResponse|type",
       "count": 1
     },
     {

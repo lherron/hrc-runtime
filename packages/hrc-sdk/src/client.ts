@@ -89,6 +89,7 @@ import type {
   StartRuntimeRequest,
   StartRuntimeResponse,
   StatusResponse,
+  StatusSummaryResponse,
   SurfaceListFilter,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
@@ -497,11 +498,27 @@ export class HrcClient {
     return this.getJson<HealthResponse>('/v1/health')
   }
 
-  async getStatus(options?: { includeArchived?: boolean }): Promise<StatusResponse> {
+  async getStatus(options: {
+    includeArchived?: boolean
+    includeSessions: false
+  }): Promise<StatusSummaryResponse>
+  async getStatus(options?: {
+    includeArchived?: boolean
+    includeSessions?: true | undefined
+  }): Promise<StatusResponse>
+  async getStatus(options: {
+    includeArchived?: boolean
+    includeSessions?: boolean | undefined
+  }): Promise<StatusResponse | StatusSummaryResponse>
+  async getStatus(options?: {
+    includeArchived?: boolean
+    includeSessions?: boolean | undefined
+  }): Promise<StatusResponse | StatusSummaryResponse> {
     const path = buildPath('/v1/status', {
       includeArchived: boolField(options?.includeArchived),
+      includeSessions: options?.includeSessions === false ? false : undefined,
     })
-    return this.getJson<StatusResponse>(path)
+    return this.getJson<StatusResponse | StatusSummaryResponse>(path)
   }
 
   async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {
