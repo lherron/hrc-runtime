@@ -1208,7 +1208,18 @@ export class HarnessBrokerController {
     // continuation clear, this is a graceful operator exit — NOT a crash. Reconcile
     // the lease liveness (mark terminated + kill the lease server) so the operator
     // is detached promptly, and avoid the alarming crash-terminal classification.
-    const userExitReason = findUserInitiatedContinuationClearReasonForRuntime(this.db, runtimeId)
+    let userExitReason: string | undefined
+    try {
+      userExitReason = findUserInitiatedContinuationClearReasonForRuntime(this.db, runtimeId)
+    } catch (lookupError) {
+      // Server teardown can close SQLite before a late broker-close callback runs.
+      // Fence that teardown-only race here: live-path repository reads and every
+      // non-closed-DB lookup failure must continue surfacing normally.
+      if (isClosedDbError(lookupError)) {
+        return
+      }
+      throw lookupError
+    }
     if (
       userExitReason !== undefined &&
       (this.reconcileBrokerTmuxLivenessOnClose || this.reapBrokerTmuxLease)
