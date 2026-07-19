@@ -2581,8 +2581,9 @@ describe('Phase 6 diagnostics CLI', () => {
     expect(result.exitCode).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({
       selector: `msg:${messageId}`,
-      condition: 'response',
-      result: 'response',
+      conditions: ['response'],
+      result: 'matched',
+      matchedCondition: 'response',
     })
   })
 

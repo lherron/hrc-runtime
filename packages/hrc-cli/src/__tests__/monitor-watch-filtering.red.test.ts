@@ -615,6 +615,7 @@ describe('monitor watch — global high-water invariant (T-04232 daedalus)', () 
         json: true,
         selector: SELECTOR,
         follow: true,
+        forever: true,
         kind: 'turn.started', // NEW: filter flag
         signal: abort.signal,
       },
@@ -686,6 +687,7 @@ describe('monitor watch — global high-water invariant (T-04232 daedalus)', () 
         json: true,
         selector: SELECTOR,
         follow: true,
+        forever: true,
         kind: 'turn.started',
         signal: abort.signal,
       },

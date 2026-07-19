@@ -258,7 +258,9 @@ describe('Bundle 1 — monitor wait bounded live reads', () => {
     const maxHrcSeq = track(spyOn(lifecycleRepositoryPrototype, 'maxHrcSeq'))
     const filtered = track(spyOn(lifecycleRepositoryPrototype, 'listFromHrcSeqFiltered'))
 
-    expect(await runWait([`runtime:${RUNTIME_ID}`, '--until', 'idle', '--timeout', '25ms'])).toBe(0)
+    expect(await runWait([`runtime:${RUNTIME_ID}`, '--until', 'idle', '--timeout', '25ms'])).toBe(
+      10
+    )
 
     expectNoFullReads(forbidden)
     expect(targeted.getStatus).toHaveBeenCalledWith({ includeSessions: false })
@@ -270,11 +272,10 @@ describe('Bundle 1 — monitor wait bounded live reads', () => {
   it('narrows a task selector in SQLite without full collection materialization', async () => {
     const targeted = installTargetedSpies()
     const forbidden = captureForbiddenReads()
-    const terminalSeq = appendLifecycleEvent('turn.completed')
     const maxHrcSeq = track(spyOn(lifecycleRepositoryPrototype, 'maxHrcSeq'))
     const filtered = track(spyOn(lifecycleRepositoryPrototype, 'listFromHrcSeqFiltered'))
 
-    expect(await runWait([TASK_ID, '--until', 'terminal', '--since', `${terminalSeq}`])).toBe(0)
+    expect(await runWait([TASK_ID, '--until-any', 'idle'])).toBe(10)
 
     expectNoFullReads(forbidden)
     expect(targeted.getStatus).toHaveBeenCalledWith({ includeSessions: false })
@@ -313,7 +314,7 @@ describe('Bundle 2 — wait parity and cursor fences', () => {
   it('preserves initial wait outcomes while filtered reads retain the global high-water fence', async () => {
     installTargetedSpies()
     const forbidden = captureForbiddenReads()
-    const terminalSeq = appendLifecycleEvent('turn.completed')
+    appendLifecycleEvent('turn.completed')
     const globalHighWater = appendLifecycleEvent(
       'turn.started',
       'agent:other:project:hrc-runtime:task:T-99999'
@@ -322,21 +323,13 @@ describe('Bundle 2 — wait parity and cursor fences', () => {
     const filtered = track(spyOn(lifecycleRepositoryPrototype, 'listFromHrcSeqFiltered'))
 
     expect(
-      await runWait([
-        `runtime:${RUNTIME_ID}`,
-        '--until',
-        'terminal',
-        '--since',
-        `${terminalSeq}`,
-        '--timeout',
-        '25ms',
-      ])
-    ).toBe(0)
+      await runWait([`runtime:${RUNTIME_ID}`, '--until', 'turn-finished', '--timeout', '25ms'])
+    ).toBe(20)
 
     expectNoFullReads(forbidden)
     expect(maxHrcSeq).toHaveReturnedWith(globalHighWater)
     expect(filtered).toHaveBeenCalledWith(
-      terminalSeq,
+      globalHighWater + 1,
       expect.objectContaining({ runtimeId: RUNTIME_ID })
     )
   })

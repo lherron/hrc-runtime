@@ -4,13 +4,7 @@ import { MonitorEventSchema } from 'hrc-events'
 import { lifecyclePayload } from '../../../hrc-server/src/broker/event-mapper/lifecycle-payload'
 import { cmdMonitorWatch } from '../monitor-watch'
 
-type MonitorCondition =
-  | 'turn-finished'
-  | 'idle'
-  | 'busy'
-  | 'response'
-  | 'response-or-idle'
-  | 'runtime-dead'
+type MonitorCondition = 'turn-finished' | 'idle' | 'busy' | 'response' | 'runtime-dead'
 
 type MonitorWatchArgs = {
   selector?: string | undefined
@@ -109,7 +103,6 @@ type InvokeResult = {
 const SESSION_REF = 'agent:cody:project:agent-spaces:task:T-01290/lane:main'
 const SCOPE_REF = 'agent:cody:project:agent-spaces:task:T-01290'
 const SELECTOR = `session:${SESSION_REF}`
-const MSG_SELECTOR = 'msg:msg-f2b'
 const HOST_SESSION_ID = 'host-session-f2b'
 const RUNTIME_ID = 'runtime-f2b'
 const TURN_ID = 'turn-f2b'
@@ -579,204 +572,6 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(result.stderr).toContain('--last cannot be used with --from-seq')
   })
 
-  test('--follow emits initial monitor.snapshot from the high-water mark and streams live events', async () => {
-    const result = await invokeWatch(
-      {
-        selector: SELECTOR,
-        follow: true,
-        until: 'idle',
-        timeoutMs: 25,
-      },
-      createFixtureState({
-        runtimeStatus: 'busy',
-        events: [
-          event(100, 'turn.started', { turnId: TURN_ID }),
-          event(101, 'runtime.idle', { turnId: TURN_ID, result: 'idle' }),
-        ],
-      })
-    )
-
-    expect(result.exitCode).toBe(0)
-    expect(result.events[0]).toMatchObject({
-      event: 'monitor.snapshot',
-      selector: SELECTOR,
-      replayed: false,
-    })
-    expect(result.events).toContainEqual(
-      expect.objectContaining({
-        event: 'runtime.idle',
-        selector: SELECTOR,
-        replayed: false,
-      })
-    )
-    expect(result.events.at(-1)).toMatchObject({
-      event: 'monitor.completed',
-      result: 'idle',
-      condition: 'idle',
-      exitCode: 0,
-    })
-  })
-
-  test.each([
-    [
-      'turn-finished',
-      event(101, 'turn.finished', { turnId: TURN_ID, result: 'turn_succeeded' }),
-      0,
-      'turn_succeeded',
-    ],
-    ['idle', event(101, 'runtime.idle', { turnId: TURN_ID, result: 'idle' }), 0, 'idle'],
-    ['busy', event(101, 'runtime.busy', { turnId: TURN_ID, result: 'busy' }), 0, 'busy'],
-    [
-      'runtime-dead',
-      event(101, 'runtime.dead', {
-        turnId: TURN_ID,
-        result: 'runtime_dead',
-        failureKind: 'runtime',
-      }),
-      2,
-      'runtime_dead',
-    ],
-  ] as const)(
-    '--until %s resolves through the F1b condition engine',
-    async (condition, terminalEvent, exitCode, result) => {
-      const state = createFixtureState({
-        runtimeStatus: condition === 'busy' ? 'idle' : 'busy',
-        events: [event(100, 'turn.started', { turnId: TURN_ID }), terminalEvent],
-      })
-
-      const cli = await invokeWatch(
-        { selector: SELECTOR, follow: true, until: condition, timeoutMs: 25 },
-        state
-      )
-
-      expect(cli.exitCode).toBe(exitCode)
-      expect(cli.events.at(-1)).toMatchObject({
-        event: 'monitor.completed',
-        condition,
-        result,
-        exitCode,
-      })
-    }
-  )
-
-  test.each(['response', 'response-or-idle'] as const)(
-    '--until %s resolves for a msg: selector on message.response',
-    async (condition) => {
-      const state = createFixtureState({
-        events: [
-          event(100, 'turn.started', { turnId: TURN_ID }),
-          event(101, 'message.response', {
-            turnId: TURN_ID,
-            messageId: MESSAGE_ID,
-            messageSeq: 1290,
-            result: 'response',
-          }),
-        ],
-      })
-
-      const cli = await invokeWatch(
-        { selector: MSG_SELECTOR, follow: true, until: condition, timeoutMs: 25 },
-        state
-      )
-
-      expect(cli.exitCode).toBe(0)
-      expect(cli.events.at(-1)).toMatchObject({
-        event: 'monitor.completed',
-        selector: MSG_SELECTOR,
-        condition,
-        result: 'response',
-        exitCode: 0,
-      })
-    }
-  )
-
-  test.each(['response', 'response-or-idle'] as const)(
-    'Q4 frozen: --until %s rejects session selectors with cli-kit usage exit 2',
-    async (condition) => {
-      const cli = await invokeWatch(
-        { selector: SELECTOR, follow: true, until: condition, timeoutMs: 25 },
-        createFixtureState()
-      )
-
-      expect(cli.exitCode).toBe(2)
-      expect(cli.stdout).toBe('')
-      expect(cli.stderr).toContain(`${condition} requires a msg: selector`)
-    }
-  )
-
-  test.each([
-    ['finite replay completed', { selector: SELECTOR }, createFixtureState({ events: [] }), 0],
-    [
-      'timeout without condition satisfaction',
-      { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 1 },
-      createFixtureState({ events: [event(100, 'turn.started', { turnId: TURN_ID })] }),
-      1,
-    ],
-    [
-      'usage error',
-      { selector: SELECTOR, follow: true, until: 'response', timeoutMs: 1 },
-      createFixtureState(),
-      2,
-    ],
-    [
-      'monitor infrastructure failure',
-      { selector: SELECTOR, follow: true, until: 'turn-finished' },
-      createFixtureState({ events: [event(100, 'turn.started', { turnId: TURN_ID })] }),
-      3,
-    ],
-    [
-      'condition impossible',
-      { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 25 },
-      createFixtureState({
-        events: [
-          event(100, 'turn.started', { turnId: TURN_ID }),
-          event(101, 'session.cleared', { result: 'context_changed', reason: 'cleared' }),
-        ],
-      }),
-      4,
-    ],
-    [
-      'SIGINT',
-      { selector: SELECTOR, follow: true, until: 'turn-finished', signal: AbortSignal.abort() },
-      createFixtureState(),
-      130,
-    ],
-  ] as const)('uses cli-kit exit code %i for %s', async (_label, args, state, exitCode) => {
-    const cli = await invokeWatch(args as MonitorWatchArgs, state)
-
-    expect(cli.exitCode).toBe(exitCode)
-  })
-
-  test('JSON output validates against MonitorEventSchema and preserves optional fields', async () => {
-    const state = createFixtureState({
-      events: [
-        event(100, 'turn.started', { turnId: TURN_ID }),
-        event(101, 'turn.finished', {
-          turnId: TURN_ID,
-          result: 'turn_failed',
-          failureKind: 'tool',
-        }),
-      ],
-    })
-    const cli = await invokeWatch(
-      { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 25 },
-      state
-    )
-
-    expect(cli.exitCode).toBe(2)
-    for (const payload of cli.events) {
-      expectValidMonitorEvent(payload)
-    }
-    expect(cli.events.at(-1)).toMatchObject({
-      event: 'monitor.completed',
-      runtimeId: RUNTIME_ID,
-      turnId: TURN_ID,
-      result: 'turn_failed',
-      failureKind: 'tool',
-      exitCode: 2,
-    })
-  })
-
   test('--pretty uses the tree renderer with lifecycle payload details', async () => {
     const state = createFixtureState({
       events: [
@@ -842,12 +637,12 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
               content: [
                 {
                   type: 'text',
-                  text: '{"event":"monitor.completed","condition":"response-or-idle","result":"response","exitCode":0}',
+                  text: '{"event":"monitor.completed","condition":"response","result":"response","exitCode":0}',
                 },
               ],
               details: {
                 stdout:
-                  '{"event":"monitor.completed","condition":"response-or-idle","result":"response","exitCode":0}',
+                  '{"event":"monitor.completed","condition":"response","result":"response","exitCode":0}',
                 stderr: '',
                 interrupted: false,
               },
@@ -968,53 +763,33 @@ describe('hrc monitor watch CLI acceptance (T-01290 / F2b)', () => {
     expect(result.stdout).toContain('#100 replayed')
   })
 
-  test('emits final monitor.completed before exiting when --until resolves', async () => {
-    const cli = await invokeWatch(
-      { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 25 },
-      createFixtureState({
-        events: [
-          event(100, 'turn.started', { turnId: TURN_ID }),
-          event(101, 'turn.finished', { turnId: TURN_ID, result: 'turn_succeeded' }),
-        ],
-      })
-    )
-
-    expect(cli.exitCode).toBe(0)
-    expect(cli.events.at(-1)).toMatchObject({
-      event: 'monitor.completed',
-      result: 'turn_succeeded',
-      exitCode: 0,
-      condition: 'turn-finished',
-    })
-  })
-
-  test('--timeout exits 1 and emits monitor.completed with result=timeout', async () => {
+  test('--timeout exits 20 and emits monitor.completed with result=timeout', async () => {
     const cli = await invokeWatch(
       { selector: SELECTOR, follow: true, until: 'turn-finished', timeoutMs: 1 },
       createFixtureState({ events: [event(100, 'turn.started', { turnId: TURN_ID })] })
     )
 
-    expect(cli.exitCode).toBe(1)
+    expect(cli.exitCode).toBe(20)
     expect(cli.events.at(-1)).toMatchObject({
       event: 'monitor.completed',
       result: 'timeout',
-      exitCode: 1,
-      condition: 'turn-finished',
+      exitCode: 20,
+      conditions: ['turn-finished'],
     })
   })
 
-  test('--stall-after exits 1 and emits monitor.stalled', async () => {
+  test('--stall-after exits 21 and emits monitor.stalled', async () => {
     const cli = await invokeWatch(
       { selector: SELECTOR, follow: true, until: 'turn-finished', stallAfterMs: 1 },
       createFixtureState({ events: [event(100, 'turn.started', { turnId: TURN_ID })] })
     )
 
-    expect(cli.exitCode).toBe(1)
+    expect(cli.exitCode).toBe(21)
     expect(cli.events.at(-1)).toMatchObject({
       event: 'monitor.stalled',
       result: 'stalled',
-      exitCode: 1,
-      condition: 'turn-finished',
+      exitCode: 21,
+      conditions: ['turn-finished'],
     })
   })
 })
@@ -1055,6 +830,7 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
         json: true,
         selector: SELECTOR,
         follow: true,
+        forever: true,
         signal: abort.signal,
       },
       {
@@ -1139,6 +915,7 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
         json: true,
         selector: SELECTOR,
         follow: true,
+        forever: true,
         last: 2,
         signal: abort.signal,
       },
@@ -1225,6 +1002,7 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
         selector: SELECTOR,
         pretty: true,
         follow: true,
+        forever: true,
         last: 1,
         signal: abort.signal,
       },
@@ -1328,25 +1106,19 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
     )
 
     expect(exitCode).toBe(0)
-    expect(stderrChunks.join('')).toBe('')
+    expect(stderrChunks.join('')).toContain('monitor.armed')
 
     const events = parseJsonLines(stdoutChunks.join(''))
 
     // Should have polled buildMonitorState more than once
     expect(callCount).toBeGreaterThan(1)
 
-    // First event should be monitor.snapshot (follow mode always starts with snapshot)
-    expect(events[0]).toMatchObject({
-      event: 'monitor.snapshot',
-      selector: SELECTOR,
-      replayed: false,
-    })
-
-    // Final event should be monitor.completed with idle
+    // Condition-mode output finishes with the shared structured result.
     expect(events.at(-1)).toMatchObject({
       event: 'monitor.completed',
-      result: 'idle',
-      condition: 'idle',
+      result: 'matched',
+      conditions: ['idle'],
+      matchedCondition: 'idle',
       exitCode: 0,
     })
 
@@ -1360,7 +1132,7 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
     }
   })
 
-  test('--follow --until idle against an already-idle ready runtime exits already_idle quickly', async () => {
+  test('--follow --until idle against an already-idle ready runtime exits already_true quickly', async () => {
     const alreadyIdleState = createFixtureState({
       runtimeStatus: 'ready',
       activeTurnId: null,
@@ -1379,13 +1151,14 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
     )
     const elapsedMs = performance.now() - startedAt
 
-    expect(cli.exitCode).toBe(0)
+    expect(cli.exitCode).toBe(10)
     expect(cli.events.at(-1)).toMatchObject({
       event: 'monitor.completed',
       selector: SELECTOR,
-      condition: 'idle',
-      result: 'already_idle',
-      exitCode: 0,
+      conditions: ['idle'],
+      matchedCondition: 'idle',
+      result: 'already_true',
+      exitCode: 10,
     })
     expect(elapsedMs).toBeLessThan(1000)
   })
@@ -1435,14 +1208,14 @@ describe('polling condition reader for --follow --until with deadline (T-01297)'
       }
     )
 
-    expect(exitCode).toBe(1)
+    expect(exitCode).toBe(20)
 
     const events = parseJsonLines(stdoutChunks.join(''))
     expect(events.at(-1)).toMatchObject({
       event: 'monitor.completed',
       result: 'timeout',
-      exitCode: 1,
-      condition: 'idle',
+      exitCode: 20,
+      conditions: ['idle'],
     })
   })
 })

@@ -7,11 +7,15 @@ import { VALID_CONDITIONS } from '../monitor-conditions.js'
 import { resolveMonitorOutputFormat } from '../monitor-render.js'
 
 const EXIT_CODE_HELP = [
-  '0 satisfied/replay-complete',
-  '1 timeout/stall',
-  '2 usage/invalid selector',
-  '3 monitor infra failure',
-  '4 condition impossible',
+  '0 matched after arm/replay',
+  '2 usage',
+  '10 already true at arm',
+  '11 no session ever',
+  '12 runtime-death obstruction',
+  '20 timeout',
+  '21 stall',
+  '22 context change',
+  '23 monitor error',
   '130 SIGINT',
 ] as const
 
@@ -71,8 +75,8 @@ describe('hrc monitor surface polish', () => {
     expect(help).toContain('--last')
     expect(help).toContain('--from-seq')
     expectConditionAndExitCodeHelp(help)
-    expect(help).toContain('--until requires --follow')
-    expect(help).toMatch(/response.*response-or-idle.*require.*msg: selector/i)
+    expect(help).toContain('Blocking watches default to --until turn-finished --until runtime-dead')
+    expect(help).toMatch(/response is legal only with exactly one msg: or seq: selector/i)
     expect(help).toContain('--stall-after exits the stream (it is not a pause signal)')
     expect(help).toMatch(/default (?:output )?format.*tree.*TTY.*ndjson.*not a TTY/i)
   })
@@ -84,7 +88,7 @@ describe('hrc monitor surface polish', () => {
     expectConditionAndExitCodeHelp(help)
   })
 
-  test('AC9: terminal help and monitor docs explain fences, fan-in, and duration risk', async () => {
+  test('quantified help and monitor docs explain fences, fan-in, and duration risk', async () => {
     const waitHelp = commandHelp('monitor', 'wait')
     const watchHelp = commandHelp('monitor', 'watch')
     const monitorDocs = await Bun.file(
@@ -97,13 +101,13 @@ describe('hrc monitor surface polish', () => {
 
     for (const help of [waitHelp, watchHelp]) {
       expect(help).toContain('--since <seq|duration>')
-      expect(help).toMatch(/first terminal.*any matching scope.*not room.*completion/i)
+      expect(help).toContain('--until-any')
+      expect(help).toContain('--until-all')
     }
-    expect(documented).toMatch(/--since.*post-finish/i)
+    expect(documented).toMatch(/--until-any.*--until-all/i)
     expect(documented).toMatch(/exact cursor.*scripts/i)
     expect(documented).toMatch(/duration.*human convenience/i)
     expect(documented).toMatch(/duration.*prior attempt/i)
-    expect(documented).toMatch(/wrkq monitor wait --until all-terminal/i)
   })
 
   test('hrc info includes monitor supervision, completion, replay, and dialect guidance', () => {
@@ -111,11 +115,11 @@ describe('hrc monitor surface polish', () => {
 
     expect(info).toContain('MONITOR')
     expect(info).toContain('hrc monitor watch T-XXXXX --follow')
-    expect(info).toContain('hrc monitor wait T-XXXXX --until terminal')
+    expect(info).toContain('hrc monitor wait T-XXXXX --until-any runtime-dead')
     expect(info).toContain('hrc monitor watch T-XXXXX --last N')
     expect(info).toContain('hrc monitor watch T-XXXXX --from-seq N')
     expect(info).toContain('hrc conditions are runtime-centric')
-    expect(info).toContain('terminal')
+    expect(info).not.toContain('hrc monitor wait T-XXXXX --until terminal')
     expect(info).toContain('idle')
     expect(info).toContain('turn-finished')
     expect(info).toContain('wrkq conditions are task-state')
