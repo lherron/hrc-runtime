@@ -112,11 +112,7 @@ export async function runMonitorUntilPlan(
   }
   if (armEvaluation.satisfied) {
     if (plan.quantifier === 'all') {
-      writeAllAlreadyTrueReport(
-        io.stderr,
-        armEvaluation.matchedCondition ?? 'condition',
-        armEvaluation.members
-      )
+      writeAllAlreadyTrueReport(io.stderr, armEvaluation.matchedCondition, armEvaluation.members)
     } else if (
       plan.quantifier === 'exact' &&
       armEvaluation.members[0] &&
@@ -260,7 +256,7 @@ function evaluateState(
   const obstructed = !deadIsNamed && plan.quantifier !== 'any' && deadMembers.length > 0
   const frozenMemberMissing =
     frozenRuntimeIds !== undefined && members.length < frozenRuntimeIds.size
-  const representative = matched[0]
+  const representative = plan.quantifier === 'all' ? undefined : matched[0]
   return {
     observedAt: new Date().toISOString(),
     members,
@@ -346,7 +342,10 @@ function runtimeLevel(status: string): string | null {
 }
 
 function commonMatchedCondition(members: readonly MonitorConditionMember[]): string | undefined {
-  return members[0]?.matchedCondition
+  const first = members[0]?.matchedCondition
+  return first !== undefined && members.every((member) => member.matchedCondition === first)
+    ? first
+    : undefined
 }
 
 function matchEdgeAfterArm(

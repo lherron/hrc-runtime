@@ -30,9 +30,22 @@ export function writeMonitorArmReport(
 
 export function writeAllAlreadyTrueReport(
   stderr: { write(chunk: string): boolean },
-  condition: string,
+  condition: string | undefined,
   members: readonly MonitorConditionMember[]
 ): void {
+  if (condition === undefined) {
+    const matchedConditions = [
+      ...new Set(
+        members.flatMap((member) =>
+          member.matchedCondition === undefined ? [] : [member.matchedCondition]
+        )
+      ),
+    ]
+    stderr.write(
+      `all members already satisfy one of ${matchedConditions.join(', ')}; per-member transition times are reported in monitor.armed\n`
+    )
+    return
+  }
   const latest = members
     .map((member) => member.statusChangedAt)
     .filter((value) => value !== 'unknown')
