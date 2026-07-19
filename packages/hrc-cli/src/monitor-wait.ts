@@ -1,20 +1,29 @@
 import { CliUsageError, parseDuration } from 'cli-kit'
 import {
   HrcDomainError,
+  type HrcMessageRecord,
   type HrcMonitorCondition,
   type HrcMonitorConditionEngineReader,
   type HrcMonitorConditionOutcome,
   type HrcMonitorEvent,
   type HrcMonitorMessageState,
+  type HrcMonitorRuntimeState,
+  type HrcMonitorSessionState,
   type HrcMonitorState,
+  type HrcRuntimeSnapshot,
   type HrcSelector,
+  type HrcSessionRecord,
+  type InspectRuntimeResponse,
   createMonitorConditionEngine,
   createMonitorReader,
   formatSelector,
-  resolveDatabasePath,
 } from 'hrc-core'
-import { discoverSocket } from 'hrc-sdk'
-import { type HrcLifecycleMonitorFilters, openHrcDatabase } from 'hrc-store-sqlite'
+import { HrcClient, discoverSocket } from 'hrc-sdk'
+import {
+  type HrcDatabase,
+  type HrcLifecycleMonitorFilters,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
 import { matchStringFlag } from './monitor-args.js'
 import {
   MSG_REQUIRED_CONDITIONS,
@@ -70,6 +79,8 @@ export async function cmdMonitorWait(args: string[]): Promise<void> {
 
 async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   validateOptions(options)
+  const timeoutMs = options.timeout ? parseDuration(options.timeout) : undefined
+  const deadlineAt = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
 
   let selectorSpecs: MonitorSelectorSpec[]
   try {
@@ -96,22 +107,36 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
 
   const fixtureState = readFixtureState()
   if (isFanInSelectorSet(selectorSpecs)) {
-    const storeFilters = deriveFanInStoreFilters(selectorSpecs, condition)
-    const initialState = fixtureState ?? readLiveMonitorState(storeFilters)
+    let liveSource: LiveMonitorStateSource | undefined
+    if (!fixtureState) {
+      try {
+        liveSource = await createLiveSourceBeforeDeadline(
+          { selectorSpecs, condition, since: options.since },
+          deadlineAt
+        )
+      } catch (error) {
+        if (error instanceof MonitorWaitDeadlineError) {
+          return writeEarlyTimeout(selectorSetLabel(selectorSpecs), condition, options.json)
+        }
+        throw error
+      }
+    }
+    const initialState = fixtureState ?? liveSource?.initialState
+    if (!initialState) throw new Error('monitor wait failed to build initial state')
     const terminalFence =
       condition === 'terminal' ? resolveTerminalFence(initialState, options.since) : undefined
     const winner = await waitForAnyMonitorCondition(
       initialState,
       {
         until: condition,
-        ...(options.timeout ? { timeoutMs: parseDuration(options.timeout) } : {}),
+        ...(deadlineAt !== undefined ? { timeoutMs: remainingDeadlineMs(deadlineAt) } : {}),
         ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
         ...(terminalFence ? { terminalFence } : {}),
       },
       selectorSpecs,
       {
         buildMonitorState: async (signal) =>
-          fixtureState ?? readLiveMonitorState(storeFilters, signal),
+          fixtureState ?? liveSource?.buildMonitorState(signal) ?? initialState,
       }
     )
     const finalEvent = {
@@ -126,17 +151,32 @@ async function runMonitorWait(options: MonitorWaitOptions): Promise<number> {
   }
   if (!selector) throw new CliUsageError('missing required argument: <selector>')
 
-  const initialState = fixtureState ?? readLiveMonitorState()
+  let liveSource: LiveMonitorStateSource | undefined
+  if (!fixtureState) {
+    try {
+      liveSource = await createLiveSourceBeforeDeadline(
+        { selectorSpecs, condition, since: options.since },
+        deadlineAt
+      )
+    } catch (error) {
+      if (error instanceof MonitorWaitDeadlineError) {
+        return writeEarlyTimeout(formatSelector(selector), condition, options.json)
+      }
+      throw error
+    }
+  }
+  const initialState = fixtureState ?? liveSource?.initialState
+  if (!initialState) throw new Error('monitor wait failed to build initial state')
   const reader = fixtureState
     ? createMonitorReader(initialState)
-    : createPollingReader(initialState)
+    : createPollingReader(initialState, liveSource as LiveMonitorStateSource)
   const engine = createMonitorConditionEngine(reader)
   let outcome: HrcMonitorConditionOutcome
   try {
     outcome = await engine.wait({
       selector,
       condition,
-      ...(options.timeout ? { timeoutMs: parseDuration(options.timeout) } : {}),
+      ...(deadlineAt !== undefined ? { timeoutMs: remainingDeadlineMs(deadlineAt) } : {}),
       ...(options.stallAfter ? { stallAfterMs: parseDuration(options.stallAfter) } : {}),
       ...(condition === 'terminal'
         ? { terminalFence: resolveTerminalFence(initialState, options.since) }
@@ -227,7 +267,87 @@ function readFixtureState(): HrcMonitorState | undefined {
   }
 }
 
-function createPollingReader(initialState: HrcMonitorState): HrcMonitorConditionEngineReader {
+type LiveMonitorSourceRequest = {
+  selectorSpecs: readonly MonitorSelectorSpec[]
+  condition: HrcMonitorCondition
+  since?: string | undefined
+}
+
+type LiveMonitorStateSource = {
+  initialState: HrcMonitorState
+  buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
+}
+
+type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
+
+type MonitorRuntimeSource = {
+  runtimeId: string
+  hostSessionId: string
+  status: string
+  transport: string
+  activeRunId?: string | null | undefined
+}
+
+type MonitorRuntimeIdentitySource = MonitorRuntimeSource & {
+  scopeRef: string
+  laneRef: string
+  generation: number
+}
+
+class MonitorWaitDeadlineError extends Error {}
+
+async function createLiveSourceBeforeDeadline(
+  request: LiveMonitorSourceRequest,
+  deadlineAt?: number | undefined
+): Promise<LiveMonitorStateSource> {
+  const controller = new AbortController()
+  const sourcePromise = createLiveMonitorStateSource(request, controller.signal)
+  if (deadlineAt === undefined) return sourcePromise
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      sourcePromise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort()
+          reject(new MonitorWaitDeadlineError('monitor wait initial read exceeded timeout'))
+        }, remainingDeadlineMs(deadlineAt))
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+function remainingDeadlineMs(deadlineAt: number): number {
+  return Math.max(0, deadlineAt - Date.now())
+}
+
+function writeEarlyTimeout(
+  selectorLabel: string,
+  condition: HrcMonitorCondition,
+  json: boolean
+): number {
+  writeFinalEvent(
+    {
+      event: 'monitor.completed',
+      selector: selectorLabel,
+      condition,
+      result: 'timeout',
+      exitCode: 1,
+      replayed: false,
+      ts: new Date().toISOString(),
+    },
+    json
+  )
+  return 1
+}
+
+function createPollingReader(
+  initialState: HrcMonitorState,
+  source: LiveMonitorStateSource
+): HrcMonitorConditionEngineReader {
   return {
     snapshot(selector) {
       return createMonitorReader(initialState).snapshot(selector)
@@ -236,15 +356,29 @@ function createPollingReader(initialState: HrcMonitorState): HrcMonitorCondition
       return createMonitorReader(initialState).captureStart(selector, options)
     },
     async *watch(request) {
-      let nextSeq = request.fromSeq ?? 1
+      const initialReader = createMonitorReader(initialState)
+      for await (const event of initialReader.watch({
+        selector: request.selector,
+        follow: false,
+        fromSeq: request.fromSeq,
+        includeCorrelatedMessageResponses: request.includeCorrelatedMessageResponses,
+      })) {
+        yield event
+      }
+      if (!request.follow) return
+
+      let nextSeq = monitorHighWater(initialState) + 1
       while (true) {
         if (request.signal?.aborted) return
-        const reader = createMonitorReader(readLiveMonitorState())
+        const fromSeq = nextSeq
+        const state = await source.buildMonitorState(request.signal)
+        if (request.signal?.aborted) return
+        const reader = createMonitorReader(state)
         let yielded = false
         for await (const event of reader.watch({
           selector: request.selector,
           follow: false,
-          fromSeq: nextSeq,
+          fromSeq,
           includeCorrelatedMessageResponses: request.includeCorrelatedMessageResponses,
         })) {
           yielded = true
@@ -254,7 +388,7 @@ function createPollingReader(initialState: HrcMonitorState): HrcMonitorCondition
           }
           yield event
         }
-        if (!request.follow) return
+        nextSeq = Math.max(nextSeq, monitorHighWater(state) + 1)
         if (!yielded) {
           await Bun.sleep(POLL_MS)
         }
@@ -263,122 +397,516 @@ function createPollingReader(initialState: HrcMonitorState): HrcMonitorCondition
   }
 }
 
-function deriveFanInStoreFilters(
-  specs: readonly MonitorSelectorSpec[],
-  condition: HrcMonitorCondition
-): HrcLifecycleMonitorFilters | undefined {
-  const canNarrowByScope = specs.every(
-    (spec) => spec.kind !== 'exact' || spec.selector.kind === 'scope'
+function monitorHighWater(state: HrcMonitorState): number {
+  return (
+    state.eventGlobalHighWaterSeq ??
+    state.events.reduce((max, event) => Math.max(max, event.seq), 0)
   )
-  if (!canNarrowByScope) return undefined
-  const filters: HrcLifecycleMonitorFilters = {
-    scopeRefs: specs.flatMap((spec) =>
-      spec.kind === 'exact' && spec.selector.kind === 'scope' ? [spec.selector.scopeRef] : []
-    ),
-    scopeRefPrefixes: specs.flatMap((spec) => (spec.kind === 'scope-prefix' ? [spec.prefix] : [])),
-    taskIds: specs.flatMap((spec) => (spec.kind === 'task' ? [spec.taskId] : [])),
-    ...(condition === 'terminal'
-      ? {
-          eventKinds: [
-            'turn.finished',
-            'turn.completed',
-            'turn.failed',
-            'runtime.dead',
-            'runtime.crashed',
-            'runtime.terminated',
-          ],
-        }
-      : {}),
-  }
-  return Object.values(filters).some(
-    (value) => value !== undefined && (!Array.isArray(value) || value.length > 0)
-  )
-    ? filters
-    : undefined
 }
 
-function readLiveMonitorState(
-  storeFilters?: HrcLifecycleMonitorFilters | undefined,
+async function createLiveMonitorStateSource(
+  request: LiveMonitorSourceRequest,
   signal?: AbortSignal | undefined
-): HrcMonitorState {
+): Promise<LiveMonitorStateSource> {
   signal?.throwIfAborted()
   const socketPath = discoverSocket()
-  const db = openHrcDatabase(resolveDatabasePath())
+  const client = new HrcClient(socketPath)
+  const status = await client.getStatus({ includeSessions: false })
+  signal?.throwIfAborted()
+
+  const db = openHrcDatabase(status.dbPath)
+  let state: HrcMonitorState
+  let filters: HrcLifecycleMonitorFilters[]
+  let targetMessages: HrcMonitorMessageState[]
+  let nextHrcSeq: number
+  let nextMessageSeq: number
   try {
     signal?.throwIfAborted()
-    const sessions = db.sqlite
-      .query<
-        {
-          host_session_id: string
-          scope_ref: string
-          lane_ref: string
-          generation: number
-          status: string
-        },
-        []
-      >(
-        `SELECT host_session_id, scope_ref, lane_ref, generation, status
-          FROM sessions
-          ORDER BY scope_ref ASC, lane_ref ASC, generation ASC`
-      )
-      .all()
-    const runtimes = db.runtimes.listAll()
-    const includeMessages = storeFilters?.eventKinds === undefined
-    const messages = includeMessages
-      ? db.messages.query({ order: 'desc', limit: 10_000 }).reverse()
-      : []
-    const latestRuntimeByHost = new Map(
-      runtimes.map((runtime) => [runtime.hostSessionId, runtime] as const)
-    )
+    const eventGlobalHighWaterSeq = db.hrcEvents.maxHrcSeq()
+    const messageGlobalHighWaterSeq = db.messages.maxMessageSeq()
+    const selected = await readSelectorSetState(request.selectorSpecs, client, db)
     signal?.throwIfAborted()
-    const rawEvents = storeFilters
-      ? db.hrcEvents.listFromHrcSeqFiltered(1, storeFilters)
-      : db.hrcEvents.listFromHrcSeq(1)
-    const eventGlobalHighWaterSeq = storeFilters ? db.hrcEvents.maxHrcSeq() : undefined
-    const includeMessageResponseEvents = storeFilters?.eventKinds === undefined
+    filters = selectorEventFilters(request.selectorSpecs, selected)
+    const fromHrcSeq = initialEventFromSeq(
+      request.condition,
+      request.since,
+      eventGlobalHighWaterSeq
+    )
+    const rawEvents = readFilteredEvents(db, fromHrcSeq, eventGlobalHighWaterSeq, filters)
+    applyLifecycleProjection(selected, rawEvents)
+    targetMessages = [...(selected.messages ?? [])]
+    const responseMessages = readCorrelatedResponses(
+      db,
+      targetMessages,
+      0,
+      messageGlobalHighWaterSeq
+    )
+    mergeMessageStates(selected, responseMessages)
     const events = [
       ...rawEvents.map(toMonitorEvent),
-      ...(includeMessageResponseEvents
-        ? messages.filter((message) => message.phase === 'response').map(toMessageResponseEvent)
-        : []),
+      ...responseMessages.map(toMessageResponseEvent),
     ].sort((a, b) => a.seq - b.seq)
     signal?.throwIfAborted()
 
-    return {
+    state = {
       daemon: {
         status: 'healthy',
+        socketPath: status.socketPath,
+        startedAt: status.startedAt,
+        uptime: status.uptime,
+        apiVersion: status.apiVersion,
       },
       socket: {
-        path: socketPath,
+        path: status.socketPath,
         responsive: true,
       },
-      sessions: sessions.map((session) => {
-        const runtime = latestRuntimeByHost.get(session.host_session_id)
-        return {
-          sessionRef: `${session.scope_ref}/lane:${session.lane_ref}`,
-          scopeRef: session.scope_ref,
-          laneRef: session.lane_ref,
-          hostSessionId: session.host_session_id,
-          generation: session.generation,
-          ...(runtime ? { runtimeId: runtime.runtimeId } : {}),
-          status: session.status,
-          activeTurnId: runtime?.activeRunId ?? null,
-        }
-      }),
-      runtimes: runtimes.map((runtime) => ({
-        runtimeId: runtime.runtimeId,
-        hostSessionId: runtime.hostSessionId,
-        status: normalizeRuntimeStatus(runtime.status, runtime.activeRunId),
-        transport: runtime.transport,
-        activeTurnId: runtime.activeRunId ?? null,
-      })),
-      messages: messages.map(toMonitorMessage),
+      sessions: selected.sessions,
+      runtimes: selected.runtimes,
+      messages: selected.messages,
       events,
-      ...(eventGlobalHighWaterSeq !== undefined ? { eventGlobalHighWaterSeq } : {}),
+      eventGlobalHighWaterSeq,
+      sessionGlobalCount: status.sessionCount,
+      runtimeGlobalCount: status.runtimeCount,
     }
+    nextHrcSeq = eventGlobalHighWaterSeq + 1
+    nextMessageSeq = messageGlobalHighWaterSeq + 1
   } finally {
     db.close()
   }
+
+  let pendingRefresh = Promise.resolve(state)
+  const refresh = async (refreshSignal?: AbortSignal | undefined): Promise<HrcMonitorState> => {
+    refreshSignal?.throwIfAborted()
+    const refreshDb = openHrcDatabase(status.dbPath)
+    try {
+      const eventGlobalHighWaterSeq = refreshDb.hrcEvents.maxHrcSeq()
+      const messageGlobalHighWaterSeq = refreshDb.messages.maxMessageSeq()
+      const rawEvents = readFilteredEvents(refreshDb, nextHrcSeq, eventGlobalHighWaterSeq, filters)
+      const responseMessages = readCorrelatedResponses(
+        refreshDb,
+        targetMessages,
+        nextMessageSeq - 1,
+        messageGlobalHighWaterSeq
+      )
+      refreshSignal?.throwIfAborted()
+
+      mergeEventIdentities(state, rawEvents, refreshDb)
+      applyLifecycleProjection(state, rawEvents)
+      mergeMessageStates(state, responseMessages)
+      state.events.push(
+        ...rawEvents.map(toMonitorEvent),
+        ...responseMessages.map(toMessageResponseEvent)
+      )
+      state.events.sort((a, b) => a.seq - b.seq)
+      state.eventGlobalHighWaterSeq = eventGlobalHighWaterSeq
+      nextHrcSeq = eventGlobalHighWaterSeq + 1
+      nextMessageSeq = messageGlobalHighWaterSeq + 1
+      return state
+    } finally {
+      refreshDb.close()
+    }
+  }
+
+  return {
+    initialState: state,
+    buildMonitorState(refreshSignal) {
+      pendingRefresh = pendingRefresh.then(() => refresh(refreshSignal))
+      return pendingRefresh
+    },
+  }
+}
+
+function initialEventFromSeq(
+  condition: HrcMonitorCondition,
+  since: string | undefined,
+  highWater: number
+): number {
+  if (condition !== 'terminal' || since === undefined) return Math.max(1, highWater)
+  if (/^\d+$/.test(since)) {
+    const seq = Number(since)
+    if (!Number.isSafeInteger(seq) || seq < 1) {
+      throw new CliUsageError('--since sequence must be a positive safe integer')
+    }
+    return seq
+  }
+  parseDuration(since)
+  return 1
+}
+
+function readFilteredEvents(
+  db: HrcDatabase,
+  fromHrcSeq: number,
+  throughHrcSeq: number,
+  filters: readonly HrcLifecycleMonitorFilters[]
+): ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']> {
+  const bySeq = new Map<
+    number,
+    ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number]
+  >()
+  for (const filter of filters) {
+    for (const event of db.hrcEvents.listFromHrcSeqFiltered(fromHrcSeq, filter)) {
+      if (event.hrcSeq <= throughHrcSeq) bySeq.set(event.hrcSeq, event)
+    }
+  }
+  return [...bySeq.values()].sort((a, b) => a.hrcSeq - b.hrcSeq)
+}
+
+function selectorEventFilters(
+  specs: readonly MonitorSelectorSpec[],
+  selected: SelectorState
+): HrcLifecycleMonitorFilters[] {
+  return specs.map((spec) => {
+    if (spec.kind === 'task') return { taskIds: [spec.taskId] }
+    if (spec.kind === 'scope-prefix') return { scopeRefPrefixes: [spec.prefix] }
+
+    const selector = spec.selector
+    if (selector.kind === 'runtime') return { runtimeId: selector.runtimeId }
+    if (selector.kind === 'host' || selector.kind === 'concrete') {
+      return { hostSessionId: selector.hostSessionId }
+    }
+    if (selector.kind === 'scope') return { scopeRef: selector.scopeRef }
+    if (selector.kind === 'message' || selector.kind === 'message-seq') {
+      const message = selected.messages?.find((candidate) =>
+        selector.kind === 'message'
+          ? candidate.messageId === selector.messageId
+          : candidate.messageSeq === selector.messageSeq
+      )
+      if (message?.runtimeId) return { runtimeId: message.runtimeId }
+      if (message?.runId) return { runId: message.runId }
+      if (message?.hostSessionId) return { hostSessionId: message.hostSessionId }
+    }
+    const session = selected.sessions.find((candidate) =>
+      selector.kind === 'stable' || selector.kind === 'target' || selector.kind === 'session'
+        ? candidate.sessionRef === selector.sessionRef
+        : false
+    )
+    return session
+      ? { hostSessionId: session.hostSessionId }
+      : { runtimeId: '__hrc_monitor_unresolved__' }
+  })
+}
+
+async function readSelectorSetState(
+  specs: readonly MonitorSelectorSpec[],
+  client: HrcClient,
+  db: HrcDatabase
+): Promise<SelectorState> {
+  const selected = emptySelectorState()
+  for (const spec of specs) {
+    if (spec.kind !== 'exact') continue
+    mergeSelectorState(selected, await readExactSelectorState(spec.selector, client, db))
+  }
+
+  const scopedHostIds = readScopedSelectorHostIds(specs, db)
+  for (const hostSessionId of scopedHostIds) {
+    const session = db.sessions.getByHostSessionId(hostSessionId)
+    if (!session) continue
+    mergeSelectorState(
+      selected,
+      stateFromSession(session, db.runtimes.getLatestByHostSessionId(hostSessionId))
+    )
+  }
+  return selected
+}
+
+function readScopedSelectorHostIds(
+  specs: readonly MonitorSelectorSpec[],
+  db: HrcDatabase
+): string[] {
+  const predicates: string[] = []
+  const values: string[] = []
+  for (const spec of specs) {
+    if (spec.kind === 'scope-prefix') {
+      predicates.push("scope_ref LIKE ? ESCAPE '\\'")
+      values.push(`${escapeLike(spec.prefix)}%`)
+    } else if (spec.kind === 'task') {
+      predicates.push("(scope_ref LIKE ? ESCAPE '\\' OR scope_ref LIKE ? ESCAPE '\\')")
+      const segment = escapeLike(`:task:${spec.taskId}`)
+      values.push(`%${segment}:%`, `%${segment}`)
+    }
+  }
+  if (predicates.length === 0) return []
+  const rows = db.sqlite
+    .query<{ host_session_id: string }, string[]>(
+      `SELECT host_session_id FROM sessions WHERE ${predicates.join(' OR ')} ORDER BY host_session_id`
+    )
+    .all(...values)
+  return rows.map((row) => row.host_session_id)
+}
+
+async function readExactSelectorState(
+  selector: HrcSelector,
+  client: HrcClient,
+  db: HrcDatabase
+): Promise<SelectorState> {
+  switch (selector.kind) {
+    case 'stable':
+    case 'target':
+    case 'session':
+    case 'scope': {
+      const sessionRef =
+        selector.kind === 'scope' ? sessionRefFor(selector.scopeRef, 'main') : selector.sessionRef
+      const resolved = await client.resolveSession({ sessionRef, create: false })
+      if (!resolved.found) return emptySelectorState()
+      return stateFromSession(
+        resolved.session,
+        db.runtimes.getLatestByHostSessionId(resolved.hostSessionId)
+      )
+    }
+    case 'concrete':
+    case 'host': {
+      const session = db.sessions.getByHostSessionId(selector.hostSessionId)
+      return session
+        ? stateFromSession(session, db.runtimes.getLatestByHostSessionId(session.hostSessionId))
+        : emptySelectorState()
+    }
+    case 'runtime': {
+      const runtime = await client.inspectRuntime({ runtimeId: selector.runtimeId })
+      return stateFromInspectedRuntime(runtime, db)
+    }
+    case 'message':
+    case 'message-seq': {
+      const message =
+        selector.kind === 'message'
+          ? db.messages.getById(selector.messageId)
+          : db.messages.getBySeq(selector.messageSeq)
+      return message ? await stateFromMessage(message, client, db) : emptySelectorState()
+    }
+  }
+}
+
+function emptySelectorState(): SelectorState {
+  return { sessions: [], runtimes: [], messages: [] }
+}
+
+function stateFromSession(
+  session: HrcSessionRecord,
+  runtime: HrcRuntimeSnapshot | InspectRuntimeResponse | undefined | null
+): SelectorState {
+  return {
+    sessions: [toMonitorSessionState(session, runtime)],
+    runtimes: runtime ? [toMonitorRuntimeState(runtime)] : [],
+    messages: [],
+  }
+}
+
+function stateFromInspectedRuntime(
+  runtime: InspectRuntimeResponse,
+  db: HrcDatabase
+): SelectorState {
+  const session = db.sessions.getByHostSessionId(runtime.hostSessionId)
+  return {
+    sessions: [
+      session ? toMonitorSessionState(session, runtime) : toMonitorSessionFromRuntime(runtime),
+    ],
+    runtimes: [toMonitorRuntimeState(runtime)],
+    messages: [],
+  }
+}
+
+async function stateFromMessage(
+  message: HrcMessageRecord,
+  client: HrcClient,
+  db: HrcDatabase
+): Promise<SelectorState> {
+  const runtime = message.execution.runtimeId
+    ? await client.inspectRuntime({ runtimeId: message.execution.runtimeId })
+    : message.execution.hostSessionId
+      ? db.runtimes.getLatestByHostSessionId(message.execution.hostSessionId)
+      : null
+  const session = message.execution.hostSessionId
+    ? db.sessions.getByHostSessionId(message.execution.hostSessionId)
+    : null
+
+  if (runtime) {
+    return {
+      sessions: [
+        session ? toMonitorSessionState(session, runtime) : toMonitorSessionFromRuntime(runtime),
+      ],
+      runtimes: [toMonitorRuntimeState(runtime)],
+      messages: [toMonitorMessage(message)],
+    }
+  }
+  if (message.execution.sessionRef) {
+    const resolved = await client.resolveSession({
+      sessionRef: message.execution.sessionRef,
+      create: false,
+    })
+    if (resolved.found) {
+      return {
+        ...stateFromSession(
+          resolved.session,
+          db.runtimes.getLatestByHostSessionId(resolved.hostSessionId)
+        ),
+        messages: [toMonitorMessage(message)],
+      }
+    }
+  }
+  return { sessions: [], runtimes: [], messages: [toMonitorMessage(message)] }
+}
+
+function toMonitorSessionState(
+  session: HrcSessionRecord,
+  runtime?: Pick<MonitorRuntimeSource, 'runtimeId' | 'activeRunId'> | null | undefined
+): HrcMonitorSessionState {
+  return {
+    sessionRef: sessionRefFor(session.scopeRef, session.laneRef),
+    scopeRef: session.scopeRef,
+    laneRef: normalizeLaneRef(session.laneRef),
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    ...(runtime?.runtimeId ? { runtimeId: runtime.runtimeId } : {}),
+    status: session.status,
+    activeTurnId: runtime?.activeRunId ?? null,
+  }
+}
+
+function toMonitorSessionFromRuntime(
+  runtime: MonitorRuntimeIdentitySource
+): HrcMonitorSessionState {
+  return {
+    sessionRef: sessionRefFor(runtime.scopeRef, runtime.laneRef),
+    scopeRef: runtime.scopeRef,
+    laneRef: normalizeLaneRef(runtime.laneRef),
+    hostSessionId: runtime.hostSessionId,
+    generation: runtime.generation,
+    runtimeId: runtime.runtimeId,
+    status: 'active',
+    activeTurnId: runtime.activeRunId,
+  }
+}
+
+function toMonitorRuntimeState(runtime: MonitorRuntimeSource): HrcMonitorRuntimeState {
+  return {
+    runtimeId: runtime.runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    status: normalizeRuntimeStatus(runtime.status, runtime.activeRunId),
+    transport: runtime.transport,
+    activeTurnId: runtime.activeRunId ?? null,
+  }
+}
+
+function mergeSelectorState(target: SelectorState, source: SelectorState): void {
+  mergeByKey(target.sessions, source.sessions, (entry) => entry.hostSessionId)
+  mergeByKey(target.runtimes, source.runtimes, (entry) => entry.runtimeId)
+  mergeByKey(target.messages ?? [], source.messages ?? [], (entry) => entry.messageId)
+}
+
+function mergeByKey<T>(target: T[], source: readonly T[], keyFor: (entry: T) => string): void {
+  const keys = new Set(target.map(keyFor))
+  for (const entry of source) {
+    const key = keyFor(entry)
+    if (keys.has(key)) continue
+    keys.add(key)
+    target.push(entry)
+  }
+}
+
+function mergeEventIdentities(
+  state: HrcMonitorState,
+  events: readonly ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number][],
+  db: HrcDatabase
+): void {
+  for (const event of events) {
+    if (state.sessions.some((session) => session.hostSessionId === event.hostSessionId)) continue
+    const session = db.sessions.getByHostSessionId(event.hostSessionId)
+    if (!session) continue
+    mergeSelectorState(
+      state,
+      stateFromSession(session, db.runtimes.getLatestByHostSessionId(event.hostSessionId))
+    )
+  }
+}
+
+function applyLifecycleProjection(
+  state: Pick<HrcMonitorState, 'sessions' | 'runtimes'>,
+  events: readonly ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number][]
+): void {
+  for (const event of events) {
+    const runtime =
+      (event.runtimeId
+        ? state.runtimes.find((candidate) => candidate.runtimeId === event.runtimeId)
+        : undefined) ??
+      state.runtimes.find((candidate) => candidate.hostSessionId === event.hostSessionId)
+    const session = state.sessions.find(
+      (candidate) => candidate.hostSessionId === event.hostSessionId
+    )
+
+    if (event.eventKind === 'turn.started') {
+      if (runtime) {
+        runtime.activeTurnId = event.runId ?? null
+        runtime.status = 'busy'
+      }
+      if (session) session.activeTurnId = event.runId ?? null
+      continue
+    }
+    if (
+      event.eventKind === 'turn.completed' ||
+      event.eventKind === 'turn.finished' ||
+      event.eventKind === 'turn.failed'
+    ) {
+      if (runtime && (!event.runId || runtime.activeTurnId === event.runId)) {
+        runtime.activeTurnId = null
+        runtime.status = 'idle'
+      }
+      if (session && (!event.runId || session.activeTurnId === event.runId)) {
+        session.activeTurnId = null
+      }
+      continue
+    }
+    if (event.eventKind === 'runtime.ready') {
+      if (runtime) runtime.status = 'idle'
+      continue
+    }
+    if (
+      event.eventKind === 'runtime.dead' ||
+      event.eventKind === 'runtime.crashed' ||
+      event.eventKind === 'runtime.terminated'
+    ) {
+      if (runtime) runtime.status = event.eventKind === 'runtime.crashed' ? 'crashed' : 'dead'
+    }
+  }
+}
+
+function readCorrelatedResponses(
+  db: HrcDatabase,
+  messages: readonly HrcMonitorMessageState[],
+  afterSeq: number,
+  throughSeq: number
+): HrcMessageRecord[] {
+  const byId = new Map<string, HrcMessageRecord>()
+  for (const message of messages) {
+    for (const response of db.messages.listCorrelatedResponses(
+      message.messageId,
+      message.rootMessageId ?? message.messageId,
+      afterSeq
+    )) {
+      if (response.messageSeq <= throughSeq) byId.set(response.messageId, response)
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.messageSeq - b.messageSeq)
+}
+
+function mergeMessageStates(
+  state: Pick<HrcMonitorState, 'messages'>,
+  messages: readonly HrcMessageRecord[]
+): void {
+  if (!state.messages) state.messages = []
+  const target = state.messages
+  mergeByKey(target, messages.map(toMonitorMessage), (entry) => entry.messageId)
+}
+
+function sessionRefFor(scopeRef: string, laneRef: string): string {
+  return `${scopeRef}/lane:${normalizeLaneRef(laneRef)}`
+}
+
+function normalizeLaneRef(laneRef: string): string {
+  const laneId = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
+  return laneId === 'default' ? 'main' : laneId
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
 }
 
 function toMonitorEvent(event: {
@@ -506,9 +1034,9 @@ function monitorResultFields(
   return {}
 }
 
-function normalizeRuntimeStatus(status: string, activeRunId: string | undefined): string {
+function normalizeRuntimeStatus(status: string, activeRunId: string | null | undefined): string {
   if (status === 'ready') return 'idle'
-  if (activeRunId !== undefined) return 'busy'
+  if (activeRunId != null) return 'busy'
   return status
 }
 

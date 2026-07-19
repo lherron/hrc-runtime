@@ -238,6 +238,34 @@ export class MessageRepository {
     return row ? mapMessageRow(row) : undefined
   }
 
+  maxMessageSeq(): number {
+    const row = this.db
+      .query<{ max_seq: number | null }, []>('SELECT MAX(message_seq) AS max_seq FROM messages')
+      .get()
+    return row?.max_seq ?? 0
+  }
+
+  /**
+   * Targeted response lookup for a single message/thread. Unlike `query()`, this
+   * cannot degrade into a collection read when the caller omits a filter.
+   */
+  listCorrelatedResponses(
+    messageId: string,
+    rootMessageId: string,
+    afterSeq = 0
+  ): HrcMessageRecord[] {
+    const rows = this.db
+      .query<MessageRow, [string, string, string, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages
+         WHERE phase = 'response'
+           AND (message_id = ? OR reply_to_message_id = ? OR root_message_id = ?)
+           AND message_seq > ?
+         ORDER BY message_seq ASC`
+      )
+      .all(messageId, messageId, rootMessageId, afterSeq)
+    return rows.map(mapMessageRow)
+  }
+
   query(filter: HrcMessageFilter): HrcMessageRecord[] {
     const where: string[] = []
     const values: Array<string | number> = []
