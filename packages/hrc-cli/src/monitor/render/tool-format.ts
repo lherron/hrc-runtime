@@ -1,5 +1,5 @@
 import type { HrcLifecycleEvent } from 'hrc-core'
-import { booleanField, numberField, stringField } from '../monitor-fields.js'
+import { booleanField, numberField, stringField } from '../../monitor-fields.js'
 import {
   type ParsedToolResult,
   type PendingToolCall,

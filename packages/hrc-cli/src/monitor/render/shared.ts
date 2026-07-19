@@ -1,3 +1,4 @@
+/** Shared primitives for monitor output renderers. */
 import chalk from 'chalk'
 
 export type PendingToolCall = {
