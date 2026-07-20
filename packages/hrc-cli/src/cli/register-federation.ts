@@ -20,7 +20,7 @@ export function registerFederationCommands(program: Command): void {
     .argument('<scope>', 'scope ref or target handle (e.g. clod@hrc-runtime:T-06613)')
     .description('show declared policy, established binding, and observed runtimes for a scope')
     .option('--json', 'output as JSON')
-    .option('--fail-on-skew', 'exit 1 when a pin disagrees with the established binding')
+    .option('--fail-on-skew', 'exit 1 when placement disagrees with the established binding')
     .addHelpText(
       'after',
       [
@@ -30,11 +30,11 @@ export function registerFederationCommands(program: Command): void {
         '  authority the established binding (local ledger first, then the registry)',
         '  observed  runtimes running on THIS node (peer observation is F1)',
         '',
-        'SKEW is a pin disagreeing with an established binding. The established home',
-        'keeps summon authority and the pin value is not acted on — editing a pin does',
-        'not relocate a scope that already exists.',
+        'SKEW is an exact pin or matched task-default disagreeing with an established',
+        'binding. The established home keeps summon authority and the policy edit is',
+        'not acted on — editing placement does not relocate a scope that already exists.',
         '',
-        'An unpinned scope established away from default_home_node is EXPECTED, not skew:',
+        'An unconstrained scope established away from default_home_node is EXPECTED, not skew:',
         'default_home_node routes implicit summons, it does not constrain where a scope lives.',
         '',
         'Exit codes:',
