@@ -31,6 +31,7 @@ import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import { assertScopeNotRetired, assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -54,7 +55,7 @@ import {
 } from './server-constants.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import { writeServerLog } from './server-log.js'
-import { normalizeOptionalQuery, parseJsonBody } from './server-parsers.js'
+import { normalizeOptionalQuery, parseJsonBody, parseSessionRef } from './server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { selectResumeContinuationCandidate } from './session-resume-continuation.js'
 import { createSessionSuccessorFromContinuation } from './session-successor.js'
@@ -991,6 +992,13 @@ export async function deliverFederationAcceptedMessage(
   if (envelope.phase !== 'request') return
 
   const delivery = envelope.delivery
+  const runtimeIntent =
+    delivery?.runtimeIntent === undefined || envelope.to.kind !== 'session'
+      ? undefined
+      : localizeFederatedRuntimeIntent(
+          parseSessionRef(envelope.to.sessionRef).scopeRef,
+          delivery.runtimeIntent
+        )
   const body: SemanticDmRequest = {
     from: envelope.from,
     to: envelope.to,
@@ -998,7 +1006,7 @@ export async function deliverFederationAcceptedMessage(
     ...(envelope.replyToMessageId === undefined
       ? {}
       : { replyToMessageId: envelope.replyToMessageId }),
-    ...(delivery?.runtimeIntent === undefined ? {} : { runtimeIntent: delivery.runtimeIntent }),
+    ...(runtimeIntent === undefined ? {} : { runtimeIntent }),
     ...(delivery?.createIfMissing === undefined
       ? {}
       : { createIfMissing: delivery.createIfMissing }),

@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { parseScopeRef } from 'agent-scope'
 import {
@@ -163,17 +163,25 @@ async function defaultDetectHarness(harnessId: HarnessId): Promise<HarnessDetect
   return await adapter.detect()
 }
 
-function resolvedPlacement(
-  scopeRef: string,
-  hint: SummonCapabilityHint | undefined,
-  options: { env: Record<string, string | undefined>; cwd: string }
-): {
+export type NodeLocalPlacementResolution = {
   placement?: RuntimePlacement
   unresolvableProjectPath?: string
   missingAgentPath?: string
-} {
-  if (hint?.placement !== undefined) return { placement: hint.placement }
+}
 
+/**
+ * Resolve placement from this node's filesystem only.
+ *
+ * Federated callers carry a useful harness/execution hint, but their absolute
+ * placement paths belong to the origin node.  The receiver must rebuild those
+ * paths from its own agent home and checkout collection before launching a
+ * runtime.  The agent root gives us a deterministic collective-root fallback
+ * when the daemon itself was launched from HOME rather than from a checkout.
+ */
+export function resolveNodeLocalPlacement(
+  scopeRef: string,
+  options: { env: Record<string, string | undefined>; cwd: string }
+): NodeLocalPlacementResolution {
   const parsed = parseScopeRef(scopeRef)
   const placementInput = {
     agentId: parsed.agentId,
@@ -184,14 +192,24 @@ function resolvedPlacement(
   let paths = resolveAgentPlacementPaths(placementInput)
 
   if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
-    // launchd runs the daemon from the checkout collection root, not from one
-    // project. Re-run the same ASP marker/git resolver from the deterministic
-    // sibling candidate. The resolver must verify the project id; merely
-    // finding a same-named directory is intentionally insufficient.
-    const siblingCandidate = join(options.cwd, parsed.projectId)
-    paths = resolveAgentPlacementPaths({ ...placementInput, cwd: siblingCandidate })
+    const siblingCandidates = [join(options.cwd, parsed.projectId)]
+    if (paths.agentRoot !== undefined) {
+      const agentsRoot = dirname(paths.agentRoot)
+      const runtimeVarRoot = dirname(agentsRoot)
+      if (basename(agentsRoot) === 'agents' && basename(runtimeVarRoot) === 'var') {
+        siblingCandidates.push(join(dirname(runtimeVarRoot), parsed.projectId))
+      }
+    }
+
+    for (const siblingCandidate of siblingCandidates) {
+      paths = resolveAgentPlacementPaths({ ...placementInput, cwd: siblingCandidate })
+      if (paths.projectRoot !== undefined) break
+    }
     if (paths.projectRoot === undefined) {
-      return { unresolvableProjectPath: siblingCandidate }
+      return {
+        unresolvableProjectPath:
+          siblingCandidates[siblingCandidates.length - 1] ?? join(options.cwd, parsed.projectId),
+      }
     }
   }
   if (paths.agentRoot === undefined) {
@@ -217,6 +235,15 @@ function resolvedPlacement(
       dryRun: false,
     },
   }
+}
+
+function resolvedPlacement(
+  scopeRef: string,
+  hint: SummonCapabilityHint | undefined,
+  options: { env: Record<string, string | undefined>; cwd: string }
+): NodeLocalPlacementResolution {
+  if (hint?.placement !== undefined) return { placement: hint.placement }
+  return resolveNodeLocalPlacement(scopeRef, options)
 }
 
 /** Builds the observer injected into every configured summon gate. */
