@@ -17,8 +17,15 @@ import {
 } from '../federation/birth-credential.js'
 import type { FederationConfig } from '../federation/federation-config.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
-import { assertSummonAuthority } from '../federation/summon-gate-server.js'
-import { type SummonGateDeps, evaluateSummonGate } from '../federation/summon-gate.js'
+import {
+  type SummonAuthorityRequest,
+  assertSummonAuthority,
+} from '../federation/summon-gate-server.js'
+import {
+  type SummonCapabilityHint,
+  type SummonGateDeps,
+  evaluateSummonGate,
+} from '../federation/summon-gate.js'
 
 const PARENT_SCOPE = 'agent:mable:project:hrc-runtime:task:T-06597'
 const CHILD_SCOPE = 'agent:cody:project:hrc-runtime:task:T-06610'
@@ -163,6 +170,60 @@ describe('T-06610 runtime-stable birth credential', () => {
       expect(completionFirst.valid).toBe(false)
       if (completionFirst.valid) throw new Error('unreachable')
       expect(completionFirst.reason).toBe('zombie-runtime')
+    } finally {
+      db.close()
+    }
+  })
+
+  test('a server request preserves both birth credential and capability hint to their consumers', async () => {
+    const db = await database()
+    try {
+      const capabilityHint = {
+        harness: { provider: 'openai', interactive: false, id: 'codex-cli' },
+      } satisfies SummonCapabilityHint
+      let observedCapability:
+        | { scopeRef: string; hint: SummonCapabilityHint | undefined }
+        | undefined
+      const server = {
+        db,
+        federationConfig: {
+          nodeId: 'max3',
+          nodeIdProvenance: 'declared',
+          sourcePath: '/tmp/federation.json',
+          sourceExists: true,
+          peers: new Map(),
+          gate: { mode: 'enforce' },
+          warnings: [],
+        } as FederationConfig,
+        registryClient: registryUnbound(),
+        policyFor: async () => {
+          throw new Error('placement policy must be ignored for child-birth')
+        },
+        capabilityFor: async (scopeRef: string, hint?: SummonCapabilityHint) => {
+          observedCapability = { scopeRef, hint }
+          return { outcome: 'capable' as const }
+        },
+      }
+      const request: SummonAuthorityRequest = {
+        scopeRef: CHILD_SCOPE,
+        path: 'ensure-target',
+        birthCredential: RUNTIME_ID,
+        capabilityHint,
+      }
+
+      const result = await assertSummonAuthority(server, request)
+
+      expect(result?.evaluation).toMatchObject({
+        decision: 'allow',
+        reason: 'child-birth',
+        authorityProvenance: {
+          kind: 'child-birth',
+          parentScopeRef: PARENT_SCOPE,
+          parentRuntimeId: RUNTIME_ID,
+          parentRunId: RUN_B,
+        },
+      })
+      expect(observedCapability).toEqual({ scopeRef: CHILD_SCOPE, hint: capabilityHint })
     } finally {
       db.close()
     }
