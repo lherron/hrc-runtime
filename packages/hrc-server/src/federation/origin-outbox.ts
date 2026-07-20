@@ -107,14 +107,13 @@ export class FederationOriginOutbox {
           db: options.db,
           peer,
           envelope: delivery.envelope,
+          onStaleRedirect: handleRedirect,
         })
       },
       onStaleRedirect: (delivery, redirect) => {
         if (delivery.envelope.to.kind !== 'session') {
           throw new Error('stale placement redirect requires a session target')
         }
-        const scopeRef = parseSessionRef(delivery.envelope.to.sessionRef).scopeRef
-        handleRedirect(scopeRef, redirect.homeNodeId, redirect.placementEpoch)
         return {
           peerNodeId: redirect.homeNodeId,
           envelope: {

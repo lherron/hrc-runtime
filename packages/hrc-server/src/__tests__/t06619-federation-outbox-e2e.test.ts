@@ -107,7 +107,7 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
           federationOutboxRetryPolicy: {
             initialRetryDelayMs: 20,
             maxRetryDelayMs: 20,
-            deadLetterAfterMs: 120,
+            deadLetterAfterMs: 1_000,
           },
         })
       )
@@ -153,7 +153,7 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
             federationOutboxRetryPolicy: {
               initialRetryDelayMs: 20,
               maxRetryDelayMs: 20,
-              deadLetterAfterMs: 120,
+              deadLetterAfterMs: 1_000,
             },
           })
         )

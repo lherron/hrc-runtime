@@ -1,6 +1,8 @@
 import type { FederationMessageEnvelope } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { parseSessionRef } from '../server-parsers.js'
+import type { StalePlacementRedirectHandler } from './binding-cache.js'
 import type { PeerEntry } from './federation-config.js'
 import { PEER_PROTOCOL_VERSION_HEADER } from './peer-protocol.js'
 
@@ -21,6 +23,8 @@ export type SendFederationEnvelopeOptions = {
   readonly fetch?: typeof globalThis.fetch | undefined
   /** Bounds one transport attempt; retries are owned by the durable outbox. */
   readonly timeoutMs?: number | undefined
+  /** T-06621 routing-hint correction; invoked only for a valid stale-placement redirect. */
+  readonly onStaleRedirect?: StalePlacementRedirectHandler | undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -91,6 +95,31 @@ export async function sendFederationEnvelope(
     throw new Error(`peer accept refused with malformed response (HTTP ${response.status})`)
   }
   const redirect = parseRedirect(error['redirect'])
+  if (
+    error['code'] === 'stale_placement' &&
+    redirect !== undefined &&
+    options.onStaleRedirect !== undefined
+  ) {
+    if (options.envelope.to.kind !== 'session') {
+      return {
+        outcome: 'refused',
+        status: response.status,
+        code: 'redirect_conflict',
+        retryable: false,
+      }
+    }
+    try {
+      const scopeRef = parseSessionRef(options.envelope.to.sessionRef).scopeRef
+      options.onStaleRedirect(scopeRef, redirect.homeNodeId, redirect.placementEpoch)
+    } catch {
+      return {
+        outcome: 'refused',
+        status: response.status,
+        code: 'redirect_conflict',
+        retryable: false,
+      }
+    }
+  }
   return {
     outcome: 'refused',
     status: response.status,
