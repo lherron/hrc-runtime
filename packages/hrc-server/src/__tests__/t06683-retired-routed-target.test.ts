@@ -145,4 +145,62 @@ describe('T-06683 retired routed target selection', () => {
       db.close()
     }
   })
+
+  test('advisory archived successor retains its single existing retirement observation', async () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    const now = fixture.now()
+    try {
+      db.sessions.updateContinuation(
+        HOST_SESSION_ID,
+        { provider: 'codex', kind: 'thread', key: 'thread-t06683-archived' },
+        now
+      )
+      db.sessions.updateStatus(HOST_SESSION_ID, 'archived', now)
+    } finally {
+      db.close()
+    }
+
+    await server?.stop()
+    await writeFile(
+      join(fixture.stateRoot, FEDERATION_CONFIG_BASENAME),
+      JSON.stringify({ nodeId: 'svc', gate: { mode: 'advisory' } }),
+      { mode: 0o600 }
+    )
+    server = await createHrcServer(fixture.serverOpts())
+
+    const captured: string[] = []
+    const original = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
+      captured.push(String(chunk))
+      return (original as (...args: unknown[]) => boolean)(chunk, ...rest)
+    }) as typeof process.stderr.write
+
+    let response: Response
+    try {
+      response = await fixture.postJson('/v1/messages/dm', {
+        from: { kind: 'entity', entity: 'human' },
+        to: { kind: 'session', sessionRef: SESSION_REF },
+        body: 'advisory archived successor observation probe',
+        createIfMissing: false,
+      })
+    } finally {
+      process.stderr.write = original
+    }
+
+    expect(response.status).toBe(200)
+    const refusalLines = captured.filter((line) => line.includes(SUMMON_GATE_REFUSAL_EVENT))
+    expect(refusalLines).toHaveLength(1)
+    expect(refusalLines[0]).toContain('"path":"archived-successor"')
+    expect(refusalLines[0]).toContain('"reason":"scope-retired"')
+    expect(refusalLines[0]).toContain('"enforced":false')
+    expect(refusalLines[0]).toContain('"mode":"advisory"')
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.sessions.listByScopeRef(SCOPE_REF)).toHaveLength(2)
+      expect(verifyDb.runtimes.listByHostSessionId(HOST_SESSION_ID)).toEqual([])
+    } finally {
+      verifyDb.close()
+    }
+  })
 })

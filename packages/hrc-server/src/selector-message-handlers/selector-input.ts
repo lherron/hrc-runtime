@@ -393,6 +393,11 @@ export async function handleDispatchTurnBySelector(
   await assertScopeNotRetired(this, {
     scopeRef: parseSessionRef(sessionRef).scopeRef,
     path: 'archived-successor',
+    advisoryCoveredByDownstreamGate: () =>
+      findTargetSession(this.db, sessionRef) === undefined &&
+      body['createIfMissing'] === true &&
+      isRecord(body['runtimeIntent']) &&
+      !isCodexAppOwnedScopeRef(sessionRef),
   })
 
   let session = findTargetSession(this.db, sessionRef)

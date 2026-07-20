@@ -284,6 +284,8 @@ export async function assertScopeNotRetired(
   request: {
     scopeRef: string
     path: Exclude<SummonPath, 'resolve-session'>
+    /** True only when the same request is guaranteed to enter the full gate later. */
+    advisoryCoveredByDownstreamGate?: (() => boolean) | undefined
   }
 ): Promise<SummonGateResult | undefined> {
   const deps = gateDepsFor(server)
@@ -291,6 +293,14 @@ export async function assertScopeNotRetired(
 
   const retirement = deps.retirementFor?.(request.scopeRef)
   if (retirement === undefined || retirement.retiredNodeId !== deps.localNodeId) {
+    return undefined
+  }
+
+  // Enforce never invokes this callback: the hard stop below still runs before
+  // any target lookup. Advisory is observational, so an archived/new target
+  // already guaranteed to enter the full summon gate should keep its existing
+  // single event instead of emitting a duplicate at both seams.
+  if (deps.mode === 'advisory' && request.advisoryCoveredByDownstreamGate?.()) {
     return undefined
   }
 

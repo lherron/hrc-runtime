@@ -521,10 +521,21 @@ export async function handleSemanticTurnHandoff(
       { field: 'to' }
     )
   }
+  const targetSessionRef = body.to.sessionRef
 
   await assertScopeNotRetired(this, {
-    scopeRef: scopeRefOf(body.to.sessionRef),
+    scopeRef: scopeRefOf(targetSessionRef),
     path: 'archived-successor',
+    advisoryCoveredByDownstreamGate: () => {
+      const session = findTargetSession(this.db, targetSessionRef)
+      if (session?.status === 'archived' && session.continuation?.key) return true
+      return (
+        session === undefined &&
+        body.createIfMissing !== false &&
+        body.runtimeIntent !== undefined &&
+        !isCodexAppOwnedScopeRef(targetSessionRef)
+      )
+    },
   })
 
   const parent =
@@ -872,9 +883,20 @@ export async function handleSemanticDm(
   }
 
   if (body.to.kind === 'session') {
+    const targetSessionRef = body.to.sessionRef
     await assertScopeNotRetired(this, {
-      scopeRef: scopeRefOf(body.to.sessionRef),
+      scopeRef: scopeRefOf(targetSessionRef),
       path: 'archived-successor',
+      advisoryCoveredByDownstreamGate: () => {
+        const session = findTargetSession(this.db, targetSessionRef)
+        if (session?.status === 'archived' && session.continuation?.key) return true
+        return (
+          session === undefined &&
+          body.createIfMissing !== false &&
+          body.runtimeIntent !== undefined &&
+          !isCodexAppOwnedScopeRef(targetSessionRef)
+        )
+      },
     })
   }
 
