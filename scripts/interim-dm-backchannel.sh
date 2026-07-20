@@ -129,7 +129,15 @@ route_for_target() {
 
 remote_for_node() {
   case "$1" in
-    svc) printf '%s\n' "${BACKCHANNEL_REMOTE_SVC:-lherron@localhost}" ;;
+    svc)
+      if [[ -n "${BACKCHANNEL_REMOTE_SVC:-}" ]]; then
+        printf '%s\n' "$BACKCHANNEL_REMOTE_SVC"
+      elif [[ "$local_node" == "max3" ]]; then
+        printf '%s\n' 'lherron@mini'
+      else
+        printf '%s\n' 'lherron@localhost'
+      fi
+      ;;
     lab) printf '%s\n' "${BACKCHANNEL_REMOTE_LAB:-lab@localhost}" ;;
     max3) printf '%s\n' "${BACKCHANNEL_REMOTE_MAX3:-lherron@max3}" ;;
     *) die "unsupported remote node: $1" ;;

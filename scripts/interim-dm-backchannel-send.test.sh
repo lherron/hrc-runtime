@@ -25,6 +25,7 @@ run_direction() {
   local origin="$1"
   local destination="$2"
   local target="$3"
+  local expected_remote="$4"
   local routes="${test_dir}/routes-${origin}.tsv"
   local ssh_log="${test_dir}/ssh-${origin}.log"
   local body_log="${test_dir}/body-${origin}.log"
@@ -45,10 +46,11 @@ run_direction() {
   [[ "$(wc -l < "$ssh_log" | tr -d '[:space:]')" == 1 ]]
   [[ "$(cat "$body_log")" == "${origin}-to-${destination}" ]]
   grep -q "/remote/interim-dm-backchannel.sh inject ${origin}" "$ssh_log"
+  grep -q -- "-o BatchMode=yes ${expected_remote} /remote/interim-dm-backchannel.sh" "$ssh_log"
 }
 
-run_direction svc max3 'agent:mable:project:hrc-runtime:task:max3/lane:main'
-run_direction max3 svc 'agent:mable:project:hrc-runtime:task:minisvc/lane:main'
+run_direction svc max3 'agent:mable:project:hrc-runtime:task:max3/lane:main' 'lherron@max3'
+run_direction max3 svc 'agent:mable:project:hrc-runtime:task:minisvc/lane:main' 'lherron@mini'
 [[ ! -e "${test_dir}/hrcchat.log" ]]
 
 printf 'PASS: routed send bypasses the origin hrcchat/store in both directions\n'
