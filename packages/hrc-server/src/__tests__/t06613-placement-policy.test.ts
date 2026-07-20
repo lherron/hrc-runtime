@@ -40,6 +40,9 @@ describe('resolvePlacementPolicy', () => {
         '[placement]',
         'default_home_node = "max3"',
         '"hrc-runtime:T-06613" = "mini"',
+        '',
+        '[placement.task-defaults]',
+        'labprimary = "lab"',
       ].join('\n')
     )
 
@@ -49,6 +52,7 @@ describe('resolvePlacementPolicy', () => {
     if (resolution.outcome !== 'resolved') return
     expect(resolution.policy.placement?.defaultHomeNode).toBe('max3')
     expect(resolution.policy.placement?.pins['hrc-runtime:T-06613']).toBe('mini')
+    expect(resolution.policy.placement?.taskDefaults['labprimary']).toBe('lab')
   })
 
   test('a profile with no [placement] stanza resolves with placement undefined', () => {

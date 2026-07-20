@@ -40,6 +40,7 @@ import type {
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
+  LocateSkew,
   ScopeLocation,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
@@ -68,6 +69,10 @@ function describeDeclared(declared: LocateDeclaredPolicy): string {
       return `pin "${declared.pinKey}" = ${declared.nodeId}`
     case 'pin-invalid':
       return `pin "${declared.pinKey}" = ${declared.rawValue} (INVALID)`
+    case 'task-default':
+      return `task-default "${declared.taskKey}" = ${declared.nodeId}`
+    case 'task-default-invalid':
+      return `task-default "${declared.taskKey}" = ${declared.rawValue} (INVALID)`
     case 'default_home_node':
       return `default_home_node = ${declared.nodeId}`
     case 'default_home_node(local)':
@@ -79,6 +84,12 @@ function describeDeclared(declared: LocateDeclaredPolicy): string {
     default:
       return 'unrecognized'
   }
+}
+
+function describeSkewConstraint(skew: LocateSkew): string {
+  return skew.kind === 'pin-vs-binding'
+    ? `pin "${skew.pinKey}" = ${skew.pinnedNodeId}`
+    : `task-default "${skew.taskKey}" = ${skew.taskDefaultNodeId}`
 }
 
 function describeAuthority(location: ScopeLocation): string {
@@ -110,7 +121,10 @@ function formatLocation(location: ScopeLocation): string {
   if (location.declared.source === 'unavailable' || location.declared.source === 'none') {
     lines.push(`            ${location.declared.detail}`)
   }
-  if (location.declared.source === 'pin-invalid') {
+  if (
+    location.declared.source === 'pin-invalid' ||
+    location.declared.source === 'task-default-invalid'
+  ) {
     lines.push(`            ${location.declared.detail}`)
   }
 
@@ -257,14 +271,14 @@ function placementSkewChecks(report: LocateBindingsReport): DoctorCheck[] {
       detail:
         scan.scanned === 0
           ? 'no placement bindings on this node'
-          : `${scan.scanned} binding(s), no pin disagrees with its established home`,
+          : `${scan.scanned} binding(s), no placement constraint disagrees with its established home`,
     })
   } else {
     for (const finding of scan.skewed) {
       checks.push({
         name: 'placement-skew',
         status: 'warn',
-        detail: `${finding.scopeRef}: pin "${finding.skew.pinKey}" = ${finding.skew.pinnedNodeId}, established on ${finding.skew.boundNodeId} (epoch ${finding.skew.placementEpoch}). ${finding.skew.boundNodeId} keeps summon authority; the pin is not acted on. Rebuild the binding to move it. See: hrc target locate ${finding.scopeRef}`,
+        detail: `${finding.scopeRef}: ${describeSkewConstraint(finding.skew)}, established on ${finding.skew.boundNodeId} (epoch ${finding.skew.placementEpoch}). ${finding.skew.boundNodeId} keeps summon authority; the policy edit is not acted on. Rebuild the binding to move it. See: hrc target locate ${finding.scopeRef}`,
       })
     }
   }
@@ -329,7 +343,7 @@ export async function cmdTargetBindings(args: string[]): Promise<void> {
   )
   for (const finding of report.scan.skewed) {
     process.stdout.write(
-      `  SKEW ${finding.scopeRef}: pin ${finding.skew.pinnedNodeId} vs established ${finding.skew.boundNodeId}\n`
+      `  SKEW ${finding.scopeRef}: ${describeSkewConstraint(finding.skew)} vs established ${finding.skew.boundNodeId}\n`
     )
   }
 }

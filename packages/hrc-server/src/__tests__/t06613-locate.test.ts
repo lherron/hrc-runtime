@@ -73,7 +73,13 @@ function registryStub(behavior: RegistryConsultResult | Error): BindingRegistryC
 }
 
 function policy(
-  placement: { defaultHomeNode?: string; pins?: Record<string, string> } | undefined
+  placement:
+    | {
+        defaultHomeNode?: string
+        pins?: Record<string, string>
+        taskDefaults?: Record<string, string>
+      }
+    | undefined
 ): PlacementPolicyResolution {
   return {
     outcome: 'resolved',
@@ -88,6 +94,7 @@ function policy(
                 ? {}
                 : { defaultHomeNode: placement.defaultHomeNode }),
               pins: placement.pins ?? {},
+              taskDefaults: placement.taskDefaults ?? {},
             },
           }),
     },
@@ -146,6 +153,37 @@ describe('locate — the three truths are reported separately', () => {
     expect(location.authority).toMatchObject({
       state: 'bound',
       record: { birthClass: 'policy-born', establishmentProvenance: 'explicit_local' },
+    })
+  })
+
+  test('task-default is declared across projects, but an exact pin still overrides it', async () => {
+    const taskDefaultLocation = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        policyFor: async () =>
+          policy({ taskDefaults: { 'T-06613': 'lab' }, defaultHomeNode: 'svc' }),
+      }),
+    })
+    expect(taskDefaultLocation.declared).toMatchObject({
+      source: 'task-default',
+      taskKey: 'T-06613',
+      nodeId: 'lab',
+    })
+
+    const exactLocation = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        policyFor: async () =>
+          policy({
+            pins: { 'hrc-runtime:T-06613': 'max3' },
+            taskDefaults: { 'T-06613': 'lab' },
+          }),
+      }),
+    })
+    expect(exactLocation.declared).toMatchObject({
+      source: 'pin',
+      pinKey: 'hrc-runtime:T-06613',
+      nodeId: 'max3',
     })
   })
 
@@ -245,6 +283,37 @@ describe('skew — a PIN disagreeing with an established binding, and nothing el
 
     expect(location.skew).toBeUndefined()
     expect(location.notes.map((note) => note.code)).toContain('pin-honored')
+  })
+
+  test('a task-default has the same skew semantics and names its matched line', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        ledger: ledgerStub(ledgerRow({ homeNodeId: 'max3', placementEpoch: 3 })),
+        policyFor: async () => policy({ taskDefaults: { 'T-06613': 'lab' } }),
+      }),
+    })
+
+    expect(location.skew).toMatchObject({
+      kind: 'task-default-vs-binding',
+      taskKey: 'T-06613',
+      taskDefaultNodeId: 'lab',
+      boundNodeId: 'max3',
+    })
+    expect(location.skew?.detail).toContain('[placement.task-defaults] "T-06613" = "lab"')
+  })
+
+  test('a task-default agreeing with the binding is not skew', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        ledger: ledgerStub(ledgerRow({ homeNodeId: 'lab' })),
+        policyFor: async () => policy({ taskDefaults: { 'T-06613': 'lab' } }),
+      }),
+    })
+
+    expect(location.skew).toBeUndefined()
+    expect(location.notes.map((note) => note.code)).toContain('task-default-honored')
   })
 
   test('a pin on an UNBOUND scope is not skew — there is nothing to disagree with', async () => {

@@ -81,7 +81,7 @@ function deps(overrides: Partial<SummonGateDeps> = {}): SummonGateDeps {
     ledger: ledgerStub(undefined),
     registry: registryStub({ outcome: 'unbound' }),
     policyFor: async () => ({
-      placement: { pins: {}, defaultHomeNode: 'max3' },
+      placement: { pins: {}, taskDefaults: {}, defaultHomeNode: 'max3' },
       claimsTask: false,
     }),
     ...overrides,
@@ -294,9 +294,87 @@ describe('placement policy — pins are hard constraints on every path', () => {
 
   test('pin key is the exact project:task scope key', () => {
     expect(placementPinKey(SCOPE)).toBe('hrc-runtime:T-06608')
+    expect(placementPinKey(SCOPE, 'task-default')).toBe('T-06608')
     expect(placementPinKey(OTHER_SCOPE)).toBe('hrc-runtime:lab')
     // Scopes without a task have no pin key — they fall to default_home_node.
     expect(placementPinKey('agent:mable:project:hrc-runtime')).toBeUndefined()
+  })
+})
+
+describe('placement task defaults — exact pin > task-default > explicit_local > default', () => {
+  test('a task-default beats explicit_local and names the matched line in its refusal', async () => {
+    const result = await evaluateSummonGate({
+      scopeRef: SCOPE,
+      path: 'command-run',
+      intent: 'explicit_local',
+      deps: deps({
+        localNodeId: 'max3',
+        policyFor: async () => ({
+          placement: {
+            pins: {},
+            taskDefaults: { 'T-06608': 'lab' },
+            defaultHomeNode: 'max3',
+          },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation.decision).toBe('refuse')
+    expect(result.evaluation.reason).toBe('pin-mismatch')
+    if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
+    expect(result.evaluation.homeNodeId).toBe('lab')
+    expect(result.evaluation.diagnostic).toContain('[placement.task-defaults]')
+    expect(result.evaluation.diagnostic).toContain('"T-06608" = "lab"')
+    expect(result.evaluation.diagnostic).not.toContain('is pinned')
+  })
+
+  test('an exact pin overrides a task-default for the same scope', async () => {
+    const result = await evaluateSummonGate({
+      scopeRef: SCOPE,
+      path: 'ensure-target',
+      intent: 'implicit',
+      deps: deps({
+        localNodeId: 'max3',
+        policyFor: async () => ({
+          placement: {
+            pins: { 'hrc-runtime:T-06608': 'max3' },
+            taskDefaults: { 'T-06608': 'lab' },
+            defaultHomeNode: 'svc',
+          },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation.decision).toBe('allow')
+    if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
+    expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.evaluation.homeNodeId).toBe('max3')
+  })
+
+  test('a matching task-default routes implicit birth ahead of default_home_node', async () => {
+    const result = await evaluateSummonGate({
+      scopeRef: SCOPE,
+      path: 'ensure-target',
+      intent: 'implicit',
+      deps: deps({
+        localNodeId: 'lab',
+        policyFor: async () => ({
+          placement: {
+            pins: {},
+            taskDefaults: { 'T-06608': 'lab' },
+            defaultHomeNode: 'svc',
+          },
+          claimsTask: false,
+        }),
+      }),
+    })
+
+    expect(result.evaluation.decision).toBe('allow')
+    if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
+    expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.evaluation.homeNodeId).toBe('lab')
   })
 })
 

@@ -184,6 +184,7 @@ export type SummonGatePolicy = {
     | {
         defaultHomeNode?: string | undefined
         pins: Record<string, string>
+        taskDefaults?: Record<string, string> | undefined
       }
     | undefined
   claimsTask: boolean
@@ -227,19 +228,25 @@ export type SummonGateRequest = {
 }
 
 /**
- * The exact `project:task` scope key a `[placement]` pin is written against.
+ * A key used by one of the two scoped placement policy levels.
  *
- * Returns undefined for scopes with no task — pins are exact task-scope keys,
- * so agent- and project-scoped summons route by `default_home_node` alone.
+ * Exact pins use `project:task`; task defaults use only `task` and therefore
+ * match that task name in every project. Returns undefined when the requested
+ * key cannot be formed from the scope.
  */
-export function placementPinKey(scopeRef: string): string | undefined {
+export function placementPinKey(
+  scopeRef: string,
+  level: 'exact' | 'task-default' = 'exact'
+): string | undefined {
   let parsed: ReturnType<typeof parseScopeRef>
   try {
     parsed = parseScopeRef(scopeRef)
   } catch {
     return undefined
   }
-  if (parsed.projectId === undefined || parsed.taskId === undefined) return undefined
+  if (parsed.taskId === undefined) return undefined
+  if (level === 'task-default') return parsed.taskId
+  if (parsed.projectId === undefined) return undefined
   return `${parsed.projectId}:${parsed.taskId}`
 }
 
@@ -344,11 +351,12 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
  *
  * Precedence, highest first:
  *
- *   1. **pin** — a hard constraint on every path (§5). Nothing overrides it,
- *      explicitness included.
- *   2. **explicit_local** — for an unpinned scope, the operator's start at this
+ *   1. **exact pin** — a hard constraint on every path (§5).
+ *   2. **task default** — cross-project task-name policy with the same matched
+ *      constraint semantics as a pin. Neither is overridden by explicitness.
+ *   3. **explicit_local** — for an unconstrained scope, the operator's start at this
  *      node IS the placement declaration (§5 "explicit operator start wins").
- *   3. **default_home_node** — where implicit summons route. `"local"` is the
+ *   4. **default_home_node** — where implicit summons route. `"local"` is the
  *      reserved sentinel meaning "the node accepting this birth", resolved ONCE
  *      here to the daemon's own configured nodeId and never reinterpreted
  *      downstream.
@@ -365,14 +373,21 @@ function resolveDesignatedHome(
   localNodeId: string,
   intent: SummonIntent
 ):
-  | { homeNodeId: string; provenance: Exclude<EstablishmentProvenance, 'rebind'> }
+  | {
+      homeNodeId: string
+      provenance: Exclude<EstablishmentProvenance, 'rebind'>
+      matchedConstraint?:
+        | { kind: 'pin'; key: string }
+        | { kind: 'task-default'; key: string }
+        | undefined
+    }
   | SummonGateEvaluation {
   const placement = policy?.placement
 
   const pinKey = placementPinKey(scopeRef)
   const pin = pinKey === undefined ? undefined : placement?.pins[pinKey]
 
-  if (pin !== undefined) {
+  if (pinKey !== undefined && pin !== undefined) {
     // A pin meaning "wherever" is not a pin (§5).
     if (isReservedNodeId(pin)) {
       return refuse(
@@ -380,10 +395,31 @@ function resolveDesignatedHome(
         `Placement pin "${pinKey}" = "${pin}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a pin. Name a real node, or move the value to default_home_node.`
       )
     }
-    return { homeNodeId: pin, provenance: 'pin' }
+    return {
+      homeNodeId: pin,
+      provenance: 'pin',
+      matchedConstraint: { kind: 'pin', key: pinKey },
+    }
   }
 
-  // The scope is virgin and unpinned, and a human ran `hrc run`/`hrc start`
+  const taskDefaultKey = placementPinKey(scopeRef, 'task-default')
+  const taskDefault =
+    taskDefaultKey === undefined ? undefined : placement?.taskDefaults?.[taskDefaultKey]
+  if (taskDefaultKey !== undefined && taskDefault !== undefined) {
+    if (isReservedNodeId(taskDefault)) {
+      return refuse(
+        'invalid-pin',
+        `Placement task default [placement.task-defaults] "${taskDefaultKey}" = "${taskDefault}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a task default. Name a real node, or move the value to default_home_node.`
+      )
+    }
+    return {
+      homeNodeId: taskDefault,
+      provenance: 'pin',
+      matchedConstraint: { kind: 'task-default', key: taskDefaultKey },
+    }
+  }
+
+  // The scope is virgin and unconstrained, and a human ran `hrc run`/`hrc start`
   // right here. That is a legitimate one-shot declaration (§5), so it needs no
   // pre-declared policy — including on a profile with no [placement] stanza at
   // all. The undeclared-placement refusal below exists to stop an IMPLICIT
@@ -559,9 +595,17 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     )
   }
 
-  if (designated.provenance === 'pin') {
-    // Pins are hard constraints on EVERY path — an explicit operator start at
-    // the wrong node does not override one.
+  if (designated.matchedConstraint !== undefined) {
+    // Exact pins and matched task defaults constrain EVERY path — an explicit
+    // operator start at the wrong node does not override either one.
+    if (designated.matchedConstraint.kind === 'task-default') {
+      const taskKey = designated.matchedConstraint.key
+      return refuse(
+        'pin-mismatch',
+        `${scopeRef} matches task default [placement.task-defaults] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that task-default line.`,
+        { homeNodeId: designated.homeNodeId }
+      )
+    }
     return refuse(
       'pin-mismatch',
       `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,

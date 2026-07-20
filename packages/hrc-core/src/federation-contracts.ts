@@ -97,6 +97,14 @@ export type LocateDeclaredPolicy =
       profilePath: string
       detail: string
     }
+  | { source: 'task-default'; taskKey: string; nodeId: string; profilePath: string }
+  | {
+      source: 'task-default-invalid'
+      taskKey: string
+      rawValue: string
+      profilePath: string
+      detail: string
+    }
   | { source: 'default_home_node'; nodeId: string; profilePath: string }
   /** `default_home_node = "local"`, resolved once to the daemon's own nodeId. */
   | { source: 'default_home_node(local)'; nodeId: string; profilePath: string }
@@ -150,16 +158,26 @@ export type LocateObservation = {
   runtimes: readonly LocateObservedRuntime[]
 }
 
-/** A pin disagreeing with an established binding. The ONLY skew §5 defines. */
-export type LocateSkew = {
-  kind: 'pin-vs-binding'
-  pinKey: string
-  pinnedNodeId: string
-  boundNodeId: string
-  placementEpoch: number
-  establishmentProvenance: EstablishmentProvenance
-  detail: string
-}
+/** A matched placement constraint disagreeing with an established binding. */
+export type LocateSkew =
+  | {
+      kind: 'pin-vs-binding'
+      pinKey: string
+      pinnedNodeId: string
+      boundNodeId: string
+      placementEpoch: number
+      establishmentProvenance: EstablishmentProvenance
+      detail: string
+    }
+  | {
+      kind: 'task-default-vs-binding'
+      taskKey: string
+      taskDefaultNodeId: string
+      boundNodeId: string
+      placementEpoch: number
+      establishmentProvenance: EstablishmentProvenance
+      detail: string
+    }
 
 /** Non-skew explanations, so expected divergence stays legible. */
 export type LocateNote = {
@@ -167,6 +185,7 @@ export type LocateNote = {
     | 'unpinned-established-elsewhere'
     | 'unpinned-established-locally'
     | 'pin-honored'
+    | 'task-default-honored'
     | 'scope-retired'
     | 'birth-chain-unresolved'
   detail: string

@@ -197,6 +197,21 @@ function describeDeclaredPolicy(
     return { source: 'pin', pinKey, nodeId: pin, profilePath }
   }
 
+  const taskKey = placementPinKey(scopeRef, 'task-default')
+  const taskDefault = taskKey === undefined ? undefined : placement.taskDefaults?.[taskKey]
+  if (taskKey !== undefined && taskDefault !== undefined) {
+    if (isReservedNodeId(taskDefault)) {
+      return {
+        source: 'task-default-invalid',
+        taskKey,
+        rawValue: taskDefault,
+        profilePath,
+        detail: `Placement task default [placement.task-defaults] "${taskKey}" = "${taskDefault}" is invalid: "local" is the reserved default_home_node sentinel and cannot be used as a task default. Name a real node, or move the value to default_home_node.`,
+      }
+    }
+    return { source: 'task-default', taskKey, nodeId: taskDefault, profilePath }
+  }
+
   const fallback = placement.defaultHomeNode
   if (fallback === undefined) {
     return {
@@ -217,6 +232,7 @@ function describeDeclaredPolicy(
 function declaredHomeNodeId(declared: LocateDeclaredPolicy): string | undefined {
   switch (declared.source) {
     case 'pin':
+    case 'task-default':
     case 'default_home_node':
     case 'default_home_node(local)':
       return declared.nodeId
@@ -258,6 +274,32 @@ function assessSkew(
           `SKEW: pin "${declared.pinKey}" = "${declared.nodeId}", but this scope is established on "${bound.homeNodeId}" (epoch ${bound.placementEpoch}, established by ${bound.establishmentProvenance}).`,
           `"${bound.homeNodeId}" keeps summon authority. The pin value is NOT acted on and nothing reconciles automatically.`,
           'To move the scope, rebuild the binding deliberately; editing the pin alone will not relocate an established scope.',
+        ].join('\n'),
+      },
+      notes,
+    }
+  }
+
+  if (declared.source === 'task-default') {
+    if (declared.nodeId === bound.homeNodeId) {
+      notes.push({
+        code: 'task-default-honored',
+        detail: `Task default [placement.task-defaults] "${declared.taskKey}" = "${declared.nodeId}" matches the established binding.`,
+      })
+      return { notes }
+    }
+    return {
+      skew: {
+        kind: 'task-default-vs-binding',
+        taskKey: declared.taskKey,
+        taskDefaultNodeId: declared.nodeId,
+        boundNodeId: bound.homeNodeId,
+        placementEpoch: bound.placementEpoch,
+        establishmentProvenance: bound.establishmentProvenance,
+        detail: [
+          `SKEW: task default [placement.task-defaults] "${declared.taskKey}" = "${declared.nodeId}", but this scope is established on "${bound.homeNodeId}" (epoch ${bound.placementEpoch}, established by ${bound.establishmentProvenance}).`,
+          `"${bound.homeNodeId}" keeps summon authority. The task-default value is NOT acted on and nothing reconciles automatically.`,
+          'To move the scope, rebuild the binding deliberately; editing the task-default alone will not relocate an established scope.',
         ].join('\n'),
       },
       notes,

@@ -167,6 +167,24 @@ describe('hrc target locate', () => {
     expect(out).toContain('Rebuild')
   })
 
+  test('human output names a matched task-default declaration', async () => {
+    stubLocate(
+      baseLocation({
+        declared: {
+          source: 'task-default',
+          taskKey: 'T-06613',
+          nodeId: 'lab',
+          profilePath: '/agents/mable/agent-profile.toml',
+        },
+      })
+    )
+    const read = captureStdout()
+
+    await cmdTargetLocate([SCOPE])
+
+    expect(read()).toContain('task-default "T-06613" = lab')
+  })
+
   test('an unpinned scope established elsewhere renders as a NOTE, never as skew', async () => {
     stubLocate(
       baseLocation({
