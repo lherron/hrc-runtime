@@ -189,4 +189,74 @@ describe('T-06697 policy-born registry establishment', () => {
       h.db.close()
     }
   })
+
+  test('startup repair installs an exact local registry row before launch capability checks', async () => {
+    const scopeRef = 'agent:soakprobe:project:hrc-runtime:task:soak-neg'
+    let capabilityChecks = 0
+    const h = await harness(async () => {
+      throw new Error('registry recovery must not consult placement policy')
+    })
+    try {
+      const binding = h.registry.establish({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'default_home_node' },
+        establishmentProvenance: 'default_home_node',
+        now: NOW,
+      })
+      if (binding.outcome !== 'created') throw new Error('expected new fixture binding')
+      Object.assign(h.server, {
+        capabilityFor: async () => {
+          capabilityChecks += 1
+          return {
+            outcome: 'incapable' as const,
+            capability: 'agent-home-skills' as const,
+            source: 'presence-heuristic' as const,
+            diagnostic: 'fixture agent home missing',
+          }
+        },
+      })
+      h.db.sessions.insert({
+        hostSessionId: 'hsid-t06697-registry-repair',
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: NOW,
+        updatedAt: NOW,
+        ancestorScopeRefs: [],
+      })
+      h.db.runtimes.insert({
+        runtimeId: 'rt-t06697-registry-repair',
+        runtimeKind: 'harness',
+        hostSessionId: 'hsid-t06697-registry-repair',
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+
+      const summary = await repairLiveUnboundPlacements(h.server)
+
+      expect(summary).toEqual({ scanned: 1, repaired: 1, alreadyBound: 0, unresolved: 0 })
+      expect(capabilityChecks).toBe(0)
+      expect(createPlacementLedgerRepository(h.db.sqlite).activeAuthority(scopeRef)).toEqual({
+        ...binding.binding,
+        state: 'active',
+        createdAt: binding.binding.updatedAt,
+      })
+    } finally {
+      h.registry.close()
+      h.db.close()
+    }
+  })
 })

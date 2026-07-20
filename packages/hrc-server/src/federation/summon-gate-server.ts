@@ -392,6 +392,19 @@ export async function repairLiveUnboundPlacements(
       continue
     }
 
+    // A collective binding already naming this node is the crash-recovery
+    // authority. Install it before capability observation: these candidates
+    // were already running at the startup boundary, so materialization checks
+    // for a future launch (for example, an agent home since removed after a
+    // soak probe ran) must not prevent the exact registry row from healing the
+    // local ledger or wedge the whole daemon at boot.
+    const registry = await deps.registry.consult(scopeRef)
+    if (registry.outcome === 'bound' && registry.binding.homeNodeId === deps.localNodeId) {
+      deps.ledger.installActive(registry.binding)
+      summary.repaired += 1
+      continue
+    }
+
     await assertSummonAuthority(server, {
       scopeRef,
       path: 'ensure-target',
