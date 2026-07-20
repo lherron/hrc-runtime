@@ -168,6 +168,7 @@ export async function cmdDm(
       thread: { rootMessageId: request.rootMessageId },
       phases: ['response'],
       afterSeq: request.messageSeq,
+      deliveryMessageId: request.messageId,
       timeoutMs: waitTimeoutMs,
     })
     const waitResult = buildDmWaitResult({

@@ -192,6 +192,18 @@ export function buildDmWaitResult(args: {
     }
   }
 
+  if (waited?.matched === false && waited.reason === 'delivery_failed') {
+    return {
+      status: 'error',
+      sentMessageId,
+      target,
+      elapsedMs,
+      lastSeq: afterSeq,
+      errorCode: waited.errorCode,
+      ...(waited.errorMessage === undefined ? {} : { errorMessage: waited.errorMessage }),
+    }
+  }
+
   // No reply: a dispatch error wins over a plain timeout (it is the actionable
   // reason the response will never come).
   const errorCode = request.execution.errorCode

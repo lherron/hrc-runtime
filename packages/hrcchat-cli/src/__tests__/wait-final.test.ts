@@ -141,6 +141,27 @@ describe('buildDmWaitResult', () => {
     expect(result.errorMessage).toBe('runtime busy')
     expect(result.lastSeq).toBe(100)
   })
+
+  it('reports a local terminal federation delivery failure without waiting for timeout', () => {
+    const result = buildDmWaitResult({
+      request: makeRecord(),
+      waited: {
+        matched: false,
+        reason: 'delivery_failed',
+        messageId: 'msg-request',
+        errorCode: 'retry_window_exhausted',
+        errorMessage: 'peer remained unreachable',
+      },
+      target: SESSION,
+      elapsedMs: 25,
+    })
+    expect(result).toMatchObject({
+      status: 'error',
+      sentMessageId: 'msg-request',
+      errorCode: 'retry_window_exhausted',
+      errorMessage: 'peer remained unreachable',
+    })
+  })
 })
 
 // -- cmdDm --wait response (quiet, single object) -----------------------------
@@ -349,6 +370,7 @@ describe('hrcchat dm --wait response', () => {
     expect(captured.wait?.thread).toEqual({ rootMessageId: 'msg-request' })
     expect(captured.wait?.phases).toEqual(['response'])
     expect(captured.wait?.afterSeq).toBe(100)
+    expect(captured.wait?.deliveryMessageId).toBe('msg-request')
   })
 
   it('defaults the wait timeout to 20m when --timeout is omitted', async () => {

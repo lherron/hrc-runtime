@@ -1011,7 +1011,10 @@ export async function deliverFederationAcceptedMessage(
       ? {}
       : { allowStaleGeneration: delivery.allowStaleGeneration }),
   }
-  await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
+  const delivered = await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
+  if (delivered.reply !== undefined) {
+    await this.federationOriginOutbox?.routeResponse(delivered.reply)
+  }
 }
 
 export async function deliverPersistedSemanticDm(

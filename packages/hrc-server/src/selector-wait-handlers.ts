@@ -9,12 +9,30 @@ import { encodeNdjson, json } from './server-util.js'
 export async function waitForMessage(
   this: HrcServerInstanceForHandlers,
   filter: HrcMessageFilter,
-  timeoutMs: number
+  timeoutMs: number,
+  deliveryMessageId?: string | undefined
 ): Promise<WaitMessageResponse> {
   // Use buffered subscriber pattern to avoid replay/subscribe race
   const buffered: HrcMessageRecord[] = []
   let resolveWait: ((result: WaitMessageResponse) => void) | null = null
   let settled = false
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+  let deliveryTimer: ReturnType<typeof setInterval> | undefined
+
+  const deliveryFailure = (): WaitMessageResponse | undefined => {
+    if (deliveryMessageId === undefined) return undefined
+    const delivery = this.db.federationOutbox.getByMessageId(deliveryMessageId)
+    if (delivery?.state !== 'dead_letter') return undefined
+    return {
+      matched: false,
+      reason: 'delivery_failed',
+      messageId: delivery.messageId,
+      errorCode: delivery.lastErrorCode ?? 'delivery_dead_lettered',
+      ...(delivery.lastErrorMessage === undefined
+        ? {}
+        : { errorMessage: delivery.lastErrorMessage }),
+    }
+  }
 
   const subscriber: MessageSubscriber = (record) => {
     if (settled) return
@@ -45,10 +63,26 @@ export async function waitForMessage(
       }
     }
 
+    const failed = deliveryFailure()
+    if (failed !== undefined) return failed
+
     // Block until match or timeout
     return await new Promise<WaitMessageResponse>((resolve) => {
       resolveWait = resolve
-      setTimeout(() => {
+      if (deliveryMessageId !== undefined) {
+        // The outbox is node-local durable state. Polling it here keeps the
+        // wait entirely on the origin daemon while the outbox's own one-shot
+        // peer requests retry independently.
+        deliveryTimer = setInterval(() => {
+          if (settled) return
+          const failure = deliveryFailure()
+          if (failure !== undefined) {
+            settled = true
+            resolve(failure)
+          }
+        }, 25)
+      }
+      timeoutTimer = setTimeout(() => {
         if (!settled) {
           settled = true
           resolve({ matched: false, reason: 'timeout' })
@@ -56,6 +90,8 @@ export async function waitForMessage(
       }, timeoutMs)
     })
   } finally {
+    if (timeoutTimer !== undefined) clearTimeout(timeoutTimer)
+    if (deliveryTimer !== undefined) clearInterval(deliveryTimer)
     this.messageSubscribers.delete(subscriber)
   }
 }
@@ -68,8 +104,12 @@ export async function handleWaitMessage(
   const filter = parseMessageFilter(isRecord(body) ? body : {})
   const timeoutMs =
     isRecord(body) && typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : 30_000
+  const deliveryMessageId =
+    isRecord(body) && typeof body['deliveryMessageId'] === 'string'
+      ? body['deliveryMessageId']
+      : undefined
 
-  const result = await this.waitForMessage(filter, timeoutMs)
+  const result = await this.waitForMessage(filter, timeoutMs, deliveryMessageId)
   return json(result satisfies WaitMessageResponse)
 }
 

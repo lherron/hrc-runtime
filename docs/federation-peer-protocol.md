@@ -117,7 +117,25 @@ sequence is never copied into the envelope.
 
 At the origin, the ACK consumer records `(requestMessageId,
 acceptedByNodeId, acceptedEpoch)` in `federation_accepted_requests`. That record
-is idempotent and is the response-fencing input for the next federation slice.
+is idempotent and is the response fence.
+
+## Bilateral transcripts and response fencing
+
+The origin inserts the request before it creates the outbox row; the accepting
+node inserts the same `messageId` before ACK. Consequently both endpoints can
+resolve `replyToMessageId` through their local message repository.
+
+Responses follow the accepting request's recorded ingress node, not the
+current placement of the reply target. On receipt, a response is accepted only
+when its `replyToMessageId` names a local request whose accepted-request record
+names the authenticated sending node. Duplicate response delivery is
+idempotent after the same validation.
+
+Current placement and the response envelope's expected epoch are deliberately
+not consulted for response completion. Placement still fences new request
+acceptance and summon authority; the accepted-request record independently
+fences completion. A response delayed across a placement rebind therefore
+still lands in the bilateral transcript.
 
 ## Origin outbox and retry lifecycle
 
@@ -141,3 +159,9 @@ and replayable. The Unix-socket API exposes the minimal F1 seams:
 
 The polished list/bulk replay/drop controls and doctor projection remain the F3
 operator-controls slice.
+
+`hrcchat dm --wait response` sends the request without a server-coupled wait,
+then waits only on its local daemon's Unix-socket API. The local wait observes
+either the bilateral response row or the request's durable outbox row reaching
+`dead_letter`; peer accept requests remain bounded one-shot attempts owned by
+the outbox and are never held open by the CLI wait.

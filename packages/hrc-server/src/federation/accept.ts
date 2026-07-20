@@ -195,41 +195,67 @@ async function acceptFederationEnvelope(
     }
   }
 
-  // A prior durable acceptance wins over a later placement change. This is
-  // the retry half of the insert-before-ACK crash contract.
-  if (options.db.messages.getById(envelope.messageId) !== undefined) {
-    return { outcome: 'duplicate', messageId: envelope.messageId }
+  if (envelope.phase === 'response') {
+    if (envelope.replyToMessageId === undefined) {
+      return { outcome: 'refused', code: 'response_reply_required', retryable: false, status: 400 }
+    }
+    const repliedTo = options.db.messages.getById(envelope.replyToMessageId)
+    if (repliedTo === undefined || repliedTo.phase !== 'request') {
+      return refused('response_request_unknown', true)
+    }
+    const acceptance = options.db.federationAcceptedRequests.get(envelope.replyToMessageId)
+    if (acceptance === undefined) {
+      return refused('response_request_not_accepted', true)
+    }
+    if (acceptance.acceptedByNodeId !== request.authenticatedNodeId) {
+      return refused('response_node_mismatch', false)
+    }
+
+    // Completion is fenced by the durable ACK provenance above, deliberately
+    // not by the current placement ledger. A response may arrive after either
+    // endpoint's scope has rebound; applying the request-placement fence here
+    // would turn an ordinary transport delay into transcript loss (§6).
+    if (options.db.messages.getById(envelope.messageId) !== undefined) {
+      return { outcome: 'duplicate', messageId: envelope.messageId }
+    }
+  } else {
+    // A prior durable request acceptance wins over a later placement change.
+    // This is the retry half of the insert-before-ACK crash contract.
+    if (options.db.messages.getById(envelope.messageId) !== undefined) {
+      return { outcome: 'duplicate', messageId: envelope.messageId }
+    }
   }
 
-  if (envelope.to.kind !== 'session') {
-    return { outcome: 'refused', code: 'session_target_required', retryable: false, status: 400 }
-  }
+  if (envelope.phase !== 'response') {
+    if (envelope.to.kind !== 'session') {
+      return { outcome: 'refused', code: 'session_target_required', retryable: false, status: 400 }
+    }
+    let scopeRef: string
+    try {
+      scopeRef = parseSessionRef(envelope.to.sessionRef).scopeRef
+    } catch {
+      return { outcome: 'refused', code: 'invalid_target', retryable: false, status: 400 }
+    }
 
-  let scopeRef: string
-  try {
-    scopeRef = parseSessionRef(envelope.to.sessionRef).scopeRef
-  } catch {
-    return { outcome: 'refused', code: 'invalid_target', retryable: false, status: 400 }
-  }
-
-  const placement = createPlacementLedgerRepository(options.db.sqlite).get(scopeRef)
-  if (placement === undefined) return refused('placement_unknown', true)
-  const current = {
-    homeNodeId: placement.homeNodeId,
-    placementEpoch: placement.placementEpoch,
-  }
-  if (placement.placementEpoch > envelope.expected.placementEpoch) {
-    return refused('stale_placement', true, current)
-  }
-  if (placement.placementEpoch < envelope.expected.placementEpoch) {
-    return refused('receiver_placement_stale', true)
-  }
-  if (
-    placement.state !== 'active' ||
-    placement.homeNodeId !== envelope.expected.homeNodeId ||
-    placement.homeNodeId !== options.localNodeId
-  ) {
-    return refused('placement_mismatch', true, current)
+    const placement = createPlacementLedgerRepository(options.db.sqlite).get(scopeRef)
+    if (placement === undefined) return refused('placement_unknown', true)
+    const current = {
+      homeNodeId: placement.homeNodeId,
+      placementEpoch: placement.placementEpoch,
+    }
+    if (placement.placementEpoch > envelope.expected.placementEpoch) {
+      return refused('stale_placement', true, current)
+    }
+    if (placement.placementEpoch < envelope.expected.placementEpoch) {
+      return refused('receiver_placement_stale', true)
+    }
+    if (
+      placement.state !== 'active' ||
+      placement.homeNodeId !== envelope.expected.homeNodeId ||
+      placement.homeNodeId !== options.localNodeId
+    ) {
+      return refused('placement_mismatch', true, current)
+    }
   }
 
   const inserted = options.db.messages.insertIdempotent({

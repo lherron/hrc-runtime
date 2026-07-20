@@ -268,11 +268,23 @@ export type WatchMessagesRequest = HrcMessageFilter & {
 // POST /v1/messages/wait (blocking)
 export type WaitMessageRequest = HrcMessageFilter & {
   timeoutMs?: number | undefined
+  /**
+   * Optional local federation outbox row to observe alongside the message
+   * filter. This never crosses the peer HTTP boundary.
+   */
+  deliveryMessageId?: string | undefined
 }
 
 export type WaitMessageResponse =
   | { matched: true; record: HrcMessageRecord }
   | { matched: false; reason: 'timeout' }
+  | {
+      matched: false
+      reason: 'delivery_failed'
+      messageId: string
+      errorCode: string
+      errorMessage?: string | undefined
+    }
 
 // POST /v1/messages/dm (atomic semantic DM helper)
 export type SemanticDmRequest = {

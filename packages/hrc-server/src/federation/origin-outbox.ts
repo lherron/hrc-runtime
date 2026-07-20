@@ -36,7 +36,14 @@ export type FederationOriginRouteResult =
   | { outcome: 'local' }
   | { outcome: 'queued'; delivery: FederationOutboxDeliveryRecord }
 
-function deliveryContext(body: SemanticDmRequest): FederationMessageDelivery | undefined {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function deliveryContext(
+  body: SemanticDmRequest | undefined
+): FederationMessageDelivery | undefined {
+  if (body === undefined) return undefined
   const context: FederationMessageDelivery = {
     ...(body.runtimeIntent === undefined ? {} : { runtimeIntent: body.runtimeIntent }),
     ...(body.createIfMissing === undefined ? {} : { createIfMissing: body.createIfMissing }),
@@ -52,7 +59,7 @@ function deliveryContext(body: SemanticDmRequest): FederationMessageDelivery | u
 
 function envelopeFor(
   record: HrcMessageRecord,
-  body: SemanticDmRequest,
+  body: SemanticDmRequest | undefined,
   expected: { homeNodeId: string; placementEpoch: number }
 ): FederationMessageEnvelope {
   const delivery = deliveryContext(body)
@@ -130,6 +137,12 @@ export class FederationOriginOutbox {
     body: SemanticDmRequest,
     record: HrcMessageRecord
   ): Promise<FederationOriginRouteResult> {
+    const responseRoute = this.responseRoute(record)
+    if (responseRoute !== undefined) {
+      return this.enqueue(record, undefined, responseRoute.peerNodeId, responseRoute.expected, {
+        responseFence: true,
+      })
+    }
     if (record.to.kind !== 'session') return { outcome: 'local' }
     const scopeRef = parseSessionRef(record.to.sessionRef).scopeRef
     const binding = await resolveFederationRoutingBinding({
@@ -140,19 +153,70 @@ export class FederationOriginOutbox {
     })
     if (binding.homeNodeId === this.options.config.nodeId) return { outcome: 'local' }
 
+    return this.enqueue(record, body, binding.homeNodeId, binding, {
+      routingSource: binding.source,
+    })
+  }
+
+  /** Route a daemon-generated response after local turn finalization. */
+  async routeResponse(record: HrcMessageRecord): Promise<FederationOriginRouteResult> {
+    const route = this.responseRoute(record)
+    if (route === undefined) return { outcome: 'local' }
+    return this.enqueue(record, undefined, route.peerNodeId, route.expected, {
+      responseFence: true,
+    })
+  }
+
+  private responseRoute(record: HrcMessageRecord):
+    | {
+        peerNodeId: string
+        expected: { homeNodeId: string; placementEpoch: number }
+      }
+    | undefined {
+    if (record.phase !== 'response' || record.replyToMessageId === undefined) return undefined
+    const request = this.options.db.messages.getById(record.replyToMessageId)
+    const ingress = request?.metadataJson?.['federationIngress']
+    if (!isRecord(ingress)) return undefined
+    const authenticatedNodeId = ingress['authenticatedNodeId']
+    const expected = ingress['expected']
+    if (
+      typeof authenticatedNodeId !== 'string' ||
+      !isRecord(expected) ||
+      typeof expected['homeNodeId'] !== 'string' ||
+      !Number.isSafeInteger(expected['placementEpoch']) ||
+      (expected['placementEpoch'] as number) < 1
+    ) {
+      return undefined
+    }
+    return {
+      peerNodeId: authenticatedNodeId,
+      expected: {
+        homeNodeId: expected['homeNodeId'],
+        placementEpoch: expected['placementEpoch'] as number,
+      },
+    }
+  }
+
+  private enqueue(
+    record: HrcMessageRecord,
+    body: SemanticDmRequest | undefined,
+    peerNodeId: string,
+    expected: { homeNodeId: string; placementEpoch: number },
+    log: { routingSource?: string | undefined; responseFence?: boolean | undefined }
+  ): FederationOriginRouteResult {
     const delivery = this.options.db.federationOutbox.enqueue({
       deliveryId: `delivery-${randomUUID()}`,
       messageId: record.messageId,
-      peerNodeId: binding.homeNodeId,
-      envelope: envelopeFor(record, body, binding),
+      peerNodeId,
+      envelope: envelopeFor(record, body, expected),
       now: new Date().toISOString(),
     })
     writeServerLog('INFO', 'federation.outbox.queued', {
       deliveryId: delivery.deliveryId,
       messageId: delivery.messageId,
-      peerNodeId: delivery.peerNodeId,
-      placementEpoch: binding.placementEpoch,
-      routingSource: binding.source,
+      peerNodeId,
+      placementEpoch: expected.placementEpoch,
+      ...log,
     })
     void this.engine.drainDue().catch((error: unknown) =>
       writeServerLog('WARN', 'federation.outbox.immediate_drain_failed', {

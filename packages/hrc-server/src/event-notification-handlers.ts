@@ -353,6 +353,14 @@ export function finalizeSemanticTurnResponse(
     },
   })
 
+  void this.federationOriginOutbox?.routeResponse(response).catch((error: unknown) => {
+    writeServerLog('WARN', 'federation.response.queue_failed', {
+      responseMessageId: response.messageId,
+      requestMessageId: request.messageId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
+
   this.db.messages.updateExecution(request.messageId, {
     state: failed ? 'failed' : 'completed',
     ...(event.errorCode ? { errorCode: event.errorCode } : {}),
