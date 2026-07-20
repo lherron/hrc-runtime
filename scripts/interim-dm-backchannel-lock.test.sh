@@ -22,10 +22,10 @@ cleanup() {
 trap cleanup EXIT
 
 printf '# no routes in lock test\n' > "${test_dir}/routes.tsv"
-BACKCHANNEL_NODE=svc BACKCHANNEL_DIR="$test_dir" "$bridge" init >/dev/null
+BACKCHANNEL_NODE=max3 BACKCHANNEL_DIR="$test_dir" "$bridge" init >/dev/null
 
 start_poller() {
-  BACKCHANNEL_NODE=svc BACKCHANNEL_DIR="$test_dir" BACKCHANNEL_POLL_SECONDS=0.1 \
+  BACKCHANNEL_NODE=max3 BACKCHANNEL_DIR="$test_dir" BACKCHANNEL_POLL_SECONDS=0.1 \
     "$bridge" poll >"${test_dir}/poller-$1.log" 2>&1 &
   STARTED_PID=$!
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# INTERIM svc<->lab DM backchannel. REMOVE WHEN T-06622 LANDS.
+# INTERIM svc hub DM backchannel.
+# DEMOTE svc<->lab TO BREAK-GLASS AT T-06622; svc<->max3 AT T-06672.
 #
 # This deliberately small bridge polls one HRC message store, matches only
 # explicit routes, and injects matching DMs into the other store over SSH.
@@ -16,7 +17,7 @@ usage() {
 usage: interim-dm-backchannel.sh init|once|poll|inject <origin-node> <target> <from-kind> <from-value>
 
 poller environment:
-  BACKCHANNEL_NODE          local node name (svc or lab)
+  BACKCHANNEL_NODE          local node name (svc, lab, or max3)
   BACKCHANNEL_DIR           runtime directory (default: ~/praesidium/var/backchannel)
   BACKCHANNEL_ROUTES        static route table (default: $BACKCHANNEL_DIR/routes.tsv)
   BACKCHANNEL_CURSOR        cursor file (default: $BACKCHANNEL_DIR/cursor)
@@ -24,6 +25,7 @@ poller environment:
   BACKCHANNEL_BATCH_SIZE    messages per query (default: 100)
   BACKCHANNEL_REMOTE_SVC    SSH target for svc (default: lherron@localhost)
   BACKCHANNEL_REMOTE_LAB    SSH target for lab (default: lab@localhost)
+  BACKCHANNEL_REMOTE_MAX3   SSH target for max3 (default: lherron@max3)
   BACKCHANNEL_SSH_IDENTITY  optional private key for the outgoing SSH leg
   BACKCHANNEL_REMOTE_SCRIPT remote script path override
   HRCCHAT                   local hrcchat binary (default: command lookup)
@@ -69,8 +71,8 @@ remote_script="${BACKCHANNEL_REMOTE_SCRIPT:-}"
 command -v jq >/dev/null 2>&1 || die "jq is not available"
 
 ensure_poller_config() {
-  [[ "$local_node" == "svc" || "$local_node" == "lab" ]] ||
-    die "BACKCHANNEL_NODE must be svc or lab"
+  [[ "$local_node" == "svc" || "$local_node" == "lab" || "$local_node" == "max3" ]] ||
+    die "BACKCHANNEL_NODE must be svc, lab, or max3"
   [[ -r "$routes_file" ]] || die "route table is not readable: $routes_file"
   mkdir -p "$backchannel_dir"
 }
@@ -104,7 +106,8 @@ route_for_target() {
   while IFS=$'\t' read -r pattern node _rest; do
     [[ -z "$pattern" || "${pattern:0:1}" == "#" ]] && continue
     [[ -n "$node" && -z "${_rest:-}" ]] || die "invalid route row in $routes_file"
-    [[ "$node" == "svc" || "$node" == "lab" ]] || die "invalid route node '$node'"
+    [[ "$node" == "svc" || "$node" == "lab" || "$node" == "max3" ]] ||
+      die "invalid route node '$node'"
 
     if [[ "$target" == $pattern ]]; then
       [[ -z "$matched" ]] || die "target matches multiple routes: $target"
@@ -119,6 +122,7 @@ remote_for_node() {
   case "$1" in
     svc) printf '%s\n' "${BACKCHANNEL_REMOTE_SVC:-lherron@localhost}" ;;
     lab) printf '%s\n' "${BACKCHANNEL_REMOTE_LAB:-lab@localhost}" ;;
+    max3) printf '%s\n' "${BACKCHANNEL_REMOTE_MAX3:-lherron@max3}" ;;
     *) die "unsupported remote node: $1" ;;
   esac
 }
@@ -146,6 +150,7 @@ script_for_node() {
   case "$node" in
     svc) printf '%s\n' '/Users/lherron/praesidium/var/backchannel/interim-dm-backchannel.sh' ;;
     lab) printf '%s\n' '/Users/lab/praesidium/var/backchannel/interim-dm-backchannel.sh' ;;
+    max3) printf '%s\n' '/Users/lherron/praesidium/var/backchannel/interim-dm-backchannel.sh' ;;
     *) die "unsupported remote node: $node" ;;
   esac
 }
@@ -157,7 +162,8 @@ inject_message() {
   local from_value="${4:-}"
   local body prefixed output status
 
-  [[ "$origin_node" == "svc" || "$origin_node" == "lab" ]] || die "invalid origin node"
+  [[ "$origin_node" == "svc" || "$origin_node" == "lab" || "$origin_node" == "max3" ]] ||
+    die "invalid origin node"
   [[ -n "$target" ]] || die "inject requires a target"
   body="$(cat)"
   prefixed="[backchannel from ${origin_node}] ${body}"

@@ -1,10 +1,7 @@
-# INTERIM svc hub DM backchannel routes.
-# DEMOTE svc<->lab TO BREAK-GLASS AT T-06622; svc<->max3 AT T-06672.
+# INTERIM svc<->max3 DM backchannel routes. DEMOTE TO BREAK-GLASS AT T-06672.
 # <canonical recipient session-ref shell glob><TAB><node>
+# Direct svc<->max3 only: lab routes are intentionally absent on max3.
 agent:*:project:hrc-runtime:task:minisvc/lane:*	svc
-agent:*:project:hrc-runtime:task:minilab/lane:*	lab
-# max3 has the established estate, so its routes are explicit live scopes.
-# Deliberately omit colliding scope refs that also exist on svc.
 agent:cody:project:hrc-runtime:task:T-06584/lane:*	max3
 agent:fettle:project:agent-control-plane:task:T-06589/lane:*	max3
 agent:cody:project:archagent:task:primary/lane:*	max3
