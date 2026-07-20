@@ -171,6 +171,7 @@ export async function ensureTargetSession(
         scopeRef: parseSessionRef(normalized).scopeRef,
         path: 'archived-successor',
         intent: 'implicit',
+        capabilityHint: { placement: intent.placement, harness: intent.harness },
       })
       const successor = createSessionSuccessorFromContinuation(this.db, existing, {
         lastAppliedIntentJson: intent,
@@ -195,7 +196,12 @@ export async function ensureTargetSession(
   }
 
   const { scopeRef, laneRef } = parseSessionRef(normalized)
-  await assertSummonAuthority(this, { scopeRef, path: 'ensure-target', intent: 'implicit' })
+  await assertSummonAuthority(this, {
+    scopeRef,
+    path: 'ensure-target',
+    intent: 'implicit',
+    capabilityHint: { placement: intent.placement, harness: intent.harness },
+  })
 
   const now = timestamp()
   const hostSessionId = createHostSessionId()

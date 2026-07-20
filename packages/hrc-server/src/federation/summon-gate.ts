@@ -28,9 +28,10 @@
 
 import { parseScopeRef } from 'agent-scope'
 import type { EstablishmentProvenance, PlacementLedgerRepository } from 'hrc-store-sqlite'
+import type { RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
-import type { SummonIntent } from 'hrc-core'
+import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'
 
 import { isReservedNodeId } from './node-id.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
@@ -100,6 +101,38 @@ export type SummonGateRefuseReason =
   | 'policy-unavailable'
   | 'registry-unreachable'
   | 'registry-refused'
+  | `capability-${SummonCapabilityName}-missing`
+  | 'capability-observation-failed'
+
+/** Node-local facts required to materialize an agent scope (§5). */
+export type SummonCapabilityName =
+  | 'project-checkout'
+  | 'agent-home-skills'
+  | 'credentials'
+  | 'harness'
+
+/**
+ * Observation made only after this node has summon authority.
+ *
+ * Capability is deliberately unable to name another node or return authority:
+ * it can preserve the authority decision or turn it into a visible refusal,
+ * never grant, move, or route authority.
+ */
+export type SummonCapabilityObservation =
+  | { outcome: 'capable' }
+  | {
+      outcome: 'incapable'
+      capability: SummonCapabilityName
+      diagnostic: string
+      retryable?: boolean | undefined
+      capabilitySource?: 'presence-heuristic' | undefined
+    }
+
+/** Materialization inputs already resolved by an ingress such as hrcchat. */
+export type SummonCapabilityHint = {
+  placement?: RuntimePlacement | undefined
+  harness?: HrcHarnessIntent | undefined
+}
 
 export type SummonGateEvaluation =
   | {
@@ -116,6 +149,8 @@ export type SummonGateEvaluation =
       /** Operator-facing text. Always names the next action. */
       diagnostic: string
       homeNodeId?: string | undefined
+      capability?: SummonCapabilityName | undefined
+      capabilitySource?: 'presence-heuristic' | undefined
     }
 
 export type SummonGateResult = {
@@ -149,6 +184,13 @@ export type SummonGateDeps = {
    * undeclared-placement signal for legacy profiles.
    */
   policyFor: (scopeRef: string) => Promise<SummonGatePolicy | undefined>
+  /** Observes node-local materialization facts after authority allows. */
+  capabilityFor?:
+    | ((
+        scopeRef: string,
+        hint?: SummonCapabilityHint | undefined
+      ) => Promise<SummonCapabilityObservation>)
+    | undefined
   /** Node-local retirement lookup (T-06614). Absent until that task lands. */
   retirementFor?: ((scopeRef: string) => ScopeRetirement | undefined) | undefined
   log?: SummonGateLog | undefined
@@ -159,6 +201,7 @@ export type SummonGateRequest = {
   path: SummonPath
   intent: SummonIntent
   deps: SummonGateDeps
+  capabilityHint?: SummonCapabilityHint | undefined
 }
 
 /**
@@ -184,14 +227,19 @@ function allow(
     homeNodeId?: string
     establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'>
   } = {}
-): SummonGateEvaluation {
+): Extract<SummonGateEvaluation, { decision: 'allow' }> {
   return { decision: 'allow', reason, ...extra }
 }
 
 function refuse(
   reason: SummonGateRefuseReason,
   diagnostic: string,
-  options: { retryable?: boolean; homeNodeId?: string } = {}
+  options: {
+    retryable?: boolean
+    homeNodeId?: string
+    capability?: SummonCapabilityName
+    capabilitySource?: 'presence-heuristic'
+  } = {}
 ): SummonGateEvaluation {
   return {
     decision: 'refuse',
@@ -199,7 +247,44 @@ function refuse(
     retryable: options.retryable ?? false,
     diagnostic,
     ...(options.homeNodeId === undefined ? {} : { homeNodeId: options.homeNodeId }),
+    ...(options.capability === undefined ? {} : { capability: options.capability }),
+    ...(options.capabilitySource === undefined
+      ? {}
+      : { capabilitySource: options.capabilitySource }),
   }
+}
+
+async function requireMaterializationCapability(
+  request: SummonGateRequest,
+  authority: Extract<SummonGateEvaluation, { decision: 'allow' }>
+): Promise<SummonGateEvaluation> {
+  const observer = request.deps.capabilityFor
+  // Compatibility for direct unit consumers while the server always injects
+  // the real observer. Absence cannot occur on a configured production daemon.
+  if (observer === undefined) return authority
+
+  let observation: SummonCapabilityObservation
+  try {
+    observation = await observer(request.scopeRef, request.capabilityHint)
+  } catch (error) {
+    return refuse(
+      'capability-observation-failed',
+      `Could not observe materialization capability for ${request.scopeRef}: ${error instanceof Error ? error.message : String(error)}. Refusing rather than silently rerouting or assuming this node is capable.`,
+      {
+        retryable: true,
+        ...(authority.homeNodeId === undefined ? {} : { homeNodeId: authority.homeNodeId }),
+      }
+    )
+  }
+
+  if (observation.outcome === 'capable') return authority
+
+  return refuse(`capability-${observation.capability}-missing`, observation.diagnostic, {
+    retryable: observation.retryable ?? false,
+    ...(authority.homeNodeId === undefined ? {} : { homeNodeId: authority.homeNodeId }),
+    capability: observation.capability,
+    capabilitySource: observation.capabilitySource ?? 'presence-heuristic',
+  })
 }
 
 /**
@@ -336,7 +421,10 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   const local = deps.ledger.activeAuthority(scopeRef)
   if (local !== undefined) {
     if (local.homeNodeId === deps.localNodeId) {
-      return allow('local-authority', { homeNodeId: local.homeNodeId })
+      return await requireMaterializationCapability(
+        request,
+        allow('local-authority', { homeNodeId: local.homeNodeId })
+      )
     }
     return refuse(
       'bound-elsewhere',
@@ -372,7 +460,10 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     if (bound.homeNodeId === deps.localNodeId) {
       // Registered here but no local row: the crash window in registry-first
       // establishment. Converging is correct; this is not a virgin birth.
-      return allow('registry-bound-local', { homeNodeId: bound.homeNodeId })
+      return await requireMaterializationCapability(
+        request,
+        allow('registry-bound-local', { homeNodeId: bound.homeNodeId })
+      )
     }
     return refuse(
       'bound-elsewhere',
@@ -397,10 +488,13 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   if (isEvaluation(designated)) return designated
 
   if (designated.homeNodeId === deps.localNodeId) {
-    return allow('virgin-establishment', {
-      homeNodeId: designated.homeNodeId,
-      establishmentProvenance: designated.provenance,
-    })
+    return await requireMaterializationCapability(
+      request,
+      allow('virgin-establishment', {
+        homeNodeId: designated.homeNodeId,
+        establishmentProvenance: designated.provenance,
+      })
+    )
   }
 
   if (designated.provenance === 'pin') {
@@ -462,6 +556,10 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
       retryable: evaluation.retryable,
       localNodeId: deps.localNodeId,
       ...(evaluation.homeNodeId === undefined ? {} : { homeNodeId: evaluation.homeNodeId }),
+      ...(evaluation.capability === undefined ? {} : { capability: evaluation.capability }),
+      ...(evaluation.capabilitySource === undefined
+        ? {}
+        : { capability_source: evaluation.capabilitySource }),
       intent: request.intent,
       // Retained after T-06609 so soak records stay self-describing: a line
       // reading `legacy-boolean` came from the T-06608 derivation, a line

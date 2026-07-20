@@ -22,7 +22,10 @@ import { writeServerLog } from '../server-log.js'
 import type { FederationConfig } from './federation-config.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { RegistryUnreachableError, createBindingRegistryClient } from './registry-client.js'
+import { createSummonCapabilityObserver } from './summon-capability.js'
 import {
+  type SummonCapabilityHint,
+  type SummonCapabilityObservation,
   type SummonGateDeps,
   type SummonGatePolicy,
   type SummonGateResult,
@@ -98,6 +101,13 @@ export type SummonGateServerContext = {
   /** Injected by tests; production builds one from the federation config. */
   readonly registryClient?: BindingRegistryClient | undefined
   readonly policyFor?: ((scopeRef: string) => Promise<SummonGatePolicy | undefined>) | undefined
+  /** Injected by tests; production observes the node's real filesystem/env. */
+  readonly capabilityFor?:
+    | ((
+        scopeRef: string,
+        hint?: SummonCapabilityHint | undefined
+      ) => Promise<SummonCapabilityObservation>)
+    | undefined
 }
 
 const gateDepsCache = new WeakMap<object, SummonGateDeps | undefined>()
@@ -120,6 +130,7 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
     // spaces-config on this path, treating policy as undeclared produces a
     // VISIBLE refusal naming the stanza line — never a silent local fallback.
     policyFor: server.policyFor ?? (async () => undefined),
+    capabilityFor: server.capabilityFor ?? createSummonCapabilityObserver(),
     log: writeServerLog,
   }
 }
@@ -150,12 +161,18 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
  * Separating those two is the entire reason the typed field exists.
  */
 export type SummonAuthorityRequest =
-  | { scopeRef: string; path: 'resolve-session'; intent: SummonIntent }
+  | {
+      scopeRef: string
+      path: 'resolve-session'
+      intent: SummonIntent
+      capabilityHint?: SummonCapabilityHint | undefined
+    }
   | {
       scopeRef: string
       path: Exclude<SummonPath, 'resolve-session'>
       /** Absent ⇒ `implicit`; `implicit` is the only value these paths accept. */
       intent?: 'implicit' | undefined
+      capabilityHint?: SummonCapabilityHint | undefined
     }
 
 /**
@@ -179,6 +196,7 @@ export async function assertSummonAuthority(
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
     deps,
+    ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
   })
 
   if (result.enforced && result.evaluation.decision === 'refuse') {
@@ -190,6 +208,12 @@ export async function assertSummonAuthority(
       ...(result.evaluation.homeNodeId === undefined
         ? {}
         : { homeNodeId: result.evaluation.homeNodeId }),
+      ...(result.evaluation.capability === undefined
+        ? {}
+        : { capability: result.evaluation.capability }),
+      ...(result.evaluation.capabilitySource === undefined
+        ? {}
+        : { capability_source: result.evaluation.capabilitySource }),
     })
   }
 

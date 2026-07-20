@@ -203,6 +203,14 @@ export async function handleCreateSessionSuccessor(
     scopeRef: prior.scopeRef,
     path: 'archived-successor',
     intent: 'implicit',
+    ...(prior.lastAppliedIntentJson === undefined
+      ? {}
+      : {
+          capabilityHint: {
+            placement: prior.lastAppliedIntentJson.placement,
+            harness: prior.lastAppliedIntentJson.harness,
+          },
+        }),
   })
 
   const successor = createSessionSuccessorFromContinuation(this.db, prior)
@@ -397,10 +405,19 @@ async function createNotifiedSessionSuccessor(
   parsedScopeJson: Record<string, unknown> | undefined
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
+  const capabilityIntent = intent ?? session.lastAppliedIntentJson
   await assertSummonAuthority(server, {
     scopeRef: session.scopeRef,
     path: 'archived-successor',
     intent: 'implicit',
+    ...(capabilityIntent === undefined
+      ? {}
+      : {
+          capabilityHint: {
+            placement: capabilityIntent.placement,
+            harness: capabilityIntent.harness,
+          },
+        }),
   })
 
   const successor = createSessionSuccessorFromContinuation(server.db, session, {
