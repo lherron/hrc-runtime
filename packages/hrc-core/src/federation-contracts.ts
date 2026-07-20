@@ -30,6 +30,7 @@ export type FederationBirthClass = 'policy-born' | 'mechanism-born'
  */
 export type EstablishmentProvenance =
   | 'pin'
+  | 'task_default'
   | 'default_home_node'
   | 'default_home_node(local)'
   | 'explicit_local'

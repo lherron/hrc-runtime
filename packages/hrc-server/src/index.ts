@@ -77,7 +77,10 @@ import {
   resolveBindingRegistryPath,
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
-import { assertSummonAuthority } from './federation/summon-gate-server.js'
+import {
+  assertSummonAuthority,
+  repairLiveUnboundPlacements,
+} from './federation/summon-gate-server.js'
 import {
   type GhostmuxManagerOptions,
   HEADLESS_VIEWER_SURFACE_KIND,
@@ -1633,6 +1636,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
   const lockHandle = await acquireServerLock(resolvedOptions)
   let shouldCleanupSocket = false
   let db: HrcDatabase | undefined
+  let server: HrcServerInstance | undefined
 
   try {
     // Node identity resolves before anything else in the boot: a malformed
@@ -1669,21 +1673,29 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       reconcileGhostty: claudeGhosttyEnabled,
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
-    writeServerLog('INFO', 'server.start.ready', logCtx)
-    return new HrcServerInstance(
+    server = new HrcServerInstance(
       { ...resolvedOptions, federationConfig },
       db,
       tmux,
       ghostmux,
       lockHandle
     )
+    await repairLiveUnboundPlacements(server)
+    writeServerLog('INFO', 'server.start.ready', logCtx)
+    return server
   } catch (error) {
     writeServerLog('ERROR', 'server.start.failed', {
       ...logCtx,
       error,
     })
-    db?.close()
-    await cleanupFailedStartup(resolvedOptions, lockHandle, shouldCleanupSocket)
+    if (server !== undefined) {
+      await server.stop()
+      db = undefined
+      shouldCleanupSocket = false
+    } else {
+      db?.close()
+      await cleanupFailedStartup(resolvedOptions, lockHandle, shouldCleanupSocket)
+    }
     throw error
   }
 }

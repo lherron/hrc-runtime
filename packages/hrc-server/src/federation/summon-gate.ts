@@ -414,7 +414,7 @@ function resolveDesignatedHome(
     }
     return {
       homeNodeId: taskDefault,
-      provenance: 'pin',
+      provenance: 'task_default',
       matchedConstraint: { kind: 'task-default', key: taskDefaultKey },
     }
   }

@@ -14,11 +14,17 @@
  */
 
 import { HrcConflictError, HrcErrorCode } from 'hrc-core'
-import type { SummonIntent } from 'hrc-core'
+import type {
+  BirthAuthorityProvenance,
+  EstablishmentProvenance,
+  FederationBirthClass,
+  SummonIntent,
+} from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
+import { isRuntimeUnavailableStatus } from '../server-util.js'
 import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
@@ -132,6 +138,85 @@ export type SummonAuthorityRequest = (
   capabilityHint?: SummonCapabilityHint | undefined
 }
 
+async function commitAuthorizedEstablishment(input: {
+  deps: SummonGateDeps
+  request: SummonAuthorityRequest
+  mode: SummonGateResult['mode']
+  homeNodeId: string
+  birthClass: FederationBirthClass
+  authorityProvenance: BirthAuthorityProvenance
+  establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
+  label: 'policy' | 'child-birth'
+}): Promise<void> {
+  let established: Awaited<ReturnType<typeof establishLocalPlacement>>
+  try {
+    established = await establishLocalPlacement({
+      registry: input.deps.registry,
+      ledger: input.deps.ledger,
+      request: {
+        scopeRef: input.request.scopeRef,
+        homeNodeId: input.homeNodeId,
+        birthClass: input.birthClass,
+        authorityProvenance: input.authorityProvenance,
+        establishmentProvenance: input.establishmentProvenance,
+        now: new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    const refused = error instanceof RegistryRefusedError
+    const detail = error instanceof Error ? error.message : String(error)
+    const reason = refused ? 'registry-refused' : 'registry-unreachable'
+    const retryable = !refused
+    const diagnostic = refused
+      ? `The binding registry refused ${input.label} establishment for ${input.request.scopeRef} (${detail}). Check this node's peer entry and bearer token in federation.json.`
+      : `Cannot establish ${input.label} authority for ${input.request.scopeRef} at the binding registry (${detail}). Refusing to mint without a collective binding; retry once the registry is reachable.`
+    writeServerLog('WARN', 'federation.summon_gate.refusal', {
+      path: input.request.path,
+      scopeRef: input.request.scopeRef,
+      reason,
+      wouldBeDecision: 'refuse',
+      enforced: true,
+      mode: input.mode,
+      retryable,
+      localNodeId: input.deps.localNodeId,
+      intent: input.request.intent,
+      birthCredentialPresent: input.request.birthCredential !== undefined,
+      diagnostic,
+    })
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+      scopeRef: input.request.scopeRef,
+      path: input.request.path,
+      reason,
+      retryable,
+    })
+  }
+
+  if (established.outcome === 'bound-elsewhere') {
+    const diagnostic = `${input.request.scopeRef} became bound on ${established.binding.homeNodeId} while ${input.label} establishment was being committed on ${input.deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`
+    writeServerLog('WARN', 'federation.summon_gate.refusal', {
+      path: input.request.path,
+      scopeRef: input.request.scopeRef,
+      reason: 'bound-elsewhere',
+      wouldBeDecision: 'refuse',
+      enforced: true,
+      mode: input.mode,
+      retryable: false,
+      localNodeId: input.deps.localNodeId,
+      homeNodeId: established.binding.homeNodeId,
+      intent: input.request.intent,
+      birthCredentialPresent: input.request.birthCredential !== undefined,
+      diagnostic,
+    })
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+      scopeRef: input.request.scopeRef,
+      path: input.request.path,
+      reason: 'bound-elsewhere',
+      retryable: false,
+      homeNodeId: established.binding.homeNodeId,
+    })
+  }
+}
+
 /**
  * Asks the gate whether this node may summon `scopeRef`, and enforces the
  * answer only when the flag says to.
@@ -190,83 +275,132 @@ export async function assertSummonAuthority(
 
   if (
     result.evaluation.decision === 'allow' &&
+    result.evaluation.reason === 'virgin-establishment' &&
+    result.evaluation.homeNodeId !== undefined &&
+    result.evaluation.establishmentProvenance !== undefined
+  ) {
+    const source = result.evaluation.establishmentProvenance
+    await commitAuthorizedEstablishment({
+      deps,
+      request,
+      mode: result.mode,
+      homeNodeId: result.evaluation.homeNodeId,
+      birthClass: 'policy-born',
+      authorityProvenance: { kind: 'policy', source },
+      establishmentProvenance: source,
+      label: 'policy',
+    })
+  }
+
+  if (
+    result.evaluation.decision === 'allow' &&
     result.evaluation.reason === 'child-birth' &&
     result.evaluation.homeNodeId !== undefined &&
     result.evaluation.authorityProvenance !== undefined
   ) {
-    let established: Awaited<ReturnType<typeof establishLocalPlacement>>
-    try {
-      established = await establishLocalPlacement({
-        registry: deps.registry,
-        ledger: deps.ledger,
-        request: {
-          scopeRef: request.scopeRef,
-          homeNodeId: result.evaluation.homeNodeId,
-          birthClass: 'mechanism-born',
-          authorityProvenance: result.evaluation.authorityProvenance,
-          // Establishment provenance is descriptive for policy-born scopes. The
-          // mechanism's exact chain lives in authorityProvenance; this existing
-          // value is the registry schema's local one-shot establishment marker.
-          establishmentProvenance: 'explicit_local',
-          now: new Date().toISOString(),
-        },
-      })
-    } catch (error) {
-      const refused = error instanceof RegistryRefusedError
-      const detail = error instanceof Error ? error.message : String(error)
-      const reason = refused ? 'registry-refused' : 'registry-unreachable'
-      const retryable = !refused
-      const diagnostic = refused
-        ? `The binding registry refused child-birth establishment for ${request.scopeRef} (${detail}). Check this node's peer entry and bearer token in federation.json.`
-        : `Cannot establish child-birth authority for ${request.scopeRef} at the binding registry (${detail}). Refusing to mint without a collective binding; retry once the registry is reachable.`
-      writeServerLog('WARN', 'federation.summon_gate.refusal', {
-        path: request.path,
-        scopeRef: request.scopeRef,
-        reason,
-        wouldBeDecision: 'refuse',
-        enforced: true,
-        mode: result.mode,
-        retryable,
-        localNodeId: deps.localNodeId,
-        intent: request.intent,
-        birthCredentialPresent: true,
-        diagnostic,
-      })
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
-        scopeRef: request.scopeRef,
-        path: request.path,
-        reason,
-        retryable,
-      })
-    }
-
-    if (established.outcome === 'bound-elsewhere') {
-      const diagnostic = `${request.scopeRef} became bound on ${established.binding.homeNodeId} while child-birth was being established on ${deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`
-      writeServerLog('WARN', 'federation.summon_gate.refusal', {
-        path: request.path,
-        scopeRef: request.scopeRef,
-        reason: 'bound-elsewhere',
-        wouldBeDecision: 'refuse',
-        enforced: true,
-        mode: result.mode,
-        retryable: false,
-        localNodeId: deps.localNodeId,
-        homeNodeId: established.binding.homeNodeId,
-        intent: request.intent,
-        birthCredentialPresent: true,
-        diagnostic,
-      })
-      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
-        scopeRef: request.scopeRef,
-        path: request.path,
-        reason: 'bound-elsewhere',
-        retryable: false,
-        homeNodeId: established.binding.homeNodeId,
-      })
-    }
+    await commitAuthorizedEstablishment({
+      deps,
+      request,
+      mode: result.mode,
+      homeNodeId: result.evaluation.homeNodeId,
+      birthClass: 'mechanism-born',
+      authorityProvenance: result.evaluation.authorityProvenance,
+      // Establishment provenance is descriptive for policy-born scopes. The
+      // mechanism's exact chain lives in authorityProvenance; this existing
+      // value is the registry schema's local one-shot establishment marker.
+      establishmentProvenance: 'explicit_local',
+      label: 'child-birth',
+    })
   }
 
   return result
+}
+
+export type LivePlacementRepairSummary = {
+  scanned: number
+  repaired: number
+  alreadyBound: number
+  unresolved: number
+}
+
+/**
+ * Rollout repair for T-06697's already-running unbound policy births.
+ *
+ * Existing-session delivery does not re-enter the summon gate. Before a
+ * restarted daemon is reported ready, replay every locally live agent scope
+ * through the implicit policy path. The normal gate remains the sole decision
+ * authority, and the normal registry-first commit remains the sole writer.
+ */
+export async function repairLiveUnboundPlacements(
+  server: SummonGateServerContext
+): Promise<LivePlacementRepairSummary> {
+  const summary: LivePlacementRepairSummary = {
+    scanned: 0,
+    repaired: 0,
+    alreadyBound: 0,
+    unresolved: 0,
+  }
+  const sessionsByScope = new Map<
+    string,
+    NonNullable<ReturnType<HrcDatabase['sessions']['getByHostSessionId']>>
+  >()
+  for (const runtime of server.db.runtimes.listAll()) {
+    if (isRuntimeUnavailableStatus(runtime.status) || !runtime.scopeRef.startsWith('agent:')) {
+      continue
+    }
+    const session = server.db.sessions.getByHostSessionId(runtime.hostSessionId)
+    if (session?.status === 'active') sessionsByScope.set(runtime.scopeRef, session)
+  }
+  if (sessionsByScope.size === 0) return summary
+
+  const deps = gateDepsFor(server)
+  if (deps === undefined) return summary
+
+  for (const [scopeRef, session] of sessionsByScope) {
+    summary.scanned += 1
+    if (deps.ledger.activeAuthority(scopeRef) !== undefined) {
+      summary.alreadyBound += 1
+      continue
+    }
+
+    await assertSummonAuthority(server, {
+      scopeRef,
+      path: 'ensure-target',
+      intent: 'implicit',
+      ...(session.lastAppliedIntentJson === undefined
+        ? {}
+        : {
+            capabilityHint: {
+              placement: session.lastAppliedIntentJson.placement,
+              harness: session.lastAppliedIntentJson.harness,
+            },
+          }),
+    })
+
+    const repaired = deps.ledger.activeAuthority(scopeRef)
+    if (repaired?.homeNodeId === deps.localNodeId) {
+      summary.repaired += 1
+      continue
+    }
+
+    summary.unresolved += 1
+    writeServerLog('WARN', 'federation.placement_repair.unresolved', {
+      scopeRef,
+      localNodeId: deps.localNodeId,
+      mode: deps.mode,
+    })
+    if (deps.mode === 'enforce') {
+      throw new Error(
+        `live placement repair left ${scopeRef} without local collective authority on ${deps.localNodeId}`
+      )
+    }
+  }
+
+  writeServerLog('INFO', 'federation.placement_repair.completed', {
+    localNodeId: deps.localNodeId,
+    ...summary,
+  })
+  return summary
 }
 
 /**

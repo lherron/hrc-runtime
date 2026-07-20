@@ -229,6 +229,7 @@ function ensurePlacementLedgerSchema(db: Database): void {
       establishment_provenance TEXT NOT NULL CHECK (
         establishment_provenance IN (
           'pin',
+          'task_default',
           'default_home_node',
           'default_home_node(local)',
           'explicit_local',
@@ -240,6 +241,45 @@ function ensurePlacementLedgerSchema(db: Database): void {
       updated_at TEXT NOT NULL
     );
   `)
+
+  const schema = db
+    .query<{ sql: string }, [string]>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
+    )
+    .get('placement_ledger')?.sql
+  if (schema?.includes("'task_default'")) return
+
+  // T-06697 widens a CHECK-constrained vocabulary. SQLite cannot alter a
+  // CHECK in place, so preserve every row while rebuilding the table once.
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE placement_ledger RENAME TO placement_ledger_legacy_t06697;
+      CREATE TABLE placement_ledger (
+        scope_ref TEXT PRIMARY KEY,
+        home_node_id TEXT NOT NULL,
+        placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
+        authority_provenance_json TEXT NOT NULL,
+        establishment_provenance TEXT NOT NULL CHECK (
+          establishment_provenance IN (
+            'pin',
+            'task_default',
+            'default_home_node',
+            'default_home_node(local)',
+            'explicit_local',
+            'rebind'
+          )
+        ),
+        prior_home_node_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO placement_ledger (${LEDGER_COLUMNS})
+      SELECT ${LEDGER_COLUMNS} FROM placement_ledger_legacy_t06697;
+      DROP TABLE placement_ledger_legacy_t06697;
+    `)
+  }).immediate()
 }
 
 export class PlacementLedgerRepository {
@@ -366,6 +406,7 @@ function createRegistryDatabase(path: string): Database {
       establishment_provenance TEXT NOT NULL CHECK (
         establishment_provenance IN (
           'pin',
+          'task_default',
           'default_home_node',
           'default_home_node(local)',
           'explicit_local',
@@ -377,6 +418,42 @@ function createRegistryDatabase(path: string): Database {
       updated_at TEXT NOT NULL
     );
   `)
+
+  const schema = db
+    .query<{ sql: string }, [string]>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
+    )
+    .get('binding_registry')?.sql
+  if (!schema?.includes("'task_default'")) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE binding_registry RENAME TO binding_registry_legacy_t06697;
+        CREATE TABLE binding_registry (
+          scope_ref TEXT PRIMARY KEY,
+          home_node_id TEXT NOT NULL,
+          placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
+          birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
+          authority_provenance_json TEXT NOT NULL,
+          establishment_provenance TEXT NOT NULL CHECK (
+            establishment_provenance IN (
+              'pin',
+              'task_default',
+              'default_home_node',
+              'default_home_node(local)',
+              'explicit_local',
+              'rebind'
+            )
+          ),
+          prior_home_node_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO binding_registry (${BINDING_COLUMNS})
+        SELECT ${BINDING_COLUMNS} FROM binding_registry_legacy_t06697;
+        DROP TABLE binding_registry_legacy_t06697;
+      `)
+    }).immediate()
+  }
   return db
 }
 

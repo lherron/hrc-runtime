@@ -373,7 +373,7 @@ describe('placement task defaults — exact pin > task-default > explicit_local 
 
     expect(result.evaluation.decision).toBe('allow')
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
-    expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.evaluation.establishmentProvenance).toBe('task_default')
     expect(result.evaluation.homeNodeId).toBe('lab')
   })
 })

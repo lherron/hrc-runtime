@@ -18,6 +18,7 @@ const INITIAL_BACKOFF_MS = 250
 
 const ESTABLISHMENT_PROVENANCE = new Set<EstablishmentProvenance>([
   'pin',
+  'task_default',
   'default_home_node',
   'default_home_node(local)',
   'explicit_local',

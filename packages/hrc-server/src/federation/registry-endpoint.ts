@@ -71,6 +71,7 @@ function parseBirthClass(value: unknown): FederationBirthClass {
 function parseEstablishmentProvenance(value: unknown): Exclude<EstablishmentProvenance, 'rebind'> {
   if (
     value === 'pin' ||
+    value === 'task_default' ||
     value === 'default_home_node' ||
     value === 'default_home_node(local)' ||
     value === 'explicit_local'

@@ -1,5 +1,6 @@
+import { Database } from 'bun:sqlite'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -219,6 +220,90 @@ describe('T-06607 federation placement persistence', () => {
       secondDb.close()
       source.close()
       rebuilt.close()
+    }
+  })
+
+  test('task_default provenance widens existing ledger and registry CHECK schemas without data loss', async () => {
+    const { local, registry: registryPath } = await paths()
+    const db = openHrcDatabase(local)
+    db.sqlite.exec(`
+      CREATE TABLE placement_ledger (
+        scope_ref TEXT PRIMARY KEY,
+        home_node_id TEXT NOT NULL,
+        placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
+        authority_provenance_json TEXT NOT NULL,
+        establishment_provenance TEXT NOT NULL CHECK (
+          establishment_provenance IN (
+            'pin', 'default_home_node', 'default_home_node(local)', 'explicit_local', 'rebind'
+          )
+        ),
+        prior_home_node_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO placement_ledger VALUES (
+        '${SCOPE}', 'svc', 1, 'active', 'policy-born', '{"kind":"policy","source":"pin"}',
+        'pin', NULL, '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
+      );
+    `)
+
+    await mkdir(join(tempDir!, 'federation'), { recursive: true })
+    const rawRegistry = new Database(registryPath, { create: true })
+    rawRegistry.exec(`
+      CREATE TABLE binding_registry (
+        scope_ref TEXT PRIMARY KEY,
+        home_node_id TEXT NOT NULL,
+        placement_epoch INTEGER NOT NULL CHECK (placement_epoch >= 1),
+        birth_class TEXT NOT NULL CHECK (birth_class IN ('policy-born', 'mechanism-born')),
+        authority_provenance_json TEXT NOT NULL,
+        establishment_provenance TEXT NOT NULL CHECK (
+          establishment_provenance IN (
+            'pin', 'default_home_node', 'default_home_node(local)', 'explicit_local', 'rebind'
+          )
+        ),
+        prior_home_node_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO binding_registry VALUES (
+        '${SCOPE}', 'svc', 1, 'policy-born', '{"kind":"policy","source":"pin"}',
+        'pin', NULL, '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
+      );
+    `)
+    rawRegistry.close()
+
+    const ledger = createPlacementLedgerRepository(db.sqlite)
+    const registry = openBindingRegistry(registryPath)
+    try {
+      expect(ledger.get(SCOPE)?.establishmentProvenance).toBe('pin')
+      expect(registry.get(SCOPE)?.establishmentProvenance).toBe('pin')
+
+      ledger.installActive({
+        scopeRef: OTHER_SCOPE,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'task_default' },
+        establishmentProvenance: 'task_default',
+        updatedAt: '2026-07-20T00:00:01.000Z',
+      })
+      registry.establish({
+        scopeRef: OTHER_SCOPE,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'task_default' },
+        establishmentProvenance: 'task_default',
+        now: '2026-07-20T00:00:01.000Z',
+      })
+
+      expect(ledger.get(OTHER_SCOPE)?.establishmentProvenance).toBe('task_default')
+      expect(registry.get(OTHER_SCOPE)?.establishmentProvenance).toBe('task_default')
+    } finally {
+      registry.close()
+      db.close()
     }
   })
 })
