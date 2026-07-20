@@ -59,10 +59,25 @@ export type ExcludedSystemRef = {
   sessionCount: number
 }
 
+export type RuledRetirementDisposition = {
+  scopeRef: string
+  retiredNodeId: string
+  canonicalHomeNodeId: string
+  canonicalPlacementEpoch: number
+  rationaleRef: string
+}
+
+export type RuledVirginExclusion = {
+  scopeRef: string
+  rationaleRef: string
+  disposition: 'pin-governed-deferred'
+}
+
 export type NamespaceInventoryReport = {
   generatedAt: string
   scopes: NamespaceScopeInventory[]
   excludedSystemRefs: ExcludedSystemRef[]
+  excludedVirginScopes: RuledVirginExclusion[]
   remainingUnreconciled: UnreconciledScope[]
   f1EnablementBlocked: boolean
 }
@@ -72,14 +87,61 @@ export type NamespaceInventoryReport = {
 // and visible: every other non-agent ref remains a hard inventory failure.
 const EXCLUDED_SYSTEM_SESSION_REFS = new Set(['system:hrc/sweep'])
 
+const RULED_RETIREMENTS = new Map<string, RuledRetirementDisposition>([
+  [
+    'agent:cody:project:agent-control-plane:task:wrkq-refactor',
+    {
+      scopeRef: 'agent:cody:project:agent-control-plane:task:wrkq-refactor',
+      retiredNodeId: 'svc',
+      canonicalHomeNodeId: 'lab',
+      canonicalPlacementEpoch: 1,
+      rationaleRef: 'T-06616/C-11185',
+    },
+  ],
+  [
+    'agent:cody:project:hrc-runtime:task:pin-probe',
+    {
+      scopeRef: 'agent:cody:project:hrc-runtime:task:pin-probe',
+      retiredNodeId: 'svc',
+      canonicalHomeNodeId: 'svc',
+      canonicalPlacementEpoch: 1,
+      rationaleRef: 'T-06616/C-11185',
+    },
+  ],
+  [
+    'agent:mable:project:hrc-runtime:task:max3',
+    {
+      scopeRef: 'agent:mable:project:hrc-runtime:task:max3',
+      retiredNodeId: 'svc',
+      canonicalHomeNodeId: 'max3',
+      canonicalPlacementEpoch: 1,
+      rationaleRef: 'T-06680/C-11241',
+    },
+  ],
+])
+
+const RULED_VIRGIN_EXCLUSIONS = new Map<string, RuledVirginExclusion>([
+  [
+    'agent:mable:project:hrc-runtime:task:primary',
+    {
+      scopeRef: 'agent:mable:project:hrc-runtime:task:primary',
+      rationaleRef: 'T-06616/DM#404',
+      disposition: 'pin-governed-deferred',
+    },
+  ],
+])
+
 const USAGE = `usage:
   bun scripts/reconcile-federation-namespace.ts inventory \\
     --registry <binding-registry.sqlite> --node <nodeId>=<sqlite-backup>... \\
+    [--exclude-virgin <allowlisted-scopeRef>]... \\
     [--advisory-log <normalized.jsonl>]...
 
   bun scripts/reconcile-federation-namespace.ts reconcile \\
     --registry <binding-registry.sqlite> --node <nodeId>=<sqlite-backup>... \\
-    --select <scopeRef>=<canonicalNodeId>... (--dry-run | --yes) \\
+    [--select <scopeRef>=<canonicalNodeId>]... \\
+    [--retire <allowlisted-scopeRef>]... \\
+    [--exclude-virgin <allowlisted-scopeRef>]... (--dry-run | --yes) \\
     [--advisory-log <normalized.jsonl>]...
 
   bun scripts/reconcile-federation-namespace.ts apply \\
@@ -104,6 +166,34 @@ type RuntimeActivityRow = { scope_ref: string; activity_at: string }
 
 function canonicalScopeRef(scopeRef: string): string {
   return formatCanonicalScopeRef({ scopeRef })
+}
+
+function resolveRuledRetirements(scopeRefs: readonly string[]): RuledRetirementDisposition[] {
+  const seen = new Set<string>()
+  return scopeRefs.map((rawScopeRef) => {
+    const scopeRef = canonicalScopeRef(rawScopeRef)
+    if (seen.has(scopeRef)) throw new Error(`duplicate retirement disposition for ${scopeRef}`)
+    seen.add(scopeRef)
+    const disposition = RULED_RETIREMENTS.get(scopeRef)
+    if (disposition === undefined) {
+      throw new Error(`${scopeRef} is not an allowlisted retirement disposition`)
+    }
+    return disposition
+  })
+}
+
+function resolveRuledVirginExclusions(scopeRefs: readonly string[]): RuledVirginExclusion[] {
+  const seen = new Set<string>()
+  return scopeRefs.map((rawScopeRef) => {
+    const scopeRef = canonicalScopeRef(rawScopeRef)
+    if (seen.has(scopeRef)) throw new Error(`duplicate virgin exclusion for ${scopeRef}`)
+    seen.add(scopeRef)
+    const disposition = RULED_VIRGIN_EXCLUSIONS.get(scopeRef)
+    if (disposition === undefined) {
+      throw new Error(`${scopeRef} is not an allowlisted virgin exclusion`)
+    }
+    return disposition
+  })
 }
 
 function requireNodeId(nodeId: string): string {
@@ -255,7 +345,13 @@ function blockerReasons(scope: NamespaceScopeInventory): UnreconciledReason[] {
     const occurrence = scope.nodes.find((node) => node.nodeId === creation.nodeId)
     if (occurrence?.retired !== true) unretiredEvidenceNodeIds.add(creation.nodeId)
   }
-  if (scope.binding === undefined) reasons.push('binding_missing')
+  // A scope whose every known node occurrence carries a retirement mark is an
+  // intentionally virgin result, not a missing-binding blocker. A deleted
+  // binding without its local mark still has unretired evidence and remains
+  // loudly incomplete.
+  if (scope.binding === undefined && unretiredEvidenceNodeIds.size > 0) {
+    reasons.push('binding_missing')
+  }
   if (unretiredEvidenceNodeIds.size > 1) reasons.push('multiple_unretired_nodes')
   if (scope.binding !== undefined) {
     const home = scope.nodes.find((node) => node.nodeId === scope.binding?.homeNodeId)
@@ -272,6 +368,7 @@ export function inventoryFederationNamespace(input: {
   nodeStores: readonly NamespaceNodeStore[]
   registryPath: string
   advisoryCreations?: readonly AdvisoryCreation[] | undefined
+  excludeVirginScopeRefs?: readonly string[] | undefined
   generatedAt?: string | undefined
 }): NamespaceInventoryReport {
   if (input.nodeStores.length === 0) throw new Error('at least one node state store is required')
@@ -322,15 +419,27 @@ export function inventoryFederationNamespace(input: {
       ),
     }))
     .sort((a, b) => a.scopeRef.localeCompare(b.scopeRef))
+  const scopesByRef = new Map(scopes.map((scope) => [scope.scopeRef, scope]))
+  const excludedVirginScopes = resolveRuledVirginExclusions(input.excludeVirginScopeRefs ?? [])
+  for (const exclusion of excludedVirginScopes) {
+    const scope = scopesByRef.get(exclusion.scopeRef)
+    if (scope === undefined)
+      throw new Error(`scope is absent from inventory: ${exclusion.scopeRef}`)
+    if (scope.binding !== undefined) {
+      throw new Error(`virgin exclusion requires an unbound scope: ${exclusion.scopeRef}`)
+    }
+  }
+  const excludedVirginRefs = new Set(excludedVirginScopes.map((item) => item.scopeRef))
   const remainingUnreconciled = scopes
     .map((scope) => ({ scopeRef: scope.scopeRef, reasons: blockerReasons(scope) }))
-    .filter((scope) => scope.reasons.length > 0)
+    .filter((scope) => scope.reasons.length > 0 && !excludedVirginRefs.has(scope.scopeRef))
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     scopes,
     excludedSystemRefs: excludedSystemRefs.sort(
       (a, b) => a.scopeRef.localeCompare(b.scopeRef) || a.nodeId.localeCompare(b.nodeId)
     ),
+    excludedVirginScopes,
     remainingUnreconciled,
     f1EnablementBlocked: remainingUnreconciled.length > 0,
   }
@@ -348,6 +457,12 @@ export type ReconciliationResult = {
   wouldChange: number
   reconciledScopes: string[]
   excludedSystemRefs: ExcludedSystemRef[]
+  retiredScopes: Array<
+    RuledRetirementDisposition & {
+      registryAction: 'would_delete' | 'deleted' | 'already_absent'
+    }
+  >
+  excludedVirginScopes: RuledVirginExclusion[]
   remainingUnreconciled: UnreconciledScope[]
   projectedRemainingUnreconciledAfterApply: UnreconciledScope[]
   f1EnablementBlocked: boolean
@@ -361,6 +476,7 @@ export type NamespaceRetirementArtifact = {
   generatedAt: string
   dryRun: boolean
   retirementSteps: NamespaceRetirementStep[]
+  archiveSteps?: Array<{ scopeRef: string; nodeId: string; archivedAt: string }> | undefined
 }
 
 function desiredBinding(
@@ -416,6 +532,8 @@ export function reconcileFederationNamespace(input: {
   nodeStores: readonly NamespaceNodeStore[]
   registryPath: string
   selections: readonly ReconciliationSelection[]
+  retireScopeRefs?: readonly string[] | undefined
+  excludeVirginScopeRefs?: readonly string[] | undefined
   dryRun: boolean
   now?: string | undefined
   advisoryCreations?: readonly AdvisoryCreation[] | undefined
@@ -425,6 +543,7 @@ export function reconcileFederationNamespace(input: {
     nodeStores: input.nodeStores,
     registryPath: input.registryPath,
     advisoryCreations: input.advisoryCreations,
+    excludeVirginScopeRefs: input.excludeVirginScopeRefs,
     generatedAt: now,
   })
   const scopesByRef = new Map(inventory.scopes.map((scope) => [scope.scopeRef, scope]))
@@ -433,12 +552,18 @@ export function reconcileFederationNamespace(input: {
     scopeRef: canonicalScopeRef(selection.scopeRef),
     canonicalNodeId: requireNodeId(selection.canonicalNodeId),
   }))
+  const retirements = resolveRuledRetirements(input.retireScopeRefs ?? [])
+  const retirementRefs = new Set(retirements.map((item) => item.scopeRef))
+  const excludedVirginRefs = new Set(inventory.excludedVirginScopes.map((item) => item.scopeRef))
   const selectedRefs = new Set<string>()
   for (const selection of selections) {
     if (selectedRefs.has(selection.scopeRef)) {
       throw new Error(`duplicate reconciliation selection for ${selection.scopeRef}`)
     }
     selectedRefs.add(selection.scopeRef)
+    if (retirementRefs.has(selection.scopeRef) || excludedVirginRefs.has(selection.scopeRef)) {
+      throw new Error(`scope has conflicting reconciliation dispositions: ${selection.scopeRef}`)
+    }
     const scope = scopesByRef.get(selection.scopeRef)
     if (scope === undefined)
       throw new Error(`scope is absent from inventory: ${selection.scopeRef}`)
@@ -454,11 +579,44 @@ export function reconcileFederationNamespace(input: {
     }
   }
 
+  for (const disposition of retirements) {
+    if (excludedVirginRefs.has(disposition.scopeRef)) {
+      throw new Error(`scope has conflicting reconciliation dispositions: ${disposition.scopeRef}`)
+    }
+    const scope = requireInventoryScope(scopesByRef, disposition.scopeRef)
+    const retiredNode = scope.nodes.find((node) => node.nodeId === disposition.retiredNodeId)
+    if (retiredNode === undefined) {
+      throw new Error(
+        `retired node ${disposition.retiredNodeId} has no inventory occurrence for ${disposition.scopeRef}`
+      )
+    }
+    const binding = scope.binding
+    if (
+      binding !== undefined &&
+      (binding.homeNodeId !== disposition.retiredNodeId ||
+        binding.placementEpoch !== disposition.canonicalPlacementEpoch)
+    ) {
+      throw new Error(
+        `retirement disposition does not match registry binding for ${disposition.scopeRef}`
+      )
+    }
+    if (
+      retiredNode.retirement !== undefined &&
+      (retiredNode.retirement.canonicalHomeNodeId !== disposition.canonicalHomeNodeId ||
+        retiredNode.retirement.canonicalPlacementEpoch !== disposition.canonicalPlacementEpoch)
+    ) {
+      throw new ScopeRetirementConflictError(disposition.scopeRef)
+    }
+  }
+
   const changing = selections.filter((selection) =>
     selectionNeedsChange(requireInventoryScope(scopesByRef, selection.scopeRef), selection)
   )
+  const retirementDeletes = retirements.filter(
+    (disposition) => scopesByRef.get(disposition.scopeRef)?.binding !== undefined
+  )
   const unreconciledWithoutSelections = inventory.remainingUnreconciled.filter(
-    (scope) => !selectedRefs.has(scope.scopeRef)
+    (scope) => !selectedRefs.has(scope.scopeRef) && !retirementRefs.has(scope.scopeRef)
   )
   const buildArtifact = (
     bindingFor: (selection: ReconciliationSelection) => PlacementBinding
@@ -466,26 +624,41 @@ export function reconcileFederationNamespace(input: {
     version: 1,
     generatedAt: now,
     dryRun: input.dryRun,
-    retirementSteps: selections.flatMap((selection) => {
-      const scope = requireInventoryScope(scopesByRef, selection.scopeRef)
-      const binding = bindingFor(selection)
-      const canonical = scope.nodes.find((node) => node.nodeId === selection.canonicalNodeId)
-      const canonicalHostSessionId = canonical?.hostSessionIds.at(-1)
-      const losingNodeIds = new Set([
-        ...scope.nodes.map((node) => node.nodeId),
-        ...scope.advisoryCreations.map((creation) => creation.nodeId),
-      ])
-      losingNodeIds.delete(selection.canonicalNodeId)
-      return [...losingNodeIds].sort().map((nodeId) => ({
-        scopeRef: selection.scopeRef,
-        retiredNodeId: nodeId,
-        canonicalHomeNodeId: selection.canonicalNodeId,
-        canonicalPlacementEpoch: binding.placementEpoch,
-        ...(canonicalHostSessionId === undefined ? {} : { canonicalHostSessionId }),
+    retirementSteps: [
+      ...selections.flatMap((selection) => {
+        const scope = requireInventoryScope(scopesByRef, selection.scopeRef)
+        const binding = bindingFor(selection)
+        const canonical = scope.nodes.find((node) => node.nodeId === selection.canonicalNodeId)
+        const canonicalHostSessionId = canonical?.hostSessionIds.at(-1)
+        const losingNodeIds = new Set([
+          ...scope.nodes.map((node) => node.nodeId),
+          ...scope.advisoryCreations.map((creation) => creation.nodeId),
+        ])
+        losingNodeIds.delete(selection.canonicalNodeId)
+        return [...losingNodeIds].sort().map((nodeId) => ({
+          scopeRef: selection.scopeRef,
+          retiredNodeId: nodeId,
+          canonicalHomeNodeId: selection.canonicalNodeId,
+          canonicalPlacementEpoch: binding.placementEpoch,
+          ...(canonicalHostSessionId === undefined ? {} : { canonicalHostSessionId }),
+          reason: 'namespace_reconciliation' as const,
+          retiredAt: now,
+        }))
+      }),
+      ...retirements.map((disposition) => ({
+        scopeRef: disposition.scopeRef,
+        retiredNodeId: disposition.retiredNodeId,
+        canonicalHomeNodeId: disposition.canonicalHomeNodeId,
+        canonicalPlacementEpoch: disposition.canonicalPlacementEpoch,
         reason: 'namespace_reconciliation' as const,
         retiredAt: now,
-      }))
-    }),
+      })),
+    ],
+    archiveSteps: retirements.map((disposition) => ({
+      scopeRef: disposition.scopeRef,
+      nodeId: disposition.retiredNodeId,
+      archivedAt: now,
+    })),
   })
   if (input.dryRun) {
     const projectedBindings = new Map<string, PlacementBinding>()
@@ -515,9 +688,16 @@ export function reconcileFederationNamespace(input: {
     return {
       dryRun: true,
       changed: 0,
-      wouldChange: changing.length,
+      wouldChange: changing.length + retirementDeletes.length,
       reconciledScopes: selections.map((selection) => selection.scopeRef),
       excludedSystemRefs: inventory.excludedSystemRefs,
+      retiredScopes: retirements.map((disposition) => ({
+        ...disposition,
+        registryAction: scopesByRef.get(disposition.scopeRef)?.binding
+          ? 'would_delete'
+          : 'already_absent',
+      })),
+      excludedVirginScopes: inventory.excludedVirginScopes,
       remainingUnreconciled: inventory.remainingUnreconciled,
       projectedRemainingUnreconciledAfterApply: unreconciledWithoutSelections,
       f1EnablementBlocked: inventory.remainingUnreconciled.length > 0,
@@ -574,18 +754,58 @@ export function reconcileFederationNamespace(input: {
     }
   }
 
+  const retirementRegistryActions = new Map<string, 'deleted' | 'already_absent'>()
+  if (retirements.length > 0) {
+    const registry = openBindingRegistry(input.registryPath)
+    try {
+      for (const disposition of retirements) {
+        const binding = registry.get(disposition.scopeRef)
+        if (binding === undefined) {
+          retirementRegistryActions.set(disposition.scopeRef, 'already_absent')
+          continue
+        }
+        if (
+          binding.homeNodeId !== disposition.retiredNodeId ||
+          binding.placementEpoch !== disposition.canonicalPlacementEpoch
+        ) {
+          throw new Error(
+            `retirement disposition does not match registry binding for ${disposition.scopeRef}`
+          )
+        }
+        const deleted = registry.sqlite
+          .query<unknown, [string, string, number]>(
+            `DELETE FROM binding_registry
+             WHERE scope_ref = ? AND home_node_id = ? AND placement_epoch = ?`
+          )
+          .run(disposition.scopeRef, disposition.retiredNodeId, disposition.canonicalPlacementEpoch)
+        if (deleted.changes !== 1) {
+          throw new Error(`registry retirement delete raced for ${disposition.scopeRef}`)
+        }
+        retirementRegistryActions.set(disposition.scopeRef, 'deleted')
+      }
+    } finally {
+      registry.close()
+    }
+  }
+
   const after = inventoryFederationNamespace({
     nodeStores: input.nodeStores,
     registryPath: input.registryPath,
     advisoryCreations: input.advisoryCreations,
+    excludeVirginScopeRefs: input.excludeVirginScopeRefs,
     generatedAt: now,
   })
   return {
     dryRun: false,
-    changed: changing.length,
+    changed: changing.length + retirementDeletes.length,
     wouldChange: 0,
     reconciledScopes: selections.map((selection) => selection.scopeRef),
     excludedSystemRefs: after.excludedSystemRefs,
+    retiredScopes: retirements.map((disposition) => ({
+      ...disposition,
+      registryAction: retirementRegistryActions.get(disposition.scopeRef) ?? 'already_absent',
+    })),
+    excludedVirginScopes: after.excludedVirginScopes,
     remainingUnreconciled: after.remainingUnreconciled,
     projectedRemainingUnreconciledAfterApply: unreconciledWithoutSelections,
     f1EnablementBlocked: after.f1EnablementBlocked,
@@ -602,6 +822,8 @@ export type ApplyRetirementsResult = {
   dryRun: boolean
   changed: number
   wouldChange: number
+  archivedSessionsChanged: number
+  wouldArchiveSessions: number
   appliedScopes: string[]
 }
 
@@ -622,8 +844,10 @@ export function applyNamespaceRetirements(input: {
     throw new Error(`node state store does not exist: ${input.statePath}`)
   }
   const steps = input.artifact.retirementSteps.filter((step) => step.retiredNodeId === nodeId)
+  const archiveSteps = (input.artifact.archiveSteps ?? []).filter((step) => step.nodeId === nodeId)
   const readonly = new Database(input.statePath, { readonly: true })
   let wouldChange = 0
+  let wouldArchiveSessions = 0
   try {
     for (const step of steps) {
       const existing = readScopeRetirements(readonly).find((row) => row.scopeRef === step.scopeRef)
@@ -641,6 +865,14 @@ export function applyNamespaceRetirements(input: {
         throw new ScopeRetirementConflictError(step.scopeRef)
       }
     }
+    for (const step of archiveSteps) {
+      const row = readonly
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) AS count FROM sessions WHERE scope_ref = ? AND status != 'archived'`
+        )
+        .get(step.scopeRef)
+      wouldArchiveSessions += row?.count ?? 0
+    }
   } finally {
     readonly.close()
   }
@@ -650,15 +882,27 @@ export function applyNamespaceRetirements(input: {
       dryRun: true,
       changed: 0,
       wouldChange,
+      archivedSessionsChanged: 0,
+      wouldArchiveSessions,
       appliedScopes: steps.map((step) => step.scopeRef),
     }
   }
   const db = new Database(input.statePath)
   let changed = 0
+  let archivedSessionsChanged = 0
   try {
     const retirements = createScopeRetirementRepository(db)
     for (const step of steps) {
       if (retirements.retire(step).outcome === 'created') changed += 1
+    }
+    for (const step of archiveSteps) {
+      const archived = db
+        .query<unknown, [string, string]>(
+          `UPDATE sessions SET status = 'archived', updated_at = ?
+           WHERE scope_ref = ? AND status != 'archived'`
+        )
+        .run(step.archivedAt, step.scopeRef)
+      archivedSessionsChanged += archived.changes
     }
   } finally {
     db.close()
@@ -668,6 +912,8 @@ export function applyNamespaceRetirements(input: {
     dryRun: false,
     changed,
     wouldChange: 0,
+    archivedSessionsChanged,
+    wouldArchiveSessions: 0,
     appliedScopes: steps.map((step) => step.scopeRef),
   }
 }
@@ -678,6 +924,8 @@ type ParsedInventoryCommand = {
   nodeStores: NamespaceNodeStore[]
   advisoryLogPaths: string[]
   selections: ReconciliationSelection[]
+  retireScopeRefs: string[]
+  excludeVirginScopeRefs: string[]
   dryRun: boolean
 }
 
@@ -739,6 +987,8 @@ function parseCommand(argv: readonly string[]): ParsedCommand {
   const nodeStores: NamespaceNodeStore[] = []
   const advisoryLogPaths: string[] = []
   const selections: ReconciliationSelection[] = []
+  const retireScopeRefs: string[] = []
+  const excludeVirginScopeRefs: string[] = []
   let dryRun = false
   let yes = false
   for (let index = 0; index < args.length; index += 1) {
@@ -765,6 +1015,10 @@ function parseCommand(argv: readonly string[]): ParsedCommand {
     } else if (flag === '--select') {
       const [scopeRef, canonicalNodeId] = splitAssignment(value, '--select')
       selections.push({ scopeRef: canonicalScopeRef(scopeRef), canonicalNodeId })
+    } else if (flag === '--retire') {
+      retireScopeRefs.push(canonicalScopeRef(value))
+    } else if (flag === '--exclude-virgin') {
+      excludeVirginScopeRefs.push(canonicalScopeRef(value))
     } else {
       throw new Error(`unknown flag: ${flag}`)
     }
@@ -772,11 +1026,17 @@ function parseCommand(argv: readonly string[]): ParsedCommand {
   if (registryPath === undefined) throw new Error('--registry is required')
   if (nodeStores.length === 0) throw new Error('at least one --node is required')
   if (rawCommand === 'inventory') {
-    if (dryRun || yes || selections.length > 0) {
-      throw new Error('inventory does not accept --dry-run, --yes, or --select')
+    if (dryRun || yes || selections.length > 0 || retireScopeRefs.length > 0) {
+      throw new Error('inventory does not accept --dry-run, --yes, --select, or --retire')
     }
   } else {
-    if (selections.length === 0) throw new Error('reconcile requires at least one --select')
+    if (
+      selections.length === 0 &&
+      retireScopeRefs.length === 0 &&
+      excludeVirginScopeRefs.length === 0
+    ) {
+      throw new Error('reconcile requires at least one disposition')
+    }
     if (dryRun === yes) throw new Error('reconcile requires exactly one of --dry-run or --yes')
   }
   return {
@@ -785,6 +1045,8 @@ function parseCommand(argv: readonly string[]): ParsedCommand {
     nodeStores,
     advisoryLogPaths,
     selections,
+    retireScopeRefs,
+    excludeVirginScopeRefs,
     dryRun,
   }
 }
@@ -853,12 +1115,15 @@ export function runNamespaceReconciliationCommand(argv: readonly string[]): unkn
       nodeStores: command.nodeStores,
       registryPath: command.registryPath,
       advisoryCreations,
+      excludeVirginScopeRefs: command.excludeVirginScopeRefs,
     })
   }
   return reconcileFederationNamespace({
     nodeStores: command.nodeStores,
     registryPath: command.registryPath,
     selections: command.selections,
+    retireScopeRefs: command.retireScopeRefs,
+    excludeVirginScopeRefs: command.excludeVirginScopeRefs,
     dryRun: command.dryRun,
     advisoryCreations,
   })

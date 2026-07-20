@@ -15,6 +15,8 @@ bun scripts/reconcile-federation-namespace.ts reconcile \
   --node max3=/path/to/max3-state.backup.sqlite \
   --node svc=/path/to/svc-state.backup.sqlite \
   --select agent:clod:project:hrc-runtime:task:T-06614=max3 \
+  --retire agent:cody:project:hrc-runtime:task:pin-probe \
+  --exclude-virgin agent:mable:project:hrc-runtime:task:primary \
   --yes > /tmp/f0-reconciliation.json
 
 ssh -o BatchMode=yes svc -- \
@@ -30,6 +32,15 @@ selection. Copy the emitted artifact to each losing node and run `apply`
 node-locally there; the tool never SSH-mutates another node. All commands emit
 JSON. `remainingUnreconciled` is the exact current F1-enablement blocker list;
 F1 remains blocked while `f1EnablementBlocked` is true.
+
+`--retire` and `--exclude-virgin` are deliberately not general-purpose escape
+hatches. The script contains the exact operator-ruled ScopeRef allowlists and
+rationale references. A retirement deletes that scope's matching registry
+binding, emits a node-local retirement mark, and emits a session-archive step;
+`apply` performs the two node-local legs idempotently. A virgin exclusion only
+removes an allowlisted, currently unbound scope from blocker accounting and is
+reported as `pin-governed-deferred`. Any unlisted disposition or a retirement
+whose node/epoch does not match the inventory aborts.
 
 ## Cross-node inventory
 

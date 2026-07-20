@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import {
   createPlacementLedgerRepository,
+  createScopeRetirementRepository,
   openBindingRegistry,
   openHrcDatabase,
   readScopeRetirement,
@@ -499,5 +500,214 @@ describe('pre-federation namespace reconciliation', () => {
     } finally {
       after.close()
     }
+  })
+
+  it('dry-runs and applies an allowlisted retire-to-virgin disposition across all three legs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-retire-virgin-'))
+    roots.push(root)
+    const scopeRef = 'agent:cody:project:agent-control-plane:task:wrkq-refactor'
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef,
+      hostSessionId: 'hsid-probe',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    const activeSvc = new Database(svcPath)
+    try {
+      activeSvc.query("UPDATE sessions SET status = 'active' WHERE scope_ref = ?").run(scopeRef)
+    } finally {
+      activeSvc.close()
+    }
+    const registryPath = join(root, 'registry.sqlite')
+    const registry = openBindingRegistry(registryPath)
+    try {
+      registry.establish({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'mechanism-born',
+        authorityProvenance: { kind: 'legacy_seed', hostSessionId: 'hsid-probe' },
+        establishmentProvenance: 'explicit_local',
+        now: '2026-07-20T02:00:00.000Z',
+      })
+    } finally {
+      registry.close()
+    }
+    const input = {
+      nodeStores: [{ nodeId: 'svc', path: svcPath }],
+      registryPath,
+      selections: [],
+      retireScopeRefs: [scopeRef],
+      dryRun: true,
+      now: '2026-07-20T03:00:00.000Z',
+    }
+
+    const dryRun = reconcileFederationNamespace(input)
+    expect(dryRun).toMatchObject({
+      changed: 0,
+      wouldChange: 1,
+      projectedRemainingUnreconciledAfterApply: [],
+      retiredScopes: [
+        {
+          scopeRef,
+          retiredNodeId: 'svc',
+          canonicalHomeNodeId: 'lab',
+          canonicalPlacementEpoch: 1,
+          rationaleRef: 'T-06616/C-11185',
+          registryAction: 'would_delete',
+        },
+      ],
+      artifact: {
+        retirementSteps: [{ scopeRef, retiredNodeId: 'svc', canonicalHomeNodeId: 'lab' }],
+        archiveSteps: [{ scopeRef, nodeId: 'svc' }],
+      },
+    })
+    const afterDryRun = openBindingRegistry(registryPath)
+    try {
+      expect(afterDryRun.get(scopeRef)).toBeDefined()
+    } finally {
+      afterDryRun.close()
+    }
+
+    const reconciled = reconcileFederationNamespace({ ...input, dryRun: false })
+    expect(reconciled.retiredScopes).toEqual([
+      expect.objectContaining({ scopeRef, registryAction: 'deleted' }),
+    ])
+    const afterRegistryLeg = openBindingRegistry(registryPath)
+    try {
+      expect(afterRegistryLeg.get(scopeRef)).toBeUndefined()
+    } finally {
+      afterRegistryLeg.close()
+    }
+    expect(
+      inventoryFederationNamespace({
+        nodeStores: input.nodeStores,
+        registryPath,
+      }).remainingUnreconciled
+    ).toEqual([{ scopeRef, reasons: ['binding_missing'] }])
+
+    expect(
+      applyNamespaceRetirements({
+        nodeId: 'svc',
+        statePath: svcPath,
+        artifact: reconciled.artifact,
+        dryRun: false,
+      })
+    ).toMatchObject({ changed: 1, archivedSessionsChanged: 1 })
+    const svc = new Database(svcPath, { readonly: true })
+    try {
+      expect(readScopeRetirement(svc, scopeRef)).toMatchObject({
+        retiredNodeId: 'svc',
+        canonicalHomeNodeId: 'lab',
+        canonicalPlacementEpoch: 1,
+      })
+      expect(
+        svc
+          .query<{ status: string }, [string]>('SELECT status FROM sessions WHERE scope_ref = ?')
+          .get(scopeRef)?.status
+      ).toBe('archived')
+    } finally {
+      svc.close()
+    }
+    expect(
+      inventoryFederationNamespace({ nodeStores: input.nodeStores, registryPath })
+        .remainingUnreconciled
+    ).toEqual([])
+  })
+
+  it('reports half-applied retirement states instead of silently accepting them', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-retire-half-'))
+    roots.push(root)
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:pin-probe'
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef,
+      hostSessionId: 'hsid-pin-probe',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    const registryPath = join(root, 'registry.sqlite')
+    const registry = openBindingRegistry(registryPath)
+    try {
+      registry.establish({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'mechanism-born',
+        authorityProvenance: { kind: 'legacy_seed', hostSessionId: 'hsid-pin-probe' },
+        establishmentProvenance: 'explicit_local',
+        now: '2026-07-20T02:00:00.000Z',
+      })
+    } finally {
+      registry.close()
+    }
+    const svc = new Database(svcPath)
+    try {
+      createScopeRetirementRepository(svc).retire({
+        scopeRef,
+        retiredNodeId: 'svc',
+        canonicalHomeNodeId: 'svc',
+        canonicalPlacementEpoch: 1,
+        reason: 'namespace_reconciliation',
+        retiredAt: '2026-07-20T03:00:00.000Z',
+      })
+    } finally {
+      svc.close()
+    }
+
+    expect(
+      inventoryFederationNamespace({
+        nodeStores: [{ nodeId: 'svc', path: svcPath }],
+        registryPath,
+      }).remainingUnreconciled
+    ).toEqual([{ scopeRef, reasons: ['retired_canonical_node'] }])
+    const repaired = reconcileFederationNamespace({
+      nodeStores: [{ nodeId: 'svc', path: svcPath }],
+      registryPath,
+      selections: [],
+      retireScopeRefs: [scopeRef],
+      dryRun: false,
+      now: '2026-07-20T03:00:00.000Z',
+    })
+    expect(repaired.retiredScopes).toEqual([
+      expect.objectContaining({ scopeRef, registryAction: 'deleted' }),
+    ])
+  })
+
+  it('allowlists pin-governed virgin exclusions and rejects every other requested disposition', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-exclude-virgin-'))
+    roots.push(root)
+    const scopeRef = 'agent:mable:project:hrc-runtime:task:primary'
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef,
+      hostSessionId: 'hsid-mable-primary',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    const report = reconcileFederationNamespace({
+      nodeStores: [{ nodeId: 'svc', path: svcPath }],
+      registryPath: join(root, 'registry.sqlite'),
+      selections: [],
+      excludeVirginScopeRefs: [scopeRef],
+      dryRun: true,
+    })
+    expect(report).toMatchObject({
+      excludedVirginScopes: [
+        { scopeRef, rationaleRef: 'T-06616/DM#404', disposition: 'pin-governed-deferred' },
+      ],
+      projectedRemainingUnreconciledAfterApply: [],
+    })
+
+    expect(() =>
+      reconcileFederationNamespace({
+        nodeStores: [{ nodeId: 'svc', path: svcPath }],
+        registryPath: join(root, 'other-registry.sqlite'),
+        selections: [],
+        retireScopeRefs: ['agent:cody:project:hrc-runtime:task:not-ruled'],
+        dryRun: true,
+      })
+    ).toThrow('not an allowlisted retirement disposition')
   })
 })
