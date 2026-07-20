@@ -29,16 +29,20 @@ export type EstablishLocalPlacementResult = {
  * remains authoritative and the same call converges by installing that exact
  * winning binding on retry.
  */
-export function establishLocalPlacement(input: {
-  registry: Pick<BindingRegistry, 'establish'>
+export async function establishLocalPlacement(input: {
+  registry: {
+    establish(
+      request: Parameters<BindingRegistry['establish']>[0]
+    ): ReturnType<BindingRegistry['establish']> | Promise<ReturnType<BindingRegistry['establish']>>
+  }
   ledger: Pick<PlacementLedgerRepository, 'activeAuthority' | 'installActive'>
   request: EstablishLocalPlacementRequest
-}): EstablishLocalPlacementResult {
+}): Promise<EstablishLocalPlacementResult> {
   const homeNodeId = parseNodeId(input.request.homeNodeId, 'homeNodeId')
 
   // Registry first is load-bearing. Do not move a ledger read above this call:
   // absence of a local row is explicitly not the virgin-binding predicate.
-  const registryResult = input.registry.establish({
+  const registryResult = await input.registry.establish({
     scopeRef: input.request.scopeRef,
     homeNodeId,
     placementEpoch: 1,

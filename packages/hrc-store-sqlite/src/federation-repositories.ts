@@ -40,8 +40,9 @@ export type InstallActivePlacementInput = Omit<PlacementLedgerRecord, 'state' | 
 
 export type EstablishBindingInput = Omit<
   PlacementBinding,
-  'createdAt' | 'updatedAt' | 'priorHomeNodeId'
+  'createdAt' | 'updatedAt' | 'priorHomeNodeId' | 'establishmentProvenance'
 > & {
+  establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
   now: string
 }
 
@@ -175,6 +176,26 @@ function sameBinding(left: PlacementBinding, right: PlacementBinding): boolean {
   )
 }
 
+function requireStoredBinding(
+  binding: PlacementBinding | undefined,
+  operation: string
+): PlacementBinding {
+  if (binding === undefined) {
+    throw new Error(`binding registry invariant failed after ${operation}`)
+  }
+  return binding
+}
+
+function requireStoredLedger(
+  record: PlacementLedgerRecord | undefined,
+  operation: string
+): PlacementLedgerRecord {
+  if (record === undefined) {
+    throw new Error(`placement ledger invariant failed after ${operation}`)
+  }
+  return record
+}
+
 export class PlacementEpochRegressionError extends Error {
   constructor(scopeRef: string, currentEpoch: number, attemptedEpoch: number) {
     super(
@@ -256,25 +277,26 @@ export class PlacementLedgerRepository {
     }
     const authorityJson = serializeAuthority(normalized.authorityProvenance)
 
-    return this.db.transaction(() => {
-      const current = this.get(normalized.scopeRef)
-      if (current !== undefined) {
-        if (normalized.placementEpoch < current.placementEpoch) {
-          throw new PlacementEpochRegressionError(
-            normalized.scopeRef,
-            current.placementEpoch,
-            normalized.placementEpoch
-          )
+    return this.db
+      .transaction(() => {
+        const current = this.get(normalized.scopeRef)
+        if (current !== undefined) {
+          if (normalized.placementEpoch < current.placementEpoch) {
+            throw new PlacementEpochRegressionError(
+              normalized.scopeRef,
+              current.placementEpoch,
+              normalized.placementEpoch
+            )
+          }
+          if (normalized.placementEpoch === current.placementEpoch) {
+            if (current.state === 'active' && sameBinding(current, normalized)) return current
+            throw new PlacementLedgerConflictError(normalized.scopeRef, normalized.placementEpoch)
+          }
         }
-        if (normalized.placementEpoch === current.placementEpoch) {
-          if (current.state === 'active' && sameBinding(current, normalized)) return current
-          throw new PlacementLedgerConflictError(normalized.scopeRef, normalized.placementEpoch)
-        }
-      }
 
-      this.db
-        .query(
-          `
+        this.db
+          .query(
+            `
             INSERT INTO placement_ledger (${LEDGER_COLUMNS})
             VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope_ref) DO UPDATE SET
@@ -287,20 +309,21 @@ export class PlacementLedgerRepository {
               prior_home_node_id = excluded.prior_home_node_id,
               updated_at = excluded.updated_at
           `
-        )
-        .run(
-          normalized.scopeRef,
-          normalized.homeNodeId,
-          normalized.placementEpoch,
-          normalized.birthClass,
-          authorityJson,
-          normalized.establishmentProvenance,
-          normalized.priorHomeNodeId ?? null,
-          normalized.createdAt,
-          normalized.updatedAt
-        )
-      return this.get(normalized.scopeRef)!
-    }).immediate()
+          )
+          .run(
+            normalized.scopeRef,
+            normalized.homeNodeId,
+            normalized.placementEpoch,
+            normalized.birthClass,
+            authorityJson,
+            normalized.establishmentProvenance,
+            normalized.priorHomeNodeId ?? null,
+            normalized.createdAt,
+            normalized.updatedAt
+          )
+        return requireStoredLedger(this.get(normalized.scopeRef), 'install')
+      })
+      .immediate()
   }
 }
 
@@ -384,30 +407,32 @@ export class BindingRegistry {
     }
     const authorityJson = serializeAuthority(input.authorityProvenance)
 
-    return this.sqlite.transaction(() => {
-      const result = this.sqlite
-        .query(
-          `
+    return this.sqlite
+      .transaction(() => {
+        const result = this.sqlite
+          .query(
+            `
             INSERT INTO binding_registry (${BINDING_COLUMNS})
             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
             ON CONFLICT(scope_ref) DO NOTHING
           `
-        )
-        .run(
-          scopeRef,
-          homeNodeId,
-          placementEpoch,
-          input.birthClass,
-          authorityJson,
-          input.establishmentProvenance,
-          input.now,
-          input.now
-        )
-      return {
-        outcome: result.changes === 1 ? 'created' : 'existing',
-        binding: this.get(scopeRef)!,
-      }
-    }).immediate() as BindingEstablishResult
+          )
+          .run(
+            scopeRef,
+            homeNodeId,
+            placementEpoch,
+            input.birthClass,
+            authorityJson,
+            input.establishmentProvenance,
+            input.now,
+            input.now
+          )
+        return {
+          outcome: result.changes === 1 ? 'created' : 'existing',
+          binding: requireStoredBinding(this.get(scopeRef), 'establishment'),
+        }
+      })
+      .immediate() as BindingEstablishResult
   }
 
   compareAndSwap(input: BindingCasInput): BindingCasResult {
@@ -415,25 +440,29 @@ export class BindingRegistry {
     const expectedHome = requireNodeId(input.expectedHomeNodeId, 'expectedHomeNodeId')
     const expectedEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
     const newHome = requireNodeId(input.newHomeNodeId, 'newHomeNodeId')
+    if (newHome === expectedHome) {
+      throw new Error('binding CAS newHomeNodeId must differ from expectedHomeNodeId')
+    }
     const nextEpoch = expectedEpoch + 1
 
-    return this.sqlite.transaction(() => {
-      const current = this.get(scopeRef)
-      if (current === undefined) return { outcome: 'not_found' }
-      if (
-        current.homeNodeId === newHome &&
-        current.placementEpoch === nextEpoch &&
-        current.priorHomeNodeId === expectedHome
-      ) {
-        return { outcome: 'idempotent', binding: current }
-      }
-      if (current.homeNodeId !== expectedHome || current.placementEpoch !== expectedEpoch) {
-        return { outcome: 'conflict', binding: current }
-      }
+    return this.sqlite
+      .transaction(() => {
+        const current = this.get(scopeRef)
+        if (current === undefined) return { outcome: 'not_found' }
+        if (
+          current.homeNodeId === newHome &&
+          current.placementEpoch === nextEpoch &&
+          current.priorHomeNodeId === expectedHome
+        ) {
+          return { outcome: 'idempotent', binding: current }
+        }
+        if (current.homeNodeId !== expectedHome || current.placementEpoch !== expectedEpoch) {
+          return { outcome: 'conflict', binding: current }
+        }
 
-      this.sqlite
-        .query(
-          `
+        this.sqlite
+          .query(
+            `
             UPDATE binding_registry
             SET home_node_id = ?,
                 placement_epoch = ?,
@@ -442,10 +471,14 @@ export class BindingRegistry {
                 updated_at = ?
             WHERE scope_ref = ? AND home_node_id = ? AND placement_epoch = ?
           `
-        )
-        .run(newHome, nextEpoch, expectedHome, input.now, scopeRef, expectedHome, expectedEpoch)
-      return { outcome: 'updated', binding: this.get(scopeRef)! }
-    }).immediate() as BindingCasResult
+          )
+          .run(newHome, nextEpoch, expectedHome, input.now, scopeRef, expectedHome, expectedEpoch)
+        return {
+          outcome: 'updated',
+          binding: requireStoredBinding(this.get(scopeRef), 'compare-and-swap'),
+        }
+      })
+      .immediate() as BindingCasResult
   }
 
   /** Rebuild-only insertion. The target registry must be empty. */
@@ -499,12 +532,14 @@ export function rebuildBindingRegistryFromLedgers(
     duplicates += 1
   }
 
-  target.sqlite.transaction(() => {
-    for (const binding of [...selected.values()].sort((a, b) =>
-      a.scopeRef.localeCompare(b.scopeRef)
-    )) {
-      target.insertRebuilt(binding)
-    }
-  }).immediate()
+  target.sqlite
+    .transaction(() => {
+      for (const binding of [...selected.values()].sort((a, b) =>
+        a.scopeRef.localeCompare(b.scopeRef)
+      )) {
+        target.insertRebuilt(binding)
+      }
+    })
+    .immediate()
   return { inserted: selected.size, duplicates }
 }

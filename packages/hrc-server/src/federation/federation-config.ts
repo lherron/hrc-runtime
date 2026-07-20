@@ -186,6 +186,7 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
   }
 
   const peers = new Map<NodeId, PeerEntry>()
+  const peerTokenOwners = new Map<string, NodeId>()
   if (value['peers'] !== undefined) {
     if (!isPlainRecord(value['peers'])) {
       throw new Error(`${sourcePath} field "peers" must be a JSON object of nodeId to peer entries`)
@@ -210,6 +211,13 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
       if (typeof rawEntry['token'] !== 'string' || rawEntry['token'].length === 0) {
         throw new Error(`${where} is missing a non-empty string "token"`)
       }
+      const priorTokenOwner = peerTokenOwners.get(rawEntry['token'])
+      if (priorTokenOwner !== undefined) {
+        throw new Error(
+          `${where} reuses the bearer token configured for peer ${JSON.stringify(priorTokenOwner)}; each peer requires a distinct token`
+        )
+      }
+      peerTokenOwners.set(rawEntry['token'], peerId)
 
       peers.set(peerId, {
         nodeId: peerId,

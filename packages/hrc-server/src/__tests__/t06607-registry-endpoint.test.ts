@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { openBindingRegistry } from 'hrc-store-sqlite'
 
+import { PeerToken } from '../federation/peer-token.js'
 import {
   createBindingRegistryRequestHandler,
   resolveBindingRegistryPath,
@@ -12,16 +13,6 @@ import {
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06607'
 const TOKEN = 'super-secret-lab-token'
-
-class TestToken {
-  constructor(private readonly value: string) {}
-  matches(candidate: string): boolean {
-    return candidate === this.value
-  }
-  toJSON(): string {
-    return '[REDACTED]'
-  }
-}
 
 describe('T-06607 authenticated registry endpoint', () => {
   let tempDir: string | undefined
@@ -38,8 +29,9 @@ describe('T-06607 authenticated registry endpoint', () => {
     const handler = createBindingRegistryRequestHandler({
       registry,
       peers: new Map([
-        ['lab', { nodeId: 'lab', token: new TestToken(TOKEN) }],
-        ['max3', { nodeId: 'max3', token: new TestToken('max3-token') }],
+        ['lab', { nodeId: 'lab', token: new PeerToken(TOKEN) }],
+        ['max3', { nodeId: 'max3', token: new PeerToken('max3-token') }],
+        ['svc', { nodeId: 'svc', token: new PeerToken('svc-token') }],
       ]),
       now: () => `2026-07-20T00:00:0${clock++}.000Z`,
     })
@@ -167,10 +159,10 @@ describe('T-06607 authenticated registry endpoint', () => {
         new Request('http://registry/v1/federation/registry/cas', {
           method: 'POST',
           headers: {
-            authorization: `Bearer ${TOKEN}`,
+            authorization: 'Bearer svc-token',
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ ...casBody, newHomeNodeId: 'lab' }),
+          body: JSON.stringify({ ...casBody, newHomeNodeId: 'svc' }),
         })
       )
       expect(stale.status).toBe(409)

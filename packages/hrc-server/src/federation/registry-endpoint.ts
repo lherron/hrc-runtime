@@ -64,13 +64,12 @@ function parseBirthClass(value: unknown): FederationBirthClass {
   throw new InvalidRegistryRequest()
 }
 
-function parseEstablishmentProvenance(value: unknown): EstablishmentProvenance {
+function parseEstablishmentProvenance(value: unknown): Exclude<EstablishmentProvenance, 'rebind'> {
   if (
     value === 'pin' ||
     value === 'default_home_node' ||
     value === 'default_home_node(local)' ||
-    value === 'explicit_local' ||
-    value === 'rebind'
+    value === 'explicit_local'
   ) {
     return value
   }
@@ -143,9 +142,7 @@ export function createBindingRegistryRequestHandler(input: {
           placementEpoch: 1,
           birthClass: parseBirthClass(body['birthClass']),
           authorityProvenance: parseAuthorityProvenance(body['authorityProvenance']),
-          establishmentProvenance: parseEstablishmentProvenance(
-            body['establishmentProvenance']
-          ),
+          establishmentProvenance: parseEstablishmentProvenance(body['establishmentProvenance']),
           now: now(),
         })
         return responseJson({ ok: true, authenticatedNodeId: peer.nodeId, ...result })
@@ -168,8 +165,12 @@ export function createBindingRegistryRequestHandler(input: {
           newHomeNodeId,
           now: now(),
         })
-        const status = result.outcome === 'conflict' ? 409 : result.outcome === 'not_found' ? 404 : 200
-        return responseJson({ ok: status === 200, authenticatedNodeId: peer.nodeId, ...result }, status)
+        const status =
+          result.outcome === 'conflict' ? 409 : result.outcome === 'not_found' ? 404 : 200
+        return responseJson(
+          { ok: status === 200, authenticatedNodeId: peer.nodeId, ...result },
+          status
+        )
       }
 
       return responseJson({ ok: false, error: 'not_found' }, 404)

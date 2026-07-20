@@ -39,7 +39,7 @@ describe('T-06607 registry-first establishment', () => {
   test('virgin establishment registers first and then installs ACTIVE authority', async () => {
     const h = await harness()
     try {
-      const result = establishLocalPlacement({
+      const result = await establishLocalPlacement({
         registry: h.registry,
         ledger: h.ledger,
         request: {
@@ -71,8 +71,12 @@ describe('T-06607 registry-first establishment', () => {
         establishmentProvenance: 'default_home_node' as const,
         now: '2026-07-20T00:00:00.000Z',
       }
-      const first = establishLocalPlacement({ registry: h.registry, ledger: h.ledger, request })
-      const second = establishLocalPlacement({
+      const first = await establishLocalPlacement({
+        registry: h.registry,
+        ledger: h.ledger,
+        request,
+      })
+      const second = await establishLocalPlacement({
         registry: h.registry,
         ledger: h.ledger,
         request: { ...request, now: '2026-07-20T00:00:01.000Z' },
@@ -102,7 +106,7 @@ describe('T-06607 registry-first establishment', () => {
       }).binding
       expect(h.ledger.get(SCOPE)).toBeUndefined()
 
-      const retry = establishLocalPlacement({
+      const retry = await establishLocalPlacement({
         registry: h.registry,
         ledger: h.ledger,
         request: {
@@ -137,7 +141,7 @@ describe('T-06607 registry-first establishment', () => {
         now: '2026-07-20T00:00:00.000Z',
       }).binding
 
-      const result = establishLocalPlacement({
+      const result = await establishLocalPlacement({
         registry: h.registry,
         ledger: h.ledger,
         request: {

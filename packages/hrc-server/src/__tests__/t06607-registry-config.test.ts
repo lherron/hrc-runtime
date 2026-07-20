@@ -9,13 +9,10 @@ const PEERS = {
 
 describe('T-06607 registry listener config', () => {
   test('absence is the feature flag and starts with no registry config', async () => {
-    await withFederationConfigFile(
-      { nodeId: 'svc', peers: PEERS },
-      async ({ stateRoot, env }) => {
-        const config = await resolveFederationConfig({ stateRoot, env })
-        expect(config.registry).toBeUndefined()
-      }
-    )
+    await withFederationConfigFile({ nodeId: 'svc', peers: PEERS }, async ({ stateRoot, env }) => {
+      const config = await resolveFederationConfig({ stateRoot, env })
+      expect(config.registry).toBeUndefined()
+    })
   })
 
   for (const bind of [
@@ -50,8 +47,17 @@ describe('T-06607 registry listener config', () => {
     ['non-object', true, /field "registry" must be a JSON object/],
     ['missing bind', {}, /registry is missing a non-empty string "bind"/],
     ['invalid URL', { bind: 'nope' }, /registry bind is not a valid URL/],
-    ['TLS without listener TLS config', { bind: 'https://svc.example.ts.net:18491' }, /must use http:/],
-    ['missing explicit port', { bind: 'http://svc.example.ts.net' }, /must include an explicit port/],
+    [
+      'TLS without listener TLS config',
+      { bind: 'https://svc.example.ts.net:18491' },
+      /must use http:/,
+    ],
+    [
+      'missing explicit port',
+      { bind: 'http://svc.example.ts.net' },
+      /must include an explicit port/,
+    ],
+    ['zero port', { bind: 'http://svc.example.ts.net:0' }, /port must be between 1 and 65535/],
     ['wildcard v4', { bind: 'http://0.0.0.0:18491' }, /tailnet host/],
     ['wildcard v6', { bind: 'http://[::]:18491' }, /tailnet host/],
     ['loopback v4', { bind: 'http://127.0.0.1:18491' }, /tailnet host/],
@@ -73,4 +79,21 @@ describe('T-06607 registry listener config', () => {
       )
     })
   }
+
+  test('rejects a bearer token shared by two peer identities', async () => {
+    await withFederationConfigFile(
+      {
+        nodeId: 'svc',
+        peers: {
+          lab: { endpoint: 'http://lab.example.ts.net:18490', token: 'shared' },
+          max3: { endpoint: 'http://max3.example.ts.net:18490', token: 'shared' },
+        },
+      },
+      async ({ stateRoot, env }) => {
+        await expect(resolveFederationConfig({ stateRoot, env })).rejects.toThrow(
+          /reuses the bearer token configured for peer "lab"/
+        )
+      }
+    )
+  })
 })

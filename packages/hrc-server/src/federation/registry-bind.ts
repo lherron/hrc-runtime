@@ -6,12 +6,14 @@ export type RegistryListenerConfig = {
 
 function isTailscaleIpv4(host: string): boolean {
   const parts = host.split('.').map((part) => Number(part))
+  const second = parts[1]
   return (
     parts.length === 4 &&
     parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
     parts[0] === 100 &&
-    parts[1]! >= 64 &&
-    parts[1]! <= 127
+    second !== undefined &&
+    second >= 64 &&
+    second <= 127
   )
 }
 
@@ -41,7 +43,17 @@ export function parseRegistryBind(raw: string, where: string): RegistryListenerC
   if (url.port.length === 0) {
     throw new Error(`${where} bind must include an explicit port`)
   }
-  if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== '/')) {
+  const port = Number(url.port)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${where} bind port must be between 1 and 65535`)
+  }
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname && url.pathname !== '/')
+  ) {
     throw new Error(`${where} bind must contain only a tailnet host and explicit port`)
   }
   if (!isTailnetHost(url.hostname)) {

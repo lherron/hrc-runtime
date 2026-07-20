@@ -647,13 +647,14 @@ class HrcServerInstance implements HrcServer {
       },
     } as unknown as Parameters<typeof Bun.serve>[0])
 
-    const registryConfig = options.federationConfig?.registry
-    if (registryConfig === undefined) {
+    const federationConfig = options.federationConfig
+    if (federationConfig === undefined || federationConfig.registry === undefined) {
       this.bindingRegistryEndpoint = undefined
       this.federationRegistryEndpoint = undefined
     } else {
+      const registryConfig = federationConfig.registry
       const peers = new Map<string, RegistryAuthPeer>()
-      for (const [nodeId, peer] of options.federationConfig!.peers) {
+      for (const [nodeId, peer] of federationConfig.peers) {
         // PeerToken.matches() is the only sanctioned receiving-side secret
         // comparison; the endpoint never receives a revealed bare secret.
         peers.set(nodeId, { nodeId, token: peer.token })
