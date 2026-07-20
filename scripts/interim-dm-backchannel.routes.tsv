@@ -17,3 +17,6 @@ agent:daedalus:project:wrkq:task:T-06598/lane:*	max3
 agent:clod:project:wrkq:task:wrkqfix/lane:*	max3
 agent:daedalus:project:wrkq:task:T-06644/lane:*	max3
 agent:daedalus:project:hrc-runtime:task:primary/lane:*	max3
+# mable cross-node coordination seat on max3 (Lance-authorized 2026-07-20); host=node so the
+# minisvc/minilab <host><node> convention collapses to the bare node name.
+agent:mable:project:hrc-runtime:task:max3/lane:*	max3
