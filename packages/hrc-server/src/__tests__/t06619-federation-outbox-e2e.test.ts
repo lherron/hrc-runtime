@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 
@@ -8,6 +8,7 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06619-two-daemon-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06619-e2e'
@@ -50,7 +51,7 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
   const host = tailnetIpv4()
-  const liveTest = host === undefined ? test.skip : test
+  const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
     'peer sleep retries visibly, wake delivers automatically, dead-letter replays once',

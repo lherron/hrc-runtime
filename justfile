@@ -30,6 +30,20 @@ test:
 test-integration:
     bun run test:integration
 
+# Federation landing/release gate: never permit a green run with the live
+# tailnet corpus silently skipped.
+test-federation-live:
+    HRC_REQUIRE_LIVE_TAILNET_TESTS=1 bun test \
+        packages/hrc-server/src/__tests__/t06607-registry-startup.test.ts \
+        packages/hrc-server/src/__tests__/t06617-peer-protocol-e2e.test.ts \
+        packages/hrc-server/src/__tests__/t06618-federation-accept-e2e.test.ts \
+        packages/hrc-server/src/__tests__/t06619-federation-outbox-e2e.test.ts \
+        packages/hrc-server/src/__tests__/t06620-federation-dm-wait-e2e.test.ts \
+        packages/hrc-server/src/__tests__/t06621-binding-cache-routing-e2e.test.ts \
+        packages/hrc-server/src/__tests__/t06663-registry-client.test.ts \
+        packages/hrc-server/src/__tests__/t06668-local-registry-consult.test.ts \
+        packages/hrc-server/src/__tests__/t06698-dm-peer-forward-routing.test.ts
+
 # Run linter
 lint:
     bun run lint

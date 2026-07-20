@@ -10,6 +10,7 @@ import { isTailnetHost } from '../federation/registry-bind.js'
 import { resolveBindingRegistryPath } from '../federation/registry-endpoint.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06607'
 const TOKEN = 'isolated-registry-token'
@@ -44,7 +45,7 @@ describe('T-06607 isolated daemon registry lifecycle', () => {
   })
 
   const tailnetIpv4 = localTailnetIpv4()
-  const liveTailnetTest = tailnetIpv4 === undefined ? test.skip : test
+  const liveTailnetTest = selectLiveTailnetTest(import.meta.path, tailnetIpv4)
   liveTailnetTest(
     'serves authenticated registry writes on the configured tailnet bind',
     async () => {

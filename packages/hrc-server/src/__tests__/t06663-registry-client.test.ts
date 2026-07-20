@@ -19,6 +19,7 @@ import {
   type BindingRegistryEndpointControl,
   startBindingRegistryEndpoint,
 } from '../federation/registry-endpoint.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06663'
 const LOCAL_SCOPE = 'agent:cody:project:hrc-runtime:task:T-06668'
@@ -330,7 +331,7 @@ describe('T-06663 real registry endpoint integration', () => {
   })
 
   const tailnetIpv4 = localTailnetIpv4()
-  const liveTailnetTest = tailnetIpv4 === undefined ? test.skip : test
+  const liveTailnetTest = selectLiveTailnetTest(import.meta.path, tailnetIpv4)
   liveTailnetTest(
     'consults and establishes through the authenticated Tailnet listener',
     async () => {

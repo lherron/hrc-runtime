@@ -25,6 +25,7 @@ import { resolveFederationRegistryClient } from '../federation/registry-resoluti
 import { SUMMON_GATE_REFUSAL_EVENT } from '../federation/summon-gate.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const SCOPE = 'agent:localgate:project:hrc-runtime:task:T-06668'
 const SESSION = `${SCOPE}/lane:main`
@@ -139,7 +140,7 @@ describe('registry-host gate on a live isolated daemon', () => {
   })
 
   const tailnetIpv4 = localTailnetIpv4()
-  const liveTailnetTest = tailnetIpv4 === undefined ? test.skip : test
+  const liveTailnetTest = selectLiveTailnetTest(import.meta.path, tailnetIpv4)
   liveTailnetTest('boots zero-peer advisory with local-only authority', async () => {
     if (tailnetIpv4 === undefined) throw new Error('tailnet IPv4 unavailable')
     fixture = await createHrcTestFixture('hrc-t06668-local-registry-')

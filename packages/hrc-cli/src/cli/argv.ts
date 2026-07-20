@@ -145,6 +145,18 @@ export type LegacyArgvSchema = {
   negatedBooleans?: string[]
 }
 
+const LEGACY_FLAG_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function assertLegacyFlagNames(schema: LegacyArgvSchema): void {
+  for (const flag of [...schema.strings, ...schema.booleans, ...(schema.negatedBooleans ?? [])]) {
+    if (!LEGACY_FLAG_NAME.test(flag)) {
+      throw new Error(
+        `toLegacyArgv schema flag ${JSON.stringify(flag)} must be lowercase kebab-case`
+      )
+    }
+  }
+}
+
 /**
  * Build a legacy-style `string[]` argv from commander-parsed positionals and
  * opts, so existing `(args: string[]): Promise<void>` handlers can be called
@@ -169,6 +181,7 @@ export function toLegacyArgv(
   schema: LegacyArgvSchema,
   rawArgv?: string[]
 ): string[] {
+  assertLegacyFlagNames(schema)
   const out: string[] = [...positionals]
 
   // String flags: --flag value

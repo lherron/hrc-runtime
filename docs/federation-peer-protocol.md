@@ -62,6 +62,14 @@ isolated daemons until the federation summon gate is enforcing on every node
 that will federate. Adding production `peerListener` config is a separate ops
 step, not part of the listener implementation.
 
+## Live-tailnet test gate
+
+Federation landing and release validation runs `just test-federation-live`.
+That recipe sets `HRC_REQUIRE_LIVE_TAILNET_TESTS=1`, so absence of a tailnet
+IPv4 interface fails every live federation file instead of silently skipping
+it. Ordinary test runs may still skip on hosts without tailnet access, but emit
+the greppable marker `HRC_LIVE_TAILNET_SKIP` with the affected filename.
+
 ## Token rotation
 
 `token` is sent on outbound peer requests. `acceptedTokens` is the inbound

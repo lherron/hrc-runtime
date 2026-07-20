@@ -78,6 +78,25 @@ async function setupTmuxBridgeEnv(label: string) {
   return { tmux, hostSessionId, generation, runtimeId, pane }
 }
 
+function flattenPaneCapture(captured: string): string {
+  return captured.replace(/[\r\n]/g, '')
+}
+
+async function captureUntilLiteral(
+  tmux: TmuxManager,
+  paneId: string,
+  expected: string
+): Promise<{ raw: string; flat: string }> {
+  let raw = ''
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await Bun.sleep(100)
+    raw = await tmux.capture(paneId)
+    const flat = flattenPaneCapture(raw)
+    if (flat.includes(expected)) return { raw, flat }
+  }
+  return { raw, flat: flattenPaneCapture(raw) }
+}
+
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-bridge-phase2-')
 })
@@ -186,15 +205,8 @@ describe('POST /v1/bridges/deliver-text', () => {
     })
 
     // tmux delivery can take a few scheduler ticks before capture reflects it.
-    let captured = ''
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await Bun.sleep(100)
-      captured = await tmux.capture(pane.paneId)
-      if (captured.includes('SMOKEY_INJECTION_MARKER')) {
-        break
-      }
-    }
-    expect(captured).toContain('SMOKEY_INJECTION_MARKER')
+    const captured = await captureUntilLiteral(tmux, pane.paneId, 'SMOKEY_INJECTION_MARKER')
+    expect(captured.flat).toContain('SMOKEY_INJECTION_MARKER')
   })
 
   // -------------------------------------------------------------------------
@@ -258,10 +270,9 @@ describe('POST /v1/bridges/deliver-text', () => {
       expectedGeneration: generation,
     })
 
-    await Bun.sleep(300)
-    const captured = await tmux.capture(pane.paneId)
+    const captured = await captureUntilLiteral(tmux, pane.paneId, 'NO_ENTER_COMMAND')
     // Text should appear on the prompt line but NOT be executed.
-    expect(captured).toContain('NO_ENTER_COMMAND')
+    expect(captured.flat).toContain('NO_ENTER_COMMAND')
     // Since no Enter was sent, the shell must not have *executed* the buffer.
     // `NO_ENTER_COMMAND` is not a real command, so an execution would leave a
     // shell error ("command not found"). The robust enter=false signal is the
@@ -271,8 +282,8 @@ describe('POST /v1/bridges/deliver-text', () => {
     // plus the live prompt line, which is a benign redraw artifact and must not
     // be mistaken for command output. (T-... env-sensitive: shell-render shape
     // depends on the host's interactive shell config.)
-    expect(captured.toLowerCase()).not.toContain('command not found')
-    expect(captured.toLowerCase()).not.toContain('not found')
+    expect(captured.raw.toLowerCase()).not.toContain('command not found')
+    expect(captured.raw.toLowerCase()).not.toContain('not found')
   })
 
   // -------------------------------------------------------------------------
@@ -302,16 +313,9 @@ describe('POST /v1/bridges/deliver-text', () => {
       expectedGeneration: generation,
     })
 
-    let captured = ''
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await Bun.sleep(100)
-      captured = await tmux.capture(pane.paneId)
-      if (captured.includes('PAYLOAD_OOB_MARKER')) {
-        break
-      }
-    }
+    const captured = await captureUntilLiteral(tmux, pane.paneId, 'PAYLOAD_OOB_MARKER')
     // The full injected text should be PAYLOAD + _OOB_MARKER concatenated
-    expect(captured).toContain('PAYLOAD_OOB_MARKER')
+    expect(captured.flat).toContain('PAYLOAD_OOB_MARKER')
   })
 
   // -------------------------------------------------------------------------

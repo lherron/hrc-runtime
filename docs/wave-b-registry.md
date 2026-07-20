@@ -33,6 +33,20 @@ have it yet, we want a hard 404 — not a silent proxy fallthrough to
 The launchd job has `KeepAlive=true` and `RunAtLoad=true`, so it survives
 shell exit and respawns on logout/login.
 
+### Mini service-inventory exception
+
+Verdaccio predates the `com.praesidium.*` launchd namespace and deliberately
+remains supervised as `com.lherron.verdaccio` while dependency pinning work is
+parked. Estate and mini service sweeps must therefore include it explicitly;
+`grep praesidium` alone is incomplete:
+
+```bash
+launchctl list | grep -E 'com\.praesidium\.|com\.lherron\.verdaccio'
+```
+
+Do not rename or migrate the unit as part of an inventory sweep. Revisit the
+label only with the publishing/pinning work that owns the artifact service.
+
 ### Lifecycle commands
 
 ```sh

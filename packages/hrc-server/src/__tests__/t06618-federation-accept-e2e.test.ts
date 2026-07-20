@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 
@@ -12,6 +12,7 @@ import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer, sendFederationEnvelope } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06618-two-daemon-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06618'
@@ -71,7 +72,7 @@ describe('T-06618 two isolated daemon delivery', () => {
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
   const host = tailnetIpv4()
-  const liveTest = host === undefined ? test.skip : test
+  const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
     'accepts, ACKs after durability, runs local correlation, dedupes, and redirects stale epochs',

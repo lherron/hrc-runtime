@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
 
 import { CliUsageError } from 'cli-kit'
 import type { HrcMonitorState } from 'hrc-core'
@@ -550,7 +548,7 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
     }
   )
 
-  test('uses the explicit default OR pair and pins the C-0004 satellite migration', async () => {
+  test('uses the explicit default OR pair for the local C-0004 projection', async () => {
     const busy = { agent: 'cody', status: 'busy' } satisfies Member
     const dead = { ...busy, status: 'dead', changedAt: ts(10) } satisfies Member
     const run = await invokeWatch(
@@ -559,22 +557,10 @@ describe('T-06575 suite 5 — exit codes and grammar legality', () => {
     )
     expect(run.exitCode).toBe(0)
     expect(lastEvent(run)).toMatchObject({ conditions: ['turn-finished', 'runtime-dead'] })
-
-    const agentLoopRoot = resolve(import.meta.dir, '../../../../../agent-loop')
-    const [contract, ruling] = await Promise.all([
-      readFile(
-        resolve(
-          agentLoopRoot,
-          'loops/cross-project-arch/state/h00104-invocation-dag-engine/contracts/C-0004.json'
-        ),
-        'utf8'
-      ),
-      readFile(resolve(agentLoopRoot, 'loops/cross-project-arch/INVOCATION_DAG.md'), 'utf8'),
-    ])
-    for (const source of [contract, ruling]) {
-      expect(source).not.toContain('--until terminal')
-      expect(source).toContain('--until turn-finished --until runtime-dead')
-    }
+    // T-06675: the former second half read agent-loop's C-0004 artifacts from
+    // a sibling checkout. That migration is agent-loop-owned and is not a
+    // portable HRC test dependency. The HRC-owned OR-pair behavior remains
+    // pinned above at the actual monitor projection seam.
   })
 })
 

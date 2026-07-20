@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect } from 'bun:test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { isTailnetHost } from '../federation/registry-bind.js'
 import { HttpBindingRegistryClient } from '../federation/registry-client.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const HRCCHAT_MAIN = join(import.meta.dir, '..', '..', '..', 'hrcchat-cli', 'src', 'main.ts')
 const TOKEN = 't06698-two-daemon-token'
@@ -96,7 +97,7 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
   const host = tailnetIpv4()
-  const liveTest = host === undefined ? test.skip : test
+  const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest('an outbound-only origin resolves the registry before local ensure-target', async () => {
     if (host === undefined) throw new Error('tailnet unavailable')

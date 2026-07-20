@@ -9,6 +9,7 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06620-two-daemon-token'
 const ORIGIN_SCOPE = 'agent:mable:project:hrc-runtime:task:minisvc'
@@ -74,7 +75,7 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
   const host = tailnetIpv4()
-  const liveTest = host === undefined ? test.skip : test
+  const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   test('local wait returns a durable terminal outbox failure without any peer request', async () => {
     const fixture = await createHrcTestFixture('hrc-t06620-terminal-wait-')

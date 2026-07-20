@@ -11,6 +11,7 @@ import { PEER_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION_HEADER } from '../federati
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 'two-isolated-daemon-peer-token'
 const PARENT_SCOPE = 'agent:mable:project:hrc-runtime:task:T-06617'
@@ -50,7 +51,7 @@ describe('T-06617 two isolated daemons', () => {
   })
 
   const tailnetIp = localTailnetIpv4()
-  const liveTailnetTest = tailnetIp === undefined ? test.skip : test
+  const liveTailnetTest = selectLiveTailnetTest(import.meta.path, tailnetIp)
 
   liveTailnetTest('auth, locate, and health cross the narrow tailnet listeners', async () => {
     if (tailnetIp === undefined) throw new Error('tailnet IPv4 unavailable')

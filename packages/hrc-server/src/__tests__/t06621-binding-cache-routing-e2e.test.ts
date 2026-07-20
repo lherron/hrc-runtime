@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,6 +26,7 @@ import {
   FederationRoutingResolutionError,
   resolveFederationRoutingBinding,
 } from '../federation/routing-resolution.js'
+import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06621-origin-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06621-e2e'
@@ -69,7 +70,7 @@ describe('T-06621 isolated registry-outage delivery', () => {
   })
 
   const host = tailnetIpv4()
-  const liveTest = host === undefined ? test.skip : test
+  const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
     'stopping svc registry preserves cached delivery while uncached routing fails visibly/retryably',
