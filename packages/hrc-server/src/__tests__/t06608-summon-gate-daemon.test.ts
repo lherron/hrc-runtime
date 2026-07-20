@@ -106,8 +106,10 @@ describe('summon gate on a live isolated daemon', () => {
       expect(payload).toContain('"wouldBeDecision":"refuse"')
       expect(payload).toContain('"enforced":false')
       expect(payload).toContain('"mode":"advisory"')
-      // Provisional intent must be unmistakable as NOT the typed T-06609 signal.
-      expect(payload).toContain('"intentSource":"legacy-boolean"')
+      // T-06609: intent is now the caller's typed field, not a derived guess.
+      // This request omitted `summonIntent`, so it reads as implicit.
+      expect(payload).toContain('"intent":"implicit"')
+      expect(payload).toContain('"intentSource":"typed"')
     } finally {
       await server.stop()
       captured.restore()

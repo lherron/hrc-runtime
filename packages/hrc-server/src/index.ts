@@ -977,11 +977,16 @@ class HrcServerInstance implements HrcServer {
       } satisfies ResolveSessionResponse)
     }
 
-    // Covers `hrc run`, `hrc start`, and `hrc session resolve --create`. The
-    // intent is provisional: this surface serves BOTH operator commands and
-    // generic SDK callers, and today's `create` boolean cannot tell them apart.
-    // The typed `summonIntent` that can is T-06609.
-    await assertSummonAuthority(this, { scopeRef, path: 'resolve-session', intent: 'implicit' })
+    // Covers `hrc run`, `hrc start`, and `hrc session resolve --create` — and
+    // every generic SDK caller besides. `create: true` cannot tell those apart,
+    // so the caller says which it is: `hrc run`/`hrc start` send
+    // `explicit_local`, everything else omits the field and gets `implicit`
+    // (spec §5). An omission is never upgraded.
+    await assertSummonAuthority(this, {
+      scopeRef,
+      path: 'resolve-session',
+      intent: parsed.summonIntent ?? 'implicit',
+    })
 
     const now = timestamp()
     const hostSessionId = createHostSessionId()

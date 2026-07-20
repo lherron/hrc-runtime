@@ -234,6 +234,7 @@ export type {
   SendWindowLiteralInputRequest,
   StatusResponse,
   StatusSummaryResponse,
+  SummonIntent,
   PruneRuntimeResult,
   PruneRuntimesRequest,
   PruneRuntimesResponse,

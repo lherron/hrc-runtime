@@ -232,6 +232,11 @@ export async function cmdRun(
       sessionRef,
       runtimeIntent: intent,
       create: true,
+      // `hrc run` is a human starting this scope at THIS node, which federation
+      // spec §5 makes a one-shot placement declaration for a virgin, unpinned
+      // scope. Nothing else about the request can carry that — an SDK caller
+      // sends a byte-identical `create: true`.
+      summonIntent: 'explicit_local',
     })
     markLaunch('resolveSession', tResolve)
     if (!resolved.found) {
@@ -469,6 +474,9 @@ export async function cmdStart(args: string[]): Promise<void> {
       sessionRef,
       runtimeIntent: intent,
       create: true,
+      // `hrc start` is the detached twin of `hrc run` — same operator, same
+      // placement declaration (spec §5).
+      summonIntent: 'explicit_local',
     })
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)

@@ -30,6 +30,7 @@ import { parseScopeRef } from 'agent-scope'
 import type { EstablishmentProvenance, PlacementLedgerRepository } from 'hrc-store-sqlite'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
+import type { SummonIntent } from 'hrc-core'
 
 import { isReservedNodeId } from './node-id.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
@@ -64,12 +65,15 @@ export type SummonPath =
   | 'app-session'
 
 /**
- * Provisional intent derived from today's inconsistent `create` /
- * `createIfMissing` booleans. The TYPED `summonIntent` field is T-06609; every
- * event this module emits carries `intentSource: 'legacy-boolean'` so soak data
- * can never be mistaken for the typed signal.
+ * Why this node was asked to summon (T-06609). Re-exported from the wire
+ * contract so the gate and the HTTP surface can never drift apart on the
+ * spelling of a value the whole placement rule turns on.
+ *
+ * This replaces T-06608's provisional derivation from the `create` /
+ * `createIfMissing` booleans, and with it the `intentSource: 'legacy-boolean'`
+ * tag those events carried.
  */
-export type ProvisionalSummonIntent = 'explicit_local' | 'implicit'
+export type { SummonIntent }
 
 /** Node-local retirement mark written by reconciliation (T-06614 C-11125). */
 export type ScopeRetirement = {
@@ -153,7 +157,7 @@ export type SummonGateDeps = {
 export type SummonGateRequest = {
   scopeRef: string
   path: SummonPath
-  intent: ProvisionalSummonIntent
+  intent: SummonIntent
   deps: SummonGateDeps
 }
 
@@ -222,26 +226,37 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
 }
 
 /**
- * Resolves where placement says a virgin scope should be born.
+ * Resolves where placement says a VIRGIN scope should be born.
  *
- * Pin wins over `default_home_node`; `"local"` is the reserved sentinel meaning
- * "the node accepting this birth", resolved ONCE here to the daemon's own
- * configured nodeId and never reinterpreted downstream.
+ * Precedence, highest first:
+ *
+ *   1. **pin** — a hard constraint on every path (§5). Nothing overrides it,
+ *      explicitness included.
+ *   2. **explicit_local** — for an unpinned scope, the operator's start at this
+ *      node IS the placement declaration (§5 "explicit operator start wins").
+ *   3. **default_home_node** — where implicit summons route. `"local"` is the
+ *      reserved sentinel meaning "the node accepting this birth", resolved ONCE
+ *      here to the daemon's own configured nodeId and never reinterpreted
+ *      downstream.
+ *
+ * Reaching this function at all already means the registry answered `unbound`,
+ * which is what confines explicit-start-wins to genuinely virgin scopes: it
+ * decides where a scope with no binding is born, never who takes one that
+ * exists. The candidate home for an explicit start is `localNodeId` — this
+ * daemon's OWN configured id — never anything the caller supplied.
  */
 function resolveDesignatedHome(
   scopeRef: string,
   policy: SummonGatePolicy | undefined,
-  localNodeId: string
+  localNodeId: string,
+  intent: SummonIntent
 ):
   | { homeNodeId: string; provenance: Exclude<EstablishmentProvenance, 'rebind'> }
   | SummonGateEvaluation {
   const placement = policy?.placement
-  if (placement === undefined) {
-    return refuse('undeclared-placement', undeclaredPlacementDiagnostic(scopeRef, localNodeId))
-  }
 
   const pinKey = placementPinKey(scopeRef)
-  const pin = pinKey === undefined ? undefined : placement.pins[pinKey]
+  const pin = pinKey === undefined ? undefined : placement?.pins[pinKey]
 
   if (pin !== undefined) {
     // A pin meaning "wherever" is not a pin (§5).
@@ -252,6 +267,19 @@ function resolveDesignatedHome(
       )
     }
     return { homeNodeId: pin, provenance: 'pin' }
+  }
+
+  // The scope is virgin and unpinned, and a human ran `hrc run`/`hrc start`
+  // right here. That is a legitimate one-shot declaration (§5), so it needs no
+  // pre-declared policy — including on a profile with no [placement] stanza at
+  // all. The undeclared-placement refusal below exists to stop an IMPLICIT
+  // summon falling back silently; an explicit start is not a fallback.
+  if (intent === 'explicit_local') {
+    return { homeNodeId: localNodeId, provenance: 'explicit_local' }
+  }
+
+  if (placement === undefined) {
+    return refuse('undeclared-placement', undeclaredPlacementDiagnostic(scopeRef, localNodeId))
   }
 
   const fallback = placement.defaultHomeNode
@@ -365,7 +393,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     )
   }
 
-  const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId)
+  const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent)
   if (isEvaluation(designated)) return designated
 
   if (designated.homeNodeId === deps.localNodeId) {
@@ -435,8 +463,10 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
       localNodeId: deps.localNodeId,
       ...(evaluation.homeNodeId === undefined ? {} : { homeNodeId: evaluation.homeNodeId }),
       intent: request.intent,
-      // Never let soak data be mistaken for the typed T-06609 signal.
-      intentSource: 'legacy-boolean',
+      // Retained after T-06609 so soak records stay self-describing: a line
+      // reading `legacy-boolean` came from the T-06608 derivation, a line
+      // reading `typed` from a signal the caller actually sent.
+      intentSource: 'typed',
       diagnostic: evaluation.diagnostic,
     })
   }

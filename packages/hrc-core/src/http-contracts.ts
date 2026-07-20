@@ -30,10 +30,28 @@ export type RestartStyle = 'reuse_pty' | 'fresh_pty'
 
 // -- Session management -------------------------------------------------------
 
+/**
+ * Why this node is being asked to summon a scope (federation spec §5).
+ *
+ * `explicit_local` says a human ran an operator command *here* — which §5 makes
+ * a one-shot placement declaration for a virgin, unpinned scope. `implicit`
+ * says something else asked (a message, a dispatch, an SDK call), and placement
+ * policy decides where the scope is born.
+ *
+ * The distinction has to be TYPED because `create: true` cannot carry it:
+ * `/v1/sessions/resolve` serves `hrc run` and `hrc start` alongside every
+ * generic SDK caller, and §5 forbids conflating the two. Absent ⇒ `implicit`,
+ * so every existing caller keeps exactly the semantics it has today and only a
+ * caller that deliberately says `explicit_local` can declare placement.
+ */
+export type SummonIntent = 'explicit_local' | 'implicit'
+
 export type ResolveSessionRequest = {
   sessionRef: string
   runtimeIntent?: HrcRuntimeIntent | undefined
   create?: boolean | undefined
+  /** Absent ⇒ `implicit`. Only operator commands send `explicit_local`. */
+  summonIntent?: SummonIntent | undefined
 }
 
 export type ResolveSessionFoundResponse = {

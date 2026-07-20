@@ -1,10 +1,14 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
+import type { SummonIntent } from 'hrc-core'
 
 import { isRecord } from './common.js'
+
+const SUMMON_INTENTS: readonly SummonIntent[] = ['explicit_local', 'implicit']
 
 export function parseResolveSessionRequest(input: unknown): {
   sessionRef: string
   create?: boolean
+  summonIntent?: SummonIntent
 } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -24,10 +28,25 @@ export function parseResolveSessionRequest(input: unknown): {
     })
   }
 
+  // Absent is the overwhelmingly common case and means `implicit` (spec §5), so
+  // it is left absent here rather than defaulted — the gate owns that default.
+  // An unrecognized value is rejected rather than coerced: silently reading a
+  // typo'd "explicit" as `implicit` would demote an operator's placement
+  // declaration to a policy-routed summon with nothing to show for it.
+  const summonIntent = input['summonIntent']
+  if (summonIntent !== undefined && !SUMMON_INTENTS.includes(summonIntent as SummonIntent)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `summonIntent must be one of ${SUMMON_INTENTS.join(', ')}`,
+      { field: 'summonIntent' }
+    )
+  }
+
   parseSessionRef(sessionRef)
   return {
     sessionRef: sessionRef.trim(),
     ...(create !== undefined ? { create } : {}),
+    ...(summonIntent !== undefined ? { summonIntent: summonIntent as SummonIntent } : {}),
   }
 }
 

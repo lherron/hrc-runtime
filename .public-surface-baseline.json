@@ -2455,6 +2455,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "SummonIntent",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|SummonIntent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "SweepRuntimeResult",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

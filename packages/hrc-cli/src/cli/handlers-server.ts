@@ -287,6 +287,14 @@ export async function cmdSessionResolve(args: string[]): Promise<void> {
   const create = hasFlag(args, '--create')
 
   const client = createClient()
+  // Deliberately NOT `summonIntent: 'explicit_local'`, though a human may well
+  // be typing it. T-06609's AC names `hrc run` and `hrc start` as the operator
+  // commands, and this verb is neither: it is the scripting/plumbing primitive
+  // that SDK callers and test harnesses drive, and it prints JSON rather than
+  // starting anything. Treating it as a placement declaration would hand every
+  // script that calls it the authority to establish a scope wherever it happens
+  // to run — the exact conflation federation spec §5 draws the line against.
+  // Placing a scope from the shell is `hrc run`/`hrc start`.
   const result = await client.resolveSession({ sessionRef, ...(create ? { create: true } : {}) })
   printJson(result)
 }

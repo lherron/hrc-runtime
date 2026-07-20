@@ -14,6 +14,7 @@
  */
 
 import { HrcConflictError, HrcErrorCode } from 'hrc-core'
+import type { SummonIntent } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
@@ -22,7 +23,6 @@ import type { FederationConfig } from './federation-config.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { RegistryUnreachableError, createBindingRegistryClient } from './registry-client.js'
 import {
-  type ProvisionalSummonIntent,
   type SummonGateDeps,
   type SummonGatePolicy,
   type SummonGateResult,
@@ -133,6 +133,32 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
 }
 
 /**
+ * The gate request, shaped so `explicit_local` is UNREACHABLE from any path but
+ * `resolve-session`.
+ *
+ * §5's line is that generic SDK and test callers with `create: true` must never
+ * become placement declarations. The four non-operator paths — message-driven
+ * ensure-target, archived-successor, command-run, app-session — are summons
+ * *on behalf of* something else, so none of them can be an operator's start.
+ * Encoding that as a union means a future caller cannot hand one of them an
+ * explicit intent even by accident: it is a compile error rather than a review
+ * catch, on a surface where the review catch would have to hold for years.
+ *
+ * `resolve-session` is the one arm that can carry either value, because it is
+ * the one surface `hrc run` and `hrc start` enter through — and, per T-06608's
+ * path-C finding, the same surface every generic SDK caller enters through.
+ * Separating those two is the entire reason the typed field exists.
+ */
+export type SummonAuthorityRequest =
+  | { scopeRef: string; path: 'resolve-session'; intent: SummonIntent }
+  | {
+      scopeRef: string
+      path: Exclude<SummonPath, 'resolve-session'>
+      /** Absent ⇒ `implicit`; `implicit` is the only value these paths accept. */
+      intent?: 'implicit' | undefined
+    }
+
+/**
  * Asks the gate whether this node may summon `scopeRef`, and enforces the
  * answer only when the flag says to.
  *
@@ -141,7 +167,7 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
  */
 export async function assertSummonAuthority(
   server: SummonGateServerContext,
-  request: { scopeRef: string; path: SummonPath; intent: ProvisionalSummonIntent }
+  request: SummonAuthorityRequest
 ): Promise<SummonGateResult | undefined> {
   const deps = gateDepsFor(server)
   if (deps === undefined) return undefined
@@ -149,7 +175,9 @@ export async function assertSummonAuthority(
   const result = await evaluateSummonGate({
     scopeRef: request.scopeRef,
     path: request.path,
-    intent: request.intent,
+    // Absent ⇒ implicit (spec §5). The default lives here, at the one seam
+    // every path funnels through, so no call site can pick a different one.
+    intent: request.intent ?? 'implicit',
     deps,
   })
 

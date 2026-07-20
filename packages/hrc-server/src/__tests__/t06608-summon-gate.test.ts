@@ -487,9 +487,10 @@ describe('advisory log content — the soak data T-06615 collects', () => {
     expect(entry.details['wouldBeDecision']).toBe('refuse')
     expect(entry.details['mode']).toBe('advisory')
     expect(entry.details['homeNodeId']).toBe('lab')
-    // Provisional intent must be unmistakable as NOT the typed T-06609 signal.
+    // T-06609 replaced the provisional derivation with the typed field; soak
+    // records now say the intent came from the caller, not from an inference.
     expect(entry.details['intent']).toBe('implicit')
-    expect(entry.details['intentSource']).toBe('legacy-boolean')
+    expect(entry.details['intentSource']).toBe('typed')
   })
 
   test('allows are not logged as refusals (soak data stays signal, not noise)', async () => {
