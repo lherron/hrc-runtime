@@ -7,6 +7,7 @@ import type {
   WaitMessageResponse,
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
+import { tryRouteBackchannelDm } from '../backchannel-route.js'
 import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
@@ -88,8 +89,10 @@ export async function cmdDm(
   // blocks on turn completion, so its timeoutMs only bounds the post-completion
   // message wait and a slow turn would blow past `--timeout`. Instead we
   // dispatch fast (detached turn) and run a client-side bounded final wait.
-  const sendWith = (replyToMessageId: string | undefined): Promise<SemanticDmResponse> =>
-    client.semanticDm({
+  const sendWith = async (replyToMessageId: string | undefined): Promise<SemanticDmResponse> => {
+    const routed = await tryRouteBackchannelDm({ from, to, body })
+    if (routed) return routed
+    return client.semanticDm({
       from,
       to,
       body,
@@ -103,6 +106,7 @@ export async function cmdDm(
         : {}),
       ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
     })
+  }
 
   // T-01744: a stale/unresolvable --reply-to anchor (e.g. the parent message was
   // lost across an unclean daemon restart) must not block delivery. The server

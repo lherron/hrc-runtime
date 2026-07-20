@@ -2,9 +2,10 @@
 # INTERIM svc hub DM backchannel.
 # DEMOTE svc<->lab TO BREAK-GLASS AT T-06622; svc<->max3 AT T-06672.
 #
-# This deliberately small bridge polls one HRC message store, matches only
-# explicit routes, and injects matching DMs into the other store over SSH.
-# Delivery is at-least-once: a message is forwarded before its cursor advances.
+# This deliberately small bridge routes only explicit targets. New hrcchat
+# sends use `route`/`send` before touching the local store; the retained poller
+# forwards legacy records. Delivery remains at-least-once: poll forwarding
+# precedes cursor advance, and an ambiguous direct-send retry may duplicate.
 
 set -euo pipefail
 
@@ -14,11 +15,12 @@ export ASP_AGENTS_ROOT="${ASP_AGENTS_ROOT:-${HOME}/praesidium/var/agents}"
 
 usage() {
   cat <<'EOF'
-usage: interim-dm-backchannel.sh init|once|poll|inject <origin-node> <target> <from-kind> <from-value>
+usage: interim-dm-backchannel.sh init|once|poll|route|send|inject ...
 
 poller environment:
   BACKCHANNEL_NODE          local node name (svc, lab, or max3)
   BACKCHANNEL_DIR           runtime directory (default: ~/praesidium/var/backchannel)
+  BACKCHANNEL_NODE_FILE     local node file (default: $BACKCHANNEL_DIR/node)
   BACKCHANNEL_ROUTES        static route table (default: $BACKCHANNEL_DIR/routes.tsv)
   BACKCHANNEL_CURSOR        cursor file (default: $BACKCHANNEL_DIR/cursor)
   BACKCHANNEL_POLL_SECONDS  poll interval (default: 2)
@@ -27,6 +29,7 @@ poller environment:
   BACKCHANNEL_REMOTE_LAB    SSH target for lab (default: lab@localhost)
   BACKCHANNEL_REMOTE_MAX3   SSH target for max3 (default: lherron@max3)
   BACKCHANNEL_SSH_IDENTITY  optional private key for the outgoing SSH leg
+  BACKCHANNEL_SSH           SSH binary override (default: command lookup)
   BACKCHANNEL_REMOTE_SCRIPT remote script path override
   HRCCHAT                   local hrcchat binary (default: command lookup)
 
@@ -54,10 +57,14 @@ shift
 
 backchannel_dir="${BACKCHANNEL_DIR:-${HOME}/praesidium/var/backchannel}"
 routes_file="${BACKCHANNEL_ROUTES:-${backchannel_dir}/routes.tsv}"
+node_file="${BACKCHANNEL_NODE_FILE:-${backchannel_dir}/node}"
 cursor_file="${BACKCHANNEL_CURSOR:-${backchannel_dir}/cursor}"
 poll_seconds="${BACKCHANNEL_POLL_SECONDS:-2}"
 batch_size="${BACKCHANNEL_BATCH_SIZE:-100}"
 local_node="${BACKCHANNEL_NODE:-}"
+if [[ -z "$local_node" && -r "$node_file" ]]; then
+  local_node="$(tr -d '[:space:]' < "$node_file")"
+fi
 if [[ -n "${HRCCHAT:-}" ]]; then
   hrcchat_bin="$HRCCHAT"
 elif [[ -x "${HOME}/.bun/bin/hrcchat" ]]; then
@@ -66,8 +73,10 @@ else
   hrcchat_bin="$(command -v hrcchat || true)"
 fi
 remote_script="${BACKCHANNEL_REMOTE_SCRIPT:-}"
+ssh_bin="${BACKCHANNEL_SSH:-$(command -v ssh || true)}"
 
 [[ -n "$hrcchat_bin" ]] || die "hrcchat is not available"
+[[ -n "$ssh_bin" ]] || die "ssh is not available"
 command -v jq >/dev/null 2>&1 || die "jq is not available"
 
 ensure_poller_config() {
@@ -172,11 +181,11 @@ inject_message() {
   case "$from_kind" in
     session)
       [[ -n "$from_value" ]] || die "session sender is missing a session ref"
-      output="$(HRC_SESSION_REF="$from_value" "$hrcchat_bin" --json dm "$target" - <<<"$prefixed")"
+      output="$(BACKCHANNEL_BYPASS=1 HRC_SESSION_REF="$from_value" "$hrcchat_bin" --json dm "$target" - <<<"$prefixed")"
       status=$?
       ;;
     entity)
-      output="$(env -u HRC_SESSION_REF "$hrcchat_bin" --json dm "$target" - <<<"$prefixed")"
+      output="$(env -u HRC_SESSION_REF BACKCHANNEL_BYPASS=1 "$hrcchat_bin" --json dm "$target" - <<<"$prefixed")"
       status=$?
       ;;
     *) die "unsupported sender kind: $from_kind" ;;
@@ -190,6 +199,32 @@ inject_message() {
     return 0
   fi
   return "$status"
+}
+
+resolve_remote_route() {
+  local target="${1:-}"
+  local route_node
+  ensure_poller_config
+  [[ -n "$target" ]] || die "route requires a canonical target session ref"
+  route_node="$(route_for_target "$target")"
+  if [[ -n "$route_node" && "$route_node" != "$local_node" ]]; then
+    printf '%s\n' "$route_node"
+  fi
+}
+
+send_message() {
+  local target="${1:-}"
+  local from_kind="${2:-}"
+  local from_value="${3:-}"
+  local route_node body
+  route_node="$(resolve_remote_route "$target")"
+  if [[ -z "$route_node" ]]; then
+    log "target is not remotely routed: $target"
+    return 10
+  fi
+  body="$(cat)"
+  log "direct send target=$target route=$route_node"
+  forward_message "$route_node" "$target" "$from_kind" "$from_value" "$body"
 }
 
 forward_message() {
@@ -209,7 +244,7 @@ forward_message() {
     ssh_args+=(-i "$BACKCHANNEL_SSH_IDENTITY")
   fi
   printf '%s' "$body" |
-    ssh "${ssh_args[@]}" "$remote" "$remote_path" inject "$local_node" "$target_handle" "$from_kind" "$from_value"
+    "$ssh_bin" "${ssh_args[@]}" "$remote" "$remote_path" inject "$local_node" "$target_handle" "$from_kind" "$from_value"
 }
 
 poll_once() {
@@ -315,6 +350,12 @@ case "$command_name" in
       fi
       sleep "$poll_seconds"
     done
+    ;;
+  route)
+    resolve_remote_route "$@"
+    ;;
+  send)
+    send_message "$@"
     ;;
   inject)
     inject_message "$@"

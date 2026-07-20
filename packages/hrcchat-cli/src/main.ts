@@ -7,6 +7,7 @@ import { Command, CommanderError } from 'commander'
 import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
+import { assertBackchannelFollowAllowed } from './backchannel-route.js'
 import { cmdDm } from './commands/dm.js'
 import { cmdDoctor } from './commands/doctor.js'
 import { cmdInfo } from './commands/info.js'
@@ -18,6 +19,7 @@ import { cmdSummon } from './commands/summon.js'
 import { TurnExitError, cmdTurn } from './commands/turn.js'
 import { cmdWho } from './commands/who.js'
 import { formatHrcDomainError } from './domain-error-format.js'
+import { resolveAddress } from './normalize.js'
 
 // -- .env.local loading -------------------------------------------------------
 
@@ -255,6 +257,10 @@ const dmCmd = program
       )
     }
     if (opts.follow !== undefined) {
+      const routedTarget = resolveAddress(target, process.env['HRC_SESSION_REF'])
+      if (routedTarget.kind === 'session') {
+        await assertBackchannelFollowAllowed(routedTarget.sessionRef)
+      }
       await cmdTurn(
         client,
         {
