@@ -1682,6 +1682,11 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       ghostmux,
       lockHandle
     )
+    // The constructor starts durable-broker reattachment concurrently. Wait
+    // for its always-resolving barrier before placement repair so a refused
+    // wrong-node candidate cannot be fenced stale and then promoted back to
+    // ready by a late warmup completion.
+    await server.brokerWarmupComplete
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
     writeServerLog('INFO', 'server.start.ready', logCtx)
     return server
