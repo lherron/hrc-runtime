@@ -1554,6 +1554,18 @@ export type {
   RegistryAuthToken,
 } from './federation/registry-endpoint.js'
 export {
+  HttpBindingRegistryClient,
+  RegistryRefusedError,
+  RegistryUnreachableError,
+  createBindingRegistryClient,
+} from './federation/registry-client.js'
+export type {
+  BindingRegistryClient,
+  BindingRegistryClientOptions,
+  RegistryClientFetch,
+  RegistryConsultResult,
+} from './federation/registry-client.js'
+export {
   NODE_ID_PATTERN,
   RESERVED_NODE_IDS,
   describeNodeIdViolation,
