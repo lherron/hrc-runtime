@@ -7,11 +7,10 @@
  * HRC event per LogRecord with source='otel'.
  */
 
-import { timingSafeEqual } from 'node:crypto'
-
 import type { HrcLaunchArtifact, HrcLaunchRecord } from 'hrc-core'
 import { normalizeCodexOtelEvent } from 'hrc-events'
 
+import { constantTimeEqual } from './constant-time.js'
 import { applyHookLifecycleEnvelope, parseHookEnvelope } from './hook-lifecycle.js'
 import {
   appendHrcEvent,
@@ -494,21 +493,6 @@ export class OtelAuthError extends Error {
     super(message)
     this.status = status
   }
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    // Still do a constant-time compare on fixed-length buffers so timing doesn't
-    // reveal whether mismatch is due to length vs. content.
-    const filler = Buffer.alloc(Math.max(a.length, b.length, 1))
-    const bufA = Buffer.from(a.padEnd(filler.length, '\0'))
-    const bufB = Buffer.from(b.padEnd(filler.length, '\0'))
-    timingSafeEqual(bufA, bufB)
-    return false
-  }
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  return timingSafeEqual(bufA, bufB)
 }
 
 export function parseOtelAuthHeader(header: string | null): {
