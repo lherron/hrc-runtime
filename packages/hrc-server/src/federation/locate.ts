@@ -360,6 +360,8 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
     ledgerRow === undefined
       ? { state: 'absent' }
       : { state: ledgerRow.state, record: toRecord(ledgerRow) }
+  const retirement = deps.retirementFor?.(scopeRef)
+  const retiredHere = retirement?.retiredNodeId === deps.localNodeId
 
   // Ledger-first, matching the gate. The registry is consulted only when the
   // local ledger holds no ACTIVE authority — a revoked row is not authority, so
@@ -403,9 +405,12 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
     authority = { state: 'unbound' }
   }
 
-  const { skew, notes } = assessSkew(declared, authority)
+  // The summon gate checks a local retirement mark before the active ledger.
+  // Locate/doctor must not describe that deliberately-retired ledger residue
+  // as live pin skew: reconciliation keeps the row for history, but it no
+  // longer grants summon authority on this node.
+  const { skew, notes } = retiredHere ? { notes: [] } : assessSkew(declared, authority)
 
-  const retirement = deps.retirementFor?.(scopeRef)
   if (retirement !== undefined) {
     notes.push({
       code: 'scope-retired',
@@ -449,12 +454,15 @@ export async function scanLedgerForSkew(options: {
   bindings: readonly PlacementLedgerRecord[]
   localNodeId: string
   policyFor: (scopeRef: string) => Promise<PlacementPolicyResolution>
+  retirementFor?: ((scopeRef: string) => ScopeRetirement | undefined) | undefined
 }): Promise<LedgerSkewScan> {
   const skewed: { scopeRef: string; skew: LocateSkew }[] = []
   const unreadable: { scopeRef: string; detail: string }[] = []
 
   for (const binding of options.bindings) {
     if (binding.state !== 'active') continue
+    const retirement = options.retirementFor?.(binding.scopeRef)
+    if (retirement?.retiredNodeId === options.localNodeId) continue
     const resolution = await options.policyFor(binding.scopeRef)
     const declared = describeDeclaredPolicy(binding.scopeRef, resolution, options.localNodeId)
     if (declared.source === 'unavailable') {

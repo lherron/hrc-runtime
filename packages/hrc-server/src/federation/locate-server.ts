@@ -162,6 +162,7 @@ export async function scanServerLedgerForSkew(
       bindings,
       localNodeId,
       policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
+      retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
     }),
   }
 }

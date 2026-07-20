@@ -450,6 +450,26 @@ describe('locate degrades visibly, never falsely', () => {
     expect(location.retirement).toMatchObject({ canonicalHomeNodeId: 'mini' })
     expect(location.notes.map((n) => n.code)).toContain('scope-retired')
   })
+
+  test('a local retirement mark suppresses stale-ledger skew in locate', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        localNodeId: 'max3',
+        ledger: ledgerStub(ledgerRow({ homeNodeId: 'max3' })),
+        policyFor: async () => policy({ pins: { [PIN_KEY]: 'mini' } }),
+        retirementFor: () => ({
+          retiredNodeId: 'max3',
+          canonicalHomeNodeId: 'mini',
+          canonicalPlacementEpoch: 1,
+          reason: 'namespace reconciliation',
+        }),
+      }),
+    })
+
+    expect(location.skew).toBeUndefined()
+    expect(location.notes.map((n) => n.code)).toContain('scope-retired')
+  })
 })
 
 describe('birth chain (T-06610 seam)', () => {
@@ -545,6 +565,22 @@ describe('scanLedgerForSkew — the doctor surface', () => {
       localNodeId: 'max3',
       bindings: [ledgerRow({ state: 'revoked', homeNodeId: 'max3' })],
       policyFor: async () => policy({ pins: { [PIN_KEY]: 'mini' } }),
+    })
+
+    expect(scan.skewed).toHaveLength(0)
+  })
+
+  test('retired local rows are not reported as skew', async () => {
+    const scan = await scanLedgerForSkew({
+      localNodeId: 'max3',
+      bindings: [ledgerRow({ homeNodeId: 'max3' })],
+      policyFor: async () => policy({ pins: { [PIN_KEY]: 'mini' } }),
+      retirementFor: () => ({
+        retiredNodeId: 'max3',
+        canonicalHomeNodeId: 'mini',
+        canonicalPlacementEpoch: 1,
+        reason: 'namespace reconciliation',
+      }),
     })
 
     expect(scan.skewed).toHaveLength(0)
