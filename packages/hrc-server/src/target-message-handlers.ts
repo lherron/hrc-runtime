@@ -31,7 +31,7 @@ import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
-import { assertSummonAuthority } from './federation/summon-gate-server.js'
+import { assertScopeNotRetired, assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   extractProjectId,
@@ -522,6 +522,11 @@ export async function handleSemanticTurnHandoff(
     )
   }
 
+  await assertScopeNotRetired(this, {
+    scopeRef: scopeRefOf(body.to.sessionRef),
+    path: 'archived-successor',
+  })
+
   const parent =
     body.replyToMessageId !== undefined
       ? this.db.messages.getById(body.replyToMessageId)
@@ -864,6 +869,13 @@ export async function handleSemanticDm(
         reason: 'responseFormat requires a session turn target',
       }
     )
+  }
+
+  if (body.to.kind === 'session') {
+    await assertScopeNotRetired(this, {
+      scopeRef: scopeRefOf(body.to.sessionRef),
+      path: 'archived-successor',
+    })
   }
 
   const respondTo = body.respondTo ?? body.from

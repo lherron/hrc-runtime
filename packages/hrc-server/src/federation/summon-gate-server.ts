@@ -268,3 +268,38 @@ export async function assertSummonAuthority(
 
   return result
 }
+
+/**
+ * Refuses a locally retired scope before an existing target row can bypass the
+ * summon gate entirely.
+ *
+ * This is deliberately retirement-only: target selection also handles
+ * established local sessions and legitimate remote routing, neither of which
+ * may be forced through virgin-placement or capability evaluation merely to
+ * check for a node-local hard stop. When no exact local mark exists, this does
+ * one local lookup and leaves the pre-existing path byte-for-byte unchanged.
+ */
+export async function assertScopeNotRetired(
+  server: SummonGateServerContext,
+  request: {
+    scopeRef: string
+    path: Exclude<SummonPath, 'resolve-session'>
+  }
+): Promise<SummonGateResult | undefined> {
+  const deps = gateDepsFor(server)
+  if (deps === undefined) return undefined
+
+  const retirement = deps.retirementFor?.(request.scopeRef)
+  if (retirement === undefined || retirement.retiredNodeId !== deps.localNodeId) {
+    return undefined
+  }
+
+  // Re-enter the canonical gate only after proving that retirement applies.
+  // Omitting a caller birth credential is intentional: retirement is a
+  // node-local hard stop and must win before any authority mechanism is read.
+  return await assertSummonAuthority(server, {
+    scopeRef: request.scopeRef,
+    path: request.path,
+    intent: 'implicit',
+  })
+}

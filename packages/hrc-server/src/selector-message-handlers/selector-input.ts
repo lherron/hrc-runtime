@@ -18,13 +18,19 @@ import type {
 } from 'hrc-core'
 import { normalizeDispatchIntent } from '../dispatch-invocation.js'
 import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
+import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
 import { requireGhosttySurface, requireTmuxPane } from '../require-helpers.js'
 import { runtimeActivityPatch } from '../runtime-activity.js'
 import { findBoundSessionRuntime, findLatestRuntime } from '../runtime-select.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
-import { isRecord, parseJsonBody, parseOptionalTurnResponseFormat } from '../server-parsers.js'
+import {
+  isRecord,
+  parseJsonBody,
+  parseOptionalTurnResponseFormat,
+  parseSessionRef,
+} from '../server-parsers.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from '../server-util.js'
 import { findTargetSession } from '../target-view.js'
 import type { TmuxPaneState } from '../tmux.js'
@@ -383,6 +389,11 @@ export async function handleDispatchTurnBySelector(
     })
   }
   const responseFormat = parseOptionalTurnResponseFormat(body['responseFormat'])
+
+  await assertScopeNotRetired(this, {
+    scopeRef: parseSessionRef(sessionRef).scopeRef,
+    path: 'archived-successor',
+  })
 
   let session = findTargetSession(this.db, sessionRef)
   if (
