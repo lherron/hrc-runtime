@@ -53,12 +53,24 @@ export type UnreconciledReason =
 
 export type UnreconciledScope = { scopeRef: string; reasons: UnreconciledReason[] }
 
+export type ExcludedSystemRef = {
+  scopeRef: string
+  nodeId: string
+  sessionCount: number
+}
+
 export type NamespaceInventoryReport = {
   generatedAt: string
   scopes: NamespaceScopeInventory[]
+  excludedSystemRefs: ExcludedSystemRef[]
   remainingUnreconciled: UnreconciledScope[]
   f1EnablementBlocked: boolean
 }
+
+// summon-gate.ts documents this synthetic bookkeeping row as deliberately
+// outside agent admission. Keep the reconciliation exemption equally narrow
+// and visible: every other non-agent ref remains a hard inventory failure.
+const EXCLUDED_SYSTEM_SESSION_REFS = new Set(['system:hrc/sweep'])
 
 const USAGE = `usage:
   bun scripts/reconcile-federation-namespace.ts inventory \\
@@ -123,7 +135,12 @@ function readRegistryBindings(path: string): PlacementBinding[] {
   const db = new Database(path, { readonly: true })
   try {
     if (!tableExists(db, 'binding_registry')) return []
-    return new BindingRegistry(db).list()
+    return new BindingRegistry(db).list().map((binding) => ({
+      ...binding,
+      // Registry authority is agent-only. Unlike node-local synthetic rows,
+      // there is no system allowlist here.
+      scopeRef: canonicalScopeRef(binding.scopeRef),
+    }))
   } finally {
     db.close()
   }
@@ -132,6 +149,7 @@ function readRegistryBindings(path: string): PlacementBinding[] {
 function readNodeStore(store: NamespaceNodeStore): {
   occurrences: Map<string, NamespaceOccurrence>
   retirements: ScopeRetirementRecord[]
+  excludedSystemRefs: ExcludedSystemRef[]
 } {
   const nodeId = requireNodeId(store.nodeId)
   if (!existsSync(store.path)) throw new Error(`node state store does not exist: ${store.path}`)
@@ -158,7 +176,20 @@ function readNodeStore(store: NamespaceNodeStore): {
           .all()
       : []
 
+    const excludedSessionCounts = new Map<string, number>()
     for (const row of sessionRows) {
+      if (!row.scope_ref.startsWith('agent:')) {
+        if (EXCLUDED_SYSTEM_SESSION_REFS.has(row.scope_ref)) {
+          excludedSessionCounts.set(
+            row.scope_ref,
+            (excludedSessionCounts.get(row.scope_ref) ?? 0) + 1
+          )
+          continue
+        }
+        // Preserve the canonical parser's loud, stable diagnostic for every
+        // unknown namespace rather than silently filtering it.
+        canonicalScopeRef(row.scope_ref)
+      }
       const scopeRef = canonicalScopeRef(row.scope_ref)
       const current = occurrences.get(scopeRef) ?? {
         nodeId,
@@ -204,7 +235,13 @@ function readNodeStore(store: NamespaceNodeStore): {
         retirement,
       })
     }
-    return { occurrences, retirements }
+    return {
+      occurrences,
+      retirements,
+      excludedSystemRefs: [...excludedSessionCounts]
+        .map(([scopeRef, sessionCount]) => ({ scopeRef, nodeId, sessionCount }))
+        .sort((a, b) => a.scopeRef.localeCompare(b.scopeRef)),
+    }
   } finally {
     db.close()
   }
@@ -240,11 +277,13 @@ export function inventoryFederationNamespace(input: {
   if (input.nodeStores.length === 0) throw new Error('at least one node state store is required')
   const nodeIds = new Set<string>()
   const byScope = new Map<string, NamespaceScopeInventory>()
+  const excludedSystemRefs: ExcludedSystemRef[] = []
   for (const rawStore of input.nodeStores) {
     const store = { ...rawStore, nodeId: requireNodeId(rawStore.nodeId) }
     if (nodeIds.has(store.nodeId)) throw new Error(`duplicate nodeId input: ${store.nodeId}`)
     nodeIds.add(store.nodeId)
-    const { occurrences } = readNodeStore(store)
+    const { occurrences, excludedSystemRefs: excluded } = readNodeStore(store)
+    excludedSystemRefs.push(...excluded)
     for (const [scopeRef, occurrence] of occurrences) {
       const scope = byScope.get(scopeRef) ?? { scopeRef, nodes: [], advisoryCreations: [] }
       scope.nodes.push(occurrence)
@@ -289,6 +328,9 @@ export function inventoryFederationNamespace(input: {
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     scopes,
+    excludedSystemRefs: excludedSystemRefs.sort(
+      (a, b) => a.scopeRef.localeCompare(b.scopeRef) || a.nodeId.localeCompare(b.nodeId)
+    ),
     remainingUnreconciled,
     f1EnablementBlocked: remainingUnreconciled.length > 0,
   }
@@ -305,6 +347,7 @@ export type ReconciliationResult = {
   changed: number
   wouldChange: number
   reconciledScopes: string[]
+  excludedSystemRefs: ExcludedSystemRef[]
   remainingUnreconciled: UnreconciledScope[]
   projectedRemainingUnreconciledAfterApply: UnreconciledScope[]
   f1EnablementBlocked: boolean
@@ -474,6 +517,7 @@ export function reconcileFederationNamespace(input: {
       changed: 0,
       wouldChange: changing.length,
       reconciledScopes: selections.map((selection) => selection.scopeRef),
+      excludedSystemRefs: inventory.excludedSystemRefs,
       remainingUnreconciled: inventory.remainingUnreconciled,
       projectedRemainingUnreconciledAfterApply: unreconciledWithoutSelections,
       f1EnablementBlocked: inventory.remainingUnreconciled.length > 0,
@@ -541,6 +585,7 @@ export function reconcileFederationNamespace(input: {
     changed: changing.length,
     wouldChange: 0,
     reconciledScopes: selections.map((selection) => selection.scopeRef),
+    excludedSystemRefs: after.excludedSystemRefs,
     remainingUnreconciled: after.remainingUnreconciled,
     projectedRemainingUnreconciledAfterApply: unreconciledWithoutSelections,
     f1EnablementBlocked: after.f1EnablementBlocked,

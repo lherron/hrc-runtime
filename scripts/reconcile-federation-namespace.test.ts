@@ -65,7 +65,106 @@ function seedNode(input: {
   return path
 }
 
+function seedSyntheticSession(path: string, scopeRef: string, hostSessionId: string): void {
+  const db = openHrcDatabase(path)
+  try {
+    db.sqlite
+      .query(
+        `INSERT INTO sessions (
+          host_session_id, scope_ref, lane_ref, generation, status,
+          prior_host_session_id, created_at, updated_at, parsed_scope_json,
+          ancestor_scope_refs_json, last_applied_intent_json, continuation_json
+        ) VALUES (?, ?, 'main', 1, 'archived', NULL, ?, ?, NULL, '[]', NULL, NULL)`
+      )
+      .run(hostSessionId, scopeRef, '2026-07-20T02:30:00.000Z', '2026-07-20T02:30:00.000Z')
+  } finally {
+    db.close()
+  }
+}
+
 describe('pre-federation namespace reconciliation', () => {
+  it('reports the documented sweep bookkeeping ref without reconciling it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-system-ref-'))
+    roots.push(root)
+    const scopeRef = 'agent:clod:project:hrc-runtime:task:T-06614'
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef,
+      hostSessionId: 'hsid-svc',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    seedSyntheticSession(svcPath, 'system:hrc/sweep', 'hrc-sweep-summary')
+
+    const report = inventoryFederationNamespace({
+      nodeStores: [{ nodeId: 'svc', path: svcPath }],
+      registryPath: join(root, 'registry.sqlite'),
+    })
+
+    expect(report.scopes.map((scope) => scope.scopeRef)).toEqual([scopeRef])
+    expect(report.excludedSystemRefs).toEqual([
+      { scopeRef: 'system:hrc/sweep', nodeId: 'svc', sessionCount: 1 },
+    ])
+  })
+
+  it('still rejects every unrecognized non-agent session ref', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-unknown-ref-'))
+    roots.push(root)
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef: 'agent:clod:project:hrc-runtime:task:T-06614',
+      hostSessionId: 'hsid-svc',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    seedSyntheticSession(svcPath, 'system:hrc/unknown', 'unknown-system-row')
+
+    expect(() =>
+      inventoryFederationNamespace({
+        nodeStores: [{ nodeId: 'svc', path: svcPath }],
+        registryPath: join(root, 'registry.sqlite'),
+      })
+    ).toThrow('ScopeRef must start with "agent:<agentId>"')
+  })
+
+  it('never allows a non-agent ref in the binding registry', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-registry-system-ref-'))
+    roots.push(root)
+    const registryPath = join(root, 'registry.sqlite')
+    const registry = openBindingRegistry(registryPath)
+    try {
+      registry.sqlite
+        .query(
+          `INSERT INTO binding_registry (
+            scope_ref, home_node_id, placement_epoch, birth_class,
+            authority_provenance_json, establishment_provenance,
+            prior_home_node_id, created_at, updated_at
+          ) VALUES (?, 'svc', 1, 'policy-born', '{}', 'explicit_local', NULL, ?, ?)`
+        )
+        .run('system:hrc/sweep', '2026-07-20T02:00:00.000Z', '2026-07-20T02:00:00.000Z')
+    } finally {
+      registry.close()
+    }
+
+    expect(() =>
+      inventoryFederationNamespace({
+        nodeStores: [
+          {
+            nodeId: 'svc',
+            path: seedNode({
+              root,
+              nodeId: 'svc',
+              scopeRef: 'agent:clod:project:hrc-runtime:task:T-06614',
+              hostSessionId: 'hsid-svc',
+              updatedAt: '2026-07-20T02:00:00.000Z',
+            }),
+          },
+        ],
+        registryPath,
+      })
+    ).toThrow('ScopeRef must start with "agent:<agentId>"')
+  })
+
   it('exposes inventory and reconcile as reviewable JSON commands', () => {
     const root = mkdtempSync(join(tmpdir(), 'hrc-f0-command-'))
     roots.push(root)
