@@ -79,9 +79,10 @@ function envelopeFor(
 }
 
 /**
- * Origin-side routing + durable transport controller. It is constructed only
- * for an explicitly enabled F1 peer listener on an enforcing node, keeping the
- * production path dark during the F0 rollout.
+ * Origin-side routing + durable transport controller. It is constructed for
+ * enforcing nodes with at least one configured peer. Originating delivery does
+ * not require this node to expose an inbound peer listener: registry-hosting
+ * nodes may be outbound-only while another peer owns the target scope.
  */
 export class FederationOriginOutbox {
   private readonly cache = new InMemoryBindingHintCache()
@@ -253,7 +254,7 @@ export function createFederationOriginOutbox(
   if (
     !options.config.sourceExists ||
     options.config.gate.mode !== 'enforce' ||
-    options.config.peerListener === undefined
+    options.config.peers.size === 0
   ) {
     return undefined
   }
