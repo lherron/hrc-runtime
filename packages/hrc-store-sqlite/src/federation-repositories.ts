@@ -3,19 +3,24 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
+import type {
+  BirthAuthorityProvenance,
+  EstablishmentProvenance,
+  FederationBirthClass,
+} from 'hrc-core'
 
-export type FederationBirthClass = 'policy-born' | 'mechanism-born'
+/**
+ * The placement vocabulary is defined in hrc-core (federation-contracts.ts) and
+ * re-exported here, so storage, the wire, and locate cannot drift on the
+ * spelling of a value that is CHECK-constrained in two schemas.
+ */
+export type {
+  BirthAuthorityProvenance,
+  EstablishmentProvenance,
+  FederationBirthClass,
+} from 'hrc-core'
+
 export type PlacementLedgerState = 'active' | 'revoked'
-export type EstablishmentProvenance =
-  | 'pin'
-  | 'default_home_node'
-  | 'default_home_node(local)'
-  | 'explicit_local'
-  | 'rebind'
-
-export type BirthAuthorityProvenance = Readonly<Record<string, unknown>> & {
-  readonly kind: string
-}
 
 export type PlacementBinding = {
   scopeRef: string

@@ -60,6 +60,7 @@ import {
   resolveFederationConfigPath,
   summarizeFederationConfig,
 } from './federation/federation-config.js'
+import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import {
   type BindingRegistryEndpointControl,
   type RegistryAuthPeer,
@@ -586,6 +587,9 @@ class HrcServerInstance implements HrcServer {
       this.handleHookIngest(request),
     [exactRouteKey('GET', '/v1/health')]: () => this.handleHealth(),
     [exactRouteKey('GET', '/v1/status')]: (_request, url) => this.handleStatus(url),
+    [exactRouteKey('GET', '/v1/federation/locate')]: (_request, url) =>
+      this.handleFederationLocate(url),
+    [exactRouteKey('GET', '/v1/federation/bindings')]: () => this.handleFederationBindings(),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       this.handleGetTarget(url),
@@ -1308,6 +1312,38 @@ class HrcServerInstance implements HrcServer {
     return summarizeFederationConfig(config)
   }
 
+  /**
+   * `GET /v1/federation/locate?scopeRef=…` (T-06613).
+   *
+   * Read-only. Answers on an unconfigured daemon too — an operator setting
+   * federation up needs "nothing is bound here, and this is what policy would
+   * say" before the gate is ever live.
+   */
+  async handleFederationLocate(url: URL): Promise<Response> {
+    const scopeRef = url.searchParams.get('scopeRef')?.trim()
+    if (!scopeRef) {
+      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'scopeRef is required', {
+        field: 'scopeRef',
+      })
+    }
+    try {
+      return json(await locateScopeOnServer(this, scopeRef))
+    } catch (error) {
+      // A scope that will not canonicalize is a caller error, not a daemon
+      // fault: report it as such rather than as a 500.
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `could not locate "${scopeRef}": ${error instanceof Error ? error.message : String(error)}`,
+        { field: 'scopeRef' }
+      )
+    }
+  }
+
+  /** `GET /v1/federation/bindings` — the whole-ledger skew sweep behind `hrc doctor`. */
+  async handleFederationBindings(): Promise<Response> {
+    return json(await scanServerLedgerForSkew(this))
+  }
+
   async handleStatus(url?: URL): Promise<Response> {
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
@@ -1555,6 +1591,31 @@ export type {
   NodeIdProvenance,
   PeerEntry,
 } from './federation/federation-config.js'
+export { locateScope, projectBirthChain, scanLedgerForSkew } from './federation/locate.js'
+export type {
+  LedgerSkewScan,
+  LocateAuthority,
+  LocateBindingRecord,
+  LocateBirthChain,
+  LocateBirthChainLink,
+  LocateBirthChainResult,
+  LocateDeclaredPolicy,
+  LocateDeps,
+  LocateLedgerView,
+  LocateNote,
+  LocateObservation,
+  LocateObservedRuntime,
+  LocateRegistryView,
+  LocateSkew,
+  ScopeLocation,
+} from './federation/locate.js'
+export { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
+export type { LocateServerContext } from './federation/locate-server.js'
+export {
+  createPlacementPolicyResolver,
+  resolvePlacementPolicy,
+} from './federation/placement-policy.js'
+export type { PlacementPolicyResolution } from './federation/placement-policy.js'
 export { isTailnetHost, parseRegistryBind } from './federation/registry-bind.js'
 export type { RegistryListenerConfig } from './federation/registry-bind.js'
 export {

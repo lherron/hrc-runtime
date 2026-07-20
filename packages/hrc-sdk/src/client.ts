@@ -11,6 +11,7 @@ import type {
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
 import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
+import type { LocateBindingsReport, ScopeLocation } from 'hrc-core'
 
 import type {
   AttachDescriptor,
@@ -519,6 +520,22 @@ export class HrcClient {
       includeSessions: options?.includeSessions === false ? false : undefined,
     })
     return this.getJson<StatusResponse | StatusSummaryResponse>(path)
+  }
+
+  /**
+   * Where does this scope live, and why? (T-06613)
+   *
+   * Read-only, and answers on an unfederated daemon too — "nothing is bound
+   * here, this is what policy would say" is a real answer an operator needs
+   * while setting federation up.
+   */
+  async locateScope(scopeRef: string): Promise<ScopeLocation> {
+    return this.getJson<ScopeLocation>(buildPath('/v1/federation/locate', { scopeRef }))
+  }
+
+  /** Whole-ledger pin-vs-binding skew sweep for this node (T-06613). */
+  async listPlacementBindings(): Promise<LocateBindingsReport> {
+    return this.getJson<LocateBindingsReport>('/v1/federation/bindings')
   }
 
   async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {

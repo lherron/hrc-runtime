@@ -2,6 +2,7 @@ import { CliUsageError } from 'cli-kit'
 import { Command, Option } from 'commander'
 
 import { throwCommanderError } from './command-errors.js'
+import { registerFederationCommands } from './register-federation.js'
 import { registerMetricsCommands } from './register-metrics.js'
 import { registerRuntimeCommands } from './register-runtime.js'
 import { registerServerSessionCommands } from './register-server-session.js'
@@ -45,6 +46,7 @@ export function buildProgram(): Command {
   registerRuntimeCommands(program)
   registerTopLevelCommands(program)
   registerMetricsCommands(program)
+  registerFederationCommands(program)
 
   return program
 }
