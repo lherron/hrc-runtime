@@ -2,8 +2,8 @@
  * T-06606 — peer token redaction (federation spec §6, day-one requirement).
  *
  * Tokens must never reach logs, errors, or event payloads. These tests pin the
- * structural guarantee: every stringification path yields `[REDACTED]`, and the
- * secret is reachable only through the explicit `reveal()` call.
+ * structural guarantee: every stringification path yields `[REDACTED]`, while
+ * receiving-side comparisons remain inside the token abstraction.
  */
 
 import { describe, expect, test } from 'bun:test'
@@ -19,8 +19,10 @@ import { withFederationConfigFile } from './fixtures/federation-config-fixture.j
 const SECRET = 'super-secret-peer-token-do-not-leak'
 
 describe('PeerToken redaction', () => {
-  test('reveal() is the only way to the secret', () => {
-    expect(new PeerToken(SECRET).reveal()).toBe(SECRET)
+  test('matches the secret without returning it', () => {
+    const token = new PeerToken(SECRET)
+    expect(token.matches(SECRET)).toBe(true)
+    expect(token.matches(`${SECRET}-wrong`)).toBe(false)
   })
 
   test('template interpolation and concatenation redact', () => {
@@ -69,8 +71,8 @@ describe('loaded peer config never surfaces tokens', () => {
       async ({ stateRoot, env }) => {
         const config = await resolveFederationConfig({ stateRoot, env })
 
-        // The token IS loaded and usable...
-        expect(config.peers.get('svc' as never)?.token.reveal()).toBe(SECRET)
+        // The token IS loaded and usable without producing a bare secret...
+        expect(config.peers.get('svc' as never)?.token.matches(SECRET)).toBe(true)
 
         // ...but no status/log projection can carry it.
         const summary = summarizeFederationConfig(config)
