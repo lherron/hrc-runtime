@@ -405,7 +405,7 @@ export async function handleDispatchTurnBySelector(
     const parsedScopeJson = isRecord(body['parsedScopeJson'])
       ? (body['parsedScopeJson'] as Record<string, unknown>)
       : undefined
-    session = this.ensureTargetSession(sessionRef, runtimeIntent, parsedScopeJson)
+    session = await this.ensureTargetSession(sessionRef, runtimeIntent, parsedScopeJson)
   }
 
   if (!session) {

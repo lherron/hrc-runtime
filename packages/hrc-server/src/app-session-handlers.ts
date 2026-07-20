@@ -24,6 +24,7 @@ import type {
   SendLiteralInputResponse,
 } from 'hrc-core'
 import { buildDispatchInvocation, normalizeDispatchIntent } from './dispatch-invocation.js'
+import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   requireContinuity,
@@ -262,6 +263,12 @@ export async function ensureAppSessionFromBody(
   // Create new managed session with a dedicated host session
   const scopeRef = `app:${appId}`
   const laneRef = appSessionKey
+
+  // Gated for completeness of the session-creation cut set. `app:<appId>` is a
+  // synthetic container rather than an agent scope, so the gate abstains
+  // (`non-agent-scope`) — see summon-gate.ts for why that is not a coverage hole.
+  await assertSummonAuthority(this, { scopeRef, path: 'app-session', intent: 'implicit' })
+
   const hostSessionId = createHostSessionId()
 
   const session: HrcSessionRecord = {

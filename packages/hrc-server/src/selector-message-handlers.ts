@@ -14,6 +14,7 @@ import {
   isMatchingInteractiveTmuxBrokerRuntime,
   validateEnsureRuntimeIntent,
 } from './broker-decisions.js'
+import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
@@ -153,17 +154,24 @@ export async function ensureRuntimeForSession(
   )
 }
 
-export function ensureTargetSession(
+export async function ensureTargetSession(
   this: HrcServerInstanceForHandlers,
   sessionRef: string,
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>
-): HrcSessionRecord {
+): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
     const now = timestamp()
     if (existing.status === 'archived' && existing.continuation?.key) {
+      // Successor creation from an archived continuation is a summon: "no live
+      // runtime" is not settlement of authority (spec §5).
+      await assertSummonAuthority(this, {
+        scopeRef: parseSessionRef(normalized).scopeRef,
+        path: 'archived-successor',
+        intent: 'implicit',
+      })
       const successor = createSessionSuccessorFromContinuation(this.db, existing, {
         lastAppliedIntentJson: intent,
         ...(parsedScopeJson ? { parsedScopeJson } : {}),
@@ -187,6 +195,8 @@ export function ensureTargetSession(
   }
 
   const { scopeRef, laneRef } = parseSessionRef(normalized)
+  await assertSummonAuthority(this, { scopeRef, path: 'ensure-target', intent: 'implicit' })
+
   const now = timestamp()
   const hostSessionId = createHostSessionId()
   const session: HrcSessionRecord = {
@@ -242,7 +252,7 @@ export async function handleEnsureTarget(
     ? (body['parsedScopeJson'] as Record<string, unknown>)
     : undefined
 
-  const session = this.ensureTargetSession(
+  const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
     parsedScopeJson

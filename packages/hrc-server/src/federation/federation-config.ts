@@ -72,6 +72,8 @@ export type FederationConfig = {
   readonly peers: ReadonlyMap<NodeId, PeerEntry>
   /** Present only on the node serving F0's narrow binding registry endpoint. */
   readonly registry?: RegistryListenerConfig | undefined
+  /** Summon-gate rollout flag. Always present; defaults to `off`. */
+  readonly gate: FederationGateConfig
   /** Non-fatal startup diagnostics (e.g. permissive file mode). */
   readonly warnings: readonly string[]
 }
@@ -163,7 +165,34 @@ type ParsedFile = {
   declaredNodeId: NodeId | undefined
   peers: Map<NodeId, PeerEntry>
   registry: RegistryListenerConfig | undefined
+  gate: FederationGateConfig | undefined
 }
+
+/**
+ * Summon-gate rollout flag (§11 F0).
+ *
+ * `off` is the default and the only value F0 ships enabled anywhere: the gate
+ * touches every session-creation path for zero payoff until F1, so it soaks in
+ * `advisory` (evaluate + log, refuse nothing) before T-06616 flips `enforce`.
+ */
+export type FederationGateMode = 'off' | 'advisory' | 'enforce'
+
+export type FederationGateConfig = {
+  readonly mode: FederationGateMode
+  /**
+   * nodeId of the peer hosting the binding registry.
+   *
+   * Explicit rather than inferred: which node holds the registry is an
+   * authority question, and guessing it (say, "the only peer") would silently
+   * pick a different answer the moment a second peer is added. Optional only
+   * when exactly one peer is declared; ambiguity is a visible refusal.
+   */
+  readonly registryHost?: NodeId | undefined
+}
+
+const FEDERATION_GATE_MODES: readonly FederationGateMode[] = ['off', 'advisory', 'enforce']
+
+export const DEFAULT_FEDERATION_GATE: FederationGateConfig = { mode: 'off' }
 
 /**
  * Parses and validates the config document.
@@ -240,7 +269,33 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
     registry = parseRegistryBind(rawBind, `${sourcePath} registry`)
   }
 
-  return { declaredNodeId, peers, registry }
+  let gate: FederationGateConfig | undefined
+  if (value['gate'] !== undefined) {
+    const where = `${sourcePath} field "gate"`
+    if (!isPlainRecord(value['gate'])) {
+      throw new Error(`${where} must be a JSON object with "mode"`)
+    }
+    const rawMode = value['gate']['mode']
+    if (typeof rawMode !== 'string' || !FEDERATION_GATE_MODES.includes(rawMode as never)) {
+      throw new Error(
+        `${where} has an invalid "mode" (${JSON.stringify(rawMode)}): expected one of ${FEDERATION_GATE_MODES.map(
+          (mode) => JSON.stringify(mode)
+        ).join(', ')}`
+      )
+    }
+    const rawHost = value['gate']['registryHost']
+    if (rawHost !== undefined && typeof rawHost !== 'string') {
+      throw new Error(`${where} field "registryHost" must be a string nodeId`)
+    }
+    const registryHost =
+      rawHost === undefined ? undefined : parseNodeId(rawHost, `${where} field "registryHost"`)
+    gate = {
+      mode: rawMode as FederationGateMode,
+      ...(registryHost === undefined ? {} : { registryHost }),
+    }
+  }
+
+  return { declaredNodeId, peers, registry, gate }
 }
 
 async function readModeWarning(path: string): Promise<string | undefined> {
@@ -289,6 +344,7 @@ export async function resolveFederationConfig(
         sourcePath,
         sourceExists: false,
         peers: new Map(),
+        gate: DEFAULT_FEDERATION_GATE,
         warnings: [],
       }
     }
@@ -308,7 +364,10 @@ export async function resolveFederationConfig(
     })
   }
 
-  const { declaredNodeId, peers, registry } = parseFederationConfigDocument(parsed, sourcePath)
+  const { declaredNodeId, peers, registry, gate } = parseFederationConfigDocument(
+    parsed,
+    sourcePath
+  )
 
   // A derived id is a hostname artifact, not a roster identity — it will not
   // match the §4 roster. Letting a peered node run on one would key ledger and
@@ -336,6 +395,7 @@ export async function resolveFederationConfig(
     sourceExists: true,
     peers,
     ...(registry === undefined ? {} : { registry }),
+    gate: gate ?? DEFAULT_FEDERATION_GATE,
     warnings,
   }
 }

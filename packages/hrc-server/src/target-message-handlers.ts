@@ -28,6 +28,7 @@ import type {
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
+import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   extractProjectId,
@@ -196,6 +197,14 @@ export async function handleCreateSessionSuccessor(
     )
   }
 
+  // Raw successor mint (POST /v1/sessions/create-successor) — a summon path in
+  // its own right, not reachable through ensureTargetSession.
+  await assertSummonAuthority(this, {
+    scopeRef: prior.scopeRef,
+    path: 'archived-successor',
+    intent: 'implicit',
+  })
+
   const successor = createSessionSuccessorFromContinuation(this.db, prior)
   this.notifyEvent(
     this.appendEvent(successor, 'session.created', {
@@ -301,7 +310,7 @@ export async function handleResumeContinuation(
     )
   }
 
-  const successor = createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
+  const successor = await createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -381,12 +390,19 @@ function isPrimaryScopeRef(scopeRef: string): boolean {
   return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
 }
 
-function createNotifiedSessionSuccessor(
+async function createNotifiedSessionSuccessor(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
   parsedScopeJson: Record<string, unknown> | undefined
-): HrcSessionRecord {
+): Promise<HrcSessionRecord> {
+  // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
+  await assertSummonAuthority(server, {
+    scopeRef: session.scopeRef,
+    path: 'archived-successor',
+    intent: 'implicit',
+  })
+
   const successor = createSessionSuccessorFromContinuation(server.db, session, {
     ...(intent ? { lastAppliedIntentJson: intent } : {}),
     ...(parsedScopeJson ? { parsedScopeJson } : {}),
@@ -523,7 +539,11 @@ export async function handleSemanticTurnHandoff(
     // T-05161: never summon a local runtime for a Codex.app-owned address.
     !isCodexAppOwnedScopeRef(body.to.sessionRef)
   ) {
-    session = this.ensureTargetSession(body.to.sessionRef, body.runtimeIntent, body.parsedScopeJson)
+    session = await this.ensureTargetSession(
+      body.to.sessionRef,
+      body.runtimeIntent,
+      body.parsedScopeJson
+    )
   }
 
   if (!session) {
@@ -540,7 +560,7 @@ export async function handleSemanticTurnHandoff(
   }
 
   if (session.status === 'archived' && session.continuation?.key) {
-    session = createNotifiedSessionSuccessor(
+    session = await createNotifiedSessionSuccessor(
       this,
       session,
       body.runtimeIntent,
@@ -852,13 +872,13 @@ export async function handleSemanticDm(
     if (!session && body.createIfMissing !== false) {
       const intent = body.runtimeIntent
       if (intent) {
-        session = this.ensureTargetSession(body.to.sessionRef, intent, body.parsedScopeJson)
+        session = await this.ensureTargetSession(body.to.sessionRef, intent, body.parsedScopeJson)
       }
     }
 
     if (session) {
       if (session.status === 'archived' && session.continuation?.key) {
-        session = createNotifiedSessionSuccessor(
+        session = await createNotifiedSessionSuccessor(
           this,
           session,
           body.runtimeIntent,

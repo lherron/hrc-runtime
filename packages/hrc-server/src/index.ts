@@ -66,6 +66,7 @@ import {
   resolveBindingRegistryPath,
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
+import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import {
   type GhostmuxManagerOptions,
   HEADLESS_VIEWER_SURFACE_KIND,
@@ -976,6 +977,12 @@ class HrcServerInstance implements HrcServer {
       } satisfies ResolveSessionResponse)
     }
 
+    // Covers `hrc run`, `hrc start`, and `hrc session resolve --create`. The
+    // intent is provisional: this surface serves BOTH operator commands and
+    // generic SDK callers, and today's `create` boolean cannot tell them apart.
+    // The typed `summonIntent` that can is T-06609.
+    await assertSummonAuthority(this, { scopeRef, path: 'resolve-session', intent: 'implicit' })
+
     const now = timestamp()
     const hostSessionId = createHostSessionId()
     const session: HrcSessionRecord = {
@@ -1030,7 +1037,7 @@ class HrcServerInstance implements HrcServer {
     }
     validateConfiguredCommandRunTarget(body.configuredTargetId, command)
 
-    const session = this.resolveOrCreateCommandRunSession(body.sessionRef)
+    const session = await this.resolveOrCreateCommandRunSession(body.sessionRef)
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
 
@@ -1113,7 +1120,7 @@ class HrcServerInstance implements HrcServer {
     } satisfies LaunchCommandScopedRunResponse)
   }
 
-  resolveOrCreateCommandRunSession(sessionRef: string): HrcSessionRecord {
+  async resolveOrCreateCommandRunSession(sessionRef: string): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
     if (continuity) {
@@ -1122,6 +1129,9 @@ class HrcServerInstance implements HrcServer {
         return existing
       }
     }
+
+    // wrkf / command-run births (POST /v1/command-runs/launch).
+    await assertSummonAuthority(this, { scopeRef, path: 'command-run', intent: 'implicit' })
 
     const now = timestamp()
     const hostSessionId = createHostSessionId()
