@@ -30,7 +30,8 @@
  * This is transport plumbing, not placement policy (§6). Nothing here decides
  * where a scope lives.
  *
- * No network listener lives in this module; F1 lands the peer protocol.
+ * An optional top-level `registry.bind` enables F0's narrow registry-only
+ * listener. The general peer protocol still lands in F1.
  */
 
 import { readFile, stat } from 'node:fs/promises'
@@ -39,6 +40,7 @@ import { join } from 'node:path'
 
 import { type NodeId, describeNodeIdViolation, isReservedNodeId, parseNodeId } from './node-id.js'
 import { PeerToken } from './peer-token.js'
+import { type RegistryListenerConfig, parseRegistryBind } from './registry-bind.js'
 
 export const HRC_PEER_CONFIG_FILE_ENV = 'HRC_PEER_CONFIG_FILE'
 export const FEDERATION_CONFIG_BASENAME = 'federation.json'
@@ -68,6 +70,8 @@ export type FederationConfig = {
   /** False when the file was absent (single-node mode). */
   readonly sourceExists: boolean
   readonly peers: ReadonlyMap<NodeId, PeerEntry>
+  /** Present only on the node serving F0's narrow binding registry endpoint. */
+  readonly registry?: RegistryListenerConfig | undefined
   /** Non-fatal startup diagnostics (e.g. permissive file mode). */
   readonly warnings: readonly string[]
 }
@@ -158,6 +162,7 @@ function validatePeerEndpoint(endpoint: string, where: string): string {
 type ParsedFile = {
   declaredNodeId: NodeId | undefined
   peers: Map<NodeId, PeerEntry>
+  registry: RegistryListenerConfig | undefined
 }
 
 /**
@@ -214,7 +219,20 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
     }
   }
 
-  return { declaredNodeId, peers }
+  let registry: RegistryListenerConfig | undefined
+  if (value['registry'] !== undefined) {
+    const where = `${sourcePath} field "registry"`
+    if (!isPlainRecord(value['registry'])) {
+      throw new Error(`${where} must be a JSON object with "bind"`)
+    }
+    const rawBind = value['registry']['bind']
+    if (typeof rawBind !== 'string' || rawBind.trim().length === 0) {
+      throw new Error(`${sourcePath} registry is missing a non-empty string "bind"`)
+    }
+    registry = parseRegistryBind(rawBind, `${sourcePath} registry`)
+  }
+
+  return { declaredNodeId, peers, registry }
 }
 
 async function readModeWarning(path: string): Promise<string | undefined> {
@@ -282,7 +300,7 @@ export async function resolveFederationConfig(
     })
   }
 
-  const { declaredNodeId, peers } = parseFederationConfigDocument(parsed, sourcePath)
+  const { declaredNodeId, peers, registry } = parseFederationConfigDocument(parsed, sourcePath)
 
   // A derived id is a hostname artifact, not a roster identity — it will not
   // match the §4 roster. Letting a peered node run on one would key ledger and
@@ -291,6 +309,11 @@ export async function resolveFederationConfig(
   if (declaredNodeId === undefined && peers.size > 0) {
     throw new Error(
       `federation config ${sourcePath} declares ${peers.size} peer(s) but no "nodeId": a node with peers must declare its own nodeId (a hostname-derived id is valid only in single-node mode). Fix: add a "nodeId" field to ${sourcePath}, e.g. {"nodeId": "lab", "peers": {...}}`
+    )
+  }
+  if (declaredNodeId === undefined && registry !== undefined) {
+    throw new Error(
+      `federation config ${sourcePath} registry listener requires a declared "nodeId" (a hostname-derived id is valid only in single-node mode)`
     )
   }
 
@@ -304,6 +327,7 @@ export async function resolveFederationConfig(
     sourcePath,
     sourceExists: true,
     peers,
+    ...(registry === undefined ? {} : { registry }),
     warnings,
   }
 }

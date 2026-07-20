@@ -61,6 +61,12 @@ import {
   summarizeFederationConfig,
 } from './federation/federation-config.js'
 import {
+  type BindingRegistryEndpointControl,
+  type RegistryAuthPeer,
+  resolveBindingRegistryPath,
+  startBindingRegistryEndpoint,
+} from './federation/registry-endpoint.js'
+import {
   type GhostmuxManagerOptions,
   HEADLESS_VIEWER_SURFACE_KIND,
   type GhostmuxManager as ServerGhostmuxManager,
@@ -475,6 +481,8 @@ class HrcServerInstance implements HrcServer {
   readonly startedAt = new Date().toISOString()
   readonly otelListener: OtlpListenerControl | undefined
   public readonly otelEndpoint: string | undefined
+  readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
+  public readonly federationRegistryEndpoint: string | undefined
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
@@ -639,6 +647,34 @@ class HrcServerInstance implements HrcServer {
       },
     } as unknown as Parameters<typeof Bun.serve>[0])
 
+    const registryConfig = options.federationConfig?.registry
+    if (registryConfig === undefined) {
+      this.bindingRegistryEndpoint = undefined
+      this.federationRegistryEndpoint = undefined
+    } else {
+      const peers = new Map<string, RegistryAuthPeer>()
+      for (const [nodeId, peer] of options.federationConfig!.peers) {
+        // PeerToken.matches() is the only sanctioned receiving-side secret
+        // comparison; the endpoint never receives a revealed bare secret.
+        peers.set(nodeId, { nodeId, token: peer.token })
+      }
+      try {
+        this.bindingRegistryEndpoint = startBindingRegistryEndpoint({
+          listener: registryConfig,
+          peers,
+          registryPath: resolveBindingRegistryPath(options.stateRoot),
+        })
+        this.federationRegistryEndpoint = this.bindingRegistryEndpoint.url
+        writeServerLog('INFO', 'server.start.binding_registry_listener', {
+          endpoint: this.bindingRegistryEndpoint.url,
+          registryPath: resolveBindingRegistryPath(options.stateRoot),
+        })
+      } catch (error) {
+        this.server.stop(true)
+        throw error
+      }
+    }
+
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
@@ -733,6 +769,13 @@ class HrcServerInstance implements HrcServer {
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
     this.server.stop(true)
+    if (this.bindingRegistryEndpoint) {
+      try {
+        this.bindingRegistryEndpoint.stop()
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.binding_registry_listener_failed', { error })
+      }
+    }
     if (this.otelListener) {
       try {
         this.otelListener.stop()
@@ -1419,6 +1462,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
   await prepareFilesystem(resolvedOptions, getTmuxSocketPath(resolvedOptions))
   const lockHandle = await acquireServerLock(resolvedOptions)
   let shouldCleanupSocket = false
+  let db: HrcDatabase | undefined
 
   try {
     // Node identity resolves before anything else in the boot: a malformed
@@ -1449,7 +1493,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
         writeServerLog('WARN', 'server.start.ghostmux_unavailable', { error })
       })
     }
-    const db = openHrcDatabase(resolvedOptions.dbPath)
+    db = openHrcDatabase(resolvedOptions.dbPath)
     await replaySpool(resolvedOptions, db)
     await reconcileStartupState(db, tmux, ghostmux, {
       reconcileGhostty: claudeGhosttyEnabled,
@@ -1468,6 +1512,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       ...logCtx,
       error,
     })
+    db?.close()
     await cleanupFailedStartup(resolvedOptions, lockHandle, shouldCleanupSocket)
     throw error
   }
@@ -1494,6 +1539,19 @@ export type {
   NodeIdProvenance,
   PeerEntry,
 } from './federation/federation-config.js'
+export { isTailnetHost, parseRegistryBind } from './federation/registry-bind.js'
+export type { RegistryListenerConfig } from './federation/registry-bind.js'
+export {
+  BINDING_REGISTRY_BASENAME,
+  createBindingRegistryRequestHandler,
+  resolveBindingRegistryPath,
+  startBindingRegistryEndpoint,
+} from './federation/registry-endpoint.js'
+export type {
+  BindingRegistryEndpointControl,
+  RegistryAuthPeer,
+  RegistryAuthToken,
+} from './federation/registry-endpoint.js'
 export {
   NODE_ID_PATTERN,
   RESERVED_NODE_IDS,
@@ -1505,3 +1563,8 @@ export {
 export type { NodeId } from './federation/node-id.js'
 export { PeerToken, REDACTED_PEER_TOKEN } from './federation/peer-token.js'
 export { constantTimeEqual } from './constant-time.js'
+export { establishLocalPlacement } from './federation/establishment.js'
+export type {
+  EstablishLocalPlacementRequest,
+  EstablishLocalPlacementResult,
+} from './federation/establishment.js'
