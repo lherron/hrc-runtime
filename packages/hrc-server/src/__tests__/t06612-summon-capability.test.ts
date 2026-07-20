@@ -127,6 +127,34 @@ describe('home-node materialization capability', () => {
     })
   })
 
+  test('project-root resolution failure has a distinct gate and event reason', async () => {
+    const entries: Array<{ event: string; details: Record<string, unknown> }> = []
+    const result = await evaluateSummonGate({
+      scopeRef: SCOPE,
+      path: 'ensure-target',
+      intent: 'implicit',
+      deps: deps({
+        capabilityFor: async () => ({
+          outcome: 'incapable',
+          capability: 'project-checkout',
+          capabilityReason: 'project-root-unresolvable',
+          diagnostic: 'project root could not be resolved from /srv/projects/missing-project',
+        }),
+        log: (_level, event, details) => entries.push({ event, details: details ?? {} }),
+      }),
+    })
+
+    expect(result.evaluation).toMatchObject({
+      decision: 'refuse',
+      reason: 'capability-project-root-unresolvable',
+      capability: 'project-checkout',
+    })
+    expect(entries[0]?.details).toMatchObject({
+      reason: 'capability-project-root-unresolvable',
+      capability: 'project-checkout',
+    })
+  })
+
   test('enforce mode makes the same capability refusal bite', async () => {
     const result = await evaluateSummonGate({
       scopeRef: SCOPE,
@@ -168,6 +196,35 @@ describe('capability is observed state, never authority', () => {
     expect(result.evaluation).toMatchObject({
       decision: 'refuse',
       reason: 'bound-elsewhere',
+      homeNodeId: 'lab',
+    })
+    expect(capabilityCalls).toBe(0)
+  })
+
+  test('the live archagent pin mismatch remains authoritative before capability observation', async () => {
+    let capabilityCalls = 0
+    const scopeRef = 'agent:cody:project:archagent:task:ae-verify-only'
+    const result = await evaluateSummonGate({
+      scopeRef,
+      path: 'ensure-target',
+      intent: 'implicit',
+      deps: deps({
+        ledger: { activeAuthority: () => undefined },
+        localNodeId: 'svc',
+        policyFor: async () => ({
+          placement: { pins: { 'archagent:ae-verify-only': 'lab' } },
+          claimsTask: false,
+        }),
+        capabilityFor: async () => {
+          capabilityCalls += 1
+          return { outcome: 'capable' }
+        },
+      }),
+    })
+
+    expect(result.evaluation).toMatchObject({
+      decision: 'refuse',
+      reason: 'pin-mismatch',
       homeNodeId: 'lab',
     })
     expect(capabilityCalls).toBe(0)

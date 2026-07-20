@@ -41,12 +41,14 @@ const PRESENCE_HEURISTIC = 'presence-heuristic' as const
 
 function incapable(
   capability: Exclude<SummonCapabilityObservation, { outcome: 'capable' }>['capability'],
-  diagnostic: string
+  diagnostic: string,
+  capabilityReason?: 'project-root-unresolvable'
 ): SummonCapabilityObservation {
   return {
     outcome: 'incapable',
     capability,
     diagnostic,
+    ...(capabilityReason === undefined ? {} : { capabilityReason }),
     capabilitySource: PRESENCE_HEURISTIC,
   }
 }
@@ -167,23 +169,29 @@ function resolvedPlacement(
   options: { env: Record<string, string | undefined>; cwd: string }
 ): {
   placement?: RuntimePlacement
-  missingProjectPath?: string
+  unresolvableProjectPath?: string
   missingAgentPath?: string
 } {
   if (hint?.placement !== undefined) return { placement: hint.placement }
 
   const parsed = parseScopeRef(scopeRef)
-  const paths = resolveAgentPlacementPaths({
+  const placementInput = {
     agentId: parsed.agentId,
     ...(parsed.projectId === undefined ? {} : { projectId: parsed.projectId }),
     cwd: options.cwd,
     env: options.env,
-  })
+  }
+  let paths = resolveAgentPlacementPaths(placementInput)
 
   if (parsed.projectId !== undefined && paths.projectRoot === undefined) {
-    return {
-      missingProjectPath:
-        options.env['ASP_PROJECT_ROOT_OVERRIDE'] ?? `<unresolved checkout for ${parsed.projectId}>`,
+    // launchd runs the daemon from the checkout collection root, not from one
+    // project. Re-run the same ASP marker/git resolver from the deterministic
+    // sibling candidate. The resolver must verify the project id; merely
+    // finding a same-named directory is intentionally insufficient.
+    const siblingCandidate = join(options.cwd, parsed.projectId)
+    paths = resolveAgentPlacementPaths({ ...placementInput, cwd: siblingCandidate })
+    if (paths.projectRoot === undefined) {
+      return { unresolvableProjectPath: siblingCandidate }
     }
   }
   if (paths.agentRoot === undefined) {
@@ -234,10 +242,11 @@ export function createSummonCapabilityObserver(
       )
     }
 
-    if (resolved.missingProjectPath !== undefined) {
+    if (resolved.unresolvableProjectPath !== undefined) {
       return incapable(
         'project-checkout',
-        `project checkout absent at ${resolved.missingProjectPath} — clone or sync the project checkout on this node`
+        `project root could not be resolved from ${resolved.unresolvableProjectPath} — ensure the checkout has an asp-targets.toml or git root, or supply an explicit project placement`,
+        'project-root-unresolvable'
       )
     }
     if (resolved.missingAgentPath !== undefined) {

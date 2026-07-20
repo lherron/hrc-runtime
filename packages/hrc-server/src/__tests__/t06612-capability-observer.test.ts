@@ -69,6 +69,45 @@ describe('node materialization capability observer', () => {
     expect(await observer(SCOPE, hint())).toEqual({ outcome: 'capable' })
   })
 
+  test('launchd workspace cwd resolves a sibling project through the ASP placement resolver', async () => {
+    await mkdir(join(projectRoot, '.git'), { recursive: true })
+    await mkdir(join(userHome, '.codex'), { recursive: true })
+    await writeFile(join(userHome, '.codex', 'auth.json'), '{}')
+    const observer = createSummonCapabilityObserver({
+      cwd: root,
+      env: { ASP_AGENTS_ROOT: join(root, 'agents') },
+      userHome,
+      detectHarness: async () => ({ available: true }),
+    })
+
+    expect(await observer(SCOPE)).toEqual({ outcome: 'capable' })
+  })
+
+  test('an unresolvable project root is not reported as an absent checkout', async () => {
+    const unmarkedProject = join(root, 'fixture-project')
+    const observer = createSummonCapabilityObserver({
+      cwd: root,
+      env: {
+        ASP_AGENTS_ROOT: join(root, 'agents'),
+        OPENAI_API_KEY: 'present-but-never-logged',
+      },
+      userHome,
+      detectHarness: async () => ({ available: true }),
+    })
+
+    const result = await observer(SCOPE)
+
+    expect(result).toMatchObject({
+      outcome: 'incapable',
+      capability: 'project-checkout',
+      capabilityReason: 'project-root-unresolvable',
+    })
+    if (result.outcome !== 'incapable') throw new Error('unreachable')
+    expect(result.diagnostic).toContain(unmarkedProject)
+    expect(result.diagnostic).toContain('could not be resolved')
+    expect(result.diagnostic).not.toContain('checkout absent')
+  })
+
   test('missing project checkout names the exact path and fix without consulting wrkq', async () => {
     const missing = join(root, 'unregistered-but-absent')
     const observer = createSummonCapabilityObserver({

@@ -112,6 +112,7 @@ export type SummonGateRefuseReason =
   | 'registry-unreachable'
   | 'registry-refused'
   | `capability-${SummonCapabilityName}-missing`
+  | 'capability-project-root-unresolvable'
   | 'capability-observation-failed'
   | 'invalid-birth-credential'
   | 'zombie-runtime'
@@ -136,6 +137,7 @@ export type SummonCapabilityObservation =
       outcome: 'incapable'
       capability: SummonCapabilityName
       diagnostic: string
+      capabilityReason?: 'project-root-unresolvable' | undefined
       retryable?: boolean | undefined
       capabilitySource?: 'presence-heuristic' | undefined
     }
@@ -302,7 +304,11 @@ async function requireMaterializationCapability(
 
   if (observation.outcome === 'capable') return authority
 
-  return refuse(`capability-${observation.capability}-missing`, observation.diagnostic, {
+  const reason: SummonGateRefuseReason =
+    observation.capabilityReason === 'project-root-unresolvable'
+      ? 'capability-project-root-unresolvable'
+      : `capability-${observation.capability}-missing`
+  return refuse(reason, observation.diagnostic, {
     retryable: observation.retryable ?? false,
     ...(authority.homeNodeId === undefined ? {} : { homeNodeId: authority.homeNodeId }),
     capability: observation.capability,
