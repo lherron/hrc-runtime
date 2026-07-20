@@ -594,7 +594,20 @@ describe('pre-federation namespace reconciliation', () => {
         artifact: reconciled.artifact,
         dryRun: false,
       })
-    ).toMatchObject({ changed: 1, archivedSessionsChanged: 1 })
+    ).toMatchObject({
+      changed: 1,
+      archivedSessionsChanged: 1,
+      appliedMarks: [
+        {
+          scopeRef,
+          markedNodeId: 'svc',
+          canonicalHomeNodeId: 'lab',
+          canonicalPlacementEpoch: 1,
+          action: 'created',
+        },
+      ],
+      archivedSessions: [{ scopeRef, nodeId: 'svc', count: 1 }],
+    })
     const svc = new Database(svcPath, { readonly: true })
     try {
       expect(readScopeRetirement(svc, scopeRef)).toMatchObject({

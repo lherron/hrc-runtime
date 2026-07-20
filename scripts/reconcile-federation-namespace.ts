@@ -824,6 +824,14 @@ export type ApplyRetirementsResult = {
   wouldChange: number
   archivedSessionsChanged: number
   wouldArchiveSessions: number
+  appliedMarks: Array<{
+    scopeRef: string
+    markedNodeId: string
+    canonicalHomeNodeId: string
+    canonicalPlacementEpoch: number
+    action: 'would_create' | 'created' | 'existing'
+  }>
+  archivedSessions: Array<{ scopeRef: string; nodeId: string; count: number }>
   appliedScopes: string[]
 }
 
@@ -848,11 +856,20 @@ export function applyNamespaceRetirements(input: {
   const readonly = new Database(input.statePath, { readonly: true })
   let wouldChange = 0
   let wouldArchiveSessions = 0
+  const dryRunMarks: ApplyRetirementsResult['appliedMarks'] = []
+  const dryRunArchives: ApplyRetirementsResult['archivedSessions'] = []
   try {
     for (const step of steps) {
       const existing = readScopeRetirements(readonly).find((row) => row.scopeRef === step.scopeRef)
       if (existing === undefined) {
         wouldChange += 1
+        dryRunMarks.push({
+          scopeRef: step.scopeRef,
+          markedNodeId: step.retiredNodeId,
+          canonicalHomeNodeId: step.canonicalHomeNodeId,
+          canonicalPlacementEpoch: step.canonicalPlacementEpoch,
+          action: 'would_create',
+        })
         continue
       }
       if (
@@ -864,6 +881,13 @@ export function applyNamespaceRetirements(input: {
       ) {
         throw new ScopeRetirementConflictError(step.scopeRef)
       }
+      dryRunMarks.push({
+        scopeRef: step.scopeRef,
+        markedNodeId: step.retiredNodeId,
+        canonicalHomeNodeId: step.canonicalHomeNodeId,
+        canonicalPlacementEpoch: step.canonicalPlacementEpoch,
+        action: 'existing',
+      })
     }
     for (const step of archiveSteps) {
       const row = readonly
@@ -872,6 +896,11 @@ export function applyNamespaceRetirements(input: {
         )
         .get(step.scopeRef)
       wouldArchiveSessions += row?.count ?? 0
+      dryRunArchives.push({
+        scopeRef: step.scopeRef,
+        nodeId: step.nodeId,
+        count: row?.count ?? 0,
+      })
     }
   } finally {
     readonly.close()
@@ -884,16 +913,28 @@ export function applyNamespaceRetirements(input: {
       wouldChange,
       archivedSessionsChanged: 0,
       wouldArchiveSessions,
+      appliedMarks: dryRunMarks,
+      archivedSessions: dryRunArchives,
       appliedScopes: steps.map((step) => step.scopeRef),
     }
   }
   const db = new Database(input.statePath)
   let changed = 0
   let archivedSessionsChanged = 0
+  const appliedMarks: ApplyRetirementsResult['appliedMarks'] = []
+  const archivedSessions: ApplyRetirementsResult['archivedSessions'] = []
   try {
     const retirements = createScopeRetirementRepository(db)
     for (const step of steps) {
-      if (retirements.retire(step).outcome === 'created') changed += 1
+      const outcome = retirements.retire(step).outcome
+      if (outcome === 'created') changed += 1
+      appliedMarks.push({
+        scopeRef: step.scopeRef,
+        markedNodeId: step.retiredNodeId,
+        canonicalHomeNodeId: step.canonicalHomeNodeId,
+        canonicalPlacementEpoch: step.canonicalPlacementEpoch,
+        action: outcome,
+      })
     }
     for (const step of archiveSteps) {
       const archived = db
@@ -903,6 +944,11 @@ export function applyNamespaceRetirements(input: {
         )
         .run(step.archivedAt, step.scopeRef)
       archivedSessionsChanged += archived.changes
+      archivedSessions.push({
+        scopeRef: step.scopeRef,
+        nodeId: step.nodeId,
+        count: archived.changes,
+      })
     }
   } finally {
     db.close()
@@ -914,6 +960,8 @@ export function applyNamespaceRetirements(input: {
     wouldChange: 0,
     archivedSessionsChanged,
     wouldArchiveSessions: 0,
+    appliedMarks,
+    archivedSessions,
     appliedScopes: steps.map((step) => step.scopeRef),
   }
 }
