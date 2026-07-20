@@ -78,6 +78,7 @@ import {
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
 import {
+  assertScopeNotRetired,
   assertSummonAuthority,
   captureLivePlacementRepairCandidates,
   repairLiveUnboundPlacements,
@@ -1057,6 +1058,12 @@ class HrcServerInstance implements HrcServer {
     const existing = findContinuitySession(this.db, parsed.sessionRef)
     if (existing) {
       if (parsed.create === true) {
+        const { scopeRef } = parseSessionRef(parsed.sessionRef)
+        // `resolve --create` is a summon surface even when continuity already
+        // exists. A retired scope must not regain authority merely because a
+        // pre-retirement session/runtime row survived the fence installation.
+        await assertScopeNotRetired(this, { scopeRef, path: 'resolve-session' })
+
         const event = this.appendEvent(existing, 'session.resolved', {
           created: false,
         })

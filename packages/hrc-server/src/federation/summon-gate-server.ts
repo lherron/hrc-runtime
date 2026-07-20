@@ -557,7 +557,7 @@ export async function assertScopeNotRetired(
   server: SummonGateServerContext,
   request: {
     scopeRef: string
-    path: Exclude<SummonPath, 'resolve-session'>
+    path: SummonPath
     /** True only when the same request is guaranteed to enter the full gate later. */
     advisoryCoveredByDownstreamGate?: (() => boolean) | undefined
   }

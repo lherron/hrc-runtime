@@ -79,6 +79,35 @@ describe('T-06683 retired routed target selection', () => {
     await fixture.cleanup()
   })
 
+  test('resolve --create refuses an existing continuity fenced by retirement', async () => {
+    const response = await fixture.postJson('/v1/sessions/resolve', {
+      sessionRef: SESSION_REF,
+      create: true,
+      summonIntent: 'explicit_local',
+    })
+
+    expect(response.status).toBe(409)
+    const body = (await response.json()) as {
+      error?: { code?: string; message?: string; detail?: Record<string, unknown> }
+    }
+    expect(body.error?.code).toBe('stale_context')
+    expect(body.error?.message).toContain('successor is lab at epoch 2')
+    expect(body.error?.detail).toMatchObject({
+      scopeRef: SCOPE_REF,
+      path: 'resolve-session',
+      reason: 'scope-retired',
+      homeNodeId: 'lab',
+    })
+
+    const verifyDb = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(verifyDb.sessions.listByScopeRef(SCOPE_REF)).toHaveLength(1)
+      expect(verifyDb.runtimes.listByHostSessionId(HOST_SESSION_ID)).toEqual([])
+    } finally {
+      verifyDb.close()
+    }
+  })
+
   test('semantic DM refuses before selecting the active viewer or creating a runtime', async () => {
     const captured: string[] = []
     const original = process.stderr.write.bind(process.stderr)
