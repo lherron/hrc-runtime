@@ -62,6 +62,11 @@ import {
 } from './federation/federation-config.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import {
+  PEER_PROTOCOL_VERSION,
+  type PeerProtocolEndpointControl,
+  startPeerProtocolEndpoint,
+} from './federation/peer-protocol.js'
+import {
   type BindingRegistryEndpointControl,
   type RegistryAuthPeer,
   resolveBindingRegistryPath,
@@ -485,6 +490,8 @@ class HrcServerInstance implements HrcServer {
   public readonly otelEndpoint: string | undefined
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
   public readonly federationRegistryEndpoint: string | undefined
+  readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
+  public readonly federationPeerEndpoint: string | undefined
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
@@ -682,6 +689,47 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
+    if (federationConfig === undefined || federationConfig.peerListener === undefined) {
+      this.peerProtocolEndpoint = undefined
+      this.federationPeerEndpoint = undefined
+    } else {
+      try {
+        this.peerProtocolEndpoint = startPeerProtocolEndpoint({
+          listener: federationConfig.peerListener,
+          options: {
+            localNodeId: federationConfig.nodeId,
+            peers: federationConfig.peers,
+            locate: (scopeRef) => locateScopeOnServer(this, scopeRef),
+            health: () => ({
+              startedAt: this.startedAt,
+              capabilities: {
+                accept: options.peerAcceptHandler !== undefined,
+                locate: true,
+                health: true,
+              },
+            }),
+            ...(options.peerAcceptHandler === undefined
+              ? {}
+              : { accept: options.peerAcceptHandler }),
+          },
+        })
+        this.federationPeerEndpoint = this.peerProtocolEndpoint.url
+        writeServerLog('INFO', 'server.start.peer_protocol_listener', {
+          endpoint: this.peerProtocolEndpoint.url,
+          protocolVersion: PEER_PROTOCOL_VERSION,
+          acceptEnabled: options.peerAcceptHandler !== undefined,
+        })
+      } catch (error) {
+        try {
+          this.bindingRegistryEndpoint?.stop()
+        } catch {
+          // Preserve the peer-listener startup error; registry cleanup is best-effort.
+        }
+        this.server.stop(true)
+        throw error
+      }
+    }
+
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
@@ -776,6 +824,13 @@ class HrcServerInstance implements HrcServer {
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
     this.server.stop(true)
+    if (this.peerProtocolEndpoint) {
+      try {
+        this.peerProtocolEndpoint.stop()
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.peer_protocol_listener_failed', { error })
+      }
+    }
     if (this.bindingRegistryEndpoint) {
       try {
         this.bindingRegistryEndpoint.stop()
@@ -1604,6 +1659,23 @@ export type {
   NodeIdProvenance,
   PeerEntry,
 } from './federation/federation-config.js'
+export {
+  PEER_PROTOCOL_MAJOR,
+  PEER_PROTOCOL_VERSION,
+  PEER_PROTOCOL_VERSION_HEADER,
+  createPeerProtocolRequestHandler,
+  parsePeerProtocolBind,
+  startPeerProtocolEndpoint,
+} from './federation/peer-protocol.js'
+export type {
+  PeerAcceptHandler,
+  PeerAcceptRequest,
+  PeerAcceptResult,
+  PeerProtocolEndpointControl,
+  PeerProtocolHealth,
+  PeerProtocolListenerConfig,
+  PeerProtocolRequestHandlerOptions,
+} from './federation/peer-protocol.js'
 export { locateScope, projectBirthChain, scanLedgerForSkew } from './federation/locate.js'
 export type {
   LedgerSkewScan,

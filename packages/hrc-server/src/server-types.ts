@@ -17,6 +17,7 @@ import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
 import type { FederationConfig } from './federation/federation-config.js'
+import type { PeerAcceptHandler } from './federation/peer-protocol.js'
 import type { GhostmuxManagerOptions } from './ghostmux.js'
 
 export type HrcEventsRouteFilters = Omit<
@@ -204,6 +205,8 @@ export type HrcServerOptions = {
    * when omitted; tests and embedders may inject a resolved config directly.
    */
   federationConfig?: FederationConfig | undefined
+  /** T-06618 injection seam for durable/idempotent envelope acceptance. */
+  peerAcceptHandler?: PeerAcceptHandler | undefined
   tmuxSocketPath?: string | undefined
   /**
    * Auto-rotation policy: a session whose `createdAt` exceeds this age (in
@@ -265,4 +268,6 @@ export type HrcServer = {
   readonly otelEndpoint: string | undefined
   /** F0's narrow authenticated registry URL, present only when federation.json declares registry.bind. */
   readonly federationRegistryEndpoint: string | undefined
+  /** F1's narrow authenticated peer URL, present only when peerListener.bind is declared. */
+  readonly federationPeerEndpoint: string | undefined
 }

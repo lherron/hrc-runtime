@@ -22,6 +22,7 @@ import type { LocateBindingsReport } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { HrcDatabase, PlacementLedgerRecord } from 'hrc-store-sqlite'
 
+import { resolveLocalBirthAncestor } from './birth-credential.js'
 import { deriveNodeIdFromHostname } from './federation-config.js'
 import type { FederationConfig } from './federation-config.js'
 import {
@@ -29,6 +30,7 @@ import {
   type LocateObservedRuntime,
   type ScopeLocation,
   locateScope,
+  projectBirthChain,
   scanLedgerForSkew,
 } from './locate.js'
 import { resolvePlacementPolicy } from './placement-policy.js'
@@ -119,8 +121,7 @@ function buildLocateDeps(server: LocateServerContext): LocateDeps {
     policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
     observedFor: server.observedFor ?? defaultObservedFor(server),
     retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
-    // T-06610 (cody) lands `resolveLocalBirthAncestor`; until then locate
-    // reports mechanism-born ancestry as unresolved rather than as absent.
+    resolveBirthChain: (scopeRef) => projectBirthChain(resolveLocalBirthAncestor(ledger, scopeRef)),
   }
 }
 

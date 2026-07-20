@@ -8,8 +8,13 @@
  * {
  *   "nodeId": "lab",
  *   "peers": {
- *     "svc": { "endpoint": "https://svc.example.ts.net:8443", "token": "..." }
- *   }
+ *     "svc": {
+ *       "endpoint": "https://svc.example.ts.net:8443",
+ *       "token": "outbound-current",
+ *       "acceptedTokens": ["inbound-current", "inbound-next"]
+ *     }
+ *   },
+ *   "peerListener": { "bind": "http://lab.example.ts.net:18490" }
  * }
  * ```
  *
@@ -30,8 +35,15 @@
  * This is transport plumbing, not placement policy (§6). Nothing here decides
  * where a scope lives.
  *
+ * **Token rotation without downtime.** `token` is the credential sent on
+ * outbound requests. `acceptedTokens` is the overlap set accepted inbound and
+ * defaults to `[token]`. Stage a new token in each receiver's accepted set,
+ * switch each sender's `token`, then remove the old accepted token. Secrets are
+ * always wrapped in PeerToken and never appear in status/log projections.
+ *
  * An optional top-level `registry.bind` enables F0's narrow registry-only
- * listener. The general peer protocol still lands in F1.
+ * listener. The optional `peerListener.bind` enables F1's dedicated narrow
+ * accept/locate/health listener. Both are absent (dark) by default.
  */
 
 import { readFile, stat } from 'node:fs/promises'
@@ -39,6 +51,7 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import { type NodeId, describeNodeIdViolation, isReservedNodeId, parseNodeId } from './node-id.js'
+import { type PeerProtocolListenerConfig, parsePeerProtocolBind } from './peer-protocol.js'
 import { PeerToken } from './peer-token.js'
 import { type RegistryListenerConfig, parseRegistryBind } from './registry-bind.js'
 
@@ -56,6 +69,8 @@ export type PeerEntry = {
   readonly nodeId: NodeId
   readonly endpoint: string
   readonly token: PeerToken
+  /** Inbound rotation overlap; defaults to the outbound token. */
+  readonly acceptedTokens?: readonly PeerToken[] | undefined
 }
 
 export type NodeIdProvenance = 'declared' | 'derived'
@@ -72,6 +87,8 @@ export type FederationConfig = {
   readonly peers: ReadonlyMap<NodeId, PeerEntry>
   /** Present only on the node serving F0's narrow binding registry endpoint. */
   readonly registry?: RegistryListenerConfig | undefined
+  /** Present only when F1's narrow peer protocol listener is explicitly enabled. */
+  readonly peerListener?: PeerProtocolListenerConfig | undefined
   /** Summon-gate rollout flag. Always present; defaults to `off`. */
   readonly gate: FederationGateConfig
   /** Non-fatal startup diagnostics (e.g. permissive file mode). */
@@ -165,6 +182,7 @@ type ParsedFile = {
   declaredNodeId: NodeId | undefined
   peers: Map<NodeId, PeerEntry>
   registry: RegistryListenerConfig | undefined
+  peerListener: PeerProtocolListenerConfig | undefined
   gate: FederationGateConfig | undefined
 }
 
@@ -240,18 +258,34 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
       if (typeof rawEntry['token'] !== 'string' || rawEntry['token'].length === 0) {
         throw new Error(`${where} is missing a non-empty string "token"`)
       }
-      const priorTokenOwner = peerTokenOwners.get(rawEntry['token'])
-      if (priorTokenOwner !== undefined) {
-        throw new Error(
-          `${where} reuses the bearer token configured for peer ${JSON.stringify(priorTokenOwner)}; each peer requires a distinct token`
-        )
+      const acceptedRaw = rawEntry['acceptedTokens']
+      if (
+        acceptedRaw !== undefined &&
+        (!Array.isArray(acceptedRaw) ||
+          acceptedRaw.length === 0 ||
+          acceptedRaw.some((token) => typeof token !== 'string' || token.length === 0))
+      ) {
+        throw new Error(`${where} field "acceptedTokens" must be a non-empty array of strings`)
       }
-      peerTokenOwners.set(rawEntry['token'], peerId)
+      const acceptedValues = acceptedRaw === undefined ? [rawEntry['token']] : acceptedRaw
+      if (new Set(acceptedValues).size !== acceptedValues.length) {
+        throw new Error(`${where} field "acceptedTokens" must not contain duplicate tokens`)
+      }
+      for (const rawToken of new Set([rawEntry['token'], ...acceptedValues])) {
+        const priorTokenOwner = peerTokenOwners.get(rawToken)
+        if (priorTokenOwner !== undefined && priorTokenOwner !== peerId) {
+          throw new Error(
+            `${where} reuses the bearer token configured for peer ${JSON.stringify(priorTokenOwner)}; each peer requires distinct outbound and accepted tokens`
+          )
+        }
+        peerTokenOwners.set(rawToken, peerId)
+      }
 
       peers.set(peerId, {
         nodeId: peerId,
         endpoint: validatePeerEndpoint(rawEntry['endpoint'].trim(), where),
         token: new PeerToken(rawEntry['token']),
+        acceptedTokens: acceptedValues.map((token) => new PeerToken(token)),
       })
     }
   }
@@ -267,6 +301,19 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
       throw new Error(`${sourcePath} registry is missing a non-empty string "bind"`)
     }
     registry = parseRegistryBind(rawBind, `${sourcePath} registry`)
+  }
+
+  let peerListener: PeerProtocolListenerConfig | undefined
+  if (value['peerListener'] !== undefined) {
+    const where = `${sourcePath} field "peerListener"`
+    if (!isPlainRecord(value['peerListener'])) {
+      throw new Error(`${where} must be a JSON object with "bind"`)
+    }
+    const rawBind = value['peerListener']['bind']
+    if (typeof rawBind !== 'string' || rawBind.trim().length === 0) {
+      throw new Error(`${sourcePath} peerListener is missing a non-empty string "bind"`)
+    }
+    peerListener = parsePeerProtocolBind(rawBind, `${sourcePath} peerListener`)
   }
 
   let gate: FederationGateConfig | undefined
@@ -295,7 +342,7 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
     }
   }
 
-  return { declaredNodeId, peers, registry, gate }
+  return { declaredNodeId, peers, registry, peerListener, gate }
 }
 
 async function readModeWarning(path: string): Promise<string | undefined> {
@@ -364,7 +411,7 @@ export async function resolveFederationConfig(
     })
   }
 
-  const { declaredNodeId, peers, registry, gate } = parseFederationConfigDocument(
+  const { declaredNodeId, peers, registry, peerListener, gate } = parseFederationConfigDocument(
     parsed,
     sourcePath
   )
@@ -383,6 +430,16 @@ export async function resolveFederationConfig(
       `federation config ${sourcePath} registry listener requires a declared "nodeId" (a hostname-derived id is valid only in single-node mode)`
     )
   }
+  if (declaredNodeId === undefined && peerListener !== undefined) {
+    throw new Error(
+      `federation config ${sourcePath} peer listener requires a declared "nodeId" (a hostname-derived id is valid only in single-node mode)`
+    )
+  }
+  if (peerListener !== undefined && peers.size === 0) {
+    throw new Error(
+      `federation config ${sourcePath} peer listener requires at least one configured peer for bearer authentication`
+    )
+  }
 
   const warnings: string[] = []
   const modeWarning = await readModeWarning(sourcePath)
@@ -395,6 +452,7 @@ export async function resolveFederationConfig(
     sourceExists: true,
     peers,
     ...(registry === undefined ? {} : { registry }),
+    ...(peerListener === undefined ? {} : { peerListener }),
     gate: gate ?? DEFAULT_FEDERATION_GATE,
     warnings,
   }
