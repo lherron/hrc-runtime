@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>BACKCHANNEL_NODE</key>
+		<string>max3</string>
+		<key>BACKCHANNEL_REMOTE_SVC</key>
+		<string>lherron@mini</string>
+		<key>BACKCHANNEL_SSH_IDENTITY</key>
+		<string>/Users/lherron/.ssh/id_ed25519_backchannel_t06678</string>
+		<key>HOME</key>
+		<string>/Users/lherron</string>
+		<key>PATH</key>
+		<string>/Users/lherron/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.praesidium.interim-dm-backchannel.t06678.max3</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/lherron/praesidium/var/backchannel/interim-dm-backchannel.sh</string>
+		<string>poll</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/lherron/praesidium/var/backchannel/poller.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lherron/praesidium/var/backchannel/poller.log</string>
+	<key>ThrottleInterval</key>
+	<integer>2</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/lherron/praesidium/var/backchannel</string>
+</dict>
+</plist>
