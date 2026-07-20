@@ -21,6 +21,7 @@ import {
 } from '../federation/registry-endpoint.js'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06663'
+const LOCAL_SCOPE = 'agent:cody:project:hrc-runtime:task:T-06668'
 const TOKEN = 'registry-client-secret'
 const BINDING: PlacementBinding = {
   scopeRef: SCOPE,
@@ -339,6 +340,7 @@ describe('T-06663 real registry endpoint integration', () => {
         listener: { bind: `http://${tailnetIpv4}:${port}` },
         peers: new Map([['lab', { nodeId: 'lab', token: new PeerToken(TOKEN) }]]),
         registryPath: join(tempDir, 'binding-registry.sqlite'),
+        localNodeId: 'svc',
       })
       const client = new HttpBindingRegistryClient(
         {
@@ -363,6 +365,24 @@ describe('T-06663 real registry endpoint integration', () => {
       expect(await client.consult(SCOPE)).toEqual({
         outcome: 'bound',
         binding: established.binding,
+      })
+
+      // The registry host shares this same authority handle without pretending
+      // to be a peer. A local establishment is immediately visible remotely.
+      expect(await endpoint.registryClient.consult(LOCAL_SCOPE)).toEqual({ outcome: 'unbound' })
+      const localEstablished = await endpoint.registryClient.establish({
+        ...BINDING,
+        scopeRef: LOCAL_SCOPE,
+        homeNodeId: 'svc',
+        now: BINDING.updatedAt,
+      })
+      expect(localEstablished).toMatchObject({
+        outcome: 'created',
+        binding: { scopeRef: LOCAL_SCOPE, homeNodeId: 'svc' },
+      })
+      expect(await client.consult(LOCAL_SCOPE)).toEqual({
+        outcome: 'bound',
+        binding: localEstablished.binding,
       })
     }
   )

@@ -34,8 +34,10 @@ import {
 import { resolvePlacementPolicy } from './placement-policy.js'
 import type { PlacementPolicyResolution } from './placement-policy.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { createBindingRegistryClient } from './registry-client.js'
-import { createUnavailableRegistryClient } from './summon-gate-server.js'
+import {
+  createUnavailableRegistryClient,
+  resolveFederationRegistryClient,
+} from './registry-resolution.js'
 
 export type LocateServerContext = {
   readonly db: HrcDatabase
@@ -43,6 +45,8 @@ export type LocateServerContext = {
   readonly federationConfig?: FederationConfig | undefined
   /** Injected by tests; production derives one from the federation config. */
   readonly registryClient?: BindingRegistryClient | undefined
+  /** Production local-authority client owned by the registry endpoint. */
+  readonly bindingRegistryEndpoint?: { readonly registryClient: BindingRegistryClient } | undefined
   readonly policyFor?: ((scopeRef: string) => Promise<PlacementPolicyResolution>) | undefined
   readonly observedFor?: ((scopeRef: string) => readonly LocateObservedRuntime[]) | undefined
 }
@@ -52,37 +56,18 @@ function configOf(server: LocateServerContext): FederationConfig | undefined {
 }
 
 /**
- * Picks the registry to consult, mirroring `resolveRegistryClient` in
- * summon-gate-server.ts. Every ambiguity resolves to an UNAVAILABLE client
- * rather than a guess: locate reporting "registry unknown, here is why" is
- * correct, and locate reporting a binding read from the wrong registry is not.
+ * Picks the same registry client as the summon gate. Every ambiguity resolves
+ * to an UNAVAILABLE client rather than a guess: locate reporting "registry
+ * unknown, here is why" is correct, and reading the wrong registry is not.
  */
-function locateRegistryClient(config: FederationConfig | undefined): BindingRegistryClient {
+function locateRegistryClient(
+  config: FederationConfig | undefined,
+  localRegistryClient?: BindingRegistryClient | undefined
+): BindingRegistryClient {
   if (config === undefined || !config.sourceExists) {
     return createUnavailableRegistryClient('federation is not configured on this node')
   }
-  const peers = [...config.peers.values()]
-  const solePeer = peers[0]
-  if (solePeer === undefined) {
-    return createUnavailableRegistryClient(
-      `node "${config.nodeId}" declares no peers, so the binding registry cannot be consulted; add the registry host to "peers" in ${config.sourcePath}`
-    )
-  }
-  const declared = config.gate.registryHost
-  if (declared !== undefined) {
-    const host = peers.find((peer) => peer.nodeId === declared)
-    return host === undefined
-      ? createUnavailableRegistryClient(
-          `gate.registryHost is "${declared}" but no peer by that nodeId is declared in ${config.sourcePath}`
-        )
-      : createBindingRegistryClient(host)
-  }
-  if (peers.length > 1) {
-    return createUnavailableRegistryClient(
-      `${config.sourcePath} declares ${peers.length} peers but no "gate.registryHost", so which node holds the binding registry is ambiguous.`
-    )
-  }
-  return createBindingRegistryClient(solePeer)
+  return resolveFederationRegistryClient(config, localRegistryClient)
 }
 
 /**
@@ -128,7 +113,9 @@ function buildLocateDeps(server: LocateServerContext): LocateDeps {
     federationConfigured,
     gateMode: config?.gate.mode ?? 'off',
     ledger,
-    registry: server.registryClient ?? locateRegistryClient(config),
+    registry:
+      server.registryClient ??
+      locateRegistryClient(config, server.bindingRegistryEndpoint?.registryClient),
     policyFor: server.policyFor ?? (async (scopeRef) => resolvePlacementPolicy(scopeRef)),
     observedFor: server.observedFor ?? defaultObservedFor(server),
     retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),

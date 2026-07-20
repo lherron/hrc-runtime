@@ -9,6 +9,8 @@ import {
 } from 'hrc-store-sqlite'
 
 import type { RegistryListenerConfig } from './registry-bind.js'
+import type { BindingRegistryClient } from './registry-client.js'
+import { createLocalBindingRegistryClient } from './registry-client.js'
 
 export const BINDING_REGISTRY_BASENAME = 'binding-registry.sqlite'
 
@@ -24,6 +26,8 @@ export type RegistryAuthPeer = {
 
 export type BindingRegistryEndpointControl = {
   readonly url: string
+  /** In-process authority path for the node hosting this registry. */
+  readonly registryClient: BindingRegistryClient
   stop(): void
 }
 
@@ -194,6 +198,7 @@ export function startBindingRegistryEndpoint(input: {
   listener: RegistryListenerConfig
   peers: ReadonlyMap<string, RegistryAuthPeer>
   registryPath: string
+  localNodeId: string
 }): BindingRegistryEndpointControl {
   if (input.peers.size === 0) {
     throw new Error('federation registry listener requires at least one authenticated peer')
@@ -208,6 +213,7 @@ export function startBindingRegistryEndpoint(input: {
     })
     return {
       url: input.listener.bind,
+      registryClient: createLocalBindingRegistryClient(registry, input.localNodeId),
       stop() {
         server.stop(true)
         registry.close()

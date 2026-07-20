@@ -27,11 +27,8 @@ import {
   createPlacementPolicyResolver,
 } from './placement-policy.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import {
-  RegistryRefusedError,
-  RegistryUnreachableError,
-  createBindingRegistryClient,
-} from './registry-client.js'
+import { RegistryRefusedError } from './registry-client.js'
+import { resolveFederationRegistryClient } from './registry-resolution.js'
 import { createSummonCapabilityObserver } from './summon-capability.js'
 import {
   type SummonCapabilityHint,
@@ -43,63 +40,6 @@ import {
   evaluateSummonGate,
 } from './summon-gate.js'
 
-/**
- * Fallback used when this node has no peer entry for the registry host.
- *
- * It fails CLOSED rather than returning `unbound`: an advisory daemon logs
- * exactly what it would have refused, and an enforce daemon refuses rather than
- * establishing a binding against a registry it cannot reach. A fallback that
- * answered `unbound` would mint authority on evidence it never had.
- */
-export function createUnavailableRegistryClient(reason: string): BindingRegistryClient {
-  return {
-    async consult() {
-      throw new RegistryUnreachableError(reason)
-    },
-    async establish() {
-      throw new RegistryUnreachableError(reason)
-    },
-  }
-}
-
-/**
- * Picks the peer that hosts the binding registry.
- *
- * A node that hosts the registry itself still consults over HTTP here rather
- * than in-process: one code path, one set of semantics, and the registry host
- * is reachable from itself by construction. Optimizing that into a direct call
- * would create a second consult path with different failure modes.
- */
-function resolveRegistryClient(config: FederationConfig): BindingRegistryClient {
-  const peers = [...config.peers.values()]
-  const solePeer = peers[0]
-  if (solePeer === undefined) {
-    return createUnavailableRegistryClient(
-      `node "${config.nodeId}" declares no peers, so the binding registry cannot be consulted; add the registry host to "peers" in ${config.sourcePath}`
-    )
-  }
-
-  const declared = config.gate.registryHost
-  if (declared !== undefined) {
-    const host = peers.find((peer) => peer.nodeId === declared)
-    if (host === undefined) {
-      return createUnavailableRegistryClient(
-        `gate.registryHost is "${declared}" but no peer by that nodeId is declared in ${config.sourcePath}`
-      )
-    }
-    return createBindingRegistryClient(host)
-  }
-
-  // Exactly one peer is unambiguous. More than one is not, and picking for the
-  // operator would silently change answer the day a second peer is added.
-  if (peers.length > 1) {
-    return createUnavailableRegistryClient(
-      `${config.sourcePath} declares ${peers.length} peers but no "gate.registryHost", so which node holds the binding registry is ambiguous. Fix: add "gate": {"registryHost": "<nodeId>"} naming the registry host.`
-    )
-  }
-  return createBindingRegistryClient(solePeer)
-}
-
 export type SummonGateServerContext = {
   readonly db: HrcDatabase
   /**
@@ -110,6 +50,8 @@ export type SummonGateServerContext = {
   readonly federationConfig?: FederationConfig | undefined
   /** Injected by tests; production builds one from the federation config. */
   readonly registryClient?: BindingRegistryClient | undefined
+  /** Production local-authority client owned by the registry endpoint. */
+  readonly bindingRegistryEndpoint?: { readonly registryClient: BindingRegistryClient } | undefined
   readonly policyFor?: ((scopeRef: string) => Promise<SummonGatePolicy | undefined>) | undefined
   /** Narrows real-profile discovery in tests without mutating process.env. */
   readonly placementPolicyOptions?: ResolvePlacementPolicyOptions | undefined
@@ -135,7 +77,9 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
     federationConfigured: true,
     localNodeId: config.nodeId,
     ledger,
-    registry: server.registryClient ?? resolveRegistryClient(config),
+    registry:
+      server.registryClient ??
+      resolveFederationRegistryClient(config, server.bindingRegistryEndpoint?.registryClient),
     // Node-local, synchronous, and undefined before the table exists
     // (T-06614 C-11125 / larry #190). Checked before all authority logic.
     retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),

@@ -669,6 +669,7 @@ class HrcServerInstance implements HrcServer {
           listener: registryConfig,
           peers,
           registryPath: resolveBindingRegistryPath(options.stateRoot),
+          localNodeId: federationConfig.nodeId,
         })
         this.federationRegistryEndpoint = this.bindingRegistryEndpoint.url
         writeServerLog('INFO', 'server.start.binding_registry_listener', {

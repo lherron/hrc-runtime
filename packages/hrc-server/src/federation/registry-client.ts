@@ -90,6 +90,93 @@ export type BindingRegistryClientOptions = {
   log?: RegistryClientLog | undefined
 }
 
+/**
+ * In-process client for the node that owns the binding registry.
+ *
+ * It deliberately shares the endpoint's open registry handle: a local consult
+ * is an authority read, not a peer request, and must not require a self-peer
+ * bearer token. The endpoint remains the authenticated transport for every
+ * other node.
+ */
+export class LocalBindingRegistryClient implements BindingRegistryClient {
+  readonly #registry: BindingRegistry
+  readonly #localNodeId: string
+  readonly #log: RegistryClientLog
+
+  constructor(
+    registry: BindingRegistry,
+    localNodeId: string,
+    options: Pick<BindingRegistryClientOptions, 'log'> = {}
+  ) {
+    this.#registry = registry
+    this.#localNodeId = localNodeId
+    this.#log = options.log ?? writeServerLog
+  }
+
+  async consult(
+    scopeRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<RegistryConsultResult> {
+    if (options.signal?.aborted) {
+      throw new RegistryUnreachableError('federation binding registry consultation aborted')
+    }
+    if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
+
+    try {
+      const binding = this.#registry.get(scopeRef)
+      const result: RegistryConsultResult =
+        binding === undefined ? { outcome: 'unbound' } : { outcome: 'bound', binding }
+      this.#log('INFO', `federation.registry.consult.${result.outcome}`, {
+        scopeRef,
+        transport: 'local',
+        ...(result.outcome === 'bound'
+          ? {
+              homeNodeId: result.binding.homeNodeId,
+              placementEpoch: result.binding.placementEpoch,
+            }
+          : {}),
+      })
+      return result
+    } catch (error) {
+      if (error instanceof RegistryRefusedError || error instanceof RegistryUnreachableError) {
+        throw error
+      }
+      throw classifyUnreachable(error)
+    }
+  }
+
+  async establish(
+    request: Parameters<BindingRegistry['establish']>[0]
+  ): Promise<BindingEstablishResult> {
+    if (request.homeNodeId !== this.#localNodeId) {
+      throw new RegistryRefusedError(400, 'invalid_request')
+    }
+    try {
+      const result = this.#registry.establish(request)
+      this.#log('INFO', `federation.registry.establish.${result.outcome}`, {
+        scopeRef: request.scopeRef,
+        homeNodeId: result.binding.homeNodeId,
+        placementEpoch: result.binding.placementEpoch,
+        transport: 'local',
+      })
+      return result
+    } catch (error) {
+      if (error instanceof RegistryRefusedError || error instanceof RegistryUnreachableError) {
+        throw error
+      }
+      throw classifyUnreachable(error)
+    }
+  }
+}
+
+export function createLocalBindingRegistryClient(
+  registry: BindingRegistry,
+  localNodeId: string,
+  options: Pick<BindingRegistryClientOptions, 'log'> = {}
+): BindingRegistryClient {
+  return new LocalBindingRegistryClient(registry, localNodeId, options)
+}
+
 class AttemptTimedOut extends Error {}
 class CallerAborted extends Error {}
 
