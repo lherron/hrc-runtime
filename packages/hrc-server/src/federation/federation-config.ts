@@ -34,8 +34,10 @@
  *   who you are is worse than refusing to boot.
  *
  * This is transport plumbing, not placement policy (§6). `gate.registryHost`
- * alone selects registry authority by node identity; `registryEndpoint` only
- * addresses that already-selected peer. Nothing here decides where a scope
+ * is the sole explicit registry-authority selector. When it is absent, the
+ * legacy exactly-one-peer fallback selects that peer; multiple peers are
+ * refused as ambiguous. `registryEndpoint` only addresses the selected peer
+ * and never participates in selection. Nothing here decides where a scope
  * lives.
  *
  * **Token rotation without downtime.** `token` is the credential sent on
@@ -247,10 +249,11 @@ export type FederationGateConfig = {
   /**
    * nodeId of the peer hosting the binding registry.
    *
-   * Explicit rather than inferred: which node holds the registry is an
-   * authority question, and guessing it (say, "the only peer") would silently
-   * pick a different answer the moment a second peer is added. Optional only
-   * when exactly one peer is declared; ambiguity is a visible refusal.
+   * Sole explicit selector: which node holds the registry is an authority
+   * question. When omitted, the backward-compatible exactly-one-peer fallback
+   * selects that peer; multiple peers are a visible ambiguity refusal. The
+   * fallback depends only on peer node identity, never endpoint or
+   * registryEndpoint values.
    */
   readonly registryHost?: NodeId | undefined
 }

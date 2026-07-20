@@ -62,11 +62,14 @@ Each peer may expose two role-separated transport origins:
   for `/v1/federation/registry/*`. When absent, registry clients fall back to
   `endpoint` for legacy or deliberately co-listened deployments.
 
-The transport split does not select authority. `gate.registryHost` remains the
-sole declaration of which node owns the binding registry; a
-`registryEndpoint` on any peer never implies or infers `registryHost`. Both
-origins authenticate the same peer identity with the existing `token` and
-`acceptedTokens` rotation contract—there is no second registry credential.
+The transport split does not select authority. `gate.registryHost` is the sole
+explicit declaration of which node owns the binding registry. For backward
+compatibility, when it is absent and exactly one peer is declared, that peer is
+selected; multiple peers without `gate.registryHost` are refused as ambiguous.
+A `registryEndpoint` on any peer never participates in selection or implies or
+infers `registryHost`. Both origins authenticate the same peer identity with
+the existing `token` and `acceptedTokens` rotation contract—there is no second
+registry credential.
 
 `registryEndpoint`, when present, is validated at daemon startup as a non-empty
 `http`/`https` tailnet destination origin with an explicit port and specific
