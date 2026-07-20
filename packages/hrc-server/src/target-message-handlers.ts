@@ -13,6 +13,7 @@ import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
   FederationMessageEnvelope,
+  HrcChildDispatchIntent,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -30,7 +31,10 @@ import type {
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import {
+  parseOptionalBirthCredential,
+  parseOptionalChildDispatchIntent,
+} from './federation/birth-credential.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import { assertScopeNotRetired, assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
@@ -189,6 +193,7 @@ export async function handleCreateSessionSuccessor(
       ? requireSession(this.db, priorHostSessionId)
       : findTargetSession(this.db, sessionRef)
   const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
+  const childDispatchIntent = parseOptionalChildDispatchIntent(body['childDispatchIntent'])
   if (!prior) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
       sessionRef,
@@ -217,6 +222,7 @@ export async function handleCreateSessionSuccessor(
           },
         }),
     ...(birthCredential === undefined ? {} : { birthCredential }),
+    ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
   })
 
   const successor = createSessionSuccessorFromContinuation(this.db, prior)
@@ -283,6 +289,7 @@ export async function handleResumeContinuation(
     ? (body['parsedScope'] as Record<string, unknown>)
     : undefined
   const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
+  const childDispatchIntent = parseOptionalChildDispatchIntent(body['childDispatchIntent'])
 
   const selection = selectResumeContinuationCandidate(this.db, {
     sessionRef,
@@ -330,7 +337,8 @@ export async function handleResumeContinuation(
     prior,
     intent,
     parsedScopeJson,
-    birthCredential
+    birthCredential,
+    childDispatchIntent
   )
 
   return json({
@@ -416,7 +424,8 @@ async function createNotifiedSessionSuccessor(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
   parsedScopeJson: Record<string, unknown> | undefined,
-  birthCredential?: string
+  birthCredential?: string,
+  childDispatchIntent?: HrcChildDispatchIntent
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
   const capabilityIntent = intent ?? session.lastAppliedIntentJson
@@ -433,6 +442,7 @@ async function createNotifiedSessionSuccessor(
           },
         }),
     ...(birthCredential === undefined ? {} : { birthCredential }),
+    ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
   })
 
   const successor = createSessionSuccessorFromContinuation(server.db, session, {
@@ -591,7 +601,8 @@ export async function handleSemanticTurnHandoff(
       body.to.sessionRef,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential
+      body.birthCredential,
+      body.childDispatchIntent
     )
   }
 
@@ -614,7 +625,8 @@ export async function handleSemanticTurnHandoff(
       session,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential
+      body.birthCredential,
+      body.childDispatchIntent
     )
   }
 
@@ -1060,7 +1072,8 @@ export async function deliverPersistedSemanticDm(
           body.to.sessionRef,
           intent,
           body.parsedScopeJson,
-          body.birthCredential
+          body.birthCredential,
+          body.childDispatchIntent
         )
       }
     }
@@ -1072,7 +1085,8 @@ export async function deliverPersistedSemanticDm(
           session,
           body.runtimeIntent,
           body.parsedScopeJson,
-          body.birthCredential
+          body.birthCredential,
+          body.childDispatchIntent
         )
       }
 

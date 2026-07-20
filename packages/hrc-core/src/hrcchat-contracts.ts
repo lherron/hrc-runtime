@@ -1,5 +1,5 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
-import type { HrcBirthCredential } from './federation.js'
+import type { HrcBirthCredential, HrcChildDispatchIntent } from './federation.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
  *
@@ -165,6 +165,7 @@ export type EnsureTargetRequest = {
   runtimeIntent: HrcRuntimeIntent
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: HrcBirthCredential | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
 }
 
 export type EnsureTargetResponse = HrcTargetView
@@ -193,6 +194,7 @@ export type DispatchTurnBySelectorRequest = {
   parsedScopeJson?: Record<string, unknown> | undefined
   fences?: HrcFence | undefined
   birthCredential?: HrcBirthCredential | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
 }
 
 export type DispatchTurnBySelectorResponse = {
@@ -299,6 +301,7 @@ export type SemanticDmRequest = {
   createIfMissing?: boolean | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: HrcBirthCredential | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
   wait?:
     | {
         enabled: boolean

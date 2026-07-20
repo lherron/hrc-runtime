@@ -21,7 +21,7 @@ import type {
   HrcStatusTmuxView,
   HrcTurnResponseFormat,
 } from './contracts.js'
-import type { HrcBirthCredential } from './federation.js'
+import type { HrcBirthCredential, HrcChildDispatchIntent } from './federation.js'
 import type { HrcFence } from './fences.js'
 import type { HrcSessionRef } from './selectors.js'
 
@@ -55,6 +55,8 @@ export type ResolveSessionRequest = {
   summonIntent?: SummonIntent | undefined
   /** Present only for a dispatch inherited from a running parent runtime. */
   birthCredential?: HrcBirthCredential | undefined
+  /** Producer-owned, exact target-bound child intent. Never sent by generic commands. */
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
 }
 
 export type ResolveSessionFoundResponse = {
@@ -170,6 +172,7 @@ export type LaunchCommandScopedRunRequest = {
   binding: LaunchCommandScopedRunBinding
   stdinJson?: unknown
   birthCredential?: HrcBirthCredential | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
 }
 
 export type LaunchCommandScopedRunResponse = {
@@ -327,6 +330,7 @@ export type ResumeContinuationRequest = {
   intent?: HrcRuntimeIntent | undefined
   parsedScope?: Record<string, unknown> | undefined
   birthCredential?: HrcBirthCredential | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
 }
 
 export type ResumeContinuationResponse = {

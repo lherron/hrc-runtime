@@ -18,6 +18,7 @@ import type {
   BirthAuthorityProvenance,
   EstablishmentProvenance,
   FederationBirthClass,
+  HrcChildDispatchIntent,
   SummonIntent,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
@@ -136,6 +137,7 @@ export type SummonAuthorityRequest = (
 ) & {
   /** Common mint context; neither field widens the typed intent arm. */
   birthCredential?: string | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
   capabilityHint?: SummonCapabilityHint | undefined
 }
 
@@ -182,6 +184,7 @@ async function commitAuthorizedEstablishment(input: {
       localNodeId: input.deps.localNodeId,
       intent: input.request.intent,
       birthCredentialPresent: input.request.birthCredential !== undefined,
+      childDispatchIntentPresent: input.request.childDispatchIntent !== undefined,
       diagnostic,
     })
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
@@ -206,6 +209,7 @@ async function commitAuthorizedEstablishment(input: {
       homeNodeId: established.binding.homeNodeId,
       intent: input.request.intent,
       birthCredentialPresent: input.request.birthCredential !== undefined,
+      childDispatchIntentPresent: input.request.childDispatchIntent !== undefined,
       diagnostic,
     })
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
@@ -239,6 +243,9 @@ export async function assertSummonAuthority(
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
     ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
+    ...(request.childDispatchIntent === undefined
+      ? {}
+      : { childDispatchIntent: request.childDispatchIntent }),
     deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
   })

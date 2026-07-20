@@ -4,6 +4,7 @@ import { HrcBadRequestError, HrcErrorCode, HrcRuntimeUnavailableError } from 'hr
 import type {
   CreateMessageResponse,
   EnsureTargetResponse,
+  HrcChildDispatchIntent,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -14,7 +15,10 @@ import {
   isMatchingInteractiveTmuxBrokerRuntime,
   validateEnsureRuntimeIntent,
 } from './broker-decisions.js'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import {
+  parseOptionalBirthCredential,
+  parseOptionalChildDispatchIntent,
+} from './federation/birth-credential.js'
 import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
@@ -160,7 +164,8 @@ export async function ensureTargetSession(
   sessionRef: string,
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>,
-  birthCredential?: string
+  birthCredential?: string,
+  childDispatchIntent?: HrcChildDispatchIntent
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const existing = findTargetSession(this.db, normalized)
@@ -175,6 +180,7 @@ export async function ensureTargetSession(
         intent: 'implicit',
         capabilityHint: { placement: intent.placement, harness: intent.harness },
         ...(birthCredential === undefined ? {} : { birthCredential }),
+        ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
       })
       const successor = createSessionSuccessorFromContinuation(this.db, existing, {
         lastAppliedIntentJson: intent,
@@ -205,6 +211,7 @@ export async function ensureTargetSession(
     intent: 'implicit',
     capabilityHint: { placement: intent.placement, harness: intent.harness },
     ...(birthCredential === undefined ? {} : { birthCredential }),
+    ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
   })
 
   const now = timestamp()
@@ -262,12 +269,14 @@ export async function handleEnsureTarget(
     ? (body['parsedScopeJson'] as Record<string, unknown>)
     : undefined
   const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
+  const childDispatchIntent = parseOptionalChildDispatchIntent(body['childDispatchIntent'])
 
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
     parsedScopeJson,
-    birthCredential
+    birthCredential,
+    childDispatchIntent
   )
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }

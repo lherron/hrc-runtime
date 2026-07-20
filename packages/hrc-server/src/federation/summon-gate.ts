@@ -36,7 +36,7 @@ import type {
 import type { RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
-import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'
+import type { HrcChildDispatchIntent, HrcHarnessIntent, SummonIntent } from 'hrc-core'
 
 import type {
   BirthCredentialValidation,
@@ -115,6 +115,7 @@ export type SummonGateRefuseReason =
   | 'capability-project-root-unresolvable'
   | 'capability-observation-failed'
   | 'invalid-birth-credential'
+  | 'invalid-child-dispatch-intent'
   | 'zombie-runtime'
 
 /** Node-local facts required to materialize an agent scope (§5). */
@@ -221,8 +222,10 @@ export type SummonGateRequest = {
   scopeRef: string
   path: SummonPath
   intent: SummonIntent
-  /** Opaque runtime-stable capability. Absent means ordinary summon intent. */
+  /** Opaque runtime-stable proof of live parent origin; never child intent. */
   birthCredential?: string | undefined
+  /** Producer-owned signal naming the exact child target. */
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
   deps: SummonGateDeps
   capabilityHint?: SummonCapabilityHint | undefined
 }
@@ -451,6 +454,30 @@ function isEvaluation(value: unknown): value is SummonGateEvaluation {
 async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation> {
   const { deps } = request
 
+  // A present credential proves only that this request originated inside a
+  // live parent runtime. It validates before every authority/classification
+  // check and never silently degrades when malformed, unknown, or dead.
+  let parentOrigin: ChildBirthAuthorityProvenance | undefined
+  if (request.birthCredential !== undefined) {
+    const validation = deps.validateBirthCredential?.(request.birthCredential) ?? {
+      valid: false as const,
+      reason: 'invalid-birth-credential' as const,
+      diagnostic:
+        'This daemon has no birth-credential validator configured; refusing parent origin.',
+    }
+    if (!validation.valid) {
+      return refuse(validation.reason, validation.diagnostic)
+    }
+    parentOrigin = validation.provenance
+  }
+
+  if (request.childDispatchIntent !== undefined && parentOrigin === undefined) {
+    return refuse(
+      'invalid-child-dispatch-intent',
+      'Child-dispatch intent requires a valid live-parent birth credential; refusing unauthenticated child-birth.'
+    )
+  }
+
   // Synthetic, non-agent scopes (`app:<appId>` gateway containers) are not
   // policy-born agent summons: they have no agent profile, therefore no
   // [placement] stanza, and no ledger binding could ever be written for them.
@@ -464,23 +491,35 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   try {
     scopeRef = formatCanonicalScopeRef({ scopeRef: request.scopeRef })
   } catch {
+    if (request.childDispatchIntent !== undefined) {
+      return refuse(
+        'invalid-child-dispatch-intent',
+        `Child-dispatch intent cannot target non-agent scope ${request.scopeRef}.`
+      )
+    }
     return allow('non-agent-scope')
   }
 
-  // A PRESENT credential is an explicit child-birth claim. It must validate or
-  // refuse; it never degrades into a policy summon. Absence is different: it
-  // follows typed/provisional summon intent exactly as before.
   let childBirth: ChildBirthAuthorityProvenance | undefined
-  if (request.birthCredential !== undefined) {
-    const validation = deps.validateBirthCredential?.(request.birthCredential) ?? {
-      valid: false as const,
-      reason: 'invalid-birth-credential' as const,
-      diagnostic: 'This daemon has no birth-credential validator configured; refusing child-birth.',
+  if (request.childDispatchIntent !== undefined) {
+    let childTargetScopeRef: string
+    try {
+      childTargetScopeRef = formatCanonicalScopeRef({
+        scopeRef: request.childDispatchIntent.targetScopeRef,
+      })
+    } catch {
+      return refuse(
+        'invalid-child-dispatch-intent',
+        `Child-dispatch target ${request.childDispatchIntent.targetScopeRef} is not a canonicalizable agent scope.`
+      )
     }
-    if (!validation.valid) {
-      return refuse(validation.reason, validation.diagnostic)
+    if (childTargetScopeRef !== scopeRef) {
+      return refuse(
+        'invalid-child-dispatch-intent',
+        `Child-dispatch intent is bound to ${childTargetScopeRef}, not requested target ${scopeRef}.`
+      )
     }
-    childBirth = validation.provenance
+    childBirth = parentOrigin
   }
 
   // (1) Retirement, before any authority logic (T-06614 C-11125).
@@ -556,9 +595,9 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     )
   }
 
-  // The registry proved this identity globally UNBOUND. A live parent permit
-  // therefore chooses the immutable mechanism-born class and this daemon's own
-  // node. Placement is intentionally not consulted.
+  // The registry proved this identity globally UNBOUND. Only the conjunction
+  // of live-parent origin and exact target-bound producer intent chooses the
+  // immutable mechanism-born class. Placement is intentionally not consulted.
   if (childBirth !== undefined) {
     return await requireMaterializationCapability(
       request,
@@ -672,6 +711,7 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
       // reading `typed` from a signal the caller actually sent.
       intentSource: 'typed',
       birthCredentialPresent: request.birthCredential !== undefined,
+      childDispatchIntentPresent: request.childDispatchIntent !== undefined,
       diagnostic: evaluation.diagnostic,
     })
   }

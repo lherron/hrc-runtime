@@ -13,6 +13,7 @@ import {
 import type {
   DropContinuationResponse,
   HrcCapabilityStatus,
+  HrcChildDispatchIntent,
   HrcCommandLaunchSpec,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -1101,6 +1102,9 @@ class HrcServerInstance implements HrcServer {
             },
           }),
       ...(parsed.birthCredential === undefined ? {} : { birthCredential: parsed.birthCredential }),
+      ...(parsed.childDispatchIntent === undefined
+        ? {}
+        : { childDispatchIntent: parsed.childDispatchIntent }),
     })
 
     const now = timestamp()
@@ -1159,7 +1163,8 @@ class HrcServerInstance implements HrcServer {
 
     const session = await this.resolveOrCreateCommandRunSession(
       body.sessionRef,
-      body.birthCredential
+      body.birthCredential,
+      body.childDispatchIntent
     )
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
@@ -1245,7 +1250,8 @@ class HrcServerInstance implements HrcServer {
 
   async resolveOrCreateCommandRunSession(
     sessionRef: string,
-    birthCredential?: string
+    birthCredential?: string,
+    childDispatchIntent?: HrcChildDispatchIntent
   ): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
@@ -1262,6 +1268,7 @@ class HrcServerInstance implements HrcServer {
       path: 'command-run',
       intent: 'implicit',
       ...(birthCredential === undefined ? {} : { birthCredential }),
+      ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
     })
 
     const now = timestamp()

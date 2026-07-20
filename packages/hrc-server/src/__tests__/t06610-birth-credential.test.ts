@@ -208,6 +208,7 @@ describe('T-06610 runtime-stable birth credential', () => {
         scopeRef: CHILD_SCOPE,
         path: 'ensure-target',
         birthCredential: RUNTIME_ID,
+        childDispatchIntent: { targetScopeRef: CHILD_SCOPE },
         capabilityHint,
       }
 
@@ -262,6 +263,7 @@ describe('T-06610 runtime-stable birth credential', () => {
         scopeRef: CHILD_SCOPE,
         path: 'ensure-target',
         birthCredential: RUNTIME_ID,
+        childDispatchIntent: { targetScopeRef: CHILD_SCOPE },
       })
 
       expect(result?.evaluation.reason).toBe('registry-bound-local')
@@ -332,7 +334,7 @@ describe('T-06610 child-birth at the summon gate', () => {
     }
   }
 
-  test('valid credential yields mechanism birth and never consults placement policy', async () => {
+  test('valid credential plus exact child intent yields mechanism birth and skips placement', async () => {
     let capabilityCalls = 0
     const provenance = {
       kind: 'child-birth' as const,
@@ -350,6 +352,7 @@ describe('T-06610 child-birth at the summon gate', () => {
       path: 'ensure-target',
       intent: 'implicit',
       birthCredential: RUNTIME_ID,
+      childDispatchIntent: { targetScopeRef: CHILD_SCOPE },
       deps: gateDeps,
     })
 

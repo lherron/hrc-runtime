@@ -1,13 +1,17 @@
 import { formatSessionHandle } from 'agent-scope'
 import { HrcBadRequestError, HrcErrorCode, normalizeSessionRef } from 'hrc-core'
 import type {
+  HrcChildDispatchIntent,
   HrcMessageAddress,
   HrcMessageFilter,
   HrcMessageRecord,
   HrcRuntimeIntent,
   HrcTurnResponseFormat,
 } from 'hrc-core'
-import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import {
+  parseOptionalBirthCredential,
+  parseOptionalChildDispatchIntent,
+} from './federation/birth-credential.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
 
 /**
@@ -301,6 +305,7 @@ export function parseSemanticDmRequest(input: unknown): {
   createIfMissing?: boolean | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
   birthCredential?: string | undefined
+  childDispatchIntent?: HrcChildDispatchIntent | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
   allowCrossScopeReply?: boolean | undefined
@@ -350,6 +355,7 @@ export function parseSemanticDmRequest(input: unknown): {
     : undefined
 
   const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
+  const childDispatchIntent = parseOptionalChildDispatchIntent(input['childDispatchIntent'])
 
   const waitInput = input['wait']
   const wait =
@@ -385,6 +391,7 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
     ...(birthCredential !== undefined ? { birthCredential } : {}),
+    ...(childDispatchIntent !== undefined ? { childDispatchIntent } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(allowCrossScopeReply !== undefined ? { allowCrossScopeReply } : {}),
