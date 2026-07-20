@@ -323,6 +323,44 @@ export type LivePlacementRepairSummary = {
   unresolved: number
 }
 
+export type LivePlacementRepairCandidate = {
+  readonly scopeRef: string
+  readonly capabilityHint?: SummonCapabilityHint | undefined
+}
+
+/**
+ * Snapshot scopes that were live when startup opened the database.
+ *
+ * Startup reconciliation may conservatively mark an otherwise-repairable
+ * runtime stale before the federation endpoints are constructed. Capturing at
+ * this boundary preserves that scope for binding repair without ever sweeping
+ * older stale/dead/terminated rows into the candidate set.
+ */
+export function captureLivePlacementRepairCandidates(
+  db: HrcDatabase
+): readonly LivePlacementRepairCandidate[] {
+  const candidates = new Map<string, LivePlacementRepairCandidate>()
+  for (const runtime of db.runtimes.listAll()) {
+    if (isRuntimeUnavailableStatus(runtime.status) || !runtime.scopeRef.startsWith('agent:')) {
+      continue
+    }
+    const session = db.sessions.getByHostSessionId(runtime.hostSessionId)
+    if (session?.status !== 'active') continue
+    candidates.set(runtime.scopeRef, {
+      scopeRef: runtime.scopeRef,
+      ...(session.lastAppliedIntentJson === undefined
+        ? {}
+        : {
+            capabilityHint: {
+              placement: session.lastAppliedIntentJson.placement,
+              harness: session.lastAppliedIntentJson.harness,
+            },
+          }),
+    })
+  }
+  return [...candidates.values()]
+}
+
 /**
  * Rollout repair for T-06697's already-running unbound policy births.
  *
@@ -332,7 +370,8 @@ export type LivePlacementRepairSummary = {
  * authority, and the normal registry-first commit remains the sole writer.
  */
 export async function repairLiveUnboundPlacements(
-  server: SummonGateServerContext
+  server: SummonGateServerContext,
+  candidates = captureLivePlacementRepairCandidates(server.db)
 ): Promise<LivePlacementRepairSummary> {
   const summary: LivePlacementRepairSummary = {
     scanned: 0,
@@ -340,23 +379,13 @@ export async function repairLiveUnboundPlacements(
     alreadyBound: 0,
     unresolved: 0,
   }
-  const sessionsByScope = new Map<
-    string,
-    NonNullable<ReturnType<HrcDatabase['sessions']['getByHostSessionId']>>
-  >()
-  for (const runtime of server.db.runtimes.listAll()) {
-    if (isRuntimeUnavailableStatus(runtime.status) || !runtime.scopeRef.startsWith('agent:')) {
-      continue
-    }
-    const session = server.db.sessions.getByHostSessionId(runtime.hostSessionId)
-    if (session?.status === 'active') sessionsByScope.set(runtime.scopeRef, session)
-  }
-  if (sessionsByScope.size === 0) return summary
+  if (candidates.length === 0) return summary
 
   const deps = gateDepsFor(server)
   if (deps === undefined) return summary
 
-  for (const [scopeRef, session] of sessionsByScope) {
+  for (const candidate of candidates) {
+    const { scopeRef } = candidate
     summary.scanned += 1
     if (deps.ledger.activeAuthority(scopeRef) !== undefined) {
       summary.alreadyBound += 1
@@ -367,14 +396,9 @@ export async function repairLiveUnboundPlacements(
       scopeRef,
       path: 'ensure-target',
       intent: 'implicit',
-      ...(session.lastAppliedIntentJson === undefined
+      ...(candidate.capabilityHint === undefined
         ? {}
-        : {
-            capabilityHint: {
-              placement: session.lastAppliedIntentJson.placement,
-              harness: session.lastAppliedIntentJson.harness,
-            },
-          }),
+        : { capabilityHint: candidate.capabilityHint }),
     })
 
     const repaired = deps.ledger.activeAuthority(scopeRef)

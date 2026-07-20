@@ -79,6 +79,7 @@ import {
 } from './federation/registry-endpoint.js'
 import {
   assertSummonAuthority,
+  captureLivePlacementRepairCandidates,
   repairLiveUnboundPlacements,
 } from './federation/summon-gate-server.js'
 import {
@@ -1668,6 +1669,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       })
     }
     db = openHrcDatabase(resolvedOptions.dbPath)
+    const livePlacementRepairCandidates = captureLivePlacementRepairCandidates(db)
     await replaySpool(resolvedOptions, db)
     await reconcileStartupState(db, tmux, ghostmux, {
       reconcileGhostty: claudeGhosttyEnabled,
@@ -1680,7 +1682,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       ghostmux,
       lockHandle
     )
-    await repairLiveUnboundPlacements(server)
+    await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
     writeServerLog('INFO', 'server.start.ready', logCtx)
     return server
   } catch (error) {

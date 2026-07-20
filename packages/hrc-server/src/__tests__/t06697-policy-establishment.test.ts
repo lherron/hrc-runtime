@@ -13,6 +13,7 @@ import {
 import type { FederationConfig } from '../federation/federation-config.js'
 import {
   assertSummonAuthority,
+  captureLivePlacementRepairCandidates,
   repairLiveUnboundPlacements,
 } from '../federation/summon-gate-server.js'
 import type { SummonGatePolicy } from '../federation/summon-gate.js'
@@ -128,7 +129,7 @@ describe('T-06697 policy-born registry establishment', () => {
     })
   }
 
-  test('startup repair binds an already-running task-default scope before returning', async () => {
+  test('startup repair binds a pre-reconcile live task-default scope even when warmup marks it stale', async () => {
     const scopeRef = 'agent:cody:project:hrc-runtime:task:T-06697-repair'
     const h = await harness(async () => ({
       placement: { pins: {}, taskDefaults: { 'T-06697-repair': 'svc' } },
@@ -164,7 +165,14 @@ describe('T-06697 policy-born registry establishment', () => {
       })
 
       expect(h.registry.get(scopeRef)).toBeUndefined()
-      const summary = await repairLiveUnboundPlacements(h.server)
+      const candidates = captureLivePlacementRepairCandidates(h.db)
+      expect(candidates).toHaveLength(1)
+
+      // Models startup reconciliation running before the server/endpoints are
+      // constructed. The pre-start snapshot, not the new stale status, defines
+      // rollout eligibility.
+      h.db.runtimes.updateStatus('rt-t06697-repair', 'stale', NOW)
+      const summary = await repairLiveUnboundPlacements(h.server, candidates)
 
       expect(summary).toEqual({ scanned: 1, repaired: 1, alreadyBound: 0, unresolved: 0 })
       expect(h.registry.get(scopeRef)).toMatchObject({
