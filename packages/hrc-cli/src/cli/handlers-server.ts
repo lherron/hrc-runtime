@@ -1,6 +1,5 @@
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
-import { HRC_BIRTH_CREDENTIAL_ENV } from 'hrc-core'
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
 
 import {
@@ -299,9 +298,6 @@ export async function cmdSessionResolve(args: string[]): Promise<void> {
   const result = await client.resolveSession({
     sessionRef,
     ...(create ? { create: true } : {}),
-    ...(create && process.env[HRC_BIRTH_CREDENTIAL_ENV]
-      ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
-      : {}),
   })
   printJson(result)
 }

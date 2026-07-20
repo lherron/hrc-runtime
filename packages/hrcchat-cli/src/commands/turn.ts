@@ -9,7 +9,7 @@ import type {
   HrcTurnResponseFormat,
   SemanticTurnHandoffResponse,
 } from 'hrc-core'
-import { HRC_BIRTH_CREDENTIAL_ENV, HrcDomainError, HrcErrorCode } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { type RenderFrame, SessionEventsManager, adaptHrcLifecycleEvent } from 'hrc-frame-render'
 import type { HrcClient } from 'hrc-sdk'
 
@@ -403,9 +403,6 @@ export async function cmdTurn(
     body,
     runtimeIntent,
     createIfMissing: true,
-    ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
-      ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
-      : {}),
     replyToMessageId: opts.replyTo,
     allowCrossScopeReply: opts.crossScopeReply,
     responseFormat,

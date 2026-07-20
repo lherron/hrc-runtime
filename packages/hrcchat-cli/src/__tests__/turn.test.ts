@@ -24,12 +24,14 @@ const savedEnv = {
   ASP_PROJECT: process.env['ASP_PROJECT'],
   HRC_SESSION_REF: process.env['HRC_SESSION_REF'],
   ASP_AGENTS_ROOT: process.env['ASP_AGENTS_ROOT'],
+  HRC_BIRTH_CREDENTIAL: process.env['HRC_BIRTH_CREDENTIAL'],
 }
 
 afterEach(() => {
   restoreEnv('ASP_PROJECT', savedEnv.ASP_PROJECT)
   restoreEnv('HRC_SESSION_REF', savedEnv.HRC_SESSION_REF)
   restoreEnv('ASP_AGENTS_ROOT', savedEnv.ASP_AGENTS_ROOT)
+  restoreEnv('HRC_BIRTH_CREDENTIAL', savedEnv.HRC_BIRTH_CREDENTIAL)
 })
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -402,6 +404,18 @@ describe('hrcchat turn — handoff uses correct parameters', () => {
     expect(handoffCalls[0]!.body).toBe('my prompt')
     expect(handoffCalls[0]!.to).toMatchObject({ kind: 'session' })
     expect(handoffCalls[0]!.createIfMissing).toBe(true)
+  })
+
+  it('does not turn an ambient runtime credential into turn child-birth authority', async () => {
+    process.env['HRC_BIRTH_CREDENTIAL'] = 'rt-ambient-parent'
+    const handoffCalls: SemanticTurnHandoffRequest[] = []
+    const client = createTurnClient({ handoffCalls })
+
+    const result = await runTurnCommand(client, {}, ['cody@agent-spaces:T-06674', 'ordinary turn'])
+
+    expect(result.exitCode).toBe(0)
+    expect(handoffCalls).toHaveLength(1)
+    expect(handoffCalls[0]).not.toHaveProperty('birthCredential')
   })
 
   it('passes --response-format-json-schema to semanticTurnHandoff', async () => {

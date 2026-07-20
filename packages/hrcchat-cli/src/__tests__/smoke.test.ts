@@ -33,11 +33,13 @@ class CliExit extends Error {
 const savedEnv = {
   ASP_PROJECT: process.env['ASP_PROJECT'],
   HRC_SESSION_REF: process.env['HRC_SESSION_REF'],
+  HRC_BIRTH_CREDENTIAL: process.env['HRC_BIRTH_CREDENTIAL'],
 }
 
 afterEach(() => {
   restoreEnv('ASP_PROJECT', savedEnv.ASP_PROJECT)
   restoreEnv('HRC_SESSION_REF', savedEnv.HRC_SESSION_REF)
+  restoreEnv('HRC_BIRTH_CREDENTIAL', savedEnv.HRC_BIRTH_CREDENTIAL)
 })
 
 describe('hrcchat CLI smoke fixture', () => {
@@ -73,6 +75,19 @@ describe('hrcchat CLI smoke fixture', () => {
       to: { kind: 'entity', entity: 'human' },
       createIfMissing: true,
     })
+  })
+
+  it('does not turn an ambient runtime credential into DM child-birth authority', async () => {
+    process.env['HRC_BIRTH_CREDENTIAL'] = 'rt-ambient-parent'
+    const client = createDmClient()
+
+    const result = await runCommand(() =>
+      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-06674', 'ordinary dm'])
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(client.requests).toHaveLength(1)
+    expect(client.requests[0]).not.toHaveProperty('birthCredential')
   })
 
   it('hrcchat dm --json emits required monitor handoff fields at top level', async () => {
