@@ -22,6 +22,10 @@ import { writeServerLog } from '../server-log.js'
 import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
+import {
+  type ResolvePlacementPolicyOptions,
+  createPlacementPolicyResolver,
+} from './placement-policy.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import {
   RegistryRefusedError,
@@ -107,6 +111,8 @@ export type SummonGateServerContext = {
   /** Injected by tests; production builds one from the federation config. */
   readonly registryClient?: BindingRegistryClient | undefined
   readonly policyFor?: ((scopeRef: string) => Promise<SummonGatePolicy | undefined>) | undefined
+  /** Narrows real-profile discovery in tests without mutating process.env. */
+  readonly placementPolicyOptions?: ResolvePlacementPolicyOptions | undefined
   /** Injected by tests; production observes the node's real filesystem/env. */
   readonly capabilityFor?:
     | ((
@@ -134,10 +140,10 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
     // (T-06614 C-11125 / larry #190). Checked before all authority logic.
     retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
     validateBirthCredential: (credential) => validateRuntimeBirthCredential(server.db, credential),
-    // Placement policy resolution is injected. Until the resolver is wired to
-    // spaces-config on this path, treating policy as undeclared produces a
-    // VISIBLE refusal naming the stanza line — never a silent local fallback.
-    policyFor: server.policyFor ?? (async () => undefined),
+    // Locate and the gate deliberately share this one profile reader. The
+    // closure is cheap to construct here; actual profile discovery/read stays
+    // lazy until a configured, non-dark gate reaches the virgin-policy branch.
+    policyFor: server.policyFor ?? createPlacementPolicyResolver(server.placementPolicyOptions),
     capabilityFor: server.capabilityFor ?? createSummonCapabilityObserver(),
     log: writeServerLog,
   }

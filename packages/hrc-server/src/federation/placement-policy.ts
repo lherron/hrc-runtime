@@ -8,12 +8,10 @@
  * rather than a locate-private parallel type — a second spelling of the pin
  * table is how locate would start reporting a policy the gate never applied.
  *
- * DELIBERATELY NOT WIRED INTO THE GATE. `summon-gate-server.ts` still injects
- * its `async () => undefined` stub, so gate behavior is byte-identical to
- * before this task. Locate is a read-only observer; turning this resolver into
- * the gate's policy source changes what an advisory daemon would refuse, which
- * is a placement-behavior change and not this task's contract. The seam is one
- * line (`policyFor: createPlacementPolicyResolver(...)`) when that lands.
+ * Both locate and the live summon gate call this module. Locate consumes the
+ * typed outcome so it can render profile failures; the gate adapter throws on
+ * those failures so `evaluateSummonGate` emits `policy-unavailable` instead of
+ * manufacturing an `undeclared-placement` refusal.
  *
  * NON-FATAL BY CONSTRUCTION. Every failure to read a profile becomes a typed
  * outcome, never a throw: an operator running locate on a broken profile needs
@@ -171,7 +169,18 @@ export function createPlacementPolicyResolver(
 ): (scopeRef: string) => Promise<SummonGatePolicy | undefined> {
   return async (scopeRef: string) => {
     const resolution = resolvePlacementPolicy(scopeRef, options)
-    return resolution.outcome === 'resolved' ? resolution.policy : undefined
+    if (resolution.outcome === 'resolved') return resolution.policy
+
+    // The gate has already filtered synthetic app scopes before consulting
+    // policy. Keep this adapter total for direct callers without inventing a
+    // profile failure for a scope that cannot carry an agent policy.
+    if (resolution.outcome === 'not-an-agent-scope') return undefined
+
+    // A profile that exists and omits [placement] resolves successfully above
+    // with `policy.placement === undefined`; that is the one real
+    // undeclared-placement signal. Missing or unreadable materialization is a
+    // different fact and the gate's catch path makes it visibly retryable.
+    throw new Error(resolution.detail)
   }
 }
 
