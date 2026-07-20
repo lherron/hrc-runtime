@@ -13,7 +13,7 @@ const justfileText = readFileSync('justfile', 'utf8')
 const SIDE_EFFECT_TOKENS = [
   'sync:asp',
   'publish-dev',
-  'bun link',
+  'atomic-install.ts',
   'hrc server restart',
   'launchctl',
   'npm publish',
@@ -63,7 +63,8 @@ describe('worktree enablement manifest', () => {
     expect(installRecipe).not.toContain('bun run sync:asp')
     expect(recipeBody('pull-deps')).toContain('sync-asp-from-verdaccio.ts --pull')
     expect(recipeBody('pull-deps')).toContain('sync-wrkq-from-verdaccio.ts --pull')
-    expect(installRecipe).toContain('just publish-dev')
-    expect(installRecipe).toContain('bun link')
+    expect(installRecipe).toContain('atomic-install.ts')
+    expect(installRecipe).not.toContain('rm -rf node_modules')
+    expect(installRecipe).not.toContain('bun link')
   })
 })

@@ -119,7 +119,7 @@ State is persisted by the sibling package `hrc-store-sqlite` (not inside hrc-ser
 - `bun run lint` / `bun run lint:fix` (biome)
 - `bun run check:boundaries` and `bun run check:manifests`
 - `bun run build` (`tsc`)
-- Installed-binary bar: `just install`, restart the real launchd daemon, and smoke `hrc --help`, `hrc server status`, and at least one real read-only API/CLI command. The daemon is `bun link`ed from `packages/hrc-cli`; after source changes, `bun run build` + `launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server`.
+- Installed-binary bar: `just install`, restart the real launchd daemon, and smoke `hrc --help`, `hrc server status`, and at least one real read-only API/CLI command. `just install` prepares an immutable release and atomically advances the shared `hrc`/`hrcchat` indirection; see [Atomic HRC CLI installs](atomic-install.md). After source changes, install before restarting the launchd service.
 
 **Boundary invariant (`scripts/check-boundaries.ts`):** the repo is split into an **ASP layer** and an **HRC layer**. HRC source (`hrc-*`, `agent-action-render`, `hrc-frame-render`) **must not** import `acp-*`, `gateway-discord`, `gateway-ios`, `coordination-substrate`, `wrkq-lib`, or `wlearn`. HRC may import ASP `spaces-*`/`agent-*` packages by name, pinned to exact versions in `package.json`. The ASP layer must not import HRC. A cross-layer import (or an HRC test asserting an ASP-source invariant) is a split violation.
 

@@ -78,32 +78,19 @@ rebuild:
 
 # Install dependencies
 # Dependency pulls are explicit via `just pull-deps`; install never advances bun.lock.
-# Linked Git worktrees auto-disable wrapper linking unless force-link=1 is passed explicitly.
+# Linked Git worktrees auto-disable the global wrapper cutover unless force-link=1 is passed explicitly.
 # Linked worktrees publish HRC packages to the isolated worktree tag/channel.
 install no-sync="" force-sync="" force-link="":
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(bun scripts/install-policy.ts shell --no-sync="{{ no-sync }}" --force-sync="{{ force-sync }}" --force-link="{{ force-link }}")"
     echo "[install] context=${PRAESIDIUM_INSTALL_CONTEXT} sync=${PRAESIDIUM_INSTALL_SYNC_MODE} link=${PRAESIDIUM_INSTALL_LINK_MODE} publish=${PRAESIDIUM_INSTALL_PUBLISH_CHANNEL} tag=${PRAESIDIUM_INSTALL_PUBLISH_TAG}"
-    bun run clean
-    rm -rf node_modules packages/*/node_modules
     echo "[install] dependency pulls are explicit; preserving bun.lock"
-    bun install --frozen-lockfile
-    bun run build
-    if [ "$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" = "worktree" ]; then
-      just publish-worktree
-    else
-      just publish-dev
-    fi
-    if [ "$PRAESIDIUM_INSTALL_LINK_MODE" != "off" ]; then
-      if [ "$PRAESIDIUM_INSTALL_LINK_MODE" = "forced" ]; then
-        echo "[install] WARNING: force-link enabled from ${PRAESIDIUM_INSTALL_CONTEXT}; updating local HRC wrappers"
-      fi
-      ( cd packages/hrc-cli && bun link )
-      ( cd packages/hrcchat-cli && bun link )
-    else
-      echo "[install] skipping bun link; linked worktree installs must not update local HRC wrappers"
-    fi
+    bun scripts/atomic-install.ts \
+      --context="$PRAESIDIUM_INSTALL_CONTEXT" \
+      --link-mode="$PRAESIDIUM_INSTALL_LINK_MODE" \
+      --publish-channel="$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" \
+      --source-root="$PWD"
 
 pull-deps:
     #!/usr/bin/env bash
