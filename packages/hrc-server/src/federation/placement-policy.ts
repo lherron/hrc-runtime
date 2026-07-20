@@ -152,7 +152,9 @@ export function resolvePlacementPolicy(
                 ? {}
                 : { defaultHomeNode: placement.default_home_node }),
               pins: { ...placement.pins },
-              taskDefaults: { ...placement.task_defaults },
+              ...(placement.task_defaults === undefined
+                ? {}
+                : { taskDefaults: { ...placement.task_defaults } }),
             },
           }),
     },

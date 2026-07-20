@@ -65,6 +65,18 @@ describe('resolvePlacementPolicy', () => {
     expect(resolution.policy.placement).toBeUndefined()
   })
 
+  test('a placement profile without task-defaults preserves the legacy compiled shape', () => {
+    const agentRoot = agentRootWith(
+      ['schemaVersion = 2', '', '[placement]', 'default_home_node = "max3"'].join('\n')
+    )
+
+    const resolution = resolvePlacementPolicy(SCOPE, { agentRoot })
+
+    expect(resolution.outcome).toBe('resolved')
+    if (resolution.outcome !== 'resolved') return
+    expect(resolution.policy.placement).toEqual({ defaultHomeNode: 'max3', pins: {} })
+  })
+
   test('a missing profile is "no-profile", not an error', () => {
     const agentRoot = agentRootWith(undefined)
 
