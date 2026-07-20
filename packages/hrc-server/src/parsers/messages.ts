@@ -1,14 +1,16 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
-import type { SummonIntent } from 'hrc-core'
+import type { HrcRuntimeIntent, SummonIntent } from 'hrc-core'
 
 import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { isRecord } from './common.js'
+import { parseRuntimeIntent } from './runtime.js'
 
 const SUMMON_INTENTS: readonly SummonIntent[] = ['explicit_local', 'implicit']
 
 export function parseResolveSessionRequest(input: unknown): {
   sessionRef: string
   create?: boolean
+  runtimeIntent?: HrcRuntimeIntent
   summonIntent?: SummonIntent
   birthCredential?: string
 } {
@@ -30,6 +32,15 @@ export function parseResolveSessionRequest(input: unknown): {
     })
   }
 
+  const runtimeIntent = input['runtimeIntent']
+  if (runtimeIntent !== undefined && !isRecord(runtimeIntent)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'runtimeIntent must be an object',
+      { field: 'runtimeIntent' }
+    )
+  }
+
   // Absent is the overwhelmingly common case and means `implicit` (spec §5), so
   // it is left absent here rather than defaulted — the gate owns that default.
   // An unrecognized value is rejected rather than coerced: silently reading a
@@ -49,6 +60,7 @@ export function parseResolveSessionRequest(input: unknown): {
   return {
     sessionRef: sessionRef.trim(),
     ...(create !== undefined ? { create } : {}),
+    ...(runtimeIntent !== undefined ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) } : {}),
     ...(summonIntent !== undefined ? { summonIntent: summonIntent as SummonIntent } : {}),
     ...(birthCredential !== undefined ? { birthCredential } : {}),
   }

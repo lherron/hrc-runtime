@@ -1088,6 +1088,14 @@ class HrcServerInstance implements HrcServer {
       scopeRef,
       path: 'resolve-session',
       intent: parsed.summonIntent ?? 'implicit',
+      ...(parsed.runtimeIntent === undefined
+        ? {}
+        : {
+            capabilityHint: {
+              placement: parsed.runtimeIntent.placement,
+              harness: parsed.runtimeIntent.harness,
+            },
+          }),
       ...(parsed.birthCredential === undefined ? {} : { birthCredential: parsed.birthCredential }),
     })
 

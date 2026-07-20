@@ -83,6 +83,19 @@ describe('node materialization capability observer', () => {
     expect(await observer(SCOPE)).toEqual({ outcome: 'capable' })
   })
 
+  test('registered placement wins when the daemon cwd is outside the checkout collection', async () => {
+    await mkdir(join(userHome, '.codex'), { recursive: true })
+    await writeFile(join(userHome, '.codex', 'auth.json'), '{}')
+    const observer = createSummonCapabilityObserver({
+      cwd: join(root, 'daemon-home'),
+      env: { ASP_AGENTS_ROOT: join(root, 'agents') },
+      userHome,
+      detectHarness: async () => ({ available: true }),
+    })
+
+    expect(await observer(SCOPE, hint())).toEqual({ outcome: 'capable' })
+  })
+
   test('an unresolvable project root is not reported as an absent checkout', async () => {
     const unmarkedProject = join(root, 'fixture-project')
     const observer = createSummonCapabilityObserver({

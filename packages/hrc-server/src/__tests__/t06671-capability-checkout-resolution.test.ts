@@ -95,6 +95,20 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
   async function resolveWithCapturedLogs(scopeRef: string): Promise<{
     status: number
     refusalLines: string[]
+  }>
+  async function resolveWithCapturedLogs(
+    scopeRef: string,
+    requestExtras: Record<string, unknown>
+  ): Promise<{
+    status: number
+    refusalLines: string[]
+  }>
+  async function resolveWithCapturedLogs(
+    scopeRef: string,
+    requestExtras: Record<string, unknown> = {}
+  ): Promise<{
+    status: number
+    refusalLines: string[]
   }> {
     const captured: string[] = []
     const original = process.stderr.write.bind(process.stderr)
@@ -106,6 +120,7 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
       const response = await fixture.postJson('/v1/sessions/resolve', {
         sessionRef: `${scopeRef}/lane:main`,
         create: true,
+        ...requestExtras,
       })
       return {
         status: response.status,
@@ -124,6 +139,32 @@ describe('capability checkout resolution in a launchd-style isolated daemon', ()
     seedLocalAuthority(SCOPE_REF)
 
     const result = await resolveWithCapturedLogs(SCOPE_REF)
+
+    expect(result.status).toBe(200)
+    expect(result.refusalLines).toEqual([])
+  })
+
+  test('resolve-session forwards registered placement before the capability gate', async () => {
+    const projectRoot = join(fixture.tmpDir, 'checkouts', 'agent-control-plane')
+    await mkdir(join(projectRoot, '.git'), { recursive: true })
+
+    await startCapabilityDaemon()
+    seedLocalAuthority(SCOPE_REF)
+
+    const result = await resolveWithCapturedLogs(SCOPE_REF, {
+      summonIntent: 'explicit_local',
+      runtimeIntent: {
+        placement: {
+          agentRoot: join(agentsRoot, 'probe'),
+          projectRoot,
+          cwd: projectRoot,
+          runMode: 'task',
+          bundle: { kind: 'agent-project', agentName: 'probe', projectRoot },
+        },
+        harness: { provider: 'openai', interactive: true, id: 'codex-cli' },
+        execution: { preferredMode: 'interactive' },
+      },
+    })
 
     expect(result.status).toBe(200)
     expect(result.refusalLines).toEqual([])
