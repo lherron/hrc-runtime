@@ -1,0 +1,4 @@
+# INTERIM svc<->lab DM backchannel routes. REMOVE WHEN T-06622 LANDS.
+# <canonical recipient session-ref shell glob><TAB><node>
+agent:*:project:hrc-runtime:task:minisvc/lane:*	svc
+agent:*:project:hrc-runtime:task:minilab/lane:*	lab
