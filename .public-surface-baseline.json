@@ -263,6 +263,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "BirthAuthorityProvenance",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|BirthAuthorityProvenance|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "BROKER_TO_HRC_LIFECYCLE_KIND",
       "kind": "value",
       "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
@@ -643,6 +651,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|EnsureWindowResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "EstablishmentProvenance",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|EstablishmentProvenance|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationBirthClass",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationBirthClass|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationGateModeValue",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationGateModeValue|type",
       "count": 1
     },
     {
@@ -1927,6 +1959,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "LedgerSkewScan",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LedgerSkewScan|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "lifecycleKindForBrokerEvent",
       "kind": "value",
       "file": "packages/hrc-core/src/broker-lifecycle-policy.ts",
@@ -1963,6 +2003,110 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|ListTargetsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateAuthority",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateAuthority|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateBindingRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateBindingRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateBindingsReport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateBindingsReport|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateBirthChain",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateBirthChain|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateBirthChainLink",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateBirthChainLink|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateDeclaredPolicy",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateDeclaredPolicy|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateLedgerView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateLedgerView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateNote",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateNote|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateObservation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateObservedRuntime",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateObservedRuntime|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateRegistryView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateRegistryView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateRetirement",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateRetirement|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocateSkew",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocateSkew|type",
       "count": 1
     },
     {
@@ -2323,6 +2467,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|RuntimeActionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ScopeLocation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|ScopeLocation|type",
       "count": 1
     },
     {

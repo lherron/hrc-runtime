@@ -351,3 +351,25 @@ export type {
   HrcMonitorState,
   HrcMonitorWatchRequest,
 } from './monitor/index.js'
+
+export type {
+  BirthAuthorityProvenance,
+  EstablishmentProvenance,
+  FederationBirthClass,
+  FederationGateModeValue,
+  LedgerSkewScan,
+  LocateAuthority,
+  LocateBindingRecord,
+  LocateBindingsReport,
+  LocateBirthChain,
+  LocateBirthChainLink,
+  LocateDeclaredPolicy,
+  LocateLedgerView,
+  LocateNote,
+  LocateObservation,
+  LocateObservedRuntime,
+  LocateRegistryView,
+  LocateRetirement,
+  LocateSkew,
+  ScopeLocation,
+} from './federation-contracts.js'
