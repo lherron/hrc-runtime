@@ -215,12 +215,6 @@ export function pruneDeltaEvents(options: PruneDeltaEventsOptions): PruneDeltaEv
     const brokerInvocationEvents = countBrokerInvocationEvents(db, cutoff)
     const matchedCount = events.matchedCount + brokerInvocationEvents.matchedCount
 
-    if (matchedCount === 0) {
-      throw new Error(
-        'Delta predicate matched no rows in events or broker_invocation_events; expected the known delta kinds in both tables'
-      )
-    }
-
     let eventsDeleted = 0
     let brokerInvocationEventsDeleted = 0
     if (options.apply) {
@@ -274,6 +268,16 @@ if (import.meta.main) {
   try {
     const options = parsePruneDeltaEventsArgs(Bun.argv.slice(2))
     const result = pruneDeltaEvents(options)
+    if (result.matchedCount === 0) {
+      // A store whose delta rows have all been pruned is observationally
+      // identical to one whose predicate has gone stale: both leave non-delta
+      // rows behind and match nothing. Warn rather than fail, or the job goes
+      // red nightly on exactly the state it exists to produce.
+      console.error(
+        'warning: delta predicate matched no rows in events or broker_invocation_events; ' +
+          'expected if the store is already pruned, but verify the known delta kinds if this persists on an active store'
+      )
+    }
     console.log(
       JSON.stringify(
         {

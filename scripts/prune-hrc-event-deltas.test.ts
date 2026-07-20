@@ -181,7 +181,7 @@ describe('prune-hrc-event-deltas', () => {
     }
   })
 
-  test('CLI exits nonzero and names both table predicates when no target delta kind exists', () => {
+  test('CLI warns without failing when no target delta kind exists', () => {
     const { path, db } = makeStore()
     insertEvent(db, 'broker.assistant.message')
     insertBrokerInvocationEvent(db, 'assistant.message')
@@ -189,10 +189,22 @@ describe('prune-hrc-event-deltas', () => {
 
     const result = runScript(path)
 
-    expect(result.exitCode).not.toBe(0)
+    // An already-pruned store leaves non-delta rows and matches nothing, which
+    // is indistinguishable from a stale predicate. Warn, but do not go red on
+    // the steady state this job exists to produce.
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toMatch(/warning/i)
     expect(result.stderr).toMatch(/predicate|delta/i)
     expect(result.stderr).toContain('events')
     expect(result.stderr).toContain('broker_invocation_events')
+    expect(JSON.parse(result.stdout).matchedCount).toBe(0)
+  })
+
+  test('a genuinely broken store still fails loudly', () => {
+    const result = runScript(join(tmpdir(), 'hrc-prune-deltas-does-not-exist', 'state.sqlite'))
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toMatch(/does not exist/i)
   })
 
   test('young target rows pass the age-unfiltered drift guard while reporting zero deletions', () => {
