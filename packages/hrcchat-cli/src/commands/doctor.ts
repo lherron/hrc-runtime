@@ -47,6 +47,18 @@ export async function cmdDoctor(
       detail: `v${status.apiVersion}`,
     })
 
+    // node identity (federation §3/§6). A derived nodeId is only legitimate in
+    // single-node mode, so flag it as soon as this node is actually federated.
+    const node = status.node
+    if (node) {
+      const derivedWhileFederated = node.nodeIdProvenance === 'derived' && node.mode === 'federated'
+      checks.push({
+        name: 'node-identity',
+        status: derivedWhileFederated ? 'warn' : 'ok',
+        detail: `${node.nodeId} (${node.nodeIdProvenance}, ${node.mode}, ${node.peerCount} peer(s))`,
+      })
+    }
+
     // tmux availability
     const tmux = status.capabilities?.backend?.tmux
     if (tmux) {

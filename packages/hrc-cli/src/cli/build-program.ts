@@ -37,8 +37,8 @@ export function buildProgram(): Command {
     .command('info')
     .description('show HRC orientation and first-contact guidance')
     .option('--json', 'output as JSON')
-    .action((_opts, command: Command) => {
-      printInfo(program, { json: command.opts()['json'] === true })
+    .action(async (_opts, command: Command) => {
+      await printInfo(program, { json: command.opts()['json'] === true })
     })
 
   registerServerSessionCommands(program)

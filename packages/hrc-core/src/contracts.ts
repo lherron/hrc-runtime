@@ -676,6 +676,22 @@ export type HrcCapabilityStatus = {
   sessionCount: number
   runtimeCount: number
   apiVersion: string
+  /**
+   * Node identity and static peer table (federation spec §3/§6).
+   *
+   * Peer bearer tokens are absent by construction — this projection is built
+   * from non-secret fields only and never carries credentials.
+   */
+  node: {
+    nodeId: string
+    /** `declared` = read from the federation config; `derived` = from hostname. */
+    nodeIdProvenance: 'declared' | 'derived'
+    mode: 'single-node' | 'federated'
+    configPath: string
+    configExists: boolean
+    peerCount: number
+    peers: { nodeId: string; endpoint: string }[]
+  }
   capabilities: {
     semanticCore: {
       sessions: boolean

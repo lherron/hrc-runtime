@@ -75,6 +75,12 @@ export type ServerRuntimeStatus = {
         | 'packagePath'
       >
     | undefined
+  /**
+   * Node identity + peer summary from the running daemon (federation §3/§6).
+   * Undefined when the daemon is not reachable — identity is daemon truth, not
+   * something the CLI re-derives locally.
+   */
+  node?: HrcStatusResponse['node'] | undefined
   tmux: TmuxStatus
   serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
   error?: string | undefined
@@ -425,6 +431,7 @@ export async function collectServerRuntimeStatus(
         : await collectTmuxStatus({ includeLeases: false })
     let apiHealth: ServerRuntimeStatus['apiHealth'] = { ok: false, error: 'daemon not running' }
     let api: ServerRuntimeStatus['api']
+    let node: ServerRuntimeStatus['node']
     let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
 
     if (socketResponsive) {
@@ -449,6 +456,7 @@ export async function collectServerRuntimeStatus(
           binaryPath: status.binaryPath,
           packagePath: status.packagePath,
         }
+        node = status.node
         serverStatus = {
           startedAt: status.startedAt,
           apiVersion: status.apiVersion,
@@ -494,6 +502,7 @@ export async function collectServerRuntimeStatus(
       tmuxSocketPath: paths.tmuxSocketPath,
       apiHealth,
       ...(api ? { api } : {}),
+      ...(node ? { node } : {}),
       tmux,
       ...(serverStatus ? { serverStatus } : {}),
     }
@@ -579,6 +588,21 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
   if (status.cwd) lines.push(`  cwd:          ${status.cwd}`)
   if (status.binaryPath) lines.push(`  binary:       ${status.binaryPath}`)
   if (status.packagePath) lines.push(`  package:      ${status.packagePath}`)
+
+  if (status.node) {
+    const node = status.node
+    lines.push(`  nodeId:       ${node.nodeId} (${node.nodeIdProvenance})`)
+    lines.push(`  node mode:    ${node.mode}`)
+    lines.push(
+      `  node config:  ${node.configPath}${node.configExists ? '' : ' (absent, single-node mode)'}`
+    )
+    if (node.peerCount > 0) {
+      lines.push(`  peers:        ${node.peerCount}`)
+      for (const peer of node.peers) {
+        lines.push(`    - ${peer.nodeId}: ${peer.endpoint}`)
+      }
+    }
+  }
 
   if (status.api) {
     lines.push(`  uptime:       ${status.api.uptime}s`)

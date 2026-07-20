@@ -2,6 +2,7 @@
 
 import type { Command } from 'commander'
 
+import { resolveServerPaths } from '../cli-runtime.js'
 import { renderCommandRoster } from './command-roster.js'
 
 // Curated prose, head + tail. The COMMANDS roster is NOT hand-listed here — it is generated from the
@@ -157,7 +158,24 @@ ENVIRONMENT
   HRC_STATE_DIR     Override persistent state root
   ASP_PROJECT       Default project context for shorthand resolution
   ASP_AGENTS_ROOT   Agents root for managed run/start resolution
-  HRC_SESSION_REF   Caller identity for HRC-aware child processes`
+  HRC_SESSION_REF   Caller identity for HRC-aware child processes
+  HRC_PEER_CONFIG_FILE
+                    Override the node-local federation config path
+                    (default <state root>/federation.json)
+
+NODE IDENTITY (federation)
+  This node's identity and its static peer table live in one operator-managed,
+  node-local file that is never git-synced:
+
+    { "nodeId": "lab", "peers": { "svc": { "endpoint": "...", "token": "..." } } }
+
+  The file holds bearer tokens, so it must be mode 0600. There is no
+  environment override for nodeId — only for the file location. If the file is
+  absent the node runs in single-node mode with a nodeId derived from the
+  hostname. A node that declares peers must declare its own nodeId.
+
+  The value shown below is resolved from that file right now; the identity of
+  the *running* daemon is reported by 'hrc server status'.`
 
 const INFO_TAIL = `  Low-level (hidden from --help, for API/client use):
     runtime ensure <hostSessionId>   ensure a runtime exists
@@ -171,9 +189,59 @@ NEXT STEP
   Run hrc <command> --help for command-specific flags and edge cases.
 `
 
+/**
+ * Resolves this node's federation identity for display.
+ *
+ * Reads the same node-local config file the daemon reads, so `hrc info` works
+ * with the daemon down. Never throws: a malformed file is the daemon's refusal
+ * to make at startup, not a reason for an orientation command to fail — it is
+ * reported inline instead.
+ */
+async function resolveNodeIdentitySummary(): Promise<{
+  nodeId: string
+  nodeIdProvenance: string
+  mode: string
+  configPath: string
+  configExists: boolean
+  peerCount: number
+  error?: string
+}> {
+  const { resolveFederationConfig, summarizeFederationConfig, resolveFederationConfigPath } =
+    await import('hrc-server')
+  const { stateRoot } = resolveServerPaths()
+  try {
+    return summarizeFederationConfig(await resolveFederationConfig({ stateRoot }))
+  } catch (error) {
+    return {
+      nodeId: '(unresolved)',
+      nodeIdProvenance: 'unresolved',
+      mode: 'unresolved',
+      configPath: resolveFederationConfigPath(stateRoot),
+      configExists: true,
+      peerCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+function renderNodeIdentityBlock(node: Awaited<ReturnType<typeof resolveNodeIdentitySummary>>) {
+  const lines = [
+    `  nodeId:      ${node.nodeId} (${node.nodeIdProvenance})`,
+    `  mode:        ${node.mode}`,
+    `  config:      ${node.configPath}${node.configExists ? '' : ' (absent)'}`,
+    `  peers:       ${node.peerCount}`,
+  ]
+  if (node.error !== undefined) lines.push(`  error:       ${node.error}`)
+  return lines.join('\n')
+}
+
 /** Full `hrc info` text: curated prose with a COMMANDS roster generated from the live registry. */
-export function buildInfoText(program: Command): string {
-  return `${INFO_HEAD}
+export function buildInfoText(
+  program: Command,
+  node?: Awaited<ReturnType<typeof resolveNodeIdentitySummary>>
+): string {
+  const nodeBlock = node === undefined ? '' : `\n\nTHIS NODE\n${renderNodeIdentityBlock(node)}`
+  return `${INFO_HEAD}${nodeBlock}
 
 COMMANDS
 ${renderCommandRoster(program)}
@@ -181,10 +249,11 @@ ${renderCommandRoster(program)}
 ${INFO_TAIL}`
 }
 
-export function printInfo(program: Command, options: { json?: boolean } = {}): void {
-  const text = buildInfoText(program)
+export async function printInfo(program: Command, options: { json?: boolean } = {}): Promise<void> {
+  const node = await resolveNodeIdentitySummary()
+  const text = buildInfoText(program, node)
   if (options.json === true) {
-    process.stdout.write(`${JSON.stringify({ command: 'hrc', text }, null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify({ command: 'hrc', text, node }, null, 2)}\n`)
     return
   }
   process.stdout.write(text)

@@ -12,6 +12,7 @@ import {
 } from 'hrc-core'
 import type {
   DropContinuationResponse,
+  HrcCapabilityStatus,
   HrcCommandLaunchSpec,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -53,6 +54,12 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import {
+  deriveNodeIdFromHostname,
+  resolveFederationConfig,
+  resolveFederationConfigPath,
+  summarizeFederationConfig,
+} from './federation/federation-config.js'
 import {
   type GhostmuxManagerOptions,
   HEADLESS_VIEWER_SURFACE_KIND,
@@ -1220,6 +1227,28 @@ class HrcServerInstance implements HrcServer {
     return json({ ok: true })
   }
 
+  /**
+   * Non-secret projection of this node's identity and peer table for status
+   * responses. Falls back to a derived single-node identity if the daemon was
+   * constructed without a resolved config (embedders/tests); the normal boot
+   * path always supplies one.
+   */
+  private nodeStatus(): HrcCapabilityStatus['node'] {
+    const config = this.options.federationConfig
+    if (config === undefined) {
+      return {
+        nodeId: deriveNodeIdFromHostname(),
+        nodeIdProvenance: 'derived',
+        mode: 'single-node',
+        configPath: resolveFederationConfigPath(this.options.stateRoot),
+        configExists: false,
+        peerCount: 0,
+        peers: [],
+      }
+    }
+    return summarizeFederationConfig(config)
+  }
+
   async handleStatus(url?: URL): Promise<Response> {
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
@@ -1238,6 +1267,7 @@ class HrcServerInstance implements HrcServer {
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
+        node: this.nodeStatus(),
         capabilities: {
           semanticCore: {
             sessions: true,
@@ -1287,6 +1317,7 @@ class HrcServerInstance implements HrcServer {
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
+      node: this.nodeStatus(),
       capabilities: {
         semanticCore: {
           sessions: true,
@@ -1390,6 +1421,21 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
   let shouldCleanupSocket = false
 
   try {
+    // Node identity resolves before anything else in the boot: a malformed
+    // federation config must refuse loudly rather than let the daemon come up
+    // not knowing which node it is. The catch below logs the named diagnostic.
+    const federationConfig =
+      resolvedOptions.federationConfig ??
+      (await resolveFederationConfig({ stateRoot: resolvedOptions.stateRoot }))
+    for (const warning of federationConfig.warnings) {
+      writeServerLog('WARN', 'server.start.federation_config_warning', { warning })
+    }
+    writeServerLog(
+      'INFO',
+      'server.start.node_identity',
+      summarizeFederationConfig(federationConfig)
+    )
+
     await prepareSocketForStartup(resolvedOptions.socketPath)
     shouldCleanupSocket = true
     const tmux = createTmuxManager({
@@ -1410,7 +1456,13 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       runtimeRoot: resolvedOptions.runtimeRoot,
     })
     writeServerLog('INFO', 'server.start.ready', logCtx)
-    return new HrcServerInstance(resolvedOptions, db, tmux, ghostmux, lockHandle)
+    return new HrcServerInstance(
+      { ...resolvedOptions, federationConfig },
+      db,
+      tmux,
+      ghostmux,
+      lockHandle
+    )
   } catch (error) {
     writeServerLog('ERROR', 'server.start.failed', {
       ...logCtx,
@@ -1426,3 +1478,29 @@ export {
   resolveCommandRunTargets,
   validateConfiguredCommandRunTarget,
 } from './command-run-targets-config.js'
+export {
+  EXPECTED_FEDERATION_CONFIG_MODE,
+  FEDERATION_CONFIG_BASENAME,
+  HRC_PEER_CONFIG_FILE_ENV,
+  deriveNodeIdFromHostname,
+  isSingleNodeMode,
+  parseFederationConfigDocument,
+  resolveFederationConfig,
+  resolveFederationConfigPath,
+  summarizeFederationConfig,
+} from './federation/federation-config.js'
+export type {
+  FederationConfig,
+  NodeIdProvenance,
+  PeerEntry,
+} from './federation/federation-config.js'
+export {
+  NODE_ID_PATTERN,
+  RESERVED_NODE_IDS,
+  describeNodeIdViolation,
+  isReservedNodeId,
+  isValidNodeId,
+  parseNodeId,
+} from './federation/node-id.js'
+export type { NodeId } from './federation/node-id.js'
+export { PeerToken, REDACTED_PEER_TOKEN } from './federation/peer-token.js'
