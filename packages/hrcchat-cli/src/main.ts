@@ -433,7 +433,11 @@ UTILITY
 // the live command registry. Import is side-effect-free: parseAsync is guarded by import.meta.main.
 export { program }
 
-if (import.meta.main) {
+// WHY exported: bin/hrcchat.js invokes this. `import.meta.main` is false when
+// this module is imported from the bin wrapper, so the guard below cannot be the
+// only entry. Extracting the body keeps import side-effect-free for the
+// CLI-surface conformance gate, which is what the guard originally protected.
+export async function runCli(): Promise<void> {
   const metrics = installCliMetricsRecorder({ bin: 'hrcchat', argv: process.argv })
   metrics.setCommandTree(program)
   try {
@@ -471,4 +475,8 @@ if (import.meta.main) {
     // Unknown errors → exit 1
     exitWithError(err, { json, binName: 'hrcchat' })
   }
+}
+
+if (import.meta.main) {
+  await runCli()
 }

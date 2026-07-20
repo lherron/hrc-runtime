@@ -5,10 +5,11 @@
   "description": "hrcchat: semantic directed messaging CLI for HRC",
   "type": "module",
   "bin": {
-    "hrcchat": "./src/main.ts"
+    "hrcchat": "./bin/hrcchat.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsc",

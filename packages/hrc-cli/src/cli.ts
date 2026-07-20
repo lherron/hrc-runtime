@@ -71,7 +71,14 @@ export {
 export { explainScopeCommandError } from './cli/errors.js'
 export { main } from './cli/program.js'
 
-if (import.meta.main) {
+// WHY exported: bin/hrc.js invokes this. `import.meta.main` is false when this
+// module is imported from the bin wrapper, so the guard below cannot be the only
+// entry — and calling `main` directly would skip the metrics recorder.
+export async function runCli(): Promise<void> {
   const metrics = installCliMetricsRecorder({ bin: 'hrc', argv: process.argv })
   await runProgram(process.argv, metrics.setCommandTree)
+}
+
+if (import.meta.main) {
+  await runCli()
 }

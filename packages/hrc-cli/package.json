@@ -5,10 +5,11 @@
   "description": "HRC operator CLI: thin wrapper over hrc-sdk",
   "type": "module",
   "bin": {
-    "hrc": "./src/cli.ts"
+    "hrc": "./bin/hrc.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsc",

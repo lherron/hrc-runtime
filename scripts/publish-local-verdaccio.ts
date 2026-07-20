@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -14,12 +14,19 @@ const PACKAGES = [
   'packages/hrc-events',
   'packages/hrc-store-sqlite',
   'packages/hrc-server',
+  // CLIs last: they consume the libraries above. Added for F-1 T-06649 — svc
+  // must run installed artifacts, which requires these to be published at all.
+  'packages/hrc-cli',
+  'packages/hrcchat-cli',
 ] as const
 
 type Manifest = {
   name?: string
   version?: string
   private?: boolean
+  main?: string
+  types?: string
+  bin?: string | Record<string, string>
   exports?: unknown
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
@@ -213,6 +220,49 @@ async function packageNames(): Promise<Set<string>> {
   return new Set(names)
 }
 
+// WHY: this publisher verified bun conditions and dep pinning but never checked
+// that the files a manifest POINTS AT are actually in the tarball. agent-spaces
+// T-06648 (3fe9020) shipped a binary that could not start for exactly that
+// reason. `bin` is the surface that bit us and the one nothing checked.
+//
+// NOTE the limit, measured not assumed: `bun pm pack` FORCE-INCLUDES the bin
+// entry file even when `files` excludes it (verified — packing hrc-cli with
+// bin=./src/cli.ts yielded exactly one src file, src/cli.ts, and none of its
+// imports). So "bin entry missing from tarball" is nearly unreachable and this
+// assertion is close to a no-op. It is kept as a cheap backstop for a bin path
+// that does not exist on disk at all.
+//
+// It does NOT catch the defect family that actually ships broken binaries:
+// a packaged bin whose IMPORTS are unshipped (agent-spaces T-06648; hrc-cli's
+// pre-fix bin=./src/cli.ts, whose ./cli/program.js was left out). The only
+// guard for that is installing the tarball outside the monorepo and starting
+// the binary. Do not treat a green publish as evidence a binary runs.
+function exportedFilePaths(value: unknown): string[] {
+  if (typeof value === 'string' && value.startsWith('./') && !value.includes('*')) {
+    return [value]
+  }
+  if (Array.isArray(value)) return value.flatMap(exportedFilePaths)
+  if (!value || typeof value !== 'object') return []
+
+  return Object.values(value as Record<string, unknown>).flatMap(exportedFilePaths)
+}
+
+function binFilePaths(value: Manifest['bin']): string[] {
+  if (typeof value === 'string') return [value]
+  if (!value || typeof value !== 'object') return []
+
+  return Object.values(value)
+}
+
+async function assertPackagedFile(packageDir: string, path: string, name: string): Promise<void> {
+  const normalized = path.replace(/^\.\//, '')
+  try {
+    await access(join(packageDir, normalized))
+  } catch {
+    throw new Error(`${name} tarball references missing file: ${path}`)
+  }
+}
+
 function pinInternalDependencies(
   deps: Record<string, string> | undefined,
   names: Set<string>,
@@ -306,6 +356,16 @@ async function packForPublish(rel: string): Promise<{
     }
     if (stagedManifest.private) {
       throw new Error(`${manifest.name} tarball still has private=true`)
+    }
+    const extractedPackageDir = join(extractDir, 'package')
+    const referencedFiles = [
+      stagedManifest.main,
+      stagedManifest.types,
+      ...binFilePaths(stagedManifest.bin),
+      ...exportedFilePaths(stagedManifest.exports),
+    ].filter((path): path is string => Boolean(path))
+    for (const path of new Set(referencedFiles)) {
+      await assertPackagedFile(extractedPackageDir, path, manifest.name)
     }
 
     return { name: manifest.name, version: publishVersion, tarballPath, tmp }
