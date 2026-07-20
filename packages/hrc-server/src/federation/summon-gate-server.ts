@@ -25,6 +25,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
+import { markRuntimeStale } from '../startup-reconcile/runtime-mutations.js'
 import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
@@ -328,6 +329,22 @@ export type LivePlacementRepairCandidate = {
   readonly capabilityHint?: SummonCapabilityHint | undefined
 }
 
+function fenceUnresolvedRepairCandidate(
+  server: SummonGateServerContext,
+  scopeRef: string,
+  detail: string
+): void {
+  for (const runtime of server.db.runtimes.listAll()) {
+    if (runtime.scopeRef !== scopeRef || isRuntimeUnavailableStatus(runtime.status)) continue
+    const session = server.db.sessions.getByHostSessionId(runtime.hostSessionId)
+    if (session === null) continue
+    markRuntimeStale(server.db, session, runtime, {
+      reason: 'placement_repair_refused',
+      detail,
+    })
+  }
+}
+
 /**
  * Snapshot scopes that were live when startup opened the database.
  *
@@ -398,21 +415,34 @@ export async function repairLiveUnboundPlacements(
     // for a future launch (for example, an agent home since removed after a
     // soak probe ran) must not prevent the exact registry row from healing the
     // local ledger or wedge the whole daemon at boot.
-    const registry = await deps.registry.consult(scopeRef)
-    if (registry.outcome === 'bound' && registry.binding.homeNodeId === deps.localNodeId) {
-      deps.ledger.installActive(registry.binding)
-      summary.repaired += 1
+    try {
+      const registry = await deps.registry.consult(scopeRef)
+      if (registry.outcome === 'bound' && registry.binding.homeNodeId === deps.localNodeId) {
+        deps.ledger.installActive(registry.binding)
+        summary.repaired += 1
+        continue
+      }
+
+      await assertSummonAuthority(server, {
+        scopeRef,
+        path: 'ensure-target',
+        intent: 'implicit',
+        ...(candidate.capabilityHint === undefined
+          ? {}
+          : { capabilityHint: candidate.capabilityHint }),
+      })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      fenceUnresolvedRepairCandidate(server, scopeRef, detail)
+      summary.unresolved += 1
+      writeServerLog('WARN', 'federation.placement_repair.refused', {
+        scopeRef,
+        localNodeId: deps.localNodeId,
+        mode: deps.mode,
+        detail,
+      })
       continue
     }
-
-    await assertSummonAuthority(server, {
-      scopeRef,
-      path: 'ensure-target',
-      intent: 'implicit',
-      ...(candidate.capabilityHint === undefined
-        ? {}
-        : { capabilityHint: candidate.capabilityHint }),
-    })
 
     const repaired = deps.ledger.activeAuthority(scopeRef)
     if (repaired?.homeNodeId === deps.localNodeId) {
@@ -426,11 +456,11 @@ export async function repairLiveUnboundPlacements(
       localNodeId: deps.localNodeId,
       mode: deps.mode,
     })
-    if (deps.mode === 'enforce') {
-      throw new Error(
-        `live placement repair left ${scopeRef} without local collective authority on ${deps.localNodeId}`
-      )
-    }
+    fenceUnresolvedRepairCandidate(
+      server,
+      scopeRef,
+      `live placement repair left ${scopeRef} without local collective authority on ${deps.localNodeId}`
+    )
   }
 
   writeServerLog('INFO', 'federation.placement_repair.completed', {

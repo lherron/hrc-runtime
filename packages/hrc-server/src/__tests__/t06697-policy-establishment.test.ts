@@ -259,4 +259,50 @@ describe('T-06697 policy-born registry establishment', () => {
       h.db.close()
     }
   })
+
+  test('startup repair fences a live wrong-node scope without wedging daemon startup', async () => {
+    const scopeRef = 'agent:mable:project:hrc-runtime:task:primary'
+    const h = await harness(async () => ({
+      placement: { pins: { 'hrc-runtime:primary': 'lab' } },
+      claimsTask: false,
+    }))
+    try {
+      h.db.sessions.insert({
+        hostSessionId: 'hsid-t06697-wrong-node',
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: NOW,
+        updatedAt: NOW,
+        ancestorScopeRefs: [],
+      })
+      h.db.runtimes.insert({
+        runtimeId: 'rt-t06697-wrong-node',
+        runtimeKind: 'harness',
+        hostSessionId: 'hsid-t06697-wrong-node',
+        scopeRef,
+        laneRef: 'main',
+        generation: 1,
+        transport: 'headless',
+        harness: 'codex-cli',
+        provider: 'openai',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+
+      const summary = await repairLiveUnboundPlacements(h.server)
+
+      expect(summary).toEqual({ scanned: 1, repaired: 0, alreadyBound: 0, unresolved: 1 })
+      expect(h.db.runtimes.getByRuntimeId('rt-t06697-wrong-node')?.status).toBe('stale')
+      expect(h.registry.get(scopeRef)).toBeUndefined()
+      expect(createPlacementLedgerRepository(h.db.sqlite).get(scopeRef)).toBeUndefined()
+    } finally {
+      h.registry.close()
+      h.db.close()
+    }
+  })
 })
