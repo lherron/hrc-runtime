@@ -15,7 +15,9 @@ import {
   resolveLocalBirthAncestor,
   validateRuntimeBirthCredential,
 } from '../federation/birth-credential.js'
+import type { FederationConfig } from '../federation/federation-config.js'
 import type { BindingRegistryClient } from '../federation/registry-client.js'
+import { assertSummonAuthority } from '../federation/summon-gate-server.js'
 import { type SummonGateDeps, evaluateSummonGate } from '../federation/summon-gate.js'
 
 const PARENT_SCOPE = 'agent:mable:project:hrc-runtime:task:T-06597'
@@ -161,6 +163,50 @@ describe('T-06610 runtime-stable birth credential', () => {
       expect(completionFirst.valid).toBe(false)
       if (completionFirst.valid) throw new Error('unreachable')
       expect(completionFirst.reason).toBe('zombie-runtime')
+    } finally {
+      db.close()
+    }
+  })
+
+  test('a registry-first crash retry installs the exact existing child binding before mint', async () => {
+    const db = await database()
+    try {
+      const existing = binding()
+      const server = {
+        db,
+        federationConfig: {
+          nodeId: 'max3',
+          nodeIdProvenance: 'declared',
+          sourcePath: '/tmp/federation.json',
+          sourceExists: true,
+          peers: new Map(),
+          gate: { mode: 'enforce' },
+          warnings: [],
+        } as FederationConfig,
+        registryClient: {
+          async consult() {
+            return { outcome: 'bound' as const, binding: existing }
+          },
+          async establish() {
+            throw new Error('an existing registry binding must not be established again')
+          },
+        },
+        policyFor: async () => {
+          throw new Error('an existing registry binding must not consult policy')
+        },
+      }
+
+      const result = await assertSummonAuthority(server, {
+        scopeRef: CHILD_SCOPE,
+        path: 'ensure-target',
+        birthCredential: RUNTIME_ID,
+      })
+
+      expect(result?.evaluation.reason).toBe('registry-bound-local')
+      expect(createPlacementLedgerRepository(db.sqlite).activeAuthority(CHILD_SCOPE)).toEqual({
+        ...existing,
+        state: 'active',
+      })
     } finally {
       db.close()
     }

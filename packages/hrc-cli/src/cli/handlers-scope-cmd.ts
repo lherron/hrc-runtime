@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 
+import { HRC_BIRTH_CREDENTIAL_ENV } from 'hrc-core'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { buildBrokerRunPreview, buildCliInvocation } from 'hrc-server'
@@ -237,6 +238,9 @@ export async function cmdRun(
       // scope. Nothing else about the request can carry that — an SDK caller
       // sends a byte-identical `create: true`.
       summonIntent: 'explicit_local',
+      ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
+        ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+        : {}),
     })
     markLaunch('resolveSession', tResolve)
     if (!resolved.found) {
@@ -372,7 +376,13 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
 
     const client = createClient()
 
-    const resumed = await client.resumeContinuation({ sessionRef, intent })
+    const resumed = await client.resumeContinuation({
+      sessionRef,
+      intent,
+      ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
+        ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+        : {}),
+    })
     const hostSessionId = resumed.hostSessionId
     const hasPrompt = prompt !== undefined && prompt.length > 0
 
@@ -477,6 +487,9 @@ export async function cmdStart(args: string[]): Promise<void> {
       // `hrc start` is the detached twin of `hrc run` — same operator, same
       // placement declaration (spec §5).
       summonIntent: 'explicit_local',
+      ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
+        ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+        : {}),
     })
     if (!resolved.found) {
       throw new Error(`failed to create session for "${scopeInput}"`)

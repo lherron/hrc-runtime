@@ -23,7 +23,11 @@ import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
 import type { BindingRegistryClient } from './registry-client.js'
-import { RegistryUnreachableError, createBindingRegistryClient } from './registry-client.js'
+import {
+  RegistryRefusedError,
+  RegistryUnreachableError,
+  createBindingRegistryClient,
+} from './registry-client.js'
 import { createSummonCapabilityObserver } from './summon-capability.js'
 import {
   type SummonCapabilityHint,
@@ -221,27 +225,70 @@ export async function assertSummonAuthority(
     })
   }
 
+  // Registry-first establishment deliberately admits this crash window: the
+  // collective binding committed but the daemon stopped before its local row.
+  // The consulted binding is the authority; install that exact row before the
+  // caller can mint a session. This also preserves an existing policy birth
+  // when a valid child credential arrives after another node won first birth.
+  if (
+    result.evaluation.decision === 'allow' &&
+    result.evaluation.reason === 'registry-bound-local' &&
+    result.evaluation.registryBinding !== undefined
+  ) {
+    deps.ledger.installActive(result.evaluation.registryBinding)
+  }
+
   if (
     result.evaluation.decision === 'allow' &&
     result.evaluation.reason === 'child-birth' &&
     result.evaluation.homeNodeId !== undefined &&
     result.evaluation.authorityProvenance !== undefined
   ) {
-    const established = await establishLocalPlacement({
-      registry: deps.registry,
-      ledger: deps.ledger,
-      request: {
+    let established: Awaited<ReturnType<typeof establishLocalPlacement>>
+    try {
+      established = await establishLocalPlacement({
+        registry: deps.registry,
+        ledger: deps.ledger,
+        request: {
+          scopeRef: request.scopeRef,
+          homeNodeId: result.evaluation.homeNodeId,
+          birthClass: 'mechanism-born',
+          authorityProvenance: result.evaluation.authorityProvenance,
+          // Establishment provenance is descriptive for policy-born scopes. The
+          // mechanism's exact chain lives in authorityProvenance; this existing
+          // value is the registry schema's local one-shot establishment marker.
+          establishmentProvenance: 'explicit_local',
+          now: new Date().toISOString(),
+        },
+      })
+    } catch (error) {
+      const refused = error instanceof RegistryRefusedError
+      const detail = error instanceof Error ? error.message : String(error)
+      const reason = refused ? 'registry-refused' : 'registry-unreachable'
+      const retryable = !refused
+      const diagnostic = refused
+        ? `The binding registry refused child-birth establishment for ${request.scopeRef} (${detail}). Check this node's peer entry and bearer token in federation.json.`
+        : `Cannot establish child-birth authority for ${request.scopeRef} at the binding registry (${detail}). Refusing to mint without a collective binding; retry once the registry is reachable.`
+      writeServerLog('WARN', 'federation.summon_gate.refusal', {
+        path: request.path,
         scopeRef: request.scopeRef,
-        homeNodeId: result.evaluation.homeNodeId,
-        birthClass: 'mechanism-born',
-        authorityProvenance: result.evaluation.authorityProvenance,
-        // Establishment provenance is descriptive for policy-born scopes. The
-        // mechanism's exact chain lives in authorityProvenance; this existing
-        // value is the registry schema's local one-shot establishment marker.
-        establishmentProvenance: 'explicit_local',
-        now: new Date().toISOString(),
-      },
-    })
+        reason,
+        wouldBeDecision: 'refuse',
+        enforced: true,
+        mode: result.mode,
+        retryable,
+        localNodeId: deps.localNodeId,
+        intent: request.intent,
+        birthCredentialPresent: true,
+        diagnostic,
+      })
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+        scopeRef: request.scopeRef,
+        path: request.path,
+        reason,
+        retryable,
+      })
+    }
 
     if (established.outcome === 'bound-elsewhere') {
       const diagnostic = `${request.scopeRef} became bound on ${established.binding.homeNodeId} while child-birth was being established on ${deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`

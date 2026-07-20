@@ -1,5 +1,6 @@
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
+import { HRC_BIRTH_CREDENTIAL_ENV } from 'hrc-core'
 import type { KillBrokerTmuxLeasesResponse } from 'hrc-core'
 
 import {
@@ -295,7 +296,13 @@ export async function cmdSessionResolve(args: string[]): Promise<void> {
   // script that calls it the authority to establish a scope wherever it happens
   // to run — the exact conflation federation spec §5 draws the line against.
   // Placing a scope from the shell is `hrc run`/`hrc start`.
-  const result = await client.resolveSession({ sessionRef, ...(create ? { create: true } : {}) })
+  const result = await client.resolveSession({
+    sessionRef,
+    ...(create ? { create: true } : {}),
+    ...(create && process.env[HRC_BIRTH_CREDENTIAL_ENV]
+      ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+      : {}),
+  })
   printJson(result)
 }
 

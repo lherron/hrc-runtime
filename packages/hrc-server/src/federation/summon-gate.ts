@@ -30,6 +30,7 @@ import { parseScopeRef } from 'agent-scope'
 import type {
   BirthAuthorityProvenance,
   EstablishmentProvenance,
+  PlacementBinding,
   PlacementLedgerRepository,
 } from 'hrc-store-sqlite'
 import type { RuntimePlacement } from 'spaces-config'
@@ -153,6 +154,8 @@ export type SummonGateEvaluation =
       establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'> | undefined
       birthClass?: 'mechanism-born' | undefined
       authorityProvenance?: BirthAuthorityProvenance | undefined
+      /** Registry authority to install locally after a registry-first crash. */
+      registryBinding?: PlacementBinding | undefined
     }
   | {
       decision: 'refuse'
@@ -245,6 +248,7 @@ function allow(
     establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'>
     birthClass?: 'mechanism-born'
     authorityProvenance?: BirthAuthorityProvenance
+    registryBinding?: PlacementBinding
   } = {}
 ): Extract<SummonGateEvaluation, { decision: 'allow' }> {
   return { decision: 'allow', reason, ...extra }
@@ -497,7 +501,10 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       // establishment. Converging is correct; this is not a virgin birth.
       return await requireMaterializationCapability(
         request,
-        allow('registry-bound-local', { homeNodeId: bound.homeNodeId })
+        allow('registry-bound-local', {
+          homeNodeId: bound.homeNodeId,
+          registryBinding: bound,
+        })
       )
     }
     return refuse(
