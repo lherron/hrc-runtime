@@ -761,6 +761,20 @@ const runtimeStatusChangedAtMigration: HrcMigration = {
   },
 }
 
+const federationAcceptedRequestsMigration: HrcMigration = {
+  id: '0018_federation_accepted_requests',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS federation_accepted_requests (
+        request_message_id TEXT PRIMARY KEY,
+        accepted_by_node_id TEXT NOT NULL,
+        accepted_epoch INTEGER NOT NULL CHECK (accepted_epoch >= 1),
+        accepted_at TEXT NOT NULL
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -780,4 +794,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   runEnrichmentFilterIndexesMigration,
   runCorrelationMigration,
   runtimeStatusChangedAtMigration,
+  federationAcceptedRequestsMigration,
 ]

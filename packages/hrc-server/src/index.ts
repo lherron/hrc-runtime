@@ -54,6 +54,7 @@ import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
+import { createFederationAcceptHandler } from './federation/accept.js'
 import {
   deriveNodeIdFromHostname,
   resolveFederationConfig,
@@ -694,6 +695,14 @@ class HrcServerInstance implements HrcServer {
       this.federationPeerEndpoint = undefined
     } else {
       try {
+        const peerAcceptHandler =
+          options.peerAcceptHandler ??
+          createFederationAcceptHandler({
+            db: this.db,
+            localNodeId: federationConfig.nodeId,
+            onAccepted: ({ envelope, record }) =>
+              this.deliverFederationAcceptedMessage(envelope, record),
+          })
         this.peerProtocolEndpoint = startPeerProtocolEndpoint({
           listener: federationConfig.peerListener,
           options: {
@@ -703,21 +712,19 @@ class HrcServerInstance implements HrcServer {
             health: () => ({
               startedAt: this.startedAt,
               capabilities: {
-                accept: options.peerAcceptHandler !== undefined,
+                accept: true,
                 locate: true,
                 health: true,
               },
             }),
-            ...(options.peerAcceptHandler === undefined
-              ? {}
-              : { accept: options.peerAcceptHandler }),
+            accept: peerAcceptHandler,
           },
         })
         this.federationPeerEndpoint = this.peerProtocolEndpoint.url
         writeServerLog('INFO', 'server.start.peer_protocol_listener', {
           endpoint: this.peerProtocolEndpoint.url,
           protocolVersion: PEER_PROTOCOL_VERSION,
-          acceptEnabled: options.peerAcceptHandler !== undefined,
+          acceptEnabled: true,
         })
       } catch (error) {
         try {
@@ -1659,6 +1666,19 @@ export type {
   NodeIdProvenance,
   PeerEntry,
 } from './federation/federation-config.js'
+export {
+  createFederationAcceptHandler,
+  parseFederationMessageEnvelope,
+} from './federation/accept.js'
+export type {
+  CreateFederationAcceptHandlerOptions,
+  FederationAcceptedMessage,
+} from './federation/accept.js'
+export { sendFederationEnvelope } from './federation/accept-client.js'
+export type {
+  PeerAcceptClientResult,
+  SendFederationEnvelopeOptions,
+} from './federation/accept-client.js'
 export {
   PEER_PROTOCOL_MAJOR,
   PEER_PROTOCOL_VERSION,

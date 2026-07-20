@@ -129,7 +129,7 @@ describe('T-06617 two isolated daemons', () => {
         expect(await health.json()).toMatchObject({
           ok: true,
           protocolVersion: PEER_PROTOCOL_VERSION,
-          capabilities: { accept: false, locate: true, health: true },
+          capabilities: { accept: true, locate: true, health: true },
         })
       }
 

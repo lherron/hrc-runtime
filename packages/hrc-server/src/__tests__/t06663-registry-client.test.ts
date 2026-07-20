@@ -295,7 +295,7 @@ describe('T-06663 construction and secret egress', () => {
     ).toThrow(RegistryRefusedError)
   })
 
-  test('has exactly one PeerToken reveal call site, at the outbound Authorization header', () => {
+  test('has only the two audited PeerToken reveal sites at outbound Authorization headers', () => {
     const scan = Bun.spawnSync({
       cmd: ['rg', '-n', String.raw`\.reveal\(\)`, 'packages'],
       cwd: `${import.meta.dir}/../../../..`,
@@ -304,9 +304,16 @@ describe('T-06663 construction and secret egress', () => {
     })
     expect(scan.exitCode).toBe(0)
     const matches = scan.stdout.toString().trim().split('\n')
-    expect(matches).toHaveLength(1)
-    expect(matches[0]).toMatch(
-      /^packages\/hrc-server\/src\/federation\/registry-client\.ts:\d+:.*token\.reveal\(\)/
+    expect(matches).toHaveLength(2)
+    expect(matches).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^packages\/hrc-server\/src\/federation\/accept-client\.ts:\d+:.*token\.reveal\(\)/
+        ),
+        expect.stringMatching(
+          /^packages\/hrc-server\/src\/federation\/registry-client\.ts:\d+:.*token\.reveal\(\)/
+        ),
+      ])
     )
   })
 })

@@ -1,3 +1,6 @@
+import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
+import type { HrcMessageAddress, HrcMessageKind, HrcMessagePhase } from './hrcchat-contracts.js'
+
 /**
  * Federation wire vocabulary shared by the daemon, the SDK, and the CLI.
  *
@@ -39,6 +42,45 @@ export type BirthAuthorityProvenance = Readonly<Record<string, unknown>> & {
 
 /** Gate enforcement level for this node. */
 export type FederationGateModeValue = 'off' | 'advisory' | 'enforce'
+
+// -- Peer message envelope ---------------------------------------------------
+
+/** Epoch-fenced destination named by an origin before it enters the outbox. */
+export type FederationExpectedPlacement = {
+  readonly homeNodeId: string
+  readonly placementEpoch: number
+}
+
+/**
+ * Optional delivery context needed to preserve today's local summon/queue
+ * behavior after the receiver durably inserts the transcript row.
+ *
+ * It deliberately excludes wait (which stays origin-local) and birthCredential
+ * (child birth never crosses nodes).
+ */
+export type FederationMessageDelivery = {
+  readonly runtimeIntent?: HrcRuntimeIntent | undefined
+  readonly createIfMissing?: boolean | undefined
+  readonly parsedScopeJson?: Readonly<Record<string, unknown>> | undefined
+  readonly respondTo?: HrcMessageAddress | undefined
+  readonly responseFormat?: HrcTurnResponseFormat | undefined
+  readonly allowStaleGeneration?: boolean | undefined
+}
+
+/** Federation v1 tolerant-reader envelope (spec §6). */
+export type FederationMessageEnvelope = {
+  readonly protocolVersion: string
+  readonly messageId: string
+  readonly kind: HrcMessageKind
+  readonly phase: HrcMessagePhase
+  readonly from: HrcMessageAddress
+  readonly to: HrcMessageAddress
+  readonly body: string
+  readonly rootMessageId: string
+  readonly replyToMessageId?: string | undefined
+  readonly expected: FederationExpectedPlacement
+  readonly delivery?: FederationMessageDelivery | undefined
+}
 
 // -- `hrc target locate` -----------------------------------------------------
 

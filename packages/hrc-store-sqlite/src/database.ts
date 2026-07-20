@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
@@ -52,6 +53,7 @@ export type HrcDatabase = {
   runtimeBuffers: RuntimeBufferRepository
   activeInputDeliveries: ActiveInputDeliveryRepository
   messages: MessageRepository
+  federationAcceptedRequests: FederationAcceptedRequestRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
@@ -103,6 +105,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     runtimeBuffers: new RuntimeBufferRepository(sqlite),
     activeInputDeliveries: new ActiveInputDeliveryRepository(sqlite),
     messages: new MessageRepository(sqlite),
+    federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),

@@ -5,6 +5,7 @@
  * router. Its entire network-visible route table is accept, locate, health.
  */
 
+import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
 
@@ -33,12 +34,20 @@ export type PeerAcceptRequest = {
 }
 
 export type PeerAcceptResult =
-  | { readonly outcome: 'accepted' | 'duplicate'; readonly messageId: string }
+  | {
+      readonly outcome: 'accepted' | 'duplicate'
+      readonly messageId: string
+      /** Internal effect queued only after the durable ACK response is built. */
+      readonly afterAck?: (() => Promise<void> | void) | undefined
+    }
   | {
       readonly outcome: 'refused'
       readonly code: string
       readonly retryable: boolean
       readonly status?: number | undefined
+      readonly redirect?:
+        | { readonly homeNodeId: string; readonly placementEpoch: number }
+        | undefined
     }
 
 export type PeerAcceptHandler = (request: PeerAcceptRequest) => Promise<PeerAcceptResult>
@@ -183,9 +192,12 @@ export function createPeerProtocolRequestHandler(
           envelope: body['envelope'],
         })
         if (result.outcome === 'refused') {
-          return refusal(result.status ?? 409, result.code, { retryable: result.retryable })
+          return refusal(result.status ?? 409, result.code, {
+            retryable: result.retryable,
+            ...(result.redirect === undefined ? {} : { redirect: result.redirect }),
+          })
         }
-        return responseJson(
+        const response = responseJson(
           {
             ok: true,
             protocolVersion: PEER_PROTOCOL_VERSION,
@@ -193,6 +205,19 @@ export function createPeerProtocolRequestHandler(
           },
           200
         )
+        if (result.outcome === 'accepted' && result.afterAck !== undefined) {
+          setTimeout(() => {
+            Promise.resolve(result.afterAck?.()).catch(() => {
+              // The message is already durable and ACKed. The row remains the
+              // receiver's queue; never turn a post-ACK local-delivery failure
+              // into a transport retry or an unhandled rejection.
+              writeServerLog('WARN', 'federation.accept.post_ack_delivery_failed', {
+                messageId: result.messageId,
+              })
+            })
+          }, 0)
+        }
+        return response
       }
 
       return refusal(404, 'not_found')

@@ -5,7 +5,7 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/v1/federation/accept` | Pass an envelope to the injected durable receiver. Until T-06618 supplies that receiver, this visibly refuses with HTTP 501 and `accept_not_enabled`. |
+| `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
 | `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand. |
 
@@ -78,17 +78,43 @@ Tokens must remain unique between peer identities so authentication always
 maps to exactly one `authenticatedNodeId`. The federation config file is
 operator-managed, node-local, not git-synced, and expected to be mode `0600`.
 
-## Accept seam for T-06618
+## Accept envelope and ACK
 
-The request body is a tolerant wrapper:
+The request body is a tolerant wrapper. Unknown wrapper, envelope, and
+delivery fields are ignored within protocol major 1:
 
 ```json
-{ "envelope": { "messageId": "..." } }
+{
+  "envelope": {
+    "protocolVersion": "1.0",
+    "messageId": "msg-11111111-1111-4111-8111-111111111111",
+    "kind": "dm",
+    "phase": "request",
+    "from": { "kind": "session", "sessionRef": "agent:mable:project:hrc-runtime:task:minisvc" },
+    "to": { "kind": "session", "sessionRef": "agent:cody:project:hrc-runtime:task:T-06618" },
+    "body": "hello from svc",
+    "rootMessageId": "msg-11111111-1111-4111-8111-111111111111",
+    "expected": { "homeNodeId": "lab", "placementEpoch": 4 }
+  }
+}
 ```
 
-After authentication and major-version validation, HRC passes
-`authenticatedNodeId`, the caller's protocol version, and the opaque envelope
-record to `peerAcceptHandler`. T-06618 owns envelope validation, durable
-idempotent insertion, and the final accepted/duplicate semantics. Successful
-results are returned as an ACK containing `outcome` and `messageId`; typed
-receiver refusals carry a code and retryability flag.
+`replyToMessageId` is optional; `rootMessageId` is always explicit. Optional
+`delivery` context carries runtime intent and other local summon inputs, but
+never `wait` (origin-local) or a birth credential (child birth is node-local).
+
+The receiver checks its local placement ledger before inserting a new message.
+A newer tuple returns `stale_placement` with a `redirect` containing the newer
+`homeNodeId` and `placementEpoch`. A message ID already durably accepted ACKs
+as `duplicate` even if placement changed afterward; this is what makes a crash
+between insert and ACK converge on retry.
+
+Successful results ACK `accepted` or `duplicate` with `messageId`. The first
+ACK is built only after the SQLite transaction commits; local summon/queue
+behavior is queued after that ACK and uses the same delivery function as a
+local semantic DM. Each node allocates its own `message_seq`; the origin's
+sequence is never copied into the envelope.
+
+At the origin, the ACK consumer records `(requestMessageId,
+acceptedByNodeId, acceptedEpoch)` in `federation_accepted_requests`. That record
+is idempotent and is the response-fencing input for the next federation slice.

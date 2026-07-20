@@ -153,9 +153,13 @@ const MESSAGE_EXECUTION_UPDATE_SPEC: ReadonlyArray<PatchColumnSpec<Partial<HrcMe
 
 export class MessageRepository {
   private readonly insertInTransaction: (input: MessageInsertInput) => HrcMessageRecord
+  private readonly insertIdempotentInTransaction: (input: MessageInsertInput) => {
+    outcome: 'inserted' | 'duplicate'
+    record: HrcMessageRecord
+  }
 
   constructor(private readonly db: Database) {
-    this.insertInTransaction = db.transaction((input: MessageInsertInput) => {
+    const insertRow = (input: MessageInsertInput): HrcMessageRecord => {
       const now = new Date().toISOString()
       const from = flattenAddress(input.from)
       const to = flattenAddress(input.to)
@@ -217,11 +221,26 @@ export class MessageRepository {
       }
 
       return mapMessageRow(stored)
+    }
+
+    this.insertInTransaction = db.transaction(insertRow)
+    this.insertIdempotentInTransaction = db.transaction((input: MessageInsertInput) => {
+      const existing = this.getById(input.messageId)
+      if (existing !== undefined) return { outcome: 'duplicate' as const, record: existing }
+      return { outcome: 'inserted' as const, record: insertRow(input) }
     })
   }
 
   insert(input: MessageInsertInput): HrcMessageRecord {
     return this.insertInTransaction(input)
+  }
+
+  /** Durable message-id dedupe used by federation accept. */
+  insertIdempotent(input: MessageInsertInput): {
+    outcome: 'inserted' | 'duplicate'
+    record: HrcMessageRecord
+  } {
+    return this.insertIdempotentInTransaction(input)
   }
 
   getById(messageId: string): HrcMessageRecord | undefined {

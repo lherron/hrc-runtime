@@ -1,5 +1,10 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase } from './database.js'
+export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
+export type {
+  FederationAcceptedRequestRecord,
+  RecordFederationAcceptanceInput,
+} from './federation-accepted-request-repository.js'
 export {
   BindingRegistry,
   PlacementEpochRegressionError,

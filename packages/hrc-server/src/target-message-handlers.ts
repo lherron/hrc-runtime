@@ -12,6 +12,7 @@ import {
 import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
+  FederationMessageEnvelope,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -21,6 +22,7 @@ import type {
   HrcTargetView,
   HrcTurnResponseFormat,
   ListMessagesResponse,
+  SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffResponse,
   WaitMessageResponse,
@@ -880,7 +882,78 @@ export async function handleSemanticDm(
     },
   })
 
-  // If target is a session, attempt semantic turn execution
+  const { execution, reply } = await this.deliverPersistedSemanticDm(body, record, respondTo)
+
+  // Handle --wait
+  let waited: WaitMessageResponse | undefined
+  if (body.wait?.enabled && record.phase === 'request') {
+    const timeoutMs = body.wait.timeoutMs ?? 30_000
+    waited = await this.waitForMessage(
+      {
+        thread: { rootMessageId: record.rootMessageId },
+        to: respondTo,
+        phases: ['response'],
+        afterSeq: record.messageSeq,
+      },
+      timeoutMs
+    )
+  }
+
+  // Re-read the record to pick up execution updates written by the durable
+  // correlation join and tmux-literal delivery path (updateExecution calls
+  // modify the DB but not the in-memory record object).
+  const freshRecord = this.db.messages.getById(record.messageId) ?? record
+
+  return json({
+    request: freshRecord,
+    ...(execution ? { execution } : {}),
+    ...(reply ? { reply } : {}),
+    ...(waited ? { waited } : {}),
+  } satisfies SemanticDmResponse)
+}
+
+export async function deliverFederationAcceptedMessage(
+  this: HrcServerInstanceForHandlers,
+  envelope: FederationMessageEnvelope,
+  record: HrcMessageRecord
+): Promise<void> {
+  this.notifyMessageSubscribers(record)
+  this.maybeCompleteInteractiveSemanticTurn(record)
+  if (envelope.phase !== 'request') return
+
+  const delivery = envelope.delivery
+  const body: SemanticDmRequest = {
+    from: envelope.from,
+    to: envelope.to,
+    body: envelope.body,
+    ...(envelope.replyToMessageId === undefined
+      ? {}
+      : { replyToMessageId: envelope.replyToMessageId }),
+    ...(delivery?.runtimeIntent === undefined ? {} : { runtimeIntent: delivery.runtimeIntent }),
+    ...(delivery?.createIfMissing === undefined
+      ? {}
+      : { createIfMissing: delivery.createIfMissing }),
+    ...(delivery?.parsedScopeJson === undefined
+      ? {}
+      : { parsedScopeJson: { ...delivery.parsedScopeJson } }),
+    ...(delivery?.respondTo === undefined ? {} : { respondTo: delivery.respondTo }),
+    ...(delivery?.responseFormat === undefined ? {} : { responseFormat: delivery.responseFormat }),
+    ...(delivery?.allowStaleGeneration === undefined
+      ? {}
+      : { allowStaleGeneration: delivery.allowStaleGeneration }),
+  }
+  await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
+}
+
+export async function deliverPersistedSemanticDm(
+  this: HrcServerInstanceForHandlers,
+  body: SemanticDmRequest,
+  record: HrcMessageRecord,
+  respondTo: HrcMessageAddress
+): Promise<{
+  execution?: DispatchTurnBySelectorResponse | undefined
+  reply?: HrcMessageRecord | undefined
+}> {
   let execution: DispatchTurnBySelectorResponse | undefined
   let reply: HrcMessageRecord | undefined
 
@@ -1014,32 +1087,7 @@ export async function handleSemanticDm(
     }
   }
 
-  // Handle --wait
-  let waited: WaitMessageResponse | undefined
-  if (body.wait?.enabled && record.phase === 'request') {
-    const timeoutMs = body.wait.timeoutMs ?? 30_000
-    waited = await this.waitForMessage(
-      {
-        thread: { rootMessageId: record.rootMessageId },
-        to: respondTo,
-        phases: ['response'],
-        afterSeq: record.messageSeq,
-      },
-      timeoutMs
-    )
-  }
-
-  // Re-read the record to pick up execution updates written by the durable
-  // correlation join and tmux-literal delivery path (updateExecution calls
-  // modify the DB but not the in-memory record object).
-  const freshRecord = this.db.messages.getById(record.messageId) ?? record
-
-  return json({
-    request: freshRecord,
-    ...(execution ? { execution } : {}),
-    ...(reply ? { reply } : {}),
-    ...(waited ? { waited } : {}),
-  } satisfies SemanticDmResponse)
+  return { execution, reply }
 }
 
 export function rejectBusyHeadlessSemanticDm(
@@ -1220,6 +1268,8 @@ export const targetMessageHandlersMethods = {
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
+  deliverFederationAcceptedMessage,
+  deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,
   executeSemanticTurn,
 }
