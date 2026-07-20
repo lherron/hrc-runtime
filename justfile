@@ -42,7 +42,8 @@ test-federation-live:
         packages/hrc-server/src/__tests__/t06621-binding-cache-routing-e2e.test.ts \
         packages/hrc-server/src/__tests__/t06663-registry-client.test.ts \
         packages/hrc-server/src/__tests__/t06668-local-registry-consult.test.ts \
-        packages/hrc-server/src/__tests__/t06698-dm-peer-forward-routing.test.ts
+        packages/hrc-server/src/__tests__/t06698-dm-peer-forward-routing.test.ts \
+        packages/hrc-server/src/__tests__/t06698-registry-endpoint-split.test.ts
 
 # Run linter
 lint:

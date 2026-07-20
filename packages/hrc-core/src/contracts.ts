@@ -690,7 +690,13 @@ export type HrcCapabilityStatus = {
     configPath: string
     configExists: boolean
     peerCount: number
-    peers: { nodeId: string; endpoint: string }[]
+    peers: {
+      nodeId: string
+      /** Peer-protocol accept/locate/health origin. */
+      endpoint: string
+      /** Binding-registry origin when separate from the peer protocol. */
+      registryEndpoint?: string | undefined
+    }[]
   }
   capabilities: {
     semanticCore: {

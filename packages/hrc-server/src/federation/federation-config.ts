@@ -9,7 +9,8 @@
  *   "nodeId": "lab",
  *   "peers": {
  *     "svc": {
- *       "endpoint": "https://svc.example.ts.net:8443",
+ *       "endpoint": "https://svc.example.ts.net:18493",
+ *       "registryEndpoint": "https://svc.example.ts.net:18491",
  *       "token": "outbound-current",
  *       "acceptedTokens": ["inbound-current", "inbound-next"]
  *     }
@@ -32,8 +33,10 @@
  *   never degrades silently to single-node mode, because silently forgetting
  *   who you are is worse than refusing to boot.
  *
- * This is transport plumbing, not placement policy (§6). Nothing here decides
- * where a scope lives.
+ * This is transport plumbing, not placement policy (§6). `gate.registryHost`
+ * alone selects registry authority by node identity; `registryEndpoint` only
+ * addresses that already-selected peer. Nothing here decides where a scope
+ * lives.
  *
  * **Token rotation without downtime.** `token` is the credential sent on
  * outbound requests. `acceptedTokens` is the overlap set accepted inbound and
@@ -53,7 +56,7 @@ import { join } from 'node:path'
 import { type NodeId, describeNodeIdViolation, isReservedNodeId, parseNodeId } from './node-id.js'
 import { type PeerProtocolListenerConfig, parsePeerProtocolBind } from './peer-protocol.js'
 import { PeerToken } from './peer-token.js'
-import { type RegistryListenerConfig, parseRegistryBind } from './registry-bind.js'
+import { type RegistryListenerConfig, isTailnetHost, parseRegistryBind } from './registry-bind.js'
 
 export const HRC_PEER_CONFIG_FILE_ENV = 'HRC_PEER_CONFIG_FILE'
 export const FEDERATION_CONFIG_BASENAME = 'federation.json'
@@ -67,7 +70,10 @@ const FALLBACK_DERIVED_NODE_ID = 'unknown-node'
 
 export type PeerEntry = {
   readonly nodeId: NodeId
+  /** Peer-protocol accept/locate/health origin. */
   readonly endpoint: string
+  /** Binding-registry origin for this peer when role-separated. */
+  readonly registryEndpoint?: string | undefined
   readonly token: PeerToken
   /** Inbound rotation overlap; defaults to the outbound token. */
   readonly acceptedTokens?: readonly PeerToken[] | undefined
@@ -178,6 +184,47 @@ function validatePeerEndpoint(endpoint: string, where: string): string {
   return url.toString()
 }
 
+/**
+ * Validates the optional role-specific binding-registry destination origin.
+ *
+ * Unlike the legacy `endpoint` field, this field is introduced after the
+ * registry and peer protocol became separate listeners. It therefore refuses
+ * anything other than the exact tailnet origin the registry client can use.
+ */
+function validateRegistryEndpoint(endpoint: string, where: string): string {
+  let url: URL
+  try {
+    url = new URL(endpoint)
+  } catch {
+    throw new Error(`${where} is not a valid URL: ${JSON.stringify(endpoint)}`)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`${where} must use http: or https:, got ${JSON.stringify(url.protocol)}`)
+  }
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new Error(`${where} must not contain embedded credentials`)
+  }
+  if (url.port.length === 0) {
+    throw new Error(`${where} must include an explicit port`)
+  }
+  const port = Number(url.port)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${where} port must be between 1 and 65535`)
+  }
+  if (!isTailnetHost(url.hostname)) {
+    throw new Error(
+      `${where} must name a specific tailnet host (100.64.0.0/10, fd7a:115c:a1e0::/48, or *.ts.net), got ${JSON.stringify(url.hostname)}`
+    )
+  }
+  const afterScheme = endpoint.slice(endpoint.indexOf('//') + 2)
+  const suffixStart = afterScheme.search(/[/?#]/)
+  const suffix = suffixStart < 0 ? '' : afterScheme.slice(suffixStart)
+  if (suffix !== '' && suffix !== '/') {
+    throw new Error(`${where} must be an origin with no path, query, or fragment`)
+  }
+  return url.toString()
+}
+
 type ParsedFile = {
   declaredNodeId: NodeId | undefined
   peers: Map<NodeId, PeerEntry>
@@ -255,6 +302,14 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
       if (typeof rawEntry['endpoint'] !== 'string' || rawEntry['endpoint'].trim().length === 0) {
         throw new Error(`${where} is missing a non-empty string "endpoint"`)
       }
+      const rawRegistryEndpoint = rawEntry['registryEndpoint']
+      const registryWhere = `${sourcePath} peers.${rawPeerId}.registryEndpoint`
+      if (
+        rawRegistryEndpoint !== undefined &&
+        (typeof rawRegistryEndpoint !== 'string' || rawRegistryEndpoint.trim().length === 0)
+      ) {
+        throw new Error(`${registryWhere} must be a non-empty string`)
+      }
       if (typeof rawEntry['token'] !== 'string' || rawEntry['token'].length === 0) {
         throw new Error(`${where} is missing a non-empty string "token"`)
       }
@@ -284,6 +339,14 @@ export function parseFederationConfigDocument(value: unknown, sourcePath: string
       peers.set(peerId, {
         nodeId: peerId,
         endpoint: validatePeerEndpoint(rawEntry['endpoint'].trim(), where),
+        ...(rawRegistryEndpoint === undefined
+          ? {}
+          : {
+              registryEndpoint: validateRegistryEndpoint(
+                (rawRegistryEndpoint as string).trim(),
+                registryWhere
+              ),
+            }),
         token: new PeerToken(rawEntry['token']),
         acceptedTokens: acceptedValues.map((token) => new PeerToken(token)),
       })
@@ -470,7 +533,7 @@ export function summarizeFederationConfig(config: FederationConfig): {
   configPath: string
   configExists: boolean
   peerCount: number
-  peers: { nodeId: string; endpoint: string }[]
+  peers: { nodeId: string; endpoint: string; registryEndpoint?: string | undefined }[]
 } {
   return {
     nodeId: config.nodeId,
@@ -482,6 +545,7 @@ export function summarizeFederationConfig(config: FederationConfig): {
     peers: [...config.peers.values()].map((peer) => ({
       nodeId: peer.nodeId,
       endpoint: peer.endpoint,
+      ...(peer.registryEndpoint === undefined ? {} : { registryEndpoint: peer.registryEndpoint }),
     })),
   }
 }

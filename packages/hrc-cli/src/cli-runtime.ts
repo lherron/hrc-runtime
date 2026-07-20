@@ -600,6 +600,9 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
       lines.push(`  peers:        ${node.peerCount}`)
       for (const peer of node.peers) {
         lines.push(`    - ${peer.nodeId}: ${peer.endpoint}`)
+        if (peer.registryEndpoint !== undefined) {
+          lines.push(`      registry: ${peer.registryEndpoint}`)
+        }
       }
     }
   }

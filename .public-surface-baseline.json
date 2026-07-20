@@ -671,10 +671,34 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationExpectedPlacement",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationExpectedPlacement|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationGateModeValue",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationGateModeValue|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationMessageDelivery",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationMessageDelivery|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationMessageEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationMessageEnvelope|type",
       "count": 1
     },
     {
@@ -755,6 +779,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HRC_ARTIFACT_REPORTED_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_BIRTH_CREDENTIAL_ENV",
+      "kind": "value",
+      "file": "packages/hrc-core/src/federation.ts",
+      "hash": "hrc-core|HRC_BIRTH_CREDENTIAL_ENV|value",
       "count": 1
     },
     {
@@ -883,6 +915,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/errors.ts",
       "hash": "hrc-core|HrcBadRequestError|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcBirthCredential",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation.ts",
+      "hash": "hrc-core|HrcBirthCredential|type",
       "count": 1
     },
     {

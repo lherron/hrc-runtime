@@ -244,7 +244,7 @@ function positiveDuration(value: number): number {
 function normalizedRegistryEndpoint(peer: PeerEntry): URL {
   let endpoint: URL
   try {
-    endpoint = new URL(peer.endpoint)
+    endpoint = new URL(peer.registryEndpoint ?? peer.endpoint)
   } catch {
     throw new RegistryRefusedError(400, 'invalid_request')
   }

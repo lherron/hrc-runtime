@@ -41,7 +41,8 @@ node identity, at least one configured peer, and a concrete tailnet host:
   "nodeId": "lab",
   "peers": {
     "svc": {
-      "endpoint": "http://svc.example.ts.net:18490",
+      "endpoint": "http://svc.example.ts.net:18493",
+      "registryEndpoint": "http://svc.example.ts.net:18491",
       "token": "outbound-current",
       "acceptedTokens": ["inbound-current", "inbound-next"]
     }
@@ -51,6 +52,27 @@ node identity, at least one configured peer, and a concrete tailnet host:
   }
 }
 ```
+
+Each peer may expose two role-separated transport origins:
+
+- `endpoint` is the peer-protocol origin and is used only for
+  `/v1/federation/accept`, `/v1/federation/locate`, and
+  `/v1/federation/health`.
+- `registryEndpoint` is the optional binding-registry origin and is used only
+  for `/v1/federation/registry/*`. When absent, registry clients fall back to
+  `endpoint` for legacy or deliberately co-listened deployments.
+
+The transport split does not select authority. `gate.registryHost` remains the
+sole declaration of which node owns the binding registry; a
+`registryEndpoint` on any peer never implies or infers `registryHost`. Both
+origins authenticate the same peer identity with the existing `token` and
+`acceptedTokens` rotation contract—there is no second registry credential.
+
+`registryEndpoint`, when present, is validated at daemon startup as a non-empty
+`http`/`https` tailnet destination origin with an explicit port and specific
+tailnet host. Embedded credentials, paths, queries, and fragments are refused
+with a diagnostic naming `peers.<node>.registryEndpoint`. Status surfaces show
+both origins but remain token-free.
 
 `peerListener.bind` rejects wildcard, unspecified, loopback, LAN, and public
 hosts at startup. Valid hosts are Tailscale IPv4 (`100.64.0.0/10`), Tailscale
