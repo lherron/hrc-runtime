@@ -118,3 +118,26 @@ sequence is never copied into the envelope.
 At the origin, the ACK consumer records `(requestMessageId,
 acceptedByNodeId, acceptedEpoch)` in `federation_accepted_requests`. That record
 is idempotent and is the response-fencing input for the next federation slice.
+
+## Origin outbox and retry lifecycle
+
+An outbound transcript row remains the owning-node message queue. Its network
+delivery is a separate `federation_outbox_deliveries` row keyed back to that
+message; target execution fields are never used for peer retry state.
+
+The origin attempts immediately, then retries exponentially from one second up
+to a six-hour cap. The automatic retry window is 28 days so a closed laptop is
+normal peer sleep, not a short outage. Transport failures are durably visible
+as `peer_unreachable`; retryable protocol refusals use `retry_scheduled`.
+Successful `accepted` and `duplicate` ACKs both settle as `delivered`.
+
+At the end of the retry window, or after a non-retryable refusal, the delivery
+becomes `dead_letter`. This is expected, terminal only for automatic attempts,
+and replayable. The Unix-socket API exposes the minimal F1 seams:
+
+- `GET /v1/federation/outbox?messageId=<id>` — raw durable delivery state.
+- `POST /v1/federation/outbox/replay` with `{ "deliveryId": "..." }` — replay
+  one dead-letter delivery with a fresh 28-day retry window.
+
+The polished list/bulk replay/drop controls and doctor projection remain the F3
+operator-controls slice.

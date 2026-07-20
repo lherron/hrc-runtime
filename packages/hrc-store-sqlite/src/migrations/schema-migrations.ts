@@ -775,6 +775,39 @@ const federationAcceptedRequestsMigration: HrcMigration = {
   },
 }
 
+const federationOutboxMigration: HrcMigration = {
+  id: '0019_federation_outbox',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS federation_outbox_deliveries (
+        delivery_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL UNIQUE REFERENCES messages(message_id) ON DELETE RESTRICT,
+        peer_node_id TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+          state IN ('pending', 'retry_scheduled', 'peer_unreachable', 'delivered', 'dead_letter')
+        ),
+        total_attempts INTEGER NOT NULL DEFAULT 0 CHECK (total_attempts >= 0),
+        cycle_attempts INTEGER NOT NULL DEFAULT 0 CHECK (cycle_attempts >= 0),
+        replay_count INTEGER NOT NULL DEFAULT 0 CHECK (replay_count >= 0),
+        retry_window_started_at TEXT NOT NULL,
+        next_attempt_at TEXT,
+        last_attempt_at TEXT,
+        delivered_at TEXT,
+        dead_lettered_at TEXT,
+        last_error_code TEXT,
+        last_error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS federation_outbox_due_idx
+        ON federation_outbox_deliveries(state, next_attempt_at);
+      CREATE INDEX IF NOT EXISTS federation_outbox_peer_state_idx
+        ON federation_outbox_deliveries(peer_node_id, state, created_at);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -795,4 +828,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   runCorrelationMigration,
   runtimeStatusChangedAtMigration,
   federationAcceptedRequestsMigration,
+  federationOutboxMigration,
 ]

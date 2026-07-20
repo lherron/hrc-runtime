@@ -5,6 +5,14 @@ export type {
   FederationAcceptedRequestRecord,
   RecordFederationAcceptanceInput,
 } from './federation-accepted-request-repository.js'
+export { FederationOutboxRepository } from './federation-outbox-repository.js'
+export type {
+  EnqueueFederationOutboxInput,
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
+  MarkFederationOutboxDeadLetterInput,
+  ScheduleFederationOutboxRetryInput,
+} from './federation-outbox-repository.js'
 export {
   BindingRegistry,
   PlacementEpochRegressionError,

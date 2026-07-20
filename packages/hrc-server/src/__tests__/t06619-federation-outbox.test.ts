@@ -1,0 +1,143 @@
+import { describe, expect, test } from 'bun:test'
+
+import type { FederationMessageEnvelope } from 'hrc-core'
+import { openHrcDatabase } from 'hrc-store-sqlite'
+
+import {
+  DEFAULT_FEDERATION_OUTBOX_RETRY_POLICY,
+  FederationOutboxDeliveryEngine,
+  federationRetryDelayMs,
+} from '../federation/outbox-delivery.js'
+
+const MESSAGE_ID = 'msg-11111111-1111-4111-8111-111111111111'
+
+function seed(db: ReturnType<typeof openHrcDatabase>): FederationMessageEnvelope {
+  const value: FederationMessageEnvelope = {
+    protocolVersion: '1.0',
+    messageId: MESSAGE_ID,
+    kind: 'dm',
+    phase: 'request',
+    from: { kind: 'session', sessionRef: 'agent:mable:project:hrc-runtime:task:minisvc' },
+    to: { kind: 'session', sessionRef: 'agent:cody:project:hrc-runtime:task:T-06619' },
+    body: 'wake up when ready',
+    rootMessageId: MESSAGE_ID,
+    expected: { homeNodeId: 'lab', placementEpoch: 2 },
+  }
+  db.messages.insert({
+    messageId: value.messageId,
+    kind: value.kind,
+    phase: value.phase,
+    from: value.from,
+    to: value.to,
+    body: value.body,
+  })
+  db.federationOutbox.enqueue({
+    deliveryId: 'delivery-1',
+    messageId: value.messageId,
+    peerNodeId: 'lab',
+    envelope: value,
+    now: '2026-07-20T00:00:00.000Z',
+  })
+  return value
+}
+
+describe('T-06619 clock-driven federation retry state machine', () => {
+  test('default exponential retry is capped and the terminal horizon is measured in weeks', () => {
+    const policy = DEFAULT_FEDERATION_OUTBOX_RETRY_POLICY
+    expect(policy.deadLetterAfterMs).toBeGreaterThanOrEqual(14 * 24 * 60 * 60 * 1_000)
+    expect(federationRetryDelayMs(1, policy)).toBe(policy.initialRetryDelayMs)
+    expect(federationRetryDelayMs(2, policy)).toBe(policy.initialRetryDelayMs * 2)
+    expect(federationRetryDelayMs(100, policy)).toBe(policy.maxRetryDelayMs)
+  })
+
+  test('peer sleep is visible and retries automatically until the peer wakes', async () => {
+    const db = openHrcDatabase(':memory:')
+    let nowMs = Date.parse('2026-07-20T00:00:00.000Z')
+    let reachable = false
+    let sends = 0
+    seed(db)
+    const engine = new FederationOutboxDeliveryEngine({
+      db,
+      now: () => new Date(nowMs),
+      policy: { initialRetryDelayMs: 1_000, maxRetryDelayMs: 8_000, deadLetterAfterMs: 60_000 },
+      send: async () => {
+        sends += 1
+        if (!reachable) throw new Error('connect ECONNREFUSED')
+        return { outcome: 'accepted', messageId: MESSAGE_ID }
+      },
+    })
+
+    try {
+      await engine.drainDue()
+      expect(db.federationOutbox.get('delivery-1')).toMatchObject({
+        state: 'peer_unreachable',
+        totalAttempts: 1,
+        nextAttemptAt: '2026-07-20T00:00:01.000Z',
+      })
+
+      nowMs += 999
+      await engine.drainDue()
+      expect(sends).toBe(1)
+
+      nowMs += 1
+      await engine.drainDue()
+      expect(db.federationOutbox.get('delivery-1')).toMatchObject({
+        state: 'peer_unreachable',
+        totalAttempts: 2,
+        nextAttemptAt: '2026-07-20T00:00:03.000Z',
+      })
+
+      reachable = true
+      nowMs += 2_000
+      await engine.drainDue()
+      expect(db.federationOutbox.get('delivery-1')).toMatchObject({
+        state: 'delivered',
+        totalAttempts: 3,
+        deliveredAt: '2026-07-20T00:00:03.000Z',
+      })
+      expect(db.messages.getById(MESSAGE_ID)?.execution.state).toBe('not_applicable')
+    } finally {
+      db.close()
+    }
+  })
+
+  test('retry exhaustion dead-letters and explicit replay is safe', async () => {
+    const db = openHrcDatabase(':memory:')
+    let nowMs = Date.parse('2026-07-20T00:00:00.000Z')
+    let reachable = false
+    seed(db)
+    const engine = new FederationOutboxDeliveryEngine({
+      db,
+      now: () => new Date(nowMs),
+      policy: { initialRetryDelayMs: 1_000, maxRetryDelayMs: 2_000, deadLetterAfterMs: 3_000 },
+      send: async () => {
+        if (!reachable) throw new Error('peer asleep')
+        return { outcome: 'duplicate', messageId: MESSAGE_ID }
+      },
+    })
+
+    try {
+      await engine.drainDue()
+      nowMs += 1_000
+      await engine.drainDue()
+      nowMs += 2_000
+      await engine.drainDue()
+      expect(db.federationOutbox.get('delivery-1')).toMatchObject({
+        state: 'dead_letter',
+        nextAttemptAt: undefined,
+        lastErrorCode: 'retry_window_exhausted',
+      })
+
+      reachable = true
+      engine.replay('delivery-1')
+      await engine.drainDue()
+      expect(db.federationOutbox.get('delivery-1')).toMatchObject({
+        state: 'delivered',
+        replayCount: 1,
+        cycleAttempts: 1,
+      })
+    } finally {
+      db.close()
+    }
+  })
+})

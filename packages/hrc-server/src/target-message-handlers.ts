@@ -882,7 +882,11 @@ export async function handleSemanticDm(
     },
   })
 
-  const { execution, reply } = await this.deliverPersistedSemanticDm(body, record, respondTo)
+  const federationRoute = await this.federationOriginOutbox?.route(body, record)
+  const { execution, reply } =
+    federationRoute?.outcome === 'queued'
+      ? {}
+      : await this.deliverPersistedSemanticDm(body, record, respondTo)
 
   // Handle --wait
   let waited: WaitMessageResponse | undefined
@@ -910,6 +914,37 @@ export async function handleSemanticDm(
     ...(reply ? { reply } : {}),
     ...(waited ? { waited } : {}),
   } satisfies SemanticDmResponse)
+}
+
+/** Raw durable visibility seam; F3 owns the polished operator projection. */
+export function handleFederationOutboxList(this: HrcServerInstanceForHandlers, url: URL): Response {
+  const messageId = normalizeOptionalQuery(url.searchParams.get('messageId'))
+  const deliveries = this.federationOriginOutbox?.list() ?? []
+  return json(
+    messageId === undefined
+      ? deliveries
+      : deliveries.filter((delivery) => delivery.messageId === messageId)
+  )
+}
+
+/** Minimal single-delivery replay action; bulk/drop/CLI controls remain F3. */
+export async function handleFederationOutboxReplay(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body) || typeof body['deliveryId'] !== 'string') {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
+      field: 'deliveryId',
+    })
+  }
+  if (this.federationOriginOutbox === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'federation origin outbox is not enabled on this node'
+    )
+  }
+  return json(this.federationOriginOutbox.replay(body['deliveryId']))
 }
 
 export async function deliverFederationAcceptedMessage(
@@ -1268,6 +1303,8 @@ export const targetMessageHandlersMethods = {
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,
+  handleFederationOutboxList,
+  handleFederationOutboxReplay,
   deliverFederationAcceptedMessage,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,

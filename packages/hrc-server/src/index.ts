@@ -63,6 +63,10 @@ import {
 } from './federation/federation-config.js'
 import { locateScopeOnServer, scanServerLedgerForSkew } from './federation/locate-server.js'
 import {
+  type FederationOriginOutbox,
+  createFederationOriginOutbox,
+} from './federation/origin-outbox.js'
+import {
   PEER_PROTOCOL_VERSION,
   type PeerProtocolEndpointControl,
   startPeerProtocolEndpoint,
@@ -493,6 +497,7 @@ class HrcServerInstance implements HrcServer {
   public readonly federationRegistryEndpoint: string | undefined
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
+  readonly federationOriginOutbox: FederationOriginOutbox | undefined
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
@@ -605,6 +610,10 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
     [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
       this.handleSemanticTurnHandoff(request),
+    [exactRouteKey('GET', '/v1/federation/outbox')]: (_request, url) =>
+      this.handleFederationOutboxList(url),
+    [exactRouteKey('POST', '/v1/federation/outbox/replay')]: (request) =>
+      this.handleFederationOutboxReplay(request),
     [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => this.handleEnsureTarget(request),
     [exactRouteKey('POST', '/v1/messages')]: (request) => this.handleCreateMessage(request),
     [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>
@@ -737,6 +746,31 @@ class HrcServerInstance implements HrcServer {
       }
     }
 
+    try {
+      this.federationOriginOutbox =
+        federationConfig === undefined
+          ? undefined
+          : createFederationOriginOutbox({
+              db: this.db,
+              config: federationConfig,
+              localRegistryClient: this.bindingRegistryEndpoint?.registryClient,
+              ...(options.federationOutboxRetryPolicy === undefined
+                ? {}
+                : { retryPolicy: options.federationOutboxRetryPolicy }),
+              ...(options.federationOutboxPollIntervalMs === undefined
+                ? {}
+                : { pollIntervalMs: options.federationOutboxPollIntervalMs }),
+            })
+    } catch (error) {
+      try {
+        this.peerProtocolEndpoint?.stop()
+        this.bindingRegistryEndpoint?.stop()
+      } finally {
+        this.server.stop(true)
+      }
+      throw error
+    }
+
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
@@ -831,6 +865,7 @@ class HrcServerInstance implements HrcServer {
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
     this.server.stop(true)
+    await this.federationOriginOutbox?.stop()
     if (this.peerProtocolEndpoint) {
       try {
         this.peerProtocolEndpoint.stop()

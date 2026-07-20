@@ -17,6 +17,7 @@ import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
 import type { FederationConfig } from './federation/federation-config.js'
+import type { FederationOutboxRetryPolicy } from './federation/outbox-delivery.js'
 import type { PeerAcceptHandler } from './federation/peer-protocol.js'
 import type { GhostmuxManagerOptions } from './ghostmux.js'
 
@@ -207,6 +208,10 @@ export type HrcServerOptions = {
   federationConfig?: FederationConfig | undefined
   /** T-06618 injection seam for durable/idempotent envelope acceptance. */
   peerAcceptHandler?: PeerAcceptHandler | undefined
+  /** Test/embedded override; production uses the weeks-scale §6 defaults. */
+  federationOutboxRetryPolicy?: FederationOutboxRetryPolicy | undefined
+  /** Test/embedded polling override; production polls once per second. */
+  federationOutboxPollIntervalMs?: number | undefined
   tmuxSocketPath?: string | undefined
   /**
    * Auto-rotation policy: a session whose `createdAt` exceeds this age (in

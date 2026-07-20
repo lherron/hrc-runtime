@@ -19,6 +19,8 @@ export type SendFederationEnvelopeOptions = {
   readonly peer: PeerEntry
   readonly envelope: FederationMessageEnvelope
   readonly fetch?: typeof globalThis.fetch | undefined
+  /** Bounds one transport attempt; retries are owned by the durable outbox. */
+  readonly timeoutMs?: number | undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,6 +50,10 @@ export async function sendFederationEnvelope(
   options: SendFederationEnvelopeOptions
 ): Promise<PeerAcceptClientResult> {
   const fetchImpl = options.fetch ?? globalThis.fetch
+  const timeoutMs = options.timeoutMs ?? 5_000
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error('federation accept timeoutMs must be a positive integer')
+  }
   const response = await fetchImpl(new URL('/v1/federation/accept', options.peer.endpoint), {
     method: 'POST',
     headers: {
@@ -56,6 +62,7 @@ export async function sendFederationEnvelope(
       [PEER_PROTOCOL_VERSION_HEADER]: options.envelope.protocolVersion,
     },
     body: JSON.stringify({ envelope: options.envelope }),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   const body = (await response.json()) as unknown
   if (!isRecord(body)) throw new Error('peer accept response must be an object')
