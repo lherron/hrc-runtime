@@ -260,19 +260,32 @@ poll_once() {
 acquire_poller_lock() {
   local lock_dir="${backchannel_dir}/poller.lock"
   local old_pid=""
-  if mkdir "$lock_dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "${lock_dir}/pid"
-  else
-    [[ -f "${lock_dir}/pid" ]] && old_pid="$(tr -d '[:space:]' < "${lock_dir}/pid")"
-    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    if [[ ! -f "${lock_dir}/pid" ]]; then
+      die "poller lock has no owner pid; refusing to steal it: $lock_dir"
+    fi
+    old_pid="$(tr -d '[:space:]' < "${lock_dir}/pid")"
+    [[ "$old_pid" =~ ^[0-9]+$ ]] || die "poller lock has an invalid owner pid: $lock_dir"
+    if kill -0 "$old_pid" 2>/dev/null; then
       die "poller already running with pid $old_pid"
     fi
     rm -f "${lock_dir}/pid"
-    rmdir "$lock_dir" 2>/dev/null || die "stale poller lock is not removable: $lock_dir"
-    mkdir "$lock_dir"
-    printf '%s\n' "$$" > "${lock_dir}/pid"
+    rmdir "$lock_dir" 2>/dev/null || continue
+    log "removed stale poller lock for dead pid $old_pid"
+  done
+  printf '%s\n' "$$" > "${lock_dir}/pid"
+  trap 'exit 0' INT TERM
+  trap cleanup_poller_lock EXIT
+}
+
+cleanup_poller_lock() {
+  local lock_dir="${backchannel_dir}/poller.lock"
+  local owner_pid=""
+  [[ -f "${lock_dir}/pid" ]] && owner_pid="$(tr -d '[:space:]' < "${lock_dir}/pid")"
+  if [[ "$owner_pid" == "$$" ]]; then
+    rm -f "${lock_dir}/pid"
+    rmdir "$lock_dir" 2>/dev/null || true
   fi
-  trap 'rm -f "'"$lock_dir"'/pid"; rmdir "'"$lock_dir"'" 2>/dev/null || true' EXIT INT TERM
 }
 
 case "$command_name" in
