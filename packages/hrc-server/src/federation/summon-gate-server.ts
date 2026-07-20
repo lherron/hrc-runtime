@@ -19,6 +19,8 @@ import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
+import { validateRuntimeBirthCredential } from './birth-credential.js'
+import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { RegistryUnreachableError, createBindingRegistryClient } from './registry-client.js'
@@ -117,15 +119,17 @@ function buildGateDeps(server: SummonGateServerContext): SummonGateDeps | undefi
   if (config === undefined || !config.sourceExists) return undefined
   if (config.gate.mode === 'off') return undefined
 
+  const ledger = createPlacementLedgerRepository(server.db.sqlite)
   return {
     mode: config.gate.mode,
     federationConfigured: true,
     localNodeId: config.nodeId,
-    ledger: createPlacementLedgerRepository(server.db.sqlite),
+    ledger,
     registry: server.registryClient ?? resolveRegistryClient(config),
     // Node-local, synchronous, and undefined before the table exists
     // (T-06614 C-11125 / larry #190). Checked before all authority logic.
     retirementFor: (scopeRef) => readScopeRetirement(server.db.sqlite, scopeRef),
+    validateBirthCredential: (credential) => validateRuntimeBirthCredential(server.db, credential),
     // Placement policy resolution is injected. Until the resolver is wired to
     // spaces-config on this path, treating policy as undeclared produces a
     // VISIBLE refusal naming the stanza line — never a silent local fallback.
@@ -160,20 +164,19 @@ function gateDepsFor(server: SummonGateServerContext): SummonGateDeps | undefine
  * path-C finding, the same surface every generic SDK caller enters through.
  * Separating those two is the entire reason the typed field exists.
  */
-export type SummonAuthorityRequest =
-  | {
-      scopeRef: string
-      path: 'resolve-session'
-      intent: SummonIntent
-      capabilityHint?: SummonCapabilityHint | undefined
-    }
+export type SummonAuthorityRequest = (
+  | { scopeRef: string; path: 'resolve-session'; intent: SummonIntent }
   | {
       scopeRef: string
       path: Exclude<SummonPath, 'resolve-session'>
       /** Absent ⇒ `implicit`; `implicit` is the only value these paths accept. */
       intent?: 'implicit' | undefined
-      capabilityHint?: SummonCapabilityHint | undefined
     }
+) & {
+  /** Common mint context; neither field widens the typed intent arm. */
+  birthCredential?: string | undefined
+  capabilityHint?: SummonCapabilityHint | undefined
+}
 
 /**
  * Asks the gate whether this node may summon `scopeRef`, and enforces the
@@ -195,6 +198,7 @@ export async function assertSummonAuthority(
     // Absent ⇒ implicit (spec §5). The default lives here, at the one seam
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
+    ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
     deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
   })
@@ -215,6 +219,54 @@ export async function assertSummonAuthority(
         ? {}
         : { capability_source: result.evaluation.capabilitySource }),
     })
+  }
+
+  if (
+    result.evaluation.decision === 'allow' &&
+    result.evaluation.reason === 'child-birth' &&
+    result.evaluation.homeNodeId !== undefined &&
+    result.evaluation.authorityProvenance !== undefined
+  ) {
+    const established = await establishLocalPlacement({
+      registry: deps.registry,
+      ledger: deps.ledger,
+      request: {
+        scopeRef: request.scopeRef,
+        homeNodeId: result.evaluation.homeNodeId,
+        birthClass: 'mechanism-born',
+        authorityProvenance: result.evaluation.authorityProvenance,
+        // Establishment provenance is descriptive for policy-born scopes. The
+        // mechanism's exact chain lives in authorityProvenance; this existing
+        // value is the registry schema's local one-shot establishment marker.
+        establishmentProvenance: 'explicit_local',
+        now: new Date().toISOString(),
+      },
+    })
+
+    if (established.outcome === 'bound-elsewhere') {
+      const diagnostic = `${request.scopeRef} became bound on ${established.binding.homeNodeId} while child-birth was being established on ${deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`
+      writeServerLog('WARN', 'federation.summon_gate.refusal', {
+        path: request.path,
+        scopeRef: request.scopeRef,
+        reason: 'bound-elsewhere',
+        wouldBeDecision: 'refuse',
+        enforced: true,
+        mode: result.mode,
+        retryable: false,
+        localNodeId: deps.localNodeId,
+        homeNodeId: established.binding.homeNodeId,
+        intent: request.intent,
+        birthCredentialPresent: true,
+        diagnostic,
+      })
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+        scopeRef: request.scopeRef,
+        path: request.path,
+        reason: 'bound-elsewhere',
+        retryable: false,
+        homeNodeId: established.binding.homeNodeId,
+      })
+    }
   }
 
   return result

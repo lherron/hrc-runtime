@@ -14,6 +14,7 @@ import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
+import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -874,7 +875,10 @@ export async function startInteractiveTmuxBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch)
+  const hrcDispatchEnv = injectRuntimeBirthCredential(
+    mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+    runtimeId
+  )
   try {
     const compiled = await compileBrokerRuntimePlan(
       {
@@ -1000,7 +1004,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       identity: compiled.identity,
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
-        mergeEnv(compiled.dispatchEnv ?? {}, hrcDispatchEnv),
+        { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
         compiled.startRequest
       ),
       ...(brokerClient ? { brokerClient } : {}),

@@ -7,6 +7,7 @@ import type {
   HrcRuntimeIntent,
   HrcTurnResponseFormat,
 } from 'hrc-core'
+import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { isRecord, parseOptionalTurnResponseFormat, parseSessionRef } from './server-parsers.js'
 
 /**
@@ -299,6 +300,7 @@ export function parseSemanticDmRequest(input: unknown): {
   runtimeIntent?: HrcRuntimeIntent | undefined
   createIfMissing?: boolean | undefined
   parsedScopeJson?: Record<string, unknown> | undefined
+  birthCredential?: string | undefined
   wait?: { enabled: boolean; timeoutMs?: number | undefined } | undefined
   allowStaleGeneration?: boolean | undefined
   allowCrossScopeReply?: boolean | undefined
@@ -347,6 +349,8 @@ export function parseSemanticDmRequest(input: unknown): {
     ? (input['parsedScopeJson'] as Record<string, unknown>)
     : undefined
 
+  const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
+
   const waitInput = input['wait']
   const wait =
     isRecord(waitInput) && typeof waitInput['enabled'] === 'boolean'
@@ -380,6 +384,7 @@ export function parseSemanticDmRequest(input: unknown): {
     ...(runtimeIntent !== undefined ? { runtimeIntent } : {}),
     ...(createIfMissing !== undefined ? { createIfMissing } : {}),
     ...(parsedScopeJson !== undefined ? { parsedScopeJson } : {}),
+    ...(birthCredential !== undefined ? { birthCredential } : {}),
     ...(wait !== undefined ? { wait } : {}),
     ...(allowStaleGeneration !== undefined ? { allowStaleGeneration } : {}),
     ...(allowCrossScopeReply !== undefined ? { allowCrossScopeReply } : {}),

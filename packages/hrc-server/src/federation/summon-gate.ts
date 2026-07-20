@@ -27,12 +27,20 @@
  */
 
 import { parseScopeRef } from 'agent-scope'
-import type { EstablishmentProvenance, PlacementLedgerRepository } from 'hrc-store-sqlite'
+import type {
+  BirthAuthorityProvenance,
+  EstablishmentProvenance,
+  PlacementLedgerRepository,
+} from 'hrc-store-sqlite'
 import type { RuntimePlacement } from 'spaces-config'
 
 import { formatCanonicalScopeRef } from 'hrc-core'
 import type { HrcHarnessIntent, SummonIntent } from 'hrc-core'
 
+import type {
+  BirthCredentialValidation,
+  ChildBirthAuthorityProvenance,
+} from './birth-credential.js'
 import { isReservedNodeId } from './node-id.js'
 import { RegistryRefusedError, RegistryUnreachableError } from './registry-client.js'
 import type { BindingRegistryClient } from './registry-client.js'
@@ -90,6 +98,7 @@ export type SummonGateAllowReason =
   | 'local-authority'
   | 'registry-bound-local'
   | 'virgin-establishment'
+  | 'child-birth'
 
 export type SummonGateRefuseReason =
   | 'scope-retired'
@@ -103,6 +112,8 @@ export type SummonGateRefuseReason =
   | 'registry-refused'
   | `capability-${SummonCapabilityName}-missing`
   | 'capability-observation-failed'
+  | 'invalid-birth-credential'
+  | 'zombie-runtime'
 
 /** Node-local facts required to materialize an agent scope (§5). */
 export type SummonCapabilityName =
@@ -140,6 +151,8 @@ export type SummonGateEvaluation =
       reason: SummonGateAllowReason
       homeNodeId?: string | undefined
       establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'> | undefined
+      birthClass?: 'mechanism-born' | undefined
+      authorityProvenance?: BirthAuthorityProvenance | undefined
     }
   | {
       decision: 'refuse'
@@ -176,7 +189,7 @@ export type SummonGateDeps = {
   /** False when federation.json is absent — the dark path. */
   federationConfigured: boolean
   localNodeId: string
-  ledger: Pick<PlacementLedgerRepository, 'activeAuthority'>
+  ledger: Pick<PlacementLedgerRepository, 'activeAuthority' | 'installActive'>
   registry: BindingRegistryClient
   /**
    * Compiled placement policy for the scope. `undefined` means the profile
@@ -193,6 +206,8 @@ export type SummonGateDeps = {
     | undefined
   /** Node-local retirement lookup (T-06614). Absent until that task lands. */
   retirementFor?: ((scopeRef: string) => ScopeRetirement | undefined) | undefined
+  /** Daemon-owned runtime/live-run lookup. Never trusts caller parent assertions. */
+  validateBirthCredential?: ((credential: string) => BirthCredentialValidation) | undefined
   log?: SummonGateLog | undefined
 }
 
@@ -200,6 +215,8 @@ export type SummonGateRequest = {
   scopeRef: string
   path: SummonPath
   intent: SummonIntent
+  /** Opaque runtime-stable capability. Absent means ordinary summon intent. */
+  birthCredential?: string | undefined
   deps: SummonGateDeps
   capabilityHint?: SummonCapabilityHint | undefined
 }
@@ -226,6 +243,8 @@ function allow(
   extra: {
     homeNodeId?: string
     establishmentProvenance?: Exclude<EstablishmentProvenance, 'rebind'>
+    birthClass?: 'mechanism-born'
+    authorityProvenance?: BirthAuthorityProvenance
   } = {}
 ): Extract<SummonGateEvaluation, { decision: 'allow' }> {
   return { decision: 'allow', reason, ...extra }
@@ -402,6 +421,22 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     return allow('non-agent-scope')
   }
 
+  // A PRESENT credential is an explicit child-birth claim. It must validate or
+  // refuse; it never degrades into a policy summon. Absence is different: it
+  // follows typed/provisional summon intent exactly as before.
+  let childBirth: ChildBirthAuthorityProvenance | undefined
+  if (request.birthCredential !== undefined) {
+    const validation = deps.validateBirthCredential?.(request.birthCredential) ?? {
+      valid: false as const,
+      reason: 'invalid-birth-credential' as const,
+      diagnostic: 'This daemon has no birth-credential validator configured; refusing child-birth.',
+    }
+    if (!validation.valid) {
+      return refuse(validation.reason, validation.diagnostic)
+    }
+    childBirth = validation.provenance
+  }
+
   // (1) Retirement, before any authority logic (T-06614 C-11125).
   //
   // Ordering is load-bearing: on a losing node the retirement mark is precisely
@@ -469,6 +504,20 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'bound-elsewhere',
       `${scopeRef} is already established on ${bound.homeNodeId} (epoch ${bound.placementEpoch}). A placement policy edit alone never grants this node authority — summon it on ${bound.homeNodeId}, or rebind it.`,
       { homeNodeId: bound.homeNodeId }
+    )
+  }
+
+  // The registry proved this identity globally UNBOUND. A live parent permit
+  // therefore chooses the immutable mechanism-born class and this daemon's own
+  // node. Placement is intentionally not consulted.
+  if (childBirth !== undefined) {
+    return await requireMaterializationCapability(
+      request,
+      allow('child-birth', {
+        homeNodeId: deps.localNodeId,
+        birthClass: 'mechanism-born',
+        authorityProvenance: childBirth,
+      })
     )
   }
 
@@ -565,6 +614,7 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
       // reading `legacy-boolean` came from the T-06608 derivation, a line
       // reading `typed` from a signal the caller actually sent.
       intentSource: 'typed',
+      birthCredentialPresent: request.birthCredential !== undefined,
       diagnostic: evaluation.diagnostic,
     })
   }

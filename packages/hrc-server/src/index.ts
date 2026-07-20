@@ -986,6 +986,7 @@ class HrcServerInstance implements HrcServer {
       scopeRef,
       path: 'resolve-session',
       intent: parsed.summonIntent ?? 'implicit',
+      ...(parsed.birthCredential === undefined ? {} : { birthCredential: parsed.birthCredential }),
     })
 
     const now = timestamp()
@@ -1042,7 +1043,10 @@ class HrcServerInstance implements HrcServer {
     }
     validateConfiguredCommandRunTarget(body.configuredTargetId, command)
 
-    const session = await this.resolveOrCreateCommandRunSession(body.sessionRef)
+    const session = await this.resolveOrCreateCommandRunSession(
+      body.sessionRef,
+      body.birthCredential
+    )
     const runtimeId = `rt-${randomUUID()}`
     const now = timestamp()
 
@@ -1125,7 +1129,10 @@ class HrcServerInstance implements HrcServer {
     } satisfies LaunchCommandScopedRunResponse)
   }
 
-  async resolveOrCreateCommandRunSession(sessionRef: string): Promise<HrcSessionRecord> {
+  async resolveOrCreateCommandRunSession(
+    sessionRef: string,
+    birthCredential?: string
+  ): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
     if (continuity) {
@@ -1136,7 +1143,12 @@ class HrcServerInstance implements HrcServer {
     }
 
     // wrkf / command-run births (POST /v1/command-runs/launch).
-    await assertSummonAuthority(this, { scopeRef, path: 'command-run', intent: 'implicit' })
+    await assertSummonAuthority(this, {
+      scopeRef,
+      path: 'command-run',
+      intent: 'implicit',
+      ...(birthCredential === undefined ? {} : { birthCredential }),
+    })
 
     const now = timestamp()
     const hostSessionId = createHostSessionId()

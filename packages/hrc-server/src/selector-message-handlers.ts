@@ -14,6 +14,7 @@ import {
   isMatchingInteractiveTmuxBrokerRuntime,
   validateEnsureRuntimeIntent,
 } from './broker-decisions.js'
+import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
@@ -158,7 +159,8 @@ export async function ensureTargetSession(
   this: HrcServerInstanceForHandlers,
   sessionRef: string,
   intent: HrcRuntimeIntent,
-  parsedScopeJson?: Record<string, unknown>
+  parsedScopeJson?: Record<string, unknown>,
+  birthCredential?: string
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const existing = findTargetSession(this.db, normalized)
@@ -172,6 +174,7 @@ export async function ensureTargetSession(
         path: 'archived-successor',
         intent: 'implicit',
         capabilityHint: { placement: intent.placement, harness: intent.harness },
+        ...(birthCredential === undefined ? {} : { birthCredential }),
       })
       const successor = createSessionSuccessorFromContinuation(this.db, existing, {
         lastAppliedIntentJson: intent,
@@ -201,6 +204,7 @@ export async function ensureTargetSession(
     path: 'ensure-target',
     intent: 'implicit',
     capabilityHint: { placement: intent.placement, harness: intent.harness },
+    ...(birthCredential === undefined ? {} : { birthCredential }),
   })
 
   const now = timestamp()
@@ -257,11 +261,13 @@ export async function handleEnsureTarget(
   const parsedScopeJson = isRecord(body['parsedScopeJson'])
     ? (body['parsedScopeJson'] as Record<string, unknown>)
     : undefined
+  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
 
   const session = await this.ensureTargetSession(
     sessionRef,
     runtimeIntent as HrcRuntimeIntent,
-    parsedScopeJson
+    parsedScopeJson,
+    birthCredential
   )
   return json(toTargetView(this.db, session) satisfies EnsureTargetResponse)
 }

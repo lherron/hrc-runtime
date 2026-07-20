@@ -1,4 +1,5 @@
 import { CliUsageError } from 'cli-kit'
+import { HRC_BIRTH_CREDENTIAL_ENV } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { resolveTargetToSessionRef } from '../normalize.js'
 import { printJson } from '../print.js'
@@ -22,6 +23,9 @@ export async function cmdSummon(
   const result = await client.ensureTarget({
     sessionRef,
     runtimeIntent,
+    ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
+      ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+      : {}),
   })
 
   if (opts.json) {

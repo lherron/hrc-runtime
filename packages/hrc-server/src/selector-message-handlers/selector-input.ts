@@ -17,6 +17,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { normalizeDispatchIntent } from '../dispatch-invocation.js'
+import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
 import { requireGhosttySurface, requireTmuxPane } from '../require-helpers.js'
@@ -405,7 +406,13 @@ export async function handleDispatchTurnBySelector(
     const parsedScopeJson = isRecord(body['parsedScopeJson'])
       ? (body['parsedScopeJson'] as Record<string, unknown>)
       : undefined
-    session = await this.ensureTargetSession(sessionRef, runtimeIntent, parsedScopeJson)
+    const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
+    session = await this.ensureTargetSession(
+      sessionRef,
+      runtimeIntent,
+      parsedScopeJson,
+      birthCredential
+    )
   }
 
   if (!session) {

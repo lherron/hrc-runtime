@@ -1,5 +1,5 @@
 import { CliUsageError, consumeBody, parseDuration } from 'cli-kit'
-import { HrcDomainError, splitSessionRef } from 'hrc-core'
+import { HRC_BIRTH_CREDENTIAL_ENV, HrcDomainError, splitSessionRef } from 'hrc-core'
 import type {
   HrcMessageAddress,
   HrcMessageRecord,
@@ -98,6 +98,9 @@ export async function cmdDm(
       replyToMessageId,
       runtimeIntent,
       createIfMissing: true,
+      ...(process.env[HRC_BIRTH_CREDENTIAL_ENV]
+        ? { birthCredential: process.env[HRC_BIRTH_CREDENTIAL_ENV] }
+        : {}),
       ...(opts.crossScopeReply ? { allowCrossScopeReply: true } : {}),
     })
 

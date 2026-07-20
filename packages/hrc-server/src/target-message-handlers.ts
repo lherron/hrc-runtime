@@ -28,6 +28,7 @@ import type {
 import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
+import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { assertSummonAuthority } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -184,6 +185,7 @@ export async function handleCreateSessionSuccessor(
     priorHostSessionId !== undefined
       ? requireSession(this.db, priorHostSessionId)
       : findTargetSession(this.db, sessionRef)
+  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
   if (!prior) {
     throw new HrcNotFoundError(HrcErrorCode.UNKNOWN_SESSION, `unknown session "${sessionRef}"`, {
       sessionRef,
@@ -211,6 +213,7 @@ export async function handleCreateSessionSuccessor(
             harness: prior.lastAppliedIntentJson.harness,
           },
         }),
+    ...(birthCredential === undefined ? {} : { birthCredential }),
   })
 
   const successor = createSessionSuccessorFromContinuation(this.db, prior)
@@ -276,6 +279,7 @@ export async function handleResumeContinuation(
   const parsedScopeJson = isObjectRecord(body['parsedScope'])
     ? (body['parsedScope'] as Record<string, unknown>)
     : undefined
+  const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
 
   const selection = selectResumeContinuationCandidate(this.db, {
     sessionRef,
@@ -318,7 +322,13 @@ export async function handleResumeContinuation(
     )
   }
 
-  const successor = await createNotifiedSessionSuccessor(this, prior, intent, parsedScopeJson)
+  const successor = await createNotifiedSessionSuccessor(
+    this,
+    prior,
+    intent,
+    parsedScopeJson,
+    birthCredential
+  )
 
   return json({
     hostSessionId: successor.hostSessionId,
@@ -402,7 +412,8 @@ async function createNotifiedSessionSuccessor(
   server: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
-  parsedScopeJson: Record<string, unknown> | undefined
+  parsedScopeJson: Record<string, unknown> | undefined,
+  birthCredential?: string
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
   const capabilityIntent = intent ?? session.lastAppliedIntentJson
@@ -418,6 +429,7 @@ async function createNotifiedSessionSuccessor(
             harness: capabilityIntent.harness,
           },
         }),
+    ...(birthCredential === undefined ? {} : { birthCredential }),
   })
 
   const successor = createSessionSuccessorFromContinuation(server.db, session, {
@@ -559,7 +571,8 @@ export async function handleSemanticTurnHandoff(
     session = await this.ensureTargetSession(
       body.to.sessionRef,
       body.runtimeIntent,
-      body.parsedScopeJson
+      body.parsedScopeJson,
+      body.birthCredential
     )
   }
 
@@ -581,7 +594,8 @@ export async function handleSemanticTurnHandoff(
       this,
       session,
       body.runtimeIntent,
-      body.parsedScopeJson
+      body.parsedScopeJson,
+      body.birthCredential
     )
   }
 
@@ -889,7 +903,12 @@ export async function handleSemanticDm(
     if (!session && body.createIfMissing !== false) {
       const intent = body.runtimeIntent
       if (intent) {
-        session = await this.ensureTargetSession(body.to.sessionRef, intent, body.parsedScopeJson)
+        session = await this.ensureTargetSession(
+          body.to.sessionRef,
+          intent,
+          body.parsedScopeJson,
+          body.birthCredential
+        )
       }
     }
 
@@ -899,7 +918,8 @@ export async function handleSemanticDm(
           this,
           session,
           body.runtimeIntent,
-          body.parsedScopeJson
+          body.parsedScopeJson,
+          body.birthCredential
         )
       }
 
