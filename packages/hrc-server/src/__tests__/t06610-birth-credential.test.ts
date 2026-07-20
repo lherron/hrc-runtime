@@ -194,6 +194,7 @@ describe('T-06610 runtime-stable birth credential', () => {
         policyFor: async () => {
           throw new Error('an existing registry binding must not consult policy')
         },
+        capabilityFor: async () => ({ outcome: 'capable' as const }),
       }
 
       const result = await assertSummonAuthority(server, {
