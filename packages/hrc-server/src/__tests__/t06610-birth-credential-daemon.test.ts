@@ -143,7 +143,6 @@ describe('T-06610 child-birth on a live isolated daemon', () => {
         sessionRef: `${CHILD_SCOPE}/lane:main`,
         create: true,
         birthCredential: RUNTIME_ID,
-        childDispatchIntent: { targetScopeRef: CHILD_SCOPE },
       })
       expect(born.status).toBe(200)
       const bornBody = (await born.json()) as { created: boolean }

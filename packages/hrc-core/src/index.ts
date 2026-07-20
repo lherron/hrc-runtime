@@ -3,7 +3,7 @@ import packageJson from '../package.json' with { type: 'json' }
 export const HRC_API_VERSION = packageJson.version
 
 export { HRC_BIRTH_CREDENTIAL_ENV } from './federation.js'
-export type { HrcBirthCredential, HrcChildDispatchIntent } from './federation.js'
+export type { HrcBirthCredential } from './federation.js'
 
 export {
   HrcBadRequestError,

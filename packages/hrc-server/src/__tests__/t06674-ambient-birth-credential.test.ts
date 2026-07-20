@@ -173,7 +173,6 @@ describe('T-06674 ambient birth credential reach', () => {
         sessionRef: `${DIRECT_SCOPE}/lane:main`,
         create: true,
         birthCredential: RUNTIME_ID,
-        childDispatchIntent: { targetScopeRef: DIRECT_SCOPE },
       })
       expect(direct.status).toBe(200)
       expect(ledger.activeAuthority(DIRECT_SCOPE)).toMatchObject({

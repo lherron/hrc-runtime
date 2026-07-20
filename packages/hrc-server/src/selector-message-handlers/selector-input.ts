@@ -17,10 +17,7 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import { normalizeDispatchIntent } from '../dispatch-invocation.js'
-import {
-  parseOptionalBirthCredential,
-  parseOptionalChildDispatchIntent,
-} from '../federation/birth-credential.js'
+import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { assertScopeNotRetired } from '../federation/summon-gate-server.js'
 import { appendHrcEvent, createUserPromptPayload } from '../hrc-event-helper.js'
 import { normalizeTargetLane } from '../messages.js'
@@ -426,13 +423,11 @@ export async function handleDispatchTurnBySelector(
       ? (body['parsedScopeJson'] as Record<string, unknown>)
       : undefined
     const birthCredential = parseOptionalBirthCredential(body['birthCredential'])
-    const childDispatchIntent = parseOptionalChildDispatchIntent(body['childDispatchIntent'])
     session = await this.ensureTargetSession(
       sessionRef,
       runtimeIntent,
       parsedScopeJson,
-      birthCredential,
-      childDispatchIntent
+      birthCredential
     )
   }
 

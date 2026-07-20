@@ -1,10 +1,7 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
-import type { HrcChildDispatchIntent, HrcRuntimeIntent, SummonIntent } from 'hrc-core'
+import type { HrcRuntimeIntent, SummonIntent } from 'hrc-core'
 
-import {
-  parseOptionalBirthCredential,
-  parseOptionalChildDispatchIntent,
-} from '../federation/birth-credential.js'
+import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { isRecord } from './common.js'
 import { parseRuntimeIntent } from './runtime.js'
 
@@ -16,7 +13,6 @@ export function parseResolveSessionRequest(input: unknown): {
   runtimeIntent?: HrcRuntimeIntent
   summonIntent?: SummonIntent
   birthCredential?: string
-  childDispatchIntent?: HrcChildDispatchIntent
 } {
   if (!isRecord(input)) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
@@ -59,7 +55,6 @@ export function parseResolveSessionRequest(input: unknown): {
     )
   }
   const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
-  const childDispatchIntent = parseOptionalChildDispatchIntent(input['childDispatchIntent'])
 
   parseSessionRef(sessionRef)
   return {
@@ -68,7 +63,6 @@ export function parseResolveSessionRequest(input: unknown): {
     ...(runtimeIntent !== undefined ? { runtimeIntent: parseRuntimeIntent(runtimeIntent) } : {}),
     ...(summonIntent !== undefined ? { summonIntent: summonIntent as SummonIntent } : {}),
     ...(birthCredential !== undefined ? { birthCredential } : {}),
-    ...(childDispatchIntent !== undefined ? { childDispatchIntent } : {}),
   }
 }
 

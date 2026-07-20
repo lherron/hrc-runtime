@@ -56,9 +56,8 @@ export type FederationExpectedPlacement = {
  * Optional delivery context needed to preserve today's local summon/queue
  * behavior after the receiver durably inserts the transcript row.
  *
- * It deliberately excludes wait (which stays origin-local), birthCredential,
- * and childDispatchIntent (child birth is accepted only at the producer-owned
- * local seam and never crosses nodes).
+ * It deliberately excludes wait (which stays origin-local) and birthCredential
+ * (child birth never crosses nodes).
  */
 export type FederationMessageDelivery = {
   readonly runtimeIntent?: HrcRuntimeIntent | undefined

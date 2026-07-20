@@ -1,10 +1,7 @@
 import { HrcBadRequestError, HrcErrorCode } from 'hrc-core'
 import type { LaunchCommandScopedRunBinding, LaunchCommandScopedRunRequest } from 'hrc-core'
 
-import {
-  parseOptionalBirthCredential,
-  parseOptionalChildDispatchIntent,
-} from '../federation/birth-credential.js'
+import { parseOptionalBirthCredential } from '../federation/birth-credential.js'
 import { isRecord, requireTrimmedStringField } from './common.js'
 
 const BINDING_KEYS = [
@@ -48,7 +45,6 @@ export function parseLaunchCommandScopedRunRequest(input: unknown): LaunchComman
   }
 
   const birthCredential = parseOptionalBirthCredential(input['birthCredential'])
-  const childDispatchIntent = parseOptionalChildDispatchIntent(input['childDispatchIntent'])
   return {
     configuredTargetId: requireTrimmedStringField(input, 'configuredTargetId'),
     sessionRef: requireTrimmedStringField(input, 'sessionRef'),
@@ -56,6 +52,5 @@ export function parseLaunchCommandScopedRunRequest(input: unknown): LaunchComman
     binding,
     ...(input['stdinJson'] !== undefined ? { stdinJson: input['stdinJson'] } : {}),
     ...(birthCredential === undefined ? {} : { birthCredential }),
-    ...(childDispatchIntent === undefined ? {} : { childDispatchIntent }),
   }
 }

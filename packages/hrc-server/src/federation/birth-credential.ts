@@ -1,5 +1,4 @@
 import { HRC_BIRTH_CREDENTIAL_ENV, HrcBadRequestError, HrcErrorCode } from 'hrc-core'
-import type { HrcChildDispatchIntent } from 'hrc-core'
 import type {
   BirthAuthorityProvenance,
   HrcDatabase,
@@ -45,11 +44,11 @@ function isDeadRuntimeStatus(status: string): boolean {
 /**
  * Validate a caller's opaque credential exclusively against daemon-owned state.
  *
- * The immediate transaction is the parent-origin linearization point. Runtime
- * and current-run rows are read as one snapshot; if a terminal write wins first
- * validation refuses, and if this transaction wins first it returns immutable
- * provenance naming the run that was live at that instant. Child authority is
- * granted only later, when the summon gate also validates target-bound intent.
+ * The immediate transaction is the child-birth linearization point. Runtime and
+ * current-run rows are read as one snapshot; if a terminal write wins first the
+ * birth refuses, and if this transaction wins first it returns an immutable
+ * birth permit naming the run that was live at that instant. Completion may
+ * occur after the permit is returned without retroactively invalidating it.
  */
 export function validateRuntimeBirthCredential(
   db: HrcDatabase,
@@ -125,29 +124,6 @@ export function parseOptionalBirthCredential(value: unknown): string | undefined
     )
   }
   return value.trim()
-}
-
-/** Strict parser for the producer-owned, exact target-bound child signal. */
-export function parseOptionalChildDispatchIntent(
-  value: unknown
-): HrcChildDispatchIntent | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'childDispatchIntent must be an object',
-      { field: 'childDispatchIntent' }
-    )
-  }
-  const targetScopeRef = (value as Record<string, unknown>)['targetScopeRef']
-  if (typeof targetScopeRef !== 'string' || targetScopeRef.trim().length === 0) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'childDispatchIntent.targetScopeRef must be a non-empty string',
-      { field: 'childDispatchIntent.targetScopeRef' }
-    )
-  }
-  return { targetScopeRef: targetScopeRef.trim() }
 }
 
 export type LocalBirthResolution = {
