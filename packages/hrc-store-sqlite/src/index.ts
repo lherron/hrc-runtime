@@ -1,5 +1,28 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase } from './database.js'
+export {
+  BindingRegistry,
+  PlacementEpochRegressionError,
+  PlacementLedgerConflictError,
+  PlacementLedgerRepository,
+  createPlacementLedgerRepository,
+  openBindingRegistry,
+  readPlacementLedgerRows,
+  rebuildBindingRegistryFromLedgers,
+} from './federation-repositories.js'
+export type {
+  BindingCasInput,
+  BindingCasResult,
+  BindingEstablishResult,
+  BirthAuthorityProvenance,
+  EstablishBindingInput,
+  EstablishmentProvenance,
+  FederationBirthClass,
+  InstallActivePlacementInput,
+  PlacementBinding,
+  PlacementLedgerRecord,
+  PlacementLedgerState,
+} from './federation-repositories.js'
 export type {
   AppManagedSessionFindOptions,
   AppManagedSessionRecord,

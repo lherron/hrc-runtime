@@ -263,4 +263,6 @@ export type HrcServer = {
   stop(): Promise<void>
   /** Resolved OTLP/HTTP log ingest URL (e.g. http://127.0.0.1:4318/v1/logs), if the listener is active. */
   readonly otelEndpoint: string | undefined
+  /** F0's narrow authenticated registry URL, present only when federation.json declares registry.bind. */
+  readonly federationRegistryEndpoint: string | undefined
 }
