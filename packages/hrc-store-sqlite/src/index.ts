@@ -23,6 +23,18 @@ export type {
   PlacementLedgerRecord,
   PlacementLedgerState,
 } from './federation-repositories.js'
+export {
+  ScopeRetirementConflictError,
+  ScopeRetirementRepository,
+  createScopeRetirementRepository,
+  readScopeRetirement,
+  readScopeRetirements,
+} from './federation-reconciliation.js'
+export type {
+  RetireScopeInput,
+  ScopeRetirementReason,
+  ScopeRetirementRecord,
+} from './federation-reconciliation.js'
 export type {
   AppManagedSessionFindOptions,
   AppManagedSessionRecord,
