@@ -2,7 +2,9 @@
  * T-06668 — a registry-hosting node consults its own authority locally.
  *
  * Self-peers remain invalid. The local registry is not a peer and therefore
- * reaches the gate through the endpoint-owned in-process client instead.
+ * reaches the gate through the endpoint-owned in-process client instead. A
+ * zero-peer listener rejects every network request while retaining that local
+ * authority path.
  */
 
 import { writeFile } from 'node:fs/promises'
@@ -138,7 +140,7 @@ describe('registry-host gate on a live isolated daemon', () => {
 
   const tailnetIpv4 = localTailnetIpv4()
   const liveTailnetTest = tailnetIpv4 === undefined ? test.skip : test
-  liveTailnetTest('boots advisory, consults locally, and emits the summon-gate event', async () => {
+  liveTailnetTest('boots zero-peer advisory with local-only authority', async () => {
     if (tailnetIpv4 === undefined) throw new Error('tailnet IPv4 unavailable')
     fixture = await createHrcTestFixture('hrc-t06668-local-registry-')
 
@@ -150,14 +152,13 @@ describe('registry-host gate on a live isolated daemon', () => {
     const port = probe.port
     probe.stop(true)
 
+    const bind = `http://${tailnetIpv4}:${port}`
     await writeFile(
       `${fixture.stateRoot}/${FEDERATION_CONFIG_BASENAME}`,
       JSON.stringify({
         nodeId: 'svc-test',
-        peers: {
-          lab: { endpoint: 'http://lab.example.ts.net:18490', token: 'lab-token' },
-        },
-        registry: { bind: `http://${tailnetIpv4}:${port}` },
+        peers: {},
+        registry: { bind },
         gate: { mode: 'advisory', registryHost: 'svc-test' },
       }),
       { mode: 0o600 }
@@ -166,6 +167,14 @@ describe('registry-host gate on a live isolated daemon', () => {
     const captured = captureServerLog()
     const server = await createHrcServer(fixture.serverOpts())
     try {
+      expect(server.federationRegistryEndpoint).toBe(bind)
+      const remote = await fetch(
+        `${bind}/v1/federation/registry/consult?scopeRef=${encodeURIComponent(SCOPE)}`,
+        { headers: { authorization: 'Bearer no-configured-peer-can-match' } }
+      )
+      expect(remote.status).toBe(401)
+      expect(await remote.json()).toEqual({ ok: false, error: 'unauthorized' })
+
       const response = await fixture.postJson('/v1/sessions/resolve', {
         sessionRef: SESSION,
         create: true,

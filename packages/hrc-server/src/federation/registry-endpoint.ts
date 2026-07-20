@@ -200,12 +200,12 @@ export function startBindingRegistryEndpoint(input: {
   registryPath: string
   localNodeId: string
 }): BindingRegistryEndpointControl {
-  if (input.peers.size === 0) {
-    throw new Error('federation registry listener requires at least one authenticated peer')
-  }
   const bind = new URL(input.listener.bind)
   const registry = openBindingRegistry(input.registryPath)
   try {
+    // A zero-peer listener is the valid single-node authority shape. The local
+    // gate uses registryClient below; the request handler still authenticates
+    // before routing, so an empty auth map makes every network request a 401.
     const server = Bun.serve({
       hostname: bind.hostname.replace(/^\[|\]$/g, ''),
       port: Number(bind.port),
