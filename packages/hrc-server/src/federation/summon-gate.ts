@@ -32,6 +32,7 @@ import type {
   EstablishmentProvenance,
   PlacementBinding,
   PlacementLedgerRepository,
+  RegistryRetirementRecord,
 } from 'hrc-store-sqlite'
 import type { RuntimePlacement } from 'spaces-config'
 
@@ -88,8 +89,8 @@ export type { SummonIntent }
 /** Node-local retirement mark written by reconciliation (T-06614 C-11125). */
 export type ScopeRetirement = {
   retiredNodeId: string
-  canonicalHomeNodeId: string
-  canonicalPlacementEpoch: number
+  retiredPlacementEpoch: number
+  successorNodeId: string | null
   reason: string
 }
 
@@ -98,6 +99,7 @@ export type SummonGateAllowReason =
   | 'non-agent-scope'
   | 'local-authority'
   | 'registry-bound-local'
+  | 'retired-policy-succession'
   | 'virgin-establishment'
   | 'child-birth'
 
@@ -158,6 +160,8 @@ export type SummonGateEvaluation =
       authorityProvenance?: BirthAuthorityProvenance | undefined
       /** Registry authority to install locally after a registry-first crash. */
       registryBinding?: PlacementBinding | undefined
+      /** Exact tombstone to consume in a registry-owned E -> E+1 transition. */
+      registryRetirement?: RegistryRetirementRecord | undefined
     }
   | {
       decision: 'refuse'
@@ -258,6 +262,7 @@ function allow(
     birthClass?: 'mechanism-born'
     authorityProvenance?: BirthAuthorityProvenance
     registryBinding?: PlacementBinding
+    registryRetirement?: RegistryRetirementRecord
   } = {}
 ): Extract<SummonGateEvaluation, { decision: 'allow' }> {
   return { decision: 'allow', reason, ...extra }
@@ -490,17 +495,36 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   // scope independently pre-federation, so it legitimately holds authority —
   // check it after the ledger and the loser allows, and reconciliation never binds.
   const retirement = deps.retirementFor?.(scopeRef)
-  if (retirement !== undefined && retirement.retiredNodeId === deps.localNodeId) {
+
+  // (2) Local ledger — the hot path, deliberately free of network unless a
+  // local epoch fence suppresses it. A later active epoch makes the retained
+  // fence inert and permits a deliberate return to this node.
+  const local = deps.ledger.activeAuthority(scopeRef)
+  const localFenceApplies =
+    retirement !== undefined &&
+    retirement.retiredNodeId === deps.localNodeId &&
+    (local === undefined || local.placementEpoch <= retirement.retiredPlacementEpoch)
+  if (localFenceApplies && retirement.successorNodeId !== deps.localNodeId) {
+    if (retirement.successorNodeId === null) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is terminally retired on ${deps.localNodeId} at epoch ${retirement.retiredPlacementEpoch}; it has no successor and cannot be summoned.`
+      )
+    }
+    if (retirement.retiredPlacementEpoch === Number.MAX_SAFE_INTEGER) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is retired on ${deps.localNodeId} at the maximum safe placement epoch; successor activation is refused rather than wrapping the epoch.`
+      )
+    }
     return refuse(
       'scope-retired',
-      `${scopeRef} was retired on this node (${deps.localNodeId}) by namespace reconciliation. Its canonical home is ${retirement.canonicalHomeNodeId} (epoch ${retirement.canonicalPlacementEpoch}); summon it there.`,
-      { homeNodeId: retirement.canonicalHomeNodeId }
+      `${scopeRef} was retired on this node (${deps.localNodeId}) at epoch ${retirement.retiredPlacementEpoch}. Its successor is ${retirement.successorNodeId} at epoch ${retirement.retiredPlacementEpoch + 1}; summon it there.`,
+      { homeNodeId: retirement.successorNodeId }
     )
   }
 
-  // (2) Local ledger — the hot path, deliberately free of network.
-  const local = deps.ledger.activeAuthority(scopeRef)
-  if (local !== undefined) {
+  if (local !== undefined && !localFenceApplies) {
     if (local.homeNodeId === deps.localNodeId) {
       return await requireMaterializationCapability(
         request,
@@ -553,6 +577,62 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'bound-elsewhere',
       `${scopeRef} is already established on ${bound.homeNodeId} (epoch ${bound.placementEpoch}). A placement policy edit alone never grants this node authority — summon it on ${bound.homeNodeId}, or rebind it.`,
       { homeNodeId: bound.homeNodeId }
+    )
+  }
+
+  if (consult.outcome === 'retired') {
+    const retired = consult.retirement
+    if (retired.successorNodeId === null) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is terminally retired at epoch ${retired.placementEpoch}; it has no successor and cannot be summoned.`
+      )
+    }
+    if (retired.successorNodeId !== deps.localNodeId) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is retired at epoch ${retired.placementEpoch}; only successor ${retired.successorNodeId} may activate it at epoch ${retired.placementEpoch + 1}.`,
+        { homeNodeId: retired.successorNodeId }
+      )
+    }
+    if (retired.birthClass === 'mechanism-born' || childBirth !== undefined) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is a retired mechanism-bound identity. Generic succession is refused; a future claim-succession mechanism must preserve its birth authority.`
+      )
+    }
+    if (retired.placementEpoch === Number.MAX_SAFE_INTEGER) {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} cannot activate because its placement epoch is exhausted at ${retired.placementEpoch}; refusing rather than wrapping authority.`
+      )
+    }
+
+    let policy: SummonGatePolicy | undefined
+    try {
+      policy = await deps.policyFor(scopeRef)
+    } catch (error) {
+      return refuse(
+        'policy-unavailable',
+        `Cannot resolve placement policy for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}`,
+        { retryable: true }
+      )
+    }
+    const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent)
+    if (isEvaluation(designated)) return designated
+    if (designated.homeNodeId !== deps.localNodeId) {
+      return refuse(
+        designated.matchedConstraint === undefined ? 'routed-elsewhere' : 'pin-mismatch',
+        `${scopeRef} names ${deps.localNodeId} as registry successor, but current placement policy designates ${designated.homeNodeId}; refusing activation until policy and the immutable successor agree.`,
+        { homeNodeId: designated.homeNodeId }
+      )
+    }
+    return await requireMaterializationCapability(
+      request,
+      allow('retired-policy-succession', {
+        homeNodeId: deps.localNodeId,
+        registryRetirement: retired,
+      })
     )
   }
 

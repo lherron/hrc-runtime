@@ -137,10 +137,12 @@ describe('pre-federation namespace reconciliation', () => {
       registry.sqlite
         .query(
           `INSERT INTO binding_registry (
-            scope_ref, home_node_id, placement_epoch, birth_class,
-            authority_provenance_json, establishment_provenance,
-            prior_home_node_id, created_at, updated_at
-          ) VALUES (?, 'svc', 1, 'policy-born', '{}', 'explicit_local', NULL, ?, ?)`
+            scope_ref, state, placement_epoch, birth_class,
+            authority_provenance_json, created_at, updated_at,
+            home_node_id, establishment_provenance, prior_home_node_id,
+            retired_home_node_id, retired_at, retirement_reason, successor_node_id
+          ) VALUES (?, 'active', 1, 'policy-born', '{}', ?, ?,
+            'svc', 'explicit_local', NULL, NULL, NULL, NULL, NULL)`
         )
         .run('system:hrc/sweep', '2026-07-20T02:00:00.000Z', '2026-07-20T02:00:00.000Z')
     } finally {
@@ -417,8 +419,8 @@ describe('pre-federation namespace reconciliation', () => {
       expect(readScopeRetirement(svc, scopeRef)).toMatchObject({
         scopeRef,
         retiredNodeId: 'svc',
-        canonicalHomeNodeId: 'max3',
-        canonicalPlacementEpoch: 1,
+        successorNodeId: 'max3',
+        retiredPlacementEpoch: 1,
         reason: 'namespace_reconciliation',
       })
     } finally {
@@ -502,7 +504,7 @@ describe('pre-federation namespace reconciliation', () => {
     }
   })
 
-  it('dry-runs and applies an allowlisted retire-to-virgin disposition across all three legs', () => {
+  it('stages the old-home fence before atomically tombstoning an allowlisted identity', () => {
     const root = mkdtempSync(join(tmpdir(), 'hrc-f0-retire-virgin-'))
     roots.push(root)
     const scopeRef = 'agent:cody:project:agent-control-plane:task:wrkq-refactor'
@@ -552,14 +554,14 @@ describe('pre-federation namespace reconciliation', () => {
         {
           scopeRef,
           retiredNodeId: 'svc',
-          canonicalHomeNodeId: 'lab',
-          canonicalPlacementEpoch: 1,
-          rationaleRef: 'T-06616/C-11185',
-          registryAction: 'would_delete',
+          retiredPlacementEpoch: 1,
+          successorNodeId: 'lab',
+          rationaleRef: 'T-06681/Lance-ruling-A',
+          registryAction: 'would_stage_fence',
         },
       ],
       artifact: {
-        retirementSteps: [{ scopeRef, retiredNodeId: 'svc', canonicalHomeNodeId: 'lab' }],
+        retirementSteps: [{ scopeRef, retiredNodeId: 'svc', successorNodeId: 'lab' }],
         archiveSteps: [{ scopeRef, nodeId: 'svc' }],
       },
     })
@@ -570,13 +572,13 @@ describe('pre-federation namespace reconciliation', () => {
       afterDryRun.close()
     }
 
-    const reconciled = reconcileFederationNamespace({ ...input, dryRun: false })
-    expect(reconciled.retiredScopes).toEqual([
-      expect.objectContaining({ scopeRef, registryAction: 'deleted' }),
+    const staged = reconcileFederationNamespace({ ...input, dryRun: false })
+    expect(staged.retiredScopes).toEqual([
+      expect.objectContaining({ scopeRef, registryAction: 'awaiting_fence' }),
     ])
     const afterRegistryLeg = openBindingRegistry(registryPath)
     try {
-      expect(afterRegistryLeg.get(scopeRef)).toBeUndefined()
+      expect(afterRegistryLeg.get(scopeRef)).toBeDefined()
     } finally {
       afterRegistryLeg.close()
     }
@@ -585,13 +587,13 @@ describe('pre-federation namespace reconciliation', () => {
         nodeStores: input.nodeStores,
         registryPath,
       }).remainingUnreconciled
-    ).toEqual([{ scopeRef, reasons: ['binding_missing'] }])
+    ).toEqual([])
 
     expect(
       applyNamespaceRetirements({
         nodeId: 'svc',
         statePath: svcPath,
-        artifact: reconciled.artifact,
+        artifact: staged.artifact,
         dryRun: false,
       })
     ).toMatchObject({
@@ -601,8 +603,8 @@ describe('pre-federation namespace reconciliation', () => {
         {
           scopeRef,
           markedNodeId: 'svc',
-          canonicalHomeNodeId: 'lab',
-          canonicalPlacementEpoch: 1,
+          retiredPlacementEpoch: 1,
+          successorNodeId: 'lab',
           action: 'created',
         },
       ],
@@ -612,8 +614,8 @@ describe('pre-federation namespace reconciliation', () => {
     try {
       expect(readScopeRetirement(svc, scopeRef)).toMatchObject({
         retiredNodeId: 'svc',
-        canonicalHomeNodeId: 'lab',
-        canonicalPlacementEpoch: 1,
+        successorNodeId: 'lab',
+        retiredPlacementEpoch: 1,
       })
       expect(
         svc
@@ -623,10 +625,77 @@ describe('pre-federation namespace reconciliation', () => {
     } finally {
       svc.close()
     }
+    const reconciled = reconcileFederationNamespace({ ...input, dryRun: false })
+    expect(reconciled.retiredScopes).toEqual([
+      expect.objectContaining({ scopeRef, registryAction: 'retired' }),
+    ])
+    const afterRetirement = openBindingRegistry(registryPath)
+    try {
+      expect(afterRetirement.get(scopeRef)).toBeUndefined()
+      expect(afterRetirement.getRecord(scopeRef)).toMatchObject({
+        state: 'retired',
+        retiredHomeNodeId: 'svc',
+        placementEpoch: 1,
+        successorNodeId: 'lab',
+      })
+    } finally {
+      afterRetirement.close()
+    }
+    const finalInventory = inventoryFederationNamespace({
+      nodeStores: input.nodeStores,
+      registryPath,
+    })
+    expect(finalInventory.remainingUnreconciled).toEqual([])
+    expect(finalInventory.scopes.find((scope) => scope.scopeRef === scopeRef)).toMatchObject({
+      registryRetirement: {
+        state: 'retired',
+        placementEpoch: 1,
+        successorNodeId: 'lab',
+      },
+    })
+  })
+
+  it('reports a registry tombstone whose exact old-home fence is missing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hrc-f0-retired-unfenced-'))
+    roots.push(root)
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:T-06681-unfenced'
+    const svcPath = seedNode({
+      root,
+      nodeId: 'svc',
+      scopeRef,
+      hostSessionId: 'hsid-unfenced',
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    })
+    const registryPath = join(root, 'registry.sqlite')
+    const registry = openBindingRegistry(registryPath)
+    try {
+      registry.establish({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'pin' },
+        establishmentProvenance: 'pin',
+        now: '2026-07-20T02:00:00.000Z',
+      })
+      registry.retire({
+        scopeRef,
+        expectedHomeNodeId: 'svc',
+        expectedPlacementEpoch: 1,
+        successorNodeId: 'lab',
+        reason: 'namespace_reconciliation',
+        retiredAt: '2026-07-20T03:00:00.000Z',
+      })
+    } finally {
+      registry.close()
+    }
+
     expect(
-      inventoryFederationNamespace({ nodeStores: input.nodeStores, registryPath })
-        .remainingUnreconciled
-    ).toEqual([])
+      inventoryFederationNamespace({
+        nodeStores: [{ nodeId: 'svc', path: svcPath }],
+        registryPath,
+      }).remainingUnreconciled
+    ).toEqual([{ scopeRef, reasons: ['registry_retirement_fence_missing'] }])
   })
 
   it('reports half-applied retirement states instead of silently accepting them', () => {
@@ -660,8 +729,8 @@ describe('pre-federation namespace reconciliation', () => {
       createScopeRetirementRepository(svc).retire({
         scopeRef,
         retiredNodeId: 'svc',
-        canonicalHomeNodeId: 'svc',
-        canonicalPlacementEpoch: 1,
+        successorNodeId: null,
+        retiredPlacementEpoch: 1,
         reason: 'namespace_reconciliation',
         retiredAt: '2026-07-20T03:00:00.000Z',
       })
@@ -684,7 +753,7 @@ describe('pre-federation namespace reconciliation', () => {
       now: '2026-07-20T03:00:00.000Z',
     })
     expect(repaired.retiredScopes).toEqual([
-      expect.objectContaining({ scopeRef, registryAction: 'deleted' }),
+      expect.objectContaining({ scopeRef, registryAction: 'retired' }),
     ])
   })
 

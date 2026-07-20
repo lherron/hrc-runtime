@@ -423,6 +423,42 @@ describe('NOT skew — expected divergence per provenance class', () => {
 })
 
 describe('locate degrades visibly, never falsely', () => {
+  test('a registry tombstone is reported as retired authority, never unbound', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        ledger: ledgerStub(undefined),
+        registry: registryStub({
+          outcome: 'retired',
+          retirement: {
+            state: 'retired',
+            scopeRef: SCOPE,
+            placementEpoch: 3,
+            birthClass: 'policy-born',
+            authorityProvenance: { kind: 'policy', source: 'pin' },
+            createdAt: '2026-07-20T00:00:00.000Z',
+            updatedAt: '2026-07-20T00:03:00.000Z',
+            retiredHomeNodeId: 'max3',
+            retiredAt: '2026-07-20T00:03:00.000Z',
+            reason: 'namespace_reconciliation',
+            successorNodeId: 'mini',
+          },
+        }),
+      }),
+    })
+
+    expect(location.registry).toMatchObject({
+      outcome: 'retired',
+      record: { placementEpoch: 3, successorNodeId: 'mini' },
+    })
+    expect(location.authority).toMatchObject({
+      state: 'retired',
+      placementEpoch: 3,
+      retiredHomeNodeId: 'max3',
+      successorNodeId: 'mini',
+    })
+  })
+
   test('an unreachable registry is UNKNOWN authority, never "unbound"', async () => {
     const location = await locateScope({
       scopeRef: SCOPE,
@@ -509,14 +545,14 @@ describe('locate degrades visibly, never falsely', () => {
       deps: deps({
         retirementFor: () => ({
           retiredNodeId: 'max3',
-          canonicalHomeNodeId: 'mini',
-          canonicalPlacementEpoch: 2,
+          successorNodeId: 'mini',
+          retiredPlacementEpoch: 2,
           reason: 'namespace reconciliation',
         }),
       }),
     })
 
-    expect(location.retirement).toMatchObject({ canonicalHomeNodeId: 'mini' })
+    expect(location.retirement).toMatchObject({ successorNodeId: 'mini' })
     expect(location.notes.map((n) => n.code)).toContain('scope-retired')
   })
 
@@ -529,8 +565,8 @@ describe('locate degrades visibly, never falsely', () => {
         policyFor: async () => policy({ pins: { [PIN_KEY]: 'mini' } }),
         retirementFor: () => ({
           retiredNodeId: 'max3',
-          canonicalHomeNodeId: 'mini',
-          canonicalPlacementEpoch: 1,
+          successorNodeId: 'mini',
+          retiredPlacementEpoch: 1,
           reason: 'namespace reconciliation',
         }),
       }),
@@ -646,8 +682,8 @@ describe('scanLedgerForSkew — the doctor surface', () => {
       policyFor: async () => policy({ pins: { [PIN_KEY]: 'mini' } }),
       retirementFor: () => ({
         retiredNodeId: 'max3',
-        canonicalHomeNodeId: 'mini',
-        canonicalPlacementEpoch: 1,
+        successorNodeId: 'mini',
+        retiredPlacementEpoch: 1,
         reason: 'namespace reconciliation',
       }),
     })

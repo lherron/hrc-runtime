@@ -325,9 +325,25 @@ function assessSkew(
 async function consultRegistry(scopeRef: string, deps: LocateDeps): Promise<LocateRegistryView> {
   try {
     const result = await deps.registry.consult(scopeRef)
-    return result.outcome === 'bound'
-      ? { outcome: 'bound', record: toRecord(result.binding) }
-      : { outcome: 'unbound' }
+    if (result.outcome === 'bound') return { outcome: 'bound', record: toRecord(result.binding) }
+    if (result.outcome === 'retired') {
+      const retired = result.retirement
+      return {
+        outcome: 'retired',
+        record: {
+          placementEpoch: retired.placementEpoch,
+          retiredHomeNodeId: retired.retiredHomeNodeId,
+          successorNodeId: retired.successorNodeId,
+          birthClass: retired.birthClass,
+          authorityProvenance: retired.authorityProvenance,
+          createdAt: retired.createdAt,
+          updatedAt: retired.updatedAt,
+          retiredAt: retired.retiredAt,
+          reason: retired.reason,
+        },
+      }
+    }
+    return { outcome: 'unbound' }
   } catch (error) {
     if (error instanceof RegistryRefusedError) {
       return { outcome: 'unknown', detail: error.message, retryable: false }
@@ -408,7 +424,14 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   // Ledger-first, matching the gate. The registry is consulted only when the
   // local ledger holds no ACTIVE authority — a revoked row is not authority, so
   // it still needs the collective's answer.
-  const localAuthority = deps.ledger.activeAuthority(scopeRef)
+  const rawLocalAuthority = deps.ledger.activeAuthority(scopeRef)
+  const localAuthority =
+    retiredHere &&
+    retirement !== undefined &&
+    rawLocalAuthority !== undefined &&
+    rawLocalAuthority.placementEpoch <= retirement.retiredPlacementEpoch
+      ? undefined
+      : rawLocalAuthority
   const registry: LocateRegistryView =
     localAuthority !== undefined
       ? {
@@ -439,6 +462,15 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
       record: registry.record,
       isLocal: registry.record.homeNodeId === deps.localNodeId,
     }
+  } else if (registry.outcome === 'retired') {
+    authority = {
+      state: 'retired',
+      placementEpoch: registry.record.placementEpoch,
+      retiredHomeNodeId: registry.record.retiredHomeNodeId,
+      successorNodeId: registry.record.successorNodeId,
+      birthClass: registry.record.birthClass,
+      authorityProvenance: registry.record.authorityProvenance,
+    }
   } else if (registry.outcome === 'unbound') {
     authority = { state: 'unbound' }
   } else if (registry.outcome === 'unknown') {
@@ -456,7 +488,10 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   if (retirement !== undefined) {
     notes.push({
       code: 'scope-retired',
-      detail: `This node holds a retirement mark for ${scopeRef}: canonical home "${retirement.canonicalHomeNodeId}" at epoch ${retirement.canonicalPlacementEpoch} (${retirement.reason}). Summons here refuse before any authority lookup.`,
+      detail:
+        retirement.successorNodeId === null
+          ? `This node holds an epoch fence for ${scopeRef}: retired here at epoch ${retirement.retiredPlacementEpoch}, terminally barred (${retirement.reason}).`
+          : `This node holds an epoch fence for ${scopeRef}: retired here at epoch ${retirement.retiredPlacementEpoch}, successor "${retirement.successorNodeId}" may activate at epoch ${retirement.retiredPlacementEpoch + 1} (${retirement.reason}).`,
     })
   }
 
@@ -504,7 +539,12 @@ export async function scanLedgerForSkew(options: {
   for (const binding of options.bindings) {
     if (binding.state !== 'active') continue
     const retirement = options.retirementFor?.(binding.scopeRef)
-    if (retirement?.retiredNodeId === options.localNodeId) continue
+    if (
+      retirement?.retiredNodeId === options.localNodeId &&
+      binding.placementEpoch <= retirement.retiredPlacementEpoch
+    ) {
+      continue
+    }
     const resolution = await options.policyFor(binding.scopeRef)
     const declared = describeDeclaredPolicy(binding.scopeRef, resolution, options.localNodeId)
     if (declared.source === 'unavailable') {

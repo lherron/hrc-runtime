@@ -1,10 +1,14 @@
 import type {
+  ActivateRetiredBindingResult,
   BindingEstablishResult,
   BindingRegistry,
   BirthAuthorityProvenance,
   EstablishmentProvenance,
   FederationBirthClass,
   PlacementBinding,
+  RegistryRetirementRecord,
+  RetargetRetiredBindingResult,
+  RetireBindingResult,
 } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
@@ -40,11 +44,19 @@ const PROVABLY_PRE_SEND_CONNECT_CODES = new Set([
 
 export type RegistryConsultResult =
   | { outcome: 'bound'; binding: PlacementBinding }
+  | { outcome: 'retired'; retirement: RegistryRetirementRecord }
   | { outcome: 'unbound' }
 
 export interface BindingRegistryClient {
   consult(scopeRef: string, options?: { signal?: AbortSignal }): Promise<RegistryConsultResult>
   establish(request: Parameters<BindingRegistry['establish']>[0]): Promise<BindingEstablishResult>
+  retire?(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult>
+  activateRetired?(
+    request: Parameters<BindingRegistry['activateRetired']>[0]
+  ): Promise<ActivateRetiredBindingResult>
+  retargetRetired?(
+    request: Parameters<BindingRegistry['retargetRetired']>[0]
+  ): Promise<RetargetRetiredBindingResult>
 }
 
 export class RegistryUnreachableError extends Error {
@@ -63,7 +75,7 @@ export class RegistryRefusedError extends Error {
 
   constructor(
     readonly status: number,
-    readonly code: 'unauthorized' | 'invalid_request'
+    readonly code: 'unauthorized' | 'invalid_request' | 'authenticated_node_mismatch'
   ) {
     super(`federation binding registry refused the request (${code})`)
     this.name = 'RegistryRefusedError'
@@ -124,9 +136,17 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
     if (!isNonemptyString(scopeRef)) throw new RegistryRefusedError(400, 'invalid_request')
 
     try {
-      const binding = this.#registry.get(scopeRef)
-      const result: RegistryConsultResult =
-        binding === undefined ? { outcome: 'unbound' } : { outcome: 'bound', binding }
+      const record = this.#registry.getRecord(scopeRef)
+      let result: RegistryConsultResult
+      if (record === undefined) result = { outcome: 'unbound' }
+      else if (record.state === 'retired') result = { outcome: 'retired', retirement: record }
+      else {
+        const binding = this.#registry.get(scopeRef)
+        if (binding === undefined) {
+          throw new Error('active registry record mapping failed')
+        }
+        result = { outcome: 'bound', binding }
+      }
       this.#log('INFO', `federation.registry.consult.${result.outcome}`, {
         scopeRef,
         transport: 'local',
@@ -135,7 +155,13 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
               homeNodeId: result.binding.homeNodeId,
               placementEpoch: result.binding.placementEpoch,
             }
-          : {}),
+          : result.outcome === 'retired'
+            ? {
+                retiredHomeNodeId: result.retirement.retiredHomeNodeId,
+                placementEpoch: result.retirement.placementEpoch,
+                successorNodeId: result.retirement.successorNodeId,
+              }
+            : {}),
       })
       return result
     } catch (error) {
@@ -156,8 +182,15 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
       const result = this.#registry.establish(request)
       this.#log('INFO', `federation.registry.establish.${result.outcome}`, {
         scopeRef: request.scopeRef,
-        homeNodeId: result.binding.homeNodeId,
-        placementEpoch: result.binding.placementEpoch,
+        ...(result.outcome === 'retired'
+          ? {
+              retiredHomeNodeId: result.retirement.retiredHomeNodeId,
+              placementEpoch: result.retirement.placementEpoch,
+            }
+          : {
+              homeNodeId: result.binding.homeNodeId,
+              placementEpoch: result.binding.placementEpoch,
+            }),
         transport: 'local',
       })
       return result
@@ -167,6 +200,32 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
       }
       throw classifyUnreachable(error)
     }
+  }
+
+  async retire(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult> {
+    if (request.expectedHomeNodeId !== this.#localNodeId) {
+      throw new RegistryRefusedError(400, 'invalid_request')
+    }
+    return this.#registry.retire(request)
+  }
+
+  async activateRetired(
+    request: Parameters<BindingRegistry['activateRetired']>[0]
+  ): Promise<ActivateRetiredBindingResult> {
+    if (request.successorNodeId !== this.#localNodeId) {
+      throw new RegistryRefusedError(400, 'invalid_request')
+    }
+    return this.#registry.activateRetired(request)
+  }
+
+  async retargetRetired(
+    request: Parameters<BindingRegistry['retargetRetired']>[0]
+  ): Promise<RetargetRetiredBindingResult> {
+    const current = this.#registry.getRecord(request.scopeRef)
+    if (current?.state !== 'retired' || current.retiredHomeNodeId !== this.#localNodeId) {
+      throw new RegistryRefusedError(400, 'invalid_request')
+    }
+    return this.#registry.retargetRetired(request)
   }
 }
 
@@ -234,6 +293,46 @@ function parseBinding(value: unknown, expectedScopeRef: string): PlacementBindin
   }
 }
 
+function parseRetirement(
+  value: unknown,
+  expectedScopeRef: string
+): RegistryRetirementRecord | undefined {
+  if (!isRecord(value) || value['state'] !== 'retired' || value['scopeRef'] !== expectedScopeRef) {
+    return undefined
+  }
+  const placementEpoch = value['placementEpoch']
+  const successorNodeId = value['successorNodeId']
+  const birthClass = parseBirthClass(value['birthClass'])
+  const authorityProvenance = parseAuthorityProvenance(value['authorityProvenance'])
+  if (
+    !Number.isSafeInteger(placementEpoch) ||
+    Number(placementEpoch) < 1 ||
+    birthClass === undefined ||
+    authorityProvenance === undefined ||
+    !isNonemptyString(value['retiredHomeNodeId']) ||
+    !isNonemptyString(value['retiredAt']) ||
+    !isNonemptyString(value['reason']) ||
+    !isNonemptyString(value['createdAt']) ||
+    !isNonemptyString(value['updatedAt']) ||
+    (successorNodeId !== null && !isNonemptyString(successorNodeId))
+  ) {
+    return undefined
+  }
+  return {
+    state: 'retired',
+    scopeRef: expectedScopeRef,
+    placementEpoch: Number(placementEpoch),
+    birthClass,
+    authorityProvenance,
+    createdAt: value['createdAt'],
+    updatedAt: value['updatedAt'],
+    retiredHomeNodeId: value['retiredHomeNodeId'],
+    retiredAt: value['retiredAt'],
+    reason: value['reason'],
+    successorNodeId,
+  }
+}
+
 function positiveDuration(value: number): number {
   if (!Number.isFinite(value) || value <= 0) {
     throw new RegistryRefusedError(400, 'invalid_request')
@@ -283,6 +382,7 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 function refusedForStatus(status: number): RegistryRefusedError | undefined {
   if (status === 401) return new RegistryRefusedError(401, 'unauthorized')
   if (status === 400) return new RegistryRefusedError(400, 'invalid_request')
+  if (status === 403) return new RegistryRefusedError(403, 'authenticated_node_mismatch')
   return undefined
 }
 
@@ -377,7 +477,13 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
                 homeNodeId: result.binding.homeNodeId,
                 placementEpoch: result.binding.placementEpoch,
               }
-            : {}),
+            : result.outcome === 'retired'
+              ? {
+                  retiredHomeNodeId: result.retirement.retiredHomeNodeId,
+                  placementEpoch: result.retirement.placementEpoch,
+                  successorNodeId: result.retirement.successorNodeId,
+                }
+              : {}),
         })
         return result
       } catch (error) {
@@ -478,6 +584,11 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
     }
 
     const body = await this.#responseBody(response)
+    const retirement =
+      isRecord(body) && body['ok'] === true && body['outcome'] === 'retired'
+        ? parseRetirement(body['retirement'], scopeRef)
+        : undefined
+    if (retirement !== undefined) return { outcome: 'retired', retirement }
     const binding =
       isRecord(body) && body['ok'] === true ? parseBinding(body['binding'], scopeRef) : undefined
     if (binding === undefined) {
@@ -511,6 +622,17 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
     }
     const body = await this.#responseBody(response)
     const outcome = isRecord(body) ? body['outcome'] : undefined
+    if (outcome === 'retired') {
+      const retirement = isRecord(body)
+        ? parseRetirement(body['retirement'], request.scopeRef)
+        : undefined
+      if (retirement === undefined) {
+        throw new RegistryUnreachableError(
+          'federation binding registry returned an invalid retirement result'
+        )
+      }
+      return { outcome, retirement }
+    }
     const binding =
       isRecord(body) && body['ok'] === true
         ? parseBinding(body['binding'], request.scopeRef)
@@ -521,6 +643,108 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
       )
     }
     return { outcome, binding }
+  }
+
+  async retire(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult> {
+    const body = await this.#mutationAttempt('/v1/federation/registry/retire', request)
+    const outcome = body['outcome']
+    if (
+      outcome !== 'retired' &&
+      outcome !== 'idempotent' &&
+      outcome !== 'conflict' &&
+      outcome !== 'not_found'
+    ) {
+      throw new RegistryUnreachableError('federation registry returned invalid retirement result')
+    }
+    const retirement = parseRetirement(body['retirement'], request.scopeRef)
+    const binding = parseBinding(body['binding'], request.scopeRef)
+    return {
+      outcome,
+      ...(retirement === undefined ? {} : { retirement }),
+      ...(binding === undefined ? {} : { binding }),
+    }
+  }
+
+  async activateRetired(
+    request: Parameters<BindingRegistry['activateRetired']>[0]
+  ): Promise<ActivateRetiredBindingResult> {
+    const body = await this.#mutationAttempt('/v1/federation/registry/activate-retired', request)
+    const outcome = body['outcome']
+    if (
+      outcome !== 'activated' &&
+      outcome !== 'idempotent' &&
+      outcome !== 'conflict' &&
+      outcome !== 'not_found' &&
+      outcome !== 'mechanism_refused' &&
+      outcome !== 'epoch_exhausted'
+    ) {
+      throw new RegistryUnreachableError('federation registry returned invalid activation result')
+    }
+    const retirement = parseRetirement(body['retirement'], request.scopeRef)
+    const binding = parseBinding(body['binding'], request.scopeRef)
+    return {
+      outcome,
+      ...(retirement === undefined ? {} : { retirement }),
+      ...(binding === undefined ? {} : { binding }),
+    }
+  }
+
+  async retargetRetired(
+    request: Parameters<BindingRegistry['retargetRetired']>[0]
+  ): Promise<RetargetRetiredBindingResult> {
+    const body = await this.#mutationAttempt('/v1/federation/registry/retarget-retired', request)
+    const outcome = body['outcome']
+    if (
+      outcome !== 'updated' &&
+      outcome !== 'idempotent' &&
+      outcome !== 'conflict' &&
+      outcome !== 'not_found' &&
+      outcome !== 'epoch_exhausted'
+    ) {
+      throw new RegistryUnreachableError('federation registry returned invalid retarget result')
+    }
+    const retirement = parseRetirement(body['retirement'], request.scopeRef)
+    const binding = parseBinding(body['binding'], request.scopeRef)
+    return {
+      outcome,
+      ...(retirement === undefined ? {} : { retirement }),
+      ...(binding === undefined ? {} : { binding }),
+    }
+  }
+
+  async #mutationAttempt(
+    pathname: string,
+    request: Readonly<Record<string, unknown>>
+  ): Promise<Record<string, unknown>> {
+    const deadline = this.#now() + this.#totalTimeoutMs
+    const body = await this.#runAttempt(deadline, async (signal) => {
+      const url = new URL(pathname, this.#endpoint)
+      const response = await this.#fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          authorization: this.#authorizationHeader,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(request),
+        redirect: 'error',
+        signal,
+      })
+      const refused = refusedForStatus(response.status)
+      if (refused !== undefined) throw refused
+      if (response.status !== 200 && response.status !== 404 && response.status !== 409) {
+        throw new RegistryUnreachableError(
+          `federation binding registry returned unexpected status ${response.status}`
+        )
+      }
+      const parsed = await this.#responseBody(response)
+      if (!isRecord(parsed) || typeof parsed['outcome'] !== 'string') {
+        throw new RegistryUnreachableError(
+          'federation registry returned unreadable mutation result'
+        )
+      }
+      return parsed
+    })
+    return body
   }
 
   async #responseBody(response: Response): Promise<unknown> {

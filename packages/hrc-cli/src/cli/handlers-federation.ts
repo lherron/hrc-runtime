@@ -102,6 +102,10 @@ function describeAuthority(location: ScopeLocation): string {
     }
     case 'unbound':
       return 'unbound (no binding established yet)'
+    case 'retired':
+      return authority.successorNodeId === null
+        ? `retired at epoch ${authority.placementEpoch} (terminal bar)`
+        : `retired at epoch ${authority.placementEpoch} -> successor ${authority.successorNodeId}`
     case 'unknown':
       return `UNKNOWN — ${authority.detail}`
     default:
@@ -142,9 +146,13 @@ function formatLocation(location: ScopeLocation): string {
     `registry:   ${
       location.registry.outcome === 'bound'
         ? `bound -> ${location.registry.record.homeNodeId}`
-        : location.registry.outcome === 'unbound'
-          ? 'unbound'
-          : `${location.registry.outcome} — ${location.registry.detail}`
+        : location.registry.outcome === 'retired'
+          ? location.registry.record.successorNodeId === null
+            ? `retired at epoch ${location.registry.record.placementEpoch} (terminal bar)`
+            : `retired at epoch ${location.registry.record.placementEpoch} -> successor ${location.registry.record.successorNodeId}`
+          : location.registry.outcome === 'unbound'
+            ? 'unbound'
+            : `${location.registry.outcome} — ${location.registry.detail}`
     }`
   )
 

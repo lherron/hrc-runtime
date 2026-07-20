@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { HrcRuntimeIntent } from 'hrc-core'
 import {
   createPlacementLedgerRepository,
+  createScopeRetirementRepository,
   openBindingRegistry,
   openHrcDatabase,
 } from 'hrc-store-sqlite'
@@ -48,13 +49,17 @@ describe('T-06697 policy-born registry establishment', () => {
       } as FederationConfig,
       registryClient: {
         async consult(scopeRef: string) {
-          const binding = registry.get(scopeRef)
-          return binding === undefined
-            ? ({ outcome: 'unbound' } as const)
-            : ({ outcome: 'bound', binding } as const)
+          const record = registry.getRecord(scopeRef)
+          if (record === undefined) return { outcome: 'unbound' } as const
+          return record.state === 'retired'
+            ? ({ outcome: 'retired', retirement: record } as const)
+            : ({ outcome: 'bound', binding: registry.get(scopeRef)! } as const)
         },
         async establish(request: Parameters<typeof registry.establish>[0]) {
           return registry.establish(request)
+        },
+        async activateRetired(request: Parameters<typeof registry.activateRetired>[0]) {
+          return registry.activateRetired(request)
         },
       },
       policyFor,
@@ -62,6 +67,73 @@ describe('T-06697 policy-born registry establishment', () => {
     }
     return { db, registry, server }
   }
+
+  test('an eligible same-node policy successor atomically activates at E+1 and installs its ledger', async () => {
+    const scopeRef = 'agent:cody:project:hrc-runtime:task:T-06697-retired-successor'
+    const h = await harness(async () => ({
+      placement: { pins: { 'hrc-runtime:T-06697-retired-successor': 'svc' } },
+      claimsTask: false,
+    }))
+    try {
+      h.registry.establish({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'pin' },
+        establishmentProvenance: 'pin',
+        now: NOW,
+      })
+      h.registry.retire({
+        scopeRef,
+        expectedHomeNodeId: 'svc',
+        expectedPlacementEpoch: 1,
+        successorNodeId: 'svc',
+        reason: 'namespace_reconciliation',
+        retiredAt: NOW,
+      })
+      createPlacementLedgerRepository(h.db.sqlite).installActive({
+        scopeRef,
+        homeNodeId: 'svc',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'pin' },
+        establishmentProvenance: 'pin',
+        updatedAt: NOW,
+      })
+      createScopeRetirementRepository(h.db.sqlite).retire({
+        scopeRef,
+        retiredNodeId: 'svc',
+        retiredPlacementEpoch: 1,
+        successorNodeId: 'svc',
+        reason: 'namespace_reconciliation',
+        retiredAt: NOW,
+      })
+
+      const result = await assertSummonAuthority(h.server, {
+        scopeRef,
+        path: 'ensure-target',
+        intent: 'implicit',
+        capabilityHint: { harness: INTENT.harness },
+      })
+
+      expect(result?.evaluation.reason).toBe('retired-policy-succession')
+      expect(h.registry.get(scopeRef)).toMatchObject({
+        homeNodeId: 'svc',
+        priorHomeNodeId: 'svc',
+        placementEpoch: 2,
+        birthClass: 'policy-born',
+      })
+      expect(createPlacementLedgerRepository(h.db.sqlite).activeAuthority(scopeRef)).toMatchObject({
+        homeNodeId: 'svc',
+        placementEpoch: 2,
+        state: 'active',
+      })
+    } finally {
+      h.registry.close()
+      h.db.close()
+    }
+  })
 
   const cases = [
     {

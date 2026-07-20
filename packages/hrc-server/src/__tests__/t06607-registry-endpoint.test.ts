@@ -172,6 +172,82 @@ describe('T-06607 authenticated registry endpoint', () => {
     }
   })
 
+  test('retirement remains visible to consult and only the disclosed successor can activate E+1', async () => {
+    const h = await harness()
+    try {
+      await h.handler(establishRequest())
+      const retired = await h.handler(
+        new Request('http://registry/v1/federation/registry/retire', {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            scopeRef: SCOPE,
+            expectedHomeNodeId: 'lab',
+            expectedPlacementEpoch: 1,
+            successorNodeId: 'max3',
+            reason: 'namespace_reconciliation',
+            retiredAt: '2026-07-20T00:01:00.000Z',
+          }),
+        })
+      )
+      expect(await retired.json()).toMatchObject({
+        outcome: 'retired',
+        retirement: { placementEpoch: 1, successorNodeId: 'max3' },
+      })
+
+      const consulted = await h.handler(
+        new Request(
+          `http://registry/v1/federation/registry/consult?scopeRef=${encodeURIComponent(SCOPE)}`,
+          { headers: { authorization: `Bearer ${TOKEN}` } }
+        )
+      )
+      expect(await consulted.json()).toMatchObject({
+        outcome: 'retired',
+        retirement: { scopeRef: SCOPE, birthClass: 'policy-born', successorNodeId: 'max3' },
+      })
+
+      const activationBody = JSON.stringify({
+        scopeRef: SCOPE,
+        successorNodeId: 'max3',
+        expectedPlacementEpoch: 1,
+      })
+      expect(
+        (
+          await h.handler(
+            new Request('http://registry/v1/federation/registry/activate-retired', {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${TOKEN}`,
+                'content-type': 'application/json',
+              },
+              body: activationBody,
+            })
+          )
+        ).status
+      ).toBe(403)
+
+      const activated = await h.handler(
+        new Request('http://registry/v1/federation/registry/activate-retired', {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer max3-token',
+            'content-type': 'application/json',
+          },
+          body: activationBody,
+        })
+      )
+      expect(await activated.json()).toMatchObject({
+        outcome: 'activated',
+        binding: { homeNodeId: 'max3', priorHomeNodeId: 'lab', placementEpoch: 2 },
+      })
+    } finally {
+      h.registry.close()
+    }
+  })
+
   test('malformed requests and error paths never reflect bearer material', async () => {
     const h = await harness()
     try {

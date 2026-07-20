@@ -52,6 +52,21 @@ function requiredString(record: Record<string, unknown>, field: string): string 
   return value.trim()
 }
 
+function requiredNullableString(record: Record<string, unknown>, field: string): string | null {
+  const value = record[field]
+  if (value === null) return null
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new InvalidRegistryRequest()
+  }
+  return value.trim()
+}
+
+function requiredEpoch(record: Record<string, unknown>, field: string): number {
+  const value = record[field]
+  if (!Number.isSafeInteger(value) || Number(value) < 1) throw new InvalidRegistryRequest()
+  return Number(value)
+}
+
 async function requestRecord(request: Request): Promise<Record<string, unknown>> {
   let value: unknown
   try {
@@ -107,6 +122,14 @@ function authenticate(
   return authenticated
 }
 
+function mutationStatus(outcome: string): number {
+  if (outcome === 'not_found') return 404
+  if (outcome === 'conflict' || outcome === 'mechanism_refused' || outcome === 'epoch_exhausted') {
+    return 409
+  }
+  return 200
+}
+
 export function createBindingRegistryRequestHandler(input: {
   registry: BindingRegistry
   peers: ReadonlyMap<string, RegistryAuthPeer>
@@ -125,14 +148,27 @@ export function createBindingRegistryRequestHandler(input: {
       if (request.method === 'GET' && url.pathname === '/v1/federation/registry/consult') {
         const scopeRef = url.searchParams.get('scopeRef')
         if (scopeRef === null || scopeRef.trim().length === 0) throw new InvalidRegistryRequest()
-        const binding = input.registry.get(scopeRef)
-        if (binding === undefined) {
+        const record = input.registry.getRecord(scopeRef)
+        if (record === undefined) {
           return responseJson(
             { ok: false, error: 'unbound', authenticatedNodeId: peer.nodeId },
             404
           )
         }
-        return responseJson({ ok: true, authenticatedNodeId: peer.nodeId, binding })
+        if (record.state === 'retired') {
+          return responseJson({
+            ok: true,
+            outcome: 'retired',
+            authenticatedNodeId: peer.nodeId,
+            retirement: record,
+          })
+        }
+        return responseJson({
+          ok: true,
+          outcome: 'bound',
+          authenticatedNodeId: peer.nodeId,
+          binding: input.registry.get(scopeRef),
+        })
       }
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/registry/establish') {
@@ -172,6 +208,72 @@ export function createBindingRegistryRequestHandler(input: {
         })
         const status =
           result.outcome === 'conflict' ? 409 : result.outcome === 'not_found' ? 404 : 200
+        return responseJson(
+          { ok: status === 200, authenticatedNodeId: peer.nodeId, ...result },
+          status
+        )
+      }
+
+      if (request.method === 'POST' && url.pathname === '/v1/federation/registry/retire') {
+        const body = await requestRecord(request)
+        const expectedHomeNodeId = requiredString(body, 'expectedHomeNodeId')
+        if (expectedHomeNodeId !== peer.nodeId) {
+          return responseJson({ ok: false, error: 'authenticated_node_mismatch' }, 403)
+        }
+        const result = input.registry.retire({
+          scopeRef: requiredString(body, 'scopeRef'),
+          expectedHomeNodeId,
+          expectedPlacementEpoch: requiredEpoch(body, 'expectedPlacementEpoch'),
+          successorNodeId: requiredNullableString(body, 'successorNodeId'),
+          reason: requiredString(body, 'reason'),
+          retiredAt: requiredString(body, 'retiredAt'),
+        })
+        const status = mutationStatus(result.outcome)
+        return responseJson(
+          { ok: status === 200, authenticatedNodeId: peer.nodeId, ...result },
+          status
+        )
+      }
+
+      if (
+        request.method === 'POST' &&
+        url.pathname === '/v1/federation/registry/activate-retired'
+      ) {
+        const body = await requestRecord(request)
+        const successorNodeId = requiredString(body, 'successorNodeId')
+        if (successorNodeId !== peer.nodeId) {
+          return responseJson({ ok: false, error: 'authenticated_node_mismatch' }, 403)
+        }
+        const result = input.registry.activateRetired({
+          scopeRef: requiredString(body, 'scopeRef'),
+          successorNodeId,
+          expectedPlacementEpoch: requiredEpoch(body, 'expectedPlacementEpoch'),
+          now: now(),
+        })
+        const status = mutationStatus(result.outcome)
+        return responseJson(
+          { ok: status === 200, authenticatedNodeId: peer.nodeId, ...result },
+          status
+        )
+      }
+
+      if (
+        request.method === 'POST' &&
+        url.pathname === '/v1/federation/registry/retarget-retired'
+      ) {
+        const body = await requestRecord(request)
+        const current = input.registry.getRecord(requiredString(body, 'scopeRef'))
+        if (current?.state !== 'retired' || current.retiredHomeNodeId !== peer.nodeId) {
+          return responseJson({ ok: false, error: 'authenticated_node_mismatch' }, 403)
+        }
+        const result = input.registry.retargetRetired({
+          scopeRef: current.scopeRef,
+          expectedSuccessorNodeId: requiredNullableString(body, 'expectedSuccessorNodeId'),
+          expectedPlacementEpoch: requiredEpoch(body, 'expectedPlacementEpoch'),
+          newSuccessorNodeId: requiredNullableString(body, 'newSuccessorNodeId'),
+          now: now(),
+        })
+        const status = mutationStatus(result.outcome)
         return responseJson(
           { ok: status === 200, authenticatedNodeId: peer.nodeId, ...result },
           status

@@ -32,6 +32,7 @@ export type ResolveFederationRoutingBindingOptions = {
 
 export type FederationRoutingResolutionErrorCode =
   | 'binding_unbound'
+  | 'binding_retired'
   | 'binding_epoch_stale'
   | 'registry_unreachable'
 
@@ -112,6 +113,17 @@ export async function resolveFederationRoutingBinding(
       scopeRef,
       true,
       `no federation routing binding exists for ${scopeRef}; delivery may be retried`
+    )
+  }
+  if (consulted.outcome === 'retired') {
+    const successor = consulted.retirement.successorNodeId
+    throw new FederationRoutingResolutionError(
+      'binding_retired',
+      scopeRef,
+      successor !== null,
+      successor === null
+        ? `${scopeRef} is terminally retired at epoch ${consulted.retirement.placementEpoch}; delivery is barred`
+        : `${scopeRef} is retired at epoch ${consulted.retirement.placementEpoch}; successor ${successor} must activate before delivery can resume`
     )
   }
   if (consulted.binding.placementEpoch < minimumPlacementEpoch) {

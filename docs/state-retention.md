@@ -31,6 +31,13 @@ The command split from T-06500 is intentional:
 Terminated `runtimes` rows are keep-forever history: no TTL and no pruning, ever.
 Lance's 2026-07-18 ruling is recorded in T-06531 comment C-10793.
 
+Federation binding-registry retirement rows and node-local epoch fences are
+also keep-forever authority. They have no TTL: expiring either would turn an
+ever-born identity back into a virgin namespace and permit an epoch-1
+collision. A later active epoch makes an older local fence inert, but does not
+delete it because registry recovery consumes the fence as reconstruction
+evidence.
+
 The controlling reason is resume-path integrity. Terminated rows anchor the
 `scope_ref` → `host_session_id` → `harness_session_json` chain used by
 `--resume`; deleting them could orphan resumable state. The table is tiny, so

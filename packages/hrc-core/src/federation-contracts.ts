@@ -131,6 +131,20 @@ export type LocateLedgerView =
 
 export type LocateRegistryView =
   | { outcome: 'bound'; record: LocateBindingRecord }
+  | {
+      outcome: 'retired'
+      record: {
+        placementEpoch: number
+        retiredHomeNodeId: string
+        successorNodeId: string | null
+        birthClass: FederationBirthClass
+        authorityProvenance: BirthAuthorityProvenance
+        createdAt: string
+        updatedAt: string
+        retiredAt: string
+        reason: string
+      }
+    }
   | { outcome: 'unbound' }
   /** Consulted and failed. Never collapsed into `unbound` (§5 fail-closed). */
   | { outcome: 'unknown'; detail: string; retryable: boolean }
@@ -140,6 +154,14 @@ export type LocateRegistryView =
 /** Who holds summon authority, and which layer said so. */
 export type LocateAuthority =
   | { state: 'bound'; source: 'ledger' | 'registry'; record: LocateBindingRecord; isLocal: boolean }
+  | {
+      state: 'retired'
+      placementEpoch: number
+      retiredHomeNodeId: string
+      successorNodeId: string | null
+      birthClass: FederationBirthClass
+      authorityProvenance: BirthAuthorityProvenance
+    }
   | { state: 'unbound' }
   | { state: 'unknown'; detail: string; retryable: boolean }
 
@@ -208,8 +230,8 @@ export type LocateBirthChain =
 /** Node-local retirement mark written by reconciliation (T-06614). */
 export type LocateRetirement = {
   retiredNodeId: string
-  canonicalHomeNodeId: string
-  canonicalPlacementEpoch: number
+  retiredPlacementEpoch: number
+  successorNodeId: string | null
   reason: string
 }
 

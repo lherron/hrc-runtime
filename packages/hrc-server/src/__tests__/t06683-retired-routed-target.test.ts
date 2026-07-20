@@ -64,8 +64,8 @@ describe('T-06683 retired routed target selection', () => {
       createScopeRetirementRepository(db.sqlite).retire({
         scopeRef: SCOPE_REF,
         retiredNodeId: 'svc',
-        canonicalHomeNodeId: 'lab',
-        canonicalPlacementEpoch: 1,
+        successorNodeId: 'lab',
+        retiredPlacementEpoch: 1,
         reason: 'namespace_reconciliation',
         retiredAt: now,
       })
@@ -116,7 +116,7 @@ describe('T-06683 retired routed target selection', () => {
       error?: { code?: string; message?: string; detail?: Record<string, unknown> }
     }
     expect(body.error?.code).toBe('stale_context')
-    expect(body.error?.message).toContain('canonical home is lab')
+    expect(body.error?.message).toContain('successor is lab at epoch 2')
     expect(body.error?.detail).toMatchObject({
       scopeRef: SCOPE_REF,
       path: 'archived-successor',

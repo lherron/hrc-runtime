@@ -192,6 +192,21 @@ async function commitAuthorizedEstablishment(input: {
     })
   }
 
+  if (established.outcome === 'retired') {
+    const successor = established.retirement.successorNodeId
+    const diagnostic =
+      successor === null
+        ? `${input.request.scopeRef} became terminally retired while ${input.label} establishment was being committed; it cannot be established again.`
+        : `${input.request.scopeRef} became retired toward successor ${successor} while ${input.label} establishment was being committed; summon it on ${successor}.`
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+      scopeRef: input.request.scopeRef,
+      path: input.request.path,
+      reason: 'scope-retired',
+      retryable: false,
+      ...(successor === null ? {} : { homeNodeId: successor }),
+    })
+  }
+
   if (established.outcome === 'bound-elsewhere') {
     const diagnostic = `${input.request.scopeRef} became bound on ${established.binding.homeNodeId} while ${input.label} establishment was being committed on ${input.deps.localNodeId}; the existing birth wins. Summon it on ${established.binding.homeNodeId}.`
     writeServerLog('WARN', 'federation.summon_gate.refusal', {
@@ -272,6 +287,64 @@ export async function assertSummonAuthority(
     result.evaluation.registryBinding !== undefined
   ) {
     deps.ledger.installActive(result.evaluation.registryBinding)
+  }
+
+  if (
+    result.evaluation.decision === 'allow' &&
+    result.evaluation.reason === 'retired-policy-succession' &&
+    result.evaluation.registryRetirement !== undefined
+  ) {
+    const retirement = result.evaluation.registryRetirement
+    const activate = deps.registry.activateRetired
+    if (activate === undefined) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `The binding registry does not expose retired-scope activation for ${request.scopeRef}; refusing rather than treating the tombstone as virgin.`,
+        {
+          scopeRef: request.scopeRef,
+          path: request.path,
+          reason: 'registry-refused',
+          retryable: false,
+        }
+      )
+    }
+
+    let activated: Awaited<ReturnType<NonNullable<typeof deps.registry.activateRetired>>>
+    try {
+      activated = await activate.call(deps.registry, {
+        scopeRef: request.scopeRef,
+        successorNodeId: deps.localNodeId,
+        expectedPlacementEpoch: retirement.placementEpoch,
+        now: new Date().toISOString(),
+      })
+    } catch (error) {
+      const refused = error instanceof RegistryRefusedError
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `Cannot activate retired authority for ${request.scopeRef} at the binding registry (${error instanceof Error ? error.message : String(error)}).`,
+        {
+          scopeRef: request.scopeRef,
+          path: request.path,
+          reason: refused ? 'registry-refused' : 'registry-unreachable',
+          retryable: !refused,
+        }
+      )
+    }
+
+    if (
+      (activated.outcome !== 'activated' && activated.outcome !== 'idempotent') ||
+      activated.binding === undefined
+    ) {
+      const diagnostic = `Retired activation for ${request.scopeRef} did not commit (${activated.outcome}); refusing local authority.`
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+        scopeRef: request.scopeRef,
+        path: request.path,
+        reason: 'scope-retired',
+        retryable: false,
+        outcome: activated.outcome,
+      })
+    }
+    deps.ledger.installActive(activated.binding)
   }
 
   if (

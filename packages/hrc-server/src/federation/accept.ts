@@ -7,7 +7,7 @@ import type {
   HrcMessageRecord,
   HrcRuntimeIntent,
 } from 'hrc-core'
-import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { parseOptionalTurnResponseFormat, parseSessionRef } from '../server-parsers.js'
@@ -238,6 +238,23 @@ async function acceptFederationEnvelope(
     }
 
     const placement = createPlacementLedgerRepository(options.db.sqlite).get(scopeRef)
+    const fence = readScopeRetirement(options.db.sqlite, scopeRef)
+    if (
+      fence !== undefined &&
+      fence.retiredNodeId === options.localNodeId &&
+      (placement === undefined || placement.placementEpoch <= fence.retiredPlacementEpoch)
+    ) {
+      if (fence.successorNodeId === null) {
+        return refused('scope_retired_terminal', false)
+      }
+      if (fence.retiredPlacementEpoch === Number.MAX_SAFE_INTEGER) {
+        return refused('placement_epoch_exhausted', false)
+      }
+      return refused('stale_placement', true, {
+        homeNodeId: fence.successorNodeId,
+        placementEpoch: fence.retiredPlacementEpoch + 1,
+      })
+    }
     if (placement === undefined) return refused('placement_unknown', true)
     const current = {
       homeNodeId: placement.homeNodeId,

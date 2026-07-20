@@ -2,9 +2,12 @@
 
 The binding registry at
 `~/praesidium/var/state/federation/binding-registry.sqlite` is reconstructible
-from the union of every node's local `placement_ledger`. The rebuild chooses the
-highest placement epoch for each canonical ScopeRef and refuses conflicting
-rows at the same epoch. It never overwrites an existing registry.
+from the union of every node's local `placement_ledger` and
+`federation_scope_retirements` epoch fences. The rebuild chooses the highest
+placement epoch for each ScopeRef and refuses conflicts at the same epoch. A
+fence at or above the highest ledger rebuilds a durable retired row; an active
+ledger above the fence rebuilds active authority. Retirement is never collapsed
+to virgin. The command never overwrites an existing registry.
 
 This is a recovery procedure, not normal rebind choreography:
 
@@ -39,7 +42,7 @@ This is a recovery procedure, not normal rebind choreography:
 
    ```bash
    sqlite3 /tmp/binding-registry.rebuilt.sqlite \
-     "SELECT scope_ref,home_node_id,placement_epoch,birth_class FROM binding_registry ORDER BY scope_ref;"
+     "SELECT scope_ref,state,home_node_id,retired_home_node_id,successor_node_id,placement_epoch,birth_class FROM binding_registry ORDER BY scope_ref;"
    ```
 
 5. Back up the current registry with `sqlite3 .backup`, stop its listener, move

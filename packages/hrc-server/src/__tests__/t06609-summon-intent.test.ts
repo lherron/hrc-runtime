@@ -270,8 +270,8 @@ describe('explicit_local binds ONLY while the registry is truly UNBOUND', () => 
       deps: deps({
         retirementFor: () => ({
           retiredNodeId: LOCAL,
-          canonicalHomeNodeId: REMOTE,
-          canonicalPlacementEpoch: 4,
+          successorNodeId: REMOTE,
+          retiredPlacementEpoch: 4,
           reason: 'namespace reconciliation',
         }),
       }),

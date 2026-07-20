@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
+import { ScopeRetirementRepository } from './federation-reconciliation.js'
 import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
@@ -56,6 +57,7 @@ export type HrcDatabase = {
   messages: MessageRepository
   federationAcceptedRequests: FederationAcceptedRequestRepository
   federationOutbox: FederationOutboxRepository
+  scopeRetirements: ScopeRetirementRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
   lifecyclePolicies: LifecyclePolicyRepository
   runtimeOperations: RuntimeOperationRepository
@@ -109,6 +111,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     messages: new MessageRepository(sqlite),
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),
+    scopeRetirements: new ScopeRetirementRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),
     lifecyclePolicies: new LifecyclePolicyRepository(sqlite),
     runtimeOperations: new RuntimeOperationRepository(sqlite),

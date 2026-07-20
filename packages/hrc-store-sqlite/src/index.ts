@@ -18,15 +18,19 @@ export {
   PlacementEpochRegressionError,
   PlacementLedgerConflictError,
   PlacementLedgerRepository,
+  applyT06681F0RetirementMigration,
   createPlacementLedgerRepository,
   openBindingRegistry,
   readPlacementLedgerRows,
   rebuildBindingRegistryFromLedgers,
 } from './federation-repositories.js'
 export type {
+  ActivateRetiredBindingInput,
+  ActivateRetiredBindingResult,
   BindingCasInput,
   BindingCasResult,
   BindingEstablishResult,
+  BindingRegistryRecord,
   BirthAuthorityProvenance,
   EstablishBindingInput,
   EstablishmentProvenance,
@@ -35,6 +39,12 @@ export type {
   PlacementBinding,
   PlacementLedgerRecord,
   PlacementLedgerState,
+  RegistryRetirementRecord,
+  RetargetRetiredBindingInput,
+  RetargetRetiredBindingResult,
+  RetireBindingInput,
+  RetireBindingResult,
+  T06681F0RetirementMigrationResult,
 } from './federation-repositories.js'
 export {
   ScopeRetirementConflictError,

@@ -5,6 +5,7 @@ import type {
   FederationBirthClass,
   PlacementBinding,
   PlacementLedgerRepository,
+  RegistryRetirementRecord,
 } from 'hrc-store-sqlite'
 
 import { parseNodeId } from './node-id.js'
@@ -18,10 +19,12 @@ export type EstablishLocalPlacementRequest = {
   now: string
 }
 
-export type EstablishLocalPlacementResult = {
-  outcome: 'established' | 'already-established' | 'bound-elsewhere'
-  binding: PlacementBinding
-}
+export type EstablishLocalPlacementResult =
+  | {
+      outcome: 'established' | 'already-established' | 'bound-elsewhere'
+      binding: PlacementBinding
+    }
+  | { outcome: 'retired'; retirement: RegistryRetirementRecord }
 
 /**
  * Linearizes a first birth at the collective registry before installing local
@@ -51,6 +54,9 @@ export async function establishLocalPlacement(input: {
     establishmentProvenance: input.request.establishmentProvenance,
     now: input.request.now,
   })
+  if (registryResult.outcome === 'retired') {
+    return { outcome: 'retired', retirement: registryResult.retirement }
+  }
   const binding = registryResult.binding
 
   if (binding.homeNodeId !== homeNodeId) {

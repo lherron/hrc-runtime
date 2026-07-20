@@ -602,8 +602,8 @@ describe('advisory log content — the soak data T-06615 collects', () => {
 describe('scope retirement (T-06614 C-11125) — checked before authority logic', () => {
   const retired = {
     retiredNodeId: 'max3',
-    canonicalHomeNodeId: 'lab',
-    canonicalPlacementEpoch: 2,
+    successorNodeId: 'lab',
+    retiredPlacementEpoch: 2,
     reason: 'namespace_reconciliation',
   }
 
@@ -637,7 +637,7 @@ describe('scope retirement (T-06614 C-11125) — checked before authority logic'
       deps: deps({
         localNodeId: 'max3',
         ledger: ledgerStub(binding({ homeNodeId: 'max3' })),
-        retirementFor: () => ({ ...retired, retiredNodeId: 'lab', canonicalHomeNodeId: 'max3' }),
+        retirementFor: () => ({ ...retired, retiredNodeId: 'lab', successorNodeId: 'max3' }),
       }),
     })
     expect(result.evaluation.decision).toBe('allow')
