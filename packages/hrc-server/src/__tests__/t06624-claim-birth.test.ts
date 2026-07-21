@@ -406,7 +406,7 @@ describe('T-06624 claim-birth summon authority', () => {
       WRKQ_DB: 'rpc://canonical.example:7171',
       WRKQ_DB_PATH: undefined,
       WRKQ_DB_PATH_FILE: undefined,
-      WRKQD_TOKEN: undefined,
+      WRKQD_TOKEN: '',
       WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
     })
   })

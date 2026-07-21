@@ -75,7 +75,9 @@ export function taskClaimCommandEnvironment(
   if (tokenFile) {
     // wrkq intentionally gives WRKQD_TOKEN precedence over the file. A stale
     // operator-shell token must not shadow the daemon's explicit credential.
-    env['WRKQD_TOKEN'] = undefined
+    // Keep the key present-but-empty: wrkq loads dotenv before resolving its
+    // credential, and an absent key would allow dotenv to restore `dev`.
+    env['WRKQD_TOKEN'] = ''
     env['WRKQD_TOKEN_FILE'] = tokenFile
   }
   return env
