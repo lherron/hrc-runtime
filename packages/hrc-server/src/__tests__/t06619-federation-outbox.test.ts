@@ -12,6 +12,7 @@ import { parseNodeId } from '../federation/node-id.js'
 import {
   DEFAULT_FEDERATION_OUTBOX_RETRY_POLICY,
   FederationOutboxDeliveryEngine,
+  type FederationOutboxDeliveryObservation,
   federationRetryDelayMs,
 } from '../federation/outbox-delivery.js'
 import { PeerToken } from '../federation/peer-token.js'
@@ -111,11 +112,13 @@ describe('T-06619 clock-driven federation retry state machine', () => {
     let nowMs = Date.parse('2026-07-20T00:00:00.000Z')
     let reachable = false
     let sends = 0
+    const observations: FederationOutboxDeliveryObservation[] = []
     seed(db)
     const engine = new FederationOutboxDeliveryEngine({
       db,
       now: () => new Date(nowMs),
       policy: { initialRetryDelayMs: 1_000, maxRetryDelayMs: 8_000, deadLetterAfterMs: 60_000 },
+      onObservation: (observation) => observations.push(observation),
       send: async () => {
         sends += 1
         if (!reachable) throw new Error('connect ECONNREFUSED')
@@ -152,6 +155,31 @@ describe('T-06619 clock-driven federation retry state machine', () => {
         deliveredAt: '2026-07-20T00:00:03.000Z',
       })
       expect(db.messages.getById(MESSAGE_ID)?.execution.state).toBe('not_applicable')
+      expect(observations).toEqual([
+        expect.objectContaining({
+          transition: 'attempt_started',
+          messageId: MESSAGE_ID,
+          peerNodeId: 'lab',
+          attemptNumber: 1,
+        }),
+        expect.objectContaining({
+          transition: 'peer_unreachable',
+          errorCode: 'peer_unreachable',
+          attemptNumber: 1,
+        }),
+        expect.objectContaining({ transition: 'attempt_started', attemptNumber: 2 }),
+        expect.objectContaining({
+          transition: 'peer_unreachable',
+          errorCode: 'peer_unreachable',
+          attemptNumber: 2,
+        }),
+        expect.objectContaining({ transition: 'attempt_started', attemptNumber: 3 }),
+        expect.objectContaining({
+          transition: 'delivered',
+          acceptOutcome: 'accepted',
+          attemptNumber: 3,
+        }),
+      ])
     } finally {
       db.close()
     }

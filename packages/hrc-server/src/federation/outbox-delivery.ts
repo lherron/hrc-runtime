@@ -40,12 +40,34 @@ export type FederationOutboxSend = (
   delivery: FederationOutboxDeliveryRecord
 ) => Promise<PeerAcceptClientResult>
 
+export type FederationOutboxDeliveryObservation = {
+  transition:
+    | 'attempt_started'
+    | 'delivered'
+    | 'retry_scheduled'
+    | 'peer_unreachable'
+    | 'dead_lettered'
+  deliveryId: string
+  messageId: string
+  peerNodeId: string
+  phase: FederationOutboxDeliveryRecord['envelope']['phase']
+  replyToMessageId?: string | undefined
+  rootMessageId: string
+  attemptNumber: number
+  cycleAttemptNumber: number
+  acceptOutcome?: 'accepted' | 'duplicate' | undefined
+  errorCode?: string | undefined
+  nextAttemptAt?: string | undefined
+}
+
 export type FederationOutboxDeliveryEngineOptions = {
   db: HrcDatabase
   send: FederationOutboxSend
   now?: (() => Date) | undefined
   policy?: FederationOutboxRetryPolicy | undefined
   onError?: ((error: unknown) => void) | undefined
+  /** Structured transition seam used by permanent federation diagnostics. */
+  onObservation?: ((observation: FederationOutboxDeliveryObservation) => void) | undefined
   onStaleRedirect?:
     | ((
         delivery: FederationOutboxDeliveryRecord,
@@ -81,6 +103,9 @@ export class FederationOutboxDeliveryEngine {
   private readonly now: () => Date
   private readonly policy: FederationOutboxRetryPolicy
   private readonly onError: ((error: unknown) => void) | undefined
+  private readonly onObservation:
+    | ((observation: FederationOutboxDeliveryObservation) => void)
+    | undefined
   private readonly onStaleRedirect: FederationOutboxDeliveryEngineOptions['onStaleRedirect']
   private readonly attempting = new Set<string>()
   private timer: ReturnType<typeof setInterval> | undefined
@@ -92,6 +117,7 @@ export class FederationOutboxDeliveryEngine {
     this.now = options.now ?? (() => new Date())
     this.policy = options.policy ?? DEFAULT_FEDERATION_OUTBOX_RETRY_POLICY
     this.onError = options.onError
+    this.onObservation = options.onObservation
     this.onStaleRedirect = options.onStaleRedirect
     validatePolicy(this.policy)
   }
@@ -148,6 +174,7 @@ export class FederationOutboxDeliveryEngine {
     delivery: FederationOutboxDeliveryRecord
   ): Promise<FederationOutboxDeliveryRecord> {
     const attemptedAt = this.now().toISOString()
+    this.observe(delivery, 'attempt_started')
     try {
       const result = await this.send(delivery)
       if (result.outcome !== 'refused') {
@@ -156,15 +183,19 @@ export class FederationOutboxDeliveryEngine {
             `peer ACK messageId ${result.messageId} does not match delivery ${delivery.messageId}`
           )
         }
-        return this.outbox.markDelivered(delivery.deliveryId, attemptedAt)
+        const delivered = this.outbox.markDelivered(delivery.deliveryId, attemptedAt)
+        this.observe(delivered, 'delivered', { acceptOutcome: result.outcome })
+        return delivered
       }
       if (!result.retryable) {
-        return this.outbox.markDeadLetter({
+        const deadLettered = this.outbox.markDeadLetter({
           deliveryId: delivery.deliveryId,
           attemptedAt,
           errorCode: result.code,
           errorMessage: `peer refused delivery with HTTP ${result.status}: ${result.code}`,
         })
+        this.observe(deadLettered, 'dead_lettered')
+        return deadLettered
       }
       let retryDelivery = delivery
       if (
@@ -181,12 +212,14 @@ export class FederationOutboxDeliveryEngine {
             attemptedAt
           )
         } catch (error) {
-          return this.outbox.markDeadLetter({
+          const deadLettered = this.outbox.markDeadLetter({
             deliveryId: delivery.deliveryId,
             attemptedAt,
             errorCode: 'redirect_conflict',
             errorMessage: errorMessage(error),
           })
+          this.observe(deadLettered, 'dead_lettered')
+          return deadLettered
         }
       }
       return this.scheduleFailure(
@@ -217,19 +250,21 @@ export class FederationOutboxDeliveryEngine {
     const attemptedAtMs = Date.parse(attemptedAt)
     const deadlineMs = Date.parse(delivery.retryWindowStartedAt) + this.policy.deadLetterAfterMs
     if (attemptedAtMs >= deadlineMs) {
-      return this.outbox.markDeadLetter({
+      const deadLettered = this.outbox.markDeadLetter({
         deliveryId: delivery.deliveryId,
         attemptedAt,
         errorCode: 'retry_window_exhausted',
         errorMessage: `${message}; automatic retry window exhausted`,
       })
+      this.observe(deadLettered, 'dead_lettered')
+      return deadLettered
     }
 
     const nextAttemptMs = Math.min(
       attemptedAtMs + federationRetryDelayMs(delivery.cycleAttempts + 1, this.policy),
       deadlineMs
     )
-    return this.outbox.scheduleRetry({
+    const scheduled = this.outbox.scheduleRetry({
       deliveryId: delivery.deliveryId,
       state,
       nextAttemptAt: new Date(nextAttemptMs).toISOString(),
@@ -237,5 +272,45 @@ export class FederationOutboxDeliveryEngine {
       errorCode,
       errorMessage: message,
     })
+    this.observe(scheduled, state)
+    return scheduled
+  }
+
+  private observe(
+    delivery: FederationOutboxDeliveryRecord,
+    transition: FederationOutboxDeliveryObservation['transition'],
+    extra: Pick<FederationOutboxDeliveryObservation, 'acceptOutcome'> = {}
+  ): void {
+    if (this.onObservation === undefined) return
+    try {
+      this.onObservation({
+        transition,
+        deliveryId: delivery.deliveryId,
+        messageId: delivery.messageId,
+        peerNodeId: delivery.peerNodeId,
+        phase: delivery.envelope.phase,
+        ...(delivery.envelope.replyToMessageId === undefined
+          ? {}
+          : { replyToMessageId: delivery.envelope.replyToMessageId }),
+        rootMessageId: delivery.envelope.rootMessageId,
+        attemptNumber:
+          transition === 'attempt_started' ? delivery.totalAttempts + 1 : delivery.totalAttempts,
+        cycleAttemptNumber:
+          transition === 'attempt_started' ? delivery.cycleAttempts + 1 : delivery.cycleAttempts,
+        ...(extra.acceptOutcome === undefined ? {} : { acceptOutcome: extra.acceptOutcome }),
+        ...(transition === 'attempt_started' || transition === 'delivered'
+          ? {}
+          : {
+              ...(delivery.lastErrorCode === undefined
+                ? {}
+                : { errorCode: delivery.lastErrorCode }),
+              ...(delivery.nextAttemptAt === undefined
+                ? {}
+                : { nextAttemptAt: delivery.nextAttemptAt }),
+            }),
+      })
+    } catch (error) {
+      this.onError?.(error)
+    }
   }
 }

@@ -99,6 +99,14 @@ export class FederationOriginOutbox {
         writeServerLog('WARN', 'federation.outbox.drain_failed', {
           error: error instanceof Error ? error.message : String(error),
         }),
+      onObservation: (observation) =>
+        writeServerLog(
+          observation.transition === 'attempt_started' || observation.transition === 'delivered'
+            ? 'INFO'
+            : 'WARN',
+          `federation.outbox.${observation.transition}`,
+          observation
+        ),
       send: async (delivery) => {
         const peer = options.config.peers.get(
           parseNodeId(delivery.peerNodeId, 'federation outbox peerNodeId')
@@ -234,6 +242,9 @@ export class FederationOriginOutbox {
       deliveryId: delivery.deliveryId,
       messageId: delivery.messageId,
       peerNodeId,
+      phase: record.phase,
+      rootMessageId: record.rootMessageId,
+      replyToMessageId: record.replyToMessageId,
       placementEpoch: expected.placementEpoch,
       ...log,
     })

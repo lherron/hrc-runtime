@@ -407,6 +407,13 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function federationOriginNodeId(record: HrcMessageRecord): string | undefined {
+  const ingress = record.metadataJson?.['federationIngress']
+  if (!isObjectRecord(ingress)) return undefined
+  const nodeId = ingress['authenticatedNodeId']
+  return typeof nodeId === 'string' ? nodeId : undefined
+}
+
 function isPrimaryScopeRef(scopeRef: string): boolean {
   return scopeRef.endsWith(':task:primary') || !scopeRef.includes(':task:')
 }
@@ -1006,9 +1013,30 @@ export async function deliverFederationAcceptedMessage(
   envelope: FederationMessageEnvelope,
   record: HrcMessageRecord
 ): Promise<void> {
+  const originNodeId = federationOriginNodeId(record)
+  const targetScopeRef =
+    envelope.to.kind === 'session' ? parseSessionRef(envelope.to.sessionRef).scopeRef : undefined
+  writeServerLog('INFO', 'federation.accept.local_delivery_started', {
+    messageId: record.messageId,
+    phase: envelope.phase,
+    rootMessageId: envelope.rootMessageId,
+    replyToMessageId: envelope.replyToMessageId,
+    originNodeId,
+    targetScopeRef,
+  })
   this.notifyMessageSubscribers(record)
   this.maybeCompleteInteractiveSemanticTurn(record)
-  if (envelope.phase !== 'request') return
+  if (envelope.phase !== 'request') {
+    writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
+      messageId: record.messageId,
+      phase: envelope.phase,
+      rootMessageId: envelope.rootMessageId,
+      replyToMessageId: envelope.replyToMessageId,
+      originNodeId,
+      executionState: record.execution.state,
+    })
+    return
+  }
 
   const delivery = envelope.delivery
   const runtimeIntent =
@@ -1039,6 +1067,27 @@ export async function deliverFederationAcceptedMessage(
       : { allowStaleGeneration: delivery.allowStaleGeneration }),
   }
   const delivered = await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
+  const persisted = this.db.messages.getById(record.messageId)
+  const execution = persisted?.execution
+  writeServerLog(
+    execution?.state === 'failed' ? 'WARN' : 'INFO',
+    'federation.accept.local_delivery_completed',
+    {
+      messageId: record.messageId,
+      phase: envelope.phase,
+      rootMessageId: envelope.rootMessageId,
+      replyToMessageId: envelope.replyToMessageId,
+      originNodeId,
+      targetScopeRef,
+      executionState: execution?.state,
+      runtimeId: execution?.runtimeId,
+      runId: execution?.runId,
+      transport: execution?.transport,
+      errorCode: execution?.errorCode,
+      errorMessage: execution?.errorMessage,
+      replyMessageId: delivered.reply?.messageId,
+    }
+  )
   if (delivered.reply !== undefined) {
     await this.federationOriginOutbox?.routeResponse(delivered.reply)
   }
@@ -1345,12 +1394,22 @@ export async function executeSemanticTurn(
     return { execution, reply }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err)
+    const latestRuntime = findLatestRuntime(this.db, session.hostSessionId)
     writeServerLog('WARN', 'semantic_dm.execution_failed', {
       messageId: record.messageId,
+      originNodeId: federationOriginNodeId(record),
+      scopeRef: session.scopeRef,
+      hostSessionId: session.hostSessionId,
+      runtimeId: latestRuntime?.runtimeId,
+      runId: latestRuntime?.activeRunId,
+      runtimeStatus: latestRuntime?.status,
+      transport: latestRuntime?.transport,
+      errorName: err instanceof Error ? err.name : undefined,
       error: errorMessage,
     })
     this.db.messages.updateExecution(record.messageId, {
       state: 'failed',
+      errorCode: 'semantic_dm_execution_failed',
       errorMessage,
     })
     return {}

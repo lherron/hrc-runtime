@@ -205,14 +205,22 @@ export function createPeerProtocolRequestHandler(
           },
           200
         )
+        writeServerLog('INFO', 'federation.accept.ack', {
+          localNodeId: options.localNodeId,
+          peerNodeId: peer.nodeId,
+          messageId: result.messageId,
+          outcome: result.outcome,
+        })
         if (result.outcome === 'accepted' && result.afterAck !== undefined) {
           setTimeout(() => {
-            Promise.resolve(result.afterAck?.()).catch(() => {
+            Promise.resolve(result.afterAck?.()).catch((error: unknown) => {
               // The message is already durable and ACKed. The row remains the
               // receiver's queue; never turn a post-ACK local-delivery failure
               // into a transport retry or an unhandled rejection.
               writeServerLog('WARN', 'federation.accept.post_ack_delivery_failed', {
                 messageId: result.messageId,
+                peerNodeId: peer.nodeId,
+                error: error instanceof Error ? error.message : String(error),
               })
             })
           }, 0)
