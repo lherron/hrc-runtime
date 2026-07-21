@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { createScopeRetirementRepository, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
@@ -160,6 +160,24 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       })
       expect(localResolve.status).toBe(200)
 
+      // The origin previously hosted the same pre-federation scope and now
+      // carries the node-local loser fence emitted by namespace reconciliation.
+      // That fence must prevent local execution without masking the registry's
+      // active remote binding: a DM from the loser still routes to the winner.
+      const fenceDb = openHrcDatabase(svc.dbPath)
+      try {
+        createScopeRetirementRepository(fenceDb.sqlite).retire({
+          scopeRef: SCOPE,
+          retiredNodeId: 'svc-test',
+          retiredPlacementEpoch: 1,
+          successorNodeId: 'lab-test',
+          reason: 'namespace_reconciliation',
+          retiredAt: '2026-07-20T00:00:00.000Z',
+        })
+      } finally {
+        fenceDb.close()
+      }
+
       const result = await runCredentialStrippedDm(svc)
       expect(result).toMatchObject({ exitCode: 0, stderr: '' })
       const sent = JSON.parse(result.stdout) as { messageId: string }
@@ -207,9 +225,8 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       })
       expect(localEnsure.status).toBe(409)
       const localEnsureBody = (await localEnsure.json()) as { error?: { message?: string } }
-      expect(localEnsureBody.error?.message).toContain(
-        'is already established on lab-test (epoch 1)'
-      )
+      expect(localEnsureBody.error?.message).toContain('retired on this node (svc-test)')
+      expect(localEnsureBody.error?.message).toContain('successor is lab-test')
 
       // Registry-unbound routing fails at the DM entry point immediately and
       // tells the caller it is retryable; it never hangs or falls through to

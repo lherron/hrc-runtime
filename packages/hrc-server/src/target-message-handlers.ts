@@ -885,20 +885,39 @@ export async function handleSemanticDm(
 
   if (body.to.kind === 'session') {
     const targetSessionRef = body.to.sessionRef
-    await assertScopeNotRetired(this, {
-      scopeRef: scopeRefOf(targetSessionRef),
-      path: 'archived-successor',
-      advisoryCoveredByDownstreamGate: () => {
-        const session = findTargetSession(this.db, targetSessionRef)
-        if (session?.status === 'archived' && session.continuation?.key) return true
-        return (
-          session === undefined &&
-          body.createIfMissing !== false &&
-          body.runtimeIntent !== undefined &&
-          !isCodexAppOwnedScopeRef(targetSessionRef)
-        )
-      },
-    })
+    const scopeRef = scopeRefOf(targetSessionRef)
+    const assertLocalTargetNotRetired = () =>
+      assertScopeNotRetired(this, {
+        scopeRef,
+        path: 'archived-successor',
+        advisoryCoveredByDownstreamGate: () => {
+          const session = findTargetSession(this.db, targetSessionRef)
+          if (session?.status === 'archived' && session.continuation?.key) return true
+          return (
+            session === undefined &&
+            body.createIfMissing !== false &&
+            body.runtimeIntent !== undefined &&
+            !isCodexAppOwnedScopeRef(targetSessionRef)
+          )
+        },
+      })
+
+    // A loser-node retirement fence forbids local execution; it does not
+    // retire the active binding held by another node. Resolve the authoritative
+    // route first so a reconciled loser can originate a DM to the winner. If
+    // routing is unavailable/unbound, preserve the more specific local
+    // retirement refusal before surfacing the routing error.
+    let remoteTarget = false
+    let routingError: unknown
+    if (parent === undefined && this.federationOriginOutbox !== undefined) {
+      try {
+        remoteTarget = await this.federationOriginOutbox.isRemoteTarget(scopeRef)
+      } catch (error) {
+        routingError = error
+      }
+    }
+    if (!remoteTarget) await assertLocalTargetNotRetired()
+    if (routingError !== undefined) throw routingError
   }
 
   const respondTo = body.respondTo ?? body.from

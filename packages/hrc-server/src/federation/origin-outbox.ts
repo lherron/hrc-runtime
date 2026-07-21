@@ -134,6 +134,20 @@ export class FederationOriginOutbox {
     this.engine.start(options.pollIntervalMs)
   }
 
+  /**
+   * Resolve whether a session target is authoritative on another configured
+   * node before local admission inspects node-local loser state.
+   *
+   * Namespace reconciliation deliberately leaves a retirement fence on every
+   * losing node. That fence bars local execution, but it must not mask the
+   * registry's active binding when the same node originates a federated DM to
+   * the winner.
+   */
+  async isRemoteTarget(scopeRef: string): Promise<boolean> {
+    const binding = await this.resolveRoutingBinding(scopeRef)
+    return binding.homeNodeId !== this.options.config.nodeId
+  }
+
   async route(
     body: SemanticDmRequest,
     record: HrcMessageRecord
@@ -146,16 +160,20 @@ export class FederationOriginOutbox {
     }
     if (record.to.kind !== 'session') return { outcome: 'local' }
     const scopeRef = parseSessionRef(record.to.sessionRef).scopeRef
-    const binding = await resolveFederationRoutingBinding({
-      scopeRef,
-      ledger: createPlacementLedgerRepository(this.options.db.sqlite),
-      cache: this.cache,
-      registry: this.registry,
-    })
+    const binding = await this.resolveRoutingBinding(scopeRef)
     if (binding.homeNodeId === this.options.config.nodeId) return { outcome: 'local' }
 
     return this.enqueue(record, body, binding.homeNodeId, binding, {
       routingSource: binding.source,
+    })
+  }
+
+  private resolveRoutingBinding(scopeRef: string) {
+    return resolveFederationRoutingBinding({
+      scopeRef,
+      ledger: createPlacementLedgerRepository(this.options.db.sqlite),
+      cache: this.cache,
+      registry: this.registry,
     })
   }
 
