@@ -40,6 +40,9 @@ import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
   FederationPeerHealthObservation,
+  FederationRebindRequest,
+  FederationRebindResult,
+  FederationRebindStep,
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
@@ -344,6 +347,63 @@ export async function cmdFederationOutboxDrop(args: string[]): Promise<void> {
   const dropped = await createClient().dropFederationOutbox(deliveryId)
   if (hasFlag(args, '--json')) printJson(dropped)
   else process.stdout.write(`dropped dead-letter: ${dropped.deliveryId} -> ${dropped.peerNodeId}\n`)
+}
+
+function parseRebindRequest(args: string[]): FederationRebindRequest {
+  const scopeArg = args.find((arg) => !arg.startsWith('-'))
+  if (scopeArg === undefined) fatal('federation rebind requires a scope or target handle')
+  const expectedHomeNodeId = parseFlag(args, '--expected-home')
+  const epochText = parseFlag(args, '--expected-epoch')
+  const newHomeNodeId = parseFlag(args, '--new-home')
+  if (expectedHomeNodeId === undefined) fatal('federation rebind requires --expected-home <node>')
+  if (epochText === undefined) fatal('federation rebind requires --expected-epoch <n>')
+  if (newHomeNodeId === undefined) fatal('federation rebind requires --new-home <node>')
+  const expectedPlacementEpoch = Number(epochText)
+  if (
+    !Number.isSafeInteger(expectedPlacementEpoch) ||
+    expectedPlacementEpoch < 1 ||
+    expectedPlacementEpoch >= Number.MAX_SAFE_INTEGER
+  ) {
+    fatal('--expected-epoch must be a positive safe integer with room for E+1')
+  }
+  return {
+    scopeRef: resolveScopeArg(scopeArg),
+    expectedHomeNodeId,
+    expectedPlacementEpoch,
+    newHomeNodeId,
+  }
+}
+
+function formatRebindHuman(result: FederationRebindResult): string {
+  const marker = result.ok ? 'OK' : 'REFUSED'
+  const tuple = `${result.request.expectedHomeNodeId}@${result.request.expectedPlacementEpoch} -> ${result.request.newHomeNodeId}@${result.request.expectedPlacementEpoch + 1}`
+  const lines = [
+    `${marker} ${result.step.toUpperCase()} ${result.outcome}: ${result.state}`,
+    `scope: ${result.request.scopeRef}`,
+    `tuple: ${tuple}`,
+    result.detail,
+  ]
+  if (result.liveRuntimeIds !== undefined) {
+    for (const runtimeId of result.liveRuntimeIds) lines.push(`live runtime: ${runtimeId}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export async function cmdFederationRebind(
+  step: FederationRebindStep,
+  args: string[]
+): Promise<void> {
+  const request = parseRebindRequest(args)
+  const client = createClient()
+  const result =
+    step === 'revoke'
+      ? await client.revokeFederationRebind(request)
+      : step === 'cas'
+        ? await client.compareAndSwapFederationRebind(request)
+        : await client.activateFederationRebind(request)
+  if (hasFlag(args, '--json')) printJson(result)
+  else process.stdout.write(formatRebindHuman(result))
+  if (!result.ok) throw new CliStatusExit(1)
 }
 
 async function checkDaemon(client: HrcClient): Promise<{

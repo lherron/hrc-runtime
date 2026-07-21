@@ -1,5 +1,6 @@
 import type {
   ActivateRetiredBindingResult,
+  BindingCasResult,
   BindingEstablishResult,
   BindingRegistry,
   BirthAuthorityProvenance,
@@ -50,6 +51,9 @@ export type RegistryConsultResult =
 export interface BindingRegistryClient {
   consult(scopeRef: string, options?: { signal?: AbortSignal }): Promise<RegistryConsultResult>
   establish(request: Parameters<BindingRegistry['establish']>[0]): Promise<BindingEstablishResult>
+  compareAndSwap?(
+    request: Parameters<BindingRegistry['compareAndSwap']>[0]
+  ): Promise<BindingCasResult>
   retire?(request: Parameters<BindingRegistry['retire']>[0]): Promise<RetireBindingResult>
   activateRetired?(
     request: Parameters<BindingRegistry['activateRetired']>[0]
@@ -207,6 +211,15 @@ export class LocalBindingRegistryClient implements BindingRegistryClient {
       throw new RegistryRefusedError(400, 'invalid_request')
     }
     return this.#registry.retire(request)
+  }
+
+  async compareAndSwap(
+    request: Parameters<BindingRegistry['compareAndSwap']>[0]
+  ): Promise<BindingCasResult> {
+    if (request.newHomeNodeId !== this.#localNodeId) {
+      throw new RegistryRefusedError(400, 'invalid_request')
+    }
+    return this.#registry.compareAndSwap(request)
   }
 
   async activateRetired(
@@ -655,6 +668,28 @@ export class HttpBindingRegistryClient implements BindingRegistryClient {
       outcome !== 'not_found'
     ) {
       throw new RegistryUnreachableError('federation registry returned invalid retirement result')
+    }
+    const retirement = parseRetirement(body['retirement'], request.scopeRef)
+    const binding = parseBinding(body['binding'], request.scopeRef)
+    return {
+      outcome,
+      ...(retirement === undefined ? {} : { retirement }),
+      ...(binding === undefined ? {} : { binding }),
+    }
+  }
+
+  async compareAndSwap(
+    request: Parameters<BindingRegistry['compareAndSwap']>[0]
+  ): Promise<BindingCasResult> {
+    const body = await this.#mutationAttempt('/v1/federation/registry/cas', request)
+    const outcome = body['outcome']
+    if (
+      outcome !== 'updated' &&
+      outcome !== 'idempotent' &&
+      outcome !== 'conflict' &&
+      outcome !== 'not_found'
+    ) {
+      throw new RegistryUnreachableError('federation registry returned invalid CAS result')
     }
     const retirement = parseRetirement(body['retirement'], request.scopeRef)
     const binding = parseBinding(body['binding'], request.scopeRef)

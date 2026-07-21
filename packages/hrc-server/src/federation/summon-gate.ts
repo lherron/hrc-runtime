@@ -114,6 +114,8 @@ export type SummonGateRefuseReason =
   | 'policy-unavailable'
   | 'registry-unreachable'
   | 'registry-refused'
+  | 'rebind-revoked'
+  | 'rebind-activation-pending'
   | `capability-${SummonCapabilityName}-missing`
   | 'capability-project-root-unresolvable'
   | 'capability-observation-failed'
@@ -201,7 +203,8 @@ export type SummonGateDeps = {
   /** False when federation.json is absent — the dark path. */
   federationConfigured: boolean
   localNodeId: string
-  ledger: Pick<PlacementLedgerRepository, 'activeAuthority' | 'installActive'>
+  ledger: Pick<PlacementLedgerRepository, 'activeAuthority' | 'installActive'> &
+    Partial<Pick<PlacementLedgerRepository, 'get'>>
   registry: BindingRegistryClient
   /**
    * Compiled placement policy for the scope. `undefined` means the profile
@@ -505,7 +508,13 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   // (2) Local ledger — the hot path, deliberately free of network unless a
   // local epoch fence suppresses it. A later active epoch makes the retained
   // fence inert and permits a deliberate return to this node.
-  const local = deps.ledger.activeAuthority(scopeRef)
+  const localRecord = deps.ledger.get?.(scopeRef)
+  const local =
+    deps.ledger.get === undefined
+      ? deps.ledger.activeAuthority(scopeRef)
+      : localRecord?.state === 'active'
+        ? localRecord
+        : undefined
   const localFenceApplies =
     retirement !== undefined &&
     retirement.retiredNodeId === deps.localNodeId &&
@@ -527,6 +536,14 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'scope-retired',
       `${scopeRef} was retired on this node (${deps.localNodeId}) at epoch ${retirement.retiredPlacementEpoch}. Its successor is ${retirement.successorNodeId} at epoch ${retirement.retiredPlacementEpoch + 1}; summon it there.`,
       { homeNodeId: retirement.successorNodeId }
+    )
+  }
+
+  if (localRecord?.state === 'revoked') {
+    return refuse(
+      'rebind-revoked',
+      `${scopeRef} is locally revoked on ${deps.localNodeId} at epoch ${localRecord.placementEpoch}. It is summonable nowhere until the fenced registry CAS and explicit activation finish; retry the manual rebind procedure.`,
+      { retryable: true }
     )
   }
 
@@ -579,6 +596,13 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   if (consult.outcome === 'bound') {
     const bound = consult.binding
     if (bound.homeNodeId === deps.localNodeId) {
+      if (bound.establishmentProvenance === 'rebind') {
+        return refuse(
+          'rebind-activation-pending',
+          `${scopeRef} is registered on ${deps.localNodeId} at rebound epoch ${bound.placementEpoch}, but this node has not activated that tuple locally. It remains summonable nowhere; retry the ACTIVATE step.`,
+          { retryable: true, homeNodeId: deps.localNodeId }
+        )
+      }
       if (
         bound.birthClass === 'mechanism-born' &&
         bound.authorityProvenance.kind === 'claim-birth' &&

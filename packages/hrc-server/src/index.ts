@@ -14,6 +14,9 @@ import type {
   DropContinuationResponse,
   FederationNodeRuntimeProjection,
   FederationPeerHealthObservation,
+  FederationRebindRequest,
+  FederationRebindResult,
+  FederationRebindStep,
   FederationRuntimeProjectionReport,
   HrcCapabilityStatus,
   HrcCommandLaunchSpec,
@@ -29,7 +32,7 @@ import type {
   SweepZombieRunsResponse,
 } from 'hrc-core'
 
-import { openHrcDatabase } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 import {
   type AppSessionHandlersMethods,
@@ -77,11 +80,19 @@ import {
   startPeerProtocolEndpoint,
 } from './federation/peer-protocol.js'
 import {
+  activateFederationRebind,
+  casFederationRebind,
+  normalizeFederationRebindRequest,
+  revokeFederationRebind,
+} from './federation/rebind.js'
+import type { BindingRegistryClient } from './federation/registry-client.js'
+import {
   type BindingRegistryEndpointControl,
   type RegistryAuthPeer,
   resolveBindingRegistryPath,
   startBindingRegistryEndpoint,
 } from './federation/registry-endpoint.js'
+import { resolveFederationRegistryClient } from './federation/registry-resolution.js'
 import {
   assertScopeNotRetired,
   captureLivePlacementRepairCandidates,
@@ -163,6 +174,7 @@ import type { ServerLockHandle } from './server-lock.js'
 import { writeServerLog } from './server-log.js'
 import { parseRuntimeIdQuery } from './server-misc.js'
 import {
+  isRecord,
   normalizeOptionalQuery,
   parseClearContextRequest,
   parseDropContinuationRequest,
@@ -187,6 +199,7 @@ import type {
 import {
   createHostSessionId,
   errorResponse,
+  isRuntimeUnavailableStatus,
   json,
   timestamp,
   unlinkIfExists,
@@ -508,6 +521,7 @@ class HrcServerInstance implements HrcServer {
   readonly otelListener: OtlpListenerControl | undefined
   public readonly otelEndpoint: string | undefined
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
+  readonly federationRegistryClient: BindingRegistryClient | undefined
   public readonly federationRegistryEndpoint: string | undefined
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
@@ -624,6 +638,12 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/federation/peers')]: () => this.handleFederationPeerHealth(),
     [exactRouteKey('GET', '/v1/federation/runtimes')]: (_request, url) =>
       this.handleFederationRuntimeProjection(url),
+    [exactRouteKey('POST', '/v1/federation/rebind/revoke')]: (request) =>
+      this.handleFederationRebind('revoke', request),
+    [exactRouteKey('POST', '/v1/federation/rebind/cas')]: (request) =>
+      this.handleFederationRebind('cas', request),
+    [exactRouteKey('POST', '/v1/federation/rebind/activate')]: (request) =>
+      this.handleFederationRebind('activate', request),
     [exactRouteKey('GET', '/v1/federation/bindings')]: () => this.handleFederationBindings(),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
@@ -724,6 +744,14 @@ class HrcServerInstance implements HrcServer {
         throw error
       }
     }
+
+    this.federationRegistryClient =
+      federationConfig === undefined
+        ? undefined
+        : resolveFederationRegistryClient(
+            federationConfig,
+            this.bindingRegistryEndpoint?.registryClient
+          )
 
     if (federationConfig === undefined || federationConfig.peerListener === undefined) {
       this.peerProtocolEndpoint = undefined
@@ -1521,6 +1549,71 @@ class HrcServerInstance implements HrcServer {
 
   async handleFederationPeerHealth(): Promise<Response> {
     return json((await this.collectFederationPeerHealth()).map((probe) => probe.health))
+  }
+
+  async handleFederationRebind(step: FederationRebindStep, request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (
+      !isRecord(body) ||
+      typeof body['scopeRef'] !== 'string' ||
+      typeof body['expectedHomeNodeId'] !== 'string' ||
+      typeof body['expectedPlacementEpoch'] !== 'number' ||
+      typeof body['newHomeNodeId'] !== 'string'
+    ) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'rebind requires scopeRef, expectedHomeNodeId, expectedPlacementEpoch, and newHomeNodeId'
+      )
+    }
+
+    let rebindRequest: FederationRebindRequest
+    try {
+      rebindRequest = normalizeFederationRebindRequest(body as FederationRebindRequest)
+    } catch (error) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        `invalid rebind request: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+
+    const config = this.options.federationConfig
+    const registry = this.federationRegistryClient
+    if (config === undefined || registry === undefined) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'federation rebind requires a configured federation registry'
+      )
+    }
+    const dependencies = {
+      owner: this,
+      localNodeId: config.nodeId,
+      ledger: createPlacementLedgerRepository(this.db.sqlite),
+      registry,
+      peerForNodeId: (nodeId: string) =>
+        [...config.peers.values()].find((peer) => peer.nodeId === nodeId),
+      liveRuntimeIds: (scopeRef: string) =>
+        this.db.runtimes
+          .listAll()
+          .filter(
+            (runtime) =>
+              runtime.scopeRef === scopeRef && !isRuntimeUnavailableStatus(runtime.status)
+          )
+          .map((runtime) => runtime.runtimeId),
+      log: writeServerLog,
+    }
+    let result: FederationRebindResult
+    switch (step) {
+      case 'revoke':
+        result = await revokeFederationRebind(dependencies, rebindRequest)
+        break
+      case 'cas':
+        result = await casFederationRebind(dependencies, rebindRequest)
+        break
+      case 'activate':
+        result = await activateFederationRebind(dependencies, rebindRequest)
+        break
+    }
+    return json(result)
   }
 
   async handleFederationRuntimeProjection(url: URL): Promise<Response> {

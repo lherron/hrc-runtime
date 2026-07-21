@@ -65,6 +65,18 @@ export type InstallActivePlacementInput = Omit<PlacementLedgerRecord, 'state' | 
   state?: 'active' | undefined
 }
 
+export type RevokePlacementInput = {
+  scopeRef: string
+  expectedHomeNodeId: string
+  expectedPlacementEpoch: number
+  updatedAt: string
+}
+
+export type RevokePlacementResult = {
+  outcome: 'revoked' | 'idempotent' | 'conflict' | 'not_found'
+  record?: PlacementLedgerRecord | undefined
+}
+
 export type EstablishBindingInput = Omit<
   PlacementBinding,
   'createdAt' | 'updatedAt' | 'priorHomeNodeId' | 'establishmentProvenance'
@@ -439,6 +451,44 @@ export class PlacementLedgerRepository {
 
   list(): PlacementLedgerRecord[] {
     return readPlacementLedgerRows(this.db)
+  }
+
+  /**
+   * Fence one exact local authority tuple before the collective registry moves.
+   * The retained row is forensic state and makes retry idempotent; it is never
+   * treated as summon authority by activeAuthority().
+   */
+  revoke(input: RevokePlacementInput): RevokePlacementResult {
+    const scopeRef = canonicalScopeRef(input.scopeRef)
+    const expectedHomeNodeId = requireNodeId(input.expectedHomeNodeId, 'expectedHomeNodeId')
+    const expectedPlacementEpoch = requirePositiveEpoch(input.expectedPlacementEpoch)
+
+    return this.db
+      .transaction(() => {
+        const current = this.get(scopeRef)
+        if (current === undefined) return { outcome: 'not_found' }
+        if (
+          current.homeNodeId !== expectedHomeNodeId ||
+          current.placementEpoch !== expectedPlacementEpoch
+        ) {
+          return { outcome: 'conflict', record: current }
+        }
+        if (current.state === 'revoked') return { outcome: 'idempotent', record: current }
+
+        const changed = this.db
+          .query(
+            `UPDATE placement_ledger
+             SET state = 'revoked', updated_at = ?
+             WHERE scope_ref = ? AND state = 'active' AND home_node_id = ? AND placement_epoch = ?`
+          )
+          .run(input.updatedAt, scopeRef, expectedHomeNodeId, expectedPlacementEpoch)
+        if (changed.changes !== 1) return { outcome: 'conflict', record: current }
+        return {
+          outcome: 'revoked',
+          record: requireStoredLedger(this.get(scopeRef), 'revoke'),
+        }
+      })
+      .immediate() as RevokePlacementResult
   }
 
   installActive(input: InstallActivePlacementInput): PlacementLedgerRecord {

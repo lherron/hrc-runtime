@@ -18,6 +18,9 @@ export function createUnavailableRegistryClient(reason: string): BindingRegistry
     async establish() {
       throw new RegistryUnreachableError(reason)
     },
+    async compareAndSwap() {
+      throw new RegistryUnreachableError(reason)
+    },
   }
 }
 

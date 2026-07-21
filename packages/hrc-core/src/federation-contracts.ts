@@ -189,6 +189,49 @@ export type FederationRuntimeProjectionReport = {
   readonly nodes: readonly FederationNodeRuntimeProjection[]
 }
 
+// -- F3 fenced manual rebind -------------------------------------------------
+
+export type FederationRebindStep = 'revoke' | 'cas' | 'activate'
+
+/** The exact old tuple and intended successor used by every idempotent step. */
+export type FederationRebindRequest = {
+  readonly scopeRef: string
+  readonly expectedHomeNodeId: string
+  readonly expectedPlacementEpoch: number
+  readonly newHomeNodeId: string
+}
+
+export type FederationRebindOutcome =
+  | 'revoked'
+  | 'registry-updated'
+  | 'activated'
+  | 'idempotent'
+  | 'conflict'
+  | 'refused'
+  | 'peer-unreachable'
+  | 'live-runtime-present'
+
+export type FederationRebindState =
+  | 'unchanged'
+  | 'old-home-live'
+  | 'revoked-nowhere'
+  | 'registry-moved-activation-pending'
+  | 'active-new-home'
+
+/** Visible result of one retryable manual-rebind step; never contains peer tokens. */
+export type FederationRebindResult = {
+  readonly step: FederationRebindStep
+  readonly ok: boolean
+  readonly outcome: FederationRebindOutcome
+  readonly state: FederationRebindState
+  readonly retryable: boolean
+  readonly detail: string
+  readonly request: FederationRebindRequest
+  readonly binding?: LocateBindingRecord | undefined
+  readonly ledger?: LocateLedgerView | undefined
+  readonly liveRuntimeIds?: readonly string[] | undefined
+}
+
 // -- `hrc target locate` -----------------------------------------------------
 
 /**

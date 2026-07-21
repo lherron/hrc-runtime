@@ -42,6 +42,8 @@ export type {
   PlacementLedgerRecord,
   PlacementLedgerState,
   RegistryRetirementRecord,
+  RevokePlacementInput,
+  RevokePlacementResult,
   RetargetRetiredBindingInput,
   RetargetRetiredBindingResult,
   RetireBindingInput,

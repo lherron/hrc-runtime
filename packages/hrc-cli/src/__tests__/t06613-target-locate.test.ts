@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import type {
   FederationOutboxDeliveryRecord,
+  FederationRebindResult,
   FederationRuntimeProjectionReport,
   LocateBindingsReport,
   ScopeLocation,
@@ -23,6 +24,7 @@ import {
   cmdFederationOutboxDrop,
   cmdFederationOutboxList,
   cmdFederationOutboxReplay,
+  cmdFederationRebind,
   cmdTargetLocate,
 } from '../cli/handlers-federation.js'
 import { cmdRuntimeList } from '../cli/handlers-runtime.js'
@@ -191,6 +193,50 @@ function stubOutbox(deliveries: FederationOutboxDeliveryRecord[]): {
     HrcClient.prototype.dropFederationOutbox = originalDrop
   })
   return calls
+}
+
+function stubRebind(): { calls: string[] } {
+  const originalRevoke = HrcClient.prototype.revokeFederationRebind
+  const originalCas = HrcClient.prototype.compareAndSwapFederationRebind
+  const originalActivate = HrcClient.prototype.activateFederationRebind
+  const calls: string[] = []
+  const response = (step: 'revoke' | 'cas' | 'activate'): FederationRebindResult => ({
+    step,
+    ok: true,
+    outcome: step === 'revoke' ? 'revoked' : step === 'cas' ? 'registry-updated' : 'activated',
+    state:
+      step === 'revoke'
+        ? 'revoked-nowhere'
+        : step === 'cas'
+          ? 'registry-moved-activation-pending'
+          : 'active-new-home',
+    retryable: step !== 'activate',
+    detail: `${step} complete`,
+    request: {
+      scopeRef: SCOPE,
+      expectedHomeNodeId: 'svc',
+      expectedPlacementEpoch: 1,
+      newHomeNodeId: 'lab',
+    },
+  })
+  HrcClient.prototype.revokeFederationRebind = async (request) => {
+    calls.push(`revoke:${request.expectedHomeNodeId}@${request.expectedPlacementEpoch}`)
+    return response('revoke')
+  }
+  HrcClient.prototype.compareAndSwapFederationRebind = async () => {
+    calls.push('cas')
+    return response('cas')
+  }
+  HrcClient.prototype.activateFederationRebind = async () => {
+    calls.push('activate')
+    return response('activate')
+  }
+  restores.push(() => {
+    HrcClient.prototype.revokeFederationRebind = originalRevoke
+    HrcClient.prototype.compareAndSwapFederationRebind = originalCas
+    HrcClient.prototype.activateFederationRebind = originalActivate
+  })
+  return { calls }
 }
 
 describe('hrc target locate', () => {
@@ -496,6 +542,59 @@ describe('hrc federation outbox', () => {
   })
 })
 
+describe('hrc federation rebind', () => {
+  const flags = [SCOPE, '--expected-home', 'svc', '--expected-epoch', '1', '--new-home', 'lab']
+
+  test('the three explicit steps call distinct typed SDK operations', async () => {
+    const { calls } = stubRebind()
+    const read = captureStdout()
+
+    await cmdFederationRebind('revoke', flags)
+    await cmdFederationRebind('cas', flags)
+    await cmdFederationRebind('activate', flags)
+
+    expect(calls).toEqual(['revoke:svc@1', 'cas', 'activate'])
+    expect(read()).toContain('OK REVOKE revoked: revoked-nowhere')
+    expect(read()).toContain('svc@1 -> lab@2')
+  })
+
+  test('a visible refused result prints before returning exit 1', async () => {
+    const original = HrcClient.prototype.revokeFederationRebind
+    HrcClient.prototype.revokeFederationRebind = async (request) => ({
+      step: 'revoke',
+      ok: false,
+      outcome: 'live-runtime-present',
+      state: 'old-home-live',
+      retryable: true,
+      detail: 'drain first',
+      request,
+      liveRuntimeIds: ['runtime-1'],
+    })
+    restores.push(() => {
+      HrcClient.prototype.revokeFederationRebind = original
+    })
+    const read = captureStdout()
+
+    await expect(cmdFederationRebind('revoke', flags)).rejects.toBeInstanceOf(CliStatusExit)
+    expect(read()).toContain('REFUSED REVOKE live-runtime-present: old-home-live')
+    expect(read()).toContain('live runtime: runtime-1')
+  })
+
+  test('refuses an old epoch that cannot be incremented safely', async () => {
+    await expect(
+      cmdFederationRebind('cas', [
+        SCOPE,
+        '--expected-home',
+        'svc',
+        '--expected-epoch',
+        String(Number.MAX_SAFE_INTEGER),
+        '--new-home',
+        'lab',
+      ])
+    ).rejects.toThrow('room for E+1')
+  })
+})
+
 describe('hrc doctor', () => {
   function report(overrides: Partial<LocateBindingsReport['scan']> = {}): LocateBindingsReport {
     return {
@@ -596,6 +695,30 @@ describe('hrc doctor', () => {
  * program so the wiring is under test, not just the handler.
  */
 describe('command registration wiring', () => {
+  test('rebind step flags survive the commander -> typed SDK translation', async () => {
+    const { calls } = stubRebind()
+    captureStdout()
+    const { buildProgram } = await import('../cli/build-program.js')
+
+    await buildProgram().parseAsync(
+      [
+        'federation',
+        'rebind',
+        'revoke',
+        SCOPE,
+        '--expected-home',
+        'svc',
+        '--expected-epoch',
+        '1',
+        '--new-home',
+        'lab',
+      ],
+      { from: 'user' }
+    )
+
+    expect(calls).toEqual(['revoke:svc@1'])
+  })
+
   test('--fail-on-skew survives the commander -> legacy argv translation', async () => {
     stubLocate(
       baseLocation({

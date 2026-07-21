@@ -751,6 +751,46 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationRebindOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRebindOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRebindRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRebindRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRebindResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRebindResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRebindState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRebindState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRebindStep",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRebindStep|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationRuntimeProjectionReport",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",

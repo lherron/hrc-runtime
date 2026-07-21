@@ -15,6 +15,7 @@ import {
   cmdFederationOutboxDrop,
   cmdFederationOutboxList,
   cmdFederationOutboxReplay,
+  cmdFederationRebind,
   cmdTargetBindings,
   cmdTargetLocate,
 } from './handlers-federation.js'
@@ -39,6 +40,34 @@ export function registerFederationCommands(program: Command): void {
         toLegacyArgv([], cmd.opts(), { strings: ['peer', 'state'], booleans: ['json'] })
       )
     })
+
+  const rebind = federation
+    .command('rebind')
+    .description('manually move one fenced placement binding from old E to new E+1')
+
+  const addRebindStep = (name: 'revoke' | 'cas' | 'activate', description: string): void => {
+    rebind
+      .command(name)
+      .argument('<scope>', 'scope ref or target handle')
+      .description(description)
+      .requiredOption('--expected-home <node>', 'exact current home node')
+      .requiredOption('--expected-epoch <n>', 'exact current placement epoch')
+      .requiredOption('--new-home <node>', 'intended successor node')
+      .option('--json', 'output the complete step result as JSON')
+      .action(async (scope: string, _opts, cmd: Command) => {
+        await cmdFederationRebind(
+          name,
+          toLegacyArgv([scope], cmd.opts(), {
+            strings: ['expected-home', 'expected-epoch', 'new-home'],
+            booleans: ['json'],
+          })
+        )
+      })
+  }
+
+  addRebindStep('revoke', 'fence the exact old tuple after draining its runtimes')
+  addRebindStep('cas', 'CAS the registry only after observing old-home revocation')
+  addRebindStep('activate', 'activate the exact rebound tuple on its new home')
 
   outbox
     .command('replay')

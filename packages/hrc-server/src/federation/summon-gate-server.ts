@@ -26,6 +26,7 @@ import type { HrcDatabase, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
 import { markRuntimeStale } from '../startup-reconcile/runtime-mutations.js'
+import { withScopeSummonLock } from './authority-lock.js'
 import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
@@ -546,15 +547,17 @@ export async function withSummonAuthority<T>(
   request: SummonAuthorityRequest,
   mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
 ): Promise<T> {
-  const authority = await assertSummonAuthority(server, request)
-  try {
-    return await mint(authority?.claimAuthority)
-  } catch (error) {
-    if (authority?.claimAuthority !== undefined) {
-      await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
+  return await withScopeSummonLock(server as object, request.scopeRef, async () => {
+    const authority = await assertSummonAuthority(server, request)
+    try {
+      return await mint(authority?.claimAuthority)
+    } catch (error) {
+      if (authority?.claimAuthority !== undefined) {
+        await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
+      }
+      throw error
     }
-    throw error
-  }
+  })
 }
 
 export type LivePlacementRepairSummary = {
@@ -657,7 +660,11 @@ export async function repairLiveUnboundPlacements(
     // local ledger or wedge the whole daemon at boot.
     try {
       const registry = await deps.registry.consult(scopeRef)
-      if (registry.outcome === 'bound' && registry.binding.homeNodeId === deps.localNodeId) {
+      if (
+        registry.outcome === 'bound' &&
+        registry.binding.homeNodeId === deps.localNodeId &&
+        registry.binding.establishmentProvenance !== 'rebind'
+      ) {
         deps.ledger.installActive(registry.binding)
         summary.repaired += 1
         continue
@@ -712,14 +719,14 @@ export async function repairLiveUnboundPlacements(
 }
 
 /**
- * Refuses a locally retired scope before an existing target row can bypass the
- * summon gate entirely.
+ * Refuses a locally retired or rebind-revoked scope before an existing target
+ * row can bypass the summon gate entirely.
  *
- * This is deliberately retirement-only: target selection also handles
- * established local sessions and legitimate remote routing, neither of which
- * may be forced through virgin-placement or capability evaluation merely to
- * check for a node-local hard stop. When no exact local mark exists, this does
- * one local lookup and leaves the pre-existing path byte-for-byte unchanged.
+ * This is deliberately limited to node-local hard stops: target selection also
+ * handles established local sessions and legitimate remote routing, neither of
+ * which may be forced through virgin-placement or capability evaluation merely
+ * to check the fence. When no exact local mark exists, this does one local
+ * lookup and leaves the pre-existing path byte-for-byte unchanged.
  */
 export async function assertScopeNotRetired(
   server: SummonGateServerContext,
@@ -734,7 +741,9 @@ export async function assertScopeNotRetired(
   if (deps === undefined) return undefined
 
   const retirement = deps.retirementFor?.(request.scopeRef)
-  if (retirement === undefined || retirement.retiredNodeId !== deps.localNodeId) {
+  const locallyRetired = retirement?.retiredNodeId === deps.localNodeId
+  const locallyRevoked = deps.ledger.get?.(request.scopeRef)?.state === 'revoked'
+  if (!locallyRetired && !locallyRevoked) {
     return undefined
   }
 
@@ -746,9 +755,9 @@ export async function assertScopeNotRetired(
     return undefined
   }
 
-  // Re-enter the canonical gate only after proving that retirement applies.
-  // Omitting a caller birth credential is intentional: retirement is a
-  // node-local hard stop and must win before any authority mechanism is read.
+  // Re-enter the canonical gate only after proving that a local hard stop applies.
+  // Omitting a caller birth credential is intentional: node-local hard stops
+  // must win before any authority mechanism is read.
   return await assertSummonAuthority(server, {
     scopeRef: request.scopeRef,
     path: request.path,

@@ -15,6 +15,8 @@ import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
   FederationPeerHealthObservation,
+  FederationRebindRequest,
+  FederationRebindResult,
   FederationRuntimeProjectionReport,
   LocateBindingsReport,
   ScopeLocation,
@@ -571,6 +573,25 @@ export class HrcClient {
       json: filter?.json,
     })
     return this.getJson<FederationRuntimeProjectionReport>(path)
+  }
+
+  /** Fence the exact old tuple on its current home before a manual rebind. */
+  async revokeFederationRebind(request: FederationRebindRequest): Promise<FederationRebindResult> {
+    return this.postJson<FederationRebindResult>('/v1/federation/rebind/revoke', request)
+  }
+
+  /** Move the registry from old E to new E+1 after old-home revocation is observable. */
+  async compareAndSwapFederationRebind(
+    request: FederationRebindRequest
+  ): Promise<FederationRebindResult> {
+    return this.postJson<FederationRebindResult>('/v1/federation/rebind/cas', request)
+  }
+
+  /** Activate the exact rebound tuple on its new home. */
+  async activateFederationRebind(
+    request: FederationRebindRequest
+  ): Promise<FederationRebindResult> {
+    return this.postJson<FederationRebindResult>('/v1/federation/rebind/activate', request)
   }
 
   /** Durable origin-side deliveries for F3 operator inspection. */
