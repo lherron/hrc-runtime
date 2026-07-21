@@ -10,10 +10,16 @@
 
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import type { LocateBindingsReport, ScopeLocation } from 'hrc-core'
+import type { FederationOutboxDeliveryRecord, LocateBindingsReport, ScopeLocation } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
-import { cmdDoctor, cmdTargetLocate } from '../cli/handlers-federation.js'
+import {
+  cmdDoctor,
+  cmdFederationOutboxDrop,
+  cmdFederationOutboxList,
+  cmdFederationOutboxReplay,
+  cmdTargetLocate,
+} from '../cli/handlers-federation.js'
 import { CliStatusExit } from '../cli/shared.js'
 
 const SCOPE = 'agent:mable:project:hrc-runtime:task:T-06613'
@@ -75,7 +81,9 @@ function stubLocate(location: ScopeLocation): void {
 function stubBindings(report: LocateBindingsReport): void {
   const originalBindings = HrcClient.prototype.listPlacementBindings
   const originalStatus = HrcClient.prototype.getStatus
+  const originalOutbox = HrcClient.prototype.listFederationOutbox
   HrcClient.prototype.listPlacementBindings = async () => report
+  HrcClient.prototype.listFederationOutbox = async () => []
   HrcClient.prototype.getStatus = (async () => ({
     uptime: 42,
     node: {
@@ -91,7 +99,75 @@ function stubBindings(report: LocateBindingsReport): void {
   restores.push(() => {
     HrcClient.prototype.listPlacementBindings = originalBindings
     HrcClient.prototype.getStatus = originalStatus
+    HrcClient.prototype.listFederationOutbox = originalOutbox
   })
+}
+
+function outboxDelivery(
+  overrides: Partial<FederationOutboxDeliveryRecord> = {}
+): FederationOutboxDeliveryRecord {
+  return {
+    deliveryId: 'delivery-1',
+    messageId: 'msg-11111111-1111-4111-8111-111111111111',
+    peerNodeId: 'lab',
+    envelope: {
+      protocolVersion: '1.0',
+      messageId: 'msg-11111111-1111-4111-8111-111111111111',
+      kind: 'dm',
+      phase: 'request',
+      from: { kind: 'session', sessionRef: SCOPE },
+      to: { kind: 'session', sessionRef: `${SCOPE}:role:peer` },
+      body: 'sleep envelope',
+      rootMessageId: 'msg-11111111-1111-4111-8111-111111111111',
+      expected: { homeNodeId: 'lab', placementEpoch: 1 },
+    },
+    state: 'dead_letter',
+    totalAttempts: 5,
+    cycleAttempts: 5,
+    replayCount: 0,
+    retryWindowStartedAt: '2026-07-01T00:00:00.000Z',
+    lastAttemptAt: '2026-07-15T00:00:00.000Z',
+    deadLetteredAt: '2026-07-15T00:00:00.000Z',
+    lastErrorCode: 'peer_unreachable',
+    lastErrorMessage: 'connection refused',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-15T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function stubOutbox(deliveries: FederationOutboxDeliveryRecord[]): {
+  replayed: string[]
+  replayedPeers: string[]
+  dropped: string[]
+} {
+  const originalList = HrcClient.prototype.listFederationOutbox
+  const originalReplay = HrcClient.prototype.replayFederationOutbox
+  const originalReplayPeer = HrcClient.prototype.replayFederationOutboxPeer
+  const originalDrop = HrcClient.prototype.dropFederationOutbox
+  const calls = { replayed: [] as string[], replayedPeers: [] as string[], dropped: [] as string[] }
+  HrcClient.prototype.listFederationOutbox = async () => deliveries
+  HrcClient.prototype.replayFederationOutbox = async (deliveryId) => {
+    calls.replayed.push(deliveryId)
+    return outboxDelivery({ deliveryId, state: 'pending', replayCount: 1 })
+  }
+  HrcClient.prototype.replayFederationOutboxPeer = async (peerNodeId) => {
+    calls.replayedPeers.push(peerNodeId)
+    return deliveries.filter(
+      (delivery) => delivery.peerNodeId === peerNodeId && delivery.state === 'dead_letter'
+    )
+  }
+  HrcClient.prototype.dropFederationOutbox = async (deliveryId) => {
+    calls.dropped.push(deliveryId)
+    return outboxDelivery({ deliveryId })
+  }
+  restores.push(() => {
+    HrcClient.prototype.listFederationOutbox = originalList
+    HrcClient.prototype.replayFederationOutbox = originalReplay
+    HrcClient.prototype.replayFederationOutboxPeer = originalReplayPeer
+    HrcClient.prototype.dropFederationOutbox = originalDrop
+  })
+  return calls
 }
 
 describe('hrc target locate', () => {
@@ -259,6 +335,51 @@ describe('hrc target locate', () => {
   })
 })
 
+describe('hrc federation outbox', () => {
+  test('human list groups by peer and makes age plus last error visible', async () => {
+    stubOutbox([
+      outboxDelivery(),
+      outboxDelivery({
+        deliveryId: 'delivery-2',
+        peerNodeId: 'max3',
+        state: 'peer_unreachable',
+        deadLetteredAt: undefined,
+      }),
+    ])
+    const read = captureStdout()
+
+    await cmdFederationOutboxList([])
+    const out = read()
+
+    expect(out).toContain('peer lab: 1')
+    expect(out).toContain('peer max3: 1')
+    expect(out).toContain('age=')
+    expect(out).toContain('last-error=peer_unreachable: connection refused')
+  })
+
+  test('single and peer-wide replay use distinct typed client operations', async () => {
+    const calls = stubOutbox([outboxDelivery()])
+    captureStdout()
+
+    await cmdFederationOutboxReplay(['delivery-1'])
+    await cmdFederationOutboxReplay(['--peer', 'lab', '--all'])
+
+    expect(calls.replayed).toEqual(['delivery-1'])
+    expect(calls.replayedPeers).toEqual(['lab'])
+  })
+
+  test('drop requires explicit confirmation before the daemon is called', async () => {
+    const calls = stubOutbox([outboxDelivery()])
+    captureStdout()
+
+    await expect(cmdFederationOutboxDrop(['delivery-1'])).rejects.toThrow('--yes')
+    expect(calls.dropped).toEqual([])
+
+    await cmdFederationOutboxDrop(['delivery-1', '--yes'])
+    expect(calls.dropped).toEqual(['delivery-1'])
+  })
+})
+
 describe('hrc doctor', () => {
   function report(overrides: Partial<LocateBindingsReport['scan']> = {}): LocateBindingsReport {
     return {
@@ -278,6 +399,7 @@ describe('hrc doctor', () => {
 
     expect(out).toContain('placement-skew')
     expect(out).toContain('+ placement-skew')
+    expect(out).toContain('+ federation-outbox')
   })
 
   test('skew is a WARNING, and exits 0 — the scope is still serving correctly', async () => {

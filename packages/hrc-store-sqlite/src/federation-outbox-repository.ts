@@ -1,32 +1,11 @@
 import type { Database } from 'bun:sqlite'
-import type { FederationMessageEnvelope } from 'hrc-core'
+import type {
+  FederationMessageEnvelope,
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
+} from 'hrc-core'
 
-export type FederationOutboxState =
-  | 'pending'
-  | 'retry_scheduled'
-  | 'peer_unreachable'
-  | 'delivered'
-  | 'dead_letter'
-
-export type FederationOutboxDeliveryRecord = {
-  deliveryId: string
-  messageId: string
-  peerNodeId: string
-  envelope: FederationMessageEnvelope
-  state: FederationOutboxState
-  totalAttempts: number
-  cycleAttempts: number
-  replayCount: number
-  retryWindowStartedAt: string
-  nextAttemptAt?: string | undefined
-  lastAttemptAt?: string | undefined
-  deliveredAt?: string | undefined
-  deadLetteredAt?: string | undefined
-  lastErrorCode?: string | undefined
-  lastErrorMessage?: string | undefined
-  createdAt: string
-  updatedAt: string
-}
+export type { FederationOutboxDeliveryRecord, FederationOutboxState } from 'hrc-core'
 
 export type EnqueueFederationOutboxInput = {
   deliveryId: string
@@ -292,6 +271,25 @@ export class FederationOutboxRepository {
       )
       .run(now, now, now, deliveryId)
     return this.require(deliveryId)
+  }
+
+  /**
+   * Permanently discard an exhausted delivery. Active rows cannot be dropped:
+   * a send may already be in flight, while dead-letter rows are terminal for
+   * automatic delivery and therefore safe to remove deliberately.
+   */
+  dropDeadLetter(deliveryId: string): FederationOutboxDeliveryRecord {
+    const existing = this.require(deliveryId)
+    if (existing.state !== 'dead_letter') {
+      throw new Error(`delivery ${deliveryId} is not dead-lettered`)
+    }
+    this.db
+      .query<unknown, [string]>(
+        `DELETE FROM federation_outbox_deliveries
+          WHERE delivery_id = ? AND state = 'dead_letter'`
+      )
+      .run(deliveryId)
+    return existing
   }
 
   private require(deliveryId: string): FederationOutboxDeliveryRecord {

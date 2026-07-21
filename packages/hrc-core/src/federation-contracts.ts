@@ -109,6 +109,41 @@ export type FederationMessageEnvelope = {
   readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
 }
 
+// -- Origin outbox operator surface -----------------------------------------
+
+/** Durable origin-side delivery lifecycle exposed to operators in F3. */
+export type FederationOutboxState =
+  | 'pending'
+  | 'retry_scheduled'
+  | 'peer_unreachable'
+  | 'delivered'
+  | 'dead_letter'
+
+/**
+ * One durable delivery attempt stream. The envelope remains available in the
+ * JSON projection for forensic use; the human CLI intentionally renders only
+ * routing, age, attempt, and last-error fields.
+ */
+export type FederationOutboxDeliveryRecord = {
+  deliveryId: string
+  messageId: string
+  peerNodeId: string
+  envelope: FederationMessageEnvelope
+  state: FederationOutboxState
+  totalAttempts: number
+  cycleAttempts: number
+  replayCount: number
+  retryWindowStartedAt: string
+  nextAttemptAt?: string | undefined
+  lastAttemptAt?: string | undefined
+  deliveredAt?: string | undefined
+  deadLetteredAt?: string | undefined
+  lastErrorCode?: string | undefined
+  lastErrorMessage?: string | undefined
+  createdAt: string
+  updatedAt: string
+}
+
 // -- `hrc target locate` -----------------------------------------------------
 
 /**

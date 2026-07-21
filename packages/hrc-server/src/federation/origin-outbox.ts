@@ -296,13 +296,37 @@ export class FederationOriginOutbox {
 
   replay(deliveryId: string): FederationOutboxDeliveryRecord {
     const replayed = this.engine.replay(deliveryId)
+    this.drainAfterReplay({ deliveryId })
+    return replayed
+  }
+
+  replayPeer(peerNodeId: string): FederationOutboxDeliveryRecord[] {
+    const replayed = this.list()
+      .filter((delivery) => delivery.peerNodeId === peerNodeId && delivery.state === 'dead_letter')
+      .map((delivery) => this.engine.replay(delivery.deliveryId))
+    this.drainAfterReplay({ peerNodeId, deliveryCount: replayed.length })
+    return replayed
+  }
+
+  dropDeadLetter(deliveryId: string): FederationOutboxDeliveryRecord {
+    const dropped = this.options.db.federationOutbox.dropDeadLetter(deliveryId)
+    writeServerLog('INFO', 'federation.outbox.dropped', {
+      deliveryId: dropped.deliveryId,
+      messageId: dropped.messageId,
+      peerNodeId: dropped.peerNodeId,
+      deadLetteredAt: dropped.deadLetteredAt,
+      lastErrorCode: dropped.lastErrorCode,
+    })
+    return dropped
+  }
+
+  private drainAfterReplay(context: Record<string, unknown>): void {
     void this.engine.drainDue().catch((error: unknown) =>
       writeServerLog('WARN', 'federation.outbox.replay_drain_failed', {
-        deliveryId,
+        ...context,
         error: error instanceof Error ? error.message : String(error),
       })
     )
-    return replayed
   }
 
   stop(): Promise<void> {

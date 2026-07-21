@@ -189,12 +189,14 @@ describe('T-06619 clock-driven federation retry state machine', () => {
     const db = openHrcDatabase(':memory:')
     let nowMs = Date.parse('2026-07-20T00:00:00.000Z')
     let reachable = false
+    let sends = 0
     seed(db)
     const engine = new FederationOutboxDeliveryEngine({
       db,
       now: () => new Date(nowMs),
       policy: { initialRetryDelayMs: 1_000, maxRetryDelayMs: 2_000, deadLetterAfterMs: 3_000 },
       send: async () => {
+        sends += 1
         if (!reachable) throw new Error('peer asleep')
         return { outcome: 'duplicate', messageId: MESSAGE_ID }
       },
@@ -214,12 +216,15 @@ describe('T-06619 clock-driven federation retry state machine', () => {
 
       reachable = true
       engine.replay('delivery-1')
+      expect(() => engine.replay('delivery-1')).toThrow('is not dead-lettered')
+      const sendsBeforeReplay = sends
       await engine.drainDue()
       expect(db.federationOutbox.get('delivery-1')).toMatchObject({
         state: 'delivered',
         replayCount: 1,
         cycleAttempts: 1,
       })
+      expect(sends).toBe(sendsBeforeReplay + 1)
     } finally {
       db.close()
     }

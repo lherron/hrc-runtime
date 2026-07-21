@@ -109,4 +109,40 @@ describe('T-06619 durable federation outbox', () => {
       db.close()
     }
   })
+
+  test('operator drop removes only a terminal dead-letter', () => {
+    const db = openHrcDatabase(':memory:')
+    try {
+      db.messages.insert({
+        messageId: MESSAGE_ID,
+        kind: 'dm',
+        phase: 'request',
+        from: envelope().from,
+        to: envelope().to,
+        body: envelope().body,
+      })
+      db.federationOutbox.enqueue({
+        deliveryId: 'delivery-1',
+        messageId: MESSAGE_ID,
+        peerNodeId: 'lab',
+        envelope: envelope(),
+        now: '2026-07-20T00:00:00.000Z',
+      })
+
+      expect(() => db.federationOutbox.dropDeadLetter('delivery-1')).toThrow('is not dead-lettered')
+      db.federationOutbox.markDeadLetter({
+        deliveryId: 'delivery-1',
+        attemptedAt: '2026-08-17T00:00:00.000Z',
+        errorCode: 'retry_window_exhausted',
+        errorMessage: 'peer remained unreachable for the retry window',
+      })
+      expect(db.federationOutbox.dropDeadLetter('delivery-1')).toMatchObject({
+        deliveryId: 'delivery-1',
+        state: 'dead_letter',
+      })
+      expect(db.federationOutbox.get('delivery-1')).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
 })

@@ -13,6 +13,7 @@ import type {
   DispatchTurnBySelectorResponse,
   DispatchTurnResponse,
   FederationMessageEnvelope,
+  FederationOutboxState,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -994,24 +995,51 @@ export async function handleSemanticDm(
   } satisfies SemanticDmResponse)
 }
 
-/** Raw durable visibility seam; F3 owns the polished operator projection. */
+/** Filterable durable delivery projection consumed by the F3 operator CLI. */
 export function handleFederationOutboxList(this: HrcServerInstanceForHandlers, url: URL): Response {
   const messageId = normalizeOptionalQuery(url.searchParams.get('messageId'))
+  const peerNodeId = normalizeOptionalQuery(url.searchParams.get('peerNodeId'))
+  const stateFilter = normalizeOptionalQuery(url.searchParams.get('state'))
+  const allowedStates = new Set<FederationOutboxState>([
+    'pending',
+    'retry_scheduled',
+    'peer_unreachable',
+    'delivered',
+    'dead_letter',
+  ])
+  const states = stateFilter?.split(',').map((state) => state.trim()) ?? []
+  const invalidState = states.find(
+    (state): state is string => !allowedStates.has(state as FederationOutboxState)
+  )
+  if (invalidState !== undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `unknown federation outbox state "${invalidState}"`,
+      { field: 'state', allowed: [...allowedStates] }
+    )
+  }
   const deliveries = this.federationOriginOutbox?.list() ?? []
   return json(
-    messageId === undefined
-      ? deliveries
-      : deliveries.filter((delivery) => delivery.messageId === messageId)
+    deliveries.filter(
+      (delivery) =>
+        (messageId === undefined || delivery.messageId === messageId) &&
+        (peerNodeId === undefined || delivery.peerNodeId === peerNodeId) &&
+        (states.length === 0 || states.includes(delivery.state))
+    )
   )
 }
 
-/** Minimal single-delivery replay action; bulk/drop/CLI controls remain F3. */
+/** Replay one terminal dead-letter through a fresh retry window. */
 export async function handleFederationOutboxReplay(
   this: HrcServerInstanceForHandlers,
   request: Request
 ): Promise<Response> {
   const body = await parseJsonBody(request)
-  if (!isObjectRecord(body) || typeof body['deliveryId'] !== 'string') {
+  if (
+    !isObjectRecord(body) ||
+    typeof body['deliveryId'] !== 'string' ||
+    body['deliveryId'].trim().length === 0
+  ) {
     throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
       field: 'deliveryId',
     })
@@ -1022,7 +1050,87 @@ export async function handleFederationOutboxReplay(
       'federation origin outbox is not enabled on this node'
     )
   }
-  return json(this.federationOriginOutbox.replay(body['deliveryId']))
+  const outbox = this.federationOriginOutbox
+  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
+  if (delivery === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `unknown federation delivery ${body['deliveryId']}`,
+      { deliveryId: body['deliveryId'] }
+    )
+  }
+  if (delivery.state !== 'dead_letter') {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `delivery ${delivery.deliveryId} is not dead-lettered`,
+      { deliveryId: delivery.deliveryId, state: delivery.state }
+    )
+  }
+  return json(outbox.replay(delivery.deliveryId))
+}
+
+/** Replay every exhausted delivery for one peer with one fresh retry window. */
+export async function handleFederationOutboxReplayPeer(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (
+    !isObjectRecord(body) ||
+    typeof body['peerNodeId'] !== 'string' ||
+    body['peerNodeId'].trim().length === 0
+  ) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'peerNodeId is required', {
+      field: 'peerNodeId',
+    })
+  }
+  if (this.federationOriginOutbox === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'federation origin outbox is not enabled on this node'
+    )
+  }
+  return json(this.federationOriginOutbox.replayPeer(body['peerNodeId']))
+}
+
+/** Permanently remove one terminal dead-letter row after CLI-owned confirmation. */
+export async function handleFederationOutboxDrop(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (
+    !isObjectRecord(body) ||
+    typeof body['deliveryId'] !== 'string' ||
+    body['deliveryId'].trim().length === 0
+  ) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
+      field: 'deliveryId',
+    })
+  }
+  const outbox = this.federationOriginOutbox
+  if (outbox === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'federation origin outbox is not enabled on this node'
+    )
+  }
+  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
+  if (delivery === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `unknown federation delivery ${body['deliveryId']}`,
+      { deliveryId: body['deliveryId'] }
+    )
+  }
+  if (delivery.state !== 'dead_letter') {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `delivery ${delivery.deliveryId} is not dead-lettered`,
+      { deliveryId: delivery.deliveryId, state: delivery.state }
+    )
+  }
+  return json(outbox.dropDeadLetter(delivery.deliveryId))
 }
 
 export async function deliverFederationAcceptedMessage(
@@ -1488,6 +1596,8 @@ export const targetMessageHandlersMethods = {
   handleSemanticDm,
   handleFederationOutboxList,
   handleFederationOutboxReplay,
+  handleFederationOutboxReplayPeer,
+  handleFederationOutboxDrop,
   deliverFederationAcceptedMessage,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,

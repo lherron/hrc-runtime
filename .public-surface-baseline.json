@@ -711,6 +711,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationOutboxDeliveryRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationOutboxDeliveryRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationOutboxState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationOutboxState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FinalSummaryRecoveryResult",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",

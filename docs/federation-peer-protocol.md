@@ -184,14 +184,25 @@ Successful `accepted` and `duplicate` ACKs both settle as `delivered`.
 
 At the end of the retry window, or after a non-retryable refusal, the delivery
 becomes `dead_letter`. This is expected, terminal only for automatic attempts,
-and replayable. The Unix-socket API exposes the minimal F1 seams:
+and replayable. The Unix-socket API exposes:
 
-- `GET /v1/federation/outbox?messageId=<id>` — raw durable delivery state.
+- `GET /v1/federation/outbox?messageId=<id>&peerNodeId=<node>&state=<csv>` —
+  filterable durable delivery state.
 - `POST /v1/federation/outbox/replay` with `{ "deliveryId": "..." }` — replay
   one dead-letter delivery with a fresh 28-day retry window.
+- `POST /v1/federation/outbox/replay-peer` with `{ "peerNodeId": "..." }` —
+  replay every current dead-letter for one peer. Repeating the operation cannot
+  replay rows already moved back to `pending`.
+- `POST /v1/federation/outbox/drop` with `{ "deliveryId": "..." }` — delete one
+  terminal dead-letter. Active rows cannot be dropped because a send may
+  already be in flight.
 
-The polished list/bulk replay/drop controls and doctor projection remain the F3
-operator-controls slice.
+The corresponding operator commands are `hrc federation outbox list`,
+`replay <delivery-id>`, `replay --all --peer <node>`, and
+`drop <delivery-id> --yes`. Human list output groups by peer and shows age, attempts, replay count,
+and the last error. `hrc doctor` reports pending and dead-letter counts per peer
+as expected sleep-envelope state rather than declaring a sleeping peer an
+outage.
 
 `hrcchat dm --wait response` sends the request without a server-coupled wait,
 then waits only on its local daemon's Unix-socket API. The local wait observes

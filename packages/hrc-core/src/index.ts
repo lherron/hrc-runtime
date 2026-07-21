@@ -364,6 +364,8 @@ export type {
   FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
   FederationMessageEnvelope,
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
   LedgerSkewScan,
   LocateAuthority,
   LocateBindingRecord,

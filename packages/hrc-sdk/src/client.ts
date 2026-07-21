@@ -11,7 +11,12 @@ import type {
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
 import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
-import type { LocateBindingsReport, ScopeLocation } from 'hrc-core'
+import type {
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
+  LocateBindingsReport,
+  ScopeLocation,
+} from 'hrc-core'
 
 import type {
   AttachDescriptor,
@@ -536,6 +541,39 @@ export class HrcClient {
   /** Whole-ledger pin-vs-binding skew sweep for this node (T-06613). */
   async listPlacementBindings(): Promise<LocateBindingsReport> {
     return this.getJson<LocateBindingsReport>('/v1/federation/bindings')
+  }
+
+  /** Durable origin-side deliveries for F3 operator inspection. */
+  async listFederationOutbox(filter?: {
+    messageId?: string | undefined
+    peerNodeId?: string | undefined
+    state?: readonly FederationOutboxState[] | undefined
+  }): Promise<FederationOutboxDeliveryRecord[]> {
+    return this.getJson<FederationOutboxDeliveryRecord[]>(
+      buildPath('/v1/federation/outbox', {
+        messageId: emptyToUndefined(filter?.messageId),
+        peerNodeId: emptyToUndefined(filter?.peerNodeId),
+        state: filter?.state,
+      })
+    )
+  }
+
+  async replayFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
+    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/replay', {
+      deliveryId,
+    })
+  }
+
+  async replayFederationOutboxPeer(peerNodeId: string): Promise<FederationOutboxDeliveryRecord[]> {
+    return this.postJson<FederationOutboxDeliveryRecord[]>('/v1/federation/outbox/replay-peer', {
+      peerNodeId,
+    })
+  }
+
+  async dropFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
+    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/drop', {
+      deliveryId,
+    })
   }
 
   async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {

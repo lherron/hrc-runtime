@@ -620,6 +620,10 @@ class HrcServerInstance implements HrcServer {
       this.handleFederationOutboxList(url),
     [exactRouteKey('POST', '/v1/federation/outbox/replay')]: (request) =>
       this.handleFederationOutboxReplay(request),
+    [exactRouteKey('POST', '/v1/federation/outbox/replay-peer')]: (request) =>
+      this.handleFederationOutboxReplayPeer(request),
+    [exactRouteKey('POST', '/v1/federation/outbox/drop')]: (request) =>
+      this.handleFederationOutboxDrop(request),
     [exactRouteKey('POST', '/v1/targets/ensure')]: (request) => this.handleEnsureTarget(request),
     [exactRouteKey('POST', '/v1/messages')]: (request) => this.handleCreateMessage(request),
     [exactRouteKey('POST', '/v1/capture/by-selector')]: (request) =>

@@ -37,6 +37,8 @@
 
 import { resolveQualifiedScopeInput } from 'agent-scope'
 import type {
+  FederationOutboxDeliveryRecord,
+  FederationOutboxState,
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
@@ -47,7 +49,7 @@ import type { HrcClient } from 'hrc-sdk'
 import { inferProjectIdFromCwd } from 'spaces-config'
 
 import { printJson } from '../print.js'
-import { hasFlag } from './argv.js'
+import { hasFlag, parseFlag } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
 function resolveScopeArg(input: string): string {
@@ -222,6 +224,111 @@ const STATUS_GLYPH: Record<DoctorCheck['status'], string> = {
   fail: 'x',
 }
 
+const ACTIVE_OUTBOX_STATES = [
+  'pending',
+  'retry_scheduled',
+  'peer_unreachable',
+  'dead_letter',
+] as const satisfies readonly FederationOutboxState[]
+
+const ALL_OUTBOX_STATES = new Set<FederationOutboxState>([...ACTIVE_OUTBOX_STATES, 'delivered'])
+
+function formatAge(from: string, now = Date.now()): string {
+  const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(from)) / 1_000))
+  const days = Math.floor(elapsedSeconds / 86_400)
+  const hours = Math.floor((elapsedSeconds % 86_400) / 3_600)
+  const minutes = Math.floor((elapsedSeconds % 3_600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m`
+  return `${elapsedSeconds}s`
+}
+
+function parseOutboxStates(args: string[]): FederationOutboxState[] {
+  const raw = parseFlag(args, '--state')
+  if (raw === undefined) return [...ACTIVE_OUTBOX_STATES]
+  const states = raw
+    .split(',')
+    .map((state) => state.trim())
+    .filter((state) => state.length > 0)
+  const invalid = states.find((state) => !ALL_OUTBOX_STATES.has(state as FederationOutboxState))
+  if (invalid !== undefined || states.length === 0) {
+    fatal(`--state must contain one or more of: ${[...ALL_OUTBOX_STATES].join(', ')}`)
+  }
+  return states as FederationOutboxState[]
+}
+
+function formatOutboxHuman(deliveries: FederationOutboxDeliveryRecord[]): string {
+  if (deliveries.length === 0) return 'federation outbox: no matching deliveries\n'
+  const peers = new Map<string, FederationOutboxDeliveryRecord[]>()
+  for (const delivery of deliveries) {
+    const rows = peers.get(delivery.peerNodeId) ?? []
+    rows.push(delivery)
+    peers.set(delivery.peerNodeId, rows)
+  }
+  const lines = [`federation outbox: ${deliveries.length} delivery(s)`]
+  for (const peerNodeId of [...peers.keys()].sort()) {
+    const rows = peers.get(peerNodeId) ?? []
+    lines.push(`peer ${peerNodeId}: ${rows.length}`)
+    for (const row of rows) {
+      const lastError =
+        row.lastErrorCode === undefined
+          ? ''
+          : `  last-error=${row.lastErrorCode}${row.lastErrorMessage === undefined ? '' : `: ${row.lastErrorMessage}`}`
+      lines.push(
+        `  ${row.state.padEnd(16)} age=${formatAge(row.createdAt).padEnd(8)} attempts=${row.totalAttempts} replay=${row.replayCount} ${row.deliveryId}${lastError}`
+      )
+    }
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export async function cmdFederationOutboxList(args: string[]): Promise<void> {
+  const peerNodeId = parseFlag(args, '--peer')
+  const deliveries = await createClient().listFederationOutbox({
+    ...(peerNodeId === undefined ? {} : { peerNodeId }),
+    state: parseOutboxStates(args),
+  })
+  if (hasFlag(args, '--json')) {
+    printJson(deliveries)
+    return
+  }
+  process.stdout.write(formatOutboxHuman(deliveries))
+}
+
+export async function cmdFederationOutboxReplay(args: string[]): Promise<void> {
+  const deliveryId = args[0]?.startsWith('-') === false ? args[0] : undefined
+  const peerNodeId = parseFlag(args, '--peer')
+  const all = hasFlag(args, '--all')
+  if (all) {
+    if (deliveryId !== undefined) fatal('outbox replay --all does not accept a delivery id')
+    if (peerNodeId === undefined) fatal('outbox replay --all requires --peer <node>')
+    const replayed = await createClient().replayFederationOutboxPeer(peerNodeId)
+    if (hasFlag(args, '--json')) printJson(replayed)
+    else
+      process.stdout.write(
+        `replay scheduled for ${replayed.length} dead-letter delivery(s) to ${peerNodeId}\n`
+      )
+    return
+  }
+  if (deliveryId === undefined) fatal('outbox replay requires a delivery id or --all --peer <node>')
+  if (peerNodeId !== undefined) fatal('--peer is only valid with --all')
+  const replayed = await createClient().replayFederationOutbox(deliveryId)
+  if (hasFlag(args, '--json')) printJson(replayed)
+  else process.stdout.write(`replay scheduled: ${replayed.deliveryId} -> ${replayed.peerNodeId}\n`)
+}
+
+export async function cmdFederationOutboxDrop(args: string[]): Promise<void> {
+  const deliveryId = args[0]?.startsWith('-') === false ? args[0] : undefined
+  if (deliveryId === undefined) fatal('outbox drop requires a delivery id')
+  if (!hasFlag(args, '--yes')) {
+    fatal('outbox drop permanently deletes one dead-letter; pass --yes to confirm')
+  }
+  const dropped = await createClient().dropFederationOutbox(deliveryId)
+  if (hasFlag(args, '--json')) printJson(dropped)
+  else process.stdout.write(`dropped dead-letter: ${dropped.deliveryId} -> ${dropped.peerNodeId}\n`)
+}
+
 async function checkDaemon(client: HrcClient): Promise<{
   checks: DoctorCheck[]
   reachable: boolean
@@ -302,6 +409,34 @@ function placementSkewChecks(report: LocateBindingsReport): DoctorCheck[] {
   return checks
 }
 
+function outboxChecks(deliveries: FederationOutboxDeliveryRecord[]): DoctorCheck[] {
+  if (deliveries.length === 0) {
+    return [
+      { name: 'federation-outbox', status: 'ok', detail: 'no pending or dead-letter deliveries' },
+    ]
+  }
+  const peers = new Map<string, FederationOutboxDeliveryRecord[]>()
+  for (const delivery of deliveries) {
+    const rows = peers.get(delivery.peerNodeId) ?? []
+    rows.push(delivery)
+    peers.set(delivery.peerNodeId, rows)
+  }
+  return [...peers.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([peerNodeId, rows]) => {
+      const pending = rows.filter((row) => row.state !== 'dead_letter').length
+      const deadLetter = rows.filter((row) => row.state === 'dead_letter').length
+      const oldest = rows.reduce((left, right) =>
+        Date.parse(left.createdAt) <= Date.parse(right.createdAt) ? left : right
+      )
+      return {
+        name: `federation-outbox:${peerNodeId}`,
+        status: 'ok' as const,
+        detail: `pending ${pending}, dead-letter ${deadLetter}, oldest ${formatAge(oldest.createdAt)} (sleep-envelope state; inspect with hrc federation outbox list --peer ${peerNodeId})`,
+      }
+    })
+}
+
 export async function cmdDoctor(args: string[]): Promise<void> {
   const client = createClient()
   const { checks, reachable } = await checkDaemon(client)
@@ -314,6 +449,17 @@ export async function cmdDoctor(args: string[]): Promise<void> {
         name: 'placement-skew',
         status: 'warn',
         detail: `could not read placement bindings: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    try {
+      checks.push(
+        ...outboxChecks(await client.listFederationOutbox({ state: [...ACTIVE_OUTBOX_STATES] }))
+      )
+    } catch (error) {
+      checks.push({
+        name: 'federation-outbox',
+        status: 'warn',
+        detail: `could not read origin deliveries: ${error instanceof Error ? error.message : String(error)}`,
       })
     }
   }
