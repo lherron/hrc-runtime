@@ -189,10 +189,22 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
         await Bun.sleep(50)
         expect((await readDelivery(replayMessageId))[0]?.state).toBe('dead_letter')
 
-        const replayResponse = await origin.postJson('/v1/federation/outbox/replay', {
-          deliveryId: dead[0]?.deliveryId,
+        const replayResponse = await origin.postJson('/v1/federation/outbox/replay-peer', {
+          peerNodeId: 'lab-test',
         })
         expect(replayResponse.status).toBe(200)
+        expect(await replayResponse.json()).toEqual([
+          expect.objectContaining({
+            deliveryId: dead[0]?.deliveryId,
+            state: 'pending',
+            replayCount: 1,
+          }),
+        ])
+        const duplicateReplayResponse = await origin.postJson('/v1/federation/outbox/replay-peer', {
+          peerNodeId: 'lab-test',
+        })
+        expect(duplicateReplayResponse.status).toBe(200)
+        expect(await duplicateReplayResponse.json()).toEqual([])
         await eventually(
           () => readDelivery(replayMessageId),
           (rows) => rows[0]?.state === 'delivered'
