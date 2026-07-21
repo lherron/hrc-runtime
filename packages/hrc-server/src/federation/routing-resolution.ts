@@ -25,6 +25,13 @@ export type ResolvedFederationRoutingBinding = FederationRoutingBinding &
 export type ResolveFederationRoutingBindingOptions = {
   readonly scopeRef: string
   readonly minimumPlacementEpoch?: number | undefined
+  /**
+   * A node-local retirement fence makes this home ineligible even when an old
+   * active ledger row or cache hint still names it. Routing must consult the
+   * registry for the winner; the stale row remains available to the local
+   * execution gate as a forensic/fencing record.
+   */
+  readonly excludedHomeNodeId?: string | undefined
   readonly ledger: FederationRoutingLedger
   readonly cache: BindingHintCache
   readonly registry: Pick<BindingRegistryClient, 'consult'>
@@ -80,7 +87,11 @@ export async function resolveFederationRoutingBinding(
   const minimumPlacementEpoch = requireMinimumEpoch(options.minimumPlacementEpoch)
 
   const local = options.ledger.get(scopeRef)
-  if (local?.state === 'active' && local.placementEpoch >= minimumPlacementEpoch) {
+  if (
+    local?.state === 'active' &&
+    local.placementEpoch >= minimumPlacementEpoch &&
+    local.homeNodeId !== options.excludedHomeNodeId
+  ) {
     return resolved('local-ledger', {
       scopeRef,
       homeNodeId: local.homeNodeId,
@@ -89,7 +100,9 @@ export async function resolveFederationRoutingBinding(
   }
 
   const cached = options.cache.get(scopeRef, minimumPlacementEpoch)
-  if (cached !== undefined) return { ...cached, source: 'cache' }
+  if (cached !== undefined && cached.homeNodeId !== options.excludedHomeNodeId) {
+    return { ...cached, source: 'cache' }
+  }
 
   let consulted: Awaited<ReturnType<BindingRegistryClient['consult']>>
   try {
@@ -124,6 +137,14 @@ export async function resolveFederationRoutingBinding(
       successor === null
         ? `${scopeRef} is terminally retired at epoch ${consulted.retirement.placementEpoch}; delivery is barred`
         : `${scopeRef} is retired at epoch ${consulted.retirement.placementEpoch}; successor ${successor} must activate before delivery can resume`
+    )
+  }
+  if (consulted.binding.homeNodeId === options.excludedHomeNodeId) {
+    throw new FederationRoutingResolutionError(
+      'binding_retired',
+      scopeRef,
+      true,
+      `registry still names retired home ${consulted.binding.homeNodeId} for ${scopeRef}; delivery may be retried`
     )
   }
   if (consulted.binding.placementEpoch < minimumPlacementEpoch) {

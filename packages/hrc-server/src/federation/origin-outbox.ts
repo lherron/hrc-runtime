@@ -6,7 +6,7 @@ import type {
   HrcMessageRecord,
   SemanticDmRequest,
 } from 'hrc-core'
-import { createPlacementLedgerRepository } from 'hrc-store-sqlite'
+import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { FederationOutboxDeliveryRecord, HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
@@ -187,11 +187,17 @@ export class FederationOriginOutbox {
   }
 
   private resolveRoutingBinding(scopeRef: string) {
+    const retirement = readScopeRetirement(this.options.db.sqlite, scopeRef)
+    const excludedHomeNodeId =
+      retirement?.retiredNodeId === this.options.config.nodeId
+        ? retirement.retiredNodeId
+        : undefined
     return resolveFederationRoutingBinding({
       scopeRef,
       ledger: createPlacementLedgerRepository(this.options.db.sqlite),
       cache: this.cache,
       registry: this.registry,
+      ...(excludedHomeNodeId === undefined ? {} : { excludedHomeNodeId }),
     })
   }
 

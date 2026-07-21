@@ -3,7 +3,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 
-import { createScopeRetirementRepository, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  createPlacementLedgerRepository,
+  createScopeRetirementRepository,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
@@ -166,6 +170,15 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       // active remote binding: a DM from the loser still routes to the winner.
       const fenceDb = openHrcDatabase(svc.dbPath)
       try {
+        createPlacementLedgerRepository(fenceDb.sqlite).installActive({
+          scopeRef: SCOPE,
+          homeNodeId: 'svc-test',
+          placementEpoch: 1,
+          birthClass: 'policy-born',
+          authorityProvenance: { kind: 'policy', source: 'task_default' },
+          establishmentProvenance: 'task_default',
+          updatedAt: '2026-07-19T23:59:00.000Z',
+        })
         createScopeRetirementRepository(fenceDb.sqlite).retire({
           scopeRef: SCOPE,
           retiredNodeId: 'svc-test',
