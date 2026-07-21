@@ -110,6 +110,29 @@ describe('MessageRepository', () => {
     expect(fromCody[0].messageId).toBe('msg-2')
   })
 
+  it('queries by exact message id', () => {
+    db.messages.insert({
+      messageId: 'msg-exact',
+      kind: 'dm',
+      phase: 'request',
+      from: humanAddr,
+      to: codyAddr,
+      body: 'exact match',
+    })
+    db.messages.insert({
+      messageId: 'msg-other',
+      kind: 'dm',
+      phase: 'request',
+      from: humanAddr,
+      to: codyAddr,
+      body: 'not selected',
+    })
+
+    expect(db.messages.query({ messageId: 'msg-exact' }).map((row) => row.messageId)).toEqual([
+      'msg-exact',
+    ])
+  })
+
   it('queries by filter: to', () => {
     db.messages.insert({
       messageId: 'msg-1',

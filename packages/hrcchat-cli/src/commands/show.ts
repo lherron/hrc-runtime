@@ -19,7 +19,7 @@ export async function cmdShow(
   const seq = Number(seqOrId)
   const filter = Number.isFinite(seq)
     ? { afterSeq: seq - 1, limit: 1 }
-    : { afterSeq: 0, limit: 1000 } // fallback: scan for message ID
+    : { messageId: seqOrId, limit: 1 }
 
   const result = await client.listMessages(filter)
   const record = Number.isFinite(seq)

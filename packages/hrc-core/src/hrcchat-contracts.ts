@@ -142,6 +142,7 @@ export type HrcMessageRecord = {
 // -- Message filter -----------------------------------------------------------
 
 export type HrcMessageFilter = {
+  messageId?: string | undefined
   participant?: HrcMessageAddress | undefined
   from?: HrcMessageAddress | undefined
   to?: HrcMessageAddress | undefined

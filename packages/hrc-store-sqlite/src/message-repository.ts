@@ -289,6 +289,11 @@ export class MessageRepository {
     const where: string[] = []
     const values: Array<string | number> = []
 
+    if (filter.messageId !== undefined) {
+      where.push('message_id = ?')
+      values.push(filter.messageId)
+    }
+
     if (filter.from) {
       const f = flattenAddress(filter.from)
       where.push('from_kind = ? AND from_ref = ?')

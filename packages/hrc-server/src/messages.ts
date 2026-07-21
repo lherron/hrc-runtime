@@ -264,11 +264,13 @@ export function parseMessageFilter(input: unknown): HrcMessageFilter {
     input['replyToMessageId'],
     'replyToMessageId'
   )
+  const messageId = parseOptionalStringBodyField(input['messageId'], 'messageId')
   const hostSessionId = parseOptionalStringBodyField(input['hostSessionId'], 'hostSessionId')
   const runId = parseOptionalStringBodyField(input['runId'], 'runId')
   const generation = parseOptionalIntegerBodyField(input['generation'], 'generation')
 
   return {
+    ...(messageId !== undefined ? { messageId } : {}),
     ...(input['participant'] !== undefined
       ? { participant: parseMessageAddress(input['participant'], 'participant') }
       : {}),
@@ -399,6 +401,7 @@ function addressMatches(a: HrcMessageAddress, b: HrcMessageAddress): boolean {
 }
 
 export function matchesMessageFilter(record: HrcMessageRecord, filter: HrcMessageFilter): boolean {
+  if (filter.messageId !== undefined && record.messageId !== filter.messageId) return false
   if (filter.afterSeq !== undefined && record.messageSeq <= filter.afterSeq) return false
   if (filter.from && !addressMatches(record.from, filter.from)) return false
   if (filter.to && !addressMatches(record.to, filter.to)) return false

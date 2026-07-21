@@ -265,6 +265,14 @@ if (cmd === 'app-server') {
     expect(listed.messages).toHaveLength(1)
     expect(listed.messages[0]?.messageId).toBe(dm.request.messageId)
     expect(listed.messages[0]?.body).toBe('ping from cody')
+
+    const exactRes = await fixture.postJson('/v1/messages/query', {
+      messageId: dm.request.messageId,
+      limit: 1,
+    })
+    expect(exactRes.status).toBe(200)
+    const exact = (await exactRes.json()) as ListMessagesResponse
+    expect(exact.messages.map((message) => message.messageId)).toEqual([dm.request.messageId])
   })
 
   it('rejects responseFormat on non-session semantic DMs before message persistence', async () => {
