@@ -163,6 +163,7 @@ export async function cmdDm(
 
     const waited: WaitMessageResponse = await client.waitMessage({
       thread: { rootMessageId: request.rootMessageId },
+      kinds: ['dm'],
       phases: ['response'],
       afterSeq: request.messageSeq,
       deliveryMessageId: request.messageId,

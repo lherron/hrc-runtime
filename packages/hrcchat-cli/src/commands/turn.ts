@@ -827,6 +827,7 @@ async function findDurableReply(
     runId: handoff.runId,
     hostSessionId: handoff.hostSessionId,
     generation: handoff.generation,
+    kinds: ['dm'],
     phases: ['response'],
     limit: 1,
     order: 'desc',

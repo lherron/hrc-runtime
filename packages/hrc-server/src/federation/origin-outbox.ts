@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
   FederationMessageEnvelope,
   HrcMessageRecord,
@@ -63,6 +64,9 @@ function envelopeFor(
   expected: { homeNodeId: string; placementEpoch: number }
 ): FederationMessageEnvelope {
   const delivery = deliveryContext(body)
+  const interactiveSignal = record.metadataJson?.['federationInteractiveSignal'] as
+    | FederationInteractiveLifecycleSignal
+    | undefined
   return {
     protocolVersion: PEER_PROTOCOL_VERSION,
     messageId: record.messageId,
@@ -75,6 +79,7 @@ function envelopeFor(
     ...(record.replyToMessageId === undefined ? {} : { replyToMessageId: record.replyToMessageId }),
     expected,
     ...(delivery === undefined ? {} : { delivery }),
+    ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
   }
 }
 

@@ -1,4 +1,5 @@
 import type {
+  FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
   FederationMessageEnvelope,
   HrcMessageAddress,
@@ -107,6 +108,58 @@ function parseDelivery(value: unknown): FederationMessageDelivery | undefined {
   }
 }
 
+function parseInteractiveSignal(value: unknown): FederationInteractiveLifecycleSignal | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value) || value['version'] !== 1 || value['type'] !== 'ask_user_question') {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const sourceHrcSeq = value['sourceHrcSeq']
+  if (!Number.isSafeInteger(sourceHrcSeq) || (sourceHrcSeq as number) < 1) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const event = value['event']
+  if (!isRecord(event) || event['eventKind'] !== 'turn.tool_call' || !isRecord(event['payload'])) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const generation = event['generation']
+  if (!Number.isSafeInteger(generation) || (generation as number) < 1) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const transport = event['transport']
+  if (
+    transport !== undefined &&
+    transport !== 'sdk' &&
+    transport !== 'tmux' &&
+    transport !== 'headless' &&
+    transport !== 'ghostty'
+  ) {
+    throw new InvalidFederationEnvelopeError()
+  }
+  const acpRunId = optionalString(value, 'acpRunId')
+  return {
+    version: 1,
+    type: 'ask_user_question',
+    sourceHrcSeq: sourceHrcSeq as number,
+    ...(acpRunId === undefined ? {} : { acpRunId }),
+    event: {
+      eventKind: 'turn.tool_call',
+      ts: requiredString(event, 'ts'),
+      hostSessionId: requiredString(event, 'hostSessionId'),
+      scopeRef: requiredString(event, 'scopeRef'),
+      laneRef: requiredString(event, 'laneRef'),
+      generation: generation as number,
+      ...(optionalString(event, 'runtimeId') === undefined
+        ? {}
+        : { runtimeId: optionalString(event, 'runtimeId') }),
+      runId: requiredString(event, 'runId'),
+      ...(transport === undefined
+        ? {}
+        : { transport: transport as FederationInteractiveLifecycleSignal['event']['transport'] }),
+      payload: event['payload'],
+    },
+  }
+}
+
 export function parseFederationMessageEnvelope(value: unknown): FederationMessageEnvelope {
   if (!isRecord(value)) throw new InvalidFederationEnvelopeError()
   const protocolVersion = requiredString(value, 'protocolVersion')
@@ -126,6 +179,10 @@ export function parseFederationMessageEnvelope(value: unknown): FederationMessag
   }
 
   const replyToMessageId = optionalString(value, 'replyToMessageId')
+  const interactiveSignal = parseInteractiveSignal(value['interactiveSignal'])
+  if (interactiveSignal !== undefined && (kind !== 'system' || phase !== 'response')) {
+    throw new InvalidFederationEnvelopeError()
+  }
   return {
     protocolVersion,
     messageId,
@@ -141,6 +198,7 @@ export function parseFederationMessageEnvelope(value: unknown): FederationMessag
       placementEpoch: placementEpoch as number,
     },
     ...(value['delivery'] === undefined ? {} : { delivery: parseDelivery(value['delivery']) }),
+    ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
   }
 }
 
@@ -294,6 +352,9 @@ async function acceptFederationEnvelope(
         expected: envelope.expected,
         ...(envelope.delivery === undefined ? {} : { delivery: envelope.delivery }),
       },
+      ...(envelope.interactiveSignal === undefined
+        ? {}
+        : { federationInteractiveSignal: envelope.interactiveSignal }),
     },
   })
   if (inserted.outcome === 'duplicate') {

@@ -136,6 +136,7 @@ export async function findCorrelatedDmFinalResponse(args: {
 
   const filter: HrcMessageFilter = {
     thread: { rootMessageId: args.request.rootMessageId },
+    kinds: ['dm'],
     phases: ['response'],
     afterSeq: args.request.messageSeq,
     order: 'desc',

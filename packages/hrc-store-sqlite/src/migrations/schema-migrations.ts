@@ -369,8 +369,7 @@ const hrcEventsMigration: HrcMigration = {
         transport TEXT,
         error_code TEXT,
         replayed INTEGER NOT NULL DEFAULT 0,
-        payload_json TEXT NOT NULL,
-        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id)
+        payload_json TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_hrc_events_host_session_seq
@@ -808,6 +807,83 @@ const federationOutboxMigration: HrcMigration = {
   },
 }
 
+// Federated lifecycle signals describe a session owned by a peer. hrc_events
+// is an observation ledger, not a local-session ownership table, so its
+// denormalized host_session_id must be allowed to name that remote identity.
+// Local admission still fences every runtime/session mutation; this migration
+// removes only the obsolete observation-time FK.
+const federatedObservedEventsMigration: HrcMigration = {
+  id: '0026_federated_observed_events',
+  apply(db) {
+    const hasHostSessionForeignKey = db
+      .query<{ table: string; from: string }, []>('PRAGMA foreign_key_list(hrc_events)')
+      .all()
+      .some((row) => row.table === 'sessions' && row.from === 'host_session_id')
+    if (!hasHostSessionForeignKey) return
+
+    db.exec(`
+      ALTER TABLE hrc_events RENAME TO hrc_events_local_only;
+
+      CREATE TABLE hrc_events (
+        hrc_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_seq INTEGER NOT NULL UNIQUE,
+        ts TEXT NOT NULL,
+        host_session_id TEXT NOT NULL,
+        scope_ref TEXT NOT NULL,
+        lane_ref TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        runtime_id TEXT,
+        run_id TEXT,
+        launch_id TEXT,
+        app_id TEXT,
+        app_session_key TEXT,
+        category TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        transport TEXT,
+        error_code TEXT,
+        replayed INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL
+      );
+
+      INSERT INTO hrc_events (
+        hrc_seq, stream_seq, ts, host_session_id, scope_ref, lane_ref,
+        generation, runtime_id, run_id, launch_id, app_id, app_session_key,
+        category, event_kind, transport, error_code, replayed, payload_json
+      )
+      SELECT
+        hrc_seq, stream_seq, ts, host_session_id, scope_ref, lane_ref,
+        generation, runtime_id, run_id, launch_id, app_id, app_session_key,
+        category, event_kind, transport, error_code, replayed, payload_json
+      FROM hrc_events_local_only;
+
+      DROP TABLE hrc_events_local_only;
+
+      CREATE INDEX idx_hrc_events_host_session_seq
+        ON hrc_events(host_session_id, hrc_seq);
+      CREATE INDEX idx_hrc_events_host_session_generation_seq
+        ON hrc_events(host_session_id, generation, hrc_seq);
+      CREATE INDEX idx_hrc_events_scope_ref_seq
+        ON hrc_events(scope_ref, hrc_seq);
+      CREATE INDEX idx_hrc_events_runtime_seq
+        ON hrc_events(runtime_id, hrc_seq);
+      CREATE INDEX idx_hrc_events_run_seq
+        ON hrc_events(run_id, hrc_seq);
+      CREATE INDEX idx_hrc_events_launch_seq
+        ON hrc_events(launch_id, hrc_seq);
+      CREATE INDEX idx_hrc_events_kind_seq
+        ON hrc_events(event_kind, hrc_seq);
+      CREATE INDEX idx_hrc_events_run_ts
+        ON hrc_events(run_id, ts);
+      CREATE INDEX idx_hrc_events_run_kind_seq
+        ON hrc_events(run_id, event_kind, hrc_seq);
+      CREATE INDEX idx_hrc_events_scope_lane_ts_seq
+        ON hrc_events(scope_ref, lane_ref, ts, hrc_seq);
+      CREATE INDEX idx_hrc_events_run_ts_seq
+        ON hrc_events(run_id, ts, hrc_seq);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -829,4 +905,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   runtimeStatusChangedAtMigration,
   federationAcceptedRequestsMigration,
   federationOutboxMigration,
+  federatedObservedEventsMigration,
 ]

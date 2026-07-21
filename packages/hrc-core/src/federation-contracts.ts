@@ -68,6 +68,31 @@ export type FederationMessageDelivery = {
   readonly allowStaleGeneration?: boolean | undefined
 }
 
+/**
+ * Narrow cross-node lifecycle projection for an interactive semantic turn.
+ * This is deliberately not a general event-stream protocol: it carries only
+ * the AskUserQuestion start needed by an origin-side interface to render and
+ * route the human's answer.
+ */
+export type FederationInteractiveLifecycleSignal = {
+  readonly version: 1
+  readonly type: 'ask_user_question'
+  readonly sourceHrcSeq: number
+  readonly acpRunId?: string | undefined
+  readonly event: {
+    readonly eventKind: 'turn.tool_call'
+    readonly ts: string
+    readonly hostSessionId: string
+    readonly scopeRef: string
+    readonly laneRef: string
+    readonly generation: number
+    readonly runtimeId?: string | undefined
+    readonly runId: string
+    readonly transport?: 'sdk' | 'tmux' | 'headless' | 'ghostty' | undefined
+    readonly payload: Readonly<Record<string, unknown>>
+  }
+}
+
 /** Federation v1 tolerant-reader envelope (spec §6). */
 export type FederationMessageEnvelope = {
   readonly protocolVersion: string
@@ -81,6 +106,7 @@ export type FederationMessageEnvelope = {
   readonly replyToMessageId?: string | undefined
   readonly expected: FederationExpectedPlacement
   readonly delivery?: FederationMessageDelivery | undefined
+  readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
 }
 
 // -- `hrc target locate` -----------------------------------------------------

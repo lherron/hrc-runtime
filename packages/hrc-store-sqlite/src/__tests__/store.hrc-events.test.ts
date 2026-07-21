@@ -62,6 +62,12 @@ function createLegacyDatabase(appliedCount: number): ReturnType<typeof createHrc
   return sqlite
 }
 
+function migrationIndex(id: string): number {
+  const index = phase1Migrations.findIndex((migration) => migration.id === id)
+  if (index < 0) throw new Error(`missing migration ${id}`)
+  return index
+}
+
 function seedLegacySession(
   sqlite: ReturnType<typeof createHrcDatabase>,
   hostSessionId: string,
@@ -599,6 +605,67 @@ describe('0009_backfill_legacy_hrc_events', () => {
         .query<{ next_seq: number }, []>('SELECT next_seq FROM event_stream_cursor WHERE id = 1')
         .get()
       expect(cursor?.next_seq).toBe(10)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+describe('federated observed event migration', () => {
+  it('preserves local history and permits events for peer-owned sessions', () => {
+    const sqlite = createLegacyDatabase(migrationIndex('0026_federated_observed_events'))
+    try {
+      seedLegacySession(sqlite, 'hsid-local', 'migration-local')
+      sqlite
+        .prepare(
+          `
+            INSERT INTO hrc_events (
+              stream_seq, ts, host_session_id, scope_ref, lane_ref, generation,
+              run_id, category, event_kind, replayed, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(
+          1,
+          ts(),
+          'hsid-local',
+          scopeRef('migration-local'),
+          'default',
+          1,
+          'run-local',
+          'turn',
+          'turn.accepted',
+          0,
+          JSON.stringify({ local: true })
+        )
+      sqlite.prepare('UPDATE event_stream_cursor SET next_seq = 2 WHERE id = 1').run()
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openHrcDatabase(dbPath)
+    try {
+      expect(db.migrations.applied).toContain('0026_federated_observed_events')
+      expect(
+        db.sqlite
+          .query<{ table: string; from: string }, []>('PRAGMA foreign_key_list(hrc_events)')
+          .all()
+      ).toEqual([])
+      expect(db.hrcEvents.listByRun('run-local')).toHaveLength(1)
+
+      const projected = db.hrcEvents.append({
+        ts: ts(),
+        hostSessionId: 'hsid-peer-owned',
+        scopeRef: scopeRef('migration-remote'),
+        laneRef: 'default',
+        generation: 1,
+        runId: 'run-remote',
+        category: 'turn',
+        eventKind: 'turn.tool_call',
+        payload: { toolName: 'AskUserQuestion' },
+      })
+      expect(projected.hostSessionId).toBe('hsid-peer-owned')
+      expect(projected.streamSeq).toBe(2)
     } finally {
       db.close()
     }

@@ -358,6 +358,7 @@ export type {
   FederationBirthClass,
   FederationGateModeValue,
   FederationExpectedPlacement,
+  FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
   FederationMessageEnvelope,
   LedgerSkewScan,

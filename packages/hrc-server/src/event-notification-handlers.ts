@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import type { HrcDomainError } from 'hrc-core'
 import type {
+  FederationInteractiveLifecycleSignal,
   HrcEventEnvelope,
   HrcLifecycleEvent,
   HrcMessageAddress,
@@ -74,6 +75,9 @@ export function notifyEvent(
   // Project canonical lifecycle events onto headless-viewer status bars. Pure
   // observer: never authority, never throws, never blocks dispatch (T-04439).
   this.headlessViewerStatus.observe(event)
+  if ('hrcSeq' in event) {
+    this.maybeRelayFederatedInteractiveLifecycle(event)
+  }
   if (
     'hrcSeq' in event &&
     (event.eventKind === 'turn.completed' ||
@@ -121,7 +125,11 @@ export function maybeCompleteInteractiveSemanticTurn(
   this: HrcServerInstanceForHandlers,
   response: HrcMessageRecord
 ): void {
-  if (response.phase !== 'response' || response.replyToMessageId === undefined) {
+  if (
+    response.kind !== 'dm' ||
+    response.phase !== 'response' ||
+    response.replyToMessageId === undefined
+  ) {
     return
   }
 
@@ -218,6 +226,114 @@ export function maybeCompleteInteractiveSemanticTurn(
     responseMessageId: response.messageId,
     runId,
     state: 'completed',
+  })
+}
+
+function deterministicInteractiveSignalMessageId(requestMessageId: string, sourceHrcSeq: number) {
+  const hex = createHash('sha256')
+    .update(`federation-interactive-signal\0${requestMessageId}\0${sourceHrcSeq}`)
+    .digest('hex')
+    .slice(0, 32)
+    .split('')
+  hex[12] = '5'
+  hex[16] = ((Number.parseInt(hex[16] ?? '0', 16) & 0x3) | 0x8).toString(16)
+  const value = hex.join('')
+  return `msg-${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`
+}
+
+function acpRunIdFromFederatedRequest(request: HrcMessageRecord): string | undefined {
+  const ingress = request.metadataJson?.['federationIngress']
+  if (!isRecord(ingress)) return undefined
+  const delivery = ingress['delivery']
+  if (!isRecord(delivery)) return undefined
+  const runtimeIntent = delivery['runtimeIntent']
+  if (!isRecord(runtimeIntent)) return undefined
+  const launch = runtimeIntent['launch']
+  if (!isRecord(launch)) return undefined
+  const env = launch['env']
+  if (!isRecord(env)) return undefined
+  const acpRunId = env['ACP_RUN_ID']
+  return typeof acpRunId === 'string' && acpRunId.trim().length > 0 ? acpRunId.trim() : undefined
+}
+
+/**
+ * Relay one durable semantic signal for a federated AskUserQuestion start.
+ * General lifecycle streaming remains node-local; the origin receives only
+ * the interactive bracket needed to present and answer the waiting turn.
+ */
+export function maybeRelayFederatedInteractiveLifecycle(
+  this: HrcServerInstanceForHandlers,
+  event: HrcLifecycleEvent
+): void {
+  if (
+    event.eventKind !== 'turn.tool_call' ||
+    event.runId === undefined ||
+    !isRecord(event.payload) ||
+    event.payload['toolName'] !== 'AskUserQuestion'
+  ) {
+    return
+  }
+
+  const request = this.db.messages.getLatestRequestByRunId(event.runId)
+  if (
+    request === undefined ||
+    request.phase !== 'request' ||
+    !isRecord(request.metadataJson?.['federationIngress']) ||
+    this.federationOriginOutbox === undefined
+  ) {
+    return
+  }
+
+  const acpRunId = acpRunIdFromFederatedRequest(request)
+  const signal: FederationInteractiveLifecycleSignal = {
+    version: 1,
+    type: 'ask_user_question',
+    sourceHrcSeq: event.hrcSeq,
+    ...(acpRunId === undefined ? {} : { acpRunId }),
+    event: {
+      eventKind: 'turn.tool_call',
+      ts: event.ts,
+      hostSessionId: event.hostSessionId,
+      scopeRef: event.scopeRef,
+      laneRef: event.laneRef,
+      generation: event.generation,
+      ...(event.runtimeId === undefined ? {} : { runtimeId: event.runtimeId }),
+      runId: event.runId,
+      ...(event.transport === undefined ? {} : { transport: event.transport }),
+      payload: event.payload,
+    },
+  }
+  const inserted = this.db.messages.insertIdempotent({
+    messageId: deterministicInteractiveSignalMessageId(request.messageId, event.hrcSeq),
+    kind: 'system',
+    phase: 'response',
+    from: request.to,
+    to: request.from,
+    body: '',
+    replyToMessageId: request.messageId,
+    rootMessageId: request.rootMessageId,
+    execution: { state: 'not_applicable' },
+    metadataJson: { federationInteractiveSignal: signal },
+  })
+  if (inserted.outcome === 'duplicate') return
+
+  this.notifyMessageSubscribers(inserted.record)
+  writeServerLog('INFO', 'federation.interactive_signal.queued', {
+    signalMessageId: inserted.record.messageId,
+    requestMessageId: request.messageId,
+    sourceHrcSeq: event.hrcSeq,
+    acpRunId,
+    scopeRef: event.scopeRef,
+    runId: event.runId,
+    runtimeId: event.runtimeId,
+    toolName: event.payload['toolName'],
+  })
+  void this.federationOriginOutbox.routeResponse(inserted.record).catch((error: unknown) => {
+    writeServerLog('WARN', 'federation.interactive_signal.queue_failed', {
+      signalMessageId: inserted.record.messageId,
+      requestMessageId: request.messageId,
+      error: error instanceof Error ? error.message : String(error),
+    })
   })
 }
 
@@ -382,6 +498,7 @@ export const eventNotificationHandlersMethods = {
   notifyMessageSubscribers,
   insertAndNotifyMessage,
   maybeCompleteInteractiveSemanticTurn,
+  maybeRelayFederatedInteractiveLifecycle,
   finalizeSemanticTurnResponse,
 }
 

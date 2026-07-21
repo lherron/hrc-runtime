@@ -961,6 +961,7 @@ export async function handleSemanticDm(
       {
         thread: { rootMessageId: record.rootMessageId },
         to: respondTo,
+        kinds: ['dm'],
         phases: ['response'],
         afterSeq: record.messageSeq,
       },
@@ -1030,6 +1031,46 @@ export async function deliverFederationAcceptedMessage(
   })
   this.notifyMessageSubscribers(record)
   this.maybeCompleteInteractiveSemanticTurn(record)
+  if (envelope.interactiveSignal !== undefined) {
+    const signal = envelope.interactiveSignal
+    const alreadyProjected = this.db.hrcEvents
+      .listByRun(signal.event.runId, { eventKind: signal.event.eventKind })
+      .some(
+        (event) =>
+          isObjectRecord(event.payload) &&
+          event.payload['federationSignalMessageId'] === record.messageId
+      )
+    if (!alreadyProjected) {
+      const projected = appendHrcEvent(this.db, signal.event.eventKind, {
+        ts: signal.event.ts,
+        hostSessionId: signal.event.hostSessionId,
+        scopeRef: signal.event.scopeRef,
+        laneRef: signal.event.laneRef,
+        generation: signal.event.generation,
+        ...(signal.event.runtimeId === undefined ? {} : { runtimeId: signal.event.runtimeId }),
+        runId: signal.event.runId,
+        ...(signal.event.transport === undefined ? {} : { transport: signal.event.transport }),
+        payload: {
+          ...signal.event.payload,
+          ...(signal.acpRunId === undefined ? {} : { acpRunId: signal.acpRunId }),
+          federationSignalMessageId: record.messageId,
+          federationSourceHrcSeq: signal.sourceHrcSeq,
+        },
+      })
+      this.notifyEvent(projected)
+      writeServerLog('INFO', 'federation.interactive_signal.projected', {
+        signalMessageId: record.messageId,
+        requestMessageId: envelope.replyToMessageId,
+        sourceHrcSeq: signal.sourceHrcSeq,
+        projectedHrcSeq: projected.hrcSeq,
+        acpRunId: signal.acpRunId,
+        scopeRef: signal.event.scopeRef,
+        runId: signal.event.runId,
+        runtimeId: signal.event.runtimeId,
+      })
+    }
+    return
+  }
   if (envelope.phase !== 'request') {
     writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
       messageId: record.messageId,

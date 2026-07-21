@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 
-import type { FederationMessageEnvelope, HrcMessageRecord, WaitMessageResponse } from 'hrc-core'
+import type {
+  FederationMessageEnvelope,
+  HrcLifecycleEvent,
+  HrcMessageRecord,
+  WaitMessageResponse,
+} from 'hrc-core'
 import {
   createPlacementLedgerRepository,
   createScopeRetirementRepository,
@@ -248,9 +253,117 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         (record) => record?.body === 'request that survives the peer restart'
       )
 
+      const signalRunId = 'run-t06704-remote-ask'
+      let askEvent: HrcLifecycleEvent
+      const signalDb = openHrcDatabase(lab.dbPath)
+      try {
+        const acceptedRequest = signalDb.messages.getById(sent.request.messageId)
+        expect(acceptedRequest).toBeDefined()
+        const metadata = acceptedRequest?.metadataJson ?? {}
+        const ingress = metadata['federationIngress'] as Record<string, unknown>
+        signalDb.sqlite.query('UPDATE messages SET metadata_json = ? WHERE message_id = ?').run(
+          JSON.stringify({
+            ...metadata,
+            federationIngress: {
+              ...ingress,
+              delivery: {
+                runtimeIntent: {
+                  launch: { env: { ACP_RUN_ID: 'run_acp_t06704' } },
+                },
+              },
+            },
+          }),
+          sent.request.messageId
+        )
+        signalDb.messages.updateExecution(sent.request.messageId, {
+          state: 'started',
+          mode: 'interactive',
+          sessionRef: REMOTE_SESSION,
+          hostSessionId: 'hs-t06620-lab',
+          generation: 1,
+          runtimeId: 'rt-t06704-lab',
+          runId: signalRunId,
+          transport: 'tmux',
+        })
+        askEvent = signalDb.hrcEvents.append({
+          ts: new Date().toISOString(),
+          hostSessionId: 'hs-t06620-lab',
+          scopeRef: REMOTE_SCOPE,
+          laneRef: 'default',
+          generation: 1,
+          runtimeId: 'rt-t06704-lab',
+          runId: signalRunId,
+          category: 'turn',
+          eventKind: 'turn.tool_call',
+          transport: 'tmux',
+          replayed: false,
+          payload: {
+            type: 'tool_execution_start',
+            toolUseId: 'toolu_t06704',
+            toolName: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  question: 'Fruit?',
+                  header: 'Fruit',
+                  options: [{ label: 'Apple', description: 'Choose Apple' }],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        })
+      } finally {
+        signalDb.close()
+      }
+
+      // Replaying the same source event is harmless: the signal message ID is
+      // deterministic and the origin projects the canonical event once.
+      const notifyLab = labServer as unknown as { notifyEvent(event: HrcLifecycleEvent): void }
+      notifyLab.notifyEvent(askEvent)
+      notifyLab.notifyEvent(askEvent)
+
+      await eventually(
+        () => {
+          const db = openHrcDatabase(svc.dbPath)
+          try {
+            return {
+              projected: db.hrcEvents.listByRun(signalRunId, { eventKind: 'turn.tool_call' }),
+              responses: db.messages.query({
+                thread: { rootMessageId: sent.request.rootMessageId },
+                phases: ['response'],
+              }),
+            }
+          } finally {
+            db.close()
+          }
+        },
+        ({ projected, responses }) => projected.length === 1 && responses.length === 1
+      ).then(({ projected, responses }) => {
+        expect(projected).toHaveLength(1)
+        expect(projected[0]).toMatchObject({
+          scopeRef: REMOTE_SCOPE,
+          laneRef: 'default',
+          hostSessionId: 'hs-t06620-lab',
+          runtimeId: 'rt-t06704-lab',
+          runId: signalRunId,
+          generation: 1,
+          eventKind: 'turn.tool_call',
+          payload: {
+            toolName: 'AskUserQuestion',
+            acpRunId: 'run_acp_t06704',
+            federationSourceHrcSeq: askEvent.hrcSeq,
+          },
+        })
+        expect(responses).toEqual([
+          expect.objectContaining({ kind: 'system', phase: 'response', body: '' }),
+        ])
+      })
+
       const waitPromise = svc
         .postJson('/v1/messages/wait', {
           thread: { rootMessageId: sent.request.rootMessageId },
+          kinds: ['dm'],
           phases: ['response'],
           afterSeq: sent.request.messageSeq,
           deliveryMessageId: sent.request.messageId,
