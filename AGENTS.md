@@ -82,14 +82,24 @@ The `hrc` daemon is managed via launchd:
 - State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
 - Logs: `/Users/lherron/praesidium/var/logs/hrc-server.{log,err.log}`
 
-The binary at `/Users/lherron/.bun/bin/hrc` is `bun link`ed from this repo's
-`packages/hrc-cli`. After local changes:
+`just install` prepares an immutable HRC release away from the checkout and
+atomically advances the shared `hrc` / `hrcchat` indirection only after build,
+entrypoint smoke, and publication succeed. The stable wrappers resolve through
+`~/.bun/install/hrc-runtime-current` into a retained release under
+`~/.bun/install/hrc-runtime-releases/`; see
+[docs/atomic-install.md](docs/atomic-install.md).
+
+Installation does not reload the daemon. After runtime changes:
 
 ```bash
-bun run build
-launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
+just install
+hrc server restart
 hrc server status
 ```
+
+The final status readback must name the newly installed release in
+`binaryPath` / `packagePath`. Build, publish, install, and restart are separate
+states; record each one when validating a runtime-affecting change.
 
 ## Headless vs Tmux Runtimes
 
@@ -122,6 +132,27 @@ After changing `hrcchat-cli` rendering, install the binary and run a real
 round-trip through a live `hrc-server`. Unit tests don't catch terminal
 rendering regressions.
 
+## Federation Topology and Message Delivery
+
+The development collective currently has three logical nodes:
+
+- `svc` owns always-on ingress, canonical shared wrkq data, the binding
+  registry, and durable services.
+- `lab` is the isolated development node, even when it is co-hosted with `svc`.
+- `max3` is a workstation node and may sleep or disappear.
+
+A logical node is not a hostname or IP address. Node identity comes from
+declared HRC configuration and authenticated peer/wrkqd credentials. ScopeRefs
+remain node-free; the binding registry, placement epochs, local ledgers, birth
+provenance, and wrkq claim generations provide authority and fencing.
+
+Native HRC federation is the normal cross-node `hrcchat` path. A message with a
+`[backchannel from <node>]` prefix came through the retained break-glass relay,
+not native federation, and cannot be used as native-delivery evidence. Native
+E2E evidence requires authoritative placement readback plus federation delivery
+state/metadata. See [docs/federation-peer-protocol.md](docs/federation-peer-protocol.md)
+and [campaign_retrospective.md](campaign_retrospective.md).
+
 ## Frame Rendering
 
 `hrc-frame-render` projects HRC lifecycle/message events into RenderFrames.
@@ -134,25 +165,28 @@ acp-server source. Those are ACP-owned. If you need to ensure cross-renderer
 parity, write the assertion against `agent-action-render` so both renderers
 can be tested against the shared contract independently in their own repos.
 
-## Consuming ASP Changes (`just pull-deps`)
+## Consuming Published Dependencies (`just pull-deps`)
 
-HRC consumes ASP (`agent-spaces`) code **only** as Verdaccio dev-snapshot pins —
-`0.1.1-dev.<timestamp>` versions pinned in every `packages/*/package.json`.
+HRC consumes ASP (`agent-spaces`) code **only** through published Verdaccio
+snapshots. Package manifests select the local development stream (commonly
+`latest`), while `bun.lock` binds the exact `0.1.1-dev.<timestamp>` artifacts.
 **Editing `../agent-spaces` source has zero effect on HRC until the change is
-published to Verdaccio and synced into HRC**, and the running launchd binary
-needs a rebuild + kickstart on top of that. There is no source-level cross-repo
-import; the snapshot pin is the only seam.
+published to Verdaccio and pulled into HRC**, and the running launchd daemon
+still needs an HRC install plus restart. There is no source-level cross-repo
+import; the published artifact is the only seam.
 
-The two halves of the pipeline:
+The producer/consumer halves of the pipeline:
 
 - **Publish (run in `../agent-spaces`):** `just install` cleans, builds,
-  `bun link`s the CLI, runs `publish-dev` (publishes a timestamped dev set
-  `0.1.1-dev.<ts>` to Verdaccio at `http://127.0.0.1:4873/` under dist-tag
-  `latest`). Downstream callbacks may check freshness, but they do not mutate
-  consumer checkouts.
-- **Pull (run in `hrc-runtime`):** `just pull-deps` queries Verdaccio for every
-  local stream, verifies coherence, reconciles `bun.lock`, and creates one
-  standard lockfile-only commit. `just check-deps` is advisory and read-only.
+  links both `asp` and `harness-broker`, and publishes one coherent timestamped
+  ASP set (`0.1.1-dev.<ts>`) to the producer's loopback Verdaccio. Unless
+  `no-sync=1` is supplied, it also synchronizes the local HRC/ACP consumer
+  checkouts; linked worktrees default to isolated publication with no global
+  wrapper or downstream cutover.
+- **Pull (run in `hrc-runtime`):** `just pull-deps` queries the Verdaccio
+  configured by this checkout for the ASP and wrkq streams, verifies coherence, reconciles
+  `bun.lock`, and creates one standard lockfile-only commit. `just check-deps`
+  is advisory and read-only.
 
 The 13 synced packages (`ASP_PACKAGES` in the sync script): `agent-scope`,
 `cli-kit`, `spaces-config`, `spaces-runtime`, `spaces-execution`,
@@ -168,9 +202,15 @@ Gotchas worth not re-deriving:
   isolation; publish the whole set from agent-spaces.
 - **Verdaccio must be running** at `127.0.0.1:4873`, or both publish and sync
   fail.
-- **Pull ≠ live.** `just pull-deps` runs `bun install` here, but the launchd HRC
-  binary still runs the old code until `bun run build` +
-  `launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server`.
+- **The estate has multiple registry stores.** A checkout resolves from its
+  `.npmrc`; HRC currently uses the tailnet `mini:4873` registry, while other
+  max3 consumers use max3 loopback storage. Before installing a pushed lock
+  through a different store, mirror the exact immutable tarballs there.
+  Re-running a producer's timestamp-generating install creates a different
+  snapshot and is not mirroring.
+- **Pull != installed != live.** `just pull-deps` advances the lock and installs
+  dependencies in the checkout. `just install` atomically selects the HRC
+  release, and `hrc server restart` activates it in launchd.
 - **Compile dep vs runtime dep.** HRC code that references new ASP *types/exports*
   needs the sync before it will typecheck — that serializes ASP→sync→HRC. A pure
   ASP *behavior/data* change (e.g. flipping a capability flag value, adding an
@@ -182,10 +222,10 @@ End-to-end order for a cross-repo change:
 
 ```bash
 # 1. edit ../agent-spaces source
-cd ../agent-spaces && just install        # build + publish-dev; downstream checks stay read-only
+cd ../agent-spaces && just install no-sync=1  # build, link, publish one coherent producer set
 # then, with an explicit consumer owner:
-cd ../hrc-runtime && just pull-deps
-bun run build && launchctl kickstart -k gui/$(id -u)/com.praesidium.hrc-server
+cd ../hrc-runtime && just pull-deps && just install
+hrc server restart && hrc server status
 ```
 
 ## Cross-Repo Publishing
@@ -195,16 +235,15 @@ HRC publishes these packages to the local Verdaccio for ACP consumption:
 - Production-imported: `agent-action-render`, `hrc-core`, `hrc-sdk`, `hrc-frame-render`
 - Dev/E2E: `hrc-events`, `hrc-store-sqlite`, `hrc-server` (only if ACP E2E uses them)
 
-To re-publish after changes (each package has its own `prepack` that strips
-`exports.*.bun` for safe Bun-consumer resolution):
+Publication is owned by the repository scripts; do not hand-edit package
+manifests or publish packages individually. Dry-run or publish the coherent set
+with:
 
 ```bash
-for p in agent-action-render hrc-core hrc-sdk hrc-frame-render hrc-events hrc-store-sqlite hrc-server; do
-  pushd packages/$p
-  jq 'del(.private)' package.json > /tmp/pkg.tmp && mv /tmp/pkg.tmp package.json
-  bun ../../scripts/strip-bun-exports.ts
-  npm publish --ignore-scripts --registry http://127.0.0.1:4873/
-  git checkout HEAD -- package.json
-  popd
-done
+just publish-dev-dry-run
+just publish-dev
 ```
+
+Main-checkout `just install` performs the same coherent publication as part of
+the atomic install. Use exact-version mirroring, not a fresh publication, when
+moving that snapshot to another configured registry store.

@@ -1,130 +1,111 @@
-# Wave B local registry (Verdaccio)
+# Verdaccio artifact distribution contract
 
-Reference doc produced for **T-01529 / Wave B0**. Other Wave B sub-tasks (B2, B4,
-and the new HRC/ACP repos) consume from this registry.
+Status: current as of 2026-07-21. This document supersedes the original Wave B0
+assumption that max3 hosted the only development registry and that mini was not
+a consumer.
 
-## What it is
+## Purpose and topology
 
-A loopback-only Verdaccio instance on `max3` used to ship the cross-repo
-boundary packages — the 10 ASP packages and 4 HRC packages — between the
-agent-spaces, HRC, and ACP repositories during the split.
+Praesidium repositories exchange ASP, HRC, ACP, and wrkq boundary packages as
+immutable versions through Verdaccio. Publisher scripts default to loopback:
 
-**Uplinks are intentionally disabled.** If a downstream `bun install` /
-`npm install` resolves a cross-repo package and the local registry doesn't
-have it yet, we want a hard 404 — not a silent proxy fallthrough to
-`registry.npmjs.org`.
+```text
+http://127.0.0.1:4873/
+```
 
-## Endpoint
+Consumer endpoints are checkout configuration, not a universal fleet constant.
+The current HRC checkout uses the tailnet endpoint `http://mini:4873/`, while
+ACP, taskboard, and agent-loop use loopback Verdaccio on their execution node.
+The mini and max3 registry stores are distinct. A lockfile can therefore name a
+valid version that is absent from the store serving the checkout that runs
+`bun install`.
 
-| Field          | Value                              |
-| -------------- | ---------------------------------- |
-| URL            | `http://127.0.0.1:4873/`           |
-| Host scope     | loopback only (`max3` localhost)   |
-| Publish user   | `lherron-local`                    |
-| Email          | `lherron@gmail.com`                |
-| Auth file      | `~/.config/verdaccio/htpasswd` (bcrypt) |
-| Storage        | `~/.local/share/verdaccio/storage` |
-| Config         | `~/.config/verdaccio/config.yaml`  |
-| Daemon         | launchd — `com.lherron.verdaccio`  |
-| Plist          | `~/Library/LaunchAgents/com.lherron.verdaccio.plist` |
-| Stdout log     | `~/praesidium/var/logs/verdaccio.out.log` |
-| Stderr log     | `~/praesidium/var/logs/verdaccio.err.log` |
+Registry topology is independent of HRC logical-node identity. In particular,
+`svc` and `lab` can be co-hosted while retaining distinct users, roots, ports,
+tokens, databases, and install prefixes. Never infer node identity from the
+Verdaccio endpoint, hostname, or IP address.
 
-The launchd job has `KeepAlive=true` and `RunAtLoad=true`, so it survives
-shell exit and respawns on logout/login.
+Uplinks remain disabled for Praesidium boundary packages. A missing package is
+supposed to fail closed rather than silently resolve different content from
+the public npm registry.
 
-### Mini service-inventory exception
+## Publication and mirroring
 
-Verdaccio predates the `com.praesidium.*` launchd namespace and deliberately
-remains supervised as `com.lherron.verdaccio` while dependency pinning work is
-parked. Estate and mini service sweeps must therefore include it explicitly;
-`grep praesidium` alone is incomplete:
+Publisher repositories create coherent timestamped development snapshots:
+
+- agent-spaces publishes one version across the complete ASP package set;
+- hrc-runtime publishes one version across its HRC package set;
+- wrkq publishes the corresponding immutable `@wrkq/client` version;
+- agent-control-plane publishes its ACP package set.
+
+Publication, lockfile selection, installation, and daemon restart are separate
+states. The fleet contract is:
+
+1. Publish the coherent package set once in the producer environment.
+2. Record the exact package names and versions selected by consumer locks.
+3. Mirror those exact immutable tarballs into every registry store that must
+   satisfy the lock.
+4. Install/build from the same pushed source and lock on each target node.
+5. Restart affected launchd services and verify their reported binary/package
+   paths and federation health.
+
+Do not rerun a producer's timestamp-generating `just install` independently on
+every node merely to populate its registry. That creates different package
+versions and obscures whether the fleet is running the same artifact. A
+lockfile alone is also insufficient: the named tarball must exist locally.
+
+The repository-owned publication commands enforce package-set coherence and
+safe packed manifests. Use them instead of hand-editing package manifests or
+publishing packages one at a time:
 
 ```bash
-launchctl list | grep -E 'com\.praesidium\.|com\.lherron\.verdaccio'
+just publish-dev-dry-run
+just publish-dev
 ```
 
-Do not rename or migrate the unit as part of an inventory sweep. Revisit the
-label only with the publishing/pinning work that owns the artifact service.
+Main-checkout `just install` may include publication as part of that
+repository's lifecycle. Linked worktrees use isolated channels and normally do
+not repoint global wrappers or synchronize downstream consumers.
 
-### Lifecycle commands
+## Consumer configuration
 
-```sh
-# load (one-time)
-launchctl load -w ~/Library/LaunchAgents/com.lherron.verdaccio.plist
-
-# stop / start (after first load)
-launchctl unload ~/Library/LaunchAgents/com.lherron.verdaccio.plist
-launchctl load  ~/Library/LaunchAgents/com.lherron.verdaccio.plist
-
-# status
-launchctl list | grep verdaccio
-curl -s http://127.0.0.1:4873/-/ping  # → "{}", HTTP 200
-```
-
-## `.npmrc` snippet for consumers
-
-The Wave B cross-repo packages are **unscoped** (`agent-scope`, `hrc-core`,
-etc.), so consumers must route by **URL pattern**, not by `@scope`. Put this in
-the new HRC/ACP repos' `.npmrc`:
+Praesidium repositories use a repo-local `.npmrc` that selects the intended
+artifact store. Several boundary packages are unscoped, so the selected
+Verdaccio is the default registry and public third-party scopes are explicitly
+routed to npmjs where needed. Two current endpoint shapes are:
 
 ```ini
-# Route the named cross-repo packages through the local Verdaccio.
-# Unscoped packages can't be redirected per-name in npm config, so we route
-# the entire default registry to the local mirror for these repos.
+# Node-local consumer store (ACP, taskboard, agent-loop)
 registry=http://127.0.0.1:4873/
-
-# Auth for publish (read is open on loopback, but publish/unpublish require it).
-//127.0.0.1:4873/:_authToken=<TOKEN>
-
-# Belt-and-braces: refuse to silently fall through to npmjs.org for missing pkgs.
-# (Verdaccio is also configured with uplinks disabled — see config.yaml.)
+//127.0.0.1:4873/:_authToken=<NODE_LOCAL_PUBLISH_TOKEN>
 fetch-retries=0
-```
 
-Replace `<TOKEN>` with the value of the
-`//127.0.0.1:4873/:_authToken=` line in `~/.npmrc` on `max3`.
+# Or the shared mini store used by HRC checkouts
+# registry=http://mini:4873/
 
-If a repo also needs to install third-party packages from public npm, do **not**
-set `registry=` repo-wide. Instead, scope third-party deps explicitly:
-
-```ini
 @types:registry=https://registry.npmjs.org/
 @anthropic-ai:registry=https://registry.npmjs.org/
-# ... etc.
 ```
 
-or invert and keep public npm as the default and add an entry per cross-repo
-package via a publish wrapper. The B2/B4 task owner picks the strategy that
-matches the consumer repo's dependency footprint.
+Read access can be open on loopback; publication credentials remain node-local
+and must not be committed. Consult that node's service inventory for its
+Verdaccio supervisor, config, storage, and logs. The historical max3 service
+uses `com.lherron.verdaccio`; do not assume that label identifies every
+registry installation.
 
-## Verification (T-01529 acceptance)
+## Verification
 
-```
-$ verdaccio --version
-v6.7.1
+Verify health and the exact required versions before installing a consumer
+lock:
 
-$ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4873/-/ping
-200
-
-$ npm whoami --registry http://127.0.0.1:4873/
-lherron-local
-
-# round-trip
-$ cd /tmp/verdaccio-smoke && npm publish --registry http://127.0.0.1:4873/
-+ praesidium-verdaccio-smoke@0.0.1
-$ npm view praesidium-verdaccio-smoke --registry http://127.0.0.1:4873/
-praesidium-verdaccio-smoke@0.0.1 ...
-$ npm unpublish praesidium-verdaccio-smoke@0.0.1 --registry http://127.0.0.1:4873/ --force
-- praesidium-verdaccio-smoke
-
-# uplink really is disabled — a known-public package 404s
-$ npm view lodash --registry http://127.0.0.1:4873/
-npm error 404 Not Found - GET http://127.0.0.1:4873/lodash
+```bash
+curl -fsS http://127.0.0.1:4873/-/ping
+npm view <package>@<exact-version> version \
+  --registry http://127.0.0.1:4873/
+bun install --frozen-lockfile
 ```
 
-## Out of scope
-
-- Publishing the real ASP/HRC boundary packages (B2/B4).
-- TLS — loopback only, no remote consumers, no certs needed.
-- Mirroring across hosts — `mini.lan` is not a consumer of this registry.
+For runtime-affecting changes, follow installation with the owning service
+restart and real status readback. HRC must report the selected atomic release
+in `binaryPath` / `packagePath`; a successful package query or build does not
+prove the daemon is running it.
