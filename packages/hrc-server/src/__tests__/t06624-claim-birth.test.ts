@@ -297,6 +297,101 @@ describe('T-06624 claim-birth summon authority', () => {
     }
   })
 
+  test('a rebound claim birth reacquires fresh local claim authority before minting', async () => {
+    const reboundAuthority: TaskClaimAuthority = {
+      ...AUTHORITY,
+      claimedNode: 'svc',
+      claimGeneration: AUTHORITY.claimGeneration + 1,
+    }
+    const h = await harness({ claim: async () => reboundAuthority })
+    try {
+      h.registry.establish({
+        scopeRef: SCOPE,
+        homeNodeId: 'max3',
+        placementEpoch: 1,
+        birthClass: 'mechanism-born',
+        authorityProvenance: {
+          kind: 'claim-birth',
+          taskId: AUTHORITY.taskId,
+          claimedBy: AUTHORITY.claimedBy,
+          claimedScope: AUTHORITY.claimedScope,
+          claimedNode: 'max3',
+          claimGeneration: AUTHORITY.claimGeneration,
+        },
+        establishmentProvenance: 'explicit_local',
+        now: AUTHORITY.claimedAt,
+      })
+      const rebound = h.registry.compareAndSwap({
+        scopeRef: SCOPE,
+        expectedHomeNodeId: 'max3',
+        expectedPlacementEpoch: 1,
+        newHomeNodeId: 'svc',
+        now: '2026-07-21T04:00:01.000Z',
+      })
+      expect(rebound.outcome).toBe('updated')
+      if (rebound.binding === undefined) throw new Error('rebound binding missing')
+      createPlacementLedgerRepository(h.db.sqlite).installActive(rebound.binding)
+
+      await expect(
+        withSummonAuthority(
+          h.server,
+          {
+            scopeRef: SCOPE,
+            path: 'ensure-target',
+            intent: 'implicit',
+            origin: 'federated-ingress',
+          },
+          () => undefined
+        )
+      ).rejects.toThrow('Federated bare addressing cannot reacquire')
+      expect(h.calls).toEqual([])
+
+      const hostSessionId = await withSummonAuthority(
+        h.server,
+        { scopeRef: SCOPE, path: 'resolve-session', intent: 'explicit_local' },
+        (claimAuthority) => {
+          h.calls.push('mint')
+          expect(claimAuthority).toEqual(reboundAuthority)
+          const now = '2026-07-21T04:00:02.000Z'
+          const inserted = h.db.sessions.insert({
+            hostSessionId: 'hsid-rebound-claim-born',
+            scopeRef: SCOPE,
+            laneRef: 'main',
+            generation: 1,
+            status: 'active',
+            createdAt: now,
+            updatedAt: now,
+            ancestorScopeRefs: [],
+          })
+          if (claimAuthority === undefined) throw new Error('rebound claim authority missing')
+          persistSessionTaskClaimAuthority(h.server, inserted.hostSessionId, claimAuthority, now)
+          return inserted.hostSessionId
+        }
+      )
+
+      expect(h.calls).toEqual(['claim', 'mint'])
+      expect(h.registry.get(SCOPE)).toMatchObject({
+        homeNodeId: 'svc',
+        placementEpoch: 2,
+        establishmentProvenance: 'rebind',
+        authorityProvenance: {
+          kind: 'claim-birth',
+          claimedNode: 'max3',
+          claimGeneration: AUTHORITY.claimGeneration,
+        },
+      })
+      expect(h.db.sessionTaskClaimAuthorities.getByHostSessionId(hostSessionId)).toMatchObject({
+        hostSessionId,
+        claimedNode: 'svc',
+        claimGeneration: reboundAuthority.claimGeneration,
+        claimToken: reboundAuthority.claimToken,
+      })
+    } finally {
+      h.registry.close()
+      h.db.close()
+    }
+  })
+
   test('a non-claims_task agent remains policy-born and never calls wrkq claim', async () => {
     const h = await harness({ claimsTask: false })
     try {

@@ -103,6 +103,7 @@ export type SummonGateAllowReason =
   | 'virgin-establishment'
   | 'child-birth'
   | 'claim-birth'
+  | 'claim-rebind'
 
 export type SummonGateRefuseReason =
   | 'scope-retired'
@@ -462,6 +463,32 @@ function isEvaluation(value: unknown): value is SummonGateEvaluation {
   return typeof value === 'object' && value !== null && 'decision' in value
 }
 
+async function decideLocalClaimBirth(
+  request: SummonGateRequest,
+  scopeRef: string,
+  local: { homeNodeId: string; establishmentProvenance: EstablishmentProvenance }
+): Promise<SummonGateEvaluation> {
+  const { deps } = request
+  if (local.establishmentProvenance !== 'rebind') {
+    return refuse(
+      'claim-birth-authority-required',
+      `${scopeRef} is claim-born on ${deps.localNodeId}. A bare address cannot recreate or parent this mechanism-born identity; resume its known local session or establish fresh wrkq claim authority explicitly.`
+    )
+  }
+  if (request.origin === 'federated-ingress' || request.origin === 'startup-repair') {
+    return refuse(
+      'claim-birth-authority-required',
+      request.origin === 'startup-repair'
+        ? `${scopeRef} is a rebound claim-born identity without a local session. Startup repair cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
+        : `${scopeRef} is a rebound claim-born identity without a local session. Federated bare addressing cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
+    )
+  }
+  return await requireMaterializationCapability(
+    request,
+    allow('claim-rebind', { homeNodeId: local.homeNodeId })
+  )
+}
+
 async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation> {
   const { deps } = request
 
@@ -554,10 +581,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
         local.authorityProvenance.kind === 'claim-birth' &&
         request.knownSession !== true
       ) {
-        return refuse(
-          'claim-birth-authority-required',
-          `${scopeRef} is claim-born on ${deps.localNodeId}. A bare address cannot recreate or parent this mechanism-born identity; resume its known local session or establish fresh wrkq claim authority explicitly.`
-        )
+        return await decideLocalClaimBirth(request, scopeRef, local)
       }
       return await requireMaterializationCapability(
         request,

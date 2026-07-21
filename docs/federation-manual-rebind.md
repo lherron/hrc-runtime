@@ -34,6 +34,10 @@ home, old epoch, and new home.
    may remain for audit, but it will be fenced from creating a successor after
    `REVOKE`.
 
+   If the scope is claim-born, also release its old wrkq claim after the final
+   runtime is drained. The new home must acquire a fresh node-bound claim; an
+   old-home claim intentionally cannot be reused across the fence.
+
 3. Optionally write a human handoff seed before shutting down the old runtime.
    The new-home session is fresh continuity; no continuation identifier is
    copied across nodes.
@@ -101,6 +105,12 @@ turn:
 ```bash
 hrc start <scope> --new-session
 ```
+
+For a claim-born scope, this local dispatch reacquires the wrkq claim before it
+mints the new session and stores the new claim credential beside that session.
+It does not re-establish or bump the placement tuple. Federated bare addressing
+and startup repair remain unable to reacquire claim authority; they fail with a
+visible instruction to dispatch locally on the new home.
 
 Do not reuse a continuation that may already exist on the new home from an
 earlier placement.

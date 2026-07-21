@@ -467,7 +467,10 @@ export async function assertSummonAuthority(
     })
   }
 
-  if (result.evaluation.decision === 'allow' && result.evaluation.reason === 'claim-birth') {
+  if (
+    result.evaluation.decision === 'allow' &&
+    (result.evaluation.reason === 'claim-birth' || result.evaluation.reason === 'claim-rebind')
+  ) {
     const claimRequest = taskClaimRequestForScope(request.scopeRef)
     if (claimRequest === undefined) {
       throw new HrcConflictError(
@@ -506,35 +509,43 @@ export async function assertSummonAuthority(
       })
     }
 
-    const provenance: BirthAuthorityProvenance = {
-      kind: 'claim-birth',
-      taskId: authority.taskId,
-      claimedBy: authority.claimedBy,
-      claimedScope: authority.claimedScope,
-      claimedNode: authority.claimedNode,
-      claimGeneration: authority.claimGeneration,
+    if (result.evaluation.reason === 'claim-birth') {
+      const provenance: BirthAuthorityProvenance = {
+        kind: 'claim-birth',
+        taskId: authority.taskId,
+        claimedBy: authority.claimedBy,
+        claimedScope: authority.claimedScope,
+        claimedNode: authority.claimedNode,
+        claimGeneration: authority.claimGeneration,
+      }
+      try {
+        await commitAuthorizedEstablishment({
+          deps,
+          request,
+          mode: result.mode,
+          homeNodeId: deps.localNodeId,
+          birthClass: 'mechanism-born',
+          authorityProvenance: provenance,
+          establishmentProvenance: 'explicit_local',
+          label: 'claim-birth',
+        })
+      } catch (error) {
+        await releaseClaimBestEffort(server, authority, 'establishment')
+        throw error
+      }
     }
-    try {
-      await commitAuthorizedEstablishment({
-        deps,
-        request,
-        mode: result.mode,
-        homeNodeId: deps.localNodeId,
-        birthClass: 'mechanism-born',
-        authorityProvenance: provenance,
-        establishmentProvenance: 'explicit_local',
-        label: 'claim-birth',
-      })
-    } catch (error) {
-      await releaseClaimBestEffort(server, authority, 'establishment')
-      throw error
-    }
-    writeServerLog('INFO', 'federation.claim_birth.acquired', {
-      scopeRef: request.scopeRef,
-      taskId: authority.taskId,
-      claimedNode: authority.claimedNode,
-      claimGeneration: authority.claimGeneration,
-    })
+    writeServerLog(
+      'INFO',
+      result.evaluation.reason === 'claim-rebind'
+        ? 'federation.claim_birth.reacquired_after_rebind'
+        : 'federation.claim_birth.acquired',
+      {
+        scopeRef: request.scopeRef,
+        taskId: authority.taskId,
+        claimedNode: authority.claimedNode,
+        claimGeneration: authority.claimGeneration,
+      }
+    )
     return { ...result, claimAuthority: authority }
   }
 
