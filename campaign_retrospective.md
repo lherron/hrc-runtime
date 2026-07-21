@@ -4,11 +4,12 @@ Date: 2026-07-21
 
 Campaign root: `T-06597`
 
-Status at retrospective cut: the implementation and original ratification bundles are
-closed, origin contains the landed changes, and the installed `svc`, `lab`, and `max3`
-nodes are healthy. A fresh behavioral E2E campaign follows this retrospective because
-the close-out audit over-weighted protocol-level and recorded evidence and did not
-personally exercise every operator workflow end to end.
+Status: completed. The implementation, ratification, and fresh behavioral E2E bundles
+are closed; origin contains the landed changes; and the installed `svc`, `lab`, and
+`max3` nodes are healthy and dependency-current. The fresh campaign corrected the
+close-out audit's over-reliance on protocol evidence by completing a native
+`wrkf-task-loop` room, exercising bilateral native messaging and cross-node task
+claim refusals, and testing the installed credential-error path on every node.
 
 ## Narrative
 
@@ -57,6 +58,14 @@ rebind gap and a message lookup path that could not find an older message by ID 
 the store exceeded its scan window. The resulting code and the live reruns were more
 valuable than a clean first pass would have been.
 
+The fresh behavioral close-out found a second class of failures in the test and
+operator path rather than federation itself: a room coordinator ended its own turn
+while the crank still needed parent authority; Bun loaded a stale cwd `.env.local`
+token ahead of the intended token file; the crank's arm check could false-pass when
+authenticated reads returned `undefined`; and the remote stdio bridge decoded an HTTP
+401 body as a successful JSON-RPC result. Each mechanism was reproduced separately,
+fixed at its owning boundary, installed, and rerun before the records were reconciled.
+
 ## What landed
 
 ### HRC
@@ -84,6 +93,21 @@ valuable than a clean first pass would have been.
   the bounded fetch→rebase→re-verify→validate-claim→push landing path, and terminal
   settlement fencing.
 - The repeatable live claim/landing harness landed in agent-loop as `a8ee932`.
+- `b691b7a` makes an explicit wrkqd token file authoritative over implicit dotenv
+  residue; `82ea18d` preserves upstream HTTP/auth/transport failures as explicit,
+  safe `WorkRpcError` envelopes while keeping genuine `WRKQ_NOT_FOUND` unchanged.
+- agent-loop `2db3c75` makes `wrkf-crank` ignore cwd dotenv files and fails arm-check
+  when the unified client's service reads are empty. Dependency pin `fad8c7a` carries
+  `@wrkq/client@0.1.0-dev.20260721081252`.
+
+### Close-out support changes
+
+- HRC `dbc4895`, `ef3e5bb`, and `bab6269` project the canonical RPC locator and token
+  file into claim-born runtimes without leaking or mutating an inline token.
+- agent-spaces `165eec2`, `6aa6188`, and `db1c30f` expose task defaults through the
+  compiled policy contract, keep tmux launch environment fencing intact, and align
+  the globally installed harness broker with the published snapshot.
+- Agents `8a7a22a` records the parent-turn lifetime rule for room coordinators.
 
 ## Live evidence already obtained
 
@@ -109,6 +133,31 @@ suppression, lint, typecheck, and all package tests passed. In particular, hrc-c
 reported 497 passing / 0 failing tests and hrcchat-cli reported 162 passing / 0
 failing tests. The audit also confirmed that HRC and ACP local heads matched
 `origin/main` and that all three installed HRC daemons reported healthy peers.
+
+## Fresh behavioral E2E closure
+
+- Real taskboard task `T-06721` ran from a fresh `wrkq-simple-task@5` room through
+  tester, test-review, implementer, observer verification, gate, landing, and engine
+  completion. Instance `wfi_t06721_1784630452304299000` closed `done`; origin landed
+  at `06fd911`; the gated taskboard `just verify` passed, including 81 Playwright
+  tests. The coordinator runtime retained a live `activeRunId` for the whole room.
+- A prior independent native room, `T-06723`, closed and landed `55285dd`; its older
+  ambient-token workaround was not counted as the final credential proof.
+- svc acquired a generation-1 claim on real open task `T-06725`; lab's simultaneous
+  claim was refused with `already_claimed` naming the svc holder. svc released it and
+  the task was restored to its original open state. Lab's later claim on completed
+  `T-06721` was refused with `wrong_state: completed`.
+- Lab sent `LAB_NATIVE_TO_SVC_1784638969110`; it arrived as this live svc agent turn,
+  not merely a polled store row, and the reply was readable from lab. Independent
+  svc→lab and lab→svc native DMs also had bilateral durable message IDs.
+- The installed `wrkf-crank` on svc, max3, and lab now exits nonzero and explicitly
+  reports `remote workrpc authentication failed (HTTP 401)` for a bad token. With
+  each node's token file, `identity_room.services` passes; a real absent task remains
+  the typed `WRKQ_NOT_FOUND` case.
+- `agent-loop`, taskboard, and ACP consumed the new immutable client snapshot at
+  `fad8c7a`, `209ddb2`, and `f2a7d99`. Their full verification gates passed; taskboard
+  and ACP were installed and restarted healthy. max3 and lab report installed `wrkf`
+  from `82ea18d`, `wrkf-crank` from `fad8c7a`, and fresh Verdaccio pins.
 
 ## Gotchas and lessons
 
@@ -177,6 +226,36 @@ name different bits. Every runtime-affecting validation must record the source c
 installed release/snapshot, daemon binary/package path, restart, and post-restart peer
 health. A successful `just install` is not itself proof that the daemon is running it.
 
+### Bun dotenv loading is an executable property
+
+Bun loads `.env.local` from process cwd before application code. Deleting or
+overwriting `process.env` inside a CLI is too late for consumers that already observed
+the injected value. Operator CLIs that require explicit transport authority should
+start with `bun --env-file=/dev/null`. Tests and one-off `bun -e` probes need the same
+isolation unless dotenv behavior is the subject under test.
+
+### Parent authority lives only for the parent turn
+
+A background crank cannot outlive the coordinator's current agent turn and still
+birth seats. A later wake is a different run and cannot retroactively supply the old
+`activeRunId`. Start one background crank, block on that exact tool result within the
+same turn until it reaches a typed halt, and only then return.
+
+### Repository context can contaminate cross-repo verification
+
+This cody runtime correctly carries `ASP_PROJECT=hrc-runtime`. Running ACP's full gate
+from that shell made one refactor-helper test observe the wrong default project. The
+repo-correct rerun with `ASP_PROJECT=agent-control-plane` passed, as did ACP's own
+pre-push gate. Cross-repo campaign commands must set target context explicitly.
+
+### Immutable snapshots must exist on every node registry
+
+Pulling a lockfile is insufficient when max3 and svc/lab use distinct local Verdaccio
+registries. The exact immutable HRC and wrkq client tarballs were mirrored before
+installing new locks. Re-running a producer's publish-oriented `just install` on every
+node would create timestamp churn; remote nodes can build/install the same pushed
+source while consuming the already-published immutable snapshot.
+
 ### Exact readback matters at campaign scale
 
 `hrcchat show <message-id>` used a bounded row scan and failed once the live store was
@@ -206,37 +285,35 @@ peer, and runtime-reattachment checks, is the reliable cycle.
 - An apparent post-parent-completion birth defect was cancelled after run-ledger
   review showed that background shell work occurred after the agent run had already
   ended; zombie refusal was correct.
+- `T-06730` was cancelled as an erroneous omnibus. Its child-birth diagnosis was the
+  parent-turn lifetime error closed by `T-06735`; its transport pieces were split and
+  closed by `T-06729` through `T-06734`; cwd dotenv/arm-check behavior was closed by
+  `T-06736`; and HTTP-401 preservation was closed by `T-06737`. The distinct wrkf CLI
+  transport mismatch remains the pre-existing `T-06190`, not a duplicate here.
+- max3's wrkq branch carried two unpushed architecture-record commits (`ba044db`,
+  `d5d98b0`) whose content had already landed upstream in newer form through
+  `10e75fe`/`aee6b86`. They were skipped during the evidence-backed rebase rather
+  than reintroducing older provenance. Their hashes/reflog remain recoverable; the
+  unrelated untracked backup file was left untouched.
 - `H-00274` remains pending in `agent:mable`'s handoff queue. Cody consumed it at
   Lance's direction but did not impersonate mable to acknowledge a foreign-scope
   handoff.
 
 ## Remaining work
 
-### Fresh behavioral E2E campaign
-
-The immediate next work is a new evidence run using five real taskboard refactor
-tasks. It must include:
-
-- at least one complete `wrkq-simple-task@5` room on node A through test, fix,
-  verification, landing, and settlement;
-- a normal claim attempt from node B while A is active (`already_claimed`) and after
-  completion (`wrong_state`), with no second room minted;
-- an explicit cross-node takeover with the predecessor fenced before push and at
-  settlement;
-- two distinct taskboard tasks landing concurrently from separate max3/lab checkouts,
-  forcing a remote-head advance and mandatory rebase/re-verification;
-- native conversation and outage-recovery checks that do not use the backchannel;
-- rerun of the birth/origin and rebind authority invariants on disposable scopes;
-- gateway ingress from svc to a remote-homed agent;
-- durable evidence and cleanup for every task, scope, runtime, claim, worktree, and
-  temporary config edit.
+There is no Federation v1 campaign blocker or open close-out defect. The fresh room,
+native messaging, claim refusal, installed auth diagnostics, fleet dependency sync,
+and cleanup are complete. The original ratification's same-task takeover,
+post-rebase concurrent landing, birth/origin, rebind, and gateway evidence remain the
+durable source for those expensive matrices; the fresh pass did not pretend to rerun
+them when it did not.
 
 ### Parked release/promotion work
 
 The svc pinned-artifact release manifest, frozen lock closure, promotion, and rollback
 exercise remain explicitly parked. They require a new operator ruling before work.
-The behavioral E2E campaign must report them as excluded, not silently count them as
-passed or failed.
+The behavioral E2E campaign treated them as excluded rather than silently counting
+them as passed or failed.
 
 ### Longer-term deferred items
 
@@ -258,6 +335,8 @@ streaming remain outside Federation v1.
 6. Keep one room per checkout; use max3 and lab for real concurrency.
 7. Do not call the campaign complete until all disposable state is removed and the
    cleanup itself has durable readback.
+8. Run Bun operator probes with dotenv disabled unless dotenv behavior itself is the
+   subject under test.
 
 ## Primary references
 
@@ -268,6 +347,8 @@ streaming remain outside Federation v1.
 - Rebind implementation and runbook: `T-06633`
 - Native product-claim validation: `T-06622`
 - Claim/landing implementation: `T-06623`, `T-06625`, `T-06626`
+- Fresh behavioral closure and split fixes: `T-06721`, `T-06723`, `T-06726`,
+  `T-06729` through `T-06737`
 - agent-loop live claim/landing harness:
   `loops/wrkf-task-loop/tests/live-claim-landing-harness.ts`
 - agent-loop live-runtime runbook: `~/praesidium/agent-loop/docs/E2E_RUNBOOK.md`
