@@ -286,7 +286,7 @@ Commands:
   monitor wait <selector...> [--until|--until-any|--until-all <condition>] [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
-  runtime list [--status <csv>] [--scope <selector>] [--agent <id>] [--task <id>] [--host-session-id <id>|--session <id>] [--transport <transport>] [--stale] [--older-than <duration>] [--json]
+  runtime list [--all-nodes] [--status <csv>] [--scope <selector>] [--agent <id>] [--task <id>] [--host-session-id <id>|--session <id>] [--transport <transport>] [--stale] [--older-than <duration>] [--json]
                                      List runtimes; for one target use hrc show <scope> or runtime inspect <id>
   runtime inspect <runtimeId> [--json] Inspect one runtime
   runtime sweep [--transport <t>] [--older-than <duration>] [--status <csv>] [--scope <prefix>] [--drop-continuation] [--dry-run|--yes] [--json]

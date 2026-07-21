@@ -14,7 +14,7 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type { HrcStatusResponse } from 'hrc-core'
+import type { FederationPeerHealthObservation, HrcStatusResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import { fatalExit, hasFlag } from './runtime-args.js'
@@ -81,6 +81,7 @@ export type ServerRuntimeStatus = {
    * something the CLI re-derives locally.
    */
   node?: HrcStatusResponse['node'] | undefined
+  peerHealth?: FederationPeerHealthObservation[] | undefined
   tmux: TmuxStatus
   serverStatus?: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
   error?: string | undefined
@@ -432,6 +433,7 @@ export async function collectServerRuntimeStatus(
     let apiHealth: ServerRuntimeStatus['apiHealth'] = { ok: false, error: 'daemon not running' }
     let api: ServerRuntimeStatus['api']
     let node: ServerRuntimeStatus['node']
+    let peerHealth: ServerRuntimeStatus['peerHealth']
     let serverStatus: Pick<HrcStatusResponse, 'startedAt' | 'apiVersion'> | undefined
 
     if (socketResponsive) {
@@ -443,7 +445,7 @@ export async function collectServerRuntimeStatus(
       }
 
       try {
-        const status = await client.getStatus()
+        const status = await client.getStatus({ includePeerHealth: true })
         api = {
           startedAt: status.startedAt,
           uptime: status.uptime,
@@ -457,6 +459,7 @@ export async function collectServerRuntimeStatus(
           packagePath: status.packagePath,
         }
         node = status.node
+        peerHealth = status.peerHealth
         serverStatus = {
           startedAt: status.startedAt,
           apiVersion: status.apiVersion,
@@ -503,6 +506,7 @@ export async function collectServerRuntimeStatus(
       apiHealth,
       ...(api ? { api } : {}),
       ...(node ? { node } : {}),
+      ...(peerHealth ? { peerHealth } : {}),
       tmux,
       ...(serverStatus ? { serverStatus } : {}),
     }
@@ -605,6 +609,14 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
         }
       }
     }
+  }
+
+  for (const peer of status.peerHealth ?? []) {
+    lines.push(
+      `  peer health: ${peer.nodeId} ${peer.state} (${peer.latencyMs}ms${
+        peer.answeredAt === undefined ? '' : `, answered ${peer.answeredAt}`
+      })${peer.detail === undefined ? '' : ` — ${peer.detail}`}`
+    )
   }
 
   if (status.api) {

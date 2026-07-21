@@ -37,7 +37,10 @@ export type RuntimeListAdoptRoute = {
   handler: ExactRouteHandler
 }
 
-async function handleListRuntimes(deps: RuntimeListAdoptDependencies, url: URL): Promise<Response> {
+export async function listRuntimesForProjection(
+  deps: RuntimeListAdoptDependencies,
+  url: URL
+): Promise<HrcRuntimeSnapshot[]> {
   const filter = parseListRuntimesFilter(url)
   const runtimes = filter.hostSessionId
     ? deps.db.runtimes.listByHostSessionId(filter.hostSessionId)
@@ -45,7 +48,11 @@ async function handleListRuntimes(deps: RuntimeListAdoptDependencies, url: URL):
   const reconciled = await Promise.all(
     runtimes.map((runtime) => deps.reconcileTmuxRuntimeLiveness(runtime))
   )
-  return json(filterRuntimes(reconciled, filter))
+  return filterRuntimes(reconciled, filter)
+}
+
+async function handleListRuntimes(deps: RuntimeListAdoptDependencies, url: URL): Promise<Response> {
+  return json(await listRuntimesForProjection(deps, url))
 }
 
 function handleListRuns(deps: RuntimeListAdoptDependencies, url: URL): Response {

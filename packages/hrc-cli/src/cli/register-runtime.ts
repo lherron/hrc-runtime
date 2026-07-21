@@ -141,6 +141,7 @@ export function registerRuntimeCommands(program: Command): void {
     .option('--older-than <duration>', 'filter by age')
     .option('--json', 'output as JSON')
     .option('--stale', 'show only stale runtimes')
+    .option('--all-nodes', 'best-effort node-labeled inventory across configured peers')
     .addHelpText(
       'after',
       '\nSingle-target queries:\n  hrc show <scope>\n  hrc runtime inspect <runtimeId>\n'
@@ -157,7 +158,7 @@ export function registerRuntimeCommands(program: Command): void {
           'task',
           'older-than',
         ],
-        booleans: ['json', 'stale'],
+        booleans: ['json', 'stale', 'all-nodes'],
       })
       await cmdRuntimeList(args)
     })

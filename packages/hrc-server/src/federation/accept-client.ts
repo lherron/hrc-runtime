@@ -4,7 +4,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import { parseSessionRef } from '../server-parsers.js'
 import type { StalePlacementRedirectHandler } from './binding-cache.js'
 import type { PeerEntry } from './federation-config.js'
-import { PEER_PROTOCOL_VERSION_HEADER } from './peer-protocol.js'
+import { buildPeerProtocolHeaders } from './peer-request.js'
 
 export type PeerAcceptClientResult =
   | { outcome: 'accepted' | 'duplicate'; messageId: string }
@@ -60,11 +60,9 @@ export async function sendFederationEnvelope(
   }
   const response = await fetchImpl(new URL('/v1/federation/accept', options.peer.endpoint), {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${options.peer.token.reveal()}`,
-      'content-type': 'application/json',
-      [PEER_PROTOCOL_VERSION_HEADER]: options.envelope.protocolVersion,
-    },
+    headers: buildPeerProtocolHeaders(options.peer, options.envelope.protocolVersion, {
+      contentType: 'application/json',
+    }),
     body: JSON.stringify({ envelope: options.envelope }),
     signal: AbortSignal.timeout(timeoutMs),
   })

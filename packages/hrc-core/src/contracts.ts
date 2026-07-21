@@ -698,6 +698,8 @@ export type HrcCapabilityStatus = {
       registryEndpoint?: string | undefined
     }[]
   }
+  /** Present only for an explicit on-demand peer-health status request. */
+  peerHealth?: import('./federation-contracts.js').FederationPeerHealthObservation[] | undefined
   capabilities: {
     semanticCore: {
       sessions: boolean

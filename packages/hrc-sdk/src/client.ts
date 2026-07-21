@@ -14,6 +14,8 @@ import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
+  FederationPeerHealthObservation,
+  FederationRuntimeProjectionReport,
   LocateBindingsReport,
   ScopeLocation,
 } from 'hrc-core'
@@ -506,22 +508,27 @@ export class HrcClient {
 
   async getStatus(options: {
     includeArchived?: boolean
+    includePeerHealth?: boolean
     includeSessions: false
   }): Promise<StatusSummaryResponse>
   async getStatus(options?: {
     includeArchived?: boolean
+    includePeerHealth?: boolean
     includeSessions?: true | undefined
   }): Promise<StatusResponse>
   async getStatus(options: {
     includeArchived?: boolean
+    includePeerHealth?: boolean
     includeSessions?: boolean | undefined
   }): Promise<StatusResponse | StatusSummaryResponse>
   async getStatus(options?: {
     includeArchived?: boolean
+    includePeerHealth?: boolean
     includeSessions?: boolean | undefined
   }): Promise<StatusResponse | StatusSummaryResponse> {
     const path = buildPath('/v1/status', {
       includeArchived: boolField(options?.includeArchived),
+      includePeerHealth: boolField(options?.includePeerHealth),
       includeSessions: options?.includeSessions === false ? false : undefined,
     })
     return this.getJson<StatusResponse | StatusSummaryResponse>(path)
@@ -541,6 +548,29 @@ export class HrcClient {
   /** Whole-ledger pin-vs-binding skew sweep for this node (T-06613). */
   async listPlacementBindings(): Promise<LocateBindingsReport> {
     return this.getJson<LocateBindingsReport>('/v1/federation/bindings')
+  }
+
+  /** Bounded on-demand health of every configured peer. */
+  async listFederationPeerHealth(): Promise<FederationPeerHealthObservation[]> {
+    return this.getJson<FederationPeerHealthObservation[]>('/v1/federation/peers')
+  }
+
+  /** Node-labeled best-effort runtime inventory, including unreachable peers. */
+  async listFederatedRuntimes(
+    filter?: RuntimeListFilter
+  ): Promise<FederationRuntimeProjectionReport> {
+    const path = buildPath('/v1/federation/runtimes', {
+      hostSessionId: emptyToUndefined(filter?.hostSessionId),
+      transport: emptyToUndefined(filter?.transport),
+      status: filter?.status,
+      stale: filter?.stale,
+      olderThan: emptyToUndefined(filter?.olderThan),
+      scope: emptyToUndefined(filter?.scope),
+      agent: emptyToUndefined(filter?.agent),
+      task: emptyToUndefined(filter?.task),
+      json: filter?.json,
+    })
+    return this.getJson<FederationRuntimeProjectionReport>(path)
   }
 
   /** Durable origin-side deliveries for F3 operator inspection. */

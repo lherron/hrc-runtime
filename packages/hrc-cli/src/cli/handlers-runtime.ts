@@ -1,5 +1,6 @@
 import type {
   BrokerInspectResponse,
+  FederationRuntimeProjectionReport,
   InspectRuntimeResponse,
   PruneRuntimesRequest,
   PruneRuntimesResponse,
@@ -45,7 +46,7 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
   const task = parseFlag(args, '--task')
   const jsonOutput = hasFlag(args, '--json')
   const client = createClient()
-  const runtimes = await client.listRuntimes({
+  const filter = {
     ...(hostSessionId ? { hostSessionId } : {}),
     ...(transport ? { transport } : {}),
     ...(status ? { status: splitCsv(status) } : {}),
@@ -55,7 +56,14 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
     ...(agent ? { agent } : {}),
     ...(task ? { task } : {}),
     ...(jsonOutput ? { json: true } : {}),
-  })
+  }
+  if (hasFlag(args, '--all-nodes')) {
+    const report = await client.listFederatedRuntimes(filter)
+    if (jsonOutput) printJson(report)
+    else process.stdout.write(formatFederatedRuntimes(report))
+    return
+  }
+  const runtimes = await client.listRuntimes(filter)
   const body = `${JSON.stringify(
     runtimes.map((runtime) => ({
       ...runtime,
@@ -70,6 +78,30 @@ export async function cmdRuntimeList(args: string[]): Promise<void> {
       `hrc: runtime list returned ${runtimes.length} runtimes (${Buffer.byteLength(body)} bytes) — narrow with --task/--scope/--agent/--status/--transport/--session\n`
     )
   }
+}
+
+function formatFederatedRuntimes(report: FederationRuntimeProjectionReport): string {
+  const lines = [
+    `runtime projection from ${report.localNodeId} at ${report.generatedAt}: ${report.nodes.length} node(s)`,
+  ]
+  for (const node of report.nodes) {
+    const answer =
+      node.answeredAt === undefined
+        ? 'never answered'
+        : `answered ${node.answeredAt} (${formatAgeSec(
+            Math.max(0, (Date.parse(report.generatedAt) - Date.parse(node.answeredAt)) / 1_000)
+          )} old)`
+    lines.push(
+      `node ${node.nodeId}: ${node.state} — checked ${node.checkedAt}, ${answer}, ${node.latencyMs}ms, ${node.runtimes.length} runtime(s)`
+    )
+    if (node.detail !== undefined) lines.push(`  detail: ${node.detail}`)
+    for (const runtime of node.runtimes) {
+      lines.push(
+        `  ${runtime.runtimeId}  ${runtime.scopeRef}  lane=${runtime.laneRef}  status=${runtime.status}`
+      )
+    }
+  }
+  return `${lines.join('\n')}\n`
 }
 
 function canonicalScopeFilter(raw: string): string {

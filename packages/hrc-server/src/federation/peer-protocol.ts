@@ -5,6 +5,7 @@
  * router. Its entire network-visible route table is accept, locate, health.
  */
 
+import type { HrcRuntimeSnapshot } from 'hrc-core'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
@@ -19,11 +20,21 @@ export type PeerProtocolListenerConfig = {
 
 export type PeerProtocolHealth = {
   readonly startedAt: string
+  /** Timestamp at which this node read its local projection. */
+  readonly observedAt?: string | undefined
   readonly capabilities: {
     readonly accept: boolean
     readonly locate: true
     readonly health: true
+    readonly runtimeProjection?: boolean | undefined
   }
+  /** Additive F3 projection, returned only when the caller asks for it. */
+  readonly runtimes?: readonly HrcRuntimeSnapshot[] | undefined
+}
+
+export type PeerProtocolHealthRequest = {
+  readonly includeRuntimes: boolean
+  readonly url: URL
 }
 
 export type PeerAcceptRequest = {
@@ -56,7 +67,9 @@ export type PeerProtocolRequestHandlerOptions = {
   readonly localNodeId: string
   readonly peers: ReadonlyMap<string, PeerEntry>
   readonly locate: (scopeRef: string) => Promise<unknown>
-  readonly health: () => PeerProtocolHealth
+  readonly health: (
+    request: PeerProtocolHealthRequest
+  ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
   readonly accept?: PeerAcceptHandler | undefined
 }
 
@@ -163,12 +176,16 @@ export function createPeerProtocolRequestHandler(
     const url = new URL(request.url)
     try {
       if (request.method === 'GET' && url.pathname === '/v1/federation/health') {
+        const health = await options.health({
+          includeRuntimes: url.searchParams.get('includeRuntimes') === 'true',
+          url,
+        })
         return responseJson(
           {
             ok: true,
             protocolVersion: PEER_PROTOCOL_VERSION,
             nodeId: options.localNodeId,
-            ...options.health(),
+            ...health,
           },
           200
         )

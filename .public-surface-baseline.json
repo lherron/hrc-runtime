@@ -711,6 +711,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationNodeRuntimeProjection",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationNodeRuntimeProjection|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationOutboxDeliveryRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -723,6 +731,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationOutboxState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationPeerCapabilities",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationPeerCapabilities|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationPeerHealthObservation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationPeerHealthObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRuntimeProjectionReport",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRuntimeProjectionReport|type",
       "count": 1
     },
     {
@@ -2155,6 +2187,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|LocateObservedRuntime|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "LocatePeerResolution",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|LocatePeerResolution|type",
       "count": 1
     },
     {

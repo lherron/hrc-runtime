@@ -39,6 +39,7 @@ import { resolveQualifiedScopeInput } from 'agent-scope'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
+  FederationPeerHealthObservation,
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
@@ -164,6 +165,22 @@ function formatLocation(location: ScopeLocation): string {
   )
   for (const runtime of observed.runtimes) {
     lines.push(`            ${runtime.runtimeId}  ${runtime.laneRef}  ${runtime.status}`)
+  }
+
+  const peer = location.peerResolution
+  if (peer !== undefined) {
+    if (peer.state === 'answered') {
+      lines.push(
+        `peer:       ${peer.nodeId} answered ${peer.answeredAt} in ${peer.latencyMs}ms; ${peer.location.observed.runtimeCount} runtime(s) observed on ${peer.location.observed.nodeId}`
+      )
+      for (const runtime of peer.location.observed.runtimes) {
+        lines.push(`            ${runtime.runtimeId}  ${runtime.laneRef}  ${runtime.status}`)
+      }
+    } else {
+      lines.push(
+        `peer:       ${peer.nodeId} ${peer.state.toUpperCase()} (checked ${peer.checkedAt}, ${peer.latencyMs}ms) — ${peer.detail}`
+      )
+    }
   }
 
   if (location.birthChain.state === 'resolved') {
@@ -334,7 +351,7 @@ async function checkDaemon(client: HrcClient): Promise<{
   reachable: boolean
 }> {
   try {
-    const status = await client.getStatus({ includeSessions: false })
+    const status = await client.getStatus({ includeSessions: false, includePeerHealth: true })
     const node = status.node
     const checks: DoctorCheck[] = [
       { name: 'hrc-daemon', status: 'ok', detail: `up ${status.uptime}s` },
@@ -357,6 +374,7 @@ async function checkDaemon(client: HrcClient): Promise<{
       status: 'ok',
       detail: node.configExists ? node.configPath : `${node.configPath} (absent, single-node mode)`,
     })
+    checks.push(...peerHealthChecks(status.peerHealth ?? []))
     return { checks, reachable: true }
   } catch (error) {
     return {
@@ -370,6 +388,17 @@ async function checkDaemon(client: HrcClient): Promise<{
       ],
     }
   }
+}
+
+function peerHealthChecks(observations: readonly FederationPeerHealthObservation[]): DoctorCheck[] {
+  return observations.map((peer) => ({
+    name: `federation-peer:${peer.nodeId}`,
+    status: peer.state === 'healthy' ? ('ok' as const) : ('warn' as const),
+    detail:
+      peer.state === 'healthy'
+        ? `healthy, answered ${peer.answeredAt ?? 'at unknown time'} in ${peer.latencyMs}ms (protocol ${peer.protocolVersion ?? 'unknown'})`
+        : `${peer.state}, checked ${peer.checkedAt} in ${peer.latencyMs}ms — ${peer.detail ?? 'no detail'}`,
+  }))
 }
 
 /**

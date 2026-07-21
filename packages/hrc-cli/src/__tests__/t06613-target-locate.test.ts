@@ -10,7 +10,12 @@
 
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import type { FederationOutboxDeliveryRecord, LocateBindingsReport, ScopeLocation } from 'hrc-core'
+import type {
+  FederationOutboxDeliveryRecord,
+  FederationRuntimeProjectionReport,
+  LocateBindingsReport,
+  ScopeLocation,
+} from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import {
@@ -20,6 +25,7 @@ import {
   cmdFederationOutboxReplay,
   cmdTargetLocate,
 } from '../cli/handlers-federation.js'
+import { cmdRuntimeList } from '../cli/handlers-runtime.js'
 import { CliStatusExit } from '../cli/shared.js'
 
 const SCOPE = 'agent:mable:project:hrc-runtime:task:T-06613'
@@ -95,6 +101,23 @@ function stubBindings(report: LocateBindingsReport): void {
       peerCount: 1,
       peers: [],
     },
+    peerHealth: [
+      {
+        nodeId: 'lab',
+        state: 'healthy',
+        checkedAt: '2026-07-20T00:00:00.000Z',
+        answeredAt: '2026-07-20T00:00:00.010Z',
+        latencyMs: 10,
+        protocolVersion: '1.0',
+      },
+      {
+        nodeId: 'svc',
+        state: 'unreachable',
+        checkedAt: '2026-07-20T00:00:00.000Z',
+        latencyMs: 1500,
+        detail: 'probe timed out',
+      },
+    ],
   })) as typeof HrcClient.prototype.getStatus
   restores.push(() => {
     HrcClient.prototype.listPlacementBindings = originalBindings
@@ -333,6 +356,99 @@ describe('hrc target locate', () => {
     expect(out).toContain('UNKNOWN')
     expect(out).not.toMatch(/authority:\s+unbound/)
   })
+
+  test('remote authority renders the peer answer and node-local observed runtime', async () => {
+    stubLocate(
+      baseLocation({
+        authority: {
+          state: 'bound',
+          source: 'registry',
+          record: { ...boundRecord, homeNodeId: 'lab' },
+          isLocal: false,
+        },
+        peerResolution: {
+          nodeId: 'lab',
+          state: 'answered',
+          checkedAt: '2026-07-20T00:00:00.000Z',
+          answeredAt: '2026-07-20T00:00:00.010Z',
+          latencyMs: 10,
+          location: baseLocation({
+            localNodeId: 'lab',
+            observed: {
+              scope: 'local-node-only',
+              nodeId: 'lab',
+              runtimeCount: 1,
+              runtimes: [{ runtimeId: 'rt-lab', laneRef: 'main', status: 'ready' }],
+            },
+          }),
+        },
+      })
+    )
+    const read = captureStdout()
+
+    await cmdTargetLocate([SCOPE])
+
+    expect(read()).toContain('peer:       lab answered')
+    expect(read()).toContain('rt-lab')
+  })
+})
+
+describe('hrc runtime list --all-nodes', () => {
+  test('renders answer timestamps and stale unreachable cache under explicit node labels', async () => {
+    const original = HrcClient.prototype.listFederatedRuntimes
+    const report: FederationRuntimeProjectionReport = {
+      localNodeId: 'svc',
+      generatedAt: '2026-07-20T00:01:00.000Z',
+      nodes: [
+        {
+          nodeId: 'svc',
+          state: 'answered',
+          checkedAt: '2026-07-20T00:01:00.000Z',
+          answeredAt: '2026-07-20T00:01:00.000Z',
+          latencyMs: 0,
+          runtimes: [],
+        },
+        {
+          nodeId: 'lab',
+          state: 'unreachable',
+          checkedAt: '2026-07-20T00:01:00.000Z',
+          answeredAt: '2026-07-20T00:00:00.000Z',
+          latencyMs: 1500,
+          detail: 'probe timed out',
+          runtimes: [
+            {
+              runtimeId: 'rt-lab',
+              hostSessionId: 'hs-lab',
+              scopeRef: SCOPE,
+              laneRef: 'main',
+              generation: 1,
+              transport: 'headless',
+              harness: 'codex',
+              provider: 'openai',
+              status: 'ready',
+              supportsInflightInput: true,
+              adopted: false,
+              createdAt: '2026-07-20T00:00:00.000Z',
+              updatedAt: '2026-07-20T00:00:00.000Z',
+            },
+          ],
+        },
+      ],
+    }
+    HrcClient.prototype.listFederatedRuntimes = async () => report
+    restores.push(() => {
+      HrcClient.prototype.listFederatedRuntimes = original
+    })
+    const read = captureStdout()
+
+    await cmdRuntimeList(['--all-nodes'])
+    const out = read()
+
+    expect(out).toContain('node svc: answered')
+    expect(out).toContain('node lab: unreachable')
+    expect(out).toContain('1m old')
+    expect(out).toContain('rt-lab')
+  })
 })
 
 describe('hrc federation outbox', () => {
@@ -465,6 +581,8 @@ describe('hrc doctor', () => {
 
     expect(checks.map((check) => check.name)).toContain('placement-skew')
     expect(checks.map((check) => check.name)).toContain('node-identity')
+    expect(checks.map((check) => check.name)).toContain('federation-peer:lab')
+    expect(checks.map((check) => check.name)).toContain('federation-peer:svc')
   })
 })
 

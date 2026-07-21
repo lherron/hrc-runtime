@@ -1,4 +1,4 @@
-import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
+import type { HrcRuntimeIntent, HrcRuntimeSnapshot, HrcTurnResponseFormat } from './contracts.js'
 import type { HrcMessageAddress, HrcMessageKind, HrcMessagePhase } from './hrcchat-contracts.js'
 
 /**
@@ -144,6 +144,51 @@ export type FederationOutboxDeliveryRecord = {
   updatedAt: string
 }
 
+// -- F3 peer health and all-node runtime projections ------------------------
+
+/** Capabilities reported by the authenticated peer-protocol health route. */
+export type FederationPeerCapabilities = {
+  readonly accept: boolean
+  readonly locate: boolean
+  readonly health: boolean
+  /** Additive v1 capability; older peers simply omit it. */
+  readonly runtimeProjection?: boolean | undefined
+}
+
+/** One bounded on-demand peer probe. Tokens and other transport secrets never enter this DTO. */
+export type FederationPeerHealthObservation = {
+  readonly nodeId: string
+  readonly state: 'healthy' | 'unreachable' | 'refused' | 'invalid-response'
+  readonly checkedAt: string
+  readonly answeredAt?: string | undefined
+  readonly latencyMs: number
+  readonly protocolVersion?: string | undefined
+  readonly startedAt?: string | undefined
+  readonly capabilities?: FederationPeerCapabilities | undefined
+  readonly detail?: string | undefined
+}
+
+/**
+ * Node-labeled runtime inventory. An unreachable node may retain the last
+ * successful in-memory projection; `answeredAt` makes that staleness explicit.
+ */
+export type FederationNodeRuntimeProjection = {
+  readonly nodeId: string
+  readonly state: 'answered' | 'unreachable' | 'refused' | 'invalid-response'
+  readonly checkedAt: string
+  readonly answeredAt?: string | undefined
+  readonly latencyMs: number
+  readonly runtimes: readonly HrcRuntimeSnapshot[]
+  readonly detail?: string | undefined
+}
+
+/** Best-effort, bounded aggregation returned by `hrc runtime list --all-nodes`. */
+export type FederationRuntimeProjectionReport = {
+  readonly localNodeId: string
+  readonly generatedAt: string
+  readonly nodes: readonly FederationNodeRuntimeProjection[]
+}
+
 // -- `hrc target locate` -----------------------------------------------------
 
 /**
@@ -242,6 +287,25 @@ export type LocateObservation = {
   runtimes: readonly LocateObservedRuntime[]
 }
 
+/** Cross-node resolution of the authoritative home through the peer protocol. */
+export type LocatePeerResolution =
+  | {
+      readonly nodeId: string
+      readonly state: 'answered'
+      readonly checkedAt: string
+      readonly answeredAt: string
+      readonly latencyMs: number
+      /** Peer responses are local-only and therefore never recursively resolve another peer. */
+      readonly location: ScopeLocation
+    }
+  | {
+      readonly nodeId: string
+      readonly state: 'unreachable' | 'refused' | 'invalid-response' | 'unconfigured'
+      readonly checkedAt: string
+      readonly latencyMs: number
+      readonly detail: string
+    }
+
 /** A matched placement constraint disagreeing with an established binding. */
 export type LocateSkew =
   | {
@@ -307,6 +371,8 @@ export type ScopeLocation = {
   registry: LocateRegistryView
   authority: LocateAuthority
   observed: LocateObservation
+  /** Present when authority names another node and this daemon attempts an on-demand peer locate. */
+  peerResolution?: LocatePeerResolution | undefined
   /** Present only for a pin that disagrees with an established binding. */
   skew?: LocateSkew | undefined
   notes: readonly LocateNote[]

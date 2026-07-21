@@ -12,6 +12,9 @@ import {
 } from 'hrc-core'
 import type {
   DropContinuationResponse,
+  FederationNodeRuntimeProjection,
+  FederationPeerHealthObservation,
+  FederationRuntimeProjectionReport,
   HrcCapabilityStatus,
   HrcCommandLaunchSpec,
   HrcRuntimeSnapshot,
@@ -22,6 +25,7 @@ import type {
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
   RestartStyle,
+  ScopeLocation,
   SweepZombieRunsResponse,
 } from 'hrc-core'
 
@@ -66,6 +70,7 @@ import {
   type FederationOriginOutbox,
   createFederationOriginOutbox,
 } from './federation/origin-outbox.js'
+import { locatePeerScope, probePeerHealth } from './federation/peer-observer.js'
 import {
   PEER_PROTOCOL_VERSION,
   type PeerProtocolEndpointControl,
@@ -129,7 +134,10 @@ import {
   runtimeInspectHandlersMethods,
 } from './runtime-inspect-handlers.js'
 import { type RuntimeIoHandlersMethods, runtimeIoHandlersMethods } from './runtime-io-handlers.js'
-import { createRuntimeListAdoptRoutes } from './runtime-list-adopt-handlers.js'
+import {
+  createRuntimeListAdoptRoutes,
+  listRuntimesForProjection,
+} from './runtime-list-adopt-handlers.js'
 import { type SdkTurnHandlersMethods, sdkTurnHandlersMethods } from './sdk-turn-handlers.js'
 import {
   type SelectorMessageHandlersMethods,
@@ -504,6 +512,10 @@ class HrcServerInstance implements HrcServer {
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly peerRuntimeProjectionCache = new Map<
+    string,
+    { answeredAt: string; runtimes: readonly HrcRuntimeSnapshot[] }
+  >()
   readonly runtimeAttachOperations = new Map<string, Promise<Response>>()
   readonly runtimeStartOperations = new Map<string, Promise<HrcRuntimeSnapshot>>()
   readonly attachedRunOperations = new Map<string, Promise<unknown>>()
@@ -608,6 +620,9 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/status')]: (_request, url) => this.handleStatus(url),
     [exactRouteKey('GET', '/v1/federation/locate')]: (_request, url) =>
       this.handleFederationLocate(url),
+    [exactRouteKey('GET', '/v1/federation/peers')]: () => this.handleFederationPeerHealth(),
+    [exactRouteKey('GET', '/v1/federation/runtimes')]: (_request, url) =>
+      this.handleFederationRuntimeProjection(url),
     [exactRouteKey('GET', '/v1/federation/bindings')]: () => this.handleFederationBindings(),
     [exactRouteKey('GET', '/v1/targets')]: (_request, url) => this.handleListTargets(url),
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
@@ -728,13 +743,16 @@ class HrcServerInstance implements HrcServer {
             localNodeId: federationConfig.nodeId,
             peers: federationConfig.peers,
             locate: (scopeRef) => locateScopeOnServer(this, scopeRef),
-            health: () => ({
+            health: async ({ includeRuntimes, url }) => ({
               startedAt: this.startedAt,
+              observedAt: new Date().toISOString(),
               capabilities: {
                 accept: true,
                 locate: true,
                 health: true,
+                runtimeProjection: true,
               },
+              ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
             accept: peerAcceptHandler,
           },
@@ -1468,6 +1486,98 @@ class HrcServerInstance implements HrcServer {
     return summarizeFederationConfig(config)
   }
 
+  /** Bounded, concurrent peer health probes; one sleeping node never serializes the others. */
+  private async collectFederationPeerHealth(
+    options: { includeRuntimes?: boolean; filter?: URLSearchParams } = {}
+  ): Promise<
+    Array<{
+      health: FederationPeerHealthObservation
+      runtimes?: readonly HrcRuntimeSnapshot[] | undefined
+    }>
+  > {
+    const config = this.options.federationConfig
+    if (config === undefined || config.peers.size === 0) return []
+    return Promise.all(
+      [...config.peers.values()].map(async (peer) => {
+        const probe = await probePeerHealth(peer, options)
+        writeServerLog(
+          probe.health.state === 'healthy' ? 'INFO' : 'WARN',
+          'federation.peer.probe',
+          {
+            localNodeId: config.nodeId,
+            peerNodeId: peer.nodeId,
+            state: probe.health.state,
+            latencyMs: probe.health.latencyMs,
+            answeredAt: probe.health.answeredAt,
+            detail: probe.health.detail,
+            includeRuntimes: options.includeRuntimes === true,
+          }
+        )
+        return probe
+      })
+    )
+  }
+
+  async handleFederationPeerHealth(): Promise<Response> {
+    return json((await this.collectFederationPeerHealth()).map((probe) => probe.health))
+  }
+
+  async handleFederationRuntimeProjection(url: URL): Promise<Response> {
+    const config = this.options.federationConfig
+    const localNodeId = config?.nodeId ?? deriveNodeIdFromHostname()
+    const checkedAt = new Date().toISOString()
+    const localRuntimes = await listRuntimesForProjection(this, url)
+    const localAnsweredAt = new Date().toISOString()
+    const nodes: FederationNodeRuntimeProjection[] = [
+      {
+        nodeId: localNodeId,
+        state: 'answered',
+        checkedAt,
+        answeredAt: localAnsweredAt,
+        latencyMs: Math.max(0, Date.parse(localAnsweredAt) - Date.parse(checkedAt)),
+        runtimes: localRuntimes,
+      },
+    ]
+    const probes = await this.collectFederationPeerHealth({
+      includeRuntimes: true,
+      filter: url.searchParams,
+    })
+    for (const probe of probes) {
+      if (probe.health.state === 'healthy' && probe.runtimes !== undefined) {
+        const answeredAt = probe.health.answeredAt ?? new Date().toISOString()
+        this.peerRuntimeProjectionCache.set(probe.health.nodeId, {
+          answeredAt,
+          runtimes: probe.runtimes,
+        })
+        nodes.push({
+          nodeId: probe.health.nodeId,
+          state: 'answered',
+          checkedAt: probe.health.checkedAt,
+          answeredAt,
+          latencyMs: probe.health.latencyMs,
+          runtimes: probe.runtimes,
+        })
+        continue
+      }
+      const cached = this.peerRuntimeProjectionCache.get(probe.health.nodeId)
+      nodes.push({
+        nodeId: probe.health.nodeId,
+        state: probe.health.state === 'healthy' ? 'invalid-response' : probe.health.state,
+        checkedAt: probe.health.checkedAt,
+        ...(cached === undefined ? {} : { answeredAt: cached.answeredAt }),
+        latencyMs: probe.health.latencyMs,
+        runtimes: cached?.runtimes ?? [],
+        detail: probe.health.detail ?? 'peer omitted the requested runtime projection',
+      })
+    }
+    const report: FederationRuntimeProjectionReport = {
+      localNodeId,
+      generatedAt: new Date().toISOString(),
+      nodes,
+    }
+    return json(report)
+  }
+
   /**
    * `GET /v1/federation/locate?scopeRef=…` (T-06613).
    *
@@ -1483,7 +1593,36 @@ class HrcServerInstance implements HrcServer {
       })
     }
     try {
-      return json(await locateScopeOnServer(this, scopeRef))
+      const location = await locateScopeOnServer(this, scopeRef)
+      const authorityNodeId =
+        location.authority.state === 'bound' ? location.authority.record.homeNodeId : undefined
+      if (authorityNodeId === undefined || authorityNodeId === location.localNodeId) {
+        return json(location)
+      }
+      const peer = this.options.federationConfig?.peers.get(authorityNodeId as never)
+      const peerResolution =
+        peer === undefined
+          ? {
+              nodeId: authorityNodeId,
+              state: 'unconfigured' as const,
+              checkedAt: new Date().toISOString(),
+              latencyMs: 0,
+              detail: `authoritative node ${authorityNodeId} is not in this node's peer table`,
+            }
+          : await locatePeerScope(peer, scopeRef)
+      writeServerLog(
+        peerResolution.state === 'answered' ? 'INFO' : 'WARN',
+        'federation.locate.peer',
+        {
+          localNodeId: location.localNodeId,
+          peerNodeId: authorityNodeId,
+          scopeRef,
+          state: peerResolution.state,
+          latencyMs: peerResolution.latencyMs,
+          ...(peerResolution.state === 'answered' ? {} : { detail: peerResolution.detail }),
+        }
+      )
+      return json({ ...location, peerResolution } satisfies ScopeLocation)
     } catch (error) {
       // A scope that will not canonicalize is a caller error, not a daemon
       // fault: report it as such rather than as a 500.
@@ -1501,6 +1640,10 @@ class HrcServerInstance implements HrcServer {
   }
 
   async handleStatus(url?: URL): Promise<Response> {
+    const peerHealth =
+      url?.searchParams.get('includePeerHealth') === 'true'
+        ? (await this.collectFederationPeerHealth()).map((probe) => probe.health)
+        : undefined
     if (url?.searchParams.get('includeSessions') === 'false') {
       const uptimeMs = Date.now() - new Date(this.startedAt).getTime()
       const tmuxStatus = await detectTmuxBackend()
@@ -1519,6 +1662,7 @@ class HrcServerInstance implements HrcServer {
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
         node: this.nodeStatus(),
+        ...(peerHealth === undefined ? {} : { peerHealth }),
         capabilities: {
           semanticCore: {
             sessions: true,
@@ -1569,6 +1713,7 @@ class HrcServerInstance implements HrcServer {
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
       node: this.nodeStatus(),
+      ...(peerHealth === undefined ? {} : { peerHealth }),
       capabilities: {
         semanticCore: {
           sessions: true,

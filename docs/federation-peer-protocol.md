@@ -7,7 +7,7 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 | --- | --- | --- |
 | `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
-| `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand. |
+| `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand; optionally include this node's filtered runtime projection. |
 
 All other paths return 404. In particular, `/v1/status`, `/v1/events`, and the
 rest of HRC's control API are never exposed by this TCP listener.
@@ -86,6 +86,32 @@ The configuration remains flag-dark in source and must only be exercised with
 isolated daemons until the federation summon gate is enforcing on every node
 that will federate. Adding production `peerListener` config is a separate ops
 step, not part of the listener implementation.
+
+## Health, locate, and runtime projections
+
+Health responses name the answering `nodeId`, its `startedAt`, the
+`observedAt` timestamp for the projection, protocol version, and additive
+capabilities. `GET /v1/federation/health?includeRuntimes=true` also returns
+that node's local runtime rows. The normal runtime-list filters (`scope`,
+`agent`, `task`, `status`, `transport`, `stale`, `olderThan`, and
+`hostSessionId`) are accepted as query parameters. This is an additive use of
+the existing health verb, not a fourth peer route; the listener still exposes
+only accept, locate, and health.
+
+The peer health handler never fans out. Aggregation belongs to the requesting
+node's Unix-socket API, which probes configured peers concurrently with a
+bounded timeout. `hrc runtime list --all-nodes` renders one explicitly labeled
+node block per answer. A failed probe remains present as `unreachable`; when
+that daemon has an earlier in-memory answer, the old rows remain visible with
+their original `answeredAt` timestamp so staleness cannot masquerade as live
+truth. `hrc doctor` and `hrc server status` request the same bounded health
+observations on demand.
+
+`hrc target locate` first resolves authority locally. When the authoritative
+home is a configured remote node, the daemon makes exactly one authenticated
+peer `locate` call to that home and attaches its node-local observation as
+`peerResolution`. Peer-listener locate itself stays local-only, preventing
+recursive fanout and preserving the bounded response contract.
 
 ## Live-tailnet test gate
 

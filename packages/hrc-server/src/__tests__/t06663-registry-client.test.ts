@@ -359,7 +359,7 @@ describe('T-06663 construction and secret egress', () => {
     expect(matches).toEqual(
       expect.arrayContaining([
         expect.stringMatching(
-          /^packages\/hrc-server\/src\/federation\/accept-client\.ts:\d+:.*token\.reveal\(\)/
+          /^packages\/hrc-server\/src\/federation\/peer-request\.ts:\d+:.*token\.reveal\(\)/
         ),
         expect.stringMatching(
           /^packages\/hrc-server\/src\/federation\/registry-client\.ts:\d+:.*token\.reveal\(\)/
