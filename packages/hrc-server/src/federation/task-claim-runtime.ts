@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
+import { taskClaimCommandEnvironment } from './task-claim-client.js'
+
 const SAFE_HOST_SESSION_ID = /^[A-Za-z0-9._-]+$/
 const TERMINAL_RUNTIME_STATUSES = new Set([
   'dead',
@@ -35,6 +37,7 @@ export function injectRuntimeTaskClaimCredentialFile(
     db: HrcDatabase
     runtimeRoot: string
     hostSessionId: string
+    claimTransportSource?: Record<string, string | undefined> | undefined
   }
 ): Record<string, string> {
   const authority = input.db.sessionTaskClaimAuthorities.getByHostSessionId(input.hostSessionId)
@@ -59,7 +62,21 @@ export function injectRuntimeTaskClaimCredentialFile(
   )
   renameSync(temporary, destination)
   chmodSync(destination, 0o600)
-  return { ...env, [HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]: destination }
+
+  // Broker dispatch env carries strings, not deletion markers. Preserve the
+  // command helper's unsets as empty keys so inherited env and dotenv cannot
+  // restore a stale inline token or local SQLite locator in the child runtime.
+  const claimTransportEnv = Object.fromEntries(
+    Object.entries(taskClaimCommandEnvironment(input.claimTransportSource)).map(([key, value]) => [
+      key,
+      value ?? '',
+    ])
+  )
+  return {
+    ...env,
+    ...claimTransportEnv,
+    [HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]: destination,
+  }
 }
 
 /**

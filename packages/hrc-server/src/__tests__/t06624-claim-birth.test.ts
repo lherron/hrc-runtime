@@ -427,12 +427,28 @@ describe('T-06624 claim-birth summon authority', () => {
       })
       persistSessionTaskClaimAuthority(h.server, 'hsid-runtime-claim', AUTHORITY, now)
       const env = injectRuntimeTaskClaimCredentialFile(
-        { KEEP: 'yes' },
-        { db: h.db, runtimeRoot: h.directory, hostSessionId: 'hsid-runtime-claim' }
+        { KEEP: 'yes', WRKQD_TOKEN: 'stale-dev-token', WRKQ_DB_PATH: '/tmp/local.sqlite' },
+        {
+          db: h.db,
+          runtimeRoot: h.directory,
+          hostSessionId: 'hsid-runtime-claim',
+          claimTransportSource: {
+            HRC_WRKQ_DB: 'rpc://canonical.example:7171',
+            HRC_WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
+          },
+        }
       )
       const path = env[HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]
       expect(path).toBeString()
       expect(env).not.toHaveProperty('WRKQ_CLAIM_TOKEN')
+      expect(env).toMatchObject({
+        KEEP: 'yes',
+        WRKQ_DB: 'rpc://canonical.example:7171',
+        WRKQ_DB_PATH: '',
+        WRKQ_DB_PATH_FILE: '',
+        WRKQD_TOKEN: '',
+        WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
+      })
       expect((await stat(path!)).mode & 0o777).toBe(0o600)
       expect(JSON.parse(await readFile(path!, 'utf8'))).toMatchObject({
         taskId: 'T-06624',
