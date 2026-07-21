@@ -156,6 +156,16 @@ export class FederationOriginOutbox {
     return binding.homeNodeId !== this.options.config.nodeId
   }
 
+  /**
+   * Whether an explicit reply can use the authenticated ingress route recorded
+   * on its parent request. Callers use this before node-local admission checks:
+   * a loser-node retirement fence bars execution, not a fenced response back
+   * to the peer that delivered the request.
+   */
+  canRouteResponseToPeer(parent: HrcMessageRecord): boolean {
+    return this.responseRouteForRequest(parent) !== undefined
+  }
+
   async route(
     body: SemanticDmRequest,
     record: HrcMessageRecord
@@ -202,6 +212,15 @@ export class FederationOriginOutbox {
     | undefined {
     if (record.phase !== 'response' || record.replyToMessageId === undefined) return undefined
     const request = this.options.db.messages.getById(record.replyToMessageId)
+    return this.responseRouteForRequest(request)
+  }
+
+  private responseRouteForRequest(request: HrcMessageRecord | undefined):
+    | {
+        peerNodeId: string
+        expected: { homeNodeId: string; placementEpoch: number }
+      }
+    | undefined {
     const ingress = request?.metadataJson?.['federationIngress']
     if (!isRecord(ingress)) return undefined
     const authenticatedNodeId = ingress['authenticatedNodeId']
@@ -229,7 +248,10 @@ export class FederationOriginOutbox {
     body: SemanticDmRequest | undefined,
     peerNodeId: string,
     expected: { homeNodeId: string; placementEpoch: number },
-    log: { routingSource?: string | undefined; responseFence?: boolean | undefined }
+    log: {
+      routingSource?: string | undefined
+      responseFence?: boolean | undefined
+    }
   ): FederationOriginRouteResult {
     const delivery = this.options.db.federationOutbox.enqueue({
       deliveryId: `delivery-${randomUUID()}`,

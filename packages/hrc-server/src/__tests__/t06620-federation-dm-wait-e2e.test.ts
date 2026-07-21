@@ -3,7 +3,11 @@ import { writeFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 
 import type { FederationMessageEnvelope, HrcMessageRecord, WaitMessageResponse } from 'hrc-core'
-import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
+import {
+  createPlacementLedgerRepository,
+  createScopeRetirementRepository,
+  openHrcDatabase,
+} from 'hrc-store-sqlite'
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
@@ -27,8 +31,16 @@ function tailnetIpv4(): string | undefined {
 }
 
 function reservePorts(host: string): [number, number] {
-  const first = Bun.serve({ hostname: host, port: 0, fetch: () => new Response('probe') })
-  const second = Bun.serve({ hostname: host, port: 0, fetch: () => new Response('probe') })
+  const first = Bun.serve({
+    hostname: host,
+    port: 0,
+    fetch: () => new Response('probe'),
+  })
+  const second = Bun.serve({
+    hostname: host,
+    port: 0,
+    fetch: () => new Response('probe'),
+  })
   const result: [number, number] = [first.port, second.port]
   first.stop(true)
   second.stop(true)
@@ -182,12 +194,35 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
     // The origin's conversation scope has already moved elsewhere by the time
     // the response arrives. Its epoch must not participate in completion.
     installBinding(svc, ORIGIN_SCOPE, 'svc-next', 5, 'rebind')
+    // Model the loser-node fence that namespace reconciliation leaves behind
+    // on the responding node. It bars local execution for ORIGIN_SCOPE, but an
+    // explicit response to authenticated federation ingress must still use
+    // the existing response-fence route back to the request's origin.
+    const labDb = openHrcDatabase(lab.dbPath)
+    try {
+      createScopeRetirementRepository(labDb.sqlite).retire({
+        scopeRef: ORIGIN_SCOPE,
+        retiredNodeId: 'lab-test',
+        retiredPlacementEpoch: 4,
+        successorNodeId: 'svc-test',
+        reason: 'namespace_reconciliation',
+        retiredAt: '2026-07-20T00:00:00.000Z',
+      })
+    } finally {
+      labDb.close()
+    }
 
     const svcServer = await createHrcServer(
-      svc.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
+      svc.serverOpts({
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
     )
     let labServer = await createHrcServer(
-      lab.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
+      lab.serverOpts({
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
     )
     try {
       const sentResponse = await svc.postJson('/v1/messages/dm', {
@@ -197,7 +232,9 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         createIfMissing: false,
       })
       expect(sentResponse.status).toBe(200)
-      const sent = (await sentResponse.json()) as { request: HrcMessageRecord }
+      const sent = (await sentResponse.json()) as {
+        request: HrcMessageRecord
+      }
 
       await eventually(
         () => {
@@ -223,7 +260,10 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
 
       await labServer.stop()
       labServer = await createHrcServer(
-        lab.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
+        lab.serverOpts({
+          otelListenerEnabled: false,
+          federationOutboxPollIntervalMs: 10,
+        })
       )
 
       const replyResponse = await lab.postJson('/v1/messages/dm', {
@@ -234,7 +274,9 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         createIfMissing: false,
       })
       expect(replyResponse.status).toBe(200)
-      const reply = (await replyResponse.json()) as { request: HrcMessageRecord }
+      const reply = (await replyResponse.json()) as {
+        request: HrcMessageRecord
+      }
 
       const waited = await waitPromise
       expect(waited).toMatchObject({

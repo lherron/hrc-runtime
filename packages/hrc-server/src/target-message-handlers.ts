@@ -818,7 +818,10 @@ export async function tryDeliverSemanticTurnToInteractiveRuntime(
 
     const finalizer = this.turnResponseFinalizers.get(runId)
     if (finalizer) {
-      this.turnResponseFinalizers.set(runId, { ...finalizer, mode: 'interactive' })
+      this.turnResponseFinalizers.set(runId, {
+        ...finalizer,
+        mode: 'interactive',
+      })
     }
 
     this.db.messages.updateExecution(request.messageId, {
@@ -914,9 +917,10 @@ export async function handleSemanticDm(
     // route first so a reconciled loser can originate a DM to the winner. If
     // routing is unavailable/unbound, preserve the more specific local
     // retirement refusal before surfacing the routing error.
-    let remoteTarget = false
+    let remoteTarget =
+      parent !== undefined && this.federationOriginOutbox?.canRouteResponseToPeer(parent) === true
     let routingError: unknown
-    if (parent === undefined && this.federationOriginOutbox !== undefined) {
+    if (!remoteTarget && this.federationOriginOutbox !== undefined) {
       try {
         remoteTarget = await this.federationOriginOutbox.isRemoteTarget(scopeRef)
       } catch (error) {
