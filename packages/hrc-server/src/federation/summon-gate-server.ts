@@ -21,7 +21,7 @@ import type {
   SummonIntent,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
@@ -46,6 +46,12 @@ import {
   type SummonPath,
   evaluateSummonGate,
 } from './summon-gate.js'
+import {
+  type TaskClaimAuthority,
+  type TaskClaimClient,
+  createTaskClaimClient,
+  taskClaimRequestForScope,
+} from './task-claim-client.js'
 
 export type SummonGateServerContext = {
   readonly db: HrcDatabase
@@ -69,6 +75,8 @@ export type SummonGateServerContext = {
         hint?: SummonCapabilityHint | undefined
       ) => Promise<SummonCapabilityObservation>)
     | undefined
+  /** Injected by tests; production crosses the wrkq CLI/RPC boundary. */
+  readonly taskClaimClient?: TaskClaimClient | undefined
 }
 
 const gateDepsCache = new WeakMap<object, SummonGateDeps | undefined>()
@@ -137,6 +145,75 @@ export type SummonAuthorityRequest = (
   /** Common mint context; neither field widens the typed intent arm. */
   birthCredential?: string | undefined
   capabilityHint?: SummonCapabilityHint | undefined
+  origin?: 'local' | 'federated-ingress' | 'startup-repair' | undefined
+  /** True only when this daemon owns the predecessor session being continued. */
+  knownSession?: boolean | undefined
+}
+
+export type SummonAuthorityResult = SummonGateResult & {
+  /** Fresh authority exists only on the invocation that won wrkq claim. */
+  claimAuthority?: TaskClaimAuthority | undefined
+}
+
+function claimClientFor(server: SummonGateServerContext): TaskClaimClient {
+  return server.taskClaimClient ?? createTaskClaimClient()
+}
+
+async function releaseClaimBestEffort(
+  server: SummonGateServerContext,
+  authority: TaskClaimAuthority,
+  phase: 'establishment' | 'session-mint'
+): Promise<void> {
+  const parsed = taskClaimRequestForScope(authority.claimedScope)
+  if (parsed === undefined) {
+    writeServerLog('ERROR', 'federation.claim_birth.release_failed', {
+      taskId: authority.taskId,
+      claimedNode: authority.claimedNode,
+      claimGeneration: authority.claimGeneration,
+      phase,
+      diagnostic: 'persisted claimedScope is not a project task scope',
+      staleClaim: true,
+    })
+    return
+  }
+  try {
+    await claimClientFor(server).release(authority, parsed.projectId)
+    writeServerLog('INFO', 'federation.claim_birth.released_after_failure', {
+      taskId: authority.taskId,
+      claimedNode: authority.claimedNode,
+      claimGeneration: authority.claimGeneration,
+      phase,
+    })
+  } catch (error) {
+    writeServerLog('ERROR', 'federation.claim_birth.release_failed', {
+      taskId: authority.taskId,
+      claimedNode: authority.claimedNode,
+      claimGeneration: authority.claimGeneration,
+      phase,
+      diagnostic: error instanceof Error ? error.message : String(error),
+      staleClaim: true,
+    })
+  }
+}
+
+/** Persist bearer authority beside, never inside, the public session record. */
+export function persistSessionTaskClaimAuthority(
+  server: SummonGateServerContext,
+  hostSessionId: string,
+  authority: TaskClaimAuthority,
+  createdAt: string
+): SessionTaskClaimAuthority {
+  return server.db.sessionTaskClaimAuthorities.insert({
+    hostSessionId,
+    taskId: authority.taskId,
+    claimedBy: authority.claimedBy,
+    claimedScope: authority.claimedScope,
+    claimedNode: authority.claimedNode,
+    claimedAt: authority.claimedAt,
+    claimGeneration: authority.claimGeneration,
+    claimToken: authority.claimToken,
+    createdAt,
+  })
 }
 
 async function commitAuthorizedEstablishment(input: {
@@ -147,7 +224,7 @@ async function commitAuthorizedEstablishment(input: {
   birthClass: FederationBirthClass
   authorityProvenance: BirthAuthorityProvenance
   establishmentProvenance: Exclude<EstablishmentProvenance, 'rebind'>
-  label: 'policy' | 'child-birth'
+  label: 'policy' | 'child-birth' | 'claim-birth'
 }): Promise<void> {
   let established: Awaited<ReturnType<typeof establishLocalPlacement>>
   try {
@@ -243,7 +320,7 @@ async function commitAuthorizedEstablishment(input: {
 export async function assertSummonAuthority(
   server: SummonGateServerContext,
   request: SummonAuthorityRequest
-): Promise<SummonGateResult | undefined> {
+): Promise<SummonAuthorityResult | undefined> {
   const deps = gateDepsFor(server)
   if (deps === undefined) return undefined
 
@@ -254,6 +331,8 @@ export async function assertSummonAuthority(
     // every path funnels through, so no call site can pick a different one.
     intent: request.intent ?? 'implicit',
     ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
+    ...(request.origin === undefined ? {} : { origin: request.origin }),
+    ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
     deps,
     ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
   })
@@ -387,7 +466,95 @@ export async function assertSummonAuthority(
     })
   }
 
+  if (result.evaluation.decision === 'allow' && result.evaluation.reason === 'claim-birth') {
+    const claimRequest = taskClaimRequestForScope(request.scopeRef)
+    if (claimRequest === undefined) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `Cannot derive task claim authority from ${request.scopeRef}; refusing before session mint.`,
+        {
+          scopeRef: request.scopeRef,
+          path: request.path,
+          reason: 'claim-birth-authority-required',
+          retryable: false,
+        }
+      )
+    }
+
+    let authority: TaskClaimAuthority
+    try {
+      authority = await claimClientFor(server).claim(claimRequest)
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : String(error)
+      writeServerLog('WARN', 'federation.summon_gate.refusal', {
+        path: request.path,
+        scopeRef: request.scopeRef,
+        reason: 'claim-refused',
+        wouldBeDecision: 'refuse',
+        enforced: true,
+        mode: result.mode,
+        retryable: false,
+        localNodeId: deps.localNodeId,
+        diagnostic,
+      })
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, diagnostic, {
+        scopeRef: request.scopeRef,
+        path: request.path,
+        reason: 'claim-refused',
+        retryable: false,
+      })
+    }
+
+    const provenance: BirthAuthorityProvenance = {
+      kind: 'claim-birth',
+      taskId: authority.taskId,
+      claimedBy: authority.claimedBy,
+      claimedScope: authority.claimedScope,
+      claimedNode: authority.claimedNode,
+      claimGeneration: authority.claimGeneration,
+    }
+    try {
+      await commitAuthorizedEstablishment({
+        deps,
+        request,
+        mode: result.mode,
+        homeNodeId: deps.localNodeId,
+        birthClass: 'mechanism-born',
+        authorityProvenance: provenance,
+        establishmentProvenance: 'explicit_local',
+        label: 'claim-birth',
+      })
+    } catch (error) {
+      await releaseClaimBestEffort(server, authority, 'establishment')
+      throw error
+    }
+    writeServerLog('INFO', 'federation.claim_birth.acquired', {
+      scopeRef: request.scopeRef,
+      taskId: authority.taskId,
+      claimedNode: authority.claimedNode,
+      claimGeneration: authority.claimGeneration,
+    })
+    return { ...result, claimAuthority: authority }
+  }
+
   return result
+}
+
+/** Session-mint boundary: unwind fresh claim authority if provisioning fails. */
+export async function withSummonAuthority<T>(
+  server: SummonGateServerContext,
+  request: SummonAuthorityRequest,
+  mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
+): Promise<T> {
+  const authority = await assertSummonAuthority(server, request)
+  try {
+    return await mint(authority?.claimAuthority)
+  } catch (error) {
+    if (authority?.claimAuthority !== undefined) {
+      await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
+    }
+    throw error
+  }
 }
 
 export type LivePlacementRepairSummary = {
@@ -500,6 +667,7 @@ export async function repairLiveUnboundPlacements(
         scopeRef,
         path: 'ensure-target',
         intent: 'implicit',
+        origin: 'startup-repair',
         ...(candidate.capabilityHint === undefined
           ? {}
           : { capabilityHint: candidate.capabilityHint }),

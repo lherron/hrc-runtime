@@ -15,7 +15,10 @@ import {
   validateEnsureRuntimeIntent,
 } from './broker-decisions.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
-import { assertSummonAuthority } from './federation/summon-gate-server.js'
+import {
+  persistSessionTaskClaimAuthority,
+  withSummonAuthority,
+} from './federation/summon-gate-server.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
@@ -160,7 +163,8 @@ export async function ensureTargetSession(
   sessionRef: string,
   intent: HrcRuntimeIntent,
   parsedScopeJson?: Record<string, unknown>,
-  birthCredential?: string
+  birthCredential?: string,
+  origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const existing = findTargetSession(this.db, normalized)
@@ -169,26 +173,50 @@ export async function ensureTargetSession(
     if (existing.status === 'archived' && existing.continuation?.key) {
       // Successor creation from an archived continuation is a summon: "no live
       // runtime" is not settlement of authority (spec §5).
-      await assertSummonAuthority(this, {
-        scopeRef: parseSessionRef(normalized).scopeRef,
-        path: 'archived-successor',
-        intent: 'implicit',
-        capabilityHint: { placement: intent.placement, harness: intent.harness },
-        ...(birthCredential === undefined ? {} : { birthCredential }),
-      })
-      const successor = createSessionSuccessorFromContinuation(this.db, existing, {
-        lastAppliedIntentJson: intent,
-        ...(parsedScopeJson ? { parsedScopeJson } : {}),
-      })
-      this.notifyEvent(
-        this.appendEvent(successor, 'session.created', {
-          created: true,
-          summon: true,
-          priorHostSessionId: existing.hostSessionId,
-          reason: 'successor-from-continuation',
-        })
+      return await withSummonAuthority(
+        this,
+        {
+          scopeRef: parseSessionRef(normalized).scopeRef,
+          path: 'archived-successor',
+          intent: 'implicit',
+          knownSession: true,
+          origin,
+          capabilityHint: { placement: intent.placement, harness: intent.harness },
+          ...(birthCredential === undefined ? {} : { birthCredential }),
+        },
+        (claimAuthority) => {
+          const successor = this.db.sqlite.transaction(() => {
+            const created = createSessionSuccessorFromContinuation(this.db, existing, {
+              lastAppliedIntentJson: intent,
+              ...(parsedScopeJson ? { parsedScopeJson } : {}),
+            })
+            if (claimAuthority !== undefined) {
+              persistSessionTaskClaimAuthority(
+                this,
+                created.hostSessionId,
+                claimAuthority,
+                created.createdAt
+              )
+            } else {
+              this.db.sessionTaskClaimAuthorities.copy(
+                existing.hostSessionId,
+                created.hostSessionId,
+                created.createdAt
+              )
+            }
+            return created
+          })()
+          this.notifyEvent(
+            this.appendEvent(successor, 'session.created', {
+              created: true,
+              summon: true,
+              priorHostSessionId: existing.hostSessionId,
+              reason: 'successor-from-continuation',
+            })
+          )
+          return successor
+        }
       )
-      return successor
     }
     this.db.sessions.updateIntent(existing.hostSessionId, intent, now)
     if (parsedScopeJson) {
@@ -199,40 +227,51 @@ export async function ensureTargetSession(
   }
 
   const { scopeRef, laneRef } = parseSessionRef(normalized)
-  await assertSummonAuthority(this, {
-    scopeRef,
-    path: 'ensure-target',
-    intent: 'implicit',
-    capabilityHint: { placement: intent.placement, harness: intent.harness },
-    ...(birthCredential === undefined ? {} : { birthCredential }),
-  })
+  return await withSummonAuthority(
+    this,
+    {
+      scopeRef,
+      path: 'ensure-target',
+      intent: 'implicit',
+      origin,
+      capabilityHint: { placement: intent.placement, harness: intent.harness },
+      ...(birthCredential === undefined ? {} : { birthCredential }),
+    },
+    (claimAuthority) => {
+      const now = timestamp()
+      const hostSessionId = createHostSessionId()
+      const session: HrcSessionRecord = {
+        hostSessionId,
+        scopeRef,
+        laneRef,
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+        lastAppliedIntentJson: intent,
+        ...(parsedScopeJson ? { parsedScopeJson } : {}),
+      }
 
-  const now = timestamp()
-  const hostSessionId = createHostSessionId()
-  const session: HrcSessionRecord = {
-    hostSessionId,
-    scopeRef,
-    laneRef,
-    generation: 1,
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-    ancestorScopeRefs: [],
-    lastAppliedIntentJson: intent,
-    ...(parsedScopeJson ? { parsedScopeJson } : {}),
-  }
+      const created = this.db.sqlite.transaction(() => {
+        const inserted = this.db.sessions.insert(session)
+        if (claimAuthority !== undefined) {
+          persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
+        }
+        this.db.continuities.upsert({
+          scopeRef,
+          laneRef,
+          activeHostSessionId: hostSessionId,
+          updatedAt: now,
+        })
+        return inserted
+      })()
 
-  const created = this.db.sessions.insert(session)
-  this.db.continuities.upsert({
-    scopeRef,
-    laneRef,
-    activeHostSessionId: hostSessionId,
-    updatedAt: now,
-  })
-
-  const event = this.appendEvent(created, 'session.created', { created: true, summon: true })
-  this.notifyEvent(event)
-  return created
+      const event = this.appendEvent(created, 'session.created', { created: true, summon: true })
+      this.notifyEvent(event)
+      return created
+    }
+  )
 }
 
 export async function handleEnsureTarget(

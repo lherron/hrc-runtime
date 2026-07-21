@@ -884,6 +884,33 @@ const federatedObservedEventsMigration: HrcMigration = {
   },
 }
 
+// T-06624: the wrkq bearer is daemon-private session authority. It is kept in
+// a dedicated table instead of sessions JSON so ordinary session/status APIs
+// can never serialize it accidentally. The public placement ledger carries
+// only the non-secret claim-birth provenance tuple.
+const sessionTaskClaimAuthorityMigration: HrcMigration = {
+  id: '0027_session_task_claim_authority',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS session_task_claim_authorities (
+        host_session_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        claimed_by TEXT NOT NULL,
+        claimed_scope TEXT NOT NULL,
+        claimed_node TEXT NOT NULL,
+        claimed_at TEXT NOT NULL,
+        claim_generation INTEGER NOT NULL CHECK (claim_generation >= 1),
+        claim_token TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (host_session_id) REFERENCES sessions(host_session_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_task_claim_authorities_task_generation
+        ON session_task_claim_authorities(task_id, claim_generation);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -906,4 +933,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   federationAcceptedRequestsMigration,
   federationOutboxMigration,
   federatedObservedEventsMigration,
+  sessionTaskClaimAuthorityMigration,
 ]

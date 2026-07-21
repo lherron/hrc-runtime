@@ -34,6 +34,7 @@ import {
   ContinuityRepository,
   SessionRepository,
 } from './repositories/session-repositories.js'
+import { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
 
 export type HrcDatabase = {
   sqlite: Database
@@ -43,6 +44,7 @@ export type HrcDatabase = {
   }
   continuities: ContinuityRepository
   sessions: SessionRepository
+  sessionTaskClaimAuthorities: SessionTaskClaimAuthorityRepository
   appManagedSessions: AppManagedSessionRepository
   appSessions: AppSessionRepository
   runtimes: RuntimeRepository
@@ -97,6 +99,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     },
     continuities: new ContinuityRepository(sqlite),
     sessions: new SessionRepository(sqlite),
+    sessionTaskClaimAuthorities: new SessionTaskClaimAuthorityRepository(sqlite),
     appManagedSessions: new AppManagedSessionRepository(sqlite),
     appSessions: new AppSessionRepository(sqlite),
     runtimes: new RuntimeRepository(sqlite),

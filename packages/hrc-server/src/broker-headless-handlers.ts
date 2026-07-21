@@ -14,6 +14,7 @@ import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-ada
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
+import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
@@ -289,9 +290,16 @@ export async function startHeadlessBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = injectRuntimeBirthCredential(
-    mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-    runtimeId
+  const hrcDispatchEnv = injectRuntimeTaskClaimCredentialFile(
+    injectRuntimeBirthCredential(
+      mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+      runtimeId
+    ),
+    {
+      db: this.db,
+      runtimeRoot: this.options.runtimeRoot,
+      hostSessionId: session.hostSessionId,
+    }
   )
   try {
     const compiled = await compileBrokerRuntimePlan(

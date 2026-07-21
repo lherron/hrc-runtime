@@ -32,7 +32,11 @@ import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
-import { assertScopeNotRetired, assertSummonAuthority } from './federation/summon-gate-server.js'
+import {
+  assertScopeNotRetired,
+  persistSessionTaskClaimAuthority,
+  withSummonAuthority,
+} from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
   extractProjectId,
@@ -204,28 +208,12 @@ export async function handleCreateSessionSuccessor(
 
   // Raw successor mint (POST /v1/sessions/create-successor) — a summon path in
   // its own right, not reachable through ensureTargetSession.
-  await assertSummonAuthority(this, {
-    scopeRef: prior.scopeRef,
-    path: 'archived-successor',
-    intent: 'implicit',
-    ...(prior.lastAppliedIntentJson === undefined
-      ? {}
-      : {
-          capabilityHint: {
-            placement: prior.lastAppliedIntentJson.placement,
-            harness: prior.lastAppliedIntentJson.harness,
-          },
-        }),
-    ...(birthCredential === undefined ? {} : { birthCredential }),
-  })
-
-  const successor = createSessionSuccessorFromContinuation(this.db, prior)
-  this.notifyEvent(
-    this.appendEvent(successor, 'session.created', {
-      created: true,
-      priorHostSessionId: prior.hostSessionId,
-      reason: 'successor-from-continuation',
-    })
+  const successor = await createNotifiedSessionSuccessor(
+    this,
+    prior,
+    undefined,
+    undefined,
+    birthCredential
   )
 
   return json({
@@ -423,37 +411,61 @@ async function createNotifiedSessionSuccessor(
   session: HrcSessionRecord,
   intent: HrcRuntimeIntent | undefined,
   parsedScopeJson: Record<string, unknown> | undefined,
-  birthCredential?: string
+  birthCredential?: string,
+  origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   // Covers hrc resume, archived-target turn-handoff, and archived-target DM.
   const capabilityIntent = intent ?? session.lastAppliedIntentJson
-  await assertSummonAuthority(server, {
-    scopeRef: session.scopeRef,
-    path: 'archived-successor',
-    intent: 'implicit',
-    ...(capabilityIntent === undefined
-      ? {}
-      : {
-          capabilityHint: {
-            placement: capabilityIntent.placement,
-            harness: capabilityIntent.harness,
-          },
-        }),
-    ...(birthCredential === undefined ? {} : { birthCredential }),
-  })
-
-  const successor = createSessionSuccessorFromContinuation(server.db, session, {
-    ...(intent ? { lastAppliedIntentJson: intent } : {}),
-    ...(parsedScopeJson ? { parsedScopeJson } : {}),
-  })
-  server.notifyEvent(
-    server.appendEvent(successor, 'session.created', {
-      created: true,
-      priorHostSessionId: session.hostSessionId,
-      reason: 'successor-from-continuation',
-    })
+  return await withSummonAuthority(
+    server,
+    {
+      scopeRef: session.scopeRef,
+      path: 'archived-successor',
+      intent: 'implicit',
+      knownSession: true,
+      origin,
+      ...(capabilityIntent === undefined
+        ? {}
+        : {
+            capabilityHint: {
+              placement: capabilityIntent.placement,
+              harness: capabilityIntent.harness,
+            },
+          }),
+      ...(birthCredential === undefined ? {} : { birthCredential }),
+    },
+    (claimAuthority) => {
+      const successor = server.db.sqlite.transaction(() => {
+        const created = createSessionSuccessorFromContinuation(server.db, session, {
+          ...(intent ? { lastAppliedIntentJson: intent } : {}),
+          ...(parsedScopeJson ? { parsedScopeJson } : {}),
+        })
+        if (claimAuthority !== undefined) {
+          persistSessionTaskClaimAuthority(
+            server,
+            created.hostSessionId,
+            claimAuthority,
+            created.createdAt
+          )
+        } else {
+          server.db.sessionTaskClaimAuthorities.copy(
+            session.hostSessionId,
+            created.hostSessionId,
+            created.createdAt
+          )
+        }
+        return created
+      })()
+      server.notifyEvent(
+        server.appendEvent(successor, 'session.created', {
+          created: true,
+          priorHostSessionId: session.hostSessionId,
+          reason: 'successor-from-continuation',
+        })
+      )
+      return successor
+    }
   )
-  return successor
 }
 
 export async function handleQueryMessages(
@@ -1149,6 +1161,7 @@ export async function deliverPersistedSemanticDm(
 }> {
   let execution: DispatchTurnBySelectorResponse | undefined
   let reply: HrcMessageRecord | undefined
+  const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
 
   // T-05161: a DM to a Codex.app-owned address (task segment `codex-<uuid7>`)
   // must be persisted (Cody-in-codex.app live-polls the DM list) but must NOT
@@ -1173,7 +1186,8 @@ export async function deliverPersistedSemanticDm(
           body.to.sessionRef,
           intent,
           body.parsedScopeJson,
-          body.birthCredential
+          body.birthCredential,
+          summonOrigin
         )
       }
     }
@@ -1185,7 +1199,8 @@ export async function deliverPersistedSemanticDm(
           session,
           body.runtimeIntent,
           body.parsedScopeJson,
-          body.birthCredential
+          body.birthCredential,
+          summonOrigin
         )
       }
 

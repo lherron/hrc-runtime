@@ -1,5 +1,7 @@
 export { openHrcDatabase } from './database.js'
 export type { HrcDatabase } from './database.js'
+export { SessionTaskClaimAuthorityRepository } from './session-task-claim-repository.js'
+export type { SessionTaskClaimAuthority } from './session-task-claim-repository.js'
 export { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 export type {
   FederationAcceptedRequestRecord,

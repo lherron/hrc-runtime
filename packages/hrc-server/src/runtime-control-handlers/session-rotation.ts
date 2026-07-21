@@ -176,14 +176,17 @@ export async function rotateSessionContext(
   }
 
   const invalidated = await this.invalidateHostContext(session.hostSessionId, reason)
-  this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
-  this.db.sessions.insert(nextSession)
-  this.db.continuities.upsert({
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    activeHostSessionId: nextSession.hostSessionId,
-    updatedAt: now,
-  })
+  this.db.sqlite.transaction(() => {
+    this.db.sessions.updateStatus(session.hostSessionId, 'archived', now)
+    this.db.sessions.insert(nextSession)
+    this.db.sessionTaskClaimAuthorities.copy(session.hostSessionId, nextSession.hostSessionId, now)
+    this.db.continuities.upsert({
+      scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
+      activeHostSessionId: nextSession.hostSessionId,
+      updatedAt: now,
+    })
+  })()
 
   if (options.managed) {
     this.db.appManagedSessions.update(options.managed.appId, options.managed.appSessionKey, {

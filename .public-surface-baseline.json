@@ -687,6 +687,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationInteractiveLifecycleSignal",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationInteractiveLifecycleSignal|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationMessageDelivery",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -827,6 +835,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HRC_PROVIDER_TRANSCRIPT_REPORTED_EVENT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV",
+      "kind": "value",
+      "file": "packages/hrc-core/src/federation.ts",
+      "hash": "hrc-core|HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV|value",
       "count": 1
     },
     {

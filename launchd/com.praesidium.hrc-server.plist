@@ -24,6 +24,10 @@
 		<string>/Users/lherron/praesidium/var/run/hrc</string>
 		<key>HRC_STATE_DIR</key>
 		<string>/Users/lherron/praesidium/var/state/hrc</string>
+		<key>HRC_WRKQ_DB</key>
+		<string>rpc://100.117.215.92:7171</string>
+		<key>HRC_WRKQD_TOKEN_FILE</key>
+		<string>/Users/lherron/.config/wrkq/node-token</string>
 		<key>LANG</key>
 		<string>en_US.UTF-8</string>
 		<key>PATH</key>

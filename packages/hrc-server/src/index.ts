@@ -79,9 +79,10 @@ import {
 } from './federation/registry-endpoint.js'
 import {
   assertScopeNotRetired,
-  assertSummonAuthority,
   captureLivePlacementRepairCandidates,
+  persistSessionTaskClaimAuthority,
   repairLiveUnboundPlacements,
+  withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import {
   type GhostmuxManagerOptions,
@@ -1095,54 +1096,66 @@ class HrcServerInstance implements HrcServer {
     // so the caller says which it is: `hrc run`/`hrc start` send
     // `explicit_local`, everything else omits the field and gets `implicit`
     // (spec §5). An omission is never upgraded.
-    await assertSummonAuthority(this, {
-      scopeRef,
-      path: 'resolve-session',
-      intent: parsed.summonIntent ?? 'implicit',
-      ...(parsed.runtimeIntent === undefined
-        ? {}
-        : {
-            capabilityHint: {
-              placement: parsed.runtimeIntent.placement,
-              harness: parsed.runtimeIntent.harness,
-            },
-          }),
-      ...(parsed.birthCredential === undefined ? {} : { birthCredential: parsed.birthCredential }),
-    })
+    return await withSummonAuthority(
+      this,
+      {
+        scopeRef,
+        path: 'resolve-session',
+        intent: parsed.summonIntent ?? 'implicit',
+        ...(parsed.runtimeIntent === undefined
+          ? {}
+          : {
+              capabilityHint: {
+                placement: parsed.runtimeIntent.placement,
+                harness: parsed.runtimeIntent.harness,
+              },
+            }),
+        ...(parsed.birthCredential === undefined
+          ? {}
+          : { birthCredential: parsed.birthCredential }),
+      },
+      (claimAuthority) => {
+        const now = timestamp()
+        const hostSessionId = createHostSessionId()
+        const session: HrcSessionRecord = {
+          hostSessionId,
+          scopeRef,
+          laneRef,
+          generation: 1,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+          ancestorScopeRefs: [],
+        }
 
-    const now = timestamp()
-    const hostSessionId = createHostSessionId()
-    const session: HrcSessionRecord = {
-      hostSessionId,
-      scopeRef,
-      laneRef,
-      generation: 1,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: [],
-    }
+        const createdSession = this.db.sqlite.transaction(() => {
+          const inserted = this.db.sessions.insert(session)
+          if (claimAuthority !== undefined) {
+            persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
+          }
+          this.db.continuities.upsert({
+            scopeRef,
+            laneRef,
+            activeHostSessionId: hostSessionId,
+            updatedAt: now,
+          })
+          return inserted
+        })()
 
-    const createdSession = this.db.sessions.insert(session)
-    this.db.continuities.upsert({
-      scopeRef,
-      laneRef,
-      activeHostSessionId: hostSessionId,
-      updatedAt: now,
-    })
+        const event = this.appendEvent(createdSession, 'session.created', {
+          created: true,
+        })
+        this.notifyEvent(event)
 
-    const event = this.appendEvent(createdSession, 'session.created', {
-      created: true,
-    })
-    this.notifyEvent(event)
-
-    return json({
-      found: true,
-      hostSessionId,
-      generation: createdSession.generation,
-      created: true,
-      session: createdSession,
-    } satisfies ResolveSessionResponse)
+        return json({
+          found: true,
+          hostSessionId,
+          generation: createdSession.generation,
+          created: true,
+          session: createdSession,
+        } satisfies ResolveSessionResponse)
+      }
+    )
   }
 
   async handleLaunchCommandScopedRun(request: Request): Promise<Response> {
@@ -1264,39 +1277,49 @@ class HrcServerInstance implements HrcServer {
     }
 
     // wrkf / command-run births (POST /v1/command-runs/launch).
-    await assertSummonAuthority(this, {
-      scopeRef,
-      path: 'command-run',
-      intent: 'implicit',
-      ...(birthCredential === undefined ? {} : { birthCredential }),
-    })
+    return await withSummonAuthority(
+      this,
+      {
+        scopeRef,
+        path: 'command-run',
+        intent: 'implicit',
+        ...(birthCredential === undefined ? {} : { birthCredential }),
+      },
+      (claimAuthority) => {
+        const now = timestamp()
+        const hostSessionId = createHostSessionId()
+        const session: HrcSessionRecord = {
+          hostSessionId,
+          scopeRef,
+          laneRef,
+          generation: 1,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+          ancestorScopeRefs: [],
+        }
 
-    const now = timestamp()
-    const hostSessionId = createHostSessionId()
-    const session: HrcSessionRecord = {
-      hostSessionId,
-      scopeRef,
-      laneRef,
-      generation: 1,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      ancestorScopeRefs: [],
-    }
-
-    const createdSession = this.db.sessions.insert(session)
-    this.db.continuities.upsert({
-      scopeRef,
-      laneRef,
-      activeHostSessionId: hostSessionId,
-      updatedAt: now,
-    })
-    const event = this.appendEvent(createdSession, 'session.created', {
-      created: true,
-      commandRun: true,
-    })
-    this.notifyEvent(event)
-    return createdSession
+        const createdSession = this.db.sqlite.transaction(() => {
+          const inserted = this.db.sessions.insert(session)
+          if (claimAuthority !== undefined) {
+            persistSessionTaskClaimAuthority(this, hostSessionId, claimAuthority, now)
+          }
+          this.db.continuities.upsert({
+            scopeRef,
+            laneRef,
+            activeHostSessionId: hostSessionId,
+            updatedAt: now,
+          })
+          return inserted
+        })()
+        const event = this.appendEvent(createdSession, 'session.created', {
+          created: true,
+          commandRun: true,
+        })
+        this.notifyEvent(event)
+        return createdSession
+      }
+    )
   }
 
   handleListSessions(url: URL): Response {

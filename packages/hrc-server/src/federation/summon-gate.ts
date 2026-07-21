@@ -102,6 +102,7 @@ export type SummonGateAllowReason =
   | 'retired-policy-succession'
   | 'virgin-establishment'
   | 'child-birth'
+  | 'claim-birth'
 
 export type SummonGateRefuseReason =
   | 'scope-retired'
@@ -118,6 +119,7 @@ export type SummonGateRefuseReason =
   | 'capability-observation-failed'
   | 'invalid-birth-credential'
   | 'zombie-runtime'
+  | 'claim-birth-authority-required'
 
 /** Node-local facts required to materialize an agent scope (§5). */
 export type SummonCapabilityName =
@@ -227,6 +229,10 @@ export type SummonGateRequest = {
   intent: SummonIntent
   /** Opaque runtime-stable capability. Absent means ordinary summon intent. */
   birthCredential?: string | undefined
+  /** Remote bare addressing can route to an existing scope, never create claim authority. */
+  origin?: 'local' | 'federated-ingress' | 'startup-repair' | undefined
+  /** Daemon-owned proof that the summon is a successor of a known local session. */
+  knownSession?: boolean | undefined
   deps: SummonGateDeps
   capabilityHint?: SummonCapabilityHint | undefined
 }
@@ -526,6 +532,16 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
 
   if (local !== undefined && !localFenceApplies) {
     if (local.homeNodeId === deps.localNodeId) {
+      if (
+        local.birthClass === 'mechanism-born' &&
+        local.authorityProvenance.kind === 'claim-birth' &&
+        request.knownSession !== true
+      ) {
+        return refuse(
+          'claim-birth-authority-required',
+          `${scopeRef} is claim-born on ${deps.localNodeId}. A bare address cannot recreate or parent this mechanism-born identity; resume its known local session or establish fresh wrkq claim authority explicitly.`
+        )
+      }
       return await requireMaterializationCapability(
         request,
         allow('local-authority', { homeNodeId: local.homeNodeId })
@@ -563,6 +579,16 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   if (consult.outcome === 'bound') {
     const bound = consult.binding
     if (bound.homeNodeId === deps.localNodeId) {
+      if (
+        bound.birthClass === 'mechanism-born' &&
+        bound.authorityProvenance.kind === 'claim-birth' &&
+        request.knownSession !== true
+      ) {
+        return refuse(
+          'claim-birth-authority-required',
+          `${scopeRef} is registered as claim-born on ${deps.localNodeId}, but this daemon has no known session proving continuity. A bare address cannot recreate or parent it; recover or release the wrkq claim before retrying.`
+        )
+      }
       // Registered here but no local row: the crash window in registry-first
       // establishment. Converging is correct; this is not a virgin birth.
       return await requireMaterializationCapability(
@@ -659,6 +685,24 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       'policy-unavailable',
       `Cannot resolve placement policy for ${scopeRef}: ${error instanceof Error ? error.message : String(error)}`,
       { retryable: true }
+    )
+  }
+
+  if (policy?.claimsTask === true && placementPinKey(scopeRef) !== undefined) {
+    if (request.origin === 'federated-ingress' || request.origin === 'startup-repair') {
+      return refuse(
+        'claim-birth-authority-required',
+        request.origin === 'startup-repair'
+          ? `${scopeRef} is a legacy live claims_task identity without claim-birth authority. Startup repair will not retroactively claim it; drain and re-enter it through a fresh local dispatch.`
+          : `${scopeRef} is an unknown claims_task identity. Federated bare addressing cannot acquire its wrkq claim or stand in for birth authority; dispatch it from the destination node.`
+      )
+    }
+    return await requireMaterializationCapability(
+      request,
+      allow('claim-birth', {
+        homeNodeId: deps.localNodeId,
+        birthClass: 'mechanism-born',
+      })
     )
   }
 
