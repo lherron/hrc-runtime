@@ -63,17 +63,20 @@ export function injectRuntimeTaskClaimCredentialFile(
   renameSync(temporary, destination)
   chmodSync(destination, 0o600)
 
-  // Broker dispatch env carries strings, not deletion markers. Preserve the
-  // command helper's unsets as empty keys so inherited env and dotenv cannot
-  // restore a stale inline token or local SQLite locator in the child runtime.
+  // Broker dispatch env carries strings, not deletion markers, and rejects
+  // credential keys such as WRKQD_TOKEN by design. The explicit token file is
+  // safe to project; wrkq reserves the absent inline key before dotenv loading
+  // whenever that file is present. Preserve only non-credential unsets as
+  // empty keys so a local SQLite locator cannot reappear in the child runtime.
   const claimTransportEnv = Object.fromEntries(
-    Object.entries(taskClaimCommandEnvironment(input.claimTransportSource)).map(([key, value]) => [
-      key,
-      value ?? '',
-    ])
+    Object.entries(taskClaimCommandEnvironment(input.claimTransportSource))
+      .filter(([key]) => key !== 'WRKQD_TOKEN')
+      .map(([key, value]) => [key, value ?? ''])
   )
+  const runtimeEnv = { ...env }
+  delete runtimeEnv['WRKQD_TOKEN']
   return {
-    ...env,
+    ...runtimeEnv,
     ...claimTransportEnv,
     [HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]: destination,
   }

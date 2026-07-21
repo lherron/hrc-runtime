@@ -441,12 +441,12 @@ describe('T-06624 claim-birth summon authority', () => {
       const path = env[HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]
       expect(path).toBeString()
       expect(env).not.toHaveProperty('WRKQ_CLAIM_TOKEN')
+      expect(env).not.toHaveProperty('WRKQD_TOKEN')
       expect(env).toMatchObject({
         KEEP: 'yes',
         WRKQ_DB: 'rpc://canonical.example:7171',
         WRKQ_DB_PATH: '',
         WRKQ_DB_PATH_FILE: '',
-        WRKQD_TOKEN: '',
         WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
       })
       expect((await stat(path!)).mode & 0o777).toBe(0o600)
