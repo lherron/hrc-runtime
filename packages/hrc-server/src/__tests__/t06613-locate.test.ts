@@ -223,6 +223,55 @@ describe('locate — the three truths are reported separately', () => {
     expect(location.authority).toMatchObject({ state: 'bound', source: 'registry' })
     expect(location.authority).toMatchObject({ record: { homeNodeId: 'mini' } })
   })
+
+  test('a revoked local epoch is visibly nowhere while the registry still names it', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        ledger: ledgerStub(ledgerRow({ state: 'revoked', placementEpoch: 3 })),
+        registry: registryStub({
+          outcome: 'bound',
+          binding: ledgerRow({ homeNodeId: 'max3', placementEpoch: 3 }),
+        }),
+      }),
+    })
+
+    expect(location.ledger).toMatchObject({ state: 'revoked' })
+    expect(location.registry).toMatchObject({
+      outcome: 'bound',
+      record: { homeNodeId: 'max3', placementEpoch: 3 },
+    })
+    expect(location.authority).toEqual({ state: 'unbound' })
+    expect(location.notes).toContainEqual(expect.objectContaining({ code: 'rebind-revoked' }))
+  })
+
+  test('a rebound local epoch is visibly nowhere until its ledger activation lands', async () => {
+    const location = await locateScope({
+      scopeRef: SCOPE,
+      deps: deps({
+        localNodeId: 'lab',
+        ledger: ledgerStub(undefined),
+        registry: registryStub({
+          outcome: 'bound',
+          binding: ledgerRow({
+            homeNodeId: 'lab',
+            placementEpoch: 4,
+            establishmentProvenance: 'rebind',
+            priorHomeNodeId: 'max3',
+          }),
+        }),
+      }),
+    })
+
+    expect(location.registry).toMatchObject({
+      outcome: 'bound',
+      record: { homeNodeId: 'lab', placementEpoch: 4 },
+    })
+    expect(location.authority).toEqual({ state: 'unbound' })
+    expect(location.notes).toContainEqual(
+      expect.objectContaining({ code: 'rebind-activation-pending' })
+    )
+  })
 })
 
 describe('skew — a PIN disagreeing with an established binding, and nothing else', () => {

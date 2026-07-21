@@ -379,6 +379,8 @@ export type LocateNote = {
     | 'task-default-honored'
     | 'scope-retired'
     | 'birth-chain-unresolved'
+    | 'rebind-revoked'
+    | 'rebind-activation-pending'
   detail: string
 }
 

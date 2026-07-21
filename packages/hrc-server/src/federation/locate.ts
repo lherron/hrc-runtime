@@ -422,8 +422,9 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   const retiredHere = retirement?.retiredNodeId === deps.localNodeId
 
   // Ledger-first, matching the gate. The registry is consulted only when the
-  // local ledger holds no ACTIVE authority — a revoked row is not authority, so
-  // it still needs the collective's answer.
+  // local ledger holds no ACTIVE authority. A revoked row still needs the
+  // collective's answer, but a stale registry row naming this node must not
+  // resurrect authority during a fenced rebind gap.
   const rawLocalAuthority = deps.ledger.activeAuthority(scopeRef)
   const localAuthority =
     retiredHere &&
@@ -447,6 +448,17 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
           }
         : await consultRegistry(scopeRef, deps)
 
+  const revokedHereAtRegistryEpoch =
+    ledgerRow?.state === 'revoked' &&
+    registry.outcome === 'bound' &&
+    registry.record.homeNodeId === deps.localNodeId &&
+    registry.record.placementEpoch <= ledgerRow.placementEpoch
+  const activationPendingHere =
+    localAuthority === undefined &&
+    registry.outcome === 'bound' &&
+    registry.record.homeNodeId === deps.localNodeId &&
+    registry.record.establishmentProvenance === 'rebind'
+
   let authority: LocateAuthority
   if (localAuthority !== undefined) {
     authority = {
@@ -455,7 +467,11 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
       record: toRecord(localAuthority),
       isLocal: localAuthority.homeNodeId === deps.localNodeId,
     }
-  } else if (registry.outcome === 'bound') {
+  } else if (
+    registry.outcome === 'bound' &&
+    !revokedHereAtRegistryEpoch &&
+    !activationPendingHere
+  ) {
     authority = {
       state: 'bound',
       source: 'registry',
@@ -484,6 +500,18 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   // as live pin skew: reconciliation keeps the row for history, but it no
   // longer grants summon authority on this node.
   const { skew, notes } = retiredHere ? { notes: [] } : assessSkew(declared, authority)
+
+  if (revokedHereAtRegistryEpoch) {
+    notes.push({
+      code: 'rebind-revoked',
+      detail: `This node revoked epoch ${ledgerRow.placementEpoch} for ${scopeRef}; the registry still names this node at epoch ${registry.record.placementEpoch}, so effective authority is nowhere until compare-and-swap advances the binding.`,
+    })
+  } else if (activationPendingHere) {
+    notes.push({
+      code: 'rebind-activation-pending',
+      detail: `The registry assigns ${scopeRef} to this node at rebind epoch ${registry.record.placementEpoch}, but the local ledger has not activated that epoch; effective authority is nowhere until ACTIVATE succeeds.`,
+    })
+  }
 
   if (retirement !== undefined) {
     notes.push({
