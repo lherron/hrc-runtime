@@ -73,8 +73,7 @@ export function injectRuntimeTaskClaimCredentialFile(
       .filter(([key]) => key !== 'WRKQD_TOKEN')
       .map(([key, value]) => [key, value ?? ''])
   )
-  const runtimeEnv = { ...env }
-  delete runtimeEnv['WRKQD_TOKEN']
+  const { WRKQD_TOKEN: _discardedInlineToken, ...runtimeEnv } = env
   return {
     ...runtimeEnv,
     ...claimTransportEnv,
