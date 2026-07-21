@@ -21,7 +21,10 @@ import {
   createTaskClaimClient,
   taskClaimCommandEnvironment,
 } from '../federation/task-claim-client.js'
-import { injectRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
+import {
+  cleanupRuntimeTaskClaimCredentialFile,
+  injectRuntimeTaskClaimCredentialFile,
+} from '../federation/task-claim-runtime.js'
 
 const SCOPE = 'agent:room-coordinator:project:hrc-runtime:task:T-06624'
 const AUTHORITY: TaskClaimAuthority = {
@@ -342,6 +345,68 @@ describe('T-06624 claim-birth summon authority', () => {
         claimGeneration: 3,
         claimToken: AUTHORITY.claimToken,
       })
+    } finally {
+      h.registry.close()
+      h.db.close()
+    }
+  })
+
+  test('runtime termination cleanup removes the bearer after the last live sibling', async () => {
+    const h = await harness()
+    try {
+      const now = '2026-07-21T04:00:01.000Z'
+      h.db.sessions.insert({
+        hostSessionId: 'hsid-runtime-cleanup',
+        scopeRef: SCOPE,
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      persistSessionTaskClaimAuthority(h.server, 'hsid-runtime-cleanup', AUTHORITY, now)
+      const env = injectRuntimeTaskClaimCredentialFile(
+        {},
+        { db: h.db, runtimeRoot: h.directory, hostSessionId: 'hsid-runtime-cleanup' }
+      )
+      const path = env[HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]!
+      h.db.runtimes.insert({
+        runtimeId: 'rt-successor',
+        hostSessionId: 'hsid-runtime-cleanup',
+        scopeRef: SCOPE,
+        laneRef: 'main',
+        generation: 2,
+        transport: 'tmux',
+        harness: 'claude-code',
+        provider: 'anthropic',
+        status: 'ready',
+        supportsInflightInput: true,
+        adopted: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      expect(
+        cleanupRuntimeTaskClaimCredentialFile({
+          db: h.db,
+          runtimeRoot: h.directory,
+          hostSessionId: 'hsid-runtime-cleanup',
+          runtimeId: 'rt-predecessor',
+        })
+      ).toEqual({ outcome: 'retained', activeRuntimeIds: ['rt-successor'] })
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+
+      h.db.runtimes.updateStatus('rt-successor', 'terminated', now)
+      expect(
+        cleanupRuntimeTaskClaimCredentialFile({
+          db: h.db,
+          runtimeRoot: h.directory,
+          hostSessionId: 'hsid-runtime-cleanup',
+          runtimeId: 'rt-successor',
+        })
+      ).toEqual({ outcome: 'removed' })
+      await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       h.registry.close()
       h.db.close()

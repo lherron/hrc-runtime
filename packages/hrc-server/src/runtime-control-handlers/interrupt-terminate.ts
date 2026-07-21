@@ -12,6 +12,7 @@ import {
   parseGhosttyViewerLingerSeconds,
 } from '../broker-decisions.js'
 import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
+import { cleanupRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
 import {
@@ -56,6 +57,39 @@ interface BrokerInterrupter {
  */
 function headlessAuditTransport(runtime: HrcRuntimeSnapshot): 'headless' | 'sdk' {
   return runtime.transport === 'headless' ? 'headless' : 'sdk'
+}
+
+function cleanupTaskClaimCredential(
+  server: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot
+): void {
+  const runtimeRoot = server.options?.runtimeRoot
+  if (runtimeRoot === undefined) {
+    writeServerLog('WARN', 'task_claim_credential.cleanup_skipped', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      reason: 'runtime_root_unavailable',
+    })
+    return
+  }
+  const result = cleanupRuntimeTaskClaimCredentialFile({
+    db: server.db,
+    runtimeRoot,
+    hostSessionId: runtime.hostSessionId,
+    runtimeId: runtime.runtimeId,
+  })
+  if (result.outcome === 'failed') {
+    writeServerLog('WARN', 'task_claim_credential.cleanup_failed', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+      error: result.error,
+    })
+  } else if (result.outcome === 'removed') {
+    writeServerLog('INFO', 'task_claim_credential.removed', {
+      runtimeId: runtime.runtimeId,
+      scopeRef: runtime.scopeRef,
+    })
+  }
 }
 
 /**
@@ -406,6 +440,7 @@ export async function terminateTmuxRuntime(
   // are NOT guarded: their first terminate is legitimate cleanup that should
   // still tear the lease down.)
   if (runtime.status === 'terminated') {
+    cleanupTaskClaimCredential(this, runtime)
     return json({
       ok: true,
       hostSessionId: session.hostSessionId,
@@ -441,6 +476,7 @@ export async function terminateTmuxRuntime(
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
+  cleanupTaskClaimCredential(this, runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
@@ -478,6 +514,7 @@ export async function terminateGhosttyRuntime(
   await this.ghostmux.terminate(surface.surfaceId)
 
   finalizeRuntimeTermination(this.db, runtime, now)
+  cleanupTaskClaimCredential(this, runtime)
   const event = appendHrcEvent(this.db, 'runtime.terminated', {
     ...sessionEventBase(session, now),
     runtimeId: runtime.runtimeId,
@@ -622,6 +659,7 @@ export async function terminateHeadlessRuntime(
   }
 
   finalizeRuntimeTermination(this.db, runtime, now)
+  cleanupTaskClaimCredential(this, runtime)
   settleBrokerRuntimeDisposed.call(this, runtime, now)
   // Reap the consolidated headless viewer pane for THIS runtime (T-05237, C4).
   // Runtime-fenced and best-effort; never affects the terminate result.
