@@ -61,16 +61,23 @@ async function runCommand(
   return { stdout, stderr, exitCode }
 }
 
-function commandEnvironment(): Record<string, string | undefined> {
+export function taskClaimCommandEnvironment(
+  source: Record<string, string | undefined> = process.env
+): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {}
-  const db = process.env['HRC_WRKQ_DB']?.trim()
+  const db = source['HRC_WRKQ_DB']?.trim()
   if (db) {
     env['WRKQ_DB'] = db
     env['WRKQ_DB_PATH'] = undefined
     env['WRKQ_DB_PATH_FILE'] = undefined
   }
-  const tokenFile = process.env['HRC_WRKQD_TOKEN_FILE']?.trim()
-  if (tokenFile) env['WRKQD_TOKEN_FILE'] = tokenFile
+  const tokenFile = source['HRC_WRKQD_TOKEN_FILE']?.trim()
+  if (tokenFile) {
+    // wrkq intentionally gives WRKQD_TOKEN precedence over the file. A stale
+    // operator-shell token must not shadow the daemon's explicit credential.
+    env['WRKQD_TOKEN'] = undefined
+    env['WRKQD_TOKEN_FILE'] = tokenFile
+  }
   return env
 }
 
@@ -158,7 +165,7 @@ export function createTaskClaimClient(
           request.scopeRef,
           '--json',
         ],
-        commandEnvironment()
+        taskClaimCommandEnvironment()
       )
       if (result.exitCode !== 0) {
         throw new TaskClaimCommandError(
@@ -196,7 +203,7 @@ export function createTaskClaimClient(
           '--json',
         ],
         {
-          ...commandEnvironment(),
+          ...taskClaimCommandEnvironment(),
           WRKQ_CLAIM_TOKEN: authority.claimToken,
           WRKQ_CLAIM_GENERATION: String(authority.claimGeneration),
         }

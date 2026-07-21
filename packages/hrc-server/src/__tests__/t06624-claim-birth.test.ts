@@ -16,7 +16,11 @@ import {
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
 } from '../federation/summon-gate-server.js'
-import { type TaskClaimAuthority, createTaskClaimClient } from '../federation/task-claim-client.js'
+import {
+  type TaskClaimAuthority,
+  createTaskClaimClient,
+  taskClaimCommandEnvironment,
+} from '../federation/task-claim-client.js'
 import { injectRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
 
 const SCOPE = 'agent:room-coordinator:project:hrc-runtime:task:T-06624'
@@ -387,6 +391,23 @@ describe('T-06624 claim-birth summon authority', () => {
     expect(calls[1]?.env).toMatchObject({
       WRKQ_CLAIM_TOKEN: AUTHORITY.claimToken,
       WRKQ_CLAIM_GENERATION: '3',
+    })
+  })
+
+  test('an explicit daemon token file clears a stale inherited inline token', () => {
+    expect(
+      taskClaimCommandEnvironment({
+        HRC_WRKQ_DB: 'rpc://canonical.example:7171',
+        HRC_WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
+        WRKQD_TOKEN: 'stale-dev-token',
+        WRKQ_DB_PATH: '/tmp/local.sqlite',
+      })
+    ).toEqual({
+      WRKQ_DB: 'rpc://canonical.example:7171',
+      WRKQ_DB_PATH: undefined,
+      WRKQ_DB_PATH_FILE: undefined,
+      WRKQD_TOKEN: undefined,
+      WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
     })
   })
 })
