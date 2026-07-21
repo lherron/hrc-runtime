@@ -176,6 +176,14 @@ describe('T-06632 all-node runtime projections and peer health', () => {
           expect.objectContaining({ nodeId: 'max3-test', state: 'unreachable', runtimes: [] }),
         ])
 
+        // A different filter must not replace the last unfiltered answer used
+        // for stale fallback after the peer goes away.
+        const filteredResponse = await svc.fetchSocket('/v1/federation/runtimes?status=busy')
+        const filtered = (await filteredResponse.json()) as FederationRuntimeProjectionReport
+        expect(filtered.nodes).toContainEqual(
+          expect.objectContaining({ nodeId: 'lab-test', state: 'answered', runtimes: [] })
+        )
+
         await labServer.stop()
         labServer = undefined
         const downStartedAt = performance.now()

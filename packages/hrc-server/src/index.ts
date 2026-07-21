@@ -512,6 +512,7 @@ class HrcServerInstance implements HrcServer {
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  /** Last successful peer answers are isolated by node and exact runtime filter. */
   readonly peerRuntimeProjectionCache = new Map<
     string,
     { answeredAt: string; runtimes: readonly HrcRuntimeSnapshot[] }
@@ -1543,9 +1544,10 @@ class HrcServerInstance implements HrcServer {
       filter: url.searchParams,
     })
     for (const probe of probes) {
+      const cacheKey = `${probe.health.nodeId}\u0000${url.searchParams.toString()}`
       if (probe.health.state === 'healthy' && probe.runtimes !== undefined) {
         const answeredAt = probe.health.answeredAt ?? new Date().toISOString()
-        this.peerRuntimeProjectionCache.set(probe.health.nodeId, {
+        this.peerRuntimeProjectionCache.set(cacheKey, {
           answeredAt,
           runtimes: probe.runtimes,
         })
@@ -1559,7 +1561,7 @@ class HrcServerInstance implements HrcServer {
         })
         continue
       }
-      const cached = this.peerRuntimeProjectionCache.get(probe.health.nodeId)
+      const cached = this.peerRuntimeProjectionCache.get(cacheKey)
       nodes.push({
         nodeId: probe.health.nodeId,
         state: probe.health.state === 'healthy' ? 'invalid-response' : probe.health.state,
