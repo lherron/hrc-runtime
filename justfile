@@ -92,6 +92,95 @@ install no-sync="" force-sync="" force-link="":
       --publish-channel="$PRAESIDIUM_INSTALL_PUBLISH_CHANNEL" \
       --source-root="$PWD"
 
+# Deploy the latest pushed main revision to the co-hosted lab logical node.
+deploy-lab:
+    @just _deploy-node "lab@mini" "lab"
+
+# Deploy the latest pushed main revision to the max3 logical node.
+deploy-max3:
+    @just _deploy-node "max3" "max3"
+
+[private]
+_deploy-node ssh-target expected-node:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+      bash -s -- "{{ expected-node }}" <<'REMOTE'
+    set -euo pipefail
+
+    expected_node="$1"
+    repo="$HOME/praesidium/hrc-runtime"
+
+    fail() {
+      printf 'deploy-%s: %s\n' "$expected_node" "$*" >&2
+      exit 1
+    }
+
+    command -v git >/dev/null 2>&1 || fail 'git is not available'
+    command -v hrc >/dev/null 2>&1 || fail 'hrc is not available'
+    command -v jq >/dev/null 2>&1 || fail 'jq is not available'
+    command -v just >/dev/null 2>&1 || fail 'just is not available'
+    [[ -d "$repo/.git" ]] || fail "checkout not found at $repo"
+
+    status_before="$(hrc server status --json)" || fail 'HRC daemon is not healthy'
+    actual_node="$(jq -er '.node.nodeId' <<<"$status_before")" ||
+      fail 'HRC status did not report a logical node ID'
+    [[ "$actual_node" == "$expected_node" ]] ||
+      fail "expected logical node $expected_node, found $actual_node"
+
+    cd "$repo"
+    branch="$(git branch --show-current)"
+    [[ "$branch" == 'main' ]] || fail "checkout must be on main, found ${branch:-detached HEAD}"
+    if [[ -n "$(git status --porcelain)" ]]; then
+      git status --short >&2
+      fail 'checkout is dirty; refusing to overwrite remote work'
+    fi
+
+    git fetch --prune origin main
+    local_sha="$(git rev-parse HEAD)"
+    remote_sha="$(git rev-parse origin/main)"
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+      merge_base="$(git merge-base HEAD origin/main)"
+      if [[ "$merge_base" != "$local_sha" ]]; then
+        git log --oneline --decorate --left-right HEAD...origin/main >&2
+        fail 'main diverges from origin/main; refusing to reset local commits'
+      fi
+      git merge --ff-only origin/main
+    fi
+    [[ "$(git rev-parse HEAD)" == "$remote_sha" ]] ||
+      fail 'checkout did not reach the fetched origin/main revision'
+
+    busy_json="$(hrc runtime list --status busy --json)" ||
+      fail 'could not inspect busy runtimes'
+    busy_count="$(jq -er 'length' <<<"$busy_json")" ||
+      fail 'busy runtime inventory was not a JSON array'
+    if (( busy_count > 0 )); then
+      jq . <<<"$busy_json" >&2
+      fail "$busy_count runtime(s) are busy; drain them before deployment"
+    fi
+
+    just install no-sync=1
+    hrc server restart --wait --wait-timeout-ms 300000
+
+    status_after="$(hrc server status --json)" || fail 'HRC daemon did not become healthy'
+    actual_node="$(jq -er '.node.nodeId' <<<"$status_after")" ||
+      fail 'post-restart status did not report a logical node ID'
+    [[ "$actual_node" == "$expected_node" ]] ||
+      fail "post-restart logical node changed to $actual_node"
+    release_path="$(jq -er '.packagePath' <<<"$status_after")" ||
+      fail 'post-restart status did not report packagePath'
+    binary_path="$(jq -er '.binaryPath' <<<"$status_after")" ||
+      fail 'post-restart status did not report binaryPath'
+    release_root="${release_path%/packages/hrc-server}"
+    [[ "$release_root" == "$HOME/.bun/install/hrc-runtime-releases/release-"* ]] ||
+      fail "packagePath is not an atomic HRC release: $release_path"
+    [[ "$binary_path" == "$release_root/"* ]] ||
+      fail "binaryPath and packagePath name different releases: $binary_path vs $release_path"
+
+    printf 'deployed %s to %s: %s\n' "$remote_sha" "$expected_node" "$release_root"
+    REMOTE
+
 pull-deps:
     #!/usr/bin/env bash
     set -euo pipefail
