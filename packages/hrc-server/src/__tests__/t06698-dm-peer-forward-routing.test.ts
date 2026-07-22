@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   createPlacementLedgerRepository,
   createScopeRetirementRepository,
+  openBindingRegistry,
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 
@@ -22,6 +23,10 @@ const TOKEN = 't06698-two-daemon-token'
 const TASK = 'codex-019efeb5-1234-7abc-8def-0123456789ab'
 const SCOPE = `agent:clod:project:hrc-runtime:task:${TASK}`
 const SESSION = `${SCOPE}/lane:main`
+const EXTERNAL_TASK = 'codex-019f8aa4-405b-7e00-94d4-cb5294ed76f0'
+const EXTERNAL_SCOPE = `agent:cody:project:hrc-runtime:task:${EXTERNAL_TASK}`
+const LOCAL_BOUND_TASK = 'codex-019f8aa4-405b-7e00-94d4-cb5294ed76f1'
+const LOCAL_BOUND_SCOPE = `agent:cody:project:hrc-runtime:task:${LOCAL_BOUND_TASK}`
 
 function tailnetIpv4(): string | undefined {
   for (const entries of Object.values(networkInterfaces())) {
@@ -66,9 +71,11 @@ async function runCredentialStrippedDm(
   target = `clod@hrc-runtime:${TASK}`,
   body = 'T-06698 forwards through the DM entry point'
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const agentRoot = join(fixture.tmpDir, 'agents', 'clod')
-  await mkdir(agentRoot, { recursive: true })
-  await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+  for (const agentId of ['clod', 'cody']) {
+    const agentRoot = join(fixture.tmpDir, 'agents', agentId)
+    await mkdir(agentRoot, { recursive: true })
+    await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+  }
 
   const env = {
     ...process.env,
@@ -214,6 +221,14 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
           record.metadataJson?.['federationIngress'] !== undefined
       )
 
+      const labDb = openHrcDatabase(lab.dbPath)
+      try {
+        expect(labDb.messages.getById(sent.messageId)?.execution.state).toBe('not_applicable')
+        expect(labDb.runtimes.listAll().filter((runtime) => runtime.scopeRef === SCOPE)).toEqual([])
+      } finally {
+        labDb.close()
+      }
+
       const svcDb = openHrcDatabase(svc.dbPath)
       try {
         expect(svcDb.federationOutbox.list()).toEqual([
@@ -254,6 +269,101 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       expect(unbound.stderr).toContain('no federation routing binding exists')
       expect(unbound.stderr).toContain('delivery may be retried')
       expect(unbound.stderr).not.toContain('[stale_context]')
+
+      // Codex.app owns `task:codex-<uuid>` inboxes outside HRC. When no
+      // federation binding exists, hrcchat must still persist the DM on the
+      // accepting node for the desktop app to poll, then stop before any HRC
+      // session/runtime delivery. Ordinary unbound scopes above still fail.
+      const external = await runCredentialStrippedDm(
+        svc,
+        `cody@hrc-runtime:${EXTERNAL_TASK}`,
+        'T-06803 unbound Codex.app inbox probe'
+      )
+      expect(external).toMatchObject({ exitCode: 0, stderr: '' })
+      const externalSent = JSON.parse(external.stdout) as { messageId: string }
+
+      const externalDb = openHrcDatabase(svc.dbPath)
+      try {
+        expect(externalDb.messages.getById(externalSent.messageId)).toMatchObject({
+          body: 'T-06803 unbound Codex.app inbox probe',
+          execution: { state: 'not_applicable' },
+        })
+        expect(externalDb.continuities.getByKey(EXTERNAL_SCOPE, 'main')).toBeNull()
+        expect(externalDb.sessions.listByScopeRef(EXTERNAL_SCOPE)).toEqual([])
+        expect(
+          externalDb.runtimes.listAll().filter((runtime) => runtime.scopeRef === EXTERNAL_SCOPE)
+        ).toEqual([])
+        expect(
+          createPlacementLedgerRepository(externalDb.sqlite).get(EXTERNAL_SCOPE)
+        ).toBeUndefined()
+        expect(
+          externalDb.federationOutbox
+            .list()
+            .filter((delivery) => delivery.messageId === externalSent.messageId)
+        ).toEqual([])
+      } finally {
+        externalDb.close()
+      }
+      expect(await registry.consult(EXTERNAL_SCOPE)).toEqual({ outcome: 'unbound' })
+
+      const localRegistry = openBindingRegistry(
+        join(svc.tmpDir, 'federation', 'binding-registry.sqlite')
+      )
+      try {
+        const localEstablished = localRegistry.establish({
+          scopeRef: LOCAL_BOUND_SCOPE,
+          homeNodeId: 'svc-test',
+          placementEpoch: 1,
+          birthClass: 'policy-born',
+          authorityProvenance: { kind: 'policy', source: 'explicit_local' },
+          establishmentProvenance: 'explicit_local',
+          now: '2026-07-20T00:00:01.000Z',
+        })
+        expect(localEstablished.outcome).toBe('created')
+      } finally {
+        localRegistry.close()
+      }
+      const localLedgerDb = openHrcDatabase(svc.dbPath)
+      try {
+        createPlacementLedgerRepository(localLedgerDb.sqlite).installActive({
+          scopeRef: LOCAL_BOUND_SCOPE,
+          homeNodeId: 'svc-test',
+          placementEpoch: 1,
+          birthClass: 'policy-born',
+          authorityProvenance: { kind: 'policy', source: 'explicit_local' },
+          establishmentProvenance: 'explicit_local',
+          updatedAt: '2026-07-20T00:00:01.000Z',
+        })
+      } finally {
+        localLedgerDb.close()
+      }
+
+      const localBound = await runCredentialStrippedDm(
+        svc,
+        `cody@hrc-runtime:${LOCAL_BOUND_TASK}`,
+        'T-06803 local-bound Codex.app inbox probe'
+      )
+      expect(localBound).toMatchObject({ exitCode: 0, stderr: '' })
+      const localBoundSent = JSON.parse(localBound.stdout) as { messageId: string }
+      const localBoundDb = openHrcDatabase(svc.dbPath)
+      try {
+        expect(localBoundDb.messages.getById(localBoundSent.messageId)).toMatchObject({
+          execution: { state: 'not_applicable' },
+        })
+        expect(localBoundDb.sessions.listByScopeRef(LOCAL_BOUND_SCOPE)).toEqual([])
+        expect(
+          localBoundDb.runtimes
+            .listAll()
+            .filter((runtime) => runtime.scopeRef === LOCAL_BOUND_SCOPE)
+        ).toEqual([])
+        expect(
+          localBoundDb.federationOutbox
+            .list()
+            .filter((delivery) => delivery.messageId === localBoundSent.messageId)
+        ).toEqual([])
+      } finally {
+        localBoundDb.close()
+      }
     } finally {
       await labServer?.stop()
       await svcServer.stop()

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { isCodexAppOwnedScopeRef } from 'hrc-core'
 import type {
   FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
@@ -23,7 +24,10 @@ import {
 import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { resolveFederationRegistryClient } from './registry-resolution.js'
-import { resolveFederationRoutingBinding } from './routing-resolution.js'
+import {
+  FederationRoutingResolutionError,
+  resolveFederationRoutingBinding,
+} from './routing-resolution.js'
 
 export type FederationOriginOutboxOptions = {
   db: HrcDatabase
@@ -157,7 +161,8 @@ export class FederationOriginOutbox {
    * the winner.
    */
   async isRemoteTarget(scopeRef: string): Promise<boolean> {
-    const binding = await this.resolveRoutingBinding(scopeRef)
+    const binding = await this.resolveMessageStorageBinding(scopeRef)
+    if (binding === undefined) return false
     return binding.homeNodeId !== this.options.config.nodeId
   }
 
@@ -183,12 +188,35 @@ export class FederationOriginOutbox {
     }
     if (record.to.kind !== 'session') return { outcome: 'local' }
     const scopeRef = parseSessionRef(record.to.sessionRef).scopeRef
-    const binding = await this.resolveRoutingBinding(scopeRef)
+    const binding = await this.resolveMessageStorageBinding(scopeRef)
+    if (binding === undefined) return { outcome: 'local' }
     if (binding.homeNodeId === this.options.config.nodeId) return { outcome: 'local' }
 
     return this.enqueue(record, body, binding.homeNodeId, binding, {
       routingSource: binding.source,
     })
+  }
+
+  /**
+   * Codex.app UUID targets are external inboxes, not HRC runtime births. An
+   * established binding still chooses the node that stores the inbox, but an
+   * intentionally unbound target falls back to this node's message store for
+   * Codex.app to poll. Every other routing refusal remains fail-closed, and
+   * local delivery still stops at the shared Codex.app no-dispatch fence.
+   */
+  private async resolveMessageStorageBinding(scopeRef: string) {
+    try {
+      return await this.resolveRoutingBinding(scopeRef)
+    } catch (error) {
+      if (
+        isCodexAppOwnedScopeRef(scopeRef) &&
+        error instanceof FederationRoutingResolutionError &&
+        error.code === 'binding_unbound'
+      ) {
+        return undefined
+      }
+      throw error
+    }
   }
 
   private resolveRoutingBinding(scopeRef: string) {
