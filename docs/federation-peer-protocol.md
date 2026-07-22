@@ -5,6 +5,7 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `POST` | `/v1/federation/establish` | Authenticated authority-only establishment of a policy-born virgin scope on its named home. |
 | `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
 | `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand; optionally include this node's filtered runtime projection. |
@@ -56,7 +57,7 @@ node identity, at least one configured peer, and a concrete tailnet host:
 Each peer may expose two role-separated transport origins:
 
 - `endpoint` is the peer-protocol origin and is used only for
-  `/v1/federation/accept`, `/v1/federation/locate`, and
+  `/v1/federation/establish`, `/v1/federation/accept`, `/v1/federation/locate`, and
   `/v1/federation/health`.
 - `registryEndpoint` is the optional binding-registry origin and is used only
   for `/v1/federation/registry/*`. When absent, registry clients fall back to
@@ -95,8 +96,14 @@ capabilities. `GET /v1/federation/health?includeRuntimes=true` also returns
 that node's local runtime rows. The normal runtime-list filters (`scope`,
 `agent`, `task`, `status`, `transport`, `stale`, `olderThan`, and
 `hostSessionId`) are accepted as query parameters. This is an additive use of
-the existing health verb, not a fourth peer route; the listener still exposes
-only accept, locate, and health.
+the existing health verb, not a fifth peer route; the listener still exposes
+only establish, accept, locate, and health.
+
+The additive health capability `establish: true` advertises support for the
+authority-only establishment verb. An origin must treat an omitted capability,
+an HTTP 404, or an endpoint that otherwise cannot speak the verb as the typed
+non-retryable refusal `peer_upgrade_required`. It must never fall back to an
+unfenced accept envelope.
 
 The peer health handler never fans out. Aggregation belongs to the requesting
 node's Unix-socket API, which probes configured peers concurrently with a
@@ -136,6 +143,114 @@ overlap set and defaults to `[token]`. Rotate without an authentication gap:
 Tokens must remain unique between peer identities so authentication always
 maps to exactly one `authenticatedNodeId`. The federation config file is
 operator-managed, node-local, not git-synced, and expected to be mode `0600`.
+
+## Remote policy establishment
+
+Remote establishment is phase one of a two-phase delivery. It creates authority
+only; ordinary epoch-fenced accept remains phase two and is the only phase that
+inserts the message or mints/reuses a session.
+
+An origin may enter this phase only when the shared placement resolver returns
+`remote-establish` for an exact registry-unbound, summon-capable, implicit
+request. The outcome is policy-born only. Child-birth credentials remain
+node-local, federated bare-address claim birth remains refused, and neither
+`explicit_local` nor the reserved `default_home_node = "local"` sentinel grants
+remote establishment authority.
+
+The authenticated request deliberately carries no placement assertion:
+
+```json
+{
+  "scopeRef": "agent:scribe:project:hrc-runtime:task:T-06807",
+  "intent": "implicit",
+  "correlationId": "establish-msg-11111111-1111-4111-8111-111111111111"
+}
+```
+
+Only the canonical `scopeRef`, the literal implicit intent, and an opaque
+correlation ID cross the peer boundary. In particular, the origin never sends a
+candidate home, epoch, policy provenance, birth credential, child authority, or
+origin-side placement path.
+
+After node-level bearer authentication, the receiver independently evaluates
+the shared summon-gate decision from its current facts in this order:
+
+1. retirement fence;
+2. active local ledger;
+3. collective registry;
+4. receiver-local placement policy and materialization capability.
+
+For a registry-unbound policy birth, the receiver must find a named policy rule
+that designates its concrete node ID. It must not reinterpret the reserved
+`"local"` sentinel as itself. A child, claim, explicit-local, undeclared, or
+other birth class is a typed refusal. If authority is allowed, the receiver
+calls the existing registry-first establishment operation: the epoch-1 registry
+CAS happens before the local ledger install. That CAS is the one and only
+advertisement; the peer protocol adds no second advertise record or summon
+ledger.
+
+Successful responses return the exact resulting binding and echo the
+correlation ID. `established` means this attempt created or completed the local
+authority; `existing` means a retry or race found the registry already bound:
+
+```json
+{
+  "ok": true,
+  "protocolVersion": "1.0",
+  "correlationId": "establish-msg-11111111-1111-4111-8111-111111111111",
+  "outcome": "established",
+  "binding": {
+    "scopeRef": "agent:scribe:project:hrc-runtime:task:T-06807",
+    "homeNodeId": "max3",
+    "placementEpoch": 1,
+    "birthClass": "policy-born",
+    "authorityProvenance": { "kind": "policy", "source": "default_home_node" },
+    "establishmentProvenance": "default_home_node",
+    "createdAt": "2026-07-22T20:00:00.000Z",
+    "updatedAt": "2026-07-22T20:00:00.000Z"
+  }
+}
+```
+
+The collective registry arbitrates concurrent first birth. A loser installs no
+local authority and returns the stored winning binding. The origin then
+re-resolves through the registry and routes to that winner. A receiver whose
+current policy does not name itself refuses with `pin-mismatch` /
+`routed-elsewhere`; the origin does not chase a suggested peer. Once a scope is
+bound, the binding wins over later policy skew.
+
+Peer-wire refusals are closed and safe:
+
+```json
+{
+  "ok": false,
+  "protocolVersion": "1.0",
+  "error": {
+    "code": "stale_context",
+    "message": "remote policy establishment refused",
+    "reason": "routed-elsewhere",
+    "retryable": false,
+    "homeNodeId": "max3",
+    "context": {
+      "scopeRef": "agent:scribe:project:hrc-runtime:task:T-06807",
+      "correlationId": "establish-msg-11111111-1111-4111-8111-111111111111"
+    }
+  }
+}
+```
+
+Policy, retirement, birth-class, capability, and authority refusals use HTTP
+409 with public code `stale_context` and a stable `reason`. Registry or named
+home unavailability uses HTTP 503 with `runtime_unavailable`,
+`retryable: true`, and `homeNodeId`. Full diagnostics stay in the receiver log;
+the peer response contains only safe context. Missing protocol support maps to
+the non-retryable reason `peer_upgrade_required`. Nothing on this path becomes
+`internal_error` or a bare HTTP 500.
+
+The origin MUST consult the registry again after a successful establishment
+response. Only the re-resolved binding may construct the ordinary fenced
+accept envelope. Establishment never inserts the message, starts a runtime,
+mints a session, or grants the origin authority.
 
 ## Accept envelope and ACK
 
@@ -201,6 +316,21 @@ still lands in the bilateral transcript.
 An outbound transcript row remains the owning-node message queue. Its network
 delivery is a separate `federation_outbox_deliveries` row keyed back to that
 message; target execution fields are never used for peer retry state.
+
+For `remote-establish`, authority establishment is the first typed stage of
+that same delivery row. The row initially retains the durable message and the
+candidate peer while its stage is `establishing`; it does not create a separate
+summon job or ledger. On a successful establishment response, the origin
+re-consults the registry and atomically advances the same row to `delivering`
+with the winning binding's epoch-fenced envelope. A crash before the advance
+retries the idempotent establish request; a crash after it retries ordinary
+accept. Peer sleep therefore remains covered by the existing 28-day retry
+window.
+
+Queued establishment is normal delivery state, not a caller-visible error. A
+retryable establishment refusal follows the existing outbox schedule. Only a
+non-retryable refusal or exhausted retry window becomes a dead letter and the
+typed terminal error observed by a waiting caller.
 
 The origin attempts immediately, then retries exponentially from one second up
 to a six-hour cap. The automatic retry window is 28 days so a closed laptop is
