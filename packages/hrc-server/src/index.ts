@@ -763,6 +763,7 @@ class HrcServerInstance implements HrcServer {
           createFederationAcceptHandler({
             db: this.db,
             localNodeId: federationConfig.nodeId,
+            registry: this.federationRegistryClient,
             onAccepted: ({ envelope, record }) =>
               this.deliverFederationAcceptedMessage(envelope, record),
           })

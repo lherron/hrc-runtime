@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
 
 import { FederationAcceptCrashError, createFederationAcceptHandler } from '../federation/accept.js'
+import { formatDmPayload } from '../messages.js'
 
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06618'
 const SESSION = `${SCOPE}/lane:default`
@@ -13,7 +14,10 @@ function envelope(messageId = 'msg-11111111-1111-4111-8111-111111111111') {
     messageId,
     kind: 'dm' as const,
     phase: 'request' as const,
-    from: { kind: 'session' as const, sessionRef: 'agent:mable:project:hrc-runtime:task:minisvc' },
+    from: {
+      kind: 'session' as const,
+      sessionRef: 'agent:mable:project:hrc-runtime:task:minisvc/lane:main',
+    },
     to: { kind: 'session' as const, sessionRef: SESSION },
     body: 'federated hello',
     rootMessageId: messageId,
@@ -100,6 +104,94 @@ describe('T-06618 durable idempotent federation receiver', () => {
         redirect: { homeNodeId: 'lab-next', placementEpoch: 5 },
       })
       expect(db.messages.getById(envelope().messageId)).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  test('repairs a missing local authority row from the exact registry binding without losing sender attribution', async () => {
+    const db = openHrcDatabase(':memory:')
+    const binding = {
+      scopeRef: SCOPE,
+      homeNodeId: 'lab',
+      placementEpoch: 4,
+      birthClass: 'policy-born' as const,
+      authorityProvenance: { kind: 'policy' as const, source: 'pin' as const },
+      establishmentProvenance: 'pin' as const,
+      updatedAt: '2026-07-20T00:00:00.000Z',
+    }
+    const accept = createFederationAcceptHandler({
+      db,
+      localNodeId: 'lab',
+      registry: { consult: async () => ({ outcome: 'bound', binding }) },
+    })
+
+    try {
+      const result = await accept({
+        authenticatedNodeId: 'svc',
+        protocolVersion: '1.7',
+        envelope: envelope(),
+      })
+
+      expect(result).toMatchObject({ outcome: 'accepted', messageId: envelope().messageId })
+      expect(createPlacementLedgerRepository(db.sqlite).activeAuthority(SCOPE)).toMatchObject(
+        binding
+      )
+      const record = db.messages.getById(envelope().messageId)
+      expect(record?.from).toEqual(envelope().from)
+      expect(record?.metadataJson).toMatchObject({
+        federationIngress: { authenticatedNodeId: 'svc' },
+      })
+      expect(
+        formatDmPayload(
+          record!.from,
+          record!.to,
+          record!.body,
+          record!.messageSeq,
+          record!.messageId
+        )
+      ).toContain('hrcchat dm mable@hrc-runtime:minisvc --reply-to')
+    } finally {
+      db.close()
+    }
+  })
+
+  test('does not activate a registry rebind tuple at federation ingress', async () => {
+    const db = openHrcDatabase(':memory:')
+    const accept = createFederationAcceptHandler({
+      db,
+      localNodeId: 'lab',
+      registry: {
+        consult: async () => ({
+          outcome: 'bound',
+          binding: {
+            scopeRef: SCOPE,
+            homeNodeId: 'lab',
+            placementEpoch: 4,
+            birthClass: 'policy-born',
+            authorityProvenance: { kind: 'policy', source: 'pin' },
+            establishmentProvenance: 'rebind',
+            priorHomeNodeId: 'svc',
+            updatedAt: '2026-07-20T00:00:00.000Z',
+          },
+        }),
+      },
+    })
+
+    try {
+      await expect(
+        accept({
+          authenticatedNodeId: 'svc',
+          protocolVersion: '1.7',
+          envelope: envelope(),
+        })
+      ).resolves.toEqual({
+        outcome: 'refused',
+        code: 'placement_unknown',
+        retryable: true,
+        status: 409,
+      })
+      expect(createPlacementLedgerRepository(db.sqlite).get(SCOPE)).toBeUndefined()
     } finally {
       db.close()
     }

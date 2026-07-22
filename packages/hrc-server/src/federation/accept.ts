@@ -13,6 +13,7 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { parseOptionalTurnResponseFormat, parseSessionRef } from '../server-parsers.js'
 import type { PeerAcceptHandler, PeerAcceptRequest, PeerAcceptResult } from './peer-protocol.js'
+import type { BindingRegistryClient } from './registry-client.js'
 
 const MESSAGE_ID_PATTERN =
   /^(?:msg-)?[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -211,6 +212,7 @@ export type FederationAcceptedMessage = {
 export type CreateFederationAcceptHandlerOptions = {
   readonly db: HrcDatabase
   readonly localNodeId: string
+  readonly registry?: Pick<BindingRegistryClient, 'consult'> | undefined
   readonly onAccepted?: ((message: FederationAcceptedMessage) => Promise<void> | void) | undefined
   /** Fault-injection seam. Production leaves this absent. */
   readonly afterDurableAcceptance?: (() => Promise<void> | void) | undefined
@@ -295,7 +297,30 @@ async function acceptFederationEnvelope(
       return { outcome: 'refused', code: 'invalid_target', retryable: false, status: 400 }
     }
 
-    const placement = createPlacementLedgerRepository(options.db.sqlite).get(scopeRef)
+    const ledger = createPlacementLedgerRepository(options.db.sqlite)
+    let placement = ledger.get(scopeRef)
+    if (placement === undefined && options.registry !== undefined) {
+      try {
+        const registry = await options.registry.consult(scopeRef)
+        if (
+          registry.outcome === 'bound' &&
+          registry.binding.homeNodeId === options.localNodeId &&
+          registry.binding.establishmentProvenance !== 'rebind'
+        ) {
+          // Registry-first establishment can leave this exact crash window:
+          // the collective binding committed, but the destination's local
+          // authority row did not. Startup repairs scopes that were already
+          // live at boot; an existing session resumed later can expose the
+          // same gap. Heal only the registry's exact non-rebind tuple, then
+          // apply the ordinary envelope epoch/home fences below.
+          ledger.installActive(registry.binding)
+          placement = ledger.get(scopeRef)
+        }
+      } catch {
+        // Preserve the receiver's retryable placement_unknown contract when
+        // registry authority cannot be read. The origin outbox will retry.
+      }
+    }
     const fence = readScopeRetirement(options.db.sqlite, scopeRef)
     if (
       fence !== undefined &&
