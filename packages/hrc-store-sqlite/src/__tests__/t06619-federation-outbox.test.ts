@@ -20,6 +20,57 @@ function envelope(): FederationMessageEnvelope {
 }
 
 describe('T-06619 durable federation outbox', () => {
+  test('authority establishment advances the same durable row to fenced delivery', () => {
+    const db = openHrcDatabase(':memory:')
+    try {
+      const fenced = envelope()
+      db.messages.insert({
+        messageId: MESSAGE_ID,
+        kind: fenced.kind,
+        phase: fenced.phase,
+        from: fenced.from,
+        to: fenced.to,
+        body: fenced.body,
+      })
+      const { expected: _expected, ...pending } = fenced
+      const establishing = db.federationOutbox.enqueueEstablishing({
+        deliveryId: 'delivery-establish-1',
+        messageId: MESSAGE_ID,
+        peerNodeId: 'lab-candidate',
+        establish: {
+          scopeRef: 'agent:cody:project:hrc-runtime:task:T-06619',
+          intent: 'implicit',
+          correlationId: 'establish-delivery-establish-1',
+        },
+        envelope: pending,
+        now: '2026-07-20T00:00:00.000Z',
+      })
+      expect(establishing).toMatchObject({
+        deliveryId: 'delivery-establish-1',
+        stage: 'establishing',
+        peerNodeId: 'lab-candidate',
+      })
+      expect('expected' in establishing.envelope).toBe(false)
+
+      const delivering = db.federationOutbox.advanceToDelivery(
+        establishing.deliveryId,
+        'registry-winner',
+        { ...pending, expected: { homeNodeId: 'registry-winner', placementEpoch: 1 } },
+        '2026-07-20T00:00:01.000Z'
+      )
+      expect(delivering).toMatchObject({
+        deliveryId: establishing.deliveryId,
+        messageId: MESSAGE_ID,
+        stage: 'delivering',
+        peerNodeId: 'registry-winner',
+        envelope: { expected: { homeNodeId: 'registry-winner', placementEpoch: 1 } },
+      })
+      expect(db.federationOutbox.list()).toHaveLength(1)
+    } finally {
+      db.close()
+    }
+  })
+
   test('the outbound message and its network delivery are separate durable facts', () => {
     const db = openHrcDatabase(':memory:')
     try {

@@ -7,6 +7,7 @@ import type {
   BirthAuthorityProvenance,
   EstablishmentProvenance,
   FederationBirthClass,
+  FederationPlacementBinding,
 } from 'hrc-core'
 
 import type { ScopeRetirementRecord } from './federation-reconciliation.js'
@@ -24,17 +25,7 @@ export type {
 
 export type PlacementLedgerState = 'active' | 'revoked'
 
-export type PlacementBinding = {
-  scopeRef: string
-  homeNodeId: string
-  placementEpoch: number
-  birthClass: FederationBirthClass
-  authorityProvenance: BirthAuthorityProvenance
-  establishmentProvenance: EstablishmentProvenance
-  priorHomeNodeId?: string | undefined
-  createdAt: string
-  updatedAt: string
-}
+export type PlacementBinding = FederationPlacementBinding
 
 export type RegistryRetirementRecord = {
   state: 'retired'

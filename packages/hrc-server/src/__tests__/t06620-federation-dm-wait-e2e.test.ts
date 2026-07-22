@@ -149,8 +149,12 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         failureDb.federationOutbox.markDeadLetter({
           deliveryId: 'delivery-t06620-terminal',
           attemptedAt: '2026-07-20T00:01:00.000Z',
-          errorCode: 'retry_window_exhausted',
+          errorCode: 'peer_unreachable',
           errorMessage: 'peer remained unavailable',
+          structuredErrorCode: 'runtime_unavailable',
+          errorReason: 'peer_unreachable',
+          retryable: true,
+          homeNodeId: 'lab-test',
         })
       } finally {
         failureDb.close()
@@ -160,8 +164,11 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         matched: false,
         reason: 'delivery_failed',
         messageId,
-        errorCode: 'retry_window_exhausted',
+        errorCode: 'runtime_unavailable',
         errorMessage: 'peer remained unavailable',
+        errorReason: 'peer_unreachable',
+        retryable: true,
+        homeNodeId: 'lab-test',
       })
     } finally {
       await server.stop()

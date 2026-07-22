@@ -253,7 +253,86 @@ describe('T-06617 narrow peer routes', () => {
     })
   })
 
-  test('the TCP handler exposes exactly accept, locate, and health', async () => {
+  test('establish has a schema-exact authority-only request and exact binding response', async () => {
+    const established: unknown[] = []
+    const serve = createPeerProtocolRequestHandler({
+      localNodeId: 'lab',
+      peers: new Map([
+        [
+          'svc',
+          {
+            nodeId: 'svc',
+            endpoint: 'http://svc.example.ts.net:18490',
+            token: new PeerToken(CURRENT_TOKEN),
+          },
+        ],
+      ]),
+      locate: async () => ({}),
+      health: () => ({
+        startedAt: '2026-07-20T00:00:00.000Z',
+        capabilities: { accept: true, establish: true, locate: true, health: true },
+      }),
+      establish: async (input) => {
+        established.push(input)
+        return {
+          outcome: 'established',
+          correlationId: input.correlationId,
+          binding: {
+            scopeRef: input.scopeRef,
+            homeNodeId: 'lab',
+            placementEpoch: 1,
+            birthClass: 'policy-born',
+            authorityProvenance: { kind: 'policy', source: 'pin' },
+            establishmentProvenance: 'pin',
+            createdAt: '2026-07-22T20:00:00.000Z',
+            updatedAt: '2026-07-22T20:00:00.000Z',
+          },
+        }
+      },
+    })
+    const body = {
+      scopeRef: 'agent:cody:project:hrc-runtime:task:T-06805',
+      intent: 'implicit',
+      correlationId: 'establish-msg-1',
+    }
+    const response = await serve(
+      request('/v1/federation/establish', {
+        token: CURRENT_TOKEN,
+        version: '1.7',
+        body,
+      })
+    )
+    expect(response.status).toBe(200)
+    expect(established).toEqual([{ authenticatedNodeId: 'svc', protocolVersion: '1.7', ...body }])
+    expect(await response.json()).toEqual({
+      ok: true,
+      protocolVersion: PEER_PROTOCOL_VERSION,
+      correlationId: 'establish-msg-1',
+      outcome: 'established',
+      binding: {
+        scopeRef: body.scopeRef,
+        homeNodeId: 'lab',
+        placementEpoch: 1,
+        birthClass: 'policy-born',
+        authorityProvenance: { kind: 'policy', source: 'pin' },
+        establishmentProvenance: 'pin',
+        createdAt: '2026-07-22T20:00:00.000Z',
+        updatedAt: '2026-07-22T20:00:00.000Z',
+      },
+    })
+
+    const oversized = await serve(
+      request('/v1/federation/establish', {
+        token: CURRENT_TOKEN,
+        version: PEER_PROTOCOL_VERSION,
+        body: { ...body, homeNodeId: 'lab' },
+      })
+    )
+    expect(oversized.status).toBe(400)
+    expect(established).toHaveLength(1)
+  })
+
+  test('the TCP handler exposes exactly establish, accept, locate, and health', async () => {
     const serve = handler()
     for (const path of ['/v1/status', '/v1/events', '/v1/federation/bindings', '/']) {
       const response = await serve(

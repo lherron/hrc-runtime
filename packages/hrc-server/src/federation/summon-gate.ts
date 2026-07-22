@@ -289,7 +289,7 @@ export type SummonGateRequest = {
   /** Opaque runtime-stable capability. Absent means ordinary summon intent. */
   birthCredential?: string | undefined
   /** Remote bare addressing can route to an existing scope, never create claim authority. */
-  origin?: 'local' | 'federated-ingress' | 'startup-repair' | undefined
+  origin?: 'local' | 'federated-ingress' | 'federated-establish' | 'startup-repair' | undefined
   /** Daemon-owned proof that the summon is a successor of a known local session. */
   knownSession?: boolean | undefined
   deps: SummonGateDeps
@@ -449,21 +449,21 @@ function undeclaredPlacementDiagnostic(scopeRef: string, localNodeId: string): s
  * exists. The candidate home for an explicit start is `localNodeId` — this
  * daemon's OWN configured id — never anything the caller supplied.
  */
+type DesignatedHome = {
+  homeNodeId: string
+  provenance: Exclude<EstablishmentProvenance, 'rebind'>
+  matchedConstraint?:
+    | { kind: 'pin'; key: string }
+    | { kind: 'task-default'; key: string }
+    | undefined
+}
+
 function resolveDesignatedHome(
   scopeRef: string,
   policy: SummonGatePolicy | undefined,
   localNodeId: string,
   intent: SummonIntent
-):
-  | {
-      homeNodeId: string
-      provenance: Exclude<EstablishmentProvenance, 'rebind'>
-      matchedConstraint?:
-        | { kind: 'pin'; key: string }
-        | { kind: 'task-default'; key: string }
-        | undefined
-    }
-  | SummonGateEvaluation {
+): DesignatedHome | SummonGateEvaluation {
   const placement = policy?.placement
 
   const pinKey = placementPinKey(scopeRef)
@@ -530,6 +530,90 @@ function isEvaluation(value: unknown): value is SummonGateEvaluation {
   return typeof value === 'object' && value !== null && 'decision' in value
 }
 
+function forbidsClaimBirth(origin: SummonGateRequest['origin']): boolean {
+  return (
+    origin === 'federated-ingress' ||
+    origin === 'federated-establish' ||
+    origin === 'startup-repair'
+  )
+}
+
+function nodeLocalRemoteEstablishRefusal(
+  request: SummonGateRequest,
+  scopeRef: string,
+  provenance: EstablishmentProvenance
+): SummonGateEvaluation | undefined {
+  if (
+    request.origin !== 'federated-establish' ||
+    (provenance !== 'explicit_local' && provenance !== 'default_home_node(local)')
+  ) {
+    return undefined
+  }
+  return refuse(
+    'routed-elsewhere',
+    `${scopeRef} has no concrete named-node policy granting remote establishment authority; ${provenance} is node-local only.`,
+    { homeNodeId: request.deps.localNodeId }
+  )
+}
+
+async function decideVirginPolicyPlacement(
+  request: SummonGateRequest,
+  scopeRef: string,
+  designated: DesignatedHome
+): Promise<SummonGateEvaluation> {
+  const { deps } = request
+  const remotePolicyRefusal = nodeLocalRemoteEstablishRefusal(
+    request,
+    scopeRef,
+    designated.provenance
+  )
+  if (remotePolicyRefusal !== undefined) return remotePolicyRefusal
+
+  if (designated.homeNodeId === deps.localNodeId) {
+    return await requireMaterializationCapability(
+      request,
+      allow('virgin-establishment', {
+        homeNodeId: designated.homeNodeId,
+        establishmentProvenance: designated.provenance,
+      })
+    )
+  }
+
+  if (designated.matchedConstraint !== undefined) {
+    if (designated.matchedConstraint.kind === 'task-default') {
+      const taskKey = designated.matchedConstraint.key
+      return refuse(
+        'pin-mismatch',
+        `${scopeRef} matches task default [placement.task-defaults] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that task-default line.`,
+        {
+          homeNodeId: designated.homeNodeId,
+          candidateEstablishmentProvenance: 'task_default',
+        }
+      )
+    }
+    return refuse(
+      'pin-mismatch',
+      `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,
+      {
+        homeNodeId: designated.homeNodeId,
+        candidateEstablishmentProvenance: 'pin',
+      }
+    )
+  }
+
+  return refuse(
+    'routed-elsewhere',
+    `${scopeRef} routes to ${designated.homeNodeId} by default_home_node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
+    {
+      homeNodeId: designated.homeNodeId,
+      ...(designated.provenance === 'explicit_local' ||
+      designated.provenance === 'default_home_node(local)'
+        ? {}
+        : { candidateEstablishmentProvenance: designated.provenance }),
+    }
+  )
+}
+
 async function decideLocalClaimBirth(
   request: SummonGateRequest,
   scopeRef: string,
@@ -542,12 +626,14 @@ async function decideLocalClaimBirth(
       `${scopeRef} is claim-born on ${deps.localNodeId}. A bare address cannot recreate or parent this mechanism-born identity; resume its known local session or establish fresh wrkq claim authority explicitly.`
     )
   }
-  if (request.origin === 'federated-ingress' || request.origin === 'startup-repair') {
+  if (forbidsClaimBirth(request.origin)) {
     return refuse(
       'claim-birth-authority-required',
       request.origin === 'startup-repair'
         ? `${scopeRef} is a rebound claim-born identity without a local session. Startup repair cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
-        : `${scopeRef} is a rebound claim-born identity without a local session. Federated bare addressing cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
+        : request.origin === 'federated-establish'
+          ? `${scopeRef} is a rebound claim-born identity without a local session. Federated remote establishment cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
+          : `${scopeRef} is a rebound claim-born identity without a local session. Federated bare addressing cannot reacquire its wrkq claim; dispatch it locally on ${deps.localNodeId}.`
     )
   }
   return await requireMaterializationCapability(
@@ -726,6 +812,13 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
 
   if (consult.outcome === 'retired') {
     const retired = consult.retirement
+    if (request.origin === 'federated-establish') {
+      return refuse(
+        'scope-retired',
+        `${scopeRef} is retired at epoch ${retired.placementEpoch}; remote establishment is virgin policy birth only.`,
+        retired.successorNodeId === null ? {} : { homeNodeId: retired.successorNodeId }
+      )
+    }
     if (retired.successorNodeId === null) {
       return refuse(
         'scope-retired',
@@ -807,7 +900,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
   }
 
   if (policy?.claimsTask === true && placementPinKey(scopeRef) !== undefined) {
-    if (request.origin === 'federated-ingress' || request.origin === 'startup-repair') {
+    if (forbidsClaimBirth(request.origin)) {
       return refuse(
         'claim-birth-authority-required',
         request.origin === 'startup-repair'
@@ -826,52 +919,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
 
   const designated = resolveDesignatedHome(scopeRef, policy, deps.localNodeId, request.intent)
   if (isEvaluation(designated)) return designated
-
-  if (designated.homeNodeId === deps.localNodeId) {
-    return await requireMaterializationCapability(
-      request,
-      allow('virgin-establishment', {
-        homeNodeId: designated.homeNodeId,
-        establishmentProvenance: designated.provenance,
-      })
-    )
-  }
-
-  if (designated.matchedConstraint !== undefined) {
-    // Exact pins and matched task defaults constrain EVERY path — an explicit
-    // operator start at the wrong node does not override either one.
-    if (designated.matchedConstraint.kind === 'task-default') {
-      const taskKey = designated.matchedConstraint.key
-      return refuse(
-        'pin-mismatch',
-        `${scopeRef} matches task default [placement.task-defaults] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that task-default line.`,
-        {
-          homeNodeId: designated.homeNodeId,
-          candidateEstablishmentProvenance: 'task_default',
-        }
-      )
-    }
-    return refuse(
-      'pin-mismatch',
-      `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,
-      {
-        homeNodeId: designated.homeNodeId,
-        candidateEstablishmentProvenance: 'pin',
-      }
-    )
-  }
-
-  return refuse(
-    'routed-elsewhere',
-    `${scopeRef} routes to ${designated.homeNodeId} by default_home_node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
-    {
-      homeNodeId: designated.homeNodeId,
-      ...(designated.provenance === 'explicit_local' ||
-      designated.provenance === 'default_home_node(local)'
-        ? {}
-        : { candidateEstablishmentProvenance: designated.provenance }),
-    }
-  )
+  return await decideVirginPolicyPlacement(request, scopeRef, designated)
 }
 
 function placementDispositionFor(

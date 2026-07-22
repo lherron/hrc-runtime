@@ -50,6 +50,7 @@ export type FederationOutboxDeliveryObservation = {
   deliveryId: string
   messageId: string
   peerNodeId: string
+  stage: FederationOutboxDeliveryRecord['stage']
   phase: FederationOutboxDeliveryRecord['envelope']['phase']
   replyToMessageId?: string | undefined
   rootMessageId: string
@@ -70,11 +71,11 @@ export type FederationOutboxDeliveryEngineOptions = {
   onObservation?: ((observation: FederationOutboxDeliveryObservation) => void) | undefined
   onStaleRedirect?:
     | ((
-        delivery: FederationOutboxDeliveryRecord,
+        delivery: Extract<FederationOutboxDeliveryRecord, { stage: 'delivering' }>,
         redirect: { homeNodeId: string; placementEpoch: number }
       ) => {
         peerNodeId: string
-        envelope: FederationOutboxDeliveryRecord['envelope']
+        envelope: Extract<FederationOutboxDeliveryRecord, { stage: 'delivering' }>['envelope']
       })
     | undefined
 }
@@ -177,6 +178,7 @@ export class FederationOutboxDeliveryEngine {
     this.observe(delivery, 'attempt_started')
     try {
       const result = await this.send(delivery)
+      const current = this.outbox.get(delivery.deliveryId) ?? delivery
       if (result.outcome !== 'refused') {
         if (result.messageId !== delivery.messageId) {
           throw new Error(
@@ -192,7 +194,11 @@ export class FederationOutboxDeliveryEngine {
           deliveryId: delivery.deliveryId,
           attemptedAt,
           errorCode: result.code,
-          errorMessage: `peer refused delivery with HTTP ${result.status}: ${result.code}`,
+          errorMessage:
+            result.message ?? `peer refused delivery with HTTP ${result.status}: ${result.code}`,
+          ...(result.reason === undefined ? {} : { errorReason: result.reason }),
+          retryable: false,
+          ...(result.homeNodeId === undefined ? {} : { homeNodeId: result.homeNodeId }),
         })
         this.observe(deadLettered, 'dead_lettered')
         return deadLettered
@@ -201,10 +207,11 @@ export class FederationOutboxDeliveryEngine {
       if (
         result.code === 'stale_placement' &&
         result.redirect !== undefined &&
-        this.onStaleRedirect !== undefined
+        this.onStaleRedirect !== undefined &&
+        current.stage === 'delivering'
       ) {
         try {
-          const retarget = this.onStaleRedirect(delivery, result.redirect)
+          const retarget = this.onStaleRedirect(current, result.redirect)
           retryDelivery = this.outbox.retarget(
             delivery.deliveryId,
             retarget.peerNodeId,
@@ -223,19 +230,30 @@ export class FederationOutboxDeliveryEngine {
         }
       }
       return this.scheduleFailure(
-        retryDelivery,
+        retryDelivery === delivery ? current : retryDelivery,
         attemptedAt,
         'retry_scheduled',
         result.code,
-        `peer retryable refusal (HTTP ${result.status}): ${result.code}`
+        result.message ?? `peer retryable refusal (HTTP ${result.status}): ${result.code}`,
+        {
+          reason: result.reason,
+          retryable: true,
+          homeNodeId: result.homeNodeId,
+        }
       )
     } catch (error) {
       return this.scheduleFailure(
-        delivery,
+        this.outbox.get(delivery.deliveryId) ?? delivery,
         attemptedAt,
         'peer_unreachable',
         'peer_unreachable',
-        errorMessage(error)
+        errorMessage(error),
+        {
+          code: 'runtime_unavailable',
+          reason: 'peer_unreachable',
+          retryable: true,
+          homeNodeId: delivery.peerNodeId,
+        }
       )
     }
   }
@@ -245,7 +263,13 @@ export class FederationOutboxDeliveryEngine {
     attemptedAt: string,
     state: 'retry_scheduled' | 'peer_unreachable',
     errorCode: string,
-    message: string
+    message: string,
+    detail: {
+      code?: string | undefined
+      reason?: string | undefined
+      retryable: boolean
+      homeNodeId?: string | undefined
+    }
   ): FederationOutboxDeliveryRecord {
     const attemptedAtMs = Date.parse(attemptedAt)
     const deadlineMs = Date.parse(delivery.retryWindowStartedAt) + this.policy.deadLetterAfterMs
@@ -253,8 +277,12 @@ export class FederationOutboxDeliveryEngine {
       const deadLettered = this.outbox.markDeadLetter({
         deliveryId: delivery.deliveryId,
         attemptedAt,
-        errorCode: 'retry_window_exhausted',
+        errorCode,
         errorMessage: `${message}; automatic retry window exhausted`,
+        ...(detail.code === undefined ? {} : { structuredErrorCode: detail.code }),
+        ...(detail.reason === undefined ? {} : { errorReason: detail.reason }),
+        retryable: detail.retryable,
+        ...(detail.homeNodeId === undefined ? {} : { homeNodeId: detail.homeNodeId }),
       })
       this.observe(deadLettered, 'dead_lettered')
       return deadLettered
@@ -271,6 +299,10 @@ export class FederationOutboxDeliveryEngine {
       attemptedAt,
       errorCode,
       errorMessage: message,
+      ...(detail.code === undefined ? {} : { structuredErrorCode: detail.code }),
+      ...(detail.reason === undefined ? {} : { errorReason: detail.reason }),
+      retryable: detail.retryable,
+      ...(detail.homeNodeId === undefined ? {} : { homeNodeId: detail.homeNodeId }),
     })
     this.observe(scheduled, state)
     return scheduled
@@ -288,6 +320,7 @@ export class FederationOutboxDeliveryEngine {
         deliveryId: delivery.deliveryId,
         messageId: delivery.messageId,
         peerNodeId: delivery.peerNodeId,
+        stage: delivery.stage,
         phase: delivery.envelope.phase,
         ...(delivery.envelope.replyToMessageId === undefined
           ? {}

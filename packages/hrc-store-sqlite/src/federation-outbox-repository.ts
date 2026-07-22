@@ -2,7 +2,10 @@ import type { Database } from 'bun:sqlite'
 import type {
   FederationMessageEnvelope,
   FederationOutboxDeliveryRecord,
+  FederationOutboxError,
   FederationOutboxState,
+  FederationPendingMessageEnvelope,
+  FederationRemoteEstablishRequest,
 } from 'hrc-core'
 
 export type { FederationOutboxDeliveryRecord, FederationOutboxState } from 'hrc-core'
@@ -15,6 +18,15 @@ export type EnqueueFederationOutboxInput = {
   now: string
 }
 
+export type EnqueueFederationEstablishingOutboxInput = {
+  deliveryId: string
+  messageId: string
+  peerNodeId: string
+  establish: FederationRemoteEstablishRequest
+  envelope: FederationPendingMessageEnvelope
+  now: string
+}
+
 export type ScheduleFederationOutboxRetryInput = {
   deliveryId: string
   state: 'retry_scheduled' | 'peer_unreachable'
@@ -22,6 +34,10 @@ export type ScheduleFederationOutboxRetryInput = {
   attemptedAt: string
   errorCode: string
   errorMessage: string
+  structuredErrorCode?: string | undefined
+  errorReason?: string | undefined
+  retryable?: boolean | undefined
+  homeNodeId?: string | undefined
 }
 
 export type MarkFederationOutboxDeadLetterInput = {
@@ -29,6 +45,10 @@ export type MarkFederationOutboxDeadLetterInput = {
   attemptedAt: string
   errorCode: string
   errorMessage: string
+  structuredErrorCode?: string | undefined
+  errorReason?: string | undefined
+  retryable?: boolean | undefined
+  homeNodeId?: string | undefined
 }
 
 type OutboxRow = {
@@ -58,12 +78,63 @@ const OUTBOX_COLUMNS = `
   last_error_code, last_error_message, created_at, updated_at
 `
 
+type StoredOutboxPayload =
+  | {
+      stage: 'establishing'
+      establish: FederationRemoteEstablishRequest
+      envelope: FederationPendingMessageEnvelope
+      lastError?: FederationOutboxError | undefined
+    }
+  | {
+      stage: 'delivering'
+      envelope: FederationMessageEnvelope
+      lastError?: FederationOutboxError | undefined
+    }
+
+function payloadFor(record: FederationOutboxDeliveryRecord): StoredOutboxPayload {
+  return record.stage === 'establishing'
+    ? { stage: record.stage, establish: record.establish, envelope: record.envelope }
+    : { stage: record.stage, envelope: record.envelope }
+}
+
+function errorFor(input: {
+  errorCode: string
+  errorMessage: string
+  structuredErrorCode?: string | undefined
+  errorReason?: string | undefined
+  retryable?: boolean | undefined
+  homeNodeId?: string | undefined
+}): FederationOutboxError | undefined {
+  if (
+    input.errorReason === undefined &&
+    input.retryable === undefined &&
+    input.homeNodeId === undefined
+  ) {
+    return undefined
+  }
+  return {
+    code: input.structuredErrorCode ?? input.errorCode,
+    message: input.errorMessage,
+    ...(input.errorReason === undefined ? {} : { reason: input.errorReason }),
+    retryable: input.retryable === true,
+    ...(input.homeNodeId === undefined ? {} : { homeNodeId: input.homeNodeId }),
+  }
+}
+
+function parsePayload(raw: string): StoredOutboxPayload {
+  const parsed = JSON.parse(raw) as StoredOutboxPayload | FederationMessageEnvelope
+  if ('stage' in parsed) return parsed
+  // Rows written before staged establishment are already delivery-fenced.
+  return { stage: 'delivering', envelope: parsed }
+}
+
 function mapRow(row: OutboxRow): FederationOutboxDeliveryRecord {
+  const payload = parsePayload(row.envelope_json)
   return {
     deliveryId: row.delivery_id,
     messageId: row.message_id,
     peerNodeId: row.peer_node_id,
-    envelope: JSON.parse(row.envelope_json) as FederationMessageEnvelope,
+    ...payload,
     state: row.state,
     totalAttempts: row.total_attempts,
     cycleAttempts: row.cycle_attempts,
@@ -75,6 +146,7 @@ function mapRow(row: OutboxRow): FederationOutboxDeliveryRecord {
     deadLetteredAt: row.dead_lettered_at ?? undefined,
     lastErrorCode: row.last_error_code ?? undefined,
     lastErrorMessage: row.last_error_message ?? undefined,
+    ...(payload.lastError === undefined ? {} : { lastError: payload.lastError }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -113,7 +185,7 @@ export class FederationOutboxRepository {
           input.deliveryId,
           input.messageId,
           input.peerNodeId,
-          JSON.stringify(input.envelope),
+          JSON.stringify({ stage: 'delivering', envelope: input.envelope }),
           input.now,
           input.now,
           input.now,
@@ -122,6 +194,73 @@ export class FederationOutboxRepository {
       return this.require(input.deliveryId)
     })
     return insert()
+  }
+
+  enqueueEstablishing(
+    input: EnqueueFederationEstablishingOutboxInput
+  ): FederationOutboxDeliveryRecord {
+    requireText(input.deliveryId, 'deliveryId')
+    requireText(input.messageId, 'messageId')
+    requireText(input.peerNodeId, 'peerNodeId')
+    requireText(input.establish.scopeRef, 'establish.scopeRef')
+    requireText(input.establish.correlationId, 'establish.correlationId')
+    requireTimestamp(input.now, 'now')
+    if (input.envelope.messageId !== input.messageId) {
+      throw new Error('outbox envelope messageId must match its owning message')
+    }
+
+    const insert = this.db.transaction(() => {
+      this.db
+        .query<unknown, [string, string, string, string, string, string, string, string]>(
+          `INSERT INTO federation_outbox_deliveries (
+             delivery_id, message_id, peer_node_id, envelope_json, state,
+             total_attempts, cycle_attempts, replay_count,
+             retry_window_started_at, next_attempt_at, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 'pending', 0, 0, 0, ?, ?, ?, ?)`
+        )
+        .run(
+          input.deliveryId,
+          input.messageId,
+          input.peerNodeId,
+          JSON.stringify({
+            stage: 'establishing',
+            establish: input.establish,
+            envelope: input.envelope,
+          }),
+          input.now,
+          input.now,
+          input.now,
+          input.now
+        )
+      return this.require(input.deliveryId)
+    })
+    return insert()
+  }
+
+  advanceToDelivery(
+    deliveryId: string,
+    peerNodeId: string,
+    envelope: FederationMessageEnvelope,
+    now: string
+  ): FederationOutboxDeliveryRecord {
+    requireText(peerNodeId, 'peerNodeId')
+    requireTimestamp(now, 'now')
+    const existing = this.require(deliveryId)
+    this.assertMutable(deliveryId)
+    if (existing.stage !== 'establishing') {
+      throw new Error(`federation delivery ${deliveryId} is already in ${existing.stage}`)
+    }
+    if (envelope.messageId !== existing.messageId) {
+      throw new Error('advanced envelope messageId must not change')
+    }
+    this.db
+      .query<unknown, [string, string, string, string]>(
+        `UPDATE federation_outbox_deliveries
+            SET peer_node_id = ?, envelope_json = ?, updated_at = ?
+          WHERE delivery_id = ?`
+      )
+      .run(peerNodeId, JSON.stringify({ stage: 'delivering', envelope }), now, deliveryId)
+    return this.require(deliveryId)
   }
 
   get(deliveryId: string): FederationOutboxDeliveryRecord | undefined {
@@ -178,6 +317,9 @@ export class FederationOutboxRepository {
     requireTimestamp(now, 'now')
     const existing = this.require(deliveryId)
     this.assertMutable(deliveryId)
+    if (existing.stage !== 'delivering') {
+      throw new Error(`cannot retarget federation delivery ${deliveryId} while establishing`)
+    }
     if (envelope.messageId !== existing.messageId) {
       throw new Error('retargeted envelope messageId must not change')
     }
@@ -187,7 +329,7 @@ export class FederationOutboxRepository {
             SET peer_node_id = ?, envelope_json = ?, updated_at = ?
           WHERE delivery_id = ?`
       )
-      .run(peerNodeId, JSON.stringify(envelope), now, deliveryId)
+      .run(peerNodeId, JSON.stringify({ stage: 'delivering', envelope }), now, deliveryId)
     return this.require(deliveryId)
   }
 
@@ -195,13 +337,22 @@ export class FederationOutboxRepository {
     requireTimestamp(input.attemptedAt, 'attemptedAt')
     requireTimestamp(input.nextAttemptAt, 'nextAttemptAt')
     this.assertMutable(input.deliveryId)
+    const existing = this.require(input.deliveryId)
+    const structuredError = errorFor(input)
+    const payload = {
+      ...payloadFor(existing),
+      ...(structuredError === undefined ? {} : { lastError: structuredError }),
+    }
     this.db
-      .query<unknown, [FederationOutboxState, string, string, string, string, string, string]>(
+      .query<
+        unknown,
+        [FederationOutboxState, string, string, string, string, string, string, string]
+      >(
         `UPDATE federation_outbox_deliveries
             SET state = ?, total_attempts = total_attempts + 1,
                 cycle_attempts = cycle_attempts + 1, next_attempt_at = ?,
                 last_attempt_at = ?, last_error_code = ?, last_error_message = ?,
-                delivered_at = NULL, dead_lettered_at = NULL, updated_at = ?
+                envelope_json = ?, delivered_at = NULL, dead_lettered_at = NULL, updated_at = ?
           WHERE delivery_id = ?`
       )
       .run(
@@ -210,6 +361,7 @@ export class FederationOutboxRepository {
         input.attemptedAt,
         input.errorCode,
         input.errorMessage,
+        JSON.stringify(payload),
         input.attemptedAt,
         input.deliveryId
       )
@@ -219,29 +371,37 @@ export class FederationOutboxRepository {
   markDelivered(deliveryId: string, deliveredAt: string): FederationOutboxDeliveryRecord {
     requireTimestamp(deliveredAt, 'deliveredAt')
     this.assertMutable(deliveryId)
+    const payload = payloadFor(this.require(deliveryId))
     this.db
-      .query<unknown, [string, string, string, string]>(
+      .query<unknown, [string, string, string, string, string]>(
         `UPDATE federation_outbox_deliveries
             SET state = 'delivered', total_attempts = total_attempts + 1,
                 cycle_attempts = cycle_attempts + 1, next_attempt_at = NULL,
                 last_attempt_at = ?, delivered_at = ?, dead_lettered_at = NULL,
-                last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                last_error_code = NULL, last_error_message = NULL,
+                envelope_json = ?, updated_at = ?
           WHERE delivery_id = ?`
       )
-      .run(deliveredAt, deliveredAt, deliveredAt, deliveryId)
+      .run(deliveredAt, deliveredAt, JSON.stringify(payload), deliveredAt, deliveryId)
     return this.require(deliveryId)
   }
 
   markDeadLetter(input: MarkFederationOutboxDeadLetterInput): FederationOutboxDeliveryRecord {
     requireTimestamp(input.attemptedAt, 'attemptedAt')
     this.assertMutable(input.deliveryId)
+    const existing = this.require(input.deliveryId)
+    const structuredError = errorFor(input)
+    const payload = {
+      ...payloadFor(existing),
+      ...(structuredError === undefined ? {} : { lastError: structuredError }),
+    }
     this.db
-      .query<unknown, [string, string, string, string, string, string]>(
+      .query<unknown, [string, string, string, string, string, string, string]>(
         `UPDATE federation_outbox_deliveries
             SET state = 'dead_letter', total_attempts = total_attempts + 1,
                 cycle_attempts = cycle_attempts + 1, next_attempt_at = NULL,
                 last_attempt_at = ?, dead_lettered_at = ?,
-                last_error_code = ?, last_error_message = ?, updated_at = ?
+                last_error_code = ?, last_error_message = ?, envelope_json = ?, updated_at = ?
           WHERE delivery_id = ?`
       )
       .run(
@@ -249,6 +409,7 @@ export class FederationOutboxRepository {
         input.attemptedAt,
         input.errorCode,
         input.errorMessage,
+        JSON.stringify(payload),
         input.attemptedAt,
         input.deliveryId
       )
@@ -261,15 +422,17 @@ export class FederationOutboxRepository {
     if (existing.state !== 'dead_letter') {
       throw new Error(`delivery ${deliveryId} is not dead-lettered`)
     }
+    const payload = payloadFor(existing)
     this.db
-      .query<unknown, [string, string, string, string]>(
+      .query<unknown, [string, string, string, string, string]>(
         `UPDATE federation_outbox_deliveries
             SET state = 'pending', cycle_attempts = 0, replay_count = replay_count + 1,
                 retry_window_started_at = ?, next_attempt_at = ?, dead_lettered_at = NULL,
-                last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                last_error_code = NULL, last_error_message = NULL,
+                envelope_json = ?, updated_at = ?
           WHERE delivery_id = ?`
       )
-      .run(now, now, now, deliveryId)
+      .run(now, now, JSON.stringify(payload), now, deliveryId)
     return this.require(deliveryId)
   }
 

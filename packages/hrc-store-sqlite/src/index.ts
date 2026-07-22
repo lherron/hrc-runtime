@@ -9,6 +9,7 @@ export type {
 } from './federation-accepted-request-repository.js'
 export { FederationOutboxRepository } from './federation-outbox-repository.js'
 export type {
+  EnqueueFederationEstablishingOutboxInput,
   EnqueueFederationOutboxInput,
   FederationOutboxDeliveryRecord,
   FederationOutboxState,

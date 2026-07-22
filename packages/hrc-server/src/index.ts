@@ -96,6 +96,7 @@ import { resolveFederationRegistryClient } from './federation/registry-resolutio
 import {
   assertScopeNotRetired,
   captureLivePlacementRepairCandidates,
+  establishRemotePolicyAuthority,
   persistSessionTaskClaimAuthority,
   repairLiveUnboundPlacements,
   resolvePlacementOnServer,
@@ -779,12 +780,15 @@ class HrcServerInstance implements HrcServer {
               observedAt: new Date().toISOString(),
               capabilities: {
                 accept: true,
+                establish: true,
                 locate: true,
                 health: true,
                 runtimeProjection: true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
+            establish: ({ scopeRef, correlationId }) =>
+              establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
             accept: peerAcceptHandler,
           },
         })
@@ -793,6 +797,7 @@ class HrcServerInstance implements HrcServer {
           endpoint: this.peerProtocolEndpoint.url,
           protocolVersion: PEER_PROTOCOL_VERSION,
           acceptEnabled: true,
+          establishEnabled: true,
         })
       } catch (error) {
         try {
@@ -2054,6 +2059,8 @@ export type {
   PeerAcceptClientResult,
   SendFederationEnvelopeOptions,
 } from './federation/accept-client.js'
+export { sendRemoteEstablish } from './federation/establish-client.js'
+export type { SendRemoteEstablishOptions } from './federation/establish-client.js'
 export {
   PEER_PROTOCOL_MAJOR,
   PEER_PROTOCOL_VERSION,
@@ -2066,6 +2073,9 @@ export type {
   PeerAcceptHandler,
   PeerAcceptRequest,
   PeerAcceptResult,
+  PeerEstablishHandler,
+  PeerEstablishRequest,
+  PeerEstablishResult,
   PeerProtocolEndpointControl,
   PeerProtocolHealth,
   PeerProtocolListenerConfig,

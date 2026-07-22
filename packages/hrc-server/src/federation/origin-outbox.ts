@@ -10,19 +10,18 @@ import type {
   FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
   FederationMessageEnvelope,
+  FederationPendingMessageEnvelope,
   HrcMessageRecord,
   SemanticDmRequest,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
-import type {
-  FederationOutboxDeliveryRecord,
-  HrcDatabase,
-} from 'hrc-store-sqlite'
+import type { FederationOutboxDeliveryRecord, HrcDatabase } from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
 import { sendFederationEnvelope } from './accept-client.js'
 import { InMemoryBindingHintCache, createStalePlacementRedirectHandler } from './binding-cache.js'
+import { sendRemoteEstablish } from './establish-client.js'
 import type { FederationConfig } from './federation-config.js'
 import { parseNodeId } from './node-id.js'
 import {
@@ -72,7 +71,10 @@ export type FederationTargetPlacement =
       outcome: 'remote-establish'
       scopeRef: string
       candidateHomeNodeId: string
-      policyProvenance: Extract<PlacementDisposition, { outcome: 'remote-establish' }>['policyProvenance']
+      policyProvenance: Extract<
+        PlacementDisposition,
+        { outcome: 'remote-establish' }
+      >['policyProvenance']
     }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -96,11 +98,10 @@ function deliveryContext(
   return Object.keys(context).length === 0 ? undefined : context
 }
 
-function envelopeFor(
+function pendingEnvelopeFor(
   record: HrcMessageRecord,
-  body: SemanticDmRequest | undefined,
-  expected: { homeNodeId: string; placementEpoch: number }
-): FederationMessageEnvelope {
+  body: SemanticDmRequest | undefined
+): FederationPendingMessageEnvelope {
   const delivery = deliveryContext(body)
   const interactiveSignal = record.metadataJson?.['federationInteractiveSignal'] as
     | FederationInteractiveLifecycleSignal
@@ -115,10 +116,17 @@ function envelopeFor(
     body: record.body,
     rootMessageId: record.rootMessageId,
     ...(record.replyToMessageId === undefined ? {} : { replyToMessageId: record.replyToMessageId }),
-    expected,
     ...(delivery === undefined ? {} : { delivery }),
     ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
   }
+}
+
+function envelopeFor(
+  record: HrcMessageRecord,
+  body: SemanticDmRequest | undefined,
+  expected: { homeNodeId: string; placementEpoch: number }
+): FederationMessageEnvelope {
+  return { ...pendingEnvelopeFor(record, body), expected }
 }
 
 /**
@@ -151,7 +159,7 @@ export class FederationOriginOutbox {
           observation
         ),
       send: async (delivery) => {
-        const peer = options.config.peers.get(
+        let peer = options.config.peers.get(
           parseNodeId(delivery.peerNodeId, 'federation outbox peerNodeId')
         )
         if (peer === undefined) {
@@ -162,6 +170,59 @@ export class FederationOriginOutbox {
             retryable: true,
           }
         }
+        if (delivery.stage === 'establishing') {
+          const establishment = await sendRemoteEstablish({
+            peer,
+            request: delivery.establish,
+          })
+          if (establishment.outcome === 'refused') {
+            return {
+              outcome: 'refused',
+              status: establishment.status,
+              code: establishment.code,
+              message: establishment.message,
+              reason: establishment.reason,
+              retryable: establishment.retryable,
+              ...(establishment.homeNodeId === undefined
+                ? {}
+                : { homeNodeId: establishment.homeNodeId }),
+            }
+          }
+
+          // The peer response is evidence that establishment completed, not
+          // an authority fence. Only a fresh registry read may fence delivery.
+          const binding = await this.resolveRoutingBinding(delivery.establish.scopeRef)
+          const expected = {
+            homeNodeId: binding.homeNodeId,
+            placementEpoch: binding.placementEpoch,
+          }
+          const advanced = options.db.federationOutbox.advanceToDelivery(
+            delivery.deliveryId,
+            binding.homeNodeId,
+            { ...delivery.envelope, expected },
+            new Date().toISOString()
+          )
+          if (advanced.stage !== 'delivering') {
+            throw new Error('outbox establish transition did not produce a delivery fence')
+          }
+          peer = options.config.peers.get(
+            parseNodeId(advanced.peerNodeId, 'federation outbox established peerNodeId')
+          )
+          if (peer === undefined) {
+            return {
+              outcome: 'refused',
+              status: 503,
+              code: 'peer_not_configured',
+              retryable: true,
+            }
+          }
+          return sendFederationEnvelope({
+            db: options.db,
+            peer,
+            envelope: advanced.envelope,
+            onStaleRedirect: handleRedirect,
+          })
+        }
         return sendFederationEnvelope({
           db: options.db,
           peer,
@@ -170,6 +231,9 @@ export class FederationOriginOutbox {
         })
       },
       onStaleRedirect: (delivery, redirect) => {
+        if (delivery.stage !== 'delivering') {
+          throw new Error('stale placement redirect cannot target an establishing delivery')
+        }
         if (delivery.envelope.to.kind !== 'session') {
           throw new Error('stale placement redirect requires a session target')
         }
@@ -277,15 +341,11 @@ export class FederationOriginOutbox {
     const placement = resolvedPlacement ?? (await this.resolveTargetPlacement(body))
     if (placement.outcome === 'local') return { outcome: 'local' }
     if (placement.outcome === 'remote-establish') {
-      throw new HrcConflictError(
-        HrcErrorCode.STALE_CONTEXT,
-        `${placement.scopeRef} requires remote policy establishment on ${placement.candidateHomeNodeId}, but that peer stage is not enabled yet.`,
-        {
-          scopeRef: placement.scopeRef,
-          reason: 'peer_upgrade_required',
-          retryable: false,
-          homeNodeId: placement.candidateHomeNodeId,
-        }
+      return this.enqueueEstablishing(
+        record,
+        body,
+        placement.scopeRef,
+        placement.candidateHomeNodeId
       )
     }
     const binding = placement.binding
@@ -426,6 +486,43 @@ export class FederationOriginOutbox {
     void this.engine.drainDue().catch((error: unknown) =>
       writeServerLog('WARN', 'federation.outbox.immediate_drain_failed', {
         deliveryId: delivery.deliveryId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    )
+    return { outcome: 'queued', delivery }
+  }
+
+  private enqueueEstablishing(
+    record: HrcMessageRecord,
+    body: SemanticDmRequest,
+    scopeRef: string,
+    peerNodeId: string
+  ): FederationOriginRouteResult {
+    const deliveryId = `delivery-${randomUUID()}`
+    const delivery = this.options.db.federationOutbox.enqueueEstablishing({
+      deliveryId,
+      messageId: record.messageId,
+      peerNodeId,
+      establish: {
+        scopeRef,
+        intent: 'implicit',
+        correlationId: `establish-${deliveryId}`,
+      },
+      envelope: pendingEnvelopeFor(record, body),
+      now: new Date().toISOString(),
+    })
+    writeServerLog('INFO', 'federation.outbox.queued', {
+      deliveryId,
+      messageId: record.messageId,
+      peerNodeId,
+      phase: record.phase,
+      rootMessageId: record.rootMessageId,
+      replyToMessageId: record.replyToMessageId,
+      stage: 'establishing',
+    })
+    void this.engine.drainDue().catch((error: unknown) =>
+      writeServerLog('WARN', 'federation.outbox.immediate_drain_failed', {
+        deliveryId,
         error: error instanceof Error ? error.message : String(error),
       })
     )

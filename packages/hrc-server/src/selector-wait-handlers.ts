@@ -27,10 +27,17 @@ export async function waitForMessage(
       matched: false,
       reason: 'delivery_failed',
       messageId: delivery.messageId,
-      errorCode: delivery.lastErrorCode ?? 'delivery_dead_lettered',
-      ...(delivery.lastErrorMessage === undefined
+      errorCode: delivery.lastError?.code ?? delivery.lastErrorCode ?? 'delivery_dead_lettered',
+      ...((delivery.lastError?.message ?? delivery.lastErrorMessage) === undefined
         ? {}
-        : { errorMessage: delivery.lastErrorMessage }),
+        : { errorMessage: delivery.lastError?.message ?? delivery.lastErrorMessage }),
+      ...(delivery.lastError?.reason === undefined
+        ? {}
+        : { errorReason: delivery.lastError.reason }),
+      ...(delivery.lastError === undefined ? {} : { retryable: delivery.lastError.retryable }),
+      ...(delivery.lastError?.homeNodeId === undefined
+        ? {}
+        : { homeNodeId: delivery.lastError.homeNodeId }),
     }
   }
 

@@ -13,6 +13,9 @@ export type PeerAcceptClientResult =
       status: number
       code: string
       retryable: boolean
+      message?: string | undefined
+      reason?: string | undefined
+      homeNodeId?: string | undefined
       redirect?: { homeNodeId: string; placementEpoch: number } | undefined
     }
 
@@ -123,6 +126,9 @@ export async function sendFederationEnvelope(
     status: response.status,
     code: error['code'],
     retryable: error['retryable'] === true,
+    ...(typeof error['message'] === 'string' ? { message: error['message'] } : {}),
+    ...(typeof error['reason'] === 'string' ? { reason: error['reason'] } : {}),
+    ...(typeof error['homeNodeId'] === 'string' ? { homeNodeId: error['homeNodeId'] } : {}),
     ...(redirect === undefined ? {} : { redirect }),
   }
 }

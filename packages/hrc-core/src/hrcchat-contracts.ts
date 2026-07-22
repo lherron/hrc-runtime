@@ -285,6 +285,9 @@ export type WaitMessageResponse =
       messageId: string
       errorCode: string
       errorMessage?: string | undefined
+      errorReason?: string | undefined
+      retryable?: boolean | undefined
+      homeNodeId?: string | undefined
     }
 
 // POST /v1/messages/dm (atomic semantic DM helper)

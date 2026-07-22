@@ -2,10 +2,11 @@
  * Federation v1's dedicated peer HTTP surface (§2/§6).
  *
  * This handler is intentionally independent from HrcServer's Unix-socket
- * router. Its entire network-visible route table is accept, locate, health.
+ * router. Its entire network-visible route table is establish, accept, locate,
+ * and health.
  */
 
-import type { HrcRuntimeSnapshot } from 'hrc-core'
+import type { FederationPlacementBinding, HrcRuntimeSnapshot } from 'hrc-core'
 import { writeServerLog } from '../server-log.js'
 import type { PeerEntry } from './federation-config.js'
 import { isTailnetHost } from './registry-bind.js'
@@ -24,6 +25,7 @@ export type PeerProtocolHealth = {
   readonly observedAt?: string | undefined
   readonly capabilities: {
     readonly accept: boolean
+    readonly establish?: boolean | undefined
     readonly locate: true
     readonly health: true
     readonly runtimeProjection?: boolean | undefined
@@ -63,6 +65,32 @@ export type PeerAcceptResult =
 
 export type PeerAcceptHandler = (request: PeerAcceptRequest) => Promise<PeerAcceptResult>
 
+export type PeerEstablishRequest = {
+  readonly authenticatedNodeId: string
+  readonly protocolVersion: string
+  readonly scopeRef: string
+  readonly intent: 'implicit'
+  readonly correlationId: string
+}
+
+export type PeerEstablishResult =
+  | {
+      readonly outcome: 'established' | 'existing'
+      readonly correlationId: string
+      readonly binding: FederationPlacementBinding
+    }
+  | {
+      readonly outcome: 'refused'
+      readonly status: number
+      readonly code: 'stale_context' | 'runtime_unavailable'
+      readonly message: string
+      readonly reason: string
+      readonly retryable: boolean
+      readonly homeNodeId?: string | undefined
+    }
+
+export type PeerEstablishHandler = (request: PeerEstablishRequest) => Promise<PeerEstablishResult>
+
 export type PeerProtocolRequestHandlerOptions = {
   readonly localNodeId: string
   readonly peers: ReadonlyMap<string, PeerEntry>
@@ -71,6 +99,7 @@ export type PeerProtocolRequestHandlerOptions = {
     request: PeerProtocolHealthRequest
   ) => Promise<PeerProtocolHealth> | PeerProtocolHealth
   readonly accept?: PeerAcceptHandler | undefined
+  readonly establish?: PeerEstablishHandler | undefined
 }
 
 export type PeerProtocolEndpointControl = {
@@ -195,6 +224,67 @@ export function createPeerProtocolRequestHandler(
         const body = await requestRecord(request)
         const location = await options.locate(requiredString(body, 'scopeRef'))
         return responseJson({ ok: true, protocolVersion: PEER_PROTOCOL_VERSION, location }, 200)
+      }
+
+      if (request.method === 'POST' && url.pathname === '/v1/federation/establish') {
+        const body = await requestRecord(request)
+        if (
+          Object.keys(body).some(
+            (key) => key !== 'scopeRef' && key !== 'intent' && key !== 'correlationId'
+          ) ||
+          body['intent'] !== 'implicit'
+        ) {
+          throw new InvalidPeerRequest()
+        }
+        if (options.establish === undefined) {
+          return refusal(404, 'peer_upgrade_required', { retryable: false })
+        }
+        const correlationId = requiredString(body, 'correlationId')
+        let result: PeerEstablishResult
+        try {
+          result = await options.establish({
+            authenticatedNodeId: peer.nodeId,
+            protocolVersion: requestVersion,
+            scopeRef: requiredString(body, 'scopeRef'),
+            intent: 'implicit',
+            correlationId,
+          })
+        } catch (error) {
+          writeServerLog('ERROR', 'federation.establish.unexpected_failure', {
+            localNodeId: options.localNodeId,
+            peerNodeId: peer.nodeId,
+            correlationId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+          result = {
+            outcome: 'refused',
+            status: 503,
+            code: 'runtime_unavailable',
+            message: 'remote policy establishment is temporarily unavailable',
+            reason: 'registry-unreachable',
+            retryable: true,
+            homeNodeId: options.localNodeId,
+          }
+        }
+        if (result.outcome === 'refused') {
+          return refusal(result.status, result.code, {
+            message: result.message,
+            reason: result.reason,
+            retryable: result.retryable,
+            ...(result.homeNodeId === undefined ? {} : { homeNodeId: result.homeNodeId }),
+            context: { scopeRef: body['scopeRef'], correlationId },
+          })
+        }
+        return responseJson(
+          {
+            ok: true,
+            protocolVersion: PEER_PROTOCOL_VERSION,
+            correlationId: result.correlationId,
+            outcome: result.outcome,
+            binding: result.binding,
+          },
+          200
+        )
       }
 
       if (request.method === 'POST' && url.pathname === '/v1/federation/accept') {

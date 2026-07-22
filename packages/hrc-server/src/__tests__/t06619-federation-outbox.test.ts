@@ -211,7 +211,13 @@ describe('T-06619 clock-driven federation retry state machine', () => {
       expect(db.federationOutbox.get('delivery-1')).toMatchObject({
         state: 'dead_letter',
         nextAttemptAt: undefined,
-        lastErrorCode: 'retry_window_exhausted',
+        lastErrorCode: 'peer_unreachable',
+        lastError: {
+          code: 'runtime_unavailable',
+          reason: 'peer_unreachable',
+          retryable: true,
+          homeNodeId: 'lab',
+        },
       })
 
       reachable = true

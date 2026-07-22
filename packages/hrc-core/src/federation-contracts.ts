@@ -109,6 +109,37 @@ export type FederationMessageEnvelope = {
   readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
 }
 
+/** Exact durable placement tuple returned by authority establishment. */
+export type FederationPlacementBinding = LocateBindingRecord & {
+  readonly scopeRef: string
+}
+
+/** Authority-only request. No origin-side placement assertion crosses the wire. */
+export type FederationRemoteEstablishRequest = {
+  readonly scopeRef: string
+  readonly intent: 'implicit'
+  readonly correlationId: string
+}
+
+export type FederationRemoteEstablishResult =
+  | {
+      readonly outcome: 'established' | 'existing'
+      readonly correlationId: string
+      readonly binding: FederationPlacementBinding
+    }
+  | {
+      readonly outcome: 'refused'
+      readonly status: number
+      readonly code: 'stale_context' | 'runtime_unavailable'
+      readonly message: string
+      readonly reason: string
+      readonly retryable: boolean
+      readonly homeNodeId?: string | undefined
+    }
+
+/** Message payload retained durably before an authority fence exists. */
+export type FederationPendingMessageEnvelope = Omit<FederationMessageEnvelope, 'expected'>
+
 // -- Origin outbox operator surface -----------------------------------------
 
 /** Durable origin-side delivery lifecycle exposed to operators in F3. */
@@ -119,16 +150,24 @@ export type FederationOutboxState =
   | 'delivered'
   | 'dead_letter'
 
+/** Public typed failure retained with a durable delivery. */
+export type FederationOutboxError = {
+  readonly code: string
+  readonly message: string
+  readonly reason?: string | undefined
+  readonly retryable: boolean
+  readonly homeNodeId?: string | undefined
+}
+
 /**
  * One durable delivery attempt stream. The envelope remains available in the
  * JSON projection for forensic use; the human CLI intentionally renders only
  * routing, age, attempt, and last-error fields.
  */
-export type FederationOutboxDeliveryRecord = {
+type FederationOutboxDeliveryCommon = {
   deliveryId: string
   messageId: string
   peerNodeId: string
-  envelope: FederationMessageEnvelope
   state: FederationOutboxState
   totalAttempts: number
   cycleAttempts: number
@@ -140,9 +179,23 @@ export type FederationOutboxDeliveryRecord = {
   deadLetteredAt?: string | undefined
   lastErrorCode?: string | undefined
   lastErrorMessage?: string | undefined
+  lastError?: FederationOutboxError | undefined
   createdAt: string
   updatedAt: string
 }
+
+export type FederationOutboxDeliveryRecord = FederationOutboxDeliveryCommon &
+  (
+    | {
+        stage: 'establishing'
+        establish: FederationRemoteEstablishRequest
+        envelope: FederationPendingMessageEnvelope
+      }
+    | {
+        stage: 'delivering'
+        envelope: FederationMessageEnvelope
+      }
+  )
 
 // -- F3 peer health and all-node runtime projections ------------------------
 
@@ -151,6 +204,8 @@ export type FederationPeerCapabilities = {
   readonly accept: boolean
   readonly locate: boolean
   readonly health: boolean
+  /** Authority-only remote policy establishment. */
+  readonly establish?: boolean | undefined
   /** Additive v1 capability; older peers simply omit it. */
   readonly runtimeProjection?: boolean | undefined
 }

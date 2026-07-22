@@ -987,7 +987,8 @@ export async function handleSemanticDm(
         phases: ['response'],
         afterSeq: record.messageSeq,
       },
-      timeoutMs
+      timeoutMs,
+      record.messageId
     )
   }
 

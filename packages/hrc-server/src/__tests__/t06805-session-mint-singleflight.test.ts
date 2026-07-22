@@ -55,9 +55,7 @@ describe('T-06805 session mint single-flight', () => {
         activeHostSessionId: sessions[0]!.hostSessionId,
       })
       expect(
-        db.hrcEvents
-          .listByScope(SCOPE)
-          .filter((event) => event.eventKind === 'session.created')
+        db.hrcEvents.listByScope(SCOPE).filter((event) => event.eventKind === 'session.created')
       ).toHaveLength(1)
     } finally {
       db.close()
