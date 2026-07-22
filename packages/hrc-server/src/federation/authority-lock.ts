@@ -19,6 +19,7 @@ interface ScopeAuthorityLock {
 }
 
 const ownerLocks = new WeakMap<object, Map<string, ScopeAuthorityLock>>()
+const ownerSessionMintTails = new WeakMap<object, Map<string, Promise<void>>>()
 
 function acquire(lock: ScopeAuthorityLock, kind: LockKind): Promise<void> {
   const writerQueued = lock.queue.some((waiter) => waiter.kind === 'rebind')
@@ -94,4 +95,38 @@ export async function withScopeAuthorityLock<T>(
   operation: () => T | Promise<T>
 ): Promise<T> {
   return await withLock(owner, scopeRef, 'rebind', operation)
+}
+
+/**
+ * Exclusive per-scope/lane mint serialization nested inside a summon reader.
+ *
+ * Summons for different lanes remain concurrent and rebind still waits for all
+ * summon readers. The mint callback must re-read continuity after entering.
+ */
+export async function withSessionMintLock<T>(
+  owner: object,
+  scopeRef: string,
+  laneRef: string,
+  operation: () => T | Promise<T>
+): Promise<T> {
+  let tails = ownerSessionMintTails.get(owner)
+  if (tails === undefined) {
+    tails = new Map()
+    ownerSessionMintTails.set(owner, tails)
+  }
+  const key = `${scopeRef}\u0000${laneRef}`
+  const prior = tails.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const tail = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  tails.set(key, tail)
+
+  await prior
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (tails.get(key) === tail) tails.delete(key)
+  }
 }

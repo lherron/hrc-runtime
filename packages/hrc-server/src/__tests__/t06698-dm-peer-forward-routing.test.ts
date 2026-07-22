@@ -256,9 +256,10 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       expect(localEnsureBody.error?.message).toContain('retired on this node (svc-test)')
       expect(localEnsureBody.error?.message).toContain('successor is lab-test')
 
-      // Registry-unbound routing fails at the DM entry point immediately and
-      // tells the caller it is retryable; it never hangs or falls through to
-      // a local summon attempt.
+      // Registry-unbound, summon-capable delivery now reaches the shared
+      // placement resolver. This fixture intentionally has no clod agent home,
+      // so the resolver returns the exact typed capability refusal instead of
+      // leaking a routing-layer internal error.
       const unbound = await runCredentialStrippedDm(
         svc,
         'clod@hrc-runtime:T-06698-unbound',
@@ -266,14 +267,15 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       )
       expect(unbound.exitCode).toBe(1)
       expect(unbound.stdout).toBe('')
-      expect(unbound.stderr).toContain('no federation routing binding exists')
-      expect(unbound.stderr).toContain('delivery may be retried')
-      expect(unbound.stderr).not.toContain('[stale_context]')
+      expect(unbound.stderr).toContain('[stale_context]')
+      expect(unbound.stderr).toContain('agent home/skills')
+      expect(unbound.stderr).not.toContain('[internal_error]')
 
       // Codex.app owns `task:codex-<uuid>` inboxes outside HRC. When no
       // federation binding exists, hrcchat must still persist the DM on the
       // accepting node for the desktop app to poll, then stop before any HRC
-      // session/runtime delivery. Ordinary unbound scopes above still fail.
+      // session/runtime delivery. Ordinary unbound scopes above still pass
+      // through placement policy and fail closed when capability is absent.
       const external = await runCredentialStrippedDm(
         svc,
         `cody@hrc-runtime:${EXTERNAL_TASK}`,

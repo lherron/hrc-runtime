@@ -164,6 +164,11 @@ describe('local ledger authority — the hot path, no network', () => {
 
     expect(result.evaluation.decision).toBe('allow')
     expect(result.evaluation.reason).toBe('local-authority')
+    expect(result.placement).toMatchObject({
+      outcome: 'local-bound',
+      source: 'local-ledger',
+      binding: { homeNodeId: 'max3', placementEpoch: 1 },
+    })
     expect(registry.calls).toEqual([])
   })
 
@@ -179,6 +184,10 @@ describe('local ledger authority — the hot path, no network', () => {
     expect(result.evaluation.reason).toBe('bound-elsewhere')
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
     expect(result.evaluation.homeNodeId).toBe('lab')
+    expect(result.placement).toMatchObject({
+      outcome: 'remote-bound',
+      binding: { homeNodeId: 'lab', placementEpoch: 1 },
+    })
     expect(result.evaluation.diagnostic).toContain('lab')
   })
 })
@@ -290,6 +299,31 @@ describe('placement policy — pins are hard constraints on every path', () => {
     if (result.evaluation.decision !== 'allow') throw new Error('unreachable')
     // Pin beats default_home_node.
     expect(result.evaluation.establishmentProvenance).toBe('pin')
+    expect(result.placement).toEqual({
+      outcome: 'local-establish',
+      kind: 'virgin-policy',
+      homeNodeId: 'max3',
+      provenance: 'pin',
+    })
+  })
+
+  test('implicit virgin pin naming a peer resolves remote-establish without acting', async () => {
+    const result = await evaluateSummonGate({
+      scopeRef: SCOPE,
+      path: 'ensure-target',
+      intent: 'implicit',
+      deps: pinnedElsewhere,
+    })
+
+    expect(result.placement).toEqual({
+      outcome: 'remote-establish',
+      kind: 'virgin-policy',
+      candidateHomeNodeId: 'lab',
+      reason: 'pin-mismatch',
+      policyProvenance: 'pin',
+    })
+    expect((pinnedElsewhere.ledger as ReturnType<typeof ledgerStub>).calls).toContain(SCOPE)
+    expect((pinnedElsewhere.registry as ReturnType<typeof registryStub>).calls).toContain(SCOPE)
   })
 
   test('pin key is the exact project:task scope key', () => {
@@ -389,6 +423,11 @@ describe('undeclared placement — visible refusal naming the stanza line', () =
 
     expect(result.evaluation.decision).toBe('refuse')
     expect(result.evaluation.reason).toBe('undeclared-placement')
+    expect(result.placement).toMatchObject({
+      outcome: 'refuse',
+      reason: 'undeclared-placement',
+      retryable: false,
+    })
     if (result.evaluation.decision !== 'refuse') throw new Error('unreachable')
     // Must name the stanza AND the exact line, never a bare "not configured".
     expect(result.evaluation.diagnostic).toContain('[placement]')

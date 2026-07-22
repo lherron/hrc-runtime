@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
-import { isCodexAppOwnedScopeRef } from 'hrc-core'
+import {
+  HrcConflictError,
+  HrcErrorCode,
+  HrcRuntimeUnavailableError,
+  isCodexAppOwnedScopeRef,
+} from 'hrc-core'
 import type {
   FederationInteractiveLifecycleSignal,
   FederationMessageDelivery,
@@ -9,7 +14,10 @@ import type {
   SemanticDmRequest,
 } from 'hrc-core'
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
-import type { FederationOutboxDeliveryRecord, HrcDatabase } from 'hrc-store-sqlite'
+import type {
+  FederationOutboxDeliveryRecord,
+  HrcDatabase,
+} from 'hrc-store-sqlite'
 
 import { writeServerLog } from '../server-log.js'
 import { parseSessionRef } from '../server-parsers.js'
@@ -28,6 +36,8 @@ import {
   FederationRoutingResolutionError,
   resolveFederationRoutingBinding,
 } from './routing-resolution.js'
+import type { ResolvedFederationRoutingBinding } from './routing-resolution.js'
+import type { PlacementDisposition } from './summon-gate.js'
 
 export type FederationOriginOutboxOptions = {
   db: HrcDatabase
@@ -35,11 +45,35 @@ export type FederationOriginOutboxOptions = {
   localRegistryClient?: BindingRegistryClient | undefined
   retryPolicy?: FederationOutboxRetryPolicy | undefined
   pollIntervalMs?: number | undefined
+  resolvePlacement?:
+    | ((input: {
+        scopeRef: string
+        body: SemanticDmRequest
+      }) => Promise<PlacementDisposition | undefined>)
+    | undefined
 }
 
 export type FederationOriginRouteResult =
   | { outcome: 'local' }
   | { outcome: 'queued'; delivery: FederationOutboxDeliveryRecord }
+
+export type FederationTargetPlacement =
+  | { outcome: 'local' }
+  | {
+      outcome: 'remote-bound'
+      binding: {
+        scopeRef: string
+        homeNodeId: string
+        placementEpoch: number
+        source?: ResolvedFederationRoutingBinding['source'] | undefined
+      }
+    }
+  | {
+      outcome: 'remote-establish'
+      scopeRef: string
+      candidateHomeNodeId: string
+      policyProvenance: Extract<PlacementDisposition, { outcome: 'remote-establish' }>['policyProvenance']
+    }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -160,6 +194,58 @@ export class FederationOriginOutbox {
    * registry's active binding when the same node originates a federated DM to
    * the winner.
    */
+  async resolveTargetPlacement(body: SemanticDmRequest): Promise<FederationTargetPlacement> {
+    if (body.to.kind !== 'session') return { outcome: 'local' }
+    const scopeRef = parseSessionRef(body.to.sessionRef).scopeRef
+    let binding: ResolvedFederationRoutingBinding | undefined
+    try {
+      binding = await this.resolveMessageStorageBinding(scopeRef)
+    } catch (error) {
+      if (
+        !(error instanceof FederationRoutingResolutionError) ||
+        error.code !== 'binding_unbound'
+      ) {
+        throw error
+      }
+
+      const summonCapable = body.createIfMissing !== false && body.runtimeIntent !== undefined
+      if (!summonCapable) {
+        throw new HrcConflictError(
+          HrcErrorCode.STALE_CONTEXT,
+          `${scopeRef} is unbound and this message does not carry summon authority.`,
+          {
+            scopeRef,
+            reason: 'summon-intent-required',
+            retryable: false,
+          }
+        )
+      }
+
+      const placement = await this.options.resolvePlacement?.({ scopeRef, body })
+      if (placement === undefined) throw error
+      switch (placement.outcome) {
+        case 'local-bound':
+        case 'local-establish':
+          return { outcome: 'local' }
+        case 'remote-bound':
+          return { outcome: 'remote-bound', binding: placement.binding }
+        case 'remote-establish':
+          return {
+            outcome: 'remote-establish',
+            scopeRef,
+            candidateHomeNodeId: placement.candidateHomeNodeId,
+            policyProvenance: placement.policyProvenance,
+          }
+        case 'refuse':
+          this.throwPlacementRefusal(scopeRef, placement)
+      }
+    }
+    if (binding === undefined || binding.homeNodeId === this.options.config.nodeId) {
+      return { outcome: 'local' }
+    }
+    return { outcome: 'remote-bound', binding }
+  }
+
   async isRemoteTarget(scopeRef: string): Promise<boolean> {
     const binding = await this.resolveMessageStorageBinding(scopeRef)
     if (binding === undefined) return false
@@ -178,7 +264,8 @@ export class FederationOriginOutbox {
 
   async route(
     body: SemanticDmRequest,
-    record: HrcMessageRecord
+    record: HrcMessageRecord,
+    resolvedPlacement?: FederationTargetPlacement | undefined
   ): Promise<FederationOriginRouteResult> {
     const responseRoute = this.responseRoute(record)
     if (responseRoute !== undefined) {
@@ -187,14 +274,41 @@ export class FederationOriginOutbox {
       })
     }
     if (record.to.kind !== 'session') return { outcome: 'local' }
-    const scopeRef = parseSessionRef(record.to.sessionRef).scopeRef
-    const binding = await this.resolveMessageStorageBinding(scopeRef)
-    if (binding === undefined) return { outcome: 'local' }
-    if (binding.homeNodeId === this.options.config.nodeId) return { outcome: 'local' }
+    const placement = resolvedPlacement ?? (await this.resolveTargetPlacement(body))
+    if (placement.outcome === 'local') return { outcome: 'local' }
+    if (placement.outcome === 'remote-establish') {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        `${placement.scopeRef} requires remote policy establishment on ${placement.candidateHomeNodeId}, but that peer stage is not enabled yet.`,
+        {
+          scopeRef: placement.scopeRef,
+          reason: 'peer_upgrade_required',
+          retryable: false,
+          homeNodeId: placement.candidateHomeNodeId,
+        }
+      )
+    }
+    const binding = placement.binding
 
     return this.enqueue(record, body, binding.homeNodeId, binding, {
       routingSource: binding.source,
     })
+  }
+
+  private throwPlacementRefusal(
+    scopeRef: string,
+    placement: Extract<PlacementDisposition, { outcome: 'refuse' }>
+  ): never {
+    const detail = {
+      scopeRef,
+      reason: placement.reason,
+      retryable: placement.retryable,
+      ...(placement.homeNodeId === undefined ? {} : { homeNodeId: placement.homeNodeId }),
+    }
+    if (placement.reason === 'registry-unreachable') {
+      throw new HrcRuntimeUnavailableError(placement.diagnostic, detail)
+    }
+    throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, placement.diagnostic, detail)
   }
 
   /**

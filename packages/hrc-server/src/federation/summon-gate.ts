@@ -167,6 +167,8 @@ export type SummonGateEvaluation =
       registryBinding?: PlacementBinding | undefined
       /** Exact tombstone to consume in a registry-owned E -> E+1 transition. */
       registryRetirement?: RegistryRetirementRecord | undefined
+      /** Exact local authority observed by the placement resolver. */
+      placementBinding?: PlacementBinding | undefined
     }
   | {
       decision: 'refuse'
@@ -178,10 +180,63 @@ export type SummonGateEvaluation =
       homeNodeId?: string | undefined
       capability?: SummonCapabilityName | undefined
       capabilitySource?: 'presence-heuristic' | undefined
+      /** Exact established remote authority; present only for bound-elsewhere. */
+      placementBinding?: PlacementBinding | undefined
+      /** Policy provenance for an unbound implicit request naming a remote home. */
+      candidateEstablishmentProvenance?:
+        | Exclude<EstablishmentProvenance, 'rebind' | 'explicit_local' | 'default_home_node(local)'>
+        | undefined
+    }
+
+/**
+ * Closed placement result shared by every summon-capable ingress.
+ *
+ * This is a decision only. Consumers may route, establish, or refuse from the
+ * result, but the resolver itself never writes authority, enqueues delivery,
+ * or mints a session.
+ */
+export type PlacementDisposition =
+  | {
+      outcome: 'local-bound'
+      binding: PlacementBinding
+      source: 'local-ledger' | 'registry'
+    }
+  | {
+      outcome: 'local-establish'
+      kind: 'virgin-policy' | 'retired-successor' | 'child' | 'claim'
+      homeNodeId: string
+      provenance:
+        | Exclude<EstablishmentProvenance, 'rebind'>
+        | BirthAuthorityProvenance
+        | RegistryRetirementRecord
+        | { claim: 'birth' | 'rebind' }
+    }
+  | {
+      outcome: 'remote-bound'
+      binding: PlacementBinding
+    }
+  | {
+      outcome: 'remote-establish'
+      kind: 'virgin-policy'
+      candidateHomeNodeId: string
+      reason: 'pin-mismatch' | 'routed-elsewhere'
+      policyProvenance: Exclude<
+        EstablishmentProvenance,
+        'rebind' | 'explicit_local' | 'default_home_node(local)'
+      >
+    }
+  | {
+      outcome: 'refuse'
+      reason: SummonGateRefuseReason
+      retryable: boolean
+      diagnostic: string
+      homeNodeId?: string | undefined
     }
 
 export type SummonGateResult = {
   evaluation: SummonGateEvaluation
+  /** Undefined only for the flag-dark and synthetic non-agent abstentions. */
+  placement?: PlacementDisposition | undefined
   /** True only when a refusal actually bites — i.e. enforce mode. */
   enforced: boolean
   mode: SummonGateMode
@@ -273,6 +328,7 @@ function allow(
     authorityProvenance?: BirthAuthorityProvenance
     registryBinding?: PlacementBinding
     registryRetirement?: RegistryRetirementRecord
+    placementBinding?: PlacementBinding
   } = {}
 ): Extract<SummonGateEvaluation, { decision: 'allow' }> {
   return { decision: 'allow', reason, ...extra }
@@ -286,6 +342,11 @@ function refuse(
     homeNodeId?: string
     capability?: SummonCapabilityName
     capabilitySource?: 'presence-heuristic'
+    placementBinding?: PlacementBinding
+    candidateEstablishmentProvenance?: Exclude<
+      EstablishmentProvenance,
+      'rebind' | 'explicit_local' | 'default_home_node(local)'
+    >
   } = {}
 ): SummonGateEvaluation {
   return {
@@ -298,6 +359,12 @@ function refuse(
     ...(options.capabilitySource === undefined
       ? {}
       : { capabilitySource: options.capabilitySource }),
+    ...(options.placementBinding === undefined
+      ? {}
+      : { placementBinding: options.placementBinding }),
+    ...(options.candidateEstablishmentProvenance === undefined
+      ? {}
+      : { candidateEstablishmentProvenance: options.candidateEstablishmentProvenance }),
   }
 }
 
@@ -585,13 +652,16 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       }
       return await requireMaterializationCapability(
         request,
-        allow('local-authority', { homeNodeId: local.homeNodeId })
+        allow('local-authority', {
+          homeNodeId: local.homeNodeId,
+          placementBinding: local,
+        })
       )
     }
     return refuse(
       'bound-elsewhere',
       `${scopeRef} is homed on ${local.homeNodeId} (epoch ${local.placementEpoch}), not this node (${deps.localNodeId}). Summon it on ${local.homeNodeId}; moving it requires a rebind.`,
-      { homeNodeId: local.homeNodeId }
+      { homeNodeId: local.homeNodeId, placementBinding: local }
     )
   }
 
@@ -650,7 +720,7 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
     return refuse(
       'bound-elsewhere',
       `${scopeRef} is already established on ${bound.homeNodeId} (epoch ${bound.placementEpoch}). A placement policy edit alone never grants this node authority — summon it on ${bound.homeNodeId}, or rebind it.`,
-      { homeNodeId: bound.homeNodeId }
+      { homeNodeId: bound.homeNodeId, placementBinding: bound }
     )
   }
 
@@ -775,21 +845,128 @@ async function decide(request: SummonGateRequest): Promise<SummonGateEvaluation>
       return refuse(
         'pin-mismatch',
         `${scopeRef} matches task default [placement.task-defaults] "${taskKey}" = "${designated.homeNodeId}"; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change that task-default line.`,
-        { homeNodeId: designated.homeNodeId }
+        {
+          homeNodeId: designated.homeNodeId,
+          candidateEstablishmentProvenance: 'task_default',
+        }
       )
     }
     return refuse(
       'pin-mismatch',
       `${scopeRef} is pinned to ${designated.homeNodeId}; it establishes and summons only there. This node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}, or change the pin.`,
-      { homeNodeId: designated.homeNodeId }
+      {
+        homeNodeId: designated.homeNodeId,
+        candidateEstablishmentProvenance: 'pin',
+      }
     )
   }
 
   return refuse(
     'routed-elsewhere',
     `${scopeRef} routes to ${designated.homeNodeId} by default_home_node; this node is ${deps.localNodeId}. Summon it on ${designated.homeNodeId}.`,
-    { homeNodeId: designated.homeNodeId }
+    {
+      homeNodeId: designated.homeNodeId,
+      ...(designated.provenance === 'explicit_local' ||
+      designated.provenance === 'default_home_node(local)'
+        ? {}
+        : { candidateEstablishmentProvenance: designated.provenance }),
+    }
   )
+}
+
+function placementDispositionFor(
+  request: SummonGateRequest,
+  evaluation: SummonGateEvaluation
+): PlacementDisposition | undefined {
+  if (evaluation.decision === 'refuse') {
+    if (evaluation.reason === 'bound-elsewhere' && evaluation.placementBinding !== undefined) {
+      return { outcome: 'remote-bound', binding: evaluation.placementBinding }
+    }
+    if (
+      request.intent === 'implicit' &&
+      evaluation.homeNodeId !== undefined &&
+      evaluation.candidateEstablishmentProvenance !== undefined &&
+      (evaluation.reason === 'pin-mismatch' || evaluation.reason === 'routed-elsewhere')
+    ) {
+      return {
+        outcome: 'remote-establish',
+        kind: 'virgin-policy',
+        candidateHomeNodeId: evaluation.homeNodeId,
+        reason: evaluation.reason,
+        policyProvenance: evaluation.candidateEstablishmentProvenance,
+      }
+    }
+    return {
+      outcome: 'refuse',
+      reason: evaluation.reason,
+      retryable: evaluation.retryable,
+      diagnostic: evaluation.diagnostic,
+      ...(evaluation.homeNodeId === undefined ? {} : { homeNodeId: evaluation.homeNodeId }),
+    }
+  }
+
+  if (evaluation.reason === 'local-authority' && evaluation.placementBinding !== undefined) {
+    return {
+      outcome: 'local-bound',
+      binding: evaluation.placementBinding,
+      source: 'local-ledger',
+    }
+  }
+  if (evaluation.reason === 'registry-bound-local' && evaluation.registryBinding !== undefined) {
+    return {
+      outcome: 'local-bound',
+      binding: evaluation.registryBinding,
+      source: 'registry',
+    }
+  }
+  if (
+    evaluation.reason === 'virgin-establishment' &&
+    evaluation.homeNodeId !== undefined &&
+    evaluation.establishmentProvenance !== undefined
+  ) {
+    return {
+      outcome: 'local-establish',
+      kind: 'virgin-policy',
+      homeNodeId: evaluation.homeNodeId,
+      provenance: evaluation.establishmentProvenance,
+    }
+  }
+  if (
+    evaluation.reason === 'retired-policy-succession' &&
+    evaluation.homeNodeId !== undefined &&
+    evaluation.registryRetirement !== undefined
+  ) {
+    return {
+      outcome: 'local-establish',
+      kind: 'retired-successor',
+      homeNodeId: evaluation.homeNodeId,
+      provenance: evaluation.registryRetirement,
+    }
+  }
+  if (
+    evaluation.reason === 'child-birth' &&
+    evaluation.homeNodeId !== undefined &&
+    evaluation.authorityProvenance !== undefined
+  ) {
+    return {
+      outcome: 'local-establish',
+      kind: 'child',
+      homeNodeId: evaluation.homeNodeId,
+      provenance: evaluation.authorityProvenance,
+    }
+  }
+  if (
+    (evaluation.reason === 'claim-birth' || evaluation.reason === 'claim-rebind') &&
+    evaluation.homeNodeId !== undefined
+  ) {
+    return {
+      outcome: 'local-establish',
+      kind: 'claim',
+      homeNodeId: evaluation.homeNodeId,
+      provenance: { claim: evaluation.reason === 'claim-birth' ? 'birth' : 'rebind' },
+    }
+  }
+  return undefined
 }
 
 /**
@@ -848,5 +1025,17 @@ export async function evaluateSummonGate(request: SummonGateRequest): Promise<Su
     })
   }
 
-  return { evaluation, enforced, mode: deps.mode }
+  const placement = placementDispositionFor(request, evaluation)
+  return {
+    evaluation,
+    ...(placement === undefined ? {} : { placement }),
+    enforced,
+    mode: deps.mode,
+  }
+}
+
+export async function resolvePlacementDisposition(
+  request: SummonGateRequest
+): Promise<PlacementDisposition | undefined> {
+  return (await evaluateSummonGate(request)).placement
 }

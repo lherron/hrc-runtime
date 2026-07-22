@@ -98,6 +98,7 @@ import {
   captureLivePlacementRepairCandidates,
   persistSessionTaskClaimAuthority,
   repairLiveUnboundPlacements,
+  resolvePlacementOnServer,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import {
@@ -812,6 +813,24 @@ class HrcServerInstance implements HrcServer {
               db: this.db,
               config: federationConfig,
               localRegistryClient: this.bindingRegistryEndpoint?.registryClient,
+              resolvePlacement: ({ scopeRef, body }) =>
+                resolvePlacementOnServer(this, {
+                  scopeRef,
+                  path: 'ensure-target',
+                  intent: 'implicit',
+                  origin: 'local',
+                  capabilityHint: {
+                    ...(body.runtimeIntent?.placement === undefined
+                      ? {}
+                      : { placement: body.runtimeIntent.placement }),
+                    ...(body.runtimeIntent?.harness === undefined
+                      ? {}
+                      : { harness: body.runtimeIntent.harness }),
+                  },
+                  ...(body.birthCredential === undefined
+                    ? {}
+                    : { birthCredential: body.birthCredential }),
+                }),
               ...(options.federationOutboxRetryPolicy === undefined
                 ? {}
                 : { retryPolicy: options.federationOutboxRetryPolicy }),
@@ -1152,6 +1171,7 @@ class HrcServerInstance implements HrcServer {
       this,
       {
         scopeRef,
+        laneRef,
         path: 'resolve-session',
         intent: parsed.summonIntent ?? 'implicit',
         ...(parsed.runtimeIntent === undefined
@@ -1167,6 +1187,16 @@ class HrcServerInstance implements HrcServer {
           : { birthCredential: parsed.birthCredential }),
       },
       (claimAuthority) => {
+        const raced = findContinuitySession(this.db, parsed.sessionRef)
+        if (raced !== null) {
+          return json({
+            found: true,
+            hostSessionId: raced.hostSessionId,
+            generation: raced.generation,
+            created: false,
+            session: raced,
+          } satisfies ResolveSessionResponse)
+        }
         const now = timestamp()
         const hostSessionId = createHostSessionId()
         const session: HrcSessionRecord = {
@@ -1333,11 +1363,19 @@ class HrcServerInstance implements HrcServer {
       this,
       {
         scopeRef,
+        laneRef,
         path: 'command-run',
         intent: 'implicit',
         ...(birthCredential === undefined ? {} : { birthCredential }),
       },
       (claimAuthority) => {
+        const racedContinuity = this.db.continuities.getByKey(scopeRef, laneRef)
+        if (racedContinuity !== null) {
+          const racedSession = this.db.sessions.getByHostSessionId(
+            racedContinuity.activeHostSessionId
+          )
+          if (racedSession !== null) return racedSession
+        }
         const now = timestamp()
         const hostSessionId = createHostSessionId()
         const session: HrcSessionRecord = {

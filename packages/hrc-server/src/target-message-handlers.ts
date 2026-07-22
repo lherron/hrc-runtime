@@ -32,6 +32,7 @@ import { shouldUseSdkTransport } from './broker-decisions.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
+import type { FederationTargetPlacement } from './federation/origin-outbox.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import {
   assertScopeNotRetired,
@@ -421,6 +422,7 @@ async function createNotifiedSessionSuccessor(
     server,
     {
       scopeRef: session.scopeRef,
+      laneRef: session.laneRef,
       path: 'archived-successor',
       intent: 'implicit',
       knownSession: true,
@@ -436,6 +438,11 @@ async function createNotifiedSessionSuccessor(
       ...(birthCredential === undefined ? {} : { birthCredential }),
     },
     (claimAuthority) => {
+      const raced = findTargetSession(
+        server.db,
+        formatSessionRef(session.scopeRef, session.laneRef)
+      )
+      if (raced !== null && raced.hostSessionId !== session.hostSessionId) return raced
       const successor = server.db.sqlite.transaction(() => {
         const created = createSessionSuccessorFromContinuation(server.db, session, {
           ...(intent ? { lastAppliedIntentJson: intent } : {}),
@@ -876,6 +883,7 @@ export async function handleSemanticDm(
   request: Request
 ): Promise<Response> {
   const body = parseSemanticDmRequest(await parseJsonBody(request))
+  let resolvedPlacement: FederationTargetPlacement | undefined
   const parent =
     body.replyToMessageId !== undefined
       ? this.db.messages.getById(body.replyToMessageId)
@@ -935,7 +943,8 @@ export async function handleSemanticDm(
     let routingError: unknown
     if (!remoteTarget && this.federationOriginOutbox !== undefined) {
       try {
-        remoteTarget = await this.federationOriginOutbox.isRemoteTarget(scopeRef)
+        resolvedPlacement = await this.federationOriginOutbox.resolveTargetPlacement(body)
+        remoteTarget = resolvedPlacement.outcome !== 'local'
       } catch (error) {
         routingError = error
       }
@@ -960,7 +969,7 @@ export async function handleSemanticDm(
     },
   })
 
-  const federationRoute = await this.federationOriginOutbox?.route(body, record)
+  const federationRoute = await this.federationOriginOutbox?.route(body, record, resolvedPlacement)
   const { execution, reply } =
     federationRoute?.outcome === 'queued'
       ? {}

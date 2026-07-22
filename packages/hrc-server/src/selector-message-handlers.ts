@@ -167,6 +167,7 @@ export async function ensureTargetSession(
   origin: 'local' | 'federated-ingress' = 'local'
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
+  const { scopeRef, laneRef } = parseSessionRef(normalized)
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
     const now = timestamp()
@@ -176,7 +177,8 @@ export async function ensureTargetSession(
       return await withSummonAuthority(
         this,
         {
-          scopeRef: parseSessionRef(normalized).scopeRef,
+          scopeRef,
+          laneRef,
           path: 'archived-successor',
           intent: 'implicit',
           knownSession: true,
@@ -185,6 +187,8 @@ export async function ensureTargetSession(
           ...(birthCredential === undefined ? {} : { birthCredential }),
         },
         (claimAuthority) => {
+          const raced = findTargetSession(this.db, normalized)
+          if (raced !== null && raced.hostSessionId !== existing.hostSessionId) return raced
           const successor = this.db.sqlite.transaction(() => {
             const created = createSessionSuccessorFromContinuation(this.db, existing, {
               lastAppliedIntentJson: intent,
@@ -226,11 +230,11 @@ export async function ensureTargetSession(
     return requireSession(this.db, existing.hostSessionId)
   }
 
-  const { scopeRef, laneRef } = parseSessionRef(normalized)
   return await withSummonAuthority(
     this,
     {
       scopeRef,
+      laneRef,
       path: 'ensure-target',
       intent: 'implicit',
       origin,
@@ -238,6 +242,8 @@ export async function ensureTargetSession(
       ...(birthCredential === undefined ? {} : { birthCredential }),
     },
     (claimAuthority) => {
+      const raced = findTargetSession(this.db, normalized)
+      if (raced !== null) return raced
       const now = timestamp()
       const hostSessionId = createHostSessionId()
       const session: HrcSessionRecord = {

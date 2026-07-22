@@ -26,7 +26,7 @@ import type { HrcDatabase, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
 import { markRuntimeStale } from '../startup-reconcile/runtime-mutations.js'
-import { withScopeSummonLock } from './authority-lock.js'
+import { withScopeSummonLock, withSessionMintLock } from './authority-lock.js'
 import { validateRuntimeBirthCredential } from './birth-credential.js'
 import { establishLocalPlacement } from './establishment.js'
 import type { FederationConfig } from './federation-config.js'
@@ -45,7 +45,9 @@ import {
   type SummonGatePolicy,
   type SummonGateResult,
   type SummonPath,
+  type PlacementDisposition,
   evaluateSummonGate,
+  resolvePlacementDisposition,
 } from './summon-gate.js'
 import {
   type TaskClaimAuthority,
@@ -149,11 +151,32 @@ export type SummonAuthorityRequest = (
   origin?: 'local' | 'federated-ingress' | 'startup-repair' | undefined
   /** True only when this daemon owns the predecessor session being continued. */
   knownSession?: boolean | undefined
+  /** Present at session-mint call sites to serialize exactly one continuity birth. */
+  laneRef?: string | undefined
 }
 
 export type SummonAuthorityResult = SummonGateResult & {
   /** Fresh authority exists only on the invocation that won wrkq claim. */
   claimAuthority?: TaskClaimAuthority | undefined
+}
+
+/** Decision-only server seam shared by message prechecks and summon execution. */
+export async function resolvePlacementOnServer(
+  server: SummonGateServerContext,
+  request: SummonAuthorityRequest
+): Promise<PlacementDisposition | undefined> {
+  const deps = gateDepsFor(server)
+  if (deps === undefined) return undefined
+  return await resolvePlacementDisposition({
+    scopeRef: request.scopeRef,
+    path: request.path,
+    intent: request.intent ?? 'implicit',
+    ...(request.birthCredential === undefined ? {} : { birthCredential: request.birthCredential }),
+    ...(request.origin === undefined ? {} : { origin: request.origin }),
+    ...(request.knownSession === undefined ? {} : { knownSession: request.knownSession }),
+    deps,
+    ...(request.capabilityHint === undefined ? {} : { capabilityHint: request.capabilityHint }),
+  })
 }
 
 function claimClientFor(server: SummonGateServerContext): TaskClaimClient {
@@ -559,15 +582,25 @@ export async function withSummonAuthority<T>(
   mint: (claimAuthority: TaskClaimAuthority | undefined) => T | Promise<T>
 ): Promise<T> {
   return await withScopeSummonLock(server as object, request.scopeRef, async () => {
-    const authority = await assertSummonAuthority(server, request)
-    try {
-      return await mint(authority?.claimAuthority)
-    } catch (error) {
-      if (authority?.claimAuthority !== undefined) {
-        await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
+    const authorizeAndMint = async () => {
+      const authority = await assertSummonAuthority(server, request)
+      try {
+        return await mint(authority?.claimAuthority)
+      } catch (error) {
+        if (authority?.claimAuthority !== undefined) {
+          await releaseClaimBestEffort(server, authority.claimAuthority, 'session-mint')
+        }
+        throw error
       }
-      throw error
     }
+    return request.laneRef === undefined
+      ? await authorizeAndMint()
+      : await withSessionMintLock(
+          server as object,
+          request.scopeRef,
+          request.laneRef,
+          authorizeAndMint
+        )
   })
 }
 
