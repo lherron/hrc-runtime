@@ -7,6 +7,7 @@ import { FederationOutboxRepository } from './federation-outbox-repository.js'
 import { ScopeRetirementRepository } from './federation-reconciliation.js'
 import { HrcMailDriveRepository } from './mail/drive-repository.js'
 import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
+import { HrcMailStopRefusalRepository } from './mail/stop-refusal-repository.js'
 import { MessageRepository } from './message-repository.js'
 import { listAppliedMigrations, runMigrations } from './migrations.js'
 import {
@@ -61,6 +62,7 @@ export type HrcDatabase = {
   messages: MessageRepository
   mailEnvelopes: HrcMailEnvelopeRepository
   mailDrives: HrcMailDriveRepository
+  mailStopRefusals: HrcMailStopRefusalRepository
   federationAcceptedRequests: FederationAcceptedRequestRepository
   federationOutbox: FederationOutboxRepository
   scopeRetirements: ScopeRetirementRepository
@@ -118,6 +120,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     messages: new MessageRepository(sqlite),
     mailEnvelopes: new HrcMailEnvelopeRepository(sqlite),
     mailDrives: new HrcMailDriveRepository(sqlite),
+    mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),
     scopeRetirements: new ScopeRetirementRepository(sqlite),

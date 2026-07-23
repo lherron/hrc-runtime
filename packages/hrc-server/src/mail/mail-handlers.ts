@@ -18,6 +18,7 @@ import {
   type HrcMailReplySchema,
   type HrcMailSendRequest,
   type HrcMailSendResponse,
+  sessionRefFor,
 } from 'hrc-core'
 import { HrcMailRepositoryError } from 'hrc-store-sqlite'
 
@@ -35,6 +36,9 @@ const MAIL_STATES = new Set<HrcMailEnvelopeState>([
   'deferred',
   'dead',
 ])
+const MAIL_STOP_SUMMARY_LIMIT = 8
+const MAIL_STOP_BODY_PREVIEW_CHARS = 160
+const MAIL_STOP_REASON_MAX_CHARS = 4_096
 
 function malformed(message: string, field?: string): never {
   throw new HrcBadRequestError(
@@ -171,6 +175,9 @@ export async function handleMailInbox(
       parseNonEmptyString(body['targetSessionRef'], 'targetSessionRef')
     ),
   }
+  // Authorize the claimed mailbox before presentation mutates any envelope.
+  runMailMutation(() => this.db.mailEnvelopes.inbox(parsed.actor, parsed.targetSessionRef))
+  runMailMutation(() => this.db.mailEnvelopes.presentPendingForTarget(parsed.targetSessionRef))
   const envelopes = runMailMutation(() =>
     this.db.mailEnvelopes.inbox(parsed.actor, parsed.targetSessionRef)
   )
@@ -264,6 +271,94 @@ export async function handleMailList(
   return json({ envelopes } satisfies HrcMailListResponse)
 }
 
+export async function handleMailStopDecision(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isRecord(body)) return malformed('request body must be an object')
+  const runtimeId = parseNonEmptyString(body['runtimeId'], 'runtimeId')
+  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
+  if (runtime === null || runtime.activeRunId === undefined) {
+    return json({ decision: 'allow', reason: 'no_active_turn' })
+  }
+
+  const run = this.db.runs.getByRunId(runtime.activeRunId)
+  if (
+    run === null ||
+    run.runtimeId !== runtimeId ||
+    run.scopeRef !== runtime.scopeRef ||
+    run.laneRef !== runtime.laneRef ||
+    !isActiveMailStopRunStatus(run.status)
+  ) {
+    return json({ decision: 'allow', reason: 'stale_active_turn' })
+  }
+
+  const targetSessionRef = normalizeTargetSessionRef(sessionRefFor(run))
+  const decision = this.db.mailStopRefusals.evaluate(
+    run.runId,
+    targetSessionRef,
+    MAIL_STOP_SUMMARY_LIMIT
+  )
+  if (decision.decision === 'allow') {
+    return json({
+      decision: 'allow',
+      reason: decision.reason,
+      runId: run.runId,
+      targetSessionRef,
+      unackedCount: decision.unackedCount,
+      refusalCount: decision.refusalCount,
+      totalRefusalCount: decision.totalRefusalCount,
+    })
+  }
+
+  return json({
+    decision: 'block',
+    reason: formatMailStopReason(decision),
+    runId: run.runId,
+    targetSessionRef,
+    unackedCount: decision.unackedCount,
+    refusalCount: decision.refusalCount,
+    totalRefusalCount: decision.totalRefusalCount,
+  })
+}
+
+function isActiveMailStopRunStatus(status: string): boolean {
+  return status === 'accepted' || status === 'started' || status === 'running'
+}
+
+function formatMailStopReason(
+  decision: Extract<
+    ReturnType<HrcServerInstanceForHandlers['db']['mailStopRefusals']['evaluate']>,
+    { decision: 'block' }
+  >
+): string {
+  const lines = [
+    `Turn finish paused: ${decision.unackedCount} unacknowledged hrcmail ${decision.unackedCount === 1 ? 'envelope' : 'envelopes'} remain (refusal ${decision.refusalCount}/3).`,
+  ]
+  for (const envelope of decision.envelopes) {
+    const from = envelope.from.kind === 'scope' ? envelope.from.sessionRef : envelope.from.principal
+    lines.push(
+      `- ${clip(envelope.envelopeId, 80)} [${envelope.state}] from ${clip(from, 120)}: ${clip(normalizePreview(envelope.body), MAIL_STOP_BODY_PREVIEW_CHARS)}`
+    )
+  }
+  if (decision.unackedCount > decision.envelopes.length) {
+    lines.push(`- … and ${decision.unackedCount - decision.envelopes.length} more`)
+  }
+  lines.push(
+    'Run `hrcmail inbox`, then ack or defer every envelope before stopping. Deferred envelopes leave this gate.'
+  )
+  return clip(lines.join('\n'), MAIL_STOP_REASON_MAX_CHARS)
+}
+
+function normalizePreview(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function clip(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, Math.max(maxChars - 1, 0))}…`
+}
+
 export const mailHandlersMethods = {
   handleMailSend,
   handleMailInbox,
@@ -271,6 +366,7 @@ export const mailHandlersMethods = {
   handleMailDefer,
   handleMailCat,
   handleMailList,
+  handleMailStopDecision,
 }
 
 export type MailHandlersMethods = typeof mailHandlersMethods

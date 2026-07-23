@@ -85,6 +85,16 @@ export {
   HrcMailRepositoryError,
 } from './mail/envelope-repository.js'
 export { HrcMailDriveRepository } from './mail/drive-repository.js'
+export {
+  HRC_MAIL_STOP_HARD_CAP,
+  HRC_MAIL_STOP_REFUSAL_CAP,
+  HrcMailStopRefusalRepository,
+} from './mail/stop-refusal-repository.js'
+export type {
+  HrcMailStopDecision,
+  HrcMailStopEnvelopeSummary,
+  HrcMailStopRefusalRecord,
+} from './mail/stop-refusal-repository.js'
 export type {
   CompleteHrcMailDriveResult,
   HrcMailDriveAttempt,

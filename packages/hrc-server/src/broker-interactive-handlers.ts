@@ -876,17 +876,20 @@ export async function startInteractiveTmuxBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = injectRuntimeTaskClaimCredentialFile(
-    injectRuntimeBirthCredential(
-      mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-      runtimeId
+  const hrcDispatchEnv = {
+    ...injectRuntimeTaskClaimCredentialFile(
+      injectRuntimeBirthCredential(
+        mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+        runtimeId
+      ),
+      {
+        db: this.db,
+        runtimeRoot: this.options.runtimeRoot,
+        hostSessionId: session.hostSessionId,
+      }
     ),
-    {
-      db: this.db,
-      runtimeRoot: this.options.runtimeRoot,
-      hostSessionId: session.hostSessionId,
-    }
-  )
+    HRC_MAIL_STOP_SOCKET: this.options.socketPath,
+  }
   try {
     const compiled = await compileBrokerRuntimePlan(
       {

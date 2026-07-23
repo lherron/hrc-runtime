@@ -695,6 +695,8 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('POST', '/v1/mail/defer')]: (request) => this.handleMailDefer(request),
     [exactRouteKey('POST', '/v1/mail/cat')]: (request) => this.handleMailCat(request),
     [exactRouteKey('POST', '/v1/mail/list')]: (request) => this.handleMailList(request),
+    [exactRouteKey('POST', '/v1/internal/mail/stop-decision')]: (request) =>
+      this.handleMailStopDecision(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>

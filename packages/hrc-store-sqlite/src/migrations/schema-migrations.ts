@@ -1029,6 +1029,30 @@ const hrcmailDriveMigration: HrcMigration = {
   },
 }
 
+const hrcmailStopRefusalMigration: HrcMigration = {
+  id: '0030_hrcmail_stop_refusals',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_stop_refusals (
+        run_id TEXT PRIMARY KEY,
+        target_session_ref TEXT NOT NULL,
+        observed_envelope_seq INTEGER NOT NULL DEFAULT 0
+          CHECK (observed_envelope_seq >= 0),
+        refusal_count INTEGER NOT NULL DEFAULT 0
+          CHECK (refusal_count >= 0 AND refusal_count <= 3),
+        total_refusal_count INTEGER NOT NULL DEFAULT 0
+          CHECK (total_refusal_count >= 0 AND total_refusal_count <= 50),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_stop_refusals_target
+        ON hrcmail_stop_refusals(target_session_ref, updated_at);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1054,4 +1078,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   sessionTaskClaimAuthorityMigration,
   hrcmailEnvelopeMigration,
   hrcmailDriveMigration,
+  hrcmailStopRefusalMigration,
 ]

@@ -87,13 +87,7 @@ describe('hrcmail Wave-1 daemon surface', () => {
     const inbox = (await inboxResponse.json()) as HrcMailInboxResponse
     expect(inbox.envelopes[0]?.envelopeId).toBe(sent.envelope.envelopeId)
     expect(inbox.envelopes[0]?.replySchema).toBeDefined()
-
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      db.mailEnvelopes.presentPendingForTarget(target)
-    } finally {
-      db.close()
-    }
+    expect(inbox.envelopes[0]?.state).toBe('presented')
 
     const invalid = await fixture.postJson('/v1/mail/ack', {
       actor: { kind: 'scope', sessionRef: target },
@@ -122,18 +116,26 @@ describe('hrcmail Wave-1 daemon surface', () => {
   it('refuses a mismatched scope disposition and invalid remote schemas visibly', async () => {
     const sendResponse = await fixture.postJson('/v1/mail/send', sendRequest('ingress-wire-3'))
     const sent = (await sendResponse.json()) as HrcMailSendResponse
+    const mismatchedActor = {
+      kind: 'scope' as const,
+      sessionRef: 'agent:clod:project:hrc-runtime:task:T-06810/lane:main',
+    }
+    const mismatchedInbox = await fixture.postJson('/v1/mail/inbox', {
+      actor: mismatchedActor,
+      targetSessionRef: target,
+    })
+    expect(mismatchedInbox.status).toBe(409)
+
     const db = openHrcDatabase(fixture.dbPath)
     try {
+      expect(db.mailEnvelopes.require(sent.envelope.envelopeId).state).toBe('pending')
       db.mailEnvelopes.presentPendingForTarget(target)
     } finally {
       db.close()
     }
 
     const mismatched = await fixture.postJson('/v1/mail/ack', {
-      actor: {
-        kind: 'scope',
-        sessionRef: 'agent:clod:project:hrc-runtime:task:T-06810/lane:main',
-      },
+      actor: mismatchedActor,
       envelopeIds: [sent.envelope.envelopeId],
       response: { ok: true },
     })

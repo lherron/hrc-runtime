@@ -309,6 +309,23 @@ export class HrcMailEnvelopeRepository {
             now
           )
 
+        const inserted = this.db
+          .query<{ envelope_seq: number }, [string]>(
+            'SELECT envelope_seq FROM hrcmail_envelopes WHERE envelope_id = ?'
+          )
+          .get(envelopeId)
+        if (inserted !== null) {
+          this.db
+            .query(
+              `UPDATE hrcmail_stop_refusals
+               SET observed_envelope_seq = MAX(observed_envelope_seq, ?),
+                   refusal_count = 0,
+                   updated_at = ?
+               WHERE target_session_ref = ?`
+            )
+            .run(inserted.envelope_seq, now, targetSessionRef)
+        }
+
         const receipt: HrcMailReceipt = {
           ingressId,
           envelopeId,
