@@ -256,7 +256,14 @@ describe('T-06810 hrcmail federation', () => {
           const origin = svcDb.mailFederatedOrigins.getByIngressId('wave-f-ingress')
           expect(origin).toBeDefined()
           requestMessageId = origin!.requestMessageId
-          const delivery = svcDb.federationOutbox.getByMessageId(requestMessageId)
+          // The destination holding the envelope does not imply the origin's
+          // outbox row has transitioned yet — the delivered-state write trails
+          // the peer ack via the outbox poller. Poll instead of asserting a
+          // snapshot, or this races and fails as {state:'pending',totalAttempts:0}.
+          const delivery = await eventually(
+            () => svcDb.federationOutbox.getByMessageId(requestMessageId),
+            (row) => row?.state === 'delivered'
+          )
           expect(delivery).toMatchObject({ state: 'delivered', stage: 'delivering' })
           if (delivery?.stage !== 'delivering') throw new Error('mail delivery is not fenced')
           redelivery = delivery.envelope
