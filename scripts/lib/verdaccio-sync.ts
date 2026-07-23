@@ -9,7 +9,7 @@ const ROOT = resolve(import.meta.dir, '..', '..')
 // require bracket access on index signatures (noPropertyAccessFromIndexSignature)
 // and biome configs that forbid it (useLiteralKeys); destructuring satisfies both.
 const { VERDACCIO_REGISTRY } = process.env
-const REGISTRY = VERDACCIO_REGISTRY ?? 'http://127.0.0.1:4873/'
+const REGISTRY = VERDACCIO_REGISTRY ?? 'http://mini:4873/'
 const LOCK_STALE_MS = 120_000
 
 /**

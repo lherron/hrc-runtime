@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/lherron</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>VERDACCIO_HANDLE_KILL_SIGNALS</key>
+		<string>true</string>
+		<key>VERDACCIO_PUBLIC_URL</key>
+		<string>http://mini:4873</string>
+	</dict>
+	<key>GroupName</key>
+	<string>staff</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.praesidium.verdaccio</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/Users/lherron/.bun/install/global/node_modules/verdaccio/bin/verdaccio</string>
+		<string>--config</string>
+		<string>/Users/lherron/.config/verdaccio/config.yaml</string>
+		<string>--listen</string>
+		<string>http://0.0.0.0:4873/</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/lherron/praesidium/var/logs/verdaccio.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lherron/praesidium/var/logs/verdaccio.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>UserName</key>
+	<string>lherron</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/lherron</string>
+</dict>
+</plist>

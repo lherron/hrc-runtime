@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
-const REGISTRY = process.env.VERDACCIO_REGISTRY ?? 'http://127.0.0.1:4873/'
+const REGISTRY = process.env.VERDACCIO_REGISTRY ?? 'http://mini:4873/'
 
 const PACKAGES = [
   'packages/agent-action-render',

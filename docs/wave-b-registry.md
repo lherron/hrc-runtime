@@ -1,35 +1,33 @@
-# Verdaccio artifact distribution contract
+# Verdaccio single-authority contract
 
-Status: current as of 2026-07-21. This document supersedes the original Wave B0
-assumption that max3 hosted the only development registry and that mini was not
-a consumer.
+Status: current as of 2026-07-23. This document supersedes every prior Wave B
+assumption about node-local Verdaccio stores, cross-store mirroring, or max3 as
+a registry authority.
 
-## Purpose and topology
+## Authority and topology
 
 Praesidium repositories exchange ASP, HRC, ACP, and wrkq boundary packages as
-immutable versions through Verdaccio. Publisher scripts default to loopback:
+immutable versions through one canonical registry:
 
 ```text
-http://127.0.0.1:4873/
+http://mini:4873/
 ```
 
-Consumer endpoints are checkout configuration, not a universal fleet constant.
-The current HRC checkout uses the tailnet endpoint `http://mini:4873/`, while
-ACP, taskboard, and agent-loop use loopback Verdaccio on their execution node.
-The mini and max3 registry stores are distinct. A lockfile can therefore name a
-valid version that is absent from the store serving the checkout that runs
-`bun install`.
+Mini hosts the only Verdaccio service and writable package store. The service
+is operationally owned by `svc`. Every consumer and publisher on `svc`, `lab`,
+and `max3` uses the canonical mini endpoint; no independent registry is an
+authorized source or publish target.
 
-Registry topology is independent of HRC logical-node identity. In particular,
-`svc` and `lab` can be co-hosted while retaining distinct users, roots, ports,
-tokens, databases, and install prefixes. Never infer node identity from the
-Verdaccio endpoint, hostname, or IP address.
+Physical co-hosting does not change logical-node identity. `svc` and `lab` run
+on mini but remain separate logical nodes with separate users, roots, runtime
+state, placement authority, and credentials. Never infer HRC node identity from
+the registry hostname, URL, or network address.
 
-Uplinks remain disabled for Praesidium boundary packages. A missing package is
-supposed to fail closed rather than silently resolve different content from
-the public npm registry.
+Uplinks remain disabled for Praesidium boundary packages. Missing boundary
+packages fail closed instead of silently resolving different content from the
+public npm registry.
 
-## Publication and mirroring
+## Publication and consumption
 
 Publisher repositories create coherent timestamped development snapshots:
 
@@ -38,74 +36,138 @@ Publisher repositories create coherent timestamped development snapshots:
 - wrkq publishes the corresponding immutable `@wrkq/client` version;
 - agent-control-plane publishes its ACP package set.
 
-Publication, lockfile selection, installation, and daemon restart are separate
-states. The fleet contract is:
+Publish each coherent set once to mini. All checkout-local `.npmrc` files,
+publisher defaults, and sync defaults select `http://mini:4873/`. Publication
+credentials remain in user configuration and must never be committed.
 
-1. Publish the coherent package set once in the producer environment.
-2. Record the exact package names and versions selected by consumer locks.
-3. Mirror those exact immutable tarballs into every registry store that must
-   satisfy the lock.
-4. Install/build from the same pushed source and lock on each target node.
-5. Restart affected launchd services and verify their reported binary/package
-   paths and federation health.
+There is no exact-store mirroring, cross-store reconciliation, or historical
+equivalence gate. A pushed lock is satisfiable when its immutable package
+versions exist in the canonical mini store. Do not rerun a
+timestamp-generating producer install merely to create a second copy on
+another node.
 
-Do not rerun a producer's timestamp-generating `just install` independently on
-every node merely to populate its registry. That creates different package
-versions and obscures whether the fleet is running the same artifact. A
-lockfile alone is also insufficient: the named tarball must exist locally.
+Publication, lockfile selection, installation, and daemon activation are
+separate states:
+
+1. Publish the coherent package set to mini.
+2. Select and commit exact package versions in the consumer lock.
+3. Install/build from that pushed source and lock.
+4. Install the owning runtime release.
+5. Restart the affected daemon and verify its installed release and health.
 
 The repository-owned publication commands enforce package-set coherence and
-safe packed manifests. Use them instead of hand-editing package manifests or
-publishing packages one at a time:
+safe packed manifests:
 
 ```bash
 just publish-dev-dry-run
 just publish-dev
 ```
 
-Main-checkout `just install` may include publication as part of that
-repository's lifecycle. Linked worktrees use isolated channels and normally do
-not repoint global wrappers or synchronize downstream consumers.
+Main-checkout `just install` may publish as part of the repository lifecycle.
+Linked worktrees retain their isolated publication channel unless an operator
+explicitly requests a cutover.
 
-## Consumer configuration
+## Canonical service supervision
 
-Praesidium repositories use a repo-local `.npmrc` that selects the intended
-artifact store. Several boundary packages are unscoped, so the selected
-Verdaccio is the default registry and public third-party scopes are explicitly
-routed to npmjs where needed. Two current endpoint shapes are:
+The canonical source for mini's logout- and reboot-durable service is:
 
-```ini
-# Node-local consumer store (ACP, taskboard, agent-loop)
-registry=http://127.0.0.1:4873/
-//127.0.0.1:4873/:_authToken=<NODE_LOCAL_PUBLISH_TOKEN>
-fetch-retries=0
-
-# Or the shared mini store used by HRC checkouts
-# registry=http://mini:4873/
-
-@types:registry=https://registry.npmjs.org/
-@anthropic-ai:registry=https://registry.npmjs.org/
+```text
+launchd/com.praesidium.verdaccio.plist
 ```
 
-Read access can be open on loopback; publication credentials remain node-local
-and must not be committed. Consult that node's service inventory for its
-Verdaccio supervisor, config, storage, and logs. The historical max3 service
-uses `com.lherron.verdaccio`; do not assume that label identifies every
-registry installation.
+It is a system-domain LaunchDaemon with label
+`com.praesidium.verdaccio`, running as `lherron:staff`. The installed path is:
+
+```text
+/Library/LaunchDaemons/com.praesidium.verdaccio.plist
+```
+
+The service uses mini's existing config, auth, and storage:
+
+```text
+/Users/lherron/.config/verdaccio/config.yaml
+/Users/lherron/.config/verdaccio/htpasswd
+/Users/lherron/.local/share/verdaccio/storage
+```
+
+The plist sets `VERDACCIO_PUBLIC_URL=http://mini:4873`, so package metadata and
+tarball URLs advertise the canonical network endpoint instead of loopback.
+
+Installing or modifying a system-domain LaunchDaemon requires root. Validate
+and stage the system definition before disturbing the live GUI LaunchAgent:
+
+```bash
+plutil -lint launchd/com.praesidium.verdaccio.plist
+sudo install -m 644 -o root -g wheel \
+  launchd/com.praesidium.verdaccio.plist \
+  /Library/LaunchDaemons/com.praesidium.verdaccio.plist
+sudo plutil -lint /Library/LaunchDaemons/com.praesidium.verdaccio.plist
+```
+
+Port 4873 cannot be owned by both jobs. Do not boot out the old GUI job until
+the system plist is installed and validated. Preserve its plist as rollback
+material during the handoff:
+
+```bash
+launchctl print gui/501/com.lherron.verdaccio
+launchctl bootout gui/501/com.lherron.verdaccio
+sudo launchctl bootstrap system \
+  /Library/LaunchDaemons/com.praesidium.verdaccio.plist
+```
+
+Require the system job and canonical endpoint to be healthy before removing
+the old GUI LaunchAgent plist:
+
+```bash
+sudo launchctl print system/com.praesidium.verdaccio
+lsof -nP -iTCP:4873 -sTCP:LISTEN
+curl -fsS http://mini:4873/-/ping
+rm /Users/lherron/Library/LaunchAgents/com.lherron.verdaccio.plist
+```
+
+If the system job does not become healthy, boot it out and bootstrap the
+preserved GUI plist as rollback. Do not remove the GUI plist or modify
+config/auth/storage during a failed cutover.
 
 ## Verification
 
-Verify health and the exact required versions before installing a consumer
-lock:
+Verify the canonical endpoint from `svc`, `lab`, and `max3`:
 
 ```bash
-curl -fsS http://127.0.0.1:4873/-/ping
+curl -fsS http://mini:4873/-/ping
 npm view <package>@<exact-version> version \
-  --registry http://127.0.0.1:4873/
+  --registry http://mini:4873/
 bun install --frozen-lockfile
 ```
 
-For runtime-affecting changes, follow installation with the owning service
-restart and real status readback. HRC must report the selected atomic release
-in `binaryPath` / `packagePath`; a successful package query or build does not
-prove the daemon is running it.
+For existing packages, verify metadata and tarball URLs name `mini:4873` and
+never loopback. Preserve and compare the complete pre-cutover and post-cutover
+dist-tag maps. An authenticated throwaway publish/view/unpublish round-trip is
+the publish-authority proof; use user-scoped credentials without printing them.
+
+For runtime-affecting dependency changes, follow installation with the owning
+service restart and real status readback. A successful registry query or build
+does not prove the daemon is running the selected package release.
+
+## Max3 retirement and recovery
+
+The max3 Verdaccio service and global installation were retired on 2026-07-23.
+Its verified cold recovery archive is:
+
+```text
+/Users/lherron/praesidium/var/backups/verdaccio-retired/20260723T201530Z/max3-verdaccio-cold.tar
+```
+
+SHA-256:
+
+```text
+d982c7e47274298d91db9f98963f8339fa0851407941f581b26076d3cd96fc08
+```
+
+The archive is recovery evidence only. It is not imported into mini, compared
+for historical equivalence, or used as an automatic fallback registry.
+
+TrueNAS backup is explicitly deferred. Until that work lands, mini-local disk
+holds both the live canonical store and the retired max3 archive. Lance accepts
+the temporary risk that loss of mini's disk can lose both. Do not claim remote
+backup durability that has not been implemented and verified.

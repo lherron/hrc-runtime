@@ -79,8 +79,9 @@ hrc server restart && hrc server status
   version at publish time; a half-published snapshot errors with
   `ASP Verdaccio latest set is incoherent`. Publish the whole ASP set from
   agent-spaces, never one package in isolation.
-- Verdaccio must be running at `127.0.0.1:4873` (this checkout resolves the
-  tailnet `mini:4873` registry via `.npmrc`) or both publish and sync fail.
+- Verdaccio must be reachable at the canonical `http://mini:4873/` endpoint or
+  both publish and sync fail. Mini is the sole registry store; consumers do not
+  mirror packages between node-local registries.
 - Pull != installed != live: `just pull-deps` advances the lock and
   installs in the checkout; `just install` atomically selects the HRC
   release; `hrc server restart` activates it in launchd.

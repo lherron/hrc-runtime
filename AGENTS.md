@@ -6,7 +6,7 @@ session/run state, and the operator/chat CLIs (`hrc`, `hrcchat`).
 
 ASP packages (agent-scope, cli-kit, spaces-config, spaces-runtime,
 spaces-execution, spaces-harness-*, agent-spaces) are external dependencies
-sourced from the local Verdaccio registry at `http://127.0.0.1:4873/`.
+sourced from the canonical Verdaccio registry at `http://mini:4873/`.
 
 ## Build & Run
 
@@ -231,7 +231,7 @@ The producer/consumer halves of the pipeline:
 
 - **Publish (run in `../agent-spaces`):** `just install` cleans, builds,
   links both `asp` and `harness-broker`, and publishes one coherent timestamped
-  ASP set (`0.1.1-dev.<ts>`) to the producer's loopback Verdaccio. Unless
+  ASP set (`0.1.1-dev.<ts>`) to the canonical mini Verdaccio. Unless
   `no-sync=1` is supplied, it also synchronizes the local HRC/ACP consumer
   checkouts; linked worktrees default to isolated publication with no global
   wrapper or downstream cutover.
@@ -252,14 +252,11 @@ Gotchas worth not re-deriving:
   packages must share the same `latest` version, else it errors with `ASP
   Verdaccio latest set is incoherent`. You cannot publish/sync one package in
   isolation; publish the whole set from agent-spaces.
-- **Verdaccio must be running** at `127.0.0.1:4873`, or both publish and sync
-  fail.
-- **The estate has multiple registry stores.** A checkout resolves from its
-  `.npmrc`; HRC currently uses the tailnet `mini:4873` registry, while other
-  max3 consumers use max3 loopback storage. Before installing a pushed lock
-  through a different store, mirror the exact immutable tarballs there.
-  Re-running a producer's timestamp-generating install creates a different
-  snapshot and is not mirroring.
+- **Verdaccio must be reachable** at `http://mini:4873/`, or both publish and
+  sync fail.
+- **Mini is the only registry authority.** Every svc, lab, and max3 consumer
+  and publisher uses the same mini store. There is no cross-store mirroring or
+  historical-equivalence gate.
 - **Pull != installed != live.** `just pull-deps` advances the lock and installs
   dependencies in the checkout. `just install` atomically selects the HRC
   release, and `hrc server restart` activates it in launchd.
@@ -297,5 +294,5 @@ just publish-dev
 ```
 
 Main-checkout `just install` performs the same coherent publication as part of
-the atomic install. Use exact-version mirroring, not a fresh publication, when
-moving that snapshot to another configured registry store.
+the atomic install. Publish once to mini; every consumer resolves that same
+immutable snapshot from the canonical store.
