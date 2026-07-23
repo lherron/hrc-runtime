@@ -735,6 +735,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationOutboxError",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationOutboxError|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationOutboxState",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
@@ -755,6 +763,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationPeerHealthObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationPendingMessageEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationPendingMessageEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationPlacementBinding",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationPlacementBinding|type",
       "count": 1
     },
     {
@@ -795,6 +819,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",
       "hash": "hrc-core|FederationRebindStep|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRemoteEstablishRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRemoteEstablishRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationRemoteEstablishResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationRemoteEstablishResult|type",
       "count": 1
     },
     {
