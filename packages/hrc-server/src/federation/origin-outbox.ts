@@ -358,7 +358,11 @@ export class FederationOriginOutbox {
   ): Promise<FederationOriginRouteResult> {
     const responseRoute = this.responseRoute(record)
     if (responseRoute !== undefined) {
-      return this.enqueue(record, undefined, responseRoute.peerNodeId, responseRoute.expected, {
+      // An explicit reply carries its delivery context so the destination can
+      // inject it into the recipient runtime, matching local reply semantics.
+      // Daemon-bridged turn-final responses (routeResponse) stay context-free
+      // and are store-only at the destination.
+      return this.enqueue(record, body, responseRoute.peerNodeId, responseRoute.expected, {
         responseFence: true,
       })
     }

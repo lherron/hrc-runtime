@@ -1201,7 +1201,13 @@ export async function deliverFederationAcceptedMessage(
     }
     return
   }
-  if (envelope.phase !== 'request') {
+  if (envelope.phase !== 'request' && envelope.delivery === undefined) {
+    // A response envelope without delivery context is a daemon-bridged
+    // turn-final reply. Locally those are durable-insert only (never injected
+    // into the origin runtime), so the federated path must match — injecting
+    // them would also let two headless recipients auto-reply to each other
+    // forever. Explicit --reply-to responses carry delivery context and fall
+    // through to runtime delivery below.
     writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
       messageId: record.messageId,
       phase: envelope.phase,
@@ -1209,6 +1215,8 @@ export async function deliverFederationAcceptedMessage(
       replyToMessageId: envelope.replyToMessageId,
       originNodeId,
       executionState: record.execution.state,
+      deliveryOutcome: 'store_only',
+      storeOnlyReason: 'response_without_delivery_context',
     })
     return
   }
@@ -1261,9 +1269,13 @@ export async function deliverFederationAcceptedMessage(
       errorCode: execution?.errorCode,
       errorMessage: execution?.errorMessage,
       replyMessageId: delivered.reply?.messageId,
+      deliveryOutcome: 'runtime_delivery',
     }
   )
-  if (delivered.reply !== undefined) {
+  // Only a request's turn-final output routes back as a federated response.
+  // A reply-to-a-response would be refused at the peer's accept fence
+  // (repliedTo must be request-phase) and jam the outbox in retry.
+  if (envelope.phase === 'request' && delivered.reply !== undefined) {
     await this.federationOriginOutbox?.routeResponse(delivered.reply)
   }
 }
