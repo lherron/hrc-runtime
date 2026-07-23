@@ -157,6 +157,7 @@ ENVIRONMENT
   HRC_RUNTIME_DIR   Override runtime root
   HRC_STATE_DIR     Override persistent state root
   ASP_PROJECT       Default project context for shorthand resolution
+  ASP_DEFAULT_TASK  Default task context after explicit target/caller defaults
   ASP_AGENTS_ROOT   Agents root for managed run/start resolution
   HRC_SESSION_REF   Caller identity for HRC-aware child processes
   HRC_PEER_CONFIG_FILE

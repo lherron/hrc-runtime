@@ -64,6 +64,7 @@ PROJECT RESOLUTION
 ENVIRONMENT VARIABLES
   HRC_SESSION_REF   Caller session identity used for "me" resolution
   ASP_PROJECT       Default project context for target resolution
+  ASP_DEFAULT_TASK  Default task context after explicit target/caller defaults
   ASP_AGENTS_ROOT   Agents root used when resolving summon/dm runtime intent
 `
 
