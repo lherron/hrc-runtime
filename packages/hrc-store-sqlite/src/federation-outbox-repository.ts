@@ -416,6 +416,40 @@ export class FederationOutboxRepository {
     return this.require(input.deliveryId)
   }
 
+  /**
+   * Operator-owned terminalization of an active delivery. This is not a send
+   * attempt, so attempt counters and last_attempt_at remain unchanged.
+   */
+  cancel(deliveryId: string, cancelledAt: string): FederationOutboxDeliveryRecord {
+    requireTimestamp(cancelledAt, 'cancelledAt')
+    const existing = this.require(deliveryId)
+    this.assertMutable(deliveryId)
+    const errorMessage = 'delivery cancelled by operator'
+    const payload = {
+      ...payloadFor(existing),
+      lastError: {
+        code: 'operator_cancelled',
+        message: errorMessage,
+        reason: 'operator_cancelled',
+        retryable: false,
+      } satisfies FederationOutboxError,
+    }
+    const result = this.db
+      .query<unknown, [string, string, string, string, string]>(
+        `UPDATE federation_outbox_deliveries
+            SET state = 'dead_letter', next_attempt_at = NULL,
+                dead_lettered_at = ?, last_error_code = 'operator_cancelled',
+                last_error_message = ?, envelope_json = ?, updated_at = ?
+          WHERE delivery_id = ?
+            AND state IN ('pending', 'retry_scheduled', 'peer_unreachable')`
+      )
+      .run(cancelledAt, errorMessage, JSON.stringify(payload), cancelledAt, deliveryId)
+    if (result.changes !== 1) {
+      throw new Error(`federation delivery ${deliveryId} could not be cancelled atomically`)
+    }
+    return this.require(deliveryId)
+  }
+
   replay(deliveryId: string, now: string): FederationOutboxDeliveryRecord {
     requireTimestamp(now, 'now')
     const existing = this.require(deliveryId)

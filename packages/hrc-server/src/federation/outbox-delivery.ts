@@ -47,6 +47,7 @@ export type FederationOutboxDeliveryObservation = {
     | 'retry_scheduled'
     | 'peer_unreachable'
     | 'dead_lettered'
+    | 'cancelled'
   deliveryId: string
   messageId: string
   peerNodeId: string
@@ -78,6 +79,16 @@ export type FederationOutboxDeliveryEngineOptions = {
         envelope: Extract<FederationOutboxDeliveryRecord, { stage: 'delivering' }>['envelope']
       })
     | undefined
+}
+
+export class FederationOutboxCancelError extends Error {
+  constructor(
+    readonly deliveryId: string,
+    readonly reason: 'attempt_in_flight'
+  ) {
+    super(`federation delivery ${deliveryId} has a send attempt in flight`)
+    this.name = 'FederationOutboxCancelError'
+  }
 }
 
 function validatePolicy(policy: FederationOutboxRetryPolicy): void {
@@ -145,6 +156,15 @@ export class FederationOutboxDeliveryEngine {
 
   replay(deliveryId: string): FederationOutboxDeliveryRecord {
     return this.outbox.replay(deliveryId, this.now().toISOString())
+  }
+
+  cancel(deliveryId: string): FederationOutboxDeliveryRecord {
+    if (this.attempting.has(deliveryId)) {
+      throw new FederationOutboxCancelError(deliveryId, 'attempt_in_flight')
+    }
+    const cancelled = this.outbox.cancel(deliveryId, this.now().toISOString())
+    this.observe(cancelled, 'cancelled')
+    return cancelled
   }
 
   drainDue(limit = 100): Promise<FederationOutboxDeliveryRecord[]> {

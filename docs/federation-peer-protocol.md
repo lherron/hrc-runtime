@@ -289,9 +289,12 @@ behavior is queued after that ACK and uses the same delivery function as a
 local semantic DM. Each node allocates its own `message_seq`; the origin's
 sequence is never copied into the envelope.
 
-At the origin, the ACK consumer records `(requestMessageId,
-acceptedByNodeId, acceptedEpoch)` in `federation_accepted_requests`. That record
-is idempotent and is the response fence.
+At the origin, the ACK consumer records phase-neutral peer-acceptance
+provenance keyed by `messageId` for both requests and responses. The record is
+idempotently bound to exactly one `acceptedByNodeId`; request acceptance also
+retains the accepted placement epoch as request metadata. A conflicting peer
+binding fails closed. The durable record is independent of outbox-row
+retention, so queue compaction cannot change later reply admissibility.
 
 ## Bilateral transcripts and response fencing
 
@@ -299,17 +302,31 @@ The origin inserts the request before it creates the outbox row; the accepting
 node inserts the same `messageId` before ACK. Consequently both endpoints can
 resolve `replyToMessageId` through their local message repository.
 
-Responses follow the accepting request's recorded ingress node, not the
-current placement of the reply target. On receipt, a response is accepted only
-when its `replyToMessageId` names a local request whose accepted-request record
-names the authenticated sending node. Duplicate response delivery is
-idempotent after the same validation.
+Responses follow their direct parent's recorded ingress node, not the current
+placement of the reply target. On receipt, a response is accepted only when
+its `replyToMessageId` names a local outbound message whose durable
+peer-acceptance record names the authenticated sending node. The parent may be
+a request or a response: each acknowledged hop authorizes the next hop, so
+arbitrarily deep bilateral reply chains compose without treating
+`rootMessageId` as delivery authority.
+
+The response `rootMessageId` must still equal the direct parent's
+`rootMessageId` for transcript coherence. Missing parent or missing ACK
+provenance remains retryable because message and ACK-record writes may be
+observed out of causal order. Wrong-peer provenance, invalid parent phase, or a
+root mismatch is permanent. Duplicate response delivery is idempotent only
+after the same validation.
 
 Current placement and the response envelope's expected epoch are deliberately
 not consulted for response completion. Placement still fences new request
-acceptance and summon authority; the accepted-request record independently
-fences completion. A response delayed across a placement rebind therefore
-still lands in the bilateral transcript.
+acceptance and summon authority; direct-parent peer-acceptance provenance
+independently fences completion. A response delayed across a placement rebind
+therefore still lands in the bilateral transcript.
+
+Migration to the phase-neutral record copies historical accepted requests and
+backfills historical response provenance from delivered outbox rows. Delivered
+rows are evidence only during that one-time migration; live admission never
+consults retained outbox state.
 
 ## Origin outbox and retry lifecycle
 
@@ -349,16 +366,20 @@ and replayable. The Unix-socket API exposes:
 - `POST /v1/federation/outbox/replay-peer` with `{ "peerNodeId": "..." }` —
   replay every current dead-letter for one peer. Repeating the operation cannot
   replay rows already moved back to `pending`.
+- `POST /v1/federation/outbox/cancel` with `{ "deliveryId": "..." }` —
+  atomically move one active scheduled row to `dead_letter` with
+  `operator_cancelled`. The delivery engine refuses cancellation while that
+  exact row has a send attempt in flight; replay remains available afterward.
 - `POST /v1/federation/outbox/drop` with `{ "deliveryId": "..." }` — delete one
   terminal dead-letter. Active rows cannot be dropped because a send may
   already be in flight.
 
 The corresponding operator commands are `hrc federation outbox list`,
-`replay <delivery-id>`, `replay --all --peer <node>`, and
-`drop <delivery-id> --yes`. Human list output groups by peer and shows age, attempts, replay count,
-and the last error. `hrc doctor` reports pending and dead-letter counts per peer
-as expected sleep-envelope state rather than declaring a sleeping peer an
-outage.
+`cancel <delivery-id>`, `replay <delivery-id>`,
+`replay --all --peer <node>`, and `drop <delivery-id> --yes`. Human list output
+groups by peer and shows age, attempts, replay count, and the last error.
+`hrc doctor` reports pending and dead-letter counts per peer as expected
+sleep-envelope state rather than declaring a sleeping peer an outage.
 
 `hrcchat dm --wait response` sends the request without a server-coupled wait,
 then waits only on its local daemon's Unix-socket API. The local wait observes

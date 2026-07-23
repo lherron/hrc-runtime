@@ -343,12 +343,12 @@ export class FederationOriginOutbox {
 
   /**
    * Whether an explicit reply can use the authenticated ingress route recorded
-   * on its parent request. Callers use this before node-local admission checks:
+   * on its direct parent. Callers use this before node-local admission checks:
    * a loser-node retirement fence bars execution, not a fenced response back
-   * to the peer that delivered the request.
+   * to the peer that delivered the parent message.
    */
   canRouteResponseToPeer(parent: HrcMessageRecord): boolean {
-    return this.responseRouteForRequest(parent) !== undefined
+    return this.responseRouteForParent(parent) !== undefined
   }
 
   async route(
@@ -473,17 +473,17 @@ export class FederationOriginOutbox {
       }
     | undefined {
     if (record.phase !== 'response' || record.replyToMessageId === undefined) return undefined
-    const request = this.options.db.messages.getById(record.replyToMessageId)
-    return this.responseRouteForRequest(request)
+    const parent = this.options.db.messages.getById(record.replyToMessageId)
+    return this.responseRouteForParent(parent)
   }
 
-  private responseRouteForRequest(request: HrcMessageRecord | undefined):
+  private responseRouteForParent(parent: HrcMessageRecord | undefined):
     | {
         peerNodeId: string
         expected: { homeNodeId: string; placementEpoch: number }
       }
     | undefined {
-    const ingress = request?.metadataJson?.['federationIngress']
+    const ingress = parent?.metadataJson?.['federationIngress']
     if (!isRecord(ingress)) return undefined
     const authenticatedNodeId = ingress['authenticatedNodeId']
     const expected = ingress['expected']
@@ -610,6 +610,17 @@ export class FederationOriginOutbox {
       lastErrorCode: dropped.lastErrorCode,
     })
     return dropped
+  }
+
+  cancel(deliveryId: string): FederationOutboxDeliveryRecord {
+    const cancelled = this.engine.cancel(deliveryId)
+    writeServerLog('WARN', 'federation.outbox.operator_cancelled', {
+      deliveryId: cancelled.deliveryId,
+      messageId: cancelled.messageId,
+      peerNodeId: cancelled.peerNodeId,
+      priorAttempts: cancelled.totalAttempts,
+    })
+    return cancelled
   }
 
   private drainAfterReplay(context: Record<string, unknown>): void {

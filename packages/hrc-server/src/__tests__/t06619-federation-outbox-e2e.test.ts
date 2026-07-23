@@ -147,6 +147,25 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
           lastErrorCode: 'peer_unreachable',
         })
 
+        const cancelMessageId = await send('operator cancels this scheduled delivery')
+        const cancellable = await eventually(
+          () => readDelivery(cancelMessageId),
+          (rows) => rows[0]?.state === 'peer_unreachable'
+        )
+        const cancelResponse = await origin.postJson('/v1/federation/outbox/cancel', {
+          deliveryId: cancellable[0]?.deliveryId,
+        })
+        expect(cancelResponse.status).toBe(200)
+        expect(await cancelResponse.json()).toMatchObject({
+          deliveryId: cancellable[0]?.deliveryId,
+          state: 'dead_letter',
+          lastErrorCode: 'operator_cancelled',
+          lastError: {
+            code: 'operator_cancelled',
+            retryable: false,
+          },
+        })
+
         labServer = await createHrcServer(
           lab.serverOpts({
             otelListenerEnabled: false,
@@ -162,6 +181,15 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
           () => readDelivery(sleepMessageId),
           (rows) => rows[0]?.state === 'delivered'
         )
+        expect((await readDelivery(cancelMessageId))[0]).toMatchObject({
+          state: 'dead_letter',
+          lastErrorCode: 'operator_cancelled',
+        })
+        const dropCancelled = await origin.postJson('/v1/federation/outbox/drop', {
+          deliveryId: cancellable[0]?.deliveryId,
+        })
+        expect(dropCancelled.status).toBe(200)
+        expect(await readDelivery(cancelMessageId)).toEqual([])
         await eventually(
           () => {
             const db = openHrcDatabase(lab.dbPath)

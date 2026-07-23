@@ -21,6 +21,7 @@ import { HrcClient } from 'hrc-sdk'
 
 import {
   cmdDoctor,
+  cmdFederationOutboxCancel,
   cmdFederationOutboxDrop,
   cmdFederationOutboxList,
   cmdFederationOutboxReplay,
@@ -165,12 +166,19 @@ function stubOutbox(deliveries: FederationOutboxDeliveryRecord[]): {
   replayed: string[]
   replayedPeers: string[]
   dropped: string[]
+  cancelled: string[]
 } {
   const originalList = HrcClient.prototype.listFederationOutbox
   const originalReplay = HrcClient.prototype.replayFederationOutbox
   const originalReplayPeer = HrcClient.prototype.replayFederationOutboxPeer
   const originalDrop = HrcClient.prototype.dropFederationOutbox
-  const calls = { replayed: [] as string[], replayedPeers: [] as string[], dropped: [] as string[] }
+  const originalCancel = HrcClient.prototype.cancelFederationOutbox
+  const calls = {
+    replayed: [] as string[],
+    replayedPeers: [] as string[],
+    dropped: [] as string[],
+    cancelled: [] as string[],
+  }
   HrcClient.prototype.listFederationOutbox = async () => deliveries
   HrcClient.prototype.replayFederationOutbox = async (deliveryId) => {
     calls.replayed.push(deliveryId)
@@ -186,11 +194,20 @@ function stubOutbox(deliveries: FederationOutboxDeliveryRecord[]): {
     calls.dropped.push(deliveryId)
     return outboxDelivery({ deliveryId })
   }
+  HrcClient.prototype.cancelFederationOutbox = async (deliveryId) => {
+    calls.cancelled.push(deliveryId)
+    return outboxDelivery({
+      deliveryId,
+      state: 'dead_letter',
+      lastErrorCode: 'operator_cancelled',
+    })
+  }
   restores.push(() => {
     HrcClient.prototype.listFederationOutbox = originalList
     HrcClient.prototype.replayFederationOutbox = originalReplay
     HrcClient.prototype.replayFederationOutboxPeer = originalReplayPeer
     HrcClient.prototype.dropFederationOutbox = originalDrop
+    HrcClient.prototype.cancelFederationOutbox = originalCancel
   })
   return calls
 }
@@ -539,6 +556,16 @@ describe('hrc federation outbox', () => {
 
     await cmdFederationOutboxDrop(['delivery-1', '--yes'])
     expect(calls.dropped).toEqual(['delivery-1'])
+  })
+
+  test('cancel uses the engine-owned recoverable terminal transition', async () => {
+    const calls = stubOutbox([outboxDelivery({ state: 'retry_scheduled' })])
+    const read = captureStdout()
+
+    await cmdFederationOutboxCancel(['delivery-1'])
+
+    expect(calls.cancelled).toEqual(['delivery-1'])
+    expect(read()).toContain('operator_cancelled')
   })
 })
 

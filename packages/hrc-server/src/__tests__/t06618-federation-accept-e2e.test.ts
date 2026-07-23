@@ -142,10 +142,11 @@ describe('T-06618 two isolated daemon delivery', () => {
             envelope: envelope(),
           })
           expect(accepted).toEqual({ outcome: 'accepted', messageId: MESSAGE_ID })
-          expect(originDb.federationAcceptedRequests.get(MESSAGE_ID)).toMatchObject({
-            requestMessageId: MESSAGE_ID,
+          expect(originDb.federationPeerAcceptances.get(MESSAGE_ID)).toMatchObject({
+            messageId: MESSAGE_ID,
             acceptedByNodeId: 'lab-test',
-            acceptedEpoch: 4,
+            phase: 'request',
+            requestEpoch: 4,
           })
         } finally {
           originDb.close()

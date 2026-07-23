@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 
 import { FederationAcceptedRequestRepository } from './federation-accepted-request-repository.js'
 import { FederationOutboxRepository } from './federation-outbox-repository.js'
+import { FederationPeerAcceptanceRepository } from './federation-peer-acceptance-repository.js'
 import { ScopeRetirementRepository } from './federation-reconciliation.js'
 import { HrcMailDriveRepository } from './mail/drive-repository.js'
 import { HrcMailEnvelopeRepository } from './mail/envelope-repository.js'
@@ -66,6 +67,7 @@ export type HrcDatabase = {
   mailDrives: HrcMailDriveRepository
   mailStopRefusals: HrcMailStopRefusalRepository
   federationAcceptedRequests: FederationAcceptedRequestRepository
+  federationPeerAcceptances: FederationPeerAcceptanceRepository
   federationOutbox: FederationOutboxRepository
   scopeRetirements: ScopeRetirementRepository
   compiledRuntimePlans: CompiledRuntimePlanRepository
@@ -125,6 +127,7 @@ export function openHrcDatabase(dbPath: string): HrcDatabase {
     mailDrives: new HrcMailDriveRepository(sqlite),
     mailStopRefusals: new HrcMailStopRefusalRepository(sqlite),
     federationAcceptedRequests: new FederationAcceptedRequestRepository(sqlite),
+    federationPeerAcceptances: new FederationPeerAcceptanceRepository(sqlite),
     federationOutbox: new FederationOutboxRepository(sqlite),
     scopeRetirements: new ScopeRetirementRepository(sqlite),
     compiledRuntimePlans: new CompiledRuntimePlanRepository(sqlite),

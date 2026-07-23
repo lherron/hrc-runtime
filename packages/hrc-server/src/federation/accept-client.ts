@@ -1,5 +1,5 @@
 import type { FederationMessageEnvelope } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import { FederationPeerAcceptanceConflictError, type HrcDatabase } from 'hrc-store-sqlite'
 
 import { parseSessionRef } from '../server-parsers.js'
 import type { StalePlacementRedirectHandler } from './binding-cache.js'
@@ -81,12 +81,28 @@ export async function sendFederationEnvelope(
     ) {
       throw new Error('peer accept response contains an invalid ACK')
     }
-    if (options.envelope.phase === 'request') {
-      options.db.federationAcceptedRequests.record({
-        requestMessageId: options.envelope.messageId,
-        acceptedByNodeId: options.peer.nodeId,
-        acceptedEpoch: options.envelope.expected.placementEpoch,
-      })
+    if (options.envelope.phase === 'request' || options.envelope.phase === 'response') {
+      try {
+        options.db.federationPeerAcceptances.record({
+          messageId: options.envelope.messageId,
+          acceptedByNodeId: options.peer.nodeId,
+          phase: options.envelope.phase,
+          ...(options.envelope.phase === 'request'
+            ? { requestEpoch: options.envelope.expected.placementEpoch }
+            : {}),
+        })
+      } catch (error) {
+        if (error instanceof FederationPeerAcceptanceConflictError) {
+          return {
+            outcome: 'refused',
+            status: 409,
+            code: 'peer_acceptance_conflict',
+            retryable: false,
+            message: error.message,
+          }
+        }
+        throw error
+      }
     }
     return { outcome: ack['outcome'], messageId: ack['messageId'] }
   }

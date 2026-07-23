@@ -7,6 +7,15 @@ export type {
   FederationAcceptedRequestRecord,
   RecordFederationAcceptanceInput,
 } from './federation-accepted-request-repository.js'
+export {
+  FederationPeerAcceptanceConflictError,
+  FederationPeerAcceptanceRepository,
+} from './federation-peer-acceptance-repository.js'
+export type {
+  FederationPeerAcceptancePhase,
+  FederationPeerAcceptanceRecord,
+  RecordFederationPeerAcceptanceInput,
+} from './federation-peer-acceptance-repository.js'
 export { FederationOutboxRepository } from './federation-outbox-repository.js'
 export type {
   EnqueueFederationEstablishingOutboxInput,

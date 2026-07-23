@@ -1072,6 +1072,119 @@ const hrcmailFederatedOriginsMigration: HrcMigration = {
   },
 }
 
+/**
+ * ACK provenance is a per-hop transcript fact, not request-only placement
+ * state. Keep the original request table for compatibility, but copy it into
+ * the canonical phase-neutral table and seed historical delivered responses
+ * so replies already waiting in peer outboxes become admissible immediately.
+ */
+const federationPeerAcceptancesMigration: HrcMigration = {
+  id: '0032_federation_peer_acceptances',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS federation_peer_acceptances (
+        message_id TEXT PRIMARY KEY,
+        accepted_by_node_id TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK (phase IN ('request', 'response')),
+        request_epoch INTEGER CHECK (request_epoch IS NULL OR request_epoch >= 1),
+        accepted_at TEXT NOT NULL,
+        CHECK (
+          (phase = 'request' AND request_epoch IS NOT NULL) OR
+          (phase = 'response' AND request_epoch IS NULL)
+        )
+      );
+    `)
+
+    const record = (
+      messageId: string,
+      acceptedByNodeId: string,
+      phase: 'request' | 'response',
+      requestEpoch: number | null,
+      acceptedAt: string
+    ): void => {
+      const existing = db
+        .query<
+          {
+            accepted_by_node_id: string
+            phase: 'request' | 'response'
+            request_epoch: number | null
+          },
+          [string]
+        >(
+          `SELECT accepted_by_node_id, phase, request_epoch
+             FROM federation_peer_acceptances
+            WHERE message_id = ?`
+        )
+        .get(messageId)
+      if (existing !== null) {
+        if (
+          existing.accepted_by_node_id !== acceptedByNodeId ||
+          existing.phase !== phase ||
+          existing.request_epoch !== requestEpoch
+        ) {
+          throw new Error(`conflicting peer-acceptance migration evidence for ${messageId}`)
+        }
+        return
+      }
+      db.query<unknown, [string, string, string, number | null, string]>(
+        `INSERT INTO federation_peer_acceptances (
+           message_id, accepted_by_node_id, phase, request_epoch, accepted_at
+         ) VALUES (?, ?, ?, ?, ?)`
+      ).run(messageId, acceptedByNodeId, phase, requestEpoch, acceptedAt)
+    }
+
+    for (const row of db
+      .query<
+        {
+          request_message_id: string
+          accepted_by_node_id: string
+          accepted_epoch: number
+          accepted_at: string
+        },
+        []
+      >(
+        `SELECT request_message_id, accepted_by_node_id, accepted_epoch, accepted_at
+           FROM federation_accepted_requests`
+      )
+      .all()) {
+      record(
+        row.request_message_id,
+        row.accepted_by_node_id,
+        'request',
+        row.accepted_epoch,
+        row.accepted_at
+      )
+    }
+
+    for (const row of db
+      .query<
+        {
+          message_id: string
+          peer_node_id: string
+          envelope_json: string
+          delivered_at: string
+        },
+        []
+      >(
+        `SELECT message_id, peer_node_id, envelope_json, delivered_at
+           FROM federation_outbox_deliveries
+          WHERE state = 'delivered' AND delivered_at IS NOT NULL`
+      )
+      .all()) {
+      const payload = JSON.parse(row.envelope_json) as {
+        stage?: string
+        envelope?: { messageId?: string; phase?: string }
+        messageId?: string
+        phase?: string
+      }
+      const envelope = payload.stage === undefined ? payload : payload.envelope
+      if (envelope?.messageId === row.message_id && envelope.phase === 'response') {
+        record(row.message_id, row.peer_node_id, 'response', null, row.delivered_at)
+      }
+    }
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1099,4 +1212,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailDriveMigration,
   hrcmailStopRefusalMigration,
   hrcmailFederatedOriginsMigration,
+  federationPeerAcceptancesMigration,
 ]

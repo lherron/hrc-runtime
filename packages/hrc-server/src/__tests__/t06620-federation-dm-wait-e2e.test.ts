@@ -418,9 +418,10 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
       }
       const svcDb = openHrcDatabase(svc.dbPath)
       try {
-        expect(svcDb.federationAcceptedRequests.get(sent.request.messageId)).toMatchObject({
+        expect(svcDb.federationPeerAcceptances.get(sent.request.messageId)).toMatchObject({
           acceptedByNodeId: 'lab-test',
-          acceptedEpoch: 4,
+          phase: 'request',
+          requestEpoch: 4,
         })
       } finally {
         svcDb.close()

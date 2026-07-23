@@ -417,22 +417,28 @@ async function acceptFederationEnvelope(
     if (envelope.replyToMessageId === undefined) {
       return { outcome: 'refused', code: 'response_reply_required', retryable: false, status: 400 }
     }
-    const repliedTo = options.db.messages.getById(envelope.replyToMessageId)
-    if (repliedTo === undefined || repliedTo.phase !== 'request') {
-      return refused('response_request_unknown', true)
+    const directParent = options.db.messages.getById(envelope.replyToMessageId)
+    if (directParent === undefined) {
+      return refused('response_parent_unknown', true)
     }
-    const acceptance = options.db.federationAcceptedRequests.get(envelope.replyToMessageId)
+    if (directParent.phase !== 'request' && directParent.phase !== 'response') {
+      return refused('response_parent_phase_invalid', false)
+    }
+    if (envelope.rootMessageId !== directParent.rootMessageId) {
+      return refused('response_root_mismatch', false)
+    }
+    const acceptance = options.db.federationPeerAcceptances.get(envelope.replyToMessageId)
     if (acceptance === undefined) {
-      return refused('response_request_not_accepted', true)
+      return refused('response_parent_not_accepted', true)
     }
     if (acceptance.acceptedByNodeId !== request.authenticatedNodeId) {
       return refused('response_node_mismatch', false)
     }
 
-    // Completion is fenced by the durable ACK provenance above, deliberately
-    // not by the current placement ledger. A response may arrive after either
-    // endpoint's scope has rebound; applying the request-placement fence here
-    // would turn an ordinary transport delay into transcript loss (§6).
+    // Completion is fenced by direct-parent, same-peer ACK provenance,
+    // deliberately not by the current placement ledger or the correlation
+    // root. Per-hop proof composes across reply chains and placement rebinds;
+    // root equality above only keeps the transcript coherent (§6).
     if (options.db.messages.getById(envelope.messageId) !== undefined) {
       return { outcome: 'duplicate', messageId: envelope.messageId }
     }

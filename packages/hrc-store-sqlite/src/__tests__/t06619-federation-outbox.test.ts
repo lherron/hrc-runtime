@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import type { FederationMessageEnvelope } from 'hrc-core'
 import { openHrcDatabase } from '../index.js'
+import { schemaMigrations } from '../migrations/schema-migrations.js'
 
 const MESSAGE_ID = 'msg-11111111-1111-4111-8111-111111111111'
 
@@ -192,6 +193,68 @@ describe('T-06619 durable federation outbox', () => {
         state: 'dead_letter',
       })
       expect(db.federationOutbox.get('delivery-1')).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  test('phase-neutral acceptance migration copies requests and backfills delivered responses', () => {
+    const db = openHrcDatabase(':memory:')
+    const responseMessageId = 'msg-22222222-2222-4222-8222-222222222222'
+    try {
+      db.federationAcceptedRequests.record({
+        requestMessageId: MESSAGE_ID,
+        acceptedByNodeId: 'lab',
+        acceptedEpoch: 7,
+        acceptedAt: '2026-07-20T00:00:00.000Z',
+      })
+      db.messages.insert({
+        messageId: responseMessageId,
+        kind: 'dm',
+        phase: 'response',
+        from: envelope().to,
+        to: envelope().from,
+        body: 'historical delivered reply',
+        replyToMessageId: MESSAGE_ID,
+        rootMessageId: MESSAGE_ID,
+      })
+      db.federationOutbox.enqueue({
+        deliveryId: 'delivery-response',
+        messageId: responseMessageId,
+        peerNodeId: 'svc',
+        envelope: {
+          ...envelope(),
+          messageId: responseMessageId,
+          phase: 'response',
+          from: envelope().to,
+          to: envelope().from,
+          body: 'historical delivered reply',
+          replyToMessageId: MESSAGE_ID,
+          expected: { homeNodeId: 'svc', placementEpoch: 3 },
+        },
+        now: '2026-07-20T00:01:00.000Z',
+      })
+      db.federationOutbox.markDelivered('delivery-response', '2026-07-20T00:01:01.000Z')
+
+      const migration = schemaMigrations.find(
+        (candidate) => candidate.id === '0032_federation_peer_acceptances'
+      )
+      expect(migration).toBeDefined()
+      migration?.apply(db.sqlite)
+
+      expect(db.federationPeerAcceptances.get(MESSAGE_ID)).toMatchObject({
+        messageId: MESSAGE_ID,
+        acceptedByNodeId: 'lab',
+        phase: 'request',
+        requestEpoch: 7,
+        acceptedAt: '2026-07-20T00:00:00.000Z',
+      })
+      expect(db.federationPeerAcceptances.get(responseMessageId)).toMatchObject({
+        messageId: responseMessageId,
+        acceptedByNodeId: 'svc',
+        phase: 'response',
+        acceptedAt: '2026-07-20T00:01:01.000Z',
+      })
     } finally {
       db.close()
     }

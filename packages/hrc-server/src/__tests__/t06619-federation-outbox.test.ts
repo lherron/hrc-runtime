@@ -235,4 +235,67 @@ describe('T-06619 clock-driven federation retry state machine', () => {
       db.close()
     }
   })
+
+  test('operator cancel terminalizes scheduled work but refuses an in-flight send', async () => {
+    const scheduledDb = openHrcDatabase(':memory:')
+    seed(scheduledDb)
+    scheduledDb.federationOutbox.scheduleRetry({
+      deliveryId: 'delivery-1',
+      state: 'retry_scheduled',
+      nextAttemptAt: '2026-07-20T00:00:10.000Z',
+      attemptedAt: '2026-07-20T00:00:00.000Z',
+      errorCode: 'response_parent_not_accepted',
+      errorMessage: 'parent ACK provenance has not arrived yet',
+    })
+    const scheduledEngine = new FederationOutboxDeliveryEngine({
+      db: scheduledDb,
+      now: () => new Date('2026-07-20T00:00:01.000Z'),
+      send: async () => ({ outcome: 'accepted', messageId: MESSAGE_ID }),
+    })
+    try {
+      expect(scheduledEngine.cancel('delivery-1')).toMatchObject({
+        state: 'dead_letter',
+        totalAttempts: 1,
+        cycleAttempts: 1,
+        lastErrorCode: 'operator_cancelled',
+        lastError: {
+          code: 'operator_cancelled',
+          reason: 'operator_cancelled',
+          retryable: false,
+        },
+      })
+      expect(scheduledDb.federationOutbox.listDue('2027-01-01T00:00:00.000Z')).toEqual([])
+    } finally {
+      scheduledDb.close()
+    }
+
+    const inFlightDb = openHrcDatabase(':memory:')
+    seed(inFlightDb)
+    let releaseSend: (() => void) | undefined
+    let sendStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      sendStarted = resolve
+    })
+    const engine = new FederationOutboxDeliveryEngine({
+      db: inFlightDb,
+      send: async () => {
+        sendStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseSend = resolve
+        })
+        return { outcome: 'accepted', messageId: MESSAGE_ID }
+      },
+    })
+    try {
+      const draining = engine.drainDue()
+      await started
+      expect(() => engine.cancel('delivery-1')).toThrow(/send attempt in flight/)
+      expect(inFlightDb.federationOutbox.get('delivery-1')?.state).toBe('pending')
+      releaseSend?.()
+      await draining
+      expect(inFlightDb.federationOutbox.get('delivery-1')?.state).toBe('delivered')
+    } finally {
+      inFlightDb.close()
+    }
+  })
 })

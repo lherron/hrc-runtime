@@ -33,6 +33,7 @@ import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { parseOptionalBirthCredential } from './federation/birth-credential.js'
 import type { FederationTargetPlacement } from './federation/origin-outbox.js'
+import { FederationOutboxCancelError } from './federation/outbox-delivery.js'
 import { localizeFederatedRuntimeIntent } from './federation/runtime-intent-localization.js'
 import {
   assertScopeNotRetired,
@@ -1143,6 +1144,56 @@ export async function handleFederationOutboxDrop(
   return json(outbox.dropDeadLetter(delivery.deliveryId))
 }
 
+/** Terminalize one scheduled delivery through the engine's in-flight fence. */
+export async function handleFederationOutboxCancel(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (
+    !isObjectRecord(body) ||
+    typeof body['deliveryId'] !== 'string' ||
+    body['deliveryId'].trim().length === 0
+  ) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'deliveryId is required', {
+      field: 'deliveryId',
+    })
+  }
+  const outbox = this.federationOriginOutbox
+  if (outbox === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'federation origin outbox is not enabled on this node'
+    )
+  }
+  const delivery = outbox.list().find((row) => row.deliveryId === body['deliveryId'])
+  if (delivery === undefined) {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `unknown federation delivery ${body['deliveryId']}`,
+      { deliveryId: body['deliveryId'] }
+    )
+  }
+  if (delivery.state === 'delivered' || delivery.state === 'dead_letter') {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      `delivery ${delivery.deliveryId} is terminal (${delivery.state})`,
+      { deliveryId: delivery.deliveryId, state: delivery.state }
+    )
+  }
+  try {
+    return json(outbox.cancel(delivery.deliveryId))
+  } catch (error) {
+    if (error instanceof FederationOutboxCancelError) {
+      throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, error.message, {
+        deliveryId: error.deliveryId,
+        reason: error.reason,
+      })
+    }
+    throw error
+  }
+}
+
 export async function deliverFederationAcceptedMessage(
   this: HrcServerInstanceForHandlers,
   envelope: FederationMessageEnvelope,
@@ -1620,6 +1671,7 @@ export const targetMessageHandlersMethods = {
   handleFederationOutboxReplay,
   handleFederationOutboxReplayPeer,
   handleFederationOutboxDrop,
+  handleFederationOutboxCancel,
   deliverFederationAcceptedMessage,
   deliverPersistedSemanticDm,
   rejectBusyHeadlessSemanticDm,

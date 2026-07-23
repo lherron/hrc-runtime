@@ -12,6 +12,7 @@ import type { Command } from 'commander'
 import { toLegacyArgv } from './argv.js'
 import {
   cmdDoctor,
+  cmdFederationOutboxCancel,
   cmdFederationOutboxDrop,
   cmdFederationOutboxList,
   cmdFederationOutboxReplay,
@@ -24,7 +25,7 @@ export function registerFederationCommands(program: Command): void {
   const federation = program.command('federation').description('inspect and operate federation')
   const outbox = federation
     .command('outbox')
-    .description('inspect, replay, and drop durable origin deliveries')
+    .description('inspect, cancel, replay, and drop durable origin deliveries')
 
   outbox
     .command('list')
@@ -82,6 +83,17 @@ export function registerFederationCommands(program: Command): void {
           strings: ['peer'],
           booleans: ['all', 'json'],
         })
+      )
+    })
+
+  outbox
+    .command('cancel')
+    .argument('<delivery-id>', 'scheduled delivery id')
+    .description('dead-letter one scheduled delivery unless its send attempt is in flight')
+    .option('--json', 'output the cancelled delivery record as JSON')
+    .action(async (deliveryId: string, _opts, cmd: Command) => {
+      await cmdFederationOutboxCancel(
+        toLegacyArgv([deliveryId], cmd.opts(), { strings: [], booleans: ['json'] })
       )
     })
 

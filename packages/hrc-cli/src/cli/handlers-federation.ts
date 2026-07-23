@@ -349,6 +349,17 @@ export async function cmdFederationOutboxDrop(args: string[]): Promise<void> {
   else process.stdout.write(`dropped dead-letter: ${dropped.deliveryId} -> ${dropped.peerNodeId}\n`)
 }
 
+export async function cmdFederationOutboxCancel(args: string[]): Promise<void> {
+  const deliveryId = args[0]?.startsWith('-') === false ? args[0] : undefined
+  if (deliveryId === undefined) fatal('outbox cancel requires a delivery id')
+  const cancelled = await createClient().cancelFederationOutbox(deliveryId)
+  if (hasFlag(args, '--json')) printJson(cancelled)
+  else
+    process.stdout.write(
+      `cancelled delivery: ${cancelled.deliveryId} -> ${cancelled.peerNodeId} (operator_cancelled)\n`
+    )
+}
+
 function parseRebindRequest(args: string[]): FederationRebindRequest {
   const scopeArg = args.find((arg) => !arg.startsWith('-'))
   if (scopeArg === undefined) fatal('federation rebind requires a scope or target handle')

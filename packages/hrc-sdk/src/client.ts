@@ -639,6 +639,12 @@ export class HrcClient {
     })
   }
 
+  async cancelFederationOutbox(deliveryId: string): Promise<FederationOutboxDeliveryRecord> {
+    return this.postJson<FederationOutboxDeliveryRecord>('/v1/federation/outbox/cancel', {
+      deliveryId,
+    })
+  }
+
   async getSubscribers(): Promise<HrcSubscriberAdmissionSnapshot> {
     return this.getJson<HrcSubscriberAdmissionSnapshot>('/v1/server/subscribers')
   }

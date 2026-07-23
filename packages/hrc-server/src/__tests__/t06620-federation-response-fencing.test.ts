@@ -20,10 +20,11 @@ function seedAcceptedRequest(db: ReturnType<typeof openHrcDatabase>): void {
     to: { kind: 'session', sessionRef: REMOTE_SESSION },
     body: 'request before the rebind',
   })
-  db.federationAcceptedRequests.record({
-    requestMessageId: REQUEST_ID,
+  db.federationPeerAcceptances.record({
+    messageId: REQUEST_ID,
     acceptedByNodeId: 'lab',
-    acceptedEpoch: 4,
+    phase: 'request',
+    requestEpoch: 4,
   })
 }
 
@@ -121,7 +122,7 @@ describe('T-06620 accepted-request response fence', () => {
         })
       ).resolves.toEqual({
         outcome: 'refused',
-        code: 'response_request_unknown',
+        code: 'response_parent_unknown',
         retryable: true,
         status: 409,
       })
