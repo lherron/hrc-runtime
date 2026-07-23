@@ -161,7 +161,23 @@ _deploy-node ssh-target expected-node:
     fi
 
     just install no-sync=1
-    hrc server restart --wait --wait-timeout-ms 300000
+    # Restart onto the freshly-selected release. The correct mechanism differs by
+    # supervisor: svc/max3 run gui LaunchAgents that `hrc server restart` detects and
+    # kickstarts cleanly. lab runs a system LaunchDaemon (no gui session for uid 502),
+    # which `hrc server restart` does NOT detect — it would self-daemonize a second
+    # process and race the KeepAlive respawn. For lab, stop and let launchd bring it
+    # back on the new release (root-free: lab may signal its own-uid process).
+    if [[ "$expected_node" == lab ]]; then
+      hrc server stop || fail 'hrc server stop failed on lab'
+      healthy=""
+      for _ in $(seq 1 40); do
+        sleep 3
+        [[ "$(hrc server status --json 2>/dev/null | jq -r '.status // "down"')" == healthy ]] && { healthy=1; break; }
+      done
+      [[ -n "$healthy" ]] || fail 'lab daemon did not become healthy after stop+respawn'
+    else
+      hrc server restart --wait --wait-timeout-ms 300000
+    fi
 
     status_after="$(hrc server status --json)" || fail 'HRC daemon did not become healthy'
     actual_node="$(jq -er '.node.nodeId' <<<"$status_after")" ||

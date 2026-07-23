@@ -101,6 +101,58 @@ The final status readback must name the newly installed release in
 `binaryPath` / `packagePath`. Build, publish, install, and restart are separate
 states; record each one when validating a runtime-affecting change.
 
+## Fleet Deployment (lab / max3)
+
+Three logical nodes, each with its own checkout, release, and daemon: **svc**
+(this node) and **lab** are co-hosted on `mini`; **max3** is a separate
+workstation. Deploy a pushed `origin/main` to a remote node with:
+
+```bash
+just deploy-lab     # ssh lab@mini → ff-only pull, just install, restart, verify
+just deploy-max3    # ssh max3     → same
+```
+
+Each target refuses a dirty checkout (watch for a stray `default.profraw`) and
+requires **0 busy runtimes** on the node (drain first). It ff-only merges
+`origin/main` (never resets local commits), installs, restarts, and verifies the
+daemon returned healthy on an atomic release with node identity unchanged.
+
+**Daemon supervisor differs by node — this governs how you restart and set flags:**
+
+- **svc, max3** run as the console user (`lherron`), so their daemons are **gui
+  LaunchAgents** (`~/Library/LaunchAgents/com.praesidium[.<node>].hrc-server.plist`,
+  loaded in `gui/<uid>`). `hrc server restart` detects the owner and
+  `launchctl kickstart`s it cleanly. Changing an env-gated flag = edit the plist
+  `EnvironmentVariables` **and reload the job** (`launchctl bootout
+  gui/<uid>/<label>` then `launchctl bootstrap gui/<uid> <plist>`); `hrc server
+  restart` / `kickstart` do NOT re-read the plist. The reload needs that uid's gui
+  session — the console user has it locally on svc and over ssh to max3.
+
+- **lab** runs as a **headless secondary user** (uid 502) with **no aqua/gui
+  session**, so a gui LaunchAgent can't persist. lab's daemon is a **system
+  LaunchDaemon**: `/Library/LaunchDaemons/com.praesidium.lab.hrc-server.plist`
+  (`UserName=lab`, `KeepAlive`, `RunAtLoad`, `ProgramArguments … server serve`).
+  Because it is not a gui LaunchAgent, `hrc server restart` does not detect it and
+  would self-daemonize a second process that races the KeepAlive respawn.
+  **Restart lab with `hrc server stop` — KeepAlive respawns it** on the current
+  release with the plist env; this is root-free (lab signals its own-uid process),
+  and `just deploy-lab` encodes this branch. Only the one-time LaunchDaemon
+  install needs root:
+
+  ```bash
+  sudo install -m 644 -o root -g wheel <plist> \
+    /Library/LaunchDaemons/com.praesidium.lab.hrc-server.plist
+  sudo launchctl bootstrap system /Library/LaunchDaemons/com.praesidium.lab.hrc-server.plist
+  ```
+
+**Env-gated daemon flags** (e.g. `HRC_MAIL_KICKER_ENABLED`) are read from
+`process.env` only, so they live in the node's plist `EnvironmentVariables` and
+apply on the next supervisor (re)load/respawn. Do **not** infer launchd
+management from a plist's mere presence — a self-daemonized `hrc server start`
+orphans to PID 1 identically. Check `launchctl print gui/<uid>/<label>` (or
+`system/<label>`) and whether the running argv matches the plist's
+`ProgramArguments`.
+
 ## Headless vs Tmux Runtimes
 
 - **Headless runtimes** run agents under a wrapper process; events flow via
