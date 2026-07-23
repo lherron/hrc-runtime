@@ -1,0 +1,5 @@
+schemaVersion: praesidium.docs.collection.v1
+id: hrc-runtime
+project: hrc-runtime
+contentRoot: .
+defaultVisibility: internal
