@@ -264,6 +264,16 @@ export class HrcMailEnvelopeRepository {
               { ingressId, envelopeId: existingReceipt.envelope_id }
             )
           }
+          if (input.materializationIntent !== undefined && existingReceipt.path_choice === 'mail') {
+            this.db
+              .query(
+                `UPDATE hrcmail_envelopes
+                 SET materialization_intent_json =
+                       COALESCE(materialization_intent_json, ?)
+                 WHERE envelope_id = ?`
+              )
+              .run(canonicalHrcMailJson(input.materializationIntent), existingReceipt.envelope_id)
+          }
           return {
             receipt: mapReceipt(existingReceipt),
             envelope: this.require(existingReceipt.envelope_id),
@@ -277,8 +287,8 @@ export class HrcMailEnvelopeRepository {
             `INSERT INTO hrcmail_envelopes (
               envelope_id, ingress_id, from_kind, from_ref, target_session_ref,
               payload_kind, body, metadata_json, reply_schema_json, state,
-              created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+              materialization_intent_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
           )
           .run(
             envelopeId,
@@ -292,6 +302,9 @@ export class HrcMailEnvelopeRepository {
               ? null
               : canonicalHrcMailJson(input.payload.metadata),
             input.replySchema === undefined ? null : canonicalHrcMailJson(input.replySchema),
+            input.materializationIntent === undefined
+              ? null
+              : canonicalHrcMailJson(input.materializationIntent),
             now,
             now
           )

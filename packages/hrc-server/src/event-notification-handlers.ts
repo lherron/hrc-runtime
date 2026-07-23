@@ -77,6 +77,7 @@ export function notifyEvent(
   this.headlessViewerStatus.observe(event)
   if ('hrcSeq' in event) {
     this.maybeRelayFederatedInteractiveLifecycle(event)
+    this.observeMailDriveLifecycleEvent(event)
   }
   if (
     'hrcSeq' in event &&

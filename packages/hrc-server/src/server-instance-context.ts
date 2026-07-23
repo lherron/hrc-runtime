@@ -6,7 +6,7 @@ import type {
   HrcProvider,
   HrcRuntimeSnapshot,
 } from 'hrc-core'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 
 import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
@@ -26,6 +26,7 @@ import type { FederationOriginOutbox } from './federation/origin-outbox.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
+import type { MailKickerHandlersMethods } from './mail-kicker-handlers.js'
 import type { MailHandlersMethods } from './mail/mail-handlers.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
 import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
@@ -67,6 +68,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   EventHandlersMethods &
   EventNotificationHandlersMethods &
   LaunchLifecycleHandlersMethods &
+  MailKickerHandlersMethods &
   MailHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
@@ -132,12 +134,20 @@ type HrcServerInstanceDataForHandlers = {
   activeRunReconcileInFlight: Promise<unknown> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
+  mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
+  mailKickerSweepInFlight: Promise<void> | undefined
+  readonly mailKickerPendingTargets: Map<string, HrcMailDriveWakeReason>
+  readonly mailKickerTargetOperations: Map<string, Promise<void>>
+  stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
+  readonly hrcMailKickerEnabled: boolean
+  readonly hrcMailKickerSweepIntervalMs: number
+  readonly hrcMailMaxRounds: number
   harnessBrokerController: HarnessBrokerController | undefined
   /**
    * Resolves once the post-construction durable-broker warmup has finished (or

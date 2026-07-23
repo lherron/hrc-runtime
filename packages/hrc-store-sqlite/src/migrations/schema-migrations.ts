@@ -969,6 +969,66 @@ const hrcmailEnvelopeMigration: HrcMigration = {
   },
 }
 
+const hrcmailDriveMigration: HrcMigration = {
+  id: '0029_hrcmail_drive_slots',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE hrcmail_envelopes
+        ADD COLUMN materialization_intent_json TEXT;
+
+      CREATE TABLE IF NOT EXISTS hrcmail_drive_attempts (
+        drive_attempt_id TEXT PRIMARY KEY,
+        target_session_ref TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        wake_reason TEXT NOT NULL CHECK (
+          wake_reason IN ('insert', 'turn_completion', 'periodic', 'recovery')
+        ),
+        state TEXT NOT NULL CHECK (
+          state IN ('claimed', 'started', 'completed', 'failed', 'no_op')
+        ),
+        prompt TEXT NOT NULL,
+        presented_count INTEGER NOT NULL DEFAULT 0 CHECK (presented_count >= 0),
+        materialization_intent_json TEXT,
+        host_session_id TEXT,
+        generation INTEGER CHECK (generation IS NULL OR generation >= 1),
+        runtime_id TEXT,
+        start_hrc_seq INTEGER,
+        terminal_event_kind TEXT,
+        last_error TEXT,
+        claimed_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_drive_attempts_target_claimed
+        ON hrcmail_drive_attempts(target_session_ref, claimed_at);
+
+      CREATE TABLE IF NOT EXISTS hrcmail_drive_slots (
+        target_session_ref TEXT PRIMARY KEY,
+        active_drive_attempt_id TEXT UNIQUE,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (active_drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS hrcmail_drive_presentations (
+        drive_attempt_id TEXT NOT NULL,
+        envelope_id TEXT NOT NULL,
+        presented_at TEXT NOT NULL,
+        PRIMARY KEY (drive_attempt_id, envelope_id),
+        FOREIGN KEY (drive_attempt_id)
+          REFERENCES hrcmail_drive_attempts(drive_attempt_id) ON DELETE CASCADE,
+        FOREIGN KEY (envelope_id)
+          REFERENCES hrcmail_envelopes(envelope_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_drive_presentations_envelope
+        ON hrcmail_drive_presentations(envelope_id, drive_attempt_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -993,4 +1053,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   federatedObservedEventsMigration,
   sessionTaskClaimAuthorityMigration,
   hrcmailEnvelopeMigration,
+  hrcmailDriveMigration,
 ]

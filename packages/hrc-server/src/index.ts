@@ -33,7 +33,7 @@ import type {
 } from 'hrc-core'
 
 import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqlite'
-import type { HrcDatabase } from 'hrc-store-sqlite'
+import type { HrcDatabase, HrcMailDriveWakeReason } from 'hrc-store-sqlite'
 import {
   type AppSessionHandlersMethods,
   appSessionHandlersMethods,
@@ -114,11 +114,18 @@ import {
   type LaunchLifecycleHandlersMethods,
   launchLifecycleHandlersMethods,
 } from './launch-lifecycle-handlers.js'
+import {
+  type MailKickerHandlersMethods,
+  mailKickerHandlersMethods,
+} from './mail-kicker-handlers.js'
 import { type MailHandlersMethods, mailHandlersMethods } from './mail/mail-handlers.js'
 import {
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
   resolveHeadlessCodexBrokerEnabled,
+  resolveHrcMailKickerEnabled,
+  resolveHrcMailKickerSweepIntervalMs,
+  resolveHrcMailMaxRounds,
   resolvePiTuiTmuxBrokerEnabled,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
@@ -511,6 +518,7 @@ interface HrcServerInstance
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
     LaunchLifecycleHandlersMethods,
+    MailKickerHandlersMethods,
     MailHandlersMethods,
     RuntimeInspectHandlersMethods {}
 
@@ -547,6 +555,10 @@ class HrcServerInstance implements HrcServer {
   activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
+  mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
+  mailKickerSweepInFlight: Promise<void> | undefined
+  readonly mailKickerPendingTargets = new Map<string, HrcMailDriveWakeReason>()
+  readonly mailKickerTargetOperations = new Map<string, Promise<void>>()
   // Stale-generation auto-rotation policy. Resolved once at construction
   // from options + env; callers can override per-request via
   // `allowStaleGeneration: true`.
@@ -556,6 +568,9 @@ class HrcServerInstance implements HrcServer {
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
   readonly piTuiTmuxBrokerEnabled: boolean
+  readonly hrcMailKickerEnabled: boolean
+  readonly hrcMailKickerSweepIntervalMs: number
+  readonly hrcMailMaxRounds: number
   harnessBrokerController: HarnessBrokerController | undefined
   /** See HrcServerInstanceForHandlers.brokerWarmupComplete (T-01996). */
   brokerWarmupComplete?: Promise<void> | undefined
@@ -867,6 +882,9 @@ class HrcServerInstance implements HrcServer {
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
     this.piTuiTmuxBrokerEnabled = resolvePiTuiTmuxBrokerEnabled(options)
+    this.hrcMailKickerEnabled = resolveHrcMailKickerEnabled(options)
+    this.hrcMailKickerSweepIntervalMs = resolveHrcMailKickerSweepIntervalMs(options)
+    this.hrcMailMaxRounds = resolveHrcMailMaxRounds(options)
     this.ctx = {
       db: this.db,
       tmux: this.tmux,
@@ -901,6 +919,7 @@ class HrcServerInstance implements HrcServer {
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
     this.startClaudeGhosttyIdleCleanup()
+    this.startMailKicker()
 
     // T-01996: eagerly warm the request-serving broker controller. The pre-instance
     // reconcile only classified durable runtimes (attach:false); this is the sole
@@ -1009,6 +1028,22 @@ class HrcServerInstance implements HrcServer {
       } catch (error) {
         writeServerLog('WARN', 'server.stop.idle_cleanup_wait_failed', { error })
       }
+    }
+    if (this.mailKickerSweepTimer) {
+      clearInterval(this.mailKickerSweepTimer)
+      this.mailKickerSweepTimer = undefined
+    }
+    this.mailKickerPendingTargets.clear()
+    if (this.mailKickerSweepInFlight) {
+      try {
+        await this.mailKickerSweepInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.mail_kicker_sweep_wait_failed', { error })
+      }
+    }
+    const mailTargetOperations = [...this.mailKickerTargetOperations.values()]
+    if (mailTargetOperations.length > 0) {
+      await Promise.allSettled(mailTargetOperations)
     }
     for (const close of [...this.activeStreamClosers]) {
       try {
@@ -1943,6 +1978,7 @@ Object.assign(
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
   launchLifecycleHandlersMethods,
+  mailKickerHandlersMethods,
   mailHandlersMethods,
   runtimeInspectHandlersMethods
 )

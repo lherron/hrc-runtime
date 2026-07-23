@@ -14,6 +14,7 @@ import type {
   SweepZombieRunResult,
 } from 'hrc-core'
 import type { HrcLifecycleQueryFilters } from 'hrc-store-sqlite'
+import type { HrcMailDriveAttempt } from 'hrc-store-sqlite'
 import type { InvocationEventEnvelope } from 'spaces-harness-broker-protocol'
 import type { SdkInflightInputClient } from './agent-spaces-adapter/index.js'
 import type { FederationConfig } from './federation/federation-config.js'
@@ -183,6 +184,17 @@ export type HrcServerOptions = {
   lockPath: string
   spoolDir: string
   dbPath: string
+  /** T-06810 Wave 2: dark-by-default embedded mailbox kicker. */
+  hrcMailKickerEnabled?: boolean | undefined
+  /** Test/embedded periodic sweep override; production defaults to one second. */
+  hrcMailKickerSweepIntervalMs?: number | undefined
+  /** Across-turn envelope bound; defaults to HRC_MAIL_MAX_ROUNDS (5). */
+  hrcMailMaxRounds?: number | undefined
+  /**
+   * Test-only crash-boundary seam. It runs after the durable slot CAS and
+   * before summon/presentation/dispatch; throwing leaves the attempt recoverable.
+   */
+  hrcMailKickerAfterClaim?: ((attempt: HrcMailDriveAttempt) => void | Promise<void>) | undefined
   /**
    * Preferred port for the OTLP/HTTP log ingest listener on 127.0.0.1. Falls
    * back to an OS-chosen ephemeral port if occupied. Defaults to 4318.

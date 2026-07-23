@@ -5,6 +5,8 @@
  * shared by the SQLite owner, daemon routes, SDK, and the hrcmail CLI.
  */
 
+import type { HrcRuntimeIntent } from './contracts.js'
+
 export const HRC_MAIL_REPLY_SCHEMA_DIALECT = 'https://json-schema.org/draft/2020-12/schema'
 export const HRC_MAIL_REPLY_SCHEMA_MAX_BYTES = 64 * 1024
 
@@ -60,6 +62,12 @@ export type HrcMailSendRequest = {
   targetSessionRef: string
   payload: HrcMailPayload
   replySchema?: HrcMailReplySchema | undefined
+  /**
+   * Persist-only materialization hint used by the kicker when the target scope
+   * has never been born. Ingress never acts on it; the kicker is the sole
+   * consumer and enters the normal summon gate before provisioning.
+   */
+  materializationIntent?: HrcRuntimeIntent | undefined
 }
 
 export type HrcMailSendResponse = {

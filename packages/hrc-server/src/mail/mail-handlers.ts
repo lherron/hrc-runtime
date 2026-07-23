@@ -22,6 +22,7 @@ import {
 import { HrcMailRepositoryError } from 'hrc-store-sqlite'
 
 import { normalizeTargetSessionRef } from '../messages.js'
+import { parseRuntimeIntent } from '../parsers/runtime.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
 import { isRecord, parseJsonBody } from '../server-parsers.js'
 import { json } from '../server-util.js'
@@ -145,8 +146,16 @@ export async function handleMailSend(
     ...(body['replySchema'] === undefined
       ? {}
       : { replySchema: parseReplySchema(body['replySchema']) as HrcMailReplySchema }),
+    ...(body['materializationIntent'] === undefined
+      ? {}
+      : {
+          materializationIntent: isRecord(body['materializationIntent'])
+            ? parseRuntimeIntent(body['materializationIntent'])
+            : malformed('materializationIntent must be an object', 'materializationIntent'),
+        }),
   }
   const result = runMailMutation(() => persistMailIngress(this.db, parsed))
+  this.requestMailKickerWake(result.envelope.targetSessionRef, 'insert')
   return json(result satisfies HrcMailSendResponse)
 }
 

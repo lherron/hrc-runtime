@@ -84,6 +84,15 @@ export {
   HrcMailEnvelopeRepository,
   HrcMailRepositoryError,
 } from './mail/envelope-repository.js'
+export { HrcMailDriveRepository } from './mail/drive-repository.js'
+export type {
+  CompleteHrcMailDriveResult,
+  HrcMailDriveAttempt,
+  HrcMailDriveAttemptState,
+  HrcMailDriveClaimResult,
+  HrcMailDriveSlot,
+  HrcMailDriveWakeReason,
+} from './mail/drive-repository.js'
 export type {
   AckHrcMailEnvelopeInput,
   CreateHrcMailEnvelopeInput,

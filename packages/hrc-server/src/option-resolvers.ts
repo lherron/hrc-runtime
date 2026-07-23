@@ -10,11 +10,15 @@ import {
 } from './precompile-launch-timing.js'
 import {
   DEFAULT_CLAUDE_GHOSTTY_IDLE_CLEANUP_MINUTES,
+  DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS,
+  DEFAULT_HRC_MAIL_MAX_ROUNDS,
   DEFAULT_STALE_GENERATION_THRESHOLD_SEC,
   HRC_BROKER_DURABLE_IPC_ENABLED_ENV,
   HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED_ENV,
   HRC_CODEX_CLI_TMUX_BROKER_ENABLED_ENV,
   HRC_HEADLESS_CODEX_BROKER_ENABLED_ENV,
+  HRC_MAIL_KICKER_ENABLED_ENV,
+  HRC_MAIL_MAX_ROUNDS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
@@ -112,6 +116,33 @@ export function resolveBrokerDurableIpcEnabled(options: HrcServerOptions): boole
     process.env[HRC_BROKER_DURABLE_IPC_ENABLED_ENV],
     { defaultOn: false }
   )
+}
+
+export function resolveHrcMailKickerEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(
+    options.hrcMailKickerEnabled,
+    process.env[HRC_MAIL_KICKER_ENABLED_ENV],
+    { defaultOn: false }
+  )
+}
+
+export function resolveHrcMailKickerSweepIntervalMs(options: HrcServerOptions): number {
+  const value = options.hrcMailKickerSweepIntervalMs
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.max(10, Math.floor(value))
+  }
+  return DEFAULT_HRC_MAIL_KICKER_SWEEP_INTERVAL_MS
+}
+
+export function resolveHrcMailMaxRounds(options: HrcServerOptions): number {
+  const override = options.hrcMailMaxRounds
+  if (typeof override === 'number' && Number.isSafeInteger(override) && override > 0) {
+    return override
+  }
+  const raw = process.env[HRC_MAIL_MAX_ROUNDS_ENV]
+  if (raw === undefined) return DEFAULT_HRC_MAIL_MAX_ROUNDS
+  const parsed = Number(raw.trim())
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_HRC_MAIL_MAX_ROUNDS
 }
 
 export function resolveAspcFacadeStartOptions(): { command: string; args: string[] } {

@@ -7,7 +7,12 @@ import { Command, CommanderError } from 'commander'
 import { HrcDomainError, type HrcMailEnvelopeState } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 
-import { resolveMailActor, resolveMailTarget, resolveOwnMailbox } from './identity.js'
+import {
+  resolveMailActor,
+  resolveMailDeliveryTarget,
+  resolveMailTarget,
+  resolveOwnMailbox,
+} from './identity.js'
 import { renderEnvelopeDetail, renderEnvelopeSummary } from './render.js'
 
 type ClientFactory = () => HrcClient
@@ -157,10 +162,11 @@ export function buildProgram(createClient: ClientFactory = defaultClientFactory)
           }
           metadata = parsed as Record<string, unknown>
         }
+        const deliveryTarget = resolveMailDeliveryTarget(target)
         const result = await createClient().sendMail({
           ingressId: opts.id ?? `mail-ingress-${randomUUID()}`,
           from: resolveMailActor(),
-          targetSessionRef: resolveMailTarget(target),
+          targetSessionRef: deliveryTarget.targetSessionRef,
           payload: {
             kind: opts.kind,
             body,
@@ -169,6 +175,7 @@ export function buildProgram(createClient: ClientFactory = defaultClientFactory)
           ...(opts.replySchema === undefined
             ? {}
             : { replySchema: readJsonFile(opts.replySchema, 'reply schema') }),
+          materializationIntent: deliveryTarget.materializationIntent,
         })
         global().json
           ? printJson(result)
