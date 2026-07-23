@@ -179,7 +179,18 @@ _deploy-node ssh-target expected-node:
       hrc server restart --wait --wait-timeout-ms 300000
     fi
 
-    status_after="$(hrc server status --json)" || fail 'HRC daemon did not become healthy'
+    # The daemon can lag its supervisor respawn by a few seconds; a single
+    # unretried status probe here failed three deploys in a row on max3.
+    status_after=""
+    for _ in $(seq 1 20); do
+      if status_after="$(hrc server status --json 2>/dev/null)" &&
+        [[ "$(jq -r '.status // "down"' <<<"$status_after")" == healthy ]]; then
+        break
+      fi
+      status_after=""
+      sleep 3
+    done
+    [[ -n "$status_after" ]] || fail 'HRC daemon did not become healthy'
     actual_node="$(jq -er '.node.nodeId' <<<"$status_after")" ||
       fail 'post-restart status did not report a logical node ID'
     [[ "$actual_node" == "$expected_node" ]] ||
