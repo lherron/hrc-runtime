@@ -55,6 +55,25 @@ function terminalRunEvent(events: HrcLifecycleEvent[]): HrcLifecycleEvent | unde
   return undefined
 }
 
+function publishTerminalPresentations(
+  server: HrcServerInstanceForHandlers,
+  driveAttemptId: string
+): void {
+  for (const envelopeId of server.db.mailDrives.presentationEnvelopeIds(driveAttemptId)) {
+    const envelope = server.db.mailEnvelopes.get(envelopeId)
+    if (envelope === undefined || (envelope.state !== 'acked' && envelope.state !== 'dead')) {
+      continue
+    }
+    void server.publishFederatedMailDisposition(envelope).catch((error: unknown) => {
+      writeServerLog('WARN', 'hrcmail.federation.disposition_failed', {
+        envelopeId,
+        driveAttemptId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }
+}
+
 function observeAttempt(
   server: HrcServerInstanceForHandlers,
   attempt: HrcMailDriveAttempt
@@ -76,11 +95,14 @@ function observeAttempt(
 
   const terminal = terminalRunEvent(events)
   if (terminal !== undefined) {
-    server.db.mailDrives.completeStartedAttempt(
+    const completed = server.db.mailDrives.completeStartedAttempt(
       current.runId,
       terminal.eventKind,
       server.hrcMailMaxRounds
     )
+    if (completed !== undefined) {
+      publishTerminalPresentations(server, completed.attempt.driveAttemptId)
+    }
     return 'finished'
   }
 
@@ -89,11 +111,14 @@ function observeAttempt(
   if (isDurablyActiveRun(run)) return 'waiting'
 
   if (run.completedAt !== undefined || run.status === 'completed' || run.status === 'failed') {
-    server.db.mailDrives.completeStartedAttempt(
+    const completed = server.db.mailDrives.completeStartedAttempt(
       current.runId,
       `run.${run.status}`,
       server.hrcMailMaxRounds
     )
+    if (completed !== undefined) {
+      publishTerminalPresentations(server, completed.attempt.driveAttemptId)
+    }
     return 'finished'
   }
   return 'waiting'
@@ -162,6 +187,11 @@ async function driveMailTargetOnce(
     const presented = server.db.mailDrives.presentForAttempt(attempt.driveAttemptId, (envelopeId) =>
       server.db.mailEnvelopes.require(envelopeId)
     )
+    for (const envelope of presented) {
+      if (envelope.state === 'acked' || envelope.state === 'dead') {
+        await server.publishFederatedMailDisposition(envelope)
+      }
+    }
     attempt = server.db.mailDrives.getAttempt(attempt.driveAttemptId) ?? attempt
     if (presented.length === 0) {
       server.db.mailDrives.completeNoOp(attempt.driveAttemptId)

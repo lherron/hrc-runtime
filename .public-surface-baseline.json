@@ -695,6 +695,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationMailPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationMailPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FederationMessageDelivery",
       "kind": "type",
       "file": "packages/hrc-core/src/federation-contracts.ts",

@@ -391,6 +391,7 @@ export type {
   FederationGateModeValue,
   FederationExpectedPlacement,
   FederationInteractiveLifecycleSignal,
+  FederationMailPayload,
   FederationMessageDelivery,
   FederationMessageEnvelope,
   FederationPendingMessageEnvelope,

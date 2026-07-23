@@ -1,4 +1,7 @@
+import { createHash, randomUUID } from 'node:crypto'
+
 import {
+  type FederationMailPayload,
   HrcBadRequestError,
   HrcConflictError,
   HrcErrorCode,
@@ -18,10 +21,13 @@ import {
   type HrcMailReplySchema,
   type HrcMailSendRequest,
   type HrcMailSendResponse,
+  type HrcMessageAddress,
+  type HrcMessageRecord,
   sessionRefFor,
 } from 'hrc-core'
 import { HrcMailRepositoryError } from 'hrc-store-sqlite'
 
+import type { FederationTargetPlacement } from '../federation/origin-outbox.js'
 import { normalizeTargetSessionRef } from '../messages.js'
 import { parseRuntimeIntent } from '../parsers/runtime.js'
 import type { HrcServerInstanceForHandlers } from '../server-instance-context.js'
@@ -133,6 +139,64 @@ function runMailMutation<T>(mutate: () => T): T {
   }
 }
 
+function mailActorAddress(actor: HrcMailActor): HrcMessageAddress {
+  return actor.kind === 'scope'
+    ? { kind: 'session', sessionRef: actor.sessionRef }
+    : { kind: 'entity', entity: 'human' }
+}
+
+function deterministicDispositionMessageId(requestMessageId: string): string {
+  const bytes = Buffer.from(
+    createHash('sha256').update(`hrcmail-disposition:${requestMessageId}`).digest().subarray(0, 16)
+  )
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `msg-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function mailRequestPayload(
+  request: HrcMailSendRequest,
+  envelopeId: string
+): Extract<FederationMailPayload, { type: 'request' }> {
+  return { version: 1, type: 'request', envelopeId, request }
+}
+
+function ensureFederatedMailRequest(
+  server: HrcServerInstanceForHandlers,
+  request: HrcMailSendRequest,
+  envelopeId: string,
+  messageId: string
+): HrcMessageRecord {
+  const mail = mailRequestPayload(request, envelopeId)
+  return server.db.messages.insertIdempotent({
+    messageId,
+    kind: 'system',
+    phase: 'request',
+    from: mailActorAddress(request.from),
+    to: { kind: 'session', sessionRef: request.targetSessionRef },
+    body: request.payload.body,
+    execution: { state: 'not_applicable' },
+    metadataJson: { federationMail: mail },
+  }).record
+}
+
+async function routeFederatedMailRequest(
+  server: HrcServerInstanceForHandlers,
+  request: HrcMailSendRequest,
+  record: HrcMessageRecord,
+  resolvedPlacement?: FederationTargetPlacement
+): Promise<void> {
+  const route = await server.federationOriginOutbox?.routeMail(request, record, resolvedPlacement)
+  if (route?.outcome === 'local') {
+    throw new HrcConflictError(
+      HrcErrorCode.STALE_CONTEXT,
+      'federated mail path no longer resolves to a remote authority',
+      { targetSessionRef: request.targetSessionRef }
+    )
+  }
+}
+
 export async function handleMailSend(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -158,6 +222,62 @@ export async function handleMailSend(
             : malformed('materializationIntent must be an object', 'materializationIntent'),
         }),
   }
+  const priorReceipt = this.db.mailEnvelopes.getIngressReceipt(parsed.ingressId)
+  if (priorReceipt !== undefined) {
+    const local = this.db.mailEnvelopes.get(priorReceipt.envelopeId)
+    if (local !== undefined) {
+      const result = runMailMutation(() => persistMailIngress(this.db, parsed))
+      this.requestMailKickerWake(result.envelope.targetSessionRef, 'insert')
+      return json(result satisfies HrcMailSendResponse)
+    }
+    const origin = this.db.mailFederatedOrigins.getByIngressId(parsed.ingressId)
+    if (origin !== undefined) {
+      const result = runMailMutation(() =>
+        this.db.mailFederatedOrigins.create({
+          request: parsed,
+          envelopeId: origin.envelopeId,
+          requestMessageId: origin.requestMessageId,
+        })
+      )
+      const record = ensureFederatedMailRequest(
+        this,
+        parsed,
+        origin.envelopeId,
+        origin.requestMessageId
+      )
+      await routeFederatedMailRequest(this, parsed, record)
+      return json(result satisfies HrcMailSendResponse)
+    }
+  }
+
+  const resolvedPlacement = await this.federationOriginOutbox?.resolveMailTargetPlacement(parsed)
+  if (resolvedPlacement !== undefined && resolvedPlacement.outcome !== 'local') {
+    const envelopeId = `mail-${randomUUID()}`
+    const requestMessageId = `msg-${randomUUID()}`
+    const stored = runMailMutation(() =>
+      this.db.sqlite
+        .transaction(() => {
+          const result = this.db.mailFederatedOrigins.create({
+            request: parsed,
+            envelopeId,
+            requestMessageId,
+          })
+          const origin = this.db.mailFederatedOrigins.getByIngressId(parsed.ingressId)
+          if (origin === undefined) throw new Error('failed to reload federated mail origin')
+          const record = ensureFederatedMailRequest(
+            this,
+            parsed,
+            origin.envelopeId,
+            origin.requestMessageId
+          )
+          return { result, record }
+        })
+        .immediate()
+    )
+    await routeFederatedMailRequest(this, parsed, stored.record, resolvedPlacement)
+    return json(stored.result satisfies HrcMailSendResponse)
+  }
+
   const result = runMailMutation(() => persistMailIngress(this.db, parsed))
   this.requestMailKickerWake(result.envelope.targetSessionRef, 'insert')
   return json(result satisfies HrcMailSendResponse)
@@ -204,6 +324,7 @@ export async function handleMailAck(
     ...(Object.hasOwn(body, 'response') ? { response: body['response'] } : {}),
   }
   const results = runMailMutation(() => this.db.mailEnvelopes.ack(parsed))
+  await Promise.all(results.map((result) => this.publishFederatedMailDisposition(result.envelope)))
   return json({ results } satisfies HrcMailAckResponse)
 }
 
@@ -239,8 +360,49 @@ export async function handleMailCat(
   const parsed: HrcMailCatRequest = {
     envelopeId: parseNonEmptyString(body['envelopeId'], 'envelopeId'),
   }
-  const envelope = runMailMutation(() => this.db.mailEnvelopes.require(parsed.envelopeId))
+  const envelope = runMailMutation(() => {
+    const local = this.db.mailEnvelopes.get(parsed.envelopeId)
+    if (local !== undefined) return local
+    const federated = this.db.mailFederatedOrigins.getByEnvelopeId(parsed.envelopeId)
+    if (federated !== undefined) return federated.envelope
+    return this.db.mailEnvelopes.require(parsed.envelopeId)
+  })
   return json({ envelope } satisfies HrcMailCatResponse)
+}
+
+export async function publishFederatedMailDisposition(
+  this: HrcServerInstanceForHandlers,
+  envelope: HrcMailCatResponse['envelope']
+): Promise<void> {
+  if (envelope.state !== 'acked' && envelope.state !== 'dead') return
+  const request = this.db.messages.getById(envelope.ingressId)
+  const mail = request?.metadataJson?.['federationMail']
+  if (
+    request === undefined ||
+    request.phase !== 'request' ||
+    !isRecord(mail) ||
+    mail['type'] !== 'request'
+  ) {
+    return
+  }
+  const disposition: FederationMailPayload = {
+    version: 1,
+    type: 'disposition',
+    envelope,
+  }
+  const response = this.db.messages.insertIdempotent({
+    messageId: deterministicDispositionMessageId(request.messageId),
+    kind: 'system',
+    phase: 'response',
+    from: request.to,
+    to: request.from,
+    body: '',
+    replyToMessageId: request.messageId,
+    rootMessageId: request.rootMessageId,
+    execution: { state: 'not_applicable' },
+    metadataJson: { federationMail: disposition },
+  }).record
+  await this.federationOriginOutbox?.routeResponse(response)
 }
 
 export async function handleMailList(
@@ -367,6 +529,7 @@ export const mailHandlersMethods = {
   handleMailCat,
   handleMailList,
   handleMailStopDecision,
+  publishFederatedMailDisposition,
 }
 
 export type MailHandlersMethods = typeof mailHandlersMethods

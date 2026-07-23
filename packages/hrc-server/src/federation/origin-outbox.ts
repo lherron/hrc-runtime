@@ -8,9 +8,13 @@ import {
 } from 'hrc-core'
 import type {
   FederationInteractiveLifecycleSignal,
+  FederationMailPayload,
   FederationMessageDelivery,
   FederationMessageEnvelope,
   FederationPendingMessageEnvelope,
+  HrcMailActor,
+  HrcMailSendRequest,
+  HrcMessageAddress,
   HrcMessageRecord,
   SemanticDmRequest,
 } from 'hrc-core'
@@ -106,6 +110,7 @@ function pendingEnvelopeFor(
   const interactiveSignal = record.metadataJson?.['federationInteractiveSignal'] as
     | FederationInteractiveLifecycleSignal
     | undefined
+  const mail = record.metadataJson?.['federationMail'] as FederationMailPayload | undefined
   return {
     protocolVersion: PEER_PROTOCOL_VERSION,
     messageId: record.messageId,
@@ -118,7 +123,14 @@ function pendingEnvelopeFor(
     ...(record.replyToMessageId === undefined ? {} : { replyToMessageId: record.replyToMessageId }),
     ...(delivery === undefined ? {} : { delivery }),
     ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
+    ...(mail === undefined ? {} : { mail }),
   }
+}
+
+function mailActorAddress(actor: HrcMailActor): HrcMessageAddress {
+  return actor.kind === 'scope'
+    ? { kind: 'session', sessionRef: actor.sessionRef }
+    : { kind: 'entity', entity: 'human' }
 }
 
 function envelopeFor(
@@ -310,6 +322,19 @@ export class FederationOriginOutbox {
     return { outcome: 'remote-bound', binding }
   }
 
+  async resolveMailTargetPlacement(
+    request: HrcMailSendRequest
+  ): Promise<FederationTargetPlacement> {
+    return this.resolveTargetPlacement({
+      from: mailActorAddress(request.from),
+      to: { kind: 'session', sessionRef: request.targetSessionRef },
+      body: request.payload.body,
+      ...(request.materializationIntent === undefined
+        ? { createIfMissing: false }
+        : { createIfMissing: true, runtimeIntent: request.materializationIntent }),
+    })
+  }
+
   async isRemoteTarget(scopeRef: string): Promise<boolean> {
     const binding = await this.resolveMessageStorageBinding(scopeRef)
     if (binding === undefined) return false
@@ -352,6 +377,26 @@ export class FederationOriginOutbox {
 
     return this.enqueue(record, body, binding.homeNodeId, binding, {
       routingSource: binding.source,
+    })
+  }
+
+  async routeMail(
+    request: HrcMailSendRequest,
+    record: HrcMessageRecord,
+    resolvedPlacement?: FederationTargetPlacement | undefined
+  ): Promise<FederationOriginRouteResult> {
+    const placement = resolvedPlacement ?? (await this.resolveMailTargetPlacement(request))
+    if (placement.outcome === 'local') return { outcome: 'local' }
+    if (placement.outcome === 'remote-establish') {
+      return this.enqueueEstablishing(
+        record,
+        undefined,
+        placement.scopeRef,
+        placement.candidateHomeNodeId
+      )
+    }
+    return this.enqueue(record, undefined, placement.binding.homeNodeId, placement.binding, {
+      routingSource: placement.binding.source,
     })
   }
 
@@ -466,6 +511,8 @@ export class FederationOriginOutbox {
       responseFence?: boolean | undefined
     }
   ): FederationOriginRouteResult {
+    const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
+    if (existing !== undefined) return { outcome: 'queued', delivery: existing }
     const delivery = this.options.db.federationOutbox.enqueue({
       deliveryId: `delivery-${randomUUID()}`,
       messageId: record.messageId,
@@ -494,10 +541,12 @@ export class FederationOriginOutbox {
 
   private enqueueEstablishing(
     record: HrcMessageRecord,
-    body: SemanticDmRequest,
+    body: SemanticDmRequest | undefined,
     scopeRef: string,
     peerNodeId: string
   ): FederationOriginRouteResult {
+    const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
+    if (existing !== undefined) return { outcome: 'queued', delivery: existing }
     const deliveryId = `delivery-${randomUUID()}`
     const delivery = this.options.db.federationOutbox.enqueueEstablishing({
       deliveryId,

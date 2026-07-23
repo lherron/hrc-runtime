@@ -793,6 +793,8 @@ class HrcServerInstance implements HrcServer {
             registry: this.federationRegistryClient,
             onAccepted: ({ envelope, record }) =>
               this.deliverFederationAcceptedMessage(envelope, record),
+            onMailAccepted: ({ envelope }) =>
+              this.requestMailKickerWake(envelope.mail.request.targetSessionRef, 'insert'),
           })
         this.peerProtocolEndpoint = startPeerProtocolEndpoint({
           listener: federationConfig.peerListener,

@@ -1053,6 +1053,25 @@ const hrcmailStopRefusalMigration: HrcMigration = {
   },
 }
 
+const hrcmailFederatedOriginsMigration: HrcMigration = {
+  id: '0031_hrcmail_federated_origins',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_federated_origins (
+        ingress_id TEXT PRIMARY KEY,
+        envelope_id TEXT NOT NULL UNIQUE,
+        request_message_id TEXT NOT NULL UNIQUE,
+        request_fingerprint TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        disposition_message_id TEXT UNIQUE,
+        disposition_fingerprint TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1079,4 +1098,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailEnvelopeMigration,
   hrcmailDriveMigration,
   hrcmailStopRefusalMigration,
+  hrcmailFederatedOriginsMigration,
 ]

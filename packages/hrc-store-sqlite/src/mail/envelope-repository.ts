@@ -185,7 +185,7 @@ function assertAuthority(envelope: HrcMailEnvelope, actor: HrcMailActor): void {
   }
 }
 
-function requestFingerprint(input: HrcMailSendRequest): string {
+export function fingerprintHrcMailRequest(input: HrcMailSendRequest): string {
   return fingerprintHrcMailJson({
     from: input.from,
     targetSessionRef: input.targetSessionRef,
@@ -233,7 +233,7 @@ export class HrcMailEnvelopeRepository {
     const ingressId = assertNonEmpty(input.ingressId, 'ingressId')
     const targetSessionRef = assertNonEmpty(input.targetSessionRef, 'targetSessionRef')
     const body = assertNonBlankText(input.payload.body, 'payload.body')
-    const fingerprint = requestFingerprint(input)
+    const fingerprint = fingerprintHrcMailRequest(input)
 
     if (input.replySchema !== undefined) {
       try {
