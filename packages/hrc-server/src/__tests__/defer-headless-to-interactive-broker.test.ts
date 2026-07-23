@@ -40,6 +40,18 @@ function codexIntent(): HrcRuntimeIntent {
   }
 }
 
+function codexIntentWithSurfaceReuse(
+  allowInteractiveSurfaceReuse: boolean | undefined
+): HrcRuntimeIntent {
+  return {
+    ...codexIntent(),
+    execution: {
+      preferredMode: 'nonInteractive',
+      ...(allowInteractiveSurfaceReuse !== undefined ? { allowInteractiveSurfaceReuse } : {}),
+    },
+  }
+}
+
 function liveCodexTui(
   overrides: Partial<NonNullable<LiveInteractiveRuntimeReuseView>> = {}
 ): LiveInteractiveRuntimeReuseView {
@@ -66,6 +78,35 @@ describe('shouldDeferHeadlessToInteractiveBrokerReuse', () => {
   it('DOES defer when the interactive runtime is busy (mid-turn) — the TUI queues the input', () => {
     expect(
       shouldDeferHeadlessToInteractiveBrokerReuse(codexIntent(), liveCodexTui({ idle: false }))
+    ).toBe(true)
+  })
+
+  it('does NOT defer an autonomous headless dispatch that explicitly vetoes interactive surface reuse', () => {
+    // T-05177: autonomous one-shot producers stamp this flag so same-session
+    // leftovers cannot capture the dispatch into an existing operator TUI.
+    expect(
+      shouldDeferHeadlessToInteractiveBrokerReuse(
+        codexIntentWithSurfaceReuse(false),
+        liveCodexTui()
+      )
+    ).toBe(false)
+  })
+
+  it('preserves default and explicit-true live TUI reuse, including busy queue-capable runtimes', () => {
+    expect(
+      shouldDeferHeadlessToInteractiveBrokerReuse(
+        codexIntentWithSurfaceReuse(undefined),
+        liveCodexTui()
+      )
+    ).toBe(true)
+    expect(
+      shouldDeferHeadlessToInteractiveBrokerReuse(codexIntentWithSurfaceReuse(true), liveCodexTui())
+    ).toBe(true)
+    expect(
+      shouldDeferHeadlessToInteractiveBrokerReuse(
+        codexIntentWithSurfaceReuse(undefined),
+        liveCodexTui({ idle: false })
+      )
     ).toBe(true)
   })
 

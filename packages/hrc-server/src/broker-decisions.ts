@@ -818,6 +818,7 @@ export function shouldDeferHeadlessToInteractiveBrokerReuse(
 ): boolean {
   return (
     latestRuntime !== null &&
+    intent.execution?.allowInteractiveSurfaceReuse !== false &&
     latestRuntime.controllerKind === 'harness-broker' &&
     (latestRuntime.transport === 'tmux' || latestRuntime.transport === 'ghostty') &&
     latestRuntime.hasLiveSurface &&

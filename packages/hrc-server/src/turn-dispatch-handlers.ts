@@ -672,8 +672,11 @@ export async function dispatchTurnForSession(
   // Normalizing to an interactive claude-code intent makes the predicates
   // below route them to the broker branch (and NOT runSdkTurn / the retired
   // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
+  const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(inputIntent)
   const intent =
-    this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
+    this.claudeCodeTmuxBrokerEnabled &&
+    !rawInteractiveSurfaceReuseVeto &&
+    shouldRedirectClaudeToInteractiveBroker(inputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
       : inputIntent
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
@@ -752,6 +755,7 @@ export async function dispatchTurnForSession(
     // headless for CLI/headless-capable targets, SDK only as fallback)
     const liveInteractiveRuntime = latestRuntime
     const interactiveAvailableAndIdle =
+      !rawInteractiveSurfaceReuseVeto &&
       liveInteractiveRuntime &&
       (liveInteractiveRuntime.transport === 'tmux' ||
         liveInteractiveRuntime.transport === 'ghostty') &&
@@ -892,6 +896,17 @@ function isProviderOnlyInteractiveIntent(intent: HrcRuntimeIntent): boolean {
 
 function isProviderOnlyOpenAiInteractiveIntent(intent: HrcRuntimeIntent): boolean {
   return isProviderOnlyInteractiveIntent(intent) && intent.harness.provider === 'openai'
+}
+
+function disallowsInteractiveSurfaceReuse(intent: HrcRuntimeIntent): boolean {
+  if (intent.execution?.allowInteractiveSurfaceReuse !== false) {
+    return false
+  }
+  return (
+    intent.execution?.preferredMode === 'headless' ||
+    intent.execution?.preferredMode === 'nonInteractive' ||
+    intent.harness.interactive === false
+  )
 }
 
 export function markRuntimeStaleForBrokerReprovision(
