@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { type Violation, formatBoundaryViolationDiagnostic } from './check-boundaries.ts'
+import {
+  type Violation,
+  findMailScopedViolation,
+  formatBoundaryViolationDiagnostic,
+} from './check-boundaries.ts'
 
 describe('check-boundaries diagnostics', () => {
   test('forbidden layer imports teach fix, why, and exception path', () => {
@@ -35,5 +39,29 @@ describe('check-boundaries diagnostics', () => {
     expect(diagnostic).toContain('WHY:')
     expect(diagnostic).toContain('broker-path files are the runtime-control boundary')
     expect(diagnostic).toContain('EXCEPTION:')
+  })
+
+  test('hrcmail scoped guards separate persistence and ingress from orchestration', () => {
+    expect(
+      findMailScopedViolation(
+        'persistence',
+        'packages/hrc-store-sqlite/src/mail/envelope-repository.ts',
+        'hrc-server'
+      )
+    ).toContain('persistence')
+    expect(
+      findMailScopedViolation(
+        'ingress',
+        'packages/hrc-server/src/mail/mail-ingress.ts',
+        '../turn-dispatch-handlers.js'
+      )
+    ).toContain('persist only')
+    expect(
+      findMailScopedViolation(
+        'ingress',
+        'packages/hrc-server/src/mail/mail-ingress.ts',
+        'hrc-store-sqlite'
+      )
+    ).toBeUndefined()
   })
 })

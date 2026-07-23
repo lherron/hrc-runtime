@@ -58,23 +58,51 @@ export const hrcPackages = [
   'hrc-store-sqlite',
   'hrc-top',
   'hrcchat-cli',
+  'hrcmail-cli',
 ]
 
 export const layers: Layer[] = [
   {
     name: 'HRC Core Contracts',
     roots: ['packages/hrc-core/src', 'packages/hrc-events/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: [
+      'hrc-server',
+      'hrc-cli',
+      'hrcchat-cli',
+      'hrcmail-cli',
+      'acp-',
+      'gateway-',
+      'wrkq-lib',
+      'wlearn',
+    ],
   },
   {
     name: 'HRC Storage',
     roots: ['packages/hrc-store-sqlite/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: [
+      'hrc-server',
+      'hrc-cli',
+      'hrcchat-cli',
+      'hrcmail-cli',
+      'acp-',
+      'gateway-',
+      'wrkq-lib',
+      'wlearn',
+    ],
   },
   {
     name: 'HRC Rendering',
     roots: ['packages/agent-action-render/src', 'packages/hrc-frame-render/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'hrcchat-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: [
+      'hrc-server',
+      'hrc-cli',
+      'hrcchat-cli',
+      'hrcmail-cli',
+      'acp-',
+      'gateway-',
+      'wrkq-lib',
+      'wlearn',
+    ],
   },
   {
     name: 'HRC Runtime',
@@ -86,6 +114,7 @@ export const layers: Layer[] = [
     roots: [
       'packages/hrc-cli/src',
       'packages/hrcchat-cli/src',
+      'packages/hrcmail-cli/src',
       'packages/hrc-top/src',
       'packages/hrc-pi-top/src',
     ],

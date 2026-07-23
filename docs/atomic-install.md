@@ -1,7 +1,7 @@
 # Atomic HRC CLI installs
 
 `just install` prepares a complete HRC runtime image away from the checkout and
-cuts the installed `hrc` and `hrcchat` commands over only after dependency
+cuts the installed `hrc`, `hrcchat`, and `hrcmail` commands over only after dependency
 installation, build, entrypoint smoke checks, and package publication succeed.
 
 ## Installed layout
@@ -9,16 +9,16 @@ installation, build, entrypoint smoke checks, and package publication succeed.
 The active commands use one stable indirection:
 
 ```text
-~/.bun/bin/hrc, hrcchat
-  -> ~/.bun/install/global/node_modules/{hrc-cli,hrcchat-cli}
-  -> ~/.bun/install/hrc-runtime-current/packages/{hrc-cli,hrcchat-cli}
+~/.bun/bin/hrc, hrcchat, hrcmail
+  -> ~/.bun/install/global/node_modules/{hrc-cli,hrcchat-cli,hrcmail-cli}
+  -> ~/.bun/install/hrc-runtime-current/packages/{hrc-cli,hrcchat-cli,hrcmail-cli}
   -> ~/.bun/install/hrc-runtime-releases/release-*/
 ```
 
 Each release directory contains its own source snapshot, workspace packages,
 build outputs, and `node_modules`. The checkout's `node_modules` is not removed
 or rewritten by a main-checkout install. The final rename of
-`hrc-runtime-current` changes both commands together.
+`hrc-runtime-current` changes all three commands together.
 
 On the first atomic install, the installer converts legacy Bun links that point
 directly into the checkout. It first points `hrc-runtime-current` at the same
@@ -49,7 +49,7 @@ release.
 
 - Dependency, build, smoke, or publication failure deletes only the incomplete
   uniquely named release and leaves `hrc-runtime-current` unchanged.
-- `hrc --help` and `hrcchat --help` run from the prepared image before cutover.
+- `hrc --help`, `hrcchat --help`, and `hrcmail --help` run from the prepared image before cutover.
 - Successfully installed release directories are retained, so rollback is an
   atomic repoint of `~/.bun/install/hrc-runtime-current` to a known-good prior
   release.

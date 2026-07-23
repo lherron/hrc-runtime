@@ -1,0 +1,30 @@
+{
+  "name": "hrcmail-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hrcmail: durable embedded-envelope mailbox CLI for HRC",
+  "type": "module",
+  "bin": {
+    "hrcmail": "./bin/hrcmail.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "cli-kit": "latest",
+    "commander": "^14.0.0",
+    "hrc-core": "*",
+    "hrc-sdk": "*",
+    "spaces-config": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}

@@ -80,3 +80,23 @@ export type {
 } from './repositories/broker-repositories.js'
 export { BrokerInvocationEventConflictError } from './repositories/broker-repositories.js'
 export type { MessageInsertInput } from './message-repository.js'
+export {
+  HrcMailEnvelopeRepository,
+  HrcMailRepositoryError,
+} from './mail/envelope-repository.js'
+export type {
+  AckHrcMailEnvelopeInput,
+  CreateHrcMailEnvelopeInput,
+  DeferHrcMailEnvelopeInput,
+  HrcMailRepositoryErrorCode,
+} from './mail/envelope-repository.js'
+export {
+  canonicalHrcMailJson,
+  compileHrcMailReplySchema,
+  fingerprintHrcMailJson,
+  validateHrcMailReply,
+} from './mail/reply-schema.js'
+export type {
+  HrcMailReplyValidationResult,
+  HrcMailSchemaValidationError,
+} from './mail/reply-schema.js'

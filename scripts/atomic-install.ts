@@ -20,6 +20,7 @@ import { timestampVersion } from './publish-local-verdaccio'
 const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts' },
   'hrcchat-cli': { bin: 'hrcchat', entrypoint: 'src/main.ts' },
+  'hrcmail-cli': { bin: 'hrcmail', entrypoint: 'src/main.ts' },
 } as const
 
 type CliPackageName = keyof typeof CLI_PACKAGES

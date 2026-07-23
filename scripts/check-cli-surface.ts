@@ -31,6 +31,7 @@ import {
 } from '../packages/hrc-cli/src/cli/usage.ts'
 import { buildInfoText as buildHrcchatInfoText } from '../packages/hrcchat-cli/src/commands/info.ts'
 import { program as hrcchatProgram } from '../packages/hrcchat-cli/src/main.ts'
+import { buildProgram as buildHrcmailProgram } from '../packages/hrcmail-cli/src/main.ts'
 
 // ───────────────────────── registry model ─────────────────────────
 
@@ -70,6 +71,18 @@ function buildRegistry(bin: string, root: Command): Registry {
     .map((command) => command.name())
     .filter((name) => name !== 'help')
   return { bin, root, longOptions, visibleTop }
+}
+
+function generatedRosterInfo(registry: Registry): string {
+  const commands = registry.root
+    .createHelp()
+    .visibleCommands(registry.root)
+    .filter((command) => command.name() !== 'help')
+  const width = Math.max(...commands.map((command) => command.name().length))
+  const roster = commands
+    .map((command) => `  ${command.name().padEnd(width + 2)}${command.description()}`)
+    .join('\n')
+  return `${registry.bin}\n\nCOMMANDS\n${roster}\n`
 }
 
 // ───────────────────────── token extraction ─────────────────────────
@@ -304,14 +317,16 @@ function report(findings: Finding[]): void {
 
 // ───────────────────────── entry ─────────────────────────
 
-/** Run the conformance check against the live hrc + hrcchat surfaces; returns all drift findings. */
+/** Run the conformance check against the live HRC CLI surfaces; returns all drift findings. */
 export function collectFindings(): Finding[] {
   const hrc = buildRegistry('hrc', buildHrcProgram())
   const hrcchat = buildRegistry('hrcchat', hrcchatProgram)
-  const registries: Record<string, Registry> = { hrc, hrcchat }
+  const hrcmail = buildRegistry('hrcmail', buildHrcmailProgram())
+  const registries: Record<string, Registry> = { hrc, hrcchat, hrcmail }
 
   const hrcInfo = buildHrcInfoText(hrc.root)
   const hrcchatInfo = buildHrcchatInfoText(hrcchat.root)
+  const hrcmailInfo = generatedRosterInfo(hrcmail)
 
   const claims: Claim[] = [
     ...extractClaims('hrc info', hrcInfo),
@@ -322,6 +337,7 @@ export function collectFindings(): Finding[] {
   return [
     ...checkRosterCompleteness(hrc, hrcInfo),
     ...checkRosterCompleteness(hrcchat, hrcchatInfo),
+    ...checkRosterCompleteness(hrcmail, hrcmailInfo),
     ...checkClaims(registries, claims),
   ]
 }
@@ -348,5 +364,5 @@ if (import.meta.main) {
     )
     process.exit(1)
   }
-  console.log('check-cli-surface: hrc + hrcchat help/info match the live command registry ✓')
+  console.log('check-cli-surface: hrc + hrcchat + hrcmail help/info match live registries ✓')
 }

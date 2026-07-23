@@ -114,6 +114,7 @@ import {
   type LaunchLifecycleHandlersMethods,
   launchLifecycleHandlersMethods,
 } from './launch-lifecycle-handlers.js'
+import { type MailHandlersMethods, mailHandlersMethods } from './mail/mail-handlers.js'
 import {
   resolveClaudeCodeTmuxBrokerEnabled,
   resolveCodexCliTmuxBrokerEnabled,
@@ -510,6 +511,7 @@ interface HrcServerInstance
     SelectorMessageHandlersMethods,
     SelectorWaitHandlersMethods,
     LaunchLifecycleHandlersMethods,
+    MailHandlersMethods,
     RuntimeInspectHandlersMethods {}
 
 class HrcServerInstance implements HrcServer {
@@ -672,6 +674,12 @@ class HrcServerInstance implements HrcServer {
       this.handleDispatchTurnBySelector(request),
     [exactRouteKey('POST', '/v1/messages/wait')]: (request) => this.handleWaitMessage(request),
     [exactRouteKey('POST', '/v1/messages/watch')]: (request) => this.handleWatchMessages(request),
+    [exactRouteKey('POST', '/v1/mail/send')]: (request) => this.handleMailSend(request),
+    [exactRouteKey('POST', '/v1/mail/inbox')]: (request) => this.handleMailInbox(request),
+    [exactRouteKey('POST', '/v1/mail/ack')]: (request) => this.handleMailAck(request),
+    [exactRouteKey('POST', '/v1/mail/defer')]: (request) => this.handleMailDefer(request),
+    [exactRouteKey('POST', '/v1/mail/cat')]: (request) => this.handleMailCat(request),
+    [exactRouteKey('POST', '/v1/mail/list')]: (request) => this.handleMailList(request),
     [exactRouteKey('POST', '/v1/app-sessions/ensure')]: (request) =>
       this.handleEnsureAppSession(request),
     [exactRouteKey('GET', '/v1/app-sessions')]: (_request, url) =>
@@ -1935,6 +1943,7 @@ Object.assign(
   selectorMessageHandlersMethods,
   selectorWaitHandlersMethods,
   launchLifecycleHandlersMethods,
+  mailHandlersMethods,
   runtimeInspectHandlersMethods
 )
 

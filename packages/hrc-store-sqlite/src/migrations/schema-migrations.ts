@@ -911,6 +911,64 @@ const sessionTaskClaimAuthorityMigration: HrcMigration = {
   },
 }
 
+const hrcmailEnvelopeMigration: HrcMigration = {
+  id: '0028_hrcmail_envelopes',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hrcmail_envelopes (
+        envelope_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        envelope_id TEXT NOT NULL UNIQUE,
+        ingress_id TEXT NOT NULL UNIQUE,
+        from_kind TEXT NOT NULL CHECK (from_kind IN ('scope', 'operator')),
+        from_ref TEXT NOT NULL,
+        target_session_ref TEXT NOT NULL,
+        payload_kind TEXT NOT NULL CHECK (payload_kind IN ('request', 'conversational')),
+        body TEXT NOT NULL,
+        metadata_json TEXT,
+        reply_schema_json TEXT,
+        state TEXT NOT NULL CHECK (
+          state IN ('pending', 'presented', 'acked', 'deferred', 'dead')
+        ),
+        round_count INTEGER NOT NULL DEFAULT 0 CHECK (round_count >= 0),
+        response_present INTEGER NOT NULL DEFAULT 0 CHECK (response_present IN (0, 1)),
+        response_json TEXT,
+        response_fingerprint TEXT,
+        defer_reason TEXT,
+        retry_after_ms INTEGER,
+        retry_at TEXT,
+        presented_at TEXT,
+        acked_at TEXT,
+        deferred_at TEXT,
+        dead_at TEXT,
+        terminal_actor_kind TEXT CHECK (
+          terminal_actor_kind IS NULL OR terminal_actor_kind IN ('scope', 'operator')
+        ),
+        terminal_actor_ref TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_envelopes_target_state_seq
+        ON hrcmail_envelopes(target_session_ref, state, envelope_seq);
+
+      CREATE INDEX IF NOT EXISTS idx_hrcmail_envelopes_deferred_retry
+        ON hrcmail_envelopes(state, retry_at, envelope_seq);
+
+      CREATE TABLE IF NOT EXISTS hrcmail_ingress_receipts (
+        ingress_id TEXT PRIMARY KEY,
+        path_choice TEXT NOT NULL CHECK (path_choice IN ('mail', 'v1_inline')),
+        -- A v1_inline choice deliberately has no envelope row. Keeping this
+        -- identifier unfenced by an FK lets a pre-cutover receipt survive a
+        -- retry after cutover without manufacturing a second delivery.
+        envelope_id TEXT NOT NULL UNIQUE,
+        request_fingerprint TEXT NOT NULL,
+        receipt_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -934,4 +992,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   federationOutboxMigration,
   federatedObservedEventsMigration,
   sessionTaskClaimAuthorityMigration,
+  hrcmailEnvelopeMigration,
 ]

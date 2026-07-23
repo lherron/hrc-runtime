@@ -304,6 +304,35 @@ export type {
   SemanticTurnHandoffResponse,
 } from './hrcchat-contracts.js'
 
+export {
+  HRC_MAIL_REPLY_SCHEMA_DIALECT,
+  HRC_MAIL_REPLY_SCHEMA_MAX_BYTES,
+} from './hrcmail-contracts.js'
+export type {
+  HrcMailAckRequest,
+  HrcMailAckResponse,
+  HrcMailActor,
+  HrcMailCatRequest,
+  HrcMailCatResponse,
+  HrcMailDeferRequest,
+  HrcMailDeferResponse,
+  HrcMailDispositionOutcome,
+  HrcMailDispositionResult,
+  HrcMailEnvelope,
+  HrcMailEnvelopeState,
+  HrcMailInboxRequest,
+  HrcMailInboxResponse,
+  HrcMailIngressPath,
+  HrcMailListRequest,
+  HrcMailListResponse,
+  HrcMailPayload,
+  HrcMailPayloadKind,
+  HrcMailReceipt,
+  HrcMailReplySchema,
+  HrcMailSendRequest,
+  HrcMailSendResponse,
+} from './hrcmail-contracts.js'
+
 export { projectTargetOperatorState } from './target-operator-projection.js'
 export type {
   HrcTargetOperatorDisplayState,

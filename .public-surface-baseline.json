@@ -887,6 +887,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HRC_MAIL_REPLY_SCHEMA_DIALECT",
+      "kind": "value",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HRC_MAIL_REPLY_SCHEMA_DIALECT|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HRC_MAIL_REPLY_SCHEMA_MAX_BYTES",
+      "kind": "value",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HRC_MAIL_REPLY_SCHEMA_MAX_BYTES|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HRC_PROVIDER_TRANSCRIPT_ARTIFACT_KIND",
       "kind": "value",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1395,6 +1411,182 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcLocalBridgeRecord|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailAckRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailAckRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailAckResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailAckResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailActor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailActor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailCatRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailCatRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailCatResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailCatResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailDeferRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailDeferRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailDeferResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailDeferResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailDispositionOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailDispositionOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailDispositionResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailDispositionResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailEnvelopeState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailEnvelopeState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailInboxRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailInboxRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailInboxResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailInboxResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailIngressPath",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailIngressPath|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailListRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailListRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailListResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailListResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailPayloadKind",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailPayloadKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailReceipt",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailReceipt|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailReplySchema",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailReplySchema|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailSendRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailSendRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMailSendResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-core|HrcMailSendResponse|type",
       "count": 1
     },
     {
@@ -3411,6 +3603,158 @@
       "kind": "value",
       "file": "packages/hrc-sdk/src/client.ts",
       "hash": "hrc-sdk|HrcClient|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailAckRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailAckRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailAckResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailAckResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailActor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailActor|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailCatRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailCatRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailCatResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailCatResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailDeferRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailDeferRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailDeferResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailDeferResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailDispositionResult",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailDispositionResult|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailEnvelope",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailEnvelopeState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailEnvelopeState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailInboxRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailInboxRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailInboxResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailInboxResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailListRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailListRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailListResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailListResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailPayload",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailReceipt",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailReceipt|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailReplySchema",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailReplySchema|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailSendRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailSendRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcMailSendResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcmail-contracts.ts",
+      "hash": "hrc-sdk|HrcMailSendResponse|type",
       "count": 1
     },
     {

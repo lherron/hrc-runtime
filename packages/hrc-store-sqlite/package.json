@@ -23,6 +23,7 @@
     "postpack": "git checkout HEAD -- package.json"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "hrc-core": "*"
   },
   "devDependencies": {

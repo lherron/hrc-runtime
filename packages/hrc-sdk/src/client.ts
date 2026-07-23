@@ -1,6 +1,18 @@
 import type {
   HrcHttpError,
   HrcLifecycleEvent,
+  HrcMailAckRequest,
+  HrcMailAckResponse,
+  HrcMailCatRequest,
+  HrcMailCatResponse,
+  HrcMailDeferRequest,
+  HrcMailDeferResponse,
+  HrcMailInboxRequest,
+  HrcMailInboxResponse,
+  HrcMailListRequest,
+  HrcMailListResponse,
+  HrcMailSendRequest,
+  HrcMailSendResponse,
   HrcMessageRecord,
   HrcSessionRecord,
   HrcTargetView,
@@ -780,6 +792,32 @@ export class HrcClient {
       },
       options?.signal
     )
+  }
+
+  // -- hrcmail: embedded envelope mailbox -----------------------------------
+
+  async sendMail(request: HrcMailSendRequest): Promise<HrcMailSendResponse> {
+    return this.postJson<HrcMailSendResponse>('/v1/mail/send', request)
+  }
+
+  async mailInbox(request: HrcMailInboxRequest): Promise<HrcMailInboxResponse> {
+    return this.postJson<HrcMailInboxResponse>('/v1/mail/inbox', request)
+  }
+
+  async ackMail(request: HrcMailAckRequest): Promise<HrcMailAckResponse> {
+    return this.postJson<HrcMailAckResponse>('/v1/mail/ack', request)
+  }
+
+  async deferMail(request: HrcMailDeferRequest): Promise<HrcMailDeferResponse> {
+    return this.postJson<HrcMailDeferResponse>('/v1/mail/defer', request)
+  }
+
+  async catMail(request: HrcMailCatRequest): Promise<HrcMailCatResponse> {
+    return this.postJson<HrcMailCatResponse>('/v1/mail/cat', request)
+  }
+
+  async listMail(request: HrcMailListRequest = {}): Promise<HrcMailListResponse> {
+    return this.postJson<HrcMailListResponse>('/v1/mail/list', request)
   }
 
   // -- Event stream -----------------------------------------------------------

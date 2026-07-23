@@ -57,6 +57,7 @@ async function writeCliSources(releasePath: string, generation: string): Promise
   for (const [packageName, entrypoint] of [
     ['hrc-cli', 'cli.ts'],
     ['hrcchat-cli', 'main.ts'],
+    ['hrcmail-cli', 'main.ts'],
   ] as const) {
     const sourceDir = join(releasePath, 'packages', packageName, 'src')
     await mkdir(sourceDir, { recursive: true })

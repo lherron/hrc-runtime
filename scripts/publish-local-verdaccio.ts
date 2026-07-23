@@ -18,6 +18,7 @@ const PACKAGES = [
   // must run installed artifacts, which requires these to be published at all.
   'packages/hrc-cli',
   'packages/hrcchat-cli',
+  'packages/hrcmail-cli',
 ] as const
 
 type Manifest = {

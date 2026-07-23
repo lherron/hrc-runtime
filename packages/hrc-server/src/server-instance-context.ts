@@ -26,6 +26,7 @@ import type { FederationOriginOutbox } from './federation/origin-outbox.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
+import type { MailHandlersMethods } from './mail/mail-handlers.js'
 import type { RuntimeControlHandlersMethods } from './runtime-control-handlers.js'
 import type { RuntimeInspectHandlersMethods } from './runtime-inspect-handlers.js'
 import type { RuntimeIoHandlersMethods } from './runtime-io-handlers.js'
@@ -66,6 +67,7 @@ type DecomposedHandlerMethods = AppSessionHandlersMethods &
   EventHandlersMethods &
   EventNotificationHandlersMethods &
   LaunchLifecycleHandlersMethods &
+  MailHandlersMethods &
   RuntimeControlHandlersMethods &
   RuntimeInspectHandlersMethods &
   RuntimeIoHandlersMethods &
