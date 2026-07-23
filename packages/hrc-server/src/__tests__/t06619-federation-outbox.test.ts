@@ -298,4 +298,76 @@ describe('T-06619 clock-driven federation retry state machine', () => {
       inFlightDb.close()
     }
   })
+
+  test('a row cancelled while an earlier snapshot row is sending never begins its own send', async () => {
+    const db = openHrcDatabase(':memory:')
+    seed(db)
+    const secondMessageId = 'msg-22222222-2222-4222-8222-222222222222'
+    db.messages.insert({
+      messageId: secondMessageId,
+      kind: 'dm',
+      phase: 'request',
+      from: { kind: 'session', sessionRef: 'agent:mable:project:hrc-runtime:task:minisvc' },
+      to: { kind: 'session', sessionRef: SESSION },
+      body: 'second due delivery',
+    })
+    db.federationOutbox.enqueue({
+      deliveryId: 'delivery-2',
+      messageId: secondMessageId,
+      peerNodeId: 'lab',
+      envelope: {
+        protocolVersion: '1.0',
+        messageId: secondMessageId,
+        kind: 'dm',
+        phase: 'request',
+        from: { kind: 'session', sessionRef: 'agent:mable:project:hrc-runtime:task:minisvc' },
+        to: { kind: 'session', sessionRef: SESSION },
+        body: 'second due delivery',
+        rootMessageId: secondMessageId,
+        expected: { homeNodeId: 'lab', placementEpoch: 2 },
+      },
+      now: '2026-07-20T00:00:00.000Z',
+    })
+
+    const sentDeliveryIds: string[] = []
+    let releaseFirstSend: (() => void) | undefined
+    let firstSendStarted: (() => void) | undefined
+    const firstStarted = new Promise<void>((resolve) => {
+      firstSendStarted = resolve
+    })
+    const engine = new FederationOutboxDeliveryEngine({
+      db,
+      send: async (delivery) => {
+        sentDeliveryIds.push(delivery.deliveryId)
+        if (delivery.deliveryId === 'delivery-1') {
+          firstSendStarted?.()
+          await new Promise<void>((resolve) => {
+            releaseFirstSend = resolve
+          })
+        }
+        return { outcome: 'accepted', messageId: delivery.messageId }
+      },
+    })
+
+    try {
+      const draining = engine.drainDue()
+      await firstStarted
+      // delivery-2 is in the drain snapshot but not yet attempting: the
+      // operator cancel must win and fence its send entirely.
+      expect(engine.cancel('delivery-2')).toMatchObject({
+        state: 'dead_letter',
+        lastErrorCode: 'operator_cancelled',
+      })
+      releaseFirstSend?.()
+      await draining
+      expect(sentDeliveryIds).toEqual(['delivery-1'])
+      expect(db.federationOutbox.get('delivery-1')?.state).toBe('delivered')
+      expect(db.federationOutbox.get('delivery-2')).toMatchObject({
+        state: 'dead_letter',
+        lastErrorCode: 'operator_cancelled',
+      })
+    } finally {
+      db.close()
+    }
+  })
 })

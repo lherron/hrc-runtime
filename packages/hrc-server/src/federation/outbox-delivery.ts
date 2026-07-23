@@ -183,7 +183,19 @@ export class FederationOutboxDeliveryEngine {
       if (this.attempting.has(delivery.deliveryId)) continue
       this.attempting.add(delivery.deliveryId)
       try {
-        results.push(await this.attempt(delivery))
+        // Revalidate against the durable row before sending: while earlier
+        // snapshot rows were awaited, an operator cancel (or any terminal
+        // transition) may have won for this row. A successfully cancelled
+        // delivery must never begin a later network send.
+        const current = this.outbox.get(delivery.deliveryId)
+        if (
+          current === undefined ||
+          current.state === 'delivered' ||
+          current.state === 'dead_letter'
+        ) {
+          continue
+        }
+        results.push(await this.attempt(current))
       } finally {
         this.attempting.delete(delivery.deliveryId)
       }
