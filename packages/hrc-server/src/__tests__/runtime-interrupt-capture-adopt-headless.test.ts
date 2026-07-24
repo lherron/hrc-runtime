@@ -6,7 +6,7 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { TmuxManager } from '../tmux'
-import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { createHrcTestFixture, setTmuxPanePrompt } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 let fixture: HrcServerTestFixture
@@ -26,32 +26,6 @@ afterEach(async () => {
   }
   await fixture.cleanup()
 })
-
-async function setPanePrompt(
-  tmux: TmuxManager,
-  paneId: string,
-  prompt: string,
-  readyMarker: string
-): Promise<void> {
-  await tmux.sendLiteral(paneId, `PS1='${prompt}'; printf '\\n${readyMarker}\\n'`)
-  await tmux.sendEnter(paneId)
-
-  const renderedPrompt = prompt.trimEnd()
-  let captured = ''
-  for (let attempt = 0; attempt < 20; attempt++) {
-    captured = await tmux.capture(paneId)
-    const markerIndex = captured.lastIndexOf(readyMarker)
-    if (
-      markerIndex >= 0 &&
-      captured.slice(markerIndex + readyMarker.length).includes(renderedPrompt)
-    ) {
-      return
-    }
-    await Bun.sleep(50)
-  }
-
-  throw new Error(`tmux pane did not activate controlled prompt; captured: ${captured}`)
-}
 
 type SeedRuntimeOptions = {
   runtimeId: string
@@ -73,9 +47,9 @@ async function setupTmuxRuntime(
   const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
 
   if (options.initialPrompt) {
-    await setPanePrompt(tmux, pane.paneId, options.initialPrompt, 'HRC_INITIAL_PROMPT_READY')
+    await setTmuxPanePrompt(tmux, pane.paneId, options.initialPrompt, 'HRC_INITIAL_PROMPT_READY')
   }
-  await setPanePrompt(tmux, pane.paneId, CONTROLLED_TMUX_PROMPT, 'HRC_TEST_PROMPT_READY')
+  await setTmuxPanePrompt(tmux, pane.paneId, CONTROLLED_TMUX_PROMPT, 'HRC_TEST_PROMPT_READY')
 
   fixture.seedTmuxRuntime(hostSessionId, label, runtimeId, { status: options.status ?? 'ready' })
   const db = openHrcDatabase(fixture.dbPath)

@@ -14,7 +14,7 @@ import { appendHrcEvent } from '../hrc-event-helper'
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
 import { TmuxManager } from '../tmux'
-import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import { createHrcTestFixture, setTmuxPanePrompt } from './fixtures/hrc-test-fixture'
 import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 
 let fixture: HrcServerTestFixture
@@ -1334,6 +1334,7 @@ if (cmd === 'app-server') {
     const sessionRef = `${scopeRef}/lane:main`
     const { hostSessionId, generation } = await fixture.resolveSession(scopeRef)
     const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
+    await setTmuxPanePrompt(tmux, pane.paneId, 'hrc-test> ', 'HRC_CODEX_LITERAL_PROMPT_READY')
     const runtimeId = `rt-codex-literal-${Date.now()}`
     const launchId = `launch-codex-literal-${Date.now()}`
     const timestamp = fixture.now()
