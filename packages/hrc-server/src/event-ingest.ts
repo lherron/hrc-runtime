@@ -371,14 +371,64 @@ async function writeCursors(path: string, cursors: ForwardCursors): Promise<void
   await rename(temporary, path)
 }
 
+function serializeBatch(batch: HrcEventIngestBatch): string {
+  return JSON.stringify(batch)
+}
+
+function takeBatchPrefix(batch: HrcEventIngestBatch, eventCount: number): HrcEventIngestBatch {
+  if (batch.feed === 'hrc_events') {
+    return { ...batch, events: batch.events.slice(0, eventCount) }
+  }
+  return { ...batch, events: batch.events.slice(0, eventCount) }
+}
+
+function prepareBoundedBatch(batch: HrcEventIngestBatch): {
+  batch: HrcEventIngestBatch
+  body: string
+} {
+  const fullBody = serializeBatch(batch)
+  if (Buffer.byteLength(fullBody) <= HRC_INGEST_MAX_BODY_BYTES) {
+    return { batch, body: fullBody }
+  }
+
+  let lower = 1
+  let upper = batch.events.length
+  let best:
+    | {
+        batch: HrcEventIngestBatch
+        body: string
+      }
+    | undefined
+  while (lower <= upper) {
+    const eventCount = Math.floor((lower + upper) / 2)
+    const candidate = takeBatchPrefix(batch, eventCount)
+    const body = serializeBatch(candidate)
+    if (Buffer.byteLength(body) <= HRC_INGEST_MAX_BODY_BYTES) {
+      best = { batch: candidate, body }
+      lower = eventCount + 1
+    } else {
+      upper = eventCount - 1
+    }
+  }
+
+  if (best === undefined) {
+    const originSeq = batch.events[0]?.originSeq
+    throw new Error(
+      `ingest event${originSeq === undefined ? '' : ` at originSeq ${originSeq}`} exceeds byte limit and cannot be split`
+    )
+  }
+  return best
+}
+
 async function postBatch(
   target: EventForwardTarget,
   batch: HrcEventIngestBatch
-): Promise<HrcEventIngestAck> {
+): Promise<{ ack: HrcEventIngestAck; eventCount: number }> {
+  const prepared = prepareBoundedBatch(batch)
   const init: RequestInit & { unix?: string } = {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(batch),
+    body: prepared.body,
   }
   const endpoint =
     target.kind === 'unix'
@@ -386,7 +436,10 @@ async function postBatch(
       : new URL('/v1/ingest', `${target.url}/`).toString()
   if (target.kind === 'unix') init.unix = target.socketPath
   const response = await fetch(endpoint, init)
-  return (await response.json()) as HrcEventIngestAck
+  return {
+    ack: (await response.json()) as HrcEventIngestAck,
+    eventCount: prepared.batch.events.length,
+  }
 }
 
 export async function forwardAvailableEvents(options: {
@@ -408,7 +461,7 @@ export async function forwardAvailableEvents(options: {
     limit: batchSize,
   })
   if (lifecycle.length > 0) {
-    const ack = await postBatch(options.target, {
+    const { ack, eventCount } = await postBatch(options.target, {
       version: 1,
       sourceRef: options.sourceRef,
       feed: 'hrc_events',
@@ -416,7 +469,7 @@ export async function forwardAvailableEvents(options: {
     })
     if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
     cursors.hrcEvents = ack.ackedThrough
-    forwarded += lifecycle.length
+    forwarded += eventCount
     await writeCursors(options.cursorPath, cursors)
   }
 
@@ -429,7 +482,7 @@ export async function forwardAvailableEvents(options: {
       if (event.id === undefined) throw new Error('local broker row is missing its table id')
       return { originSeq: event.id, event }
     })
-    const ack = await postBatch(options.target, {
+    const { ack, eventCount } = await postBatch(options.target, {
       version: 1,
       sourceRef: options.sourceRef,
       feed: 'broker_invocation_events',
@@ -437,7 +490,7 @@ export async function forwardAvailableEvents(options: {
     })
     if (!ack.ok) throw new Error(`${ack.code}: ${ack.message}`)
     cursors.brokerInvocationEvents = ack.ackedThrough
-    forwarded += broker.length
+    forwarded += eventCount
     await writeCursors(options.cursorPath, cursors)
   }
 
