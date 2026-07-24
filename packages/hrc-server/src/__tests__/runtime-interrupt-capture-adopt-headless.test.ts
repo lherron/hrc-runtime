@@ -12,6 +12,9 @@ import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
 let fixture: HrcServerTestFixture
 let server: HrcServer
 
+const CONTROLLED_TMUX_PROMPT = 'hrc-test> '
+const LONG_AMBIENT_TMUX_PROMPT = `${'ambient-prompt-'.repeat(5)}> `
+
 beforeEach(async () => {
   fixture = await createHrcTestFixture('hrc-runtime-actions-headless-')
   server = await createHrcServer(fixture.serverOpts())
@@ -24,6 +27,32 @@ afterEach(async () => {
   await fixture.cleanup()
 })
 
+async function setPanePrompt(
+  tmux: TmuxManager,
+  paneId: string,
+  prompt: string,
+  readyMarker: string
+): Promise<void> {
+  await tmux.sendLiteral(paneId, `PS1='${prompt}'; printf '\\n${readyMarker}\\n'`)
+  await tmux.sendEnter(paneId)
+
+  const renderedPrompt = prompt.trimEnd()
+  let captured = ''
+  for (let attempt = 0; attempt < 20; attempt++) {
+    captured = await tmux.capture(paneId)
+    const markerIndex = captured.lastIndexOf(readyMarker)
+    if (
+      markerIndex >= 0 &&
+      captured.slice(markerIndex + readyMarker.length).includes(renderedPrompt)
+    ) {
+      return
+    }
+    await Bun.sleep(50)
+  }
+
+  throw new Error(`tmux pane did not activate controlled prompt; captured: ${captured}`)
+}
+
 type SeedRuntimeOptions = {
   runtimeId: string
   hostSessionId: string
@@ -33,13 +62,22 @@ type SeedRuntimeOptions = {
   activeRunId?: string | undefined
 }
 
-async function setupTmuxRuntime(label: string, runtimeId: string, status = 'ready') {
+async function setupTmuxRuntime(
+  label: string,
+  runtimeId: string,
+  options: { status?: string; initialPrompt?: string } = {}
+) {
   const tmux = new TmuxManager(fixture.tmuxSocketPath)
   await tmux.initialize()
   const { hostSessionId } = await fixture.resolveSession(label)
   const pane = await tmux.ensurePane(hostSessionId, 'fresh_pty')
 
-  fixture.seedTmuxRuntime(hostSessionId, label, runtimeId, { status })
+  if (options.initialPrompt) {
+    await setPanePrompt(tmux, pane.paneId, options.initialPrompt, 'HRC_INITIAL_PROMPT_READY')
+  }
+  await setPanePrompt(tmux, pane.paneId, CONTROLLED_TMUX_PROMPT, 'HRC_TEST_PROMPT_READY')
+
+  fixture.seedTmuxRuntime(hostSessionId, label, runtimeId, { status: options.status ?? 'ready' })
   const db = openHrcDatabase(fixture.dbPath)
   try {
     db.runtimes.update(runtimeId, {
@@ -197,7 +235,10 @@ describe('runtime interrupt transport branching', () => {
 
 describe('runtime capture transport branching', () => {
   it('keeps the tmux capture path working', async () => {
-    const { tmux, pane } = await setupTmuxRuntime('capture-tmux', 'rt-capture-tmux')
+    expect(LONG_AMBIENT_TMUX_PROMPT.length).toBeGreaterThan(60)
+    const { tmux, pane } = await setupTmuxRuntime('capture-tmux', 'rt-capture-tmux', {
+      initialPrompt: LONG_AMBIENT_TMUX_PROMPT,
+    })
     await tmux.sendLiteral(pane.paneId, 'CAPTURE_TMUX_MARKER')
 
     let body: { text?: string } = {}
