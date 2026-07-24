@@ -426,13 +426,12 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   // collective's answer, but a stale registry row naming this node must not
   // resurrect authority during a fenced rebind gap.
   const rawLocalAuthority = deps.ledger.activeAuthority(scopeRef)
-  const localAuthority =
+  const localFenceApplies =
     retiredHere &&
     retirement !== undefined &&
-    rawLocalAuthority !== undefined &&
-    rawLocalAuthority.placementEpoch <= retirement.retiredPlacementEpoch
-      ? undefined
-      : rawLocalAuthority
+    (rawLocalAuthority === undefined ||
+      rawLocalAuthority.placementEpoch <= retirement.retiredPlacementEpoch)
+  const localAuthority = localFenceApplies ? undefined : rawLocalAuthority
   const registry: LocateRegistryView =
     localAuthority !== undefined
       ? {
@@ -499,7 +498,7 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
   // Locate/doctor must not describe that deliberately-retired ledger residue
   // as live pin skew: reconciliation keeps the row for history, but it no
   // longer grants summon authority on this node.
-  const { skew, notes } = retiredHere ? { notes: [] } : assessSkew(declared, authority)
+  const { skew, notes } = localFenceApplies ? { notes: [] } : assessSkew(declared, authority)
 
   if (revokedHereAtRegistryEpoch) {
     notes.push({
@@ -513,7 +512,7 @@ export async function locateScope(request: LocateRequest): Promise<ScopeLocation
     })
   }
 
-  if (retirement !== undefined) {
+  if (localFenceApplies && retirement !== undefined) {
     notes.push({
       code: 'scope-retired',
       detail:

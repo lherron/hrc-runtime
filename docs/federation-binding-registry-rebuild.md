@@ -53,3 +53,12 @@ This is a recovery procedure, not normal rebind choreography:
 The registry and local databases use WAL mode. Never reconstruct by copying a
 live `.sqlite` file without its WAL or by selecting a lower epoch to make a
 conflict disappear.
+
+An orphan retirement fence—one whose retired-home ledger row is absent from
+the supplied backups—is not evidence that the fence is stale. On its source
+node it remains an effective fail-closed fence because no later active local
+ledger epoch proves that authority returned there. The rebuild refuses that
+scope because the fence alone cannot reconstruct immutable birth class and
+authority provenance. Recover the missing WAL-aware node backup or otherwise
+restore the matching ledger evidence before retrying; never delete or ignore
+an orphan fence merely to make the rebuild converge.

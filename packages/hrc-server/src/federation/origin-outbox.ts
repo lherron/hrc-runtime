@@ -443,14 +443,18 @@ export class FederationOriginOutbox {
   }
 
   private resolveRoutingBinding(scopeRef: string) {
+    const ledger = createPlacementLedgerRepository(this.options.db.sqlite)
     const retirement = readScopeRetirement(this.options.db.sqlite, scopeRef)
+    const localAuthority = ledger.activeAuthority(scopeRef)
     const excludedHomeNodeId =
-      retirement?.retiredNodeId === this.options.config.nodeId
+      retirement?.retiredNodeId === this.options.config.nodeId &&
+      (localAuthority === undefined ||
+        localAuthority.placementEpoch <= retirement.retiredPlacementEpoch)
         ? retirement.retiredNodeId
         : undefined
     return resolveFederationRoutingBinding({
       scopeRef,
-      ledger: createPlacementLedgerRepository(this.options.db.sqlite),
+      ledger,
       cache: this.cache,
       registry: this.registry,
       ...(excludedHomeNodeId === undefined ? {} : { excludedHomeNodeId }),

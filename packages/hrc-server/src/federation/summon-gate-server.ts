@@ -941,7 +941,11 @@ export async function assertScopeNotRetired(
   if (deps === undefined) return undefined
 
   const retirement = deps.retirementFor?.(request.scopeRef)
-  const locallyRetired = retirement?.retiredNodeId === deps.localNodeId
+  const localAuthority = deps.ledger.activeAuthority(request.scopeRef)
+  const locallyRetired =
+    retirement?.retiredNodeId === deps.localNodeId &&
+    (localAuthority === undefined ||
+      localAuthority.placementEpoch <= retirement.retiredPlacementEpoch)
   const locallyRevoked = deps.ledger.get?.(request.scopeRef)?.state === 'revoked'
   if (!locallyRetired && !locallyRevoked) {
     return undefined
