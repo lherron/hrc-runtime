@@ -120,13 +120,37 @@ peer `locate` call to that home and attaches its node-local observation as
 `peerResolution`. Peer-listener locate itself stays local-only, preventing
 recursive fanout and preserving the bounded response contract.
 
-## Live-tailnet test gate
+## Federation validation ladder
 
-Federation landing and release validation runs `just test-federation-live`.
-That recipe sets `HRC_REQUIRE_LIVE_TAILNET_TESTS=1`, so absence of a tailnet
-IPv4 interface fails every live federation file instead of silently skipping
-it. Ordinary test runs may still skip on hosts without tailnet access, but emit
-the greppable marker `HRC_LIVE_TAILNET_SKIP` with the affected filename.
+Federation validation is a three-rung ladder (ratified 2026-07-24, T-06905).
+Each rung proves a distinct claim; no rung substitutes for another.
+
+1. **Hermetic federation integration — `test-federation-loopback`.** The
+   behavioral corpus runs against multiple real HRC instances with independent
+   stores over loopback. This rung sits inside `verify` and `e2e` and MUST
+   fail if zero loopback federation cases execute. It is the room/CI behavior
+   gate: bearer auth, real HTTP, independent ledgers/epochs,
+   ACK-after-durability, outbox retry, sleep/restart, and projections are all
+   genuine over loopback. What loopback does NOT prove is the production
+   tailnet bind/admission path and transport envelope.
+2. **Live-interface qualification — `just test-federation-live`.** That recipe
+   sets `HRC_REQUIRE_LIVE_TAILNET_TESTS=1`, so absence of a tailnet IPv4
+   interface fails every live federation file instead of silently skipping it.
+   Ordinary test runs may still skip on hosts without tailnet access, but emit
+   the greppable marker `HRC_LIVE_TAILNET_SKIP` with the affected filename.
+   Loopback success NEVER satisfies this rung.
+3. **Installed topology proof.** Real multi-host campaigns (svc/lab/max3)
+   back release and topology claims. Neither local rung substitutes.
+
+Governing principle: a command may not green while skipping the tier it
+claims. `verify`/`e2e` claim portable behavior, so they must run the loopback
+rung; `test-federation-live` claims live, so it must fail without a tailnet.
+
+Invariant: no environment escape may admit loopback in production config
+parsing — production law rejects loopback bind (see the peer-listener bind
+rules above) and must continue to. The loopback bypass for rung 1 lives below
+production config validation, in a test-fixture-only transport seam, and the
+tests proving production startup rejects loopback stay in force.
 
 ## Token rotation
 
