@@ -68,6 +68,37 @@ check:
 # Run all verification (check + lint + typecheck + test)
 verify: check lint typecheck test
 
+# -- Ephemeral development environment (T-06896) -----------------------------
+#
+# hrc-runtime is a daemon project, so "the environment the suite needs" is a
+# running daemon and a resolvable agent home — not a database and a port. Both
+# were satisfied ambiently until now (the operator's production daemon at
+# ~/praesidium/var/run/hrc, the operator's homes at ~/praesidium/var/agents),
+# which is why the suite was green on exactly one machine. `env-up` provisions
+# both under one temp root and touches neither of the real ones. See
+# scripts/dev-env.sh for the why in full.
+
+# Provision the ephemeral e2e environment (idempotent, self-healing)
+env-up:
+    bash scripts/dev-env.sh up
+
+# Tear the ephemeral e2e environment down (safe on a half-built or crashed root)
+env-down:
+    bash scripts/dev-env.sh down
+
+# The e2e suite is the whole corpus run against a REAL provisioned daemon,
+# because that is what this project's tests actually exercise: live unix
+# sockets, live tmux panes, and the CLIs spawned as subprocesses. Running it any
+# other way tests a mock of the thing rather than the thing.
+
+# Run the e2e suite against the ephemeral environment
+e2e: env-up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(bash scripts/dev-env.sh env)"
+    echo "[e2e] daemon ${HRC_RUNTIME_DIR}/hrc.sock, agents ${ASP_AGENTS_ROOT}"
+    bun run test
+
 # Clean build artifacts
 clean:
     bun run clean
