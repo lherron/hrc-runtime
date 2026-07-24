@@ -449,6 +449,7 @@ if (cmd === 'app-server') {
   // fail-closed legacy routes), so broker-start tests recreate the server with
   // the flag ON over the same paths.
   async function restartServerWithHeadlessCodexBroker(): Promise<void> {
+    await installFakeCodex('fake-codex-headless-broker')
     await server.stop()
     server = await createHrcServer({
       runtimeRoot,
