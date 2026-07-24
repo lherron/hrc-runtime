@@ -419,4 +419,86 @@ describe('SessionEventsManager — adapter + projection', () => {
     const codeBlock = lastFrame!.blocks.find((b) => b.t === 'code')
     expect(codeBlock).toMatchObject({ t: 'code', lang: 'bash', code: 'rm -rf /' })
   })
+
+  test('dispatches consecutive event types through their state handlers', () => {
+    const manager = new SessionEventsManager('test', () => {})
+    manager.subscribe(TEST_SESSION, 'test-proj')
+
+    receive(manager, {
+      projectId: 'test-proj',
+      runId: 'run-dispatch',
+      seq: 1,
+      event: {
+        type: 'run_queued',
+        runId: 'run-dispatch',
+        projectId: 'test-proj',
+        queuedAt: 1,
+        input: { content: 'exercise dispatch' },
+      },
+    })
+    receive(manager, {
+      projectId: 'test-proj',
+      runId: 'run-dispatch',
+      seq: 2,
+      event: {
+        type: 'run_started',
+        runId: 'run-dispatch',
+        projectId: 'test-proj',
+        startedAt: 2,
+      },
+    })
+    receive(manager, {
+      projectId: 'test-proj',
+      runId: 'run-dispatch',
+      seq: 3,
+      event: { type: 'notice', level: 'info', message: 'handler reached' },
+    })
+    receive(manager, {
+      projectId: 'test-proj',
+      runId: 'run-dispatch',
+      seq: 4,
+      event: {
+        type: 'permission_request',
+        requestId: 'req-dispatch',
+        runId: 'run-dispatch',
+        projectId: 'test-proj',
+        toolUseId: 'tool-dispatch',
+        toolName: 'Read',
+        toolInput: { file_path: '/tmp/input' },
+        actions: [{ id: 'approve', kind: 'approve', label: 'Allow' }],
+        requestedAt: 4,
+      },
+    })
+    receive(manager, {
+      projectId: 'test-proj',
+      runId: 'run-dispatch',
+      seq: 5,
+      event: {
+        type: 'permission_decision',
+        requestId: 'req-dispatch',
+        runId: 'run-dispatch',
+        projectId: 'test-proj',
+        toolUseId: 'tool-dispatch',
+        decision: 'allow',
+        source: 'test',
+        decidedAt: 5,
+      },
+    })
+
+    expect(manager.getRunState(TEST_SESSION, 'run-dispatch')).toMatchObject({
+      lastSeq: 5,
+      status: 'running',
+      inputContent: 'exercise dispatch',
+      startedAt: 2,
+      permissionRequest: undefined,
+      noticeEntries: [
+        {
+          id: '3',
+          level: 'info',
+          message: 'handler reached',
+          seq: 3,
+        },
+      ],
+    })
+  })
 })

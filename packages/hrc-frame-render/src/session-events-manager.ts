@@ -277,6 +277,326 @@ function eventUsesContextRun(event: GatewaySessionEvent): boolean {
   }
 }
 
+type SessionEventOf<Type extends GatewaySessionEvent['type']> = Extract<
+  GatewaySessionEvent,
+  { type: Type }
+>
+
+type EventHandlerContext = {
+  newState: ProjectState
+  getOrCreateRun: (runId: string) => RunState
+  runId: string | undefined
+  seq: number
+}
+
+function applyRunQueued(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'run_queued'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.projectId = event.projectId
+  run.status = 'queued'
+  run.inputContent = event.input.content
+  newState.runs.set(event.runId, run)
+  newState.focusedRunId = event.runId
+}
+
+function applyRunStarted(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'run_started'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.status = 'running'
+  run.startedAt = event.startedAt
+  newState.runs.set(event.runId, run)
+  newState.focusedRunId = event.runId
+}
+
+function applyRunCompleted(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'run_completed'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.status = 'completed'
+  run.completedAt = event.completedAt
+  if (event.finalOutput && run.assistantSegments.length === 0) {
+    new AssistantSegmentBuffer(run).setFinal(seq, event.finalOutput)
+  }
+  run.currentAssistantMessageRef = undefined
+  newState.runs.set(event.runId, run)
+}
+
+function applyRunFailed(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'run_failed'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.status = 'failed'
+  newState.runs.set(event.runId, run)
+}
+
+function applyRunCancelled(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'run_cancelled'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.status = 'cancelled'
+  newState.runs.set(event.runId, run)
+}
+
+function applyMessageStart(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'message_start'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  const segments = new AssistantSegmentBuffer(run)
+  const message = event.message
+  const messageId = event.messageId
+  if (message) {
+    const content = flattenMessageContent(message.content)
+
+    if (message.role === 'user') {
+      run.userMessage = content
+    } else if (message.role === 'assistant') {
+      const ref = messageId ?? `seg-${seq}`
+      segments.startMessage(ref, seq, content)
+    }
+  } else if (messageId !== undefined) {
+    segments.startMessage(messageId, seq, '')
+  }
+
+  newState.runs.set(contextRunId, run)
+}
+
+function applyMessageEnd(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'message_end'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  const segments = new AssistantSegmentBuffer(run)
+  const message = event.message
+  const messageId = event.messageId
+  const targetRef = messageId ?? run.currentAssistantMessageRef
+  if (message) {
+    const content = flattenMessageContent(message.content)
+
+    if (message.role === 'user') {
+      run.userMessage = content
+    } else if (message.role === 'assistant') {
+      segments.endMessage(targetRef, seq, content)
+    }
+  } else if (targetRef !== undefined) {
+    segments.closeExisting(targetRef)
+  }
+  segments.clearCurrentMessageRefIf(targetRef)
+
+  newState.runs.set(contextRunId, run)
+}
+
+function applyMessageUpdate(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'message_update'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  const segments = new AssistantSegmentBuffer(run)
+  const targetRef = event.messageId ?? run.currentAssistantMessageRef
+
+  if (event.textDelta) {
+    segments.appendDelta(targetRef, seq, event.textDelta)
+  }
+
+  if (event.contentBlocks) {
+    const textContent = event.contentBlocks
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+
+    if (textContent) {
+      segments.replaceBody(targetRef, seq, textContent)
+    }
+  }
+
+  newState.runs.set(contextRunId, run)
+}
+
+function applyTurnEnd(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'turn_end'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  run.status = 'completed'
+  run.completedAt = Date.now()
+  const segments = new AssistantSegmentBuffer(run)
+  const completedMessage = extractTurnEndAssistantMessage(event.payload)
+  if (completedMessage !== undefined && segments.length === 0) {
+    segments.setFinal(seq, completedMessage)
+  } else {
+    segments.closeActive()
+  }
+  run.currentAssistantMessageRef = undefined
+  newState.runs.set(contextRunId, run)
+}
+
+function applyToolExecutionStart(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'tool_execution_start'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  new AssistantSegmentBuffer(run).closeActive()
+  const existingIndex = run.toolExecutions.findIndex((tool) => tool.toolUseId === event.toolUseId)
+
+  if (existingIndex >= 0) {
+    const existingTool = run.toolExecutions[existingIndex]
+    if (!existingTool) {
+      return
+    }
+
+    run.toolExecutions[existingIndex] = {
+      ...existingTool,
+      status: 'running',
+    }
+  } else {
+    run.toolExecutions.push({
+      toolUseId: event.toolUseId,
+      toolName: event.toolName,
+      input: event.input,
+      seq,
+      status: 'running',
+    })
+  }
+
+  newState.runs.set(contextRunId, run)
+}
+
+function applyToolExecutionEnd(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'tool_execution_end'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  const toolIndex = run.toolExecutions.findIndex((tool) => tool.toolUseId === event.toolUseId)
+  let output = ''
+  const images: Array<{ data: string; mimeType: string }> = []
+  const mediaRefs: MediaRef[] = []
+
+  const result = event.result as {
+    content?: ToolResultContentBlock[]
+    details?:
+      | {
+          content?: ToolResultContentBlock[]
+        }
+      | undefined
+  }
+
+  const contentBlocks = result.content ?? result.details?.content ?? []
+  for (const block of contentBlocks) {
+    if (block.type === 'text' && block.text) {
+      output += block.text
+    } else if (block.type === 'image' && block.data && block.mimeType) {
+      images.push({ data: block.data, mimeType: block.mimeType })
+    } else if (block.type === 'media_ref' && block.url) {
+      mediaRefs.push({
+        url: block.url,
+        mimeType: block.mimeType,
+        filename: block.filename,
+        alt: block.alt,
+      })
+    }
+  }
+
+  const status: ToolExecution['status'] = event.isError ? 'failed' : 'completed'
+
+  if (toolIndex >= 0) {
+    const existingTool = run.toolExecutions[toolIndex]
+    if (!existingTool) {
+      return
+    }
+
+    run.toolExecutions[toolIndex] = {
+      ...existingTool,
+      status,
+      output: output || existingTool.output || '',
+      images: images.length > 0 ? images : existingTool.images,
+      mediaRefs: mediaRefs.length > 0 ? mediaRefs : existingTool.mediaRefs,
+    }
+  } else {
+    run.toolExecutions.push({
+      toolUseId: event.toolUseId,
+      toolName: event.toolName,
+      input: {},
+      seq,
+      status,
+      output: output || '',
+      images: images.length > 0 ? images : undefined,
+      mediaRefs: mediaRefs.length > 0 ? mediaRefs : undefined,
+    })
+  }
+
+  newState.runs.set(contextRunId, run)
+}
+
+function applyPermissionRequest(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'permission_request'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.status = 'awaiting_permission'
+  run.permissionRequest = {
+    requestId: event.requestId,
+    toolUseId: event.toolUseId,
+    toolName: event.toolName,
+    toolInput: event.toolInput,
+    actions: event.actions,
+  }
+  newState.runs.set(event.runId, run)
+}
+
+function applyPermissionDecision(
+  { newState, getOrCreateRun, seq }: EventHandlerContext,
+  event: SessionEventOf<'permission_decision'>
+): void {
+  const run = getOrCreateRun(event.runId)
+  run.lastSeq = seq
+  run.permissionRequest = undefined
+  if (run.status === 'awaiting_permission') {
+    run.status = 'running'
+  }
+  newState.runs.set(event.runId, run)
+}
+
+function applyNotice(
+  { newState, getOrCreateRun, runId, seq }: EventHandlerContext,
+  event: SessionEventOf<'notice'>
+): void {
+  const contextRunId = runId as string
+  const run = getOrCreateRun(contextRunId)
+  run.lastSeq = seq
+  run.noticeEntries.push({
+    id: String(seq),
+    level: event.level,
+    message: event.message,
+    seq,
+  })
+  newState.runs.set(contextRunId, run)
+}
+
 function processEvent(
   state: ProjectState,
   event: GatewaySessionEvent,
@@ -316,289 +636,51 @@ function processEvent(
     return newState
   }
 
+  const context: EventHandlerContext = { newState, getOrCreateRun, runId, seq }
+
   switch (event.type) {
-    case 'run_queued': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.projectId = event.projectId
-      run.status = 'queued'
-      run.inputContent = event.input.content
-      newState.runs.set(event.runId, run)
-      newState.focusedRunId = event.runId
+    case 'run_queued':
+      applyRunQueued(context, event)
       break
-    }
-
-    case 'run_started': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.status = 'running'
-      run.startedAt = event.startedAt
-      newState.runs.set(event.runId, run)
-      newState.focusedRunId = event.runId
+    case 'run_started':
+      applyRunStarted(context, event)
       break
-    }
-
-    case 'run_completed': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.status = 'completed'
-      run.completedAt = event.completedAt
-      if (event.finalOutput && run.assistantSegments.length === 0) {
-        new AssistantSegmentBuffer(run).setFinal(seq, event.finalOutput)
-      }
-      run.currentAssistantMessageRef = undefined
-      newState.runs.set(event.runId, run)
+    case 'run_completed':
+      applyRunCompleted(context, event)
       break
-    }
-
-    case 'run_failed': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.status = 'failed'
-      newState.runs.set(event.runId, run)
+    case 'run_failed':
+      applyRunFailed(context, event)
       break
-    }
-
-    case 'run_cancelled': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.status = 'cancelled'
-      newState.runs.set(event.runId, run)
+    case 'run_cancelled':
+      applyRunCancelled(context, event)
       break
-    }
-
-    case 'message_start': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      const segments = new AssistantSegmentBuffer(run)
-      const message = event.message
-      const messageId = event.messageId
-      if (message) {
-        const content = flattenMessageContent(message.content)
-
-        if (message.role === 'user') {
-          run.userMessage = content
-        } else if (message.role === 'assistant') {
-          const ref = messageId ?? `seg-${seq}`
-          segments.startMessage(ref, seq, content)
-        }
-      } else if (messageId !== undefined) {
-        segments.startMessage(messageId, seq, '')
-      }
-
-      newState.runs.set(contextRunId, run)
+    case 'message_start':
+      applyMessageStart(context, event)
       break
-    }
-
-    case 'message_end': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      const segments = new AssistantSegmentBuffer(run)
-      const message = event.message
-      const messageId = event.messageId
-      const targetRef = messageId ?? run.currentAssistantMessageRef
-      if (message) {
-        const content = flattenMessageContent(message.content)
-
-        if (message.role === 'user') {
-          run.userMessage = content
-        } else if (message.role === 'assistant') {
-          segments.endMessage(targetRef, seq, content)
-        }
-      } else if (targetRef !== undefined) {
-        segments.closeExisting(targetRef)
-      }
-      segments.clearCurrentMessageRefIf(targetRef)
-
-      newState.runs.set(contextRunId, run)
+    case 'message_end':
+      applyMessageEnd(context, event)
       break
-    }
-
-    case 'message_update': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      const segments = new AssistantSegmentBuffer(run)
-      const targetRef = event.messageId ?? run.currentAssistantMessageRef
-
-      if (event.textDelta) {
-        segments.appendDelta(targetRef, seq, event.textDelta)
-      }
-
-      if (event.contentBlocks) {
-        const textContent = event.contentBlocks
-          .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-          .map((block) => block.text)
-          .join('')
-
-        if (textContent) {
-          segments.replaceBody(targetRef, seq, textContent)
-        }
-      }
-
-      newState.runs.set(contextRunId, run)
+    case 'message_update':
+      applyMessageUpdate(context, event)
       break
-    }
-
-    case 'turn_end': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      run.status = 'completed'
-      run.completedAt = Date.now()
-      const segments = new AssistantSegmentBuffer(run)
-      const completedMessage = extractTurnEndAssistantMessage(event.payload)
-      if (completedMessage !== undefined && segments.length === 0) {
-        segments.setFinal(seq, completedMessage)
-      } else {
-        segments.closeActive()
-      }
-      run.currentAssistantMessageRef = undefined
-      newState.runs.set(contextRunId, run)
+    case 'turn_end':
+      applyTurnEnd(context, event)
       break
-    }
-
-    case 'tool_execution_start': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      new AssistantSegmentBuffer(run).closeActive()
-      const existingIndex = run.toolExecutions.findIndex(
-        (tool) => tool.toolUseId === event.toolUseId
-      )
-
-      if (existingIndex >= 0) {
-        const existingTool = run.toolExecutions[existingIndex]
-        if (!existingTool) {
-          break
-        }
-
-        run.toolExecutions[existingIndex] = {
-          ...existingTool,
-          status: 'running',
-        }
-      } else {
-        run.toolExecutions.push({
-          toolUseId: event.toolUseId,
-          toolName: event.toolName,
-          input: event.input,
-          seq,
-          status: 'running',
-        })
-      }
-
-      newState.runs.set(contextRunId, run)
+    case 'tool_execution_start':
+      applyToolExecutionStart(context, event)
       break
-    }
-
-    case 'tool_execution_end': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      const toolIndex = run.toolExecutions.findIndex((tool) => tool.toolUseId === event.toolUseId)
-      let output = ''
-      const images: Array<{ data: string; mimeType: string }> = []
-      const mediaRefs: MediaRef[] = []
-
-      const result = event.result as {
-        content?: ToolResultContentBlock[]
-        details?:
-          | {
-              content?: ToolResultContentBlock[]
-            }
-          | undefined
-      }
-
-      const contentBlocks = result.content ?? result.details?.content ?? []
-      for (const block of contentBlocks) {
-        if (block.type === 'text' && block.text) {
-          output += block.text
-        } else if (block.type === 'image' && block.data && block.mimeType) {
-          images.push({ data: block.data, mimeType: block.mimeType })
-        } else if (block.type === 'media_ref' && block.url) {
-          mediaRefs.push({
-            url: block.url,
-            mimeType: block.mimeType,
-            filename: block.filename,
-            alt: block.alt,
-          })
-        }
-      }
-
-      const status: ToolExecution['status'] = event.isError ? 'failed' : 'completed'
-
-      if (toolIndex >= 0) {
-        const existingTool = run.toolExecutions[toolIndex]
-        if (!existingTool) {
-          break
-        }
-
-        run.toolExecutions[toolIndex] = {
-          ...existingTool,
-          status,
-          output: output || existingTool.output || '',
-          images: images.length > 0 ? images : existingTool.images,
-          mediaRefs: mediaRefs.length > 0 ? mediaRefs : existingTool.mediaRefs,
-        }
-      } else {
-        run.toolExecutions.push({
-          toolUseId: event.toolUseId,
-          toolName: event.toolName,
-          input: {},
-          seq,
-          status,
-          output: output || '',
-          images: images.length > 0 ? images : undefined,
-          mediaRefs: mediaRefs.length > 0 ? mediaRefs : undefined,
-        })
-      }
-
-      newState.runs.set(contextRunId, run)
+    case 'tool_execution_end':
+      applyToolExecutionEnd(context, event)
       break
-    }
-
-    case 'permission_request': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.status = 'awaiting_permission'
-      run.permissionRequest = {
-        requestId: event.requestId,
-        toolUseId: event.toolUseId,
-        toolName: event.toolName,
-        toolInput: event.toolInput,
-        actions: event.actions,
-      }
-      newState.runs.set(event.runId, run)
+    case 'permission_request':
+      applyPermissionRequest(context, event)
       break
-    }
-
-    case 'permission_decision': {
-      const run = getOrCreateRun(event.runId)
-      run.lastSeq = seq
-      run.permissionRequest = undefined
-      if (run.status === 'awaiting_permission') {
-        run.status = 'running'
-      }
-      newState.runs.set(event.runId, run)
+    case 'permission_decision':
+      applyPermissionDecision(context, event)
       break
-    }
-
-    case 'notice': {
-      const contextRunId = runId as string
-      const run = getOrCreateRun(contextRunId)
-      run.lastSeq = seq
-      run.noticeEntries.push({
-        id: String(seq),
-        level: event.level,
-        message: event.message,
-        seq,
-      })
-      newState.runs.set(contextRunId, run)
+    case 'notice':
+      applyNotice(context, event)
       break
-    }
-
     default:
       // Session-metadata events (and any other unhandled types) are known-but-ignored.
       break
