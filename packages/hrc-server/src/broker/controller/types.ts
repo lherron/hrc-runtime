@@ -354,6 +354,13 @@ export type HarnessBrokerControllerDeps = {
    */
   brokerActiveRpcTimeoutMs?: number | undefined
   /**
+   * Exact per-RPC ceiling for the same-client health/status proof performed
+   * before a durable reattach is published active. This bound cannot be
+   * disabled: invalid, zero, negative, or non-finite values fall back to 2s.
+   * Overridable with HRC_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS.
+   */
+  brokerAttachControlProbeTimeoutMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.

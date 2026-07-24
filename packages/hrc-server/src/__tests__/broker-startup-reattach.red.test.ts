@@ -273,6 +273,11 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   private eventsSinceQueue: InvocationEventsSinceResponse[] = []
   attachThrows: Error | undefined
   eventsSinceThrows: Error | undefined
+  healthResponse: BrokerHealthResponse = { status: 'ok', activeInvocations: 1, drivers: [] }
+  statusResponse: InvocationStatusResponse = {
+    invocationId: INVOCATION_ID,
+    state: 'ready',
+  } as InvocationStatusResponse
 
   queueEventsSince(response: InvocationEventsSinceResponse): void {
     this.eventsSinceQueue.push(response)
@@ -314,7 +319,7 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   }
   async health(): Promise<BrokerHealthResponse> {
     this.calls.push('health')
-    return { status: 'ok', activeInvocations: 1, drivers: [] }
+    return this.healthResponse
   }
   async startInvocationFromRequest(): Promise<never> {
     this.calls.push('start')
@@ -338,7 +343,7 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   }
   async status(): Promise<InvocationStatusResponse> {
     this.calls.push('status')
-    return { invocationId: INVOCATION_ID, state: 'ready' } as InvocationStatusResponse
+    return this.statusResponse
   }
   async dispose(_req: InvocationDisposeRequest): Promise<void> {
     this.calls.push('dispose')
@@ -404,9 +409,12 @@ function attachResponseFor(snapshot: InvocationSnapshot): BrokerAttachResponse {
   }
 }
 
-function makeController(): HarnessBrokerController {
+function makeController(brokerAttachControlProbeTimeoutMs?: number): HarnessBrokerController {
   return new HarnessBrokerController({
     db,
+    ...(brokerAttachControlProbeTimeoutMs !== undefined
+      ? { brokerAttachControlProbeTimeoutMs }
+      : {}),
     now: () => nowTs(),
     serverInstanceId: SERVER_INSTANCE_ID,
   })
@@ -639,6 +647,52 @@ describe('Phase 4 reattach: fenced / transport-close during replay => not attach
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
+  })
+})
+
+describe('T-05299 startup/lazy reattach control-proof surfacing', () => {
+  it('lazy reattach returns false and persists a precise control-probe failure', async () => {
+    seedDurableBrokerRuntime()
+    const controller = makeController(10)
+    const client = new MockDurableBrokerClient()
+    client.snapshotResponse = emptySnapshot()
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+    client.queueEventsSince({ events: [], currentSeq: 0, retentionFloorSeq: 0 })
+    client.healthResponse = {
+      status: 'shutting_down',
+      activeInvocations: 1,
+      drivers: [],
+    }
+
+    const reattached = await reconcile.reattachDurableBrokerForDispatch(db, readRuntime(), {
+      controller,
+      brokerUnixClientFactory: async () => client,
+      resolveAttachToken: async () => ATTACH_TOKEN,
+      probeBrokerLease: async () => ({
+        brokerSocketLive: true,
+        brokerWindow: BROKER_WINDOW,
+        tuiWindow: TUI_WINDOW,
+      }),
+    })
+
+    expect(reattached).toBe(false)
+    const control = extractRuntimeControlState(readRuntime().runtimeStateJson)
+    expect(control?.brokerAttached).toBe(false)
+    const rawControl = readRuntime().runtimeStateJson?.['control'] as
+      | { lastAttachError?: { code?: string } }
+      | undefined
+    expect(rawControl?.lastAttachError?.code).toBe('broker_control_probe_shutting_down')
+  })
+
+  it('warmup categorizes control-proof failures separately from replay and lease failures', () => {
+    expect(
+      reconcile.brokerWarmupCategoryForOutcome({
+        runtimeId: RUNTIME_ID,
+        state: 'stale',
+        brokerAttached: false,
+        reason: 'broker_control_probe_timeout',
+      })
+    ).toBe('control_probe_failed')
   })
 })
 

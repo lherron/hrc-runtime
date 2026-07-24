@@ -97,6 +97,7 @@ export type BrokerWarmupCategory =
   | 'substrate_gone_stale'
   | 'lease_identity_invalid_stale'
   | 'attach_replay_failed'
+  | 'control_probe_failed'
   | 'terminated'
   | 'other'
 

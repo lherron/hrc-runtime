@@ -554,7 +554,10 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   }
   async status(): Promise<InvocationStatusResponse> {
     this.calls.push('status')
-    return { invocationId: HEADLESS_INVOCATION_ID, state: 'ready' } as InvocationStatusResponse
+    return {
+      invocationId: this.snapshotResponse.invocationId,
+      state: 'ready',
+    } as InvocationStatusResponse
   }
   async dispose(_req: InvocationDisposeRequest): Promise<void> {
     this.calls.push('dispose')

@@ -100,6 +100,7 @@ const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 // after an hrc-server restart that no longer answers control RPCs).
 const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
 const DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS = 20_000
+export const DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS = 2_000
 
 // T-05358: the broker socket can close mid-dispose. The durable unix/stdio
 // transport rejects the in-flight RPC with `Broker transport closed`, while a
@@ -176,6 +177,27 @@ function resolveBrokerActiveRpcTimeoutMs(depsValue?: number, envValue?: string):
     if (Number.isFinite(parsed) && parsed >= 0) return parsed
   }
   return DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS
+}
+
+/**
+ * Resolve the per-RPC attach control-proof timeout. Unlike the general active
+ * RPC and dispose bounds, this safety proof can never be disabled: invalid,
+ * zero, negative, and non-finite values all fall back to the exact 2s default.
+ */
+export function resolveBrokerAttachControlProbeTimeoutMs(
+  depsValue?: number,
+  envValue?: string
+): number {
+  if (typeof depsValue === 'number' && Number.isFinite(depsValue) && depsValue > 0) {
+    return depsValue
+  }
+  if (envValue !== undefined) {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+  return DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
 }
 
 export { BrokerControllerError } from './controller/errors'
@@ -273,6 +295,7 @@ export class HarnessBrokerController {
   private readonly brokerTmuxSummaryReapGraceMs: number
   private readonly brokerDisposeTimeoutMs: number
   private readonly brokerActiveRpcTimeoutMs: number
+  private readonly brokerAttachControlProbeTimeoutMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -339,6 +362,10 @@ export class HarnessBrokerController {
       deps.brokerActiveRpcTimeoutMs,
       deps.env?.['HRC_BROKER_ACTIVE_RPC_TIMEOUT_MS']
     )
+    this.brokerAttachControlProbeTimeoutMs = resolveBrokerAttachControlProbeTimeoutMs(
+      deps.brokerAttachControlProbeTimeoutMs,
+      deps.env?.['HRC_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS']
+    )
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
@@ -392,6 +419,7 @@ export class HarnessBrokerController {
       env: this.env,
       now: this.now,
       serverInstanceId: this.serverInstanceId,
+      attachControlProbeTimeoutMs: this.brokerAttachControlProbeTimeoutMs,
       logger: this.logger,
       persistenceContext: () => this.persistenceContext(),
       allocationContext: () => this.allocationContext(),
