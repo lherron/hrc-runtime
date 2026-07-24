@@ -80,10 +80,17 @@ export type {
   HrcLifecycleQueryFilters,
   RunListFilters,
 } from './repositories/shared.js'
-export type { EventAppendInput, HrcLifecycleEventInput } from './repositories/event-repositories.js'
+export { ImportedHrcLifecycleEventConflictError } from './repositories/event-repositories.js'
+export type {
+  EventAppendInput,
+  HrcLifecycleEventInput,
+  ImportedHrcLifecycleEventAppendResult,
+  ImportedHrcLifecycleEventInput,
+} from './repositories/event-repositories.js'
 export type {
   BrokerInvocationEventAppendInput,
   BrokerInvocationEventAppendResult,
+  ImportedBrokerInvocationEventInput,
   BrokerInvocationUpdatePatch,
   RuntimeOperationUpdatePatch,
 } from './repositories/broker-repositories.js'

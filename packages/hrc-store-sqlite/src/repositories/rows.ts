@@ -140,6 +140,8 @@ export type EventRow = {
 export type HrcEventRow = {
   hrc_seq: number
   stream_seq: number
+  source_ref: string | null
+  origin_seq: number | null
   ts: string
   host_session_id: string
   scope_ref: string

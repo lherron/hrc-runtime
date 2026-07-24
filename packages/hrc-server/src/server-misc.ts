@@ -93,6 +93,9 @@ export function matchesHrcLifecycleEventFilter(
   event: HrcLifecycleEvent,
   filters: HrcEventsRouteFilters
 ): boolean {
+  if (filters.sourceRef !== undefined && event.sourceRef !== filters.sourceRef) {
+    return false
+  }
   if (filters.hostSessionId !== undefined && event.hostSessionId !== filters.hostSessionId) {
     return false
   }

@@ -207,6 +207,9 @@ export function parseEventsRouteFilters(
   const generation = parseOptionalIntegerQuery(searchParams.get('generation'), 'generation')
 
   return {
+    ...(normalizeOptionalQuery(searchParams.get('sourceRef')) !== undefined
+      ? { sourceRef: normalizeOptionalQuery(searchParams.get('sourceRef')) }
+      : {}),
     ...(normalizeOptionalQuery(searchParams.get('hostSessionId')) !== undefined
       ? { hostSessionId: normalizeOptionalQuery(searchParams.get('hostSessionId')) }
       : {}),
@@ -446,6 +449,8 @@ function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensics
     invocationId: row.invocationId,
     runtimeId: row.runtimeId,
     ...(row.runId !== undefined ? { runId: row.runId } : {}),
+    ...(row.sourceRef !== undefined ? { sourceRef: row.sourceRef } : {}),
+    ...(row.originSeq !== undefined ? { originSeq: row.originSeq } : {}),
     seq: row.seq,
     time: row.time,
     type: row.type,
@@ -481,8 +486,29 @@ function parseForensicsRow(row: HrcBrokerInvocationEventRecord): BrokerForensics
 
 /** Read-only post-mortem projection of persisted broker rows. */
 export function handleBrokerForensics(this: HrcServerInstanceForHandlers, url: URL): Response {
-  const targetId = requireQuery(url.searchParams, 'targetId')
-  const invocation = this.db.brokerInvocations.getByInvocationId(targetId)
+  const sourceRef = normalizeOptionalQuery(url.searchParams.get('sourceRef'))
+  const targetId = normalizeOptionalQuery(url.searchParams.get('targetId'))
+  if ((sourceRef === undefined) === (targetId === undefined)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'exactly one of targetId or sourceRef is required'
+    )
+  }
+  if (sourceRef !== undefined) {
+    const rows = this.db.brokerInvocationEvents.listBySourceRef(sourceRef)
+    return json({
+      targetKind: 'source_ref',
+      targetId: sourceRef,
+      runtimeIds: [...new Set(rows.map((row) => row.runtimeId))],
+      invocationIds: [...new Set(rows.map((row) => row.invocationId))],
+      events: rows.map(parseForensicsRow),
+    } satisfies BrokerForensicsResponse)
+  }
+  if (targetId === undefined) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'targetId is required')
+  }
+  const resolvedTargetId = targetId
+  const invocation = this.db.brokerInvocations.getByInvocationId(resolvedTargetId)
 
   let targetKind: BrokerForensicsResponse['targetKind']
   let rows: HrcBrokerInvocationEventRecord[]
@@ -495,12 +521,12 @@ export function handleBrokerForensics(this: HrcServerInstanceForHandlers, url: U
     runtimeIds = [invocation.runtimeId]
     invocationIds = [invocation.invocationId]
   } else {
-    const runtime = this.db.runtimes.getByRuntimeId(targetId)
+    const runtime = this.db.runtimes.getByRuntimeId(resolvedTargetId)
     if (!runtime) {
       throw new HrcBadRequestError(
         HrcErrorCode.INVALID_SELECTOR,
-        `no persisted broker runtime or invocation matched "${targetId}"`,
-        { targetId }
+        `no persisted broker runtime or invocation matched "${resolvedTargetId}"`,
+        { targetId: resolvedTargetId }
       )
     }
     targetKind = 'runtime'
@@ -513,7 +539,7 @@ export function handleBrokerForensics(this: HrcServerInstanceForHandlers, url: U
 
   return json({
     targetKind,
-    targetId,
+    targetId: resolvedTargetId,
     runtimeIds,
     invocationIds,
     events: rows.map(parseForensicsRow),

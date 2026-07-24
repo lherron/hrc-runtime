@@ -84,6 +84,7 @@ export type WatchOptions = {
   runId?: string | undefined
   category?: HrcEventCategory | undefined
   eventKind?: string | undefined
+  sourceRef?: string | undefined
   signal?: AbortSignal | undefined
 }
 
@@ -114,7 +115,9 @@ export type WatchBrokerEventsOptions = {
 
 export type BrokerForensicsOptions = {
   /** Exact persisted runtimeId or invocationId. Scope resolution stays in the CLI. */
-  targetId: string
+  targetId?: string | undefined
+  /** Exact imported-ledger attribution label. Does not require host authority rows. */
+  sourceRef?: string | undefined
 }
 
 /**
@@ -125,6 +128,7 @@ export type BrokerForensicsOptions = {
  * (hostSessionId, generation) and is not a stream.
  */
 export type LatestEventBySessionFilter = {
+  sourceRef?: string | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   scopeRef?: string | undefined

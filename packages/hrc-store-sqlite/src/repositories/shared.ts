@@ -35,6 +35,7 @@ import type {
 } from './rows.js'
 
 export type HrcLifecycleQueryFilters = {
+  sourceRef?: string | null | undefined
   hostSessionId?: string | undefined
   generation?: number | undefined
   scopeRef?: string | undefined
@@ -59,6 +60,7 @@ export type HrcLifecycleQueryFilters = {
  * `eventKinds`/`toolNames`/`payloadContains` when true.
  */
 export type HrcLifecycleMonitorFilters = {
+  sourceRef?: string | null | undefined
   scopeRef?: string | undefined
   /** Match any event whose scopeRef is exactly one of these values. */
   scopeRefs?: string[] | undefined
@@ -346,6 +348,8 @@ export const EVENT_COLUMNS = `
 export const HRC_EVENT_COLUMNS = `
   hrc_seq,
   stream_seq,
+  source_ref,
+  origin_seq,
   ts,
   host_session_id,
   scope_ref,
@@ -608,6 +612,12 @@ export function buildLifecycleWhere(
     where.push('host_session_id = ?')
     values.push(filters.hostSessionId)
   }
+  if (filters.sourceRef === null) {
+    where.push('source_ref IS NULL')
+  } else if (filters.sourceRef !== undefined) {
+    where.push('source_ref = ?')
+    values.push(filters.sourceRef)
+  }
   if (filters.generation !== undefined) {
     where.push('generation = ?')
     values.push(filters.generation)
@@ -851,6 +861,8 @@ export function mapHrcEventRow(row: HrcEventRow): HrcLifecycleEvent {
   return {
     hrcSeq: row.hrc_seq,
     streamSeq: row.stream_seq,
+    ...(row.source_ref !== null ? { sourceRef: row.source_ref } : {}),
+    ...(row.origin_seq !== null ? { originSeq: row.origin_seq } : {}),
     ts: row.ts,
     hostSessionId: row.host_session_id,
     scopeRef: row.scope_ref,

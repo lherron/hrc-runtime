@@ -551,6 +551,47 @@ const runsBrokerInputFenceMigration: HrcMigration = {
   },
 }
 
+// T-06838: observational provenance for store-and-forward event ingestion.
+// ALTER TABLE keeps every existing/native row null-provenance. Triggers provide
+// the pair invariant on populated tables that SQLite cannot retrofit with an
+// ALTER TABLE CHECK constraint.
+const observationalEventProvenanceMigration: HrcMigration = {
+  id: '0033_observational_event_provenance',
+  apply(db) {
+    for (const table of ['hrc_events', 'broker_invocation_events']) {
+      const columns = new Set(
+        db
+          .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+          .all()
+          .map((row) => row.name)
+      )
+      if (!columns.has('source_ref')) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN source_ref TEXT`)
+      }
+      if (!columns.has('origin_seq')) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN origin_seq INTEGER`)
+      }
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_source_origin
+          ON ${table}(source_ref, origin_seq)
+          WHERE source_ref IS NOT NULL;
+        CREATE TRIGGER IF NOT EXISTS trg_${table}_source_origin_insert
+          BEFORE INSERT ON ${table}
+          WHEN (NEW.source_ref IS NULL) != (NEW.origin_seq IS NULL)
+          BEGIN
+            SELECT RAISE(ABORT, 'source_ref and origin_seq must be both null or both non-null');
+          END;
+        CREATE TRIGGER IF NOT EXISTS trg_${table}_source_origin_update
+          BEFORE UPDATE OF source_ref, origin_seq ON ${table}
+          WHEN (NEW.source_ref IS NULL) != (NEW.origin_seq IS NULL)
+          BEGIN
+            SELECT RAISE(ABORT, 'source_ref and origin_seq must be both null or both non-null');
+          END;
+      `)
+    }
+  },
+}
+
 export const brokerMigrations: readonly HrcMigration[] = [
   brokerPersistenceMigration,
   runtimeBrokerStateMigration,
@@ -562,4 +603,5 @@ export const brokerMigrations: readonly HrcMigration[] = [
   brokerFullEnvelopeMigration,
   runtimeArtifactOperationKindMigration,
   runsBrokerInputFenceMigration,
+  observationalEventProvenanceMigration,
 ]

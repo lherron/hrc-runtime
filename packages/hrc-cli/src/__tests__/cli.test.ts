@@ -739,22 +739,29 @@ describe('server tmux kill broker leases', () => {
 })
 
 describe('legacy monitor command removal', () => {
-  it('top-level help lists monitor group and omits removed status/events entries', async () => {
+  it('top-level help lists monitor and recovery events groups while omitting removed status', async () => {
     const result = await runCli(['--help'])
     const output = result.stdout + result.stderr
     expect(result.exitCode).toBe(0)
     expect(output).toContain('monitor')
+    expect(output).toMatch(/\n\s+events\s/)
     expect(output).not.toMatch(/\n\s+status\s/)
-    expect(output).not.toMatch(/\n\s+events\s/)
   })
 
   it('removed legacy hrc commands exit as unknown commands', async () => {
-    for (const args of [['status'], ['events'], ['server', 'health']]) {
+    for (const args of [['status'], ['server', 'health']]) {
       const result = await runCli(args, cliEnv())
       expect(result.exitCode).toBe(2)
       expect(result.stdout).toBe('')
       expect(result.stderr).toMatch(/unknown command/i)
     }
+  })
+
+  it('events exposes only the dead-ledger drain recovery command', async () => {
+    const result = await runCli(['events', '--help'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('drain')
+    expect(result.stdout).not.toContain('follow')
   })
 
   it('monitor subcommand help covers show, watch, and wait', async () => {

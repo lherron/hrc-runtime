@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 
 import { cmdBrokerEvents, cmdBrokerStats, cmdBrokerTranscript } from '../broker-forensics.js'
 import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
+import { cmdEventsDrain } from '../events-drain.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { cmdCapture, cmdInterrupt, cmdRuntimeEnsure, cmdTerminate } from './handlers-control.js'
 import {
@@ -15,6 +16,22 @@ import {
 } from './handlers-runtime.js'
 
 export function registerRuntimeCommands(program: Command): void {
+  const events = program.command('events').description('forward and recover HRC event ledgers')
+  events
+    .command('drain')
+    .description("push a dead container ledger's unforwarded tails into host HRC")
+    .argument('<state.sqlite>', 'path to the dead container HRC state database')
+    .requiredOption('--source-ref <ref>', 'exact claimed source_ref for attribution and dedup')
+    .option('--json', 'output as JSON')
+    .action(async (dbPath, _opts, cmd: Command) => {
+      const opts = cmd.opts<{ sourceRef: string; json?: boolean }>()
+      await cmdEventsDrain({
+        dbPath,
+        sourceRef: opts.sourceRef,
+        ...(opts.json ? { json: true } : {}),
+      })
+    })
+
   // -- runtime group (commander, Phase 6 T2) ----------------------------------
 
   const broker = program.command('broker').description('inspect broker-backed runtime invocations')
@@ -36,15 +53,16 @@ export function registerRuntimeCommands(program: Command): void {
   broker
     .command('events')
     .description('list durable broker events for post-mortem analysis')
-    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--type <types>', 'comma-separated event types')
     .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
     .option('--json', 'output as a JSON array')
     .option('--ndjson', 'output one complete event per NDJSON line')
     .action(async (target, _opts, cmd: Command) => {
-      const args = toLegacyArgv([target], cmd.opts(), {
-        strings: ['type', 'seq'],
+      const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
+        strings: ['type', 'seq', 'source-ref'],
         booleans: ['latest', 'json', 'ndjson'],
       })
       await cmdBrokerEvents(args)
@@ -53,14 +71,15 @@ export function registerRuntimeCommands(program: Command): void {
   broker
     .command('transcript')
     .description('render an interleaved broker exec, assistant, and notice stream')
-    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--seq <range>', 'inclusive sequence range (<from>..<to>)')
     .option('--kinds <kinds>', 'comma-separated exec,cot,notice kinds', 'exec,cot,notice')
     .option('--full', 'do not clip long event text')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
     .action(async (target, _opts, cmd: Command) => {
-      const args = toLegacyArgv([target], cmd.opts(), {
-        strings: ['seq', 'kinds'],
+      const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
+        strings: ['seq', 'kinds', 'source-ref'],
         booleans: ['full', 'latest'],
       })
       await cmdBrokerTranscript(args)
@@ -69,12 +88,13 @@ export function registerRuntimeCommands(program: Command): void {
   broker
     .command('stats')
     .description('summarize durable broker activity for post-mortem analysis')
-    .argument('<target>', 'runtime ID, invocation ID, scope ref, or target handle')
+    .argument('[target]', 'runtime ID, invocation ID, scope ref, or target handle')
+    .option('--source-ref <ref>', 'select imported rows by exact source_ref')
     .option('--latest', 'select the newest runtime when a scope is ambiguous')
     .option('--json', 'output as JSON')
     .action(async (target, _opts, cmd: Command) => {
-      const args = toLegacyArgv([target], cmd.opts(), {
-        strings: [],
+      const args = toLegacyArgv(target ? [target] : [], cmd.opts(), {
+        strings: ['source-ref'],
         booleans: ['latest', 'json'],
       })
       await cmdBrokerStats(args)

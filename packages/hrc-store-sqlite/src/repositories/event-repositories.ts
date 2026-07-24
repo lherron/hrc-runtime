@@ -164,6 +164,27 @@ export type HrcLifecycleEventInput = Omit<
   replayed?: boolean | undefined
 }
 
+export type ImportedHrcLifecycleEventInput = {
+  sourceRef: string
+  originSeq: number
+  event: HrcLifecycleEvent
+}
+
+export type ImportedHrcLifecycleEventAppendResult = {
+  event: HrcLifecycleEvent
+  idempotent: boolean
+}
+
+export class ImportedHrcLifecycleEventConflictError extends Error {
+  constructor(
+    readonly sourceRef: string,
+    readonly originSeq: number
+  ) {
+    super(`conflicting imported hrc event at ${sourceRef}/${originSeq}`)
+    this.name = 'ImportedHrcLifecycleEventConflictError'
+  }
+}
+
 export class HrcLifecycleEventRepository {
   private readonly appendInTransaction: (event: HrcLifecycleEventInput) => HrcLifecycleEvent
 
@@ -234,6 +255,74 @@ export class HrcLifecycleEventRepository {
     return this.appendInTransaction(event)
   }
 
+  appendImported(input: ImportedHrcLifecycleEventInput): ImportedHrcLifecycleEventAppendResult {
+    if (!input.sourceRef.trim() || !Number.isSafeInteger(input.originSeq) || input.originSeq < 1) {
+      throw new Error(
+        'imported lifecycle event requires non-empty sourceRef and positive originSeq'
+      )
+    }
+    const append = this.db.transaction(() => {
+      const existing = this.db
+        .query<HrcEventRow, [string, number]>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+            WHERE source_ref = ? AND origin_seq = ?`
+        )
+        .get(input.sourceRef, input.originSeq)
+      if (existing) {
+        const stored = mapHrcEventRow(existing)
+        const comparable = ({
+          hrcSeq: _hrcSeq,
+          streamSeq: _streamSeq,
+          sourceRef: _sourceRef,
+          originSeq: _originSeq,
+          ...rest
+        }: HrcLifecycleEvent) => rest
+        if (JSON.stringify(comparable(stored)) !== JSON.stringify(comparable(input.event))) {
+          throw new ImportedHrcLifecycleEventConflictError(input.sourceRef, input.originSeq)
+        }
+        return { event: stored, idempotent: true }
+      }
+
+      const streamSeq = allocateStreamSeq(this.db)
+      execute(
+        this.db,
+        `INSERT INTO hrc_events (
+          stream_seq, source_ref, origin_seq, ts, host_session_id, scope_ref, lane_ref,
+          generation, runtime_id, run_id, launch_id, app_id, app_session_key, category,
+          event_kind, transport, error_code, replayed, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        streamSeq,
+        input.sourceRef,
+        input.originSeq,
+        input.event.ts,
+        input.event.hostSessionId,
+        input.event.scopeRef,
+        input.event.laneRef,
+        input.event.generation,
+        input.event.runtimeId ?? null,
+        input.event.runId ?? null,
+        input.event.launchId ?? null,
+        input.event.appId ?? null,
+        input.event.appSessionKey ?? null,
+        input.event.category,
+        input.event.eventKind,
+        input.event.transport ?? null,
+        input.event.errorCode ?? null,
+        input.event.replayed ? 1 : 0,
+        JSON.stringify(input.event.payload ?? {})
+      )
+      const row = this.db
+        .query<HrcEventRow, [string, number]>(
+          `SELECT ${HRC_EVENT_COLUMNS} FROM hrc_events
+            WHERE source_ref = ? AND origin_seq = ?`
+        )
+        .get(input.sourceRef, input.originSeq)
+      if (!row) throw new Error(`failed to reload imported hrc event ${input.sourceRef}`)
+      return { event: mapHrcEventRow(row), idempotent: false }
+    })
+    return append.immediate()
+  }
+
   listFromHrcSeq(
     fromHrcSeq = 1,
     filters: Omit<HrcLifecycleQueryFilters, 'fromHrcSeq' | 'fromStreamSeq'> = {}
@@ -300,6 +389,7 @@ export class HrcLifecycleEventRepository {
     filters: HrcLifecycleMonitorFilters
   ): HrcLifecycleEvent[] {
     const baseFilters: HrcLifecycleQueryFilters = {
+      sourceRef: filters.sourceRef,
       fromHrcSeq,
       scopeRef: filters.scopeRef,
       laneRef: filters.laneRef,

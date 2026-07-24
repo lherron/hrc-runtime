@@ -1143,6 +1143,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcBrokerIngestItem",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcBrokerIngestItem|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcBrokerInvocationEventRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1267,6 +1275,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcEventEnvelope|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventIngestAck",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcEventIngestAck|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventIngestBatch",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcEventIngestBatch|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcEventIngestFeed",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcEventIngestFeed|type",
       "count": 1
     },
     {
@@ -1435,6 +1467,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcLifecycleEvent|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcLifecycleIngestItem",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcLifecycleIngestItem|type",
       "count": 1
     },
     {
@@ -2739,6 +2779,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/paths.ts",
       "hash": "hrc-core|resolveDatabasePath|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "resolveIngestSocketPath",
+      "kind": "value",
+      "file": "packages/hrc-core/src/paths.ts",
+      "hash": "hrc-core|resolveIngestSocketPath|value",
       "count": 1
     },
     {

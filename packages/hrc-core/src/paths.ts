@@ -65,6 +65,10 @@ export function resolveControlSocketPath(): string {
   return join(resolveRuntimeRoot(), 'hrc.sock')
 }
 
+export function resolveIngestSocketPath(): string {
+  return join(resolveRuntimeRoot(), 'ingest', 'events.sock')
+}
+
 export function resolveTmuxSocketPath(): string {
   return join(resolveRuntimeRoot(), 'tmux.sock')
 }

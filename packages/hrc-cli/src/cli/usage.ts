@@ -286,6 +286,8 @@ Commands:
                                      Watch exact, scope:<prefix>:*, or bare T-XXXXX selectors
   monitor wait <selector...> [--until|--until-any|--until-all <condition>] [--timeout <duration>] [--stall-after <duration>] [--json]
                                      Wait for a monitor condition and exit with its result
+  events drain <state.sqlite> --source-ref <ref> [--json]
+                                     Forward both unacked ledger tails through host ingest
   runtime ensure <hostSessionId> [--provider <provider>] [--restart-style <style>]
   runtime list [--all-nodes] [--status <csv>] [--scope <selector>] [--agent <id>] [--task <id>] [--host-session-id <id>|--session <id>] [--transport <transport>] [--stale] [--older-than <duration>] [--json]
                                      List runtimes; for one target use hrc show <scope> or runtime inspect <id>

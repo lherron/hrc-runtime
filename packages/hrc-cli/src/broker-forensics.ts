@@ -2,7 +2,7 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { BrokerForensicsEvent, BrokerForensicsResponse } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 
-import { hasFlag, parseFlag, requireArg, splitCsv } from './cli/argv.js'
+import { hasFlag, parseFlag, splitCsv } from './cli/argv.js'
 import { createClient, fatal } from './cli/shared.js'
 import { resolveRuntimeArg } from './selector-resolve.js'
 
@@ -69,10 +69,16 @@ function payloadText(event: BrokerForensicsEvent, full = false): string {
 }
 
 async function fetchForensics(
-  rawTarget: string,
+  rawTarget: string | undefined,
   client: HrcClient,
-  latest: boolean
+  latest: boolean,
+  sourceRef?: string
 ): Promise<BrokerForensicsResponse> {
+  if (sourceRef !== undefined) {
+    if (rawTarget !== undefined) fatal('<target> and --source-ref are mutually exclusive')
+    return client.brokerForensics({ sourceRef })
+  }
+  if (rawTarget === undefined) fatal('either <target> or --source-ref is required')
   try {
     // Fast path for exact persisted runtime and invocation IDs. The daemon owns
     // this lookup so terminated invocations are not limited by a live registry.
@@ -99,7 +105,7 @@ function filterEvents(
 }
 
 export async function cmdBrokerEvents(args: string[]): Promise<void> {
-  const rawTarget = requireArg(args, 0, '<runtimeId|invocationId|scope>')
+  const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const jsonOutput = hasFlag(args, '--json')
   const ndjsonOutput = hasFlag(args, '--ndjson')
   if (jsonOutput && ndjsonOutput) fatal('--json and --ndjson are mutually exclusive')
@@ -108,7 +114,12 @@ export async function cmdBrokerEvents(args: string[]): Promise<void> {
   const types = typeRaw ? new Set(splitCsv(typeRaw)) : undefined
   const range = parseSeqRange(parseFlag(args, '--seq'))
   const client = createClient()
-  const result = await fetchForensics(rawTarget, client, hasFlag(args, '--latest'))
+  const result = await fetchForensics(
+    rawTarget,
+    client,
+    hasFlag(args, '--latest'),
+    parseFlag(args, '--source-ref')
+  )
   const events = filterEvents(result.events, { types, range })
 
   if (ndjsonOutput) {
@@ -198,12 +209,17 @@ function renderTranscriptEvent(event: BrokerForensicsEvent, full: boolean): stri
 }
 
 export async function cmdBrokerTranscript(args: string[]): Promise<void> {
-  const rawTarget = requireArg(args, 0, '<runtimeId|invocationId|scope>')
+  const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const range = parseSeqRange(parseFlag(args, '--seq'))
   const kinds = parseTranscriptKinds(parseFlag(args, '--kinds'))
   const full = hasFlag(args, '--full')
   const client = createClient()
-  const result = await fetchForensics(rawTarget, client, hasFlag(args, '--latest'))
+  const result = await fetchForensics(
+    rawTarget,
+    client,
+    hasFlag(args, '--latest'),
+    parseFlag(args, '--source-ref')
+  )
   const events = result.events.filter((event) => {
     const kind = transcriptKind(event.type)
     return kind !== undefined && kinds.has(kind) && inSeqRange(event, range)
@@ -259,9 +275,14 @@ function buildStats(result: BrokerForensicsResponse): BrokerStats {
 }
 
 export async function cmdBrokerStats(args: string[]): Promise<void> {
-  const rawTarget = requireArg(args, 0, '<runtimeId|invocationId|scope>')
+  const rawTarget = args[0] && !args[0].startsWith('--') ? args[0] : undefined
   const client = createClient()
-  const result = await fetchForensics(rawTarget, client, hasFlag(args, '--latest'))
+  const result = await fetchForensics(
+    rawTarget,
+    client,
+    hasFlag(args, '--latest'),
+    parseFlag(args, '--source-ref')
+  )
   const stats = buildStats(result)
 
   if (hasFlag(args, '--json')) {

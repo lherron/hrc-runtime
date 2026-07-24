@@ -450,6 +450,12 @@ export type BrokerInvocationEventAppendInput = {
   createdAt?: string | undefined
 }
 
+export type ImportedBrokerInvocationEventInput = {
+  sourceRef: string
+  originSeq: number
+  event: HrcBrokerInvocationEventRecord
+}
+
 export type BrokerInvocationEventAppendResult = {
   record: HrcBrokerInvocationEventRecord
   /** True when an identical event already existed and the append was a no-op. */
@@ -627,6 +633,93 @@ export class BrokerInvocationEventRepository {
    */
   appendEvent(input: BrokerInvocationEventAppendInput): BrokerInvocationEventAppendResult {
     return this.appendInTransaction(input)
+  }
+
+  appendImported(input: ImportedBrokerInvocationEventInput): BrokerInvocationEventAppendResult {
+    if (!input.sourceRef.trim() || !Number.isSafeInteger(input.originSeq) || input.originSeq < 1) {
+      throw new Error('imported broker event requires non-empty sourceRef and positive originSeq')
+    }
+    const append = this.db.transaction(() => {
+      const existing = this.db
+        .query<BrokerInvocationEventRow, [string, number]>(
+          `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+            WHERE source_ref = ? AND origin_seq = ?`
+        )
+        .get(input.sourceRef, input.originSeq)
+      if (existing) {
+        const stored = mapBrokerInvocationEventRow(existing)
+        const comparable = ({
+          id: _id,
+          sourceRef: _sourceRef,
+          originSeq: _originSeq,
+          hrcEventSeq: _hrcEventSeq,
+          projectionStatus: _projectionStatus,
+          projectionError: _projectionError,
+          ...rest
+        }: HrcBrokerInvocationEventRecord) => rest
+        if (JSON.stringify(comparable(stored)) !== JSON.stringify(comparable(input.event))) {
+          throw new BrokerInvocationEventConflictError(input.sourceRef, input.originSeq)
+        }
+        return { record: stored, idempotent: true }
+      }
+
+      execute(
+        this.db,
+        `INSERT INTO broker_invocation_events (
+          invocation_id, seq, time, type, run_id, runtime_id, harness_generation,
+          turn_attempt, broker_event_json, broker_envelope_json, hrc_event_seq,
+          projection_status, projection_error, source_ref, origin_seq, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'imported', ?, ?, ?, ?)`,
+        input.event.invocationId,
+        input.event.seq,
+        input.event.time,
+        input.event.type,
+        input.event.runId ?? null,
+        input.event.runtimeId,
+        input.event.harnessGeneration ?? null,
+        input.event.turnAttempt ?? null,
+        input.event.brokerEventJson,
+        input.event.brokerEnvelopeJson ?? null,
+        input.event.projectionError ?? null,
+        input.sourceRef,
+        input.originSeq,
+        input.event.createdAt
+      )
+      const stored = this.getBySourceOrigin(input.sourceRef, input.originSeq)
+      if (!stored) throw new Error(`failed to reload imported broker event ${input.sourceRef}`)
+      return { record: stored, idempotent: false }
+    })
+    return append.immediate()
+  }
+
+  getBySourceOrigin(sourceRef: string, originSeq: number): HrcBrokerInvocationEventRecord | null {
+    const row = this.db
+      .query<BrokerInvocationEventRow, [string, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE source_ref = ? AND origin_seq = ?`
+      )
+      .get(sourceRef, originSeq)
+    return row ? mapBrokerInvocationEventRow(row) : null
+  }
+
+  listBySourceRef(sourceRef: string): HrcBrokerInvocationEventRecord[] {
+    return this.db
+      .query<BrokerInvocationEventRow, [string]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE source_ref = ? ORDER BY origin_seq ASC`
+      )
+      .all(sourceRef)
+      .map(mapBrokerInvocationEventRow)
+  }
+
+  listLocalFromId(afterId: number, limit: number): HrcBrokerInvocationEventRecord[] {
+    return this.db
+      .query<BrokerInvocationEventRow, [number, number]>(
+        `SELECT ${BROKER_INVOCATION_EVENT_COLUMNS} FROM broker_invocation_events
+          WHERE source_ref IS NULL AND id > ? ORDER BY id ASC LIMIT ?`
+      )
+      .all(afterId, limit)
+      .map(mapBrokerInvocationEventRow)
   }
 
   getByInvocationAndSeq(invocationId: string, seq: number): HrcBrokerInvocationEventRecord | null {

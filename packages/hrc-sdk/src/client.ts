@@ -145,6 +145,7 @@ const EVENT_FILTER_FIELDS = [
   'runId',
   'category',
   'eventKind',
+  'sourceRef',
 ] as const satisfies ReadonlyArray<keyof HrcLifecycleEvent & keyof WatchOptions>
 
 /** Maximum number of characters of a non-JSON error body to include in the thrown error. */
@@ -436,7 +437,10 @@ export class HrcClient {
 
   /** Read-only access to durable, including terminated, broker ledger rows. */
   async brokerForensics(options: BrokerForensicsOptions): Promise<BrokerForensicsResponse> {
-    const path = buildPath('/v1/broker-forensics', { targetId: options.targetId })
+    const path = buildPath('/v1/broker-forensics', {
+      targetId: options.targetId,
+      sourceRef: options.sourceRef,
+    })
     return this.getJson<BrokerForensicsResponse>(path)
   }
 

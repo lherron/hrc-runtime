@@ -67,6 +67,10 @@ export type HrcLifecycleTransport = 'sdk' | 'tmux' | 'headless' | 'ghostty'
 export type HrcLifecycleEvent = {
   hrcSeq: number
   streamSeq: number
+  /** Claimed origin label for observational rows imported from another HRC ledger. */
+  sourceRef?: string | undefined
+  /** Sequence in the source ledger. Present iff sourceRef is present. */
+  originSeq?: number | undefined
   ts: string
   hostSessionId: string
   scopeRef: string
@@ -567,6 +571,8 @@ export type HrcBrokerInvocationRecord = {
 }
 
 export type HrcBrokerInvocationEventRecord = {
+  /** Host-local monotonic table cursor. */
+  id?: number | undefined
   invocationId: string
   seq: number
   time: string
@@ -593,6 +599,10 @@ export type HrcBrokerInvocationEventRecord = {
   hrcEventSeq?: number | undefined
   projectionStatus: HrcBrokerEventProjectionStatus
   projectionError?: string | undefined
+  /** Claimed origin label for observational rows imported from another HRC ledger. */
+  sourceRef?: string | undefined
+  /** Monotonic id in the source ledger. Present iff sourceRef is present. */
+  originSeq?: number | undefined
   createdAt: string
 }
 

@@ -7,9 +7,11 @@ import type { AttachmentRef } from 'spaces-runtime'
 import type {
   HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcBrokerInvocationEventRecord,
   HrcCommandLaunchSpec,
   HrcContinuationRef,
   HrcHarness,
+  HrcLifecycleEvent,
   HrcLocalBridgeRecord,
   HrcManagedSessionRecord,
   HrcProvider,
@@ -634,15 +636,59 @@ export type BrokerForensicsEvent = {
   payload?: unknown
   parseError?: string | undefined
   rawPayload?: string | undefined
+  sourceRef?: string | undefined
+  originSeq?: number | undefined
 }
 
 export type BrokerForensicsResponse = {
-  targetKind: 'runtime' | 'invocation'
+  targetKind: 'runtime' | 'invocation' | 'source_ref'
   targetId: string
   runtimeIds: string[]
   invocationIds: string[]
   events: BrokerForensicsEvent[]
 }
+
+export type HrcEventIngestFeed = 'hrc_events' | 'broker_invocation_events'
+
+export type HrcLifecycleIngestItem = {
+  originSeq: number
+  event: HrcLifecycleEvent
+}
+
+export type HrcBrokerIngestItem = {
+  originSeq: number
+  event: HrcBrokerInvocationEventRecord
+}
+
+export type HrcEventIngestBatch =
+  | {
+      version: 1
+      sourceRef: string
+      feed: 'hrc_events'
+      events: HrcLifecycleIngestItem[]
+    }
+  | {
+      version: 1
+      sourceRef: string
+      feed: 'broker_invocation_events'
+      events: HrcBrokerIngestItem[]
+    }
+
+export type HrcEventIngestAck =
+  | {
+      ok: true
+      feed: HrcEventIngestFeed
+      ackedThrough: number
+      inserted: number
+      duplicates: number
+    }
+  | {
+      ok: false
+      feed?: HrcEventIngestFeed | undefined
+      code: 'invalid_batch' | 'divergent_duplicate' | 'ingest_error' | 'ingest_busy'
+      message: string
+      rejectedOriginSeq?: number | undefined
+    }
 
 export type FinalSummaryRecoveryState =
   | 'not_needed'

@@ -58,6 +58,14 @@ import {
 } from './command-run-targets-config.js'
 import { type EventHandlersMethods, eventHandlersMethods } from './event-handlers.js'
 import {
+  type EventForwarder,
+  type EventIngestListener,
+  HRC_EVENT_FORWARD_SOURCE_REF_ENV,
+  HRC_EVENT_INGEST_SOCKET_ENV,
+  startEventForwarder,
+  startEventIngestListener,
+} from './event-ingest.js'
+import {
   type EventNotificationHandlersMethods,
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
@@ -497,6 +505,7 @@ async function finalizeConfiguredCommandRun(
 // without duplicating the intent → argv/env translation.
 export { buildCliInvocation } from './agent-spaces-adapter/cli-adapter.js'
 export type { CliInvocationResult } from './agent-spaces-adapter/cli-adapter.js'
+export { drainEventDatabase } from './event-ingest.js'
 
 export type { BrokerRunPreview } from './broker-run-preview.js'
 export { buildBrokerRunPreview } from './broker-run-preview.js'
@@ -578,6 +587,8 @@ class HrcServerInstance implements HrcServer {
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
   readonly requestMetricsEnabled = process.env['HRC_METRICS'] !== '0'
+  eventIngestListener: EventIngestListener | undefined
+  eventForwarder: EventForwarder | undefined
   readonly exactRouteHandlers: Record<string, ExactRouteHandler> = {
     [exactRouteKey('POST', '/v1/sessions/resolve')]: (request) =>
       this.handleResolveSession(request),
@@ -968,6 +979,40 @@ class HrcServerInstance implements HrcServer {
     }
   }
 
+  async initializeEventTransport(): Promise<void> {
+    const sourceRef = process.env[HRC_EVENT_FORWARD_SOURCE_REF_ENV]?.trim()
+    const socketPath = process.env[HRC_EVENT_INGEST_SOCKET_ENV]?.trim() || undefined
+    if (sourceRef) {
+      this.eventForwarder = startEventForwarder({
+        db: this.db,
+        stateRoot: this.options.stateRoot,
+        sourceRef,
+        ...(socketPath ? { socketPath } : {}),
+      })
+      writeServerLog('INFO', 'server.start.event_forwarder', { sourceRef, socketPath })
+      return
+    }
+    this.eventIngestListener = await startEventIngestListener({
+      db: this.db,
+      runtimeRoot: this.options.runtimeRoot,
+      ...(socketPath ? { socketPath } : {}),
+      onLifecycleEvent: (event) => this.notifyEvent(event),
+      onBrokerEvent: (record) => {
+        if (!record.brokerEnvelopeJson) return
+        try {
+          const notification = {
+            envelope: JSON.parse(record.brokerEnvelopeJson),
+            record,
+          }
+          for (const subscriber of this.rawBrokerSubscribers) subscriber(notification)
+        } catch {
+          // The imported durable row remains for forensics even if its optional
+          // raw envelope cannot participate in live fanout.
+        }
+      },
+    })
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) {
       return
@@ -980,6 +1025,8 @@ class HrcServerInstance implements HrcServer {
       tmuxSocketPath: getTmuxSocketPath(this.options),
     })
     this.server.stop(true)
+    await this.eventForwarder?.stop()
+    await this.eventIngestListener?.stop()
     await this.federationOriginOutbox?.stop()
     if (this.peerProtocolEndpoint) {
       try {
@@ -2051,6 +2098,7 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
       ghostmux,
       lockHandle
     )
+    await server.initializeEventTransport()
     // The constructor starts durable-broker reattachment concurrently. Wait
     // for its always-resolving barrier before placement repair so a refused
     // wrong-node candidate cannot be fenced stale and then promoted back to

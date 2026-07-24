@@ -88,6 +88,7 @@ export type BrokerInvocationRow = {
 }
 
 export type BrokerInvocationEventRow = {
+  id: number
   invocation_id: string
   seq: number
   time: string
@@ -101,6 +102,8 @@ export type BrokerInvocationEventRow = {
   hrc_event_seq: number | null
   projection_status: string
   projection_error: string | null
+  source_ref: string | null
+  origin_seq: number | null
   created_at: string
 }
 
@@ -204,6 +207,7 @@ export const BROKER_INVOCATION_COLUMNS = `
   updated_at`
 
 export const BROKER_INVOCATION_EVENT_COLUMNS = `
+  id,
   invocation_id,
   seq,
   time,
@@ -217,6 +221,8 @@ export const BROKER_INVOCATION_EVENT_COLUMNS = `
   hrc_event_seq,
   projection_status,
   projection_error,
+  source_ref,
+  origin_seq,
   created_at`
 
 export const RUNTIME_ARTIFACT_COLUMNS = `
@@ -352,6 +358,7 @@ export function mapBrokerInvocationEventRow(
   row: BrokerInvocationEventRow
 ): HrcBrokerInvocationEventRecord {
   return {
+    id: row.id,
     invocationId: row.invocation_id,
     seq: row.seq,
     time: row.time,
@@ -365,6 +372,8 @@ export function mapBrokerInvocationEventRow(
     ...(row.hrc_event_seq !== null ? { hrcEventSeq: row.hrc_event_seq } : {}),
     projectionStatus: row.projection_status,
     ...(row.projection_error !== null ? { projectionError: row.projection_error } : {}),
+    ...(row.source_ref !== null ? { sourceRef: row.source_ref } : {}),
+    ...(row.origin_seq !== null ? { originSeq: row.origin_seq } : {}),
     createdAt: row.created_at,
   }
 }
