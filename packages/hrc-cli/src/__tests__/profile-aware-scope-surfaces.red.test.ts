@@ -21,6 +21,17 @@ let tempRoot: string
 let projectRoot: string
 let canonicalAgentsRoot: string
 let localAgentRoot: string
+const CODEX_SHIM_PATH = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  'integration-tests',
+  'fixtures',
+  'codex-shim',
+  'codex'
+)
 
 function profile(defaultScopeRole: string): string {
   return [
@@ -46,6 +57,7 @@ async function runCli(args: string[], tty = false): Promise<CliResult> {
   const originalStdoutTty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   const env = {
     ASP_AGENTS_ROOT: canonicalAgentsRoot,
+    ASP_CODEX_PATH: CODEX_SHIM_PATH,
     ASP_PROJECT: 'proj',
     ASP_PROJECT_ROOT_OVERRIDE: projectRoot,
   }

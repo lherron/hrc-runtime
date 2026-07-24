@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'claude-code fixture\n'
+  exit 0
+fi
+
+printf 'CLAUDE_FIXTURE_STARTED\n'
+exec sleep "${HRC_SHIM_SLEEP:-60}"

@@ -24,6 +24,17 @@ import {
 } from './fixtures/live-tailnet-test.js'
 
 const HRCCHAT_MAIN = join(import.meta.dir, '..', '..', '..', 'hrcchat-cli', 'src', 'main.ts')
+const CLAUDE_SHIM = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  'integration-tests',
+  'fixtures',
+  'claude-shim',
+  'claude'
+)
 const TOKEN = 't06698-two-daemon-token'
 const TASK = 'codex-019efeb5-1234-7abc-8def-0123456789ab'
 const SCOPE = `agent:clod:project:hrc-runtime:task:${TASK}`
@@ -117,13 +128,27 @@ async function runCredentialStrippedDm(
 describe('T-06698 hrcchat DM peer forwarding', () => {
   const fixtures: HrcServerTestFixture[] = []
   let priorAgentsRoot: string | undefined
+  let priorAnthropicApiKey: string | undefined
+  let priorAspClaudePath: string | undefined
   let agentsRootOverridden = false
   afterEach(async () => {
     if (agentsRootOverridden) {
       if (priorAgentsRoot === undefined) Reflect.deleteProperty(process.env, 'ASP_AGENTS_ROOT')
       else process.env['ASP_AGENTS_ROOT'] = priorAgentsRoot
+      if (priorAnthropicApiKey === undefined) {
+        Reflect.deleteProperty(process.env, 'ANTHROPIC_API_KEY')
+      } else {
+        process.env['ANTHROPIC_API_KEY'] = priorAnthropicApiKey
+      }
+      if (priorAspClaudePath === undefined) {
+        Reflect.deleteProperty(process.env, 'ASP_CLAUDE_PATH')
+      } else {
+        process.env['ASP_CLAUDE_PATH'] = priorAspClaudePath
+      }
       agentsRootOverridden = false
       priorAgentsRoot = undefined
+      priorAnthropicApiKey = undefined
+      priorAspClaudePath = undefined
     }
     await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
   })
@@ -137,8 +162,12 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
     const lab = await createHrcTestFixture('h98-l-')
     fixtures.push(svc, lab)
     priorAgentsRoot = process.env['ASP_AGENTS_ROOT']
+    priorAnthropicApiKey = process.env['ANTHROPIC_API_KEY']
+    priorAspClaudePath = process.env['ASP_CLAUDE_PATH']
     agentsRootOverridden = true
     process.env['ASP_AGENTS_ROOT'] = join(svc.tmpDir, 'agents')
+    process.env['ANTHROPIC_API_KEY'] = 't06698-test-fixture'
+    process.env['ASP_CLAUDE_PATH'] = CLAUDE_SHIM
     for (const agentId of ['clod', 'cody']) {
       const agentRoot = join(svc.tmpDir, 'agents', agentId)
       await mkdir(agentRoot, { recursive: true })
