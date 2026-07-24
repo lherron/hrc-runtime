@@ -1,6 +1,12 @@
 import { CliUsageError } from 'cli-kit'
 
-import { HrcClient, discoverSocket } from 'hrc-sdk'
+import {
+  HrcClient,
+  discoverSocket,
+  writePlacementWarnings as writeSdkPlacementWarnings,
+} from 'hrc-sdk'
+
+export { formatAgentNotFound } from 'hrc-sdk'
 
 export function createClient(): HrcClient {
   const socketPath = discoverSocket()
@@ -12,20 +18,7 @@ export function fatal(message: string): never {
 }
 
 export function writePlacementWarnings(warnings: string[] | undefined): void {
-  if (!warnings || warnings.length === 0) return
-  for (const warning of warnings) {
-    process.stderr.write(`[hrc] warning: ${warning}\n`)
-  }
-}
-
-export function formatAgentNotFound(
-  agentId: string,
-  searchedAgentRoots: string[] | undefined
-): string {
-  if (searchedAgentRoots && searchedAgentRoots.length > 0) {
-    return `agent "${agentId}" not found; searched: ${searchedAgentRoots.join(', ')}`
-  }
-  return `agent "${agentId}" not found; no agent roots configured.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.`
+  writeSdkPlacementWarnings('hrc', warnings)
 }
 
 export class CliStatusExit extends Error {

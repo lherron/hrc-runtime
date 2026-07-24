@@ -3679,6 +3679,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "formatAgentNotFound",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/cli-helpers.ts",
+      "hash": "hrc-sdk|formatAgentNotFound|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "harnessFrontendToHrcHarness",
       "kind": "value",
       "file": "packages/hrc-sdk/src/resolve-intent.ts",
@@ -3975,6 +3983,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "renderCommandRoster",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/cli-helpers.ts",
+      "hash": "hrc-sdk|renderCommandRoster|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "resolveAgentHarness",
       "kind": "value",
       "file": "packages/hrc-sdk/src/resolve-intent.ts",
@@ -4219,6 +4235,14 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|WatchOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "writePlacementWarnings",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/cli-helpers.ts",
+      "hash": "hrc-sdk|writePlacementWarnings|value",
       "count": 1
     }
   ]
