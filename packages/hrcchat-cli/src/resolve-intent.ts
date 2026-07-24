@@ -9,30 +9,16 @@
  */
 import { CliUsageError } from 'cli-kit'
 import type { HrcRuntimeIntent } from 'hrc-core'
-import { buildHrcRuntimeIntent } from 'hrc-sdk'
+import { buildHrcRuntimeIntent, formatAgentNotFound, writePlacementWarnings } from 'hrc-sdk'
 
 import { resolveScope } from './normalize.js'
-
-function writePlacementWarnings(warnings: string[] | undefined): void {
-  if (!warnings || warnings.length === 0) return
-  for (const warning of warnings) {
-    process.stderr.write(`[hrcchat] warning: ${warning}\n`)
-  }
-}
-
-function formatAgentNotFound(agentId: string, searchedAgentRoots: string[] | undefined): string {
-  if (searchedAgentRoots && searchedAgentRoots.length > 0) {
-    return `agent "${agentId}" not found; searched: ${searchedAgentRoots.join(', ')}`
-  }
-  return `agent "${agentId}" not found; no agent roots configured.\n  Set ASP_AGENTS_ROOT or configure agents-root in asp-targets.toml.`
-}
 
 export function resolveRuntimeIntentForTarget(targetInput: string): HrcRuntimeIntent {
   const resolved = resolveScope(targetInput)
   const scope = resolved.parsed
 
   const paths = resolved.placement
-  writePlacementWarnings(paths.warnings)
+  writePlacementWarnings('hrcchat', paths.warnings)
   const agentRoot = paths.agentRoot
   if (!agentRoot) {
     throw new CliUsageError(formatAgentNotFound(scope.agentId, paths.searchedAgentRoots))

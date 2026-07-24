@@ -1,6 +1,11 @@
 export { discoverSocket } from './discover.js'
 export { HrcClient } from './client.js'
 export {
+  formatAgentNotFound,
+  renderCommandRoster,
+  writePlacementWarnings,
+} from './cli-helpers.js'
+export {
   buildHrcRuntimeIntent,
   harnessFrontendToHrcHarness,
   resolveAgentHarness,
