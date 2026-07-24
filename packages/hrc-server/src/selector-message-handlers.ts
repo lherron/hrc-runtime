@@ -19,6 +19,7 @@ import {
   persistSessionTaskClaimAuthority,
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
+import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import { normalizeTargetSessionRef, parseMessageAddress } from './messages.js'
 import { requireSession } from './require-helpers.js'
 import { findLatestRuntime } from './runtime-select.js'
@@ -117,6 +118,7 @@ export async function ensureRuntimeForSession(
   intent: HrcRuntimeIntent,
   restartStyle: RestartStyle
 ): Promise<HrcRuntimeSnapshot> {
+  assertLocalPersonaAllowed(this, session.scopeRef)
   validateEnsureRuntimeIntent(intent)
   this.db.sessions.updateIntent(session.hostSessionId, intent, timestamp())
   const brokerOptions = this.selectInteractiveTmuxBrokerOptions(intent)
@@ -168,6 +170,7 @@ export async function ensureTargetSession(
 ): Promise<HrcSessionRecord> {
   const normalized = normalizeTargetSessionRef(sessionRef)
   const { scopeRef, laneRef } = parseSessionRef(normalized)
+  assertLocalPersonaAllowed(this, scopeRef)
   const existing = findTargetSession(this.db, normalized)
   if (existing) {
     const now = timestamp()

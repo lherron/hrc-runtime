@@ -41,6 +41,7 @@ import {
   withSummonAuthority,
 } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
+import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   extractProjectId,
   formatDmPayload,
@@ -551,6 +552,7 @@ export async function handleSemanticTurnHandoff(
     )
   }
   const targetSessionRef = body.to.sessionRef
+  assertLocalPersonaAllowed(this, scopeRefOf(targetSessionRef))
 
   await assertScopeNotRetired(this, {
     scopeRef: scopeRefOf(targetSessionRef),
@@ -950,7 +952,10 @@ export async function handleSemanticDm(
         routingError = error
       }
     }
-    if (!remoteTarget) await assertLocalTargetNotRetired()
+    if (!remoteTarget) {
+      assertLocalPersonaAllowed(this, scopeRef)
+      await assertLocalTargetNotRetired()
+    }
     if (routingError !== undefined) throw routingError
   }
 
@@ -1358,6 +1363,7 @@ export async function deliverPersistedSemanticDm(
   }
 
   if (body.to.kind === 'session' && !codexAppOwnedTarget) {
+    assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
     // Auto-summon if needed
     let session = findTargetSession(this.db, body.to.sessionRef)
     if (!session && body.createIfMissing !== false) {

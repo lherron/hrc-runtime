@@ -184,6 +184,15 @@ export type HrcServerOptions = {
   lockPath: string
   spoolDir: string
   dbPath: string
+  /**
+   * Operator-owned defense-in-depth boundary for local agent execution.
+   *
+   * `undefined` preserves unrestricted historical behavior. A configured list
+   * admits only scopes whose `agent:<id>` is present; an empty list denies all
+   * local agent scopes. This typed daemon input is never copied into harness
+   * child environment.
+   */
+  localPersonaAllowlist?: readonly string[] | undefined
   /** T-06810 Wave 2: dark-by-default embedded mailbox kicker. */
   hrcMailKickerEnabled?: boolean | undefined
   /** Test/embedded periodic sweep override; production defaults to one second. */

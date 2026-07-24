@@ -127,6 +127,10 @@ import {
   launchLifecycleHandlersMethods,
 } from './launch-lifecycle-handlers.js'
 import {
+  assertLocalPersonaAllowed,
+  normalizeLocalPersonaAllowlist,
+} from './local-persona-policy.js'
+import {
   type MailKickerHandlersMethods,
   mailKickerHandlersMethods,
 } from './mail-kicker-handlers.js'
@@ -1241,10 +1245,13 @@ class HrcServerInstance implements HrcServer {
   async handleResolveSession(request: Request): Promise<Response> {
     const body = await parseJsonBody(request)
     const parsed = parseResolveSessionRequest(body)
+    const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
+    if (parsed.create === true) {
+      assertLocalPersonaAllowed(this, scopeRef)
+    }
     const existing = findContinuitySession(this.db, parsed.sessionRef)
     if (existing) {
       if (parsed.create === true) {
-        const { scopeRef } = parseSessionRef(parsed.sessionRef)
         // `resolve --create` is a summon surface even when continuity already
         // exists. A retired scope must not regain authority merely because a
         // pre-retirement session/runtime row survived the fence installation.
@@ -1265,7 +1272,6 @@ class HrcServerInstance implements HrcServer {
       } satisfies ResolveSessionResponse)
     }
 
-    const { scopeRef, laneRef } = parseSessionRef(parsed.sessionRef)
     if (parsed.create !== true) {
       return json({
         found: false,
@@ -1464,6 +1470,7 @@ class HrcServerInstance implements HrcServer {
     birthCredential?: string
   ): Promise<HrcSessionRecord> {
     const { scopeRef, laneRef } = parseCommandRunSessionRef(sessionRef)
+    assertLocalPersonaAllowed(this, scopeRef)
     const continuity = this.db.continuities.getByKey(scopeRef, laneRef)
     if (continuity) {
       const existing = this.db.sessions.getByHostSessionId(continuity.activeHostSessionId)
@@ -2052,6 +2059,7 @@ Object.assign(
 export async function createHrcServer(options: HrcServerOptions): Promise<HrcServer> {
   const resolvedOptions: HrcServerOptions = {
     ...options,
+    localPersonaAllowlist: normalizeLocalPersonaAllowlist(options.localPersonaAllowlist),
     commandRunTargets: await resolveCommandRunTargets(options.commandRunTargets),
   }
   const logCtx = {
@@ -2062,6 +2070,12 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     tmuxSocketPath: getTmuxSocketPath(resolvedOptions),
   }
   writeServerLog('INFO', 'server.start.begin', logCtx)
+  if (resolvedOptions.localPersonaAllowlist !== undefined) {
+    writeServerLog('INFO', 'server.start.local_persona_policy', {
+      mode: 'allowlist',
+      allowedPersonaIds: resolvedOptions.localPersonaAllowlist,
+    })
+  }
   await prepareFilesystem(resolvedOptions, getTmuxSocketPath(resolvedOptions))
   const lockHandle = await acquireServerLock(resolvedOptions)
   let shouldCleanupSocket = false

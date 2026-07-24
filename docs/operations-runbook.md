@@ -24,6 +24,33 @@ procedure — for architecture background see `hrc-runtime/architecture-overview
   (plist: `launchd/com.praesidium.hrc-server.plist`, installed to
   `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`)
 
+## Container-local persona allowlist
+
+A supervisor can bound which agent personas its daemon may execute locally:
+
+```bash
+hrc server serve \
+  --allow-persona room-coordinator two-box-implementer daedalus
+```
+
+The values are canonical `agent:<id>` persona IDs without the `agent:` prefix.
+When the option is omitted, historical unrestricted behavior is preserved. When
+configured, HRC rejects every other agent scope before local semantic delivery,
+session/claim birth, runtime start, or turn dispatch. The error names both the
+rejected agent and full scope. Project, task, role, and lane segments do not
+widen the policy: every scope for an admitted persona is allowed, and every
+scope for an omitted persona is denied.
+
+This is a node-local execution trust boundary, not a federation bearer or an
+authorization credential. The allowlist is typed supervisor argv consumed by
+the daemon and is never copied into harness child environment. A federated DM
+that routes to a different authoritative node is not local execution and is
+therefore not constrained by the origin node's list; the receiving node applies
+its own list before delivery or birth. Configure the option on the supervisor's
+actual `server serve` command. For launchd that means changing
+`ProgramArguments` and reloading the job; `hrc server restart` alone does not
+re-read a plist.
+
 ## Restart doctrine
 
 `hrc server restart` does **not** reload launchd plist

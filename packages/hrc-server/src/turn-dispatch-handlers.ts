@@ -37,6 +37,7 @@ import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
+import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   assertBrokerRuntimeReusableAdmission,
   assertRuntimeNotBusy,
@@ -657,6 +658,7 @@ export async function dispatchTurnForSession(
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
+  assertLocalPersonaAllowed(this, session.scopeRef)
   const runId = options.runId ?? `run-${randomUUID()}`
   const observationContext: DispatchTurnObservationContext = {
     lifecycleFromSeq: this.db.hrcEvents.maxHrcSeq() + 1,

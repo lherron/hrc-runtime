@@ -31,6 +31,7 @@ import {
   canUseDirectPaneFallback,
   hasLeasedBrokerSubstrate,
 } from './broker/runtime-hosting.js'
+import { assertLocalPersonaAllowed } from './local-persona-policy.js'
 import {
   requireGhosttySurface,
   requireKnownRuntime,
@@ -299,6 +300,7 @@ export async function startRuntimeForSession(
     suppressHeadlessViewer?: boolean | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
+  assertLocalPersonaAllowed(this, session.scopeRef)
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
     return await existingOperation

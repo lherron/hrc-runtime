@@ -39,7 +39,25 @@ export async function cmdServerServe(_args: string[]): Promise<void> {
   if (status.running) {
     fatal(`daemon already running on ${status.socketPath} (pid ${status.pid ?? 'unknown'})`)
   }
-  return serverForeground()
+  return serverForeground(parseLocalPersonaAllowlist(_args))
+}
+
+function parseLocalPersonaAllowlist(args: string[]): readonly string[] | undefined {
+  const allowed: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--allow-persona') {
+      const value = args[index + 1]
+      if (value === undefined) fatal('--allow-persona requires an agent id')
+      allowed.push(value)
+      index += 1
+      continue
+    }
+    if (arg?.startsWith('--allow-persona=')) {
+      allowed.push(arg.slice('--allow-persona='.length))
+    }
+  }
+  return allowed.length === 0 ? undefined : allowed
 }
 
 export async function cmdServerStart(
@@ -211,7 +229,7 @@ export async function cmdServerSubscribers(args: string[]): Promise<void> {
   }
 }
 
-async function serverForeground(): Promise<void> {
+async function serverForeground(localPersonaAllowlist?: readonly string[]): Promise<void> {
   // Refuse to boot as a child of a coding-agent harness: the server would leak
   // the harness's recursion-guard env into every child harness it launches,
   // silently killing every dispatched run. The launchd-delegating start/restart
@@ -233,6 +251,7 @@ async function serverForeground(): Promise<void> {
     spoolDir: paths.spoolDir,
     dbPath: paths.dbPath,
     tmuxSocketPath: paths.tmuxSocketPath,
+    localPersonaAllowlist,
     otelPreferredPort: resolveOtelPreferredPortFromEnv(),
     commandRunTargets: await loadCommandRunTargetsFromEnv(),
   })

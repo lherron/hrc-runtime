@@ -8,6 +8,7 @@ import type {
 } from 'hrc-core'
 import type { AppManagedSessionRecord } from 'hrc-store-sqlite'
 import { appendHrcEvent } from '../hrc-event-helper.js'
+import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import {
   requireContinuity,
   requireManagedAppSession,
@@ -52,6 +53,7 @@ export async function maybeAutoRotateStaleSession(
   priorGeneration?: number | undefined
   priorHostSessionId?: string | undefined
 }> {
+  assertLocalPersonaAllowed(this, session.scopeRef)
   const createdAtMs = Date.parse(session.createdAt)
   const ageSec = Number.isFinite(createdAtMs)
     ? Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000))
@@ -142,6 +144,7 @@ export async function rotateSessionContext(
     reason?: string | undefined
   }
 ): Promise<ClearContextResponse> {
+  assertLocalPersonaAllowed(this, session.scopeRef)
   const continuity = requireContinuity(this.db, session)
   if (continuity.activeHostSessionId !== session.hostSessionId) {
     throw new HrcConflictError(HrcErrorCode.STALE_CONTEXT, 'host session is no longer active', {

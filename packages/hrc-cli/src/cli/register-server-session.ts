@@ -65,8 +65,15 @@ export function registerServerSessionCommands(program: Command): void {
   server
     .command('serve')
     .description('run the server in the foreground for supervisors')
+    .option(
+      '--allow-persona <agentIds...>',
+      'allow only these agent personas to execute locally (omitted means unrestricted)'
+    )
     .action(async (_opts, cmd: Command) => {
-      const args = toLegacyArgv([], cmd.opts(), { strings: [], booleans: [] })
+      const args = toLegacyArgv([], cmd.opts(), {
+        strings: ['allow-persona'],
+        booleans: [],
+      })
       await cmdServerServe(args)
     })
 

@@ -24,6 +24,7 @@ import type {
 import { createPlacementLedgerRepository, readScopeRetirement } from 'hrc-store-sqlite'
 import type { HrcDatabase, SessionTaskClaimAuthority } from 'hrc-store-sqlite'
 
+import { assertLocalPersonaAllowed } from '../local-persona-policy.js'
 import { writeServerLog } from '../server-log.js'
 import { isRuntimeUnavailableStatus } from '../server-util.js'
 import { markRuntimeStale } from '../startup-reconcile/runtime-mutations.js'
@@ -63,7 +64,12 @@ export type SummonGateServerContext = {
    * The live daemon carries its resolved federation config on `options`
    * (index.ts threads it in at startup). Tests may pass it at the top level.
    */
-  readonly options?: { readonly federationConfig?: FederationConfig | undefined } | undefined
+  readonly options?:
+    | {
+        readonly federationConfig?: FederationConfig | undefined
+        readonly localPersonaAllowlist?: readonly string[] | undefined
+      }
+    | undefined
   readonly federationConfig?: FederationConfig | undefined
   /** Injected by tests; production builds one from the federation config. */
   readonly registryClient?: BindingRegistryClient | undefined
@@ -501,6 +507,7 @@ export async function assertSummonAuthority(
   server: SummonGateServerContext,
   request: SummonAuthorityRequest
 ): Promise<SummonAuthorityResult | undefined> {
+  assertLocalPersonaAllowed(server, request.scopeRef)
   const deps = gateDepsFor(server)
   if (deps === undefined) return undefined
 
