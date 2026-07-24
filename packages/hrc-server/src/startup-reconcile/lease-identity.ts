@@ -138,10 +138,14 @@ async function enumerateHeldUnixSocketPaths(): Promise<Set<string>> {
     throw new Error(stderr.trim() || `lsof exited with status ${exitCode}`)
   }
 
+  return parseLsofUnixSocketPaths(stdout)
+}
+
+export function parseLsofUnixSocketPaths(stdout: string): Set<string> {
   const heldPaths = new Set<string>()
   for (const line of stdout.split('\n')) {
     if (line.startsWith('n/')) {
-      heldPaths.add(line.slice(1))
+      heldPaths.add(line.slice(1).replace(/ type=\w+$/, ''))
     }
   }
   return heldPaths
