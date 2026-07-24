@@ -76,8 +76,21 @@ check:
 # which `typecheck` has always required (it reads sibling dist/*.d.ts) and the
 # gate never declared.
 
+# Written as a script rather than a dependency list (`verify: env-up check …`)
+# because just runs each dependency in its OWN shell: env-up would provision the
+# environment and then none of the stages would see it. That shape looked right
+# and failed the proof — the corpus ran against no daemon and no agents root.
+# The eval is what actually connects the two.
+
 # Run all verification (env-up + check + lint + typecheck + test)
-verify: env-up check lint typecheck test
+verify: env-up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(bash scripts/dev-env.sh env)"
+    just check
+    just lint
+    just typecheck
+    just test
 
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
