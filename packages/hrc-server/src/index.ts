@@ -61,7 +61,11 @@ import {
   type EventForwarder,
   type EventIngestListener,
   HRC_EVENT_FORWARD_SOURCE_REF_ENV,
+  HRC_EVENT_FORWARD_URL_ENV,
   HRC_EVENT_INGEST_SOCKET_ENV,
+  HRC_EVENT_INGEST_TCP_PORT_ENV,
+  resolveEventForwardTarget,
+  resolveEventIngestTcpPort,
   startEventForwarder,
   startEventIngestListener,
 } from './event-ingest.js'
@@ -982,20 +986,29 @@ class HrcServerInstance implements HrcServer {
   async initializeEventTransport(): Promise<void> {
     const sourceRef = process.env[HRC_EVENT_FORWARD_SOURCE_REF_ENV]?.trim()
     const socketPath = process.env[HRC_EVENT_INGEST_SOCKET_ENV]?.trim() || undefined
+    const forwardUrl = process.env[HRC_EVENT_FORWARD_URL_ENV]?.trim() || undefined
     if (sourceRef) {
+      const target = resolveEventForwardTarget({ socketPath, tcpUrl: forwardUrl })
       this.eventForwarder = startEventForwarder({
         db: this.db,
         stateRoot: this.options.stateRoot,
         sourceRef,
-        ...(socketPath ? { socketPath } : {}),
+        target,
       })
-      writeServerLog('INFO', 'server.start.event_forwarder', { sourceRef, socketPath })
+      writeServerLog('INFO', 'server.start.event_forwarder', { sourceRef, target })
       return
     }
+    if (forwardUrl) {
+      throw new Error(
+        `${HRC_EVENT_FORWARD_URL_ENV} is only valid with ${HRC_EVENT_FORWARD_SOURCE_REF_ENV}`
+      )
+    }
+    const tcpPort = resolveEventIngestTcpPort(process.env[HRC_EVENT_INGEST_TCP_PORT_ENV])
     this.eventIngestListener = await startEventIngestListener({
       db: this.db,
       runtimeRoot: this.options.runtimeRoot,
       ...(socketPath ? { socketPath } : {}),
+      ...(tcpPort !== undefined ? { tcpPort } : {}),
       onLifecycleEvent: (event) => this.notifyEvent(event),
       onBrokerEvent: (record) => {
         if (!record.brokerEnvelopeJson) return

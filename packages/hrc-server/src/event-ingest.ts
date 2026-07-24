@@ -21,6 +21,9 @@ export const HRC_INGEST_MAX_BODY_BYTES = 1_048_576
 export const HRC_INGEST_MAX_BATCH_EVENTS = 100
 export const HRC_EVENT_FORWARD_SOURCE_REF_ENV = 'HRC_EVENT_FORWARD_SOURCE_REF'
 export const HRC_EVENT_INGEST_SOCKET_ENV = 'HRC_EVENT_INGEST_SOCKET'
+export const HRC_EVENT_FORWARD_URL_ENV = 'HRC_EVENT_FORWARD_URL'
+export const HRC_EVENT_INGEST_TCP_PORT_ENV = 'HRC_EVENT_INGEST_TCP_PORT'
+export const HRC_EVENT_INGEST_TCP_HOST = '127.0.0.1'
 const CURSOR_FILE = 'event-forward-cursors.json'
 const serveIngest = Bun.serve
 
@@ -33,12 +36,16 @@ type IngestCounters = {
 
 export type EventIngestListener = {
   socketPath: string
+  tcpUrl?: string
   counters: IngestCounters
   stop(): Promise<void>
 }
 
+export type EventForwardTarget = { kind: 'unix'; socketPath: string } | { kind: 'tcp'; url: string }
+
 export type EventForwarder = {
   sourceRef: string
+  target: EventForwardTarget
   cursorPath: string
   stop(): Promise<void>
 }
@@ -123,10 +130,169 @@ function validateBatch(value: unknown): HrcEventIngestBatch {
   return batch as HrcEventIngestBatch
 }
 
+export function resolveEventIngestTcpPort(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error(`${HRC_EVENT_INGEST_TCP_PORT_ENV} must be an integer from 1 to 65535`)
+  }
+  const port = Number(value)
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${HRC_EVENT_INGEST_TCP_PORT_ENV} must be an integer from 1 to 65535`)
+  }
+  return port
+}
+
+export function resolveEventForwardTarget(options: {
+  socketPath?: string | undefined
+  tcpUrl?: string | undefined
+}): EventForwardTarget {
+  const socketPath = options.socketPath?.trim()
+  const tcpUrl = options.tcpUrl?.trim()
+  if (Boolean(socketPath) === Boolean(tcpUrl)) {
+    throw new Error(
+      `forwarder mode requires exactly one of ${HRC_EVENT_INGEST_SOCKET_ENV} or ${HRC_EVENT_FORWARD_URL_ENV}`
+    )
+  }
+  if (socketPath) return { kind: 'unix', socketPath }
+  if (!tcpUrl) throw new Error('forwarder target declaration is missing')
+
+  let parsed: URL
+  try {
+    parsed = new URL(tcpUrl)
+  } catch {
+    throw new Error(`${HRC_EVENT_FORWARD_URL_ENV} must be an HTTP origin with an explicit port`)
+  }
+  if (
+    parsed.protocol !== 'http:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port === '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new Error(`${HRC_EVENT_FORWARD_URL_ENV} must be an HTTP origin with an explicit port`)
+  }
+  return { kind: 'tcp', url: parsed.origin }
+}
+
+function createIngestHandler(options: {
+  db: HrcDatabase
+  counters: IngestCounters
+  onLifecycleEvent?: (event: HrcLifecycleEvent) => void
+  onBrokerEvent?: (event: HrcBrokerInvocationEventRecord) => void
+}): (request: Request) => Response | Promise<Response> {
+  let activeRequests = 0
+  return (request: Request) => {
+    if (activeRequests >= 64) {
+      options.counters.rejected += 1
+      return jsonResponse(
+        { ok: false, code: 'ingest_busy', message: 'ingest concurrency limit reached' },
+        503
+      )
+    }
+    activeRequests += 1
+    return (async () => {
+      if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/ingest') {
+        return new Response('not found', { status: 404 })
+      }
+      let batch: HrcEventIngestBatch
+      try {
+        batch = validateBatch(JSON.parse(await readBoundedBody(request)))
+      } catch (error) {
+        options.counters.rejected += 1
+        return jsonResponse(
+          {
+            ok: false,
+            code: 'invalid_batch',
+            message: error instanceof Error ? error.message : String(error),
+          },
+          400
+        )
+      }
+
+      let inserted = 0
+      let duplicates = 0
+      for (const item of batch.events) {
+        try {
+          if (batch.feed === 'hrc_events') {
+            const result = options.db.hrcEvents.appendImported({
+              sourceRef: batch.sourceRef,
+              originSeq: item.originSeq,
+              event: item.event as HrcLifecycleEvent,
+            })
+            if (result.idempotent) duplicates += 1
+            else {
+              inserted += 1
+              options.onLifecycleEvent?.(result.event)
+            }
+          } else {
+            const result = options.db.brokerInvocationEvents.appendImported({
+              sourceRef: batch.sourceRef,
+              originSeq: item.originSeq,
+              event: item.event as HrcBrokerInvocationEventRecord,
+            })
+            if (result.idempotent) duplicates += 1
+            else {
+              inserted += 1
+              options.onBrokerEvent?.(result.record)
+            }
+          }
+        } catch (error) {
+          if (
+            error instanceof ImportedHrcLifecycleEventConflictError ||
+            error instanceof BrokerInvocationEventConflictError
+          ) {
+            options.counters.divergentDuplicates += 1
+            return jsonResponse(
+              {
+                ok: false,
+                feed: batch.feed,
+                code: 'divergent_duplicate',
+                message: error.message,
+                rejectedOriginSeq: item.originSeq,
+              },
+              409
+            )
+          }
+          options.counters.rejected += 1
+          return jsonResponse(
+            {
+              ok: false,
+              feed: batch.feed,
+              code: 'ingest_error',
+              message: error instanceof Error ? error.message : String(error),
+              rejectedOriginSeq: item.originSeq,
+            },
+            500
+          )
+        }
+      }
+      options.counters.accepted += inserted
+      options.counters.duplicates += duplicates
+      const ackedThrough = batch.events.at(-1)?.originSeq
+      if (ackedThrough === undefined) throw new Error('validated ingest batch was empty')
+      return jsonResponse(
+        {
+          ok: true,
+          feed: batch.feed,
+          ackedThrough,
+          inserted,
+          duplicates,
+        },
+        200
+      )
+    })().finally(() => {
+      activeRequests -= 1
+    })
+  }
+}
+
 export async function startEventIngestListener(options: {
   db: HrcDatabase
   runtimeRoot: string
   socketPath?: string
+  tcpPort?: number
   onLifecycleEvent?: (event: HrcLifecycleEvent) => void
   onBrokerEvent?: (event: HrcBrokerInvocationEventRecord) => void
 }): Promise<EventIngestListener> {
@@ -139,120 +305,44 @@ export async function startEventIngestListener(options: {
     divergentDuplicates: 0,
     rejected: 0,
   }
-  let activeRequests = 0
-  const server = serveIngest({
+  const fetch = createIngestHandler({ ...options, counters })
+  const unixServer = serveIngest({
     unix: socketPath,
     idleTimeout: 30,
-    fetch: (request: Request) => {
-      if (activeRequests >= 64) {
-        counters.rejected += 1
-        return jsonResponse(
-          { ok: false, code: 'ingest_busy', message: 'ingest concurrency limit reached' },
-          503
-        )
-      }
-      activeRequests += 1
-      return (async () => {
-        if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/ingest') {
-          return new Response('not found', { status: 404 })
-        }
-        let batch: HrcEventIngestBatch
-        try {
-          batch = validateBatch(JSON.parse(await readBoundedBody(request)))
-        } catch (error) {
-          counters.rejected += 1
-          return jsonResponse(
-            {
-              ok: false,
-              code: 'invalid_batch',
-              message: error instanceof Error ? error.message : String(error),
-            },
-            400
-          )
-        }
-
-        let inserted = 0
-        let duplicates = 0
-        for (const item of batch.events) {
-          try {
-            if (batch.feed === 'hrc_events') {
-              const result = options.db.hrcEvents.appendImported({
-                sourceRef: batch.sourceRef,
-                originSeq: item.originSeq,
-                event: item.event as HrcLifecycleEvent,
-              })
-              if (result.idempotent) duplicates += 1
-              else {
-                inserted += 1
-                options.onLifecycleEvent?.(result.event)
-              }
-            } else {
-              const result = options.db.brokerInvocationEvents.appendImported({
-                sourceRef: batch.sourceRef,
-                originSeq: item.originSeq,
-                event: item.event as HrcBrokerInvocationEventRecord,
-              })
-              if (result.idempotent) duplicates += 1
-              else {
-                inserted += 1
-                options.onBrokerEvent?.(result.record)
-              }
-            }
-          } catch (error) {
-            if (
-              error instanceof ImportedHrcLifecycleEventConflictError ||
-              error instanceof BrokerInvocationEventConflictError
-            ) {
-              counters.divergentDuplicates += 1
-              return jsonResponse(
-                {
-                  ok: false,
-                  feed: batch.feed,
-                  code: 'divergent_duplicate',
-                  message: error.message,
-                  rejectedOriginSeq: item.originSeq,
-                },
-                409
-              )
-            }
-            counters.rejected += 1
-            return jsonResponse(
-              {
-                ok: false,
-                feed: batch.feed,
-                code: 'ingest_error',
-                message: error instanceof Error ? error.message : String(error),
-                rejectedOriginSeq: item.originSeq,
-              },
-              500
-            )
-          }
-        }
-        counters.accepted += inserted
-        counters.duplicates += duplicates
-        const ackedThrough = batch.events.at(-1)?.originSeq
-        if (ackedThrough === undefined) throw new Error('validated ingest batch was empty')
-        return jsonResponse(
-          {
-            ok: true,
-            feed: batch.feed,
-            ackedThrough,
-            inserted,
-            duplicates,
-          },
-          200
-        )
-      })().finally(() => {
-        activeRequests -= 1
-      })
-    },
+    fetch,
   } as unknown as Parameters<typeof Bun.serve>[0])
-  writeServerLog('INFO', 'server.start.event_ingest_listener', { socketPath })
+  let tcpServer: ReturnType<typeof Bun.serve> | undefined
+  let tcpUrl: string | undefined
+  try {
+    if (options.tcpPort !== undefined) {
+      if (
+        !Number.isSafeInteger(options.tcpPort) ||
+        options.tcpPort < 1 ||
+        options.tcpPort > 65_535
+      ) {
+        throw new Error('event ingest TCP port must be an integer from 1 to 65535')
+      }
+      tcpServer = serveIngest({
+        hostname: HRC_EVENT_INGEST_TCP_HOST,
+        port: options.tcpPort,
+        idleTimeout: 30,
+        fetch,
+      } as unknown as Parameters<typeof Bun.serve>[0])
+      tcpUrl = `http://${HRC_EVENT_INGEST_TCP_HOST}:${options.tcpPort}`
+    }
+  } catch (error) {
+    unixServer.stop(true)
+    await rm(socketPath, { force: true })
+    throw error
+  }
+  writeServerLog('INFO', 'server.start.event_ingest_listener', { socketPath, tcpUrl })
   return {
     socketPath,
+    ...(tcpUrl ? { tcpUrl } : {}),
     counters,
     async stop() {
-      server.stop(true)
+      tcpServer?.stop(true)
+      unixServer.stop(true)
       await rm(socketPath, { force: true })
     },
   }
@@ -282,22 +372,27 @@ async function writeCursors(path: string, cursors: ForwardCursors): Promise<void
 }
 
 async function postBatch(
-  socketPath: string,
+  target: EventForwardTarget,
   batch: HrcEventIngestBatch
 ): Promise<HrcEventIngestAck> {
-  const response = await fetch('http://hrc/v1/ingest', {
+  const init: RequestInit & { unix?: string } = {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(batch),
-    unix: socketPath,
-  } as RequestInit & { unix: string })
+  }
+  const endpoint =
+    target.kind === 'unix'
+      ? 'http://hrc/v1/ingest'
+      : new URL('/v1/ingest', `${target.url}/`).toString()
+  if (target.kind === 'unix') init.unix = target.socketPath
+  const response = await fetch(endpoint, init)
   return (await response.json()) as HrcEventIngestAck
 }
 
 export async function forwardAvailableEvents(options: {
   db: HrcDatabase
   sourceRef: string
-  socketPath: string
+  target: EventForwardTarget
   cursorPath: string
   batchSize?: number
 }): Promise<{ cursors: ForwardCursors; forwarded: number }> {
@@ -313,7 +408,7 @@ export async function forwardAvailableEvents(options: {
     limit: batchSize,
   })
   if (lifecycle.length > 0) {
-    const ack = await postBatch(options.socketPath, {
+    const ack = await postBatch(options.target, {
       version: 1,
       sourceRef: options.sourceRef,
       feed: 'hrc_events',
@@ -334,7 +429,7 @@ export async function forwardAvailableEvents(options: {
       if (event.id === undefined) throw new Error('local broker row is missing its table id')
       return { originSeq: event.id, event }
     })
-    const ack = await postBatch(options.socketPath, {
+    const ack = await postBatch(options.target, {
       version: 1,
       sourceRef: options.sourceRef,
       feed: 'broker_invocation_events',
@@ -353,10 +448,9 @@ export function startEventForwarder(options: {
   db: HrcDatabase
   stateRoot: string
   sourceRef: string
-  socketPath?: string
+  target: EventForwardTarget
   retryMs?: number
 }): EventForwarder {
-  const socketPath = options.socketPath ?? resolveIngestSocketPath()
   const cursorPath = join(options.stateRoot, CURSOR_FILE)
   const retryMs = Math.max(100, options.retryMs ?? 1_000)
   let stopping = false
@@ -369,14 +463,14 @@ export function startEventForwarder(options: {
         const result = await forwardAvailableEvents({
           db: options.db,
           sourceRef: options.sourceRef,
-          socketPath,
+          target: options.target,
           cursorPath,
         })
         if (result.forwarded === 0) break
       } catch (error) {
         writeServerLog('WARN', 'event_forwarder.retry', {
           sourceRef: options.sourceRef,
-          socketPath,
+          target: options.target,
           error,
         })
         break
@@ -391,6 +485,7 @@ export function startEventForwarder(options: {
 
   return {
     sourceRef: options.sourceRef,
+    target: options.target,
     cursorPath,
     async stop() {
       stopping = true
@@ -413,7 +508,10 @@ export async function drainEventDatabase(options: {
       const result = await forwardAvailableEvents({
         db,
         sourceRef: options.sourceRef,
-        socketPath: options.socketPath ?? resolveIngestSocketPath(),
+        target: {
+          kind: 'unix',
+          socketPath: options.socketPath ?? resolveIngestSocketPath(),
+        },
         cursorPath,
       })
       forwarded += result.forwarded

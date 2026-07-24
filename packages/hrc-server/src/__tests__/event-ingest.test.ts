@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,6 +15,8 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import {
   drainEventDatabase,
   forwardAvailableEvents,
+  resolveEventForwardTarget,
+  resolveEventIngestTcpPort,
   startEventIngestListener,
 } from '../event-ingest.js'
 
@@ -23,12 +26,31 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture(options: { tcpPort?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'hrc-ingest-'))
   roots.push(root)
   const db = openHrcDatabase(join(root, 'state.sqlite'))
-  const listener = await startEventIngestListener({ db, runtimeRoot: root })
+  const listener = await startEventIngestListener({ db, runtimeRoot: root, ...options })
   return { root, db, listener }
+}
+
+async function reserveTcpPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('failed to reserve an IPv4 TCP port'))
+        return
+      }
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve(address.port)
+      })
+    })
+  })
 }
 
 async function ingest(socketPath: string, batch: HrcEventIngestBatch) {
@@ -37,6 +59,17 @@ async function ingest(socketPath: string, batch: HrcEventIngestBatch) {
     body: JSON.stringify(batch),
     unix: socketPath,
   } as RequestInit & { unix: string })
+  return {
+    status: response.status,
+    body: (await response.json()) as HrcEventIngestAck,
+  }
+}
+
+async function ingestTcp(url: string, batch: HrcEventIngestBatch) {
+  const response = await fetch(`${url}/v1/ingest`, {
+    method: 'POST',
+    body: JSON.stringify(batch),
+  })
   return {
     status: response.status,
     body: (await response.json()) as HrcEventIngestAck,
@@ -87,6 +120,62 @@ function broker(id = 13): HrcBrokerInvocationEventRecord {
 }
 
 describe('T-06838 dedicated observational ingest', () => {
+  test('requires one declared forward target and validates opt-in listener port', () => {
+    expect(resolveEventForwardTarget({ socketPath: '/run/hrc/events.sock' })).toEqual({
+      kind: 'unix',
+      socketPath: '/run/hrc/events.sock',
+    })
+    expect(resolveEventForwardTarget({ tcpUrl: 'http://host.docker.internal:18495' })).toEqual({
+      kind: 'tcp',
+      url: 'http://host.docker.internal:18495',
+    })
+    expect(() => resolveEventForwardTarget({})).toThrow('exactly one')
+    expect(() =>
+      resolveEventForwardTarget({
+        socketPath: '/run/hrc/events.sock',
+        tcpUrl: 'http://host.docker.internal:18495',
+      })
+    ).toThrow('exactly one')
+    for (const url of [
+      'https://host.docker.internal:18495',
+      'http://host.docker.internal',
+      'http://host.docker.internal:18495/v1/ingest',
+      'http://user:pass@host.docker.internal:18495',
+    ]) {
+      expect(() => resolveEventForwardTarget({ tcpUrl: url })).toThrow('HTTP origin')
+    }
+    expect(resolveEventIngestTcpPort(undefined)).toBeUndefined()
+    expect(resolveEventIngestTcpPort('18495')).toBe(18_495)
+    for (const port of ['0', '65536', '18495x', '-1']) {
+      expect(() => resolveEventIngestTcpPort(port)).toThrow('integer from 1 to 65535')
+    }
+  })
+
+  test('serves the identical bounded ingest path over real unix and opt-in IPv4 TCP', async () => {
+    const host = await fixture({ tcpPort: await reserveTcpPort() })
+    const sourceRef = 'devbox-room:T-06838:dual-transport'
+    const batch: HrcEventIngestBatch = {
+      version: 1,
+      sourceRef,
+      feed: 'hrc_events',
+      events: [{ originSeq: 41, event: lifecycle() }],
+    }
+    expect(host.listener.tcpUrl).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/)
+    expect(await ingestTcp(host.listener.tcpUrl!, batch)).toMatchObject({
+      status: 200,
+      body: { ok: true, inserted: 1 },
+    })
+    expect(await ingest(host.listener.socketPath, batch)).toMatchObject({
+      status: 200,
+      body: { ok: true, inserted: 0, duplicates: 1 },
+    })
+    expect(host.db.hrcEvents.listFromHrcSeq(1, { sourceRef })).toHaveLength(1)
+    expect(host.listener.counters).toMatchObject({ accepted: 1, duplicates: 1 })
+
+    await host.listener.stop()
+    host.db.close()
+  })
+
   test('imports both feeds with origin facts, provenance, and no authority rows', async () => {
     const { db, listener } = await fixture()
     const sourceRef = 'devbox-room:T-06838:run-a'
@@ -200,13 +289,14 @@ describe('T-06838 dedicated observational ingest', () => {
     db.close()
   })
 
-  test('forwards two independently cursor-acked feeds and reconnect resumes', async () => {
+  test('forwards both independently cursor-acked feeds over declared TCP and resumes', async () => {
     const localRoot = await mkdtemp(join(tmpdir(), 'hrc-forward-local-'))
     roots.push(localRoot)
     const local = openHrcDatabase(join(localRoot, 'state.sqlite'))
-    const host = await fixture()
+    const host = await fixture({ tcpPort: await reserveTcpPort() })
     const sourceRef = 'devbox-room:T-06838:run-forward'
     const cursorPath = join(localRoot, 'event-forward-cursors.json')
+    const target = { kind: 'tcp', url: host.listener.tcpUrl! } as const
 
     local.hrcEvents.append({
       ts: lifecycle().ts,
@@ -240,7 +330,7 @@ describe('T-06838 dedicated observational ingest', () => {
     const first = await forwardAvailableEvents({
       db: local,
       sourceRef,
-      socketPath: host.listener.socketPath,
+      target,
       cursorPath,
     })
     expect(first).toMatchObject({
@@ -253,7 +343,7 @@ describe('T-06838 dedicated observational ingest', () => {
     const resumed = await forwardAvailableEvents({
       db: local,
       sourceRef,
-      socketPath: host.listener.socketPath,
+      target,
       cursorPath,
     })
     expect(resumed.forwarded).toBe(0)
@@ -263,7 +353,7 @@ describe('T-06838 dedicated observational ingest', () => {
     local.close()
   })
 
-  test('missing socket rejects forwarding without changing local writes or cursors', async () => {
+  test('unreachable declared unix or TCP target leaves local writes and cursors untouched', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hrc-forward-offline-'))
     roots.push(root)
     const db = openHrcDatabase(join(root, 'state.sqlite'))
@@ -283,7 +373,16 @@ describe('T-06838 dedicated observational ingest', () => {
       forwardAvailableEvents({
         db,
         sourceRef: 'offline-room',
-        socketPath: join(root, 'absent.sock'),
+        target: { kind: 'unix', socketPath: join(root, 'absent.sock') },
+        cursorPath,
+      })
+    ).rejects.toThrow()
+    const unreachablePort = await reserveTcpPort()
+    await expect(
+      forwardAvailableEvents({
+        db,
+        sourceRef: 'offline-room',
+        target: { kind: 'tcp', url: `http://127.0.0.1:${unreachablePort}` },
         cursorPath,
       })
     ).rejects.toThrow()
