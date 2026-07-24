@@ -11,9 +11,13 @@ import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqli
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import { createHrcServer } from '../index.js'
+import type { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const LAB_TOKEN = 't06632-svc-lab-token'
 const MAX3_TOKEN = 't06632-svc-max3-token'
@@ -84,7 +88,7 @@ describe('T-06632 all-node runtime projections and peer health', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
@@ -128,9 +132,9 @@ describe('T-06632 all-node runtime projections and peer health', () => {
       installPlacement(svc, 'lab-test')
       installPlacement(lab, 'lab-test')
 
-      const svcServer = await createHrcServer(svc.serverOpts({ otelListenerEnabled: false }))
+      const svcServer = await createFederationTestServer(svc, { otelListenerEnabled: false })
       let labServer: Awaited<ReturnType<typeof createHrcServer>> | undefined =
-        await createHrcServer(lab.serverOpts({ otelListenerEnabled: false }))
+        await createFederationTestServer(lab, { otelListenerEnabled: false })
       try {
         const statusResponse = await svc.fetchSocket(
           '/v1/status?includeSessions=false&includePeerHealth=true'

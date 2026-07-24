@@ -14,9 +14,14 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { HttpBindingRegistryClient } from '../federation/registry-client.js'
-import { createHrcServer } from '../index.js'
+import type { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestConfigUrl,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const HRCCHAT_MAIN = join(import.meta.dir, '..', '..', '..', 'hrcchat-cli', 'src', 'main.ts')
 const TOKEN = 't06698-two-daemon-token'
@@ -71,10 +76,16 @@ async function runCredentialStrippedDm(
   target = `clod@hrc-runtime:${TASK}`,
   body = 'T-06698 forwards through the DM entry point'
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  for (const agentId of ['clod', 'cody']) {
+  const targetAgentId = target.split('@', 1)[0] ?? 'clod'
+  for (const agentId of new Set(['clod', 'cody', targetAgentId])) {
     const agentRoot = join(fixture.tmpDir, 'agents', agentId)
     await mkdir(agentRoot, { recursive: true })
-    await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+    await writeFile(
+      join(agentRoot, 'agent-profile.toml'),
+      agentId === 'rex'
+        ? 'schemaVersion = 2\n\n[placement]\ndefault_home_node = "svc-test"\n'
+        : 'schemaVersion = 2\n'
+    )
   }
 
   const env = {
@@ -105,9 +116,19 @@ async function runCredentialStrippedDm(
 
 describe('T-06698 hrcchat DM peer forwarding', () => {
   const fixtures: HrcServerTestFixture[] = []
-  afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
+  let priorAgentsRoot: string | undefined
+  let agentsRootOverridden = false
+  afterEach(async () => {
+    if (agentsRootOverridden) {
+      if (priorAgentsRoot === undefined) Reflect.deleteProperty(process.env, 'ASP_AGENTS_ROOT')
+      else process.env['ASP_AGENTS_ROOT'] = priorAgentsRoot
+      agentsRootOverridden = false
+      priorAgentsRoot = undefined
+    }
+    await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
+  })
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest('an outbound-only origin resolves the registry before local ensure-target', async () => {
@@ -115,6 +136,15 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
     const svc = await createHrcTestFixture('h98-s-')
     const lab = await createHrcTestFixture('h98-l-')
     fixtures.push(svc, lab)
+    priorAgentsRoot = process.env['ASP_AGENTS_ROOT']
+    agentsRootOverridden = true
+    process.env['ASP_AGENTS_ROOT'] = join(svc.tmpDir, 'agents')
+    for (const agentId of ['clod', 'cody']) {
+      const agentRoot = join(svc.tmpDir, 'agents', agentId)
+      await mkdir(agentRoot, { recursive: true })
+      await writeFile(join(agentRoot, 'agent-profile.toml'), 'schemaVersion = 2\n')
+      await writeFile(join(agentRoot, 'SOUL.md'), `# ${agentId} test fixture\n`)
+    }
     const [registryPort, labPeerPort] = reservePorts(host)
     const registryBind = `http://${host}:${registryPort}`
     const labPeerBind = `http://${host}:${labPeerPort}`
@@ -137,15 +167,16 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       gate: { mode: 'enforce', registryHost: 'svc-test' },
     })
 
-    const svcServer = await createHrcServer(
-      svc.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-    )
+    const svcServer = await createFederationTestServer(svc, {
+      otelListenerEnabled: false,
+      federationOutboxPollIntervalMs: 10,
+    })
     let labServer: Awaited<ReturnType<typeof createHrcServer>> | undefined
     try {
       const registry = new HttpBindingRegistryClient(
         {
           nodeId: 'svc-test',
-          endpoint: registryBind,
+          endpoint: federationTestConfigUrl(registryBind),
           token: new PeerToken(TOKEN),
         },
         { log: () => {} }
@@ -161,9 +192,10 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       })
       expect(established.outcome).toBe('created')
 
-      labServer = await createHrcServer(
-        lab.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-      )
+      labServer = await createFederationTestServer(lab, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
       const localResolve = await lab.postJson('/v1/sessions/resolve', {
         sessionRef: SESSION,
         create: true,
@@ -257,12 +289,13 @@ describe('T-06698 hrcchat DM peer forwarding', () => {
       expect(localEnsureBody.error?.message).toContain('successor is lab-test')
 
       // Registry-unbound, summon-capable delivery now reaches the shared
-      // placement resolver. This fixture intentionally has no clod agent home,
-      // so the resolver returns the exact typed capability refusal instead of
+      // placement resolver. Rex has only the address-resolution profile
+      // created by the CLI fixture, not a composable server-side agent home;
+      // the resolver must return the typed capability refusal instead of
       // leaking a routing-layer internal error.
       const unbound = await runCredentialStrippedDm(
         svc,
-        'clod@hrc-runtime:T-06698-unbound',
+        'rex@hrc-runtime:T-06698-unbound',
         'T-06698 unbound routing probe'
       )
       expect(unbound.exitCode).toBe(1)

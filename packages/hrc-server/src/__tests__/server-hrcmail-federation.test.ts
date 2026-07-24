@@ -16,9 +16,12 @@ import { createFederationAcceptHandler } from '../federation/accept.js'
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { PEER_PROTOCOL_VERSION_HEADER } from '../federation/peer-protocol.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06810-hrcmail-federation-token'
 const ORIGIN_SESSION = 'agent:mable:project:hrc-runtime:task:minisvc/lane:main'
@@ -186,7 +189,7 @@ describe('T-06810 hrcmail federation', () => {
     }
   })
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
@@ -218,12 +221,14 @@ describe('T-06810 hrcmail federation', () => {
       installTargetBinding(svc)
       installTargetBinding(lab)
 
-      const svcServer = await createHrcServer(
-        svc.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-      )
-      const labServer = await createHrcServer(
-        lab.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-      )
+      const svcServer = await createFederationTestServer(svc, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
+      const labServer = await createFederationTestServer(lab, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
       try {
         const sendResponse = await svc.postJson('/v1/mail/send', request())
         expect(sendResponse.status).toBe(200)

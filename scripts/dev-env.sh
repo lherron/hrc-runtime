@@ -98,6 +98,11 @@ display = "${agent}"
 role = "fixture"
 harness = "codex"
 EOF
+    cat > "${AGENTS_DIR}/${agent}/SOUL.md" <<EOF
+# ${agent}
+
+Ephemeral hrc-runtime verification fixture.
+EOF
   done
 }
 

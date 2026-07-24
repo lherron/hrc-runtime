@@ -10,9 +10,13 @@ import { parseNodeId } from '../federation/node-id.js'
 import { PEER_PROTOCOL_VERSION_HEADER } from '../federation/peer-protocol.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import { createHrcServer, sendFederationEnvelope } from '../index.js'
+import { sendFederationEnvelope } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06618-two-daemon-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06618'
@@ -71,7 +75,7 @@ describe('T-06618 two isolated daemon delivery', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
@@ -116,8 +120,8 @@ describe('T-06618 two isolated daemon delivery', () => {
         seedDb.close()
       }
 
-      const svcServer = await createHrcServer(svc.serverOpts({ otelListenerEnabled: false }))
-      const labServer = await createHrcServer(lab.serverOpts({ otelListenerEnabled: false }))
+      const svcServer = await createFederationTestServer(svc, { otelListenerEnabled: false })
+      const labServer = await createFederationTestServer(lab, { otelListenerEnabled: false })
       try {
         const send = (body: unknown) =>
           fetch(`${labBind}/v1/federation/accept`, {

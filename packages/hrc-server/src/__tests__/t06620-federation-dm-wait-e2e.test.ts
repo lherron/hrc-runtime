@@ -18,7 +18,11 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06620-two-daemon-token'
 const ORIGIN_SCOPE = 'agent:mable:project:hrc-runtime:task:minisvc'
@@ -91,7 +95,7 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   test('local wait returns a durable terminal outbox failure without any peer request', async () => {
@@ -224,18 +228,14 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
       labDb.close()
     }
 
-    const svcServer = await createHrcServer(
-      svc.serverOpts({
-        otelListenerEnabled: false,
-        federationOutboxPollIntervalMs: 10,
-      })
-    )
-    let labServer = await createHrcServer(
-      lab.serverOpts({
-        otelListenerEnabled: false,
-        federationOutboxPollIntervalMs: 10,
-      })
-    )
+    const svcServer = await createFederationTestServer(svc, {
+      otelListenerEnabled: false,
+      federationOutboxPollIntervalMs: 10,
+    })
+    let labServer = await createFederationTestServer(lab, {
+      otelListenerEnabled: false,
+      federationOutboxPollIntervalMs: 10,
+    })
     try {
       const sentResponse = await svc.postJson('/v1/messages/dm', {
         from: { kind: 'session', sessionRef: ORIGIN_SESSION },
@@ -379,12 +379,10 @@ describe('T-06620 local dm wait over bilateral federation transcripts', () => {
         .then((response) => response.json() as Promise<WaitMessageResponse>)
 
       await labServer.stop()
-      labServer = await createHrcServer(
-        lab.serverOpts({
-          otelListenerEnabled: false,
-          federationOutboxPollIntervalMs: 10,
-        })
-      )
+      labServer = await createFederationTestServer(lab, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
 
       const replyResponse = await lab.postJson('/v1/messages/dm', {
         from: { kind: 'session', sessionRef: REMOTE_SESSION },

@@ -11,7 +11,11 @@ import { PEER_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION_HEADER } from '../federati
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 'two-isolated-daemon-peer-token'
 const PARENT_SCOPE = 'agent:mable:project:hrc-runtime:task:T-06617'
@@ -50,7 +54,7 @@ describe('T-06617 two isolated daemons', () => {
     await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
   })
 
-  const tailnetIp = localTailnetIpv4()
+  const tailnetIp = federationTestHost(localTailnetIpv4())
   const liveTailnetTest = selectLiveTailnetTest(import.meta.path, tailnetIp)
 
   liveTailnetTest('auth, locate, and health cross the narrow tailnet listeners', async () => {
@@ -116,8 +120,8 @@ describe('T-06617 two isolated daemons', () => {
       labDb.close()
     }
 
-    const svcServer = await createHrcServer(svc.serverOpts({ otelListenerEnabled: false }))
-    const labServer = await createHrcServer(lab.serverOpts({ otelListenerEnabled: false }))
+    const svcServer = await createFederationTestServer(svc, { otelListenerEnabled: false })
+    const labServer = await createFederationTestServer(lab, { otelListenerEnabled: false })
     try {
       expect(svcServer.federationPeerEndpoint).toBe(`${svcBind}/`)
       expect(labServer.federationPeerEndpoint).toBe(`${labBind}/`)

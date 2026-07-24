@@ -6,9 +6,13 @@ import { createPlacementLedgerRepository, openHrcDatabase } from 'hrc-store-sqli
 
 import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import { createHrcServer } from '../index.js'
+import type { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06619-two-daemon-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06619-e2e'
@@ -50,7 +54,7 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
@@ -101,17 +105,15 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
         }
       }
 
-      const originServer = await createHrcServer(
-        origin.serverOpts({
-          otelListenerEnabled: false,
-          federationOutboxPollIntervalMs: 10,
-          federationOutboxRetryPolicy: {
-            initialRetryDelayMs: 20,
-            maxRetryDelayMs: 20,
-            deadLetterAfterMs: 1_000,
-          },
-        })
-      )
+      const originServer = await createFederationTestServer(origin, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+        federationOutboxRetryPolicy: {
+          initialRetryDelayMs: 20,
+          maxRetryDelayMs: 20,
+          deadLetterAfterMs: 1_000,
+        },
+      })
       let labServer: Awaited<ReturnType<typeof createHrcServer>> | undefined
       try {
         const send = async (body: string) => {
@@ -166,17 +168,15 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
           },
         })
 
-        labServer = await createHrcServer(
-          lab.serverOpts({
-            otelListenerEnabled: false,
-            federationOutboxPollIntervalMs: 10,
-            federationOutboxRetryPolicy: {
-              initialRetryDelayMs: 20,
-              maxRetryDelayMs: 20,
-              deadLetterAfterMs: 1_000,
-            },
-          })
-        )
+        labServer = await createFederationTestServer(lab, {
+          otelListenerEnabled: false,
+          federationOutboxPollIntervalMs: 10,
+          federationOutboxRetryPolicy: {
+            initialRetryDelayMs: 20,
+            maxRetryDelayMs: 20,
+            deadLetterAfterMs: 1_000,
+          },
+        })
         await eventually(
           () => readDelivery(sleepMessageId),
           (rows) => rows[0]?.state === 'delivered'
@@ -213,7 +213,7 @@ describe('T-06619 isolated origin outbox lifecycle', () => {
         )
         expect(dead[0]?.totalAttempts).toBeGreaterThan(1)
 
-        labServer = await createHrcServer(lab.serverOpts({ otelListenerEnabled: false }))
+        labServer = await createFederationTestServer(lab, { otelListenerEnabled: false })
         await Bun.sleep(50)
         expect((await readDelivery(replayMessageId))[0]?.state).toBe('dead_letter')
 

@@ -11,9 +11,12 @@ import { FEDERATION_CONFIG_BASENAME } from '../federation/federation-config.js'
 import { parseNodeId } from '../federation/node-id.js'
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
-import { createHrcServer } from '../index.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const ROOT_ID = 'msg-11111111-1111-4111-8111-111111111111'
 const RESPONSE_1_ID = 'msg-22222222-2222-4222-8222-222222222222'
@@ -157,7 +160,7 @@ describe('T-06829 phase-neutral per-hop response fencing', () => {
   const fixtures: HrcServerTestFixture[] = []
   afterEach(async () => Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup())))
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   test('alternating request plus three replies inject at every hop across an epoch bump', async () => {
@@ -398,12 +401,14 @@ describe('T-06829 phase-neutral per-hop response fencing', () => {
         }
       }
 
-      const aServer = await createHrcServer(
-        a.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-      )
-      const bServer = await createHrcServer(
-        b.serverOpts({ otelListenerEnabled: false, federationOutboxPollIntervalMs: 10 })
-      )
+      const aServer = await createFederationTestServer(a, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
+      const bServer = await createFederationTestServer(b, {
+        otelListenerEnabled: false,
+        federationOutboxPollIntervalMs: 10,
+      })
       try {
         const send = async (
           fixture: HrcServerTestFixture,

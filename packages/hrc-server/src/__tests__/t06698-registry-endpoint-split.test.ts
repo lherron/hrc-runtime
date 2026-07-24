@@ -17,10 +17,14 @@ import { PEER_PROTOCOL_VERSION, PEER_PROTOCOL_VERSION_HEADER } from '../federati
 import { PeerToken } from '../federation/peer-token.js'
 import { isTailnetHost } from '../federation/registry-bind.js'
 import { resolveFederationRegistryClient } from '../federation/registry-resolution.js'
-import { createHrcServer } from '../index.js'
 import { withFederationConfigFile } from './fixtures/federation-config-fixture.js'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  createFederationTestServer,
+  federationTestConfigUrl,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 'split-listener-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06698'
@@ -179,7 +183,7 @@ describe('two-listener route isolation', () => {
     await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
   })
 
-  const tailnetIp = localTailnetIpv4()
+  const tailnetIp = federationTestHost(localTailnetIpv4())
   const liveTailnetTest = selectLiveTailnetTest(import.meta.file, tailnetIp)
 
   liveTailnetTest('registry and peer protocol use only their declared listener', async () => {
@@ -212,7 +216,7 @@ describe('two-listener route isolation', () => {
       { mode: 0o600 }
     )
 
-    const server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+    const server = await createFederationTestServer(fixture, { otelListenerEnabled: false })
     const headers = {
       authorization: `Bearer ${TOKEN}`,
       'content-type': 'application/json',
@@ -223,8 +227,8 @@ describe('two-listener route isolation', () => {
       expect(JSON.parse(statusText).node.peers).toEqual([
         {
           nodeId: 'lab-test',
-          endpoint: `${peerBind}/`,
-          registryEndpoint: `${registryBind}/`,
+          endpoint: federationTestConfigUrl(`${peerBind}/`),
+          registryEndpoint: federationTestConfigUrl(`${registryBind}/`),
         },
       ])
       expect(statusText).not.toContain(TOKEN)

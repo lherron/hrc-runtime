@@ -26,7 +26,11 @@ import {
   FederationRoutingResolutionError,
   resolveFederationRoutingBinding,
 } from '../federation/routing-resolution.js'
-import { selectLiveTailnetTest } from './fixtures/live-tailnet-test.js'
+import {
+  federationTestConfigUrl,
+  federationTestHost,
+  selectLiveTailnetTest,
+} from './fixtures/live-tailnet-test.js'
 
 const TOKEN = 't06621-origin-token'
 const SCOPE = 'agent:cody:project:hrc-runtime:task:T-06621-e2e'
@@ -69,7 +73,7 @@ describe('T-06621 isolated registry-outage delivery', () => {
     for (const dispose of cleanup.splice(0).reverse()) await dispose()
   })
 
-  const host = tailnetIpv4()
+  const host = federationTestHost(tailnetIpv4())
   const liveTest = selectLiveTailnetTest(import.meta.path, host)
 
   liveTest(
@@ -141,7 +145,7 @@ describe('T-06621 isolated registry-outage delivery', () => {
       const registryClient = new HttpBindingRegistryClient(
         {
           nodeId: parseNodeId('svc', 'test registry peer'),
-          endpoint: registryEndpoint.url,
+          endpoint: federationTestConfigUrl(registryEndpoint.url),
           token: new PeerToken(TOKEN),
         } satisfies PeerEntry,
         {
