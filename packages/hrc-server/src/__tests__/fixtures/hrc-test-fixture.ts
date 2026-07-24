@@ -63,12 +63,20 @@ export async function setTmuxPanePrompt(
   prompt: string,
   readyMarker: string
 ): Promise<void> {
-  await tmux.sendLiteral(paneId, `PS1='${prompt}'; printf '\\n${readyMarker}\\n'`)
+  // Prompt frameworks commonly replace PS1 from zsh precmd hooks. Replace the
+  // pane shell with a no-rc Bash so both the prompt and its redraw behavior are
+  // fixture-owned, regardless of the operator's login-shell configuration.
+  await tmux.sendLiteral(paneId, 'exec /bin/bash --noprofile --norc -i')
+  await tmux.sendEnter(paneId)
+  await tmux.sendLiteral(
+    paneId,
+    `PS1=${shellSingleQuote(prompt)}; PS2=''; PROMPT_COMMAND=; printf '\\n%s\\n' ${shellSingleQuote(readyMarker)}`
+  )
   await tmux.sendEnter(paneId)
 
   const renderedPrompt = prompt.trimEnd()
   let captured = ''
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     captured = await tmux.capture(paneId)
     const markerIndex = captured.lastIndexOf(readyMarker)
     if (
@@ -81,6 +89,10 @@ export async function setTmuxPanePrompt(
   }
 
   throw new Error(`tmux pane did not activate controlled prompt; captured: ${captured}`)
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`
 }
 
 export async function createHrcTestFixture(prefix: string): Promise<HrcServerTestFixture> {
