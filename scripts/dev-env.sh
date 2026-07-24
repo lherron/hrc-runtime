@@ -19,6 +19,11 @@
 #   env-up    idempotent, self-healing, prints what it started
 #   env-down  teardown; env-up after a crashed env-down still works
 #
+# `just verify` — the declared landing gate — depends on env-up by ruling
+# (T-06900 + T-06902, joint). So this script is load-bearing for landing, not a
+# convenience: if it stops provisioning honestly, the gate stops meaning
+# anything. Keep it boring.
+#
 # The `hrc server serve` verb is deliberate. `hrc server start` probes launchd
 # and kickstarts the LaunchAgent when one is loaded — on a developer laptop that
 # would start (or restart) the operator's PRODUCTION daemon and ignore the
@@ -96,18 +101,29 @@ EOF
   done
 }
 
-# Dependencies and build outputs are part of "what the e2e suite needs from a
-# fresh clone": package typecheck and the cross-package imports both read
-# sibling dist/*.d.ts, which a fresh clone does not have.
+# env-up owns the build (T-06900/T-06902 joint ruling). Package typecheck and
+# the cross-package imports both resolve siblings through their built
+# dist/*.d.ts, which a fresh clone does not have.
+#
+# The build is UNCONDITIONAL, not "build if dist is missing". A present-but-
+# stale dist — after a pull, a branch switch, a revert — is the same class of
+# bug as no dist at all: the gate reads state left behind by earlier work
+# instead of deriving it from the tree, and it can report green on a tree that
+# is red (or the reverse). Skipping the build when dist merely *exists* would
+# reintroduce the finding this recipe was written to close, in a subtler form.
+# It costs ~13s.
+#
+# `bun install` stays conditional: this repo pulls dependencies explicitly via
+# `just pull-deps` and treats bun.lock as something a gate must never advance,
+# so the install here only covers the case it has to — a clone with no
+# node_modules at all.
 provision_build() {
   if [[ ! -d "${REPO_ROOT}/node_modules" ]]; then
     log "installing dependencies (bun install)"
     (cd "${REPO_ROOT}" && bun install)
   fi
-  if [[ ! -f "${REPO_ROOT}/packages/hrc-core/dist/index.d.ts" ]]; then
-    log "building workspace (bun run build)"
-    (cd "${REPO_ROOT}" && bun run build)
-  fi
+  log "building workspace (bun run build)"
+  (cd "${REPO_ROOT}" && bun run build)
 }
 
 start_daemon() {

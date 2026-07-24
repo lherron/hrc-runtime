@@ -15,7 +15,10 @@ info:
     @echo "  just build     - Build all packages"
     @echo "  just test      - Run tests"
     @echo "  just lint      - Run biome linter"
-    @echo "  just verify    - Run lint + typecheck + test"
+    @echo "  just verify    - Declared landing gate: env-up + check + lint + typecheck + test"
+    @echo "  just env-up    - Provision the ephemeral daemon + fixture agent homes"
+    @echo "  just env-down  - Tear that environment down"
+    @echo "  just e2e       - Run the suite against the provisioned environment"
     @echo "  just serve-docs - Serve docs/html on 0.0.0.0:18481"
 
 # Build all packages
@@ -65,8 +68,16 @@ check:
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
 
-# Run all verification (check + lint + typecheck + test)
-verify: check lint typecheck test
+# The declared landing gate. It depends on `env-up` by ruling (T-06900 +
+# T-06902, joint): the gate provisions the environment it needs instead of
+# inheriting it. Before that ruling a green `just verify` was partly a statement
+# about the operator's live production daemon rather than about the tree under
+# test — strictly worse than merely non-hermetic. `env-up` also owns the build,
+# which `typecheck` has always required (it reads sibling dist/*.d.ts) and the
+# gate never declared.
+
+# Run all verification (env-up + check + lint + typecheck + test)
+verify: env-up check lint typecheck test
 
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
@@ -77,6 +88,10 @@ verify: check lint typecheck test
 # which is why the suite was green on exactly one machine. `env-up` provisions
 # both under one temp root and touches neither of the real ones. See
 # scripts/dev-env.sh for the why in full.
+#
+# `env-up` leaves its daemon running on purpose — a second `env-up` reuses it,
+# so back-to-back `just verify` / `just e2e` do not pay for a restart. Reap it
+# with `just env-down` when you are done for the day.
 
 # Provision the ephemeral e2e environment (idempotent, self-healing)
 env-up:
