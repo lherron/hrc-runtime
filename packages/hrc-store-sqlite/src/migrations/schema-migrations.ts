@@ -1,3 +1,6 @@
+import type { HrcMessageRecord } from 'hrc-core'
+
+import { collectiveHistoryFilterColumnValues } from '../collective-history-columns.js'
 import {
   type LegacyHrcEventRow,
   categoryForLegacyHrcEventKind,
@@ -1259,6 +1262,85 @@ const federationPeerAcceptanceOutcomeMigration: HrcMigration = {
   },
 }
 
+/**
+ * Indexed materialization of every filterable collective-history field (T-06973).
+ *
+ * Migration 0033 kept all of `from`/`to`/`participant`/`thread`/`replyTo`/
+ * `runId`/`kinds`/`phases`/`hostSessionId`/`generation` inside
+ * `canonical_record_json`, so a `--limit 20` query selected every row, parsed
+ * every record, ran one observation query per message and sorted in JS. At
+ * svc's ~18k messages that cost ~0.55s and grew linearly; this class already
+ * caused a live CPU incident.
+ *
+ * Columns are nullable and backfilled in place so the migration is safe on a
+ * populated database: adding a column and building indexes never rewrites the
+ * canonical JSON, and a row whose JSON is corrupt is left with NULL filter
+ * columns rather than failing the whole migration.
+ */
+const collectiveHistoryFilterColumnsMigration: HrcMigration = {
+  id: '0035_collective_history_filter_columns',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE collective_history_messages ADD COLUMN from_ref TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN to_ref TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN root_message_id TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN reply_to_message_id TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN kind TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN phase TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN host_session_id TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN run_id TEXT;
+      ALTER TABLE collective_history_messages ADD COLUMN generation INTEGER;
+    `)
+
+    // Backfill through the same projection the write path uses, so the two can
+    // never disagree about how an address or a missing execution field encodes.
+    const rows = db
+      .query<{ collective_seq: number; canonical_record_json: string }, []>(
+        'SELECT collective_seq, canonical_record_json FROM collective_history_messages'
+      )
+      .all()
+    const update = db.prepare(
+      `UPDATE collective_history_messages
+          SET from_ref = ?, to_ref = ?, root_message_id = ?, reply_to_message_id = ?,
+              kind = ?, phase = ?, host_session_id = ?, run_id = ?, generation = ?
+        WHERE collective_seq = ?`
+    )
+    for (const row of rows) {
+      let values: Array<string | number | null>
+      try {
+        values = collectiveHistoryFilterColumnValues(
+          JSON.parse(row.canonical_record_json) as HrcMessageRecord
+        )
+      } catch {
+        // A record written before a validating write path, or corrupted on
+        // disk, must not make the whole database unopenable. Such a row keeps
+        // NULL filter columns and stays reachable by messageId and cursor.
+        continue
+      }
+      update.run(...values, row.collective_seq)
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_from
+        ON collective_history_messages(from_ref, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_to
+        ON collective_history_messages(to_ref, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_root
+        ON collective_history_messages(root_message_id, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_reply_to
+        ON collective_history_messages(reply_to_message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_kind
+        ON collective_history_messages(kind, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_phase
+        ON collective_history_messages(phase, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_run
+        ON collective_history_messages(run_id, canonical_created_at, message_id);
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_host_session
+        ON collective_history_messages(host_session_id, canonical_created_at, message_id);
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1289,4 +1371,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   federationPeerAcceptancesMigration,
   collectiveMessageHistoryMigration,
   federationPeerAcceptanceOutcomeMigration,
+  collectiveHistoryFilterColumnsMigration,
 ]

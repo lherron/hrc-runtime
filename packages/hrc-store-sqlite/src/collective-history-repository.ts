@@ -4,11 +4,14 @@ import { createHash } from 'node:crypto'
 import type {
   HrcCollectiveHistoryObservation,
   HrcCollectiveMessageRecord,
-  HrcMessageAddress,
   HrcMessageDeliveryEvidence,
   HrcMessageFilter,
   HrcMessageRecord,
 } from 'hrc-core'
+import {
+  collectiveHistoryAddressRef,
+  collectiveHistoryFilterColumnValues,
+} from './collective-history-columns.js'
 import { execute } from './repositories/shared.js'
 
 export type CollectiveHistorySourceRole = 'origin' | 'destination'
@@ -25,6 +28,7 @@ export type RecordCollectiveHistoryObservationInput = {
 type CollectiveMessageRow = {
   collective_seq: number
   message_id: string
+  reply_to_message_id: string | null
   canonical_record_json: string
   canonical_source_node_id: string
   canonical_source_role: CollectiveHistorySourceRole
@@ -39,48 +43,6 @@ type CollectiveObservationRow = {
   accepted_destination_node_id: string | null
   record_json: string
   observed_at: string
-}
-
-function addressEquals(left: HrcMessageAddress, right: HrcMessageAddress): boolean {
-  if (left.kind !== right.kind) return false
-  return left.kind === 'entity'
-    ? left.entity === (right as Extract<HrcMessageAddress, { kind: 'entity' }>).entity
-    : left.sessionRef === (right as Extract<HrcMessageAddress, { kind: 'session' }>).sessionRef
-}
-
-function matchesFilter(record: HrcMessageRecord, filter: HrcMessageFilter): boolean {
-  if (filter.messageId !== undefined && record.messageId !== filter.messageId) return false
-  if (filter.from !== undefined && !addressEquals(record.from, filter.from)) return false
-  if (filter.to !== undefined && !addressEquals(record.to, filter.to)) return false
-  if (
-    filter.participant !== undefined &&
-    !addressEquals(record.from, filter.participant) &&
-    !addressEquals(record.to, filter.participant)
-  ) {
-    return false
-  }
-  if (filter.thread !== undefined && record.rootMessageId !== filter.thread.rootMessageId) {
-    return false
-  }
-  if (
-    filter.replyToMessageId !== undefined &&
-    record.replyToMessageId !== filter.replyToMessageId
-  ) {
-    return false
-  }
-  if (
-    filter.hostSessionId !== undefined &&
-    record.execution.hostSessionId !== filter.hostSessionId
-  ) {
-    return false
-  }
-  if (filter.runId !== undefined && record.execution.runId !== filter.runId) return false
-  if (filter.generation !== undefined && record.execution.generation !== filter.generation) {
-    return false
-  }
-  if (filter.kinds?.length && !filter.kinds.includes(record.kind)) return false
-  if (filter.phases?.length && !filter.phases.includes(record.phase)) return false
-  return true
 }
 
 function compareMessageOrder(
@@ -144,6 +106,87 @@ function orderThreadTopologically(
   return output
 }
 
+/** Window growth per escalation, and the point at which we stop guessing and read everything. */
+const WINDOW_GROWTH = 8
+const COLLECTIVE_HISTORY_MAX_WINDOW = 4096
+
+/**
+ * Every filter pushed into indexed SQL. Before T-06973 only `messageId` and
+ * `afterSeq` were here and the rest were re-checked in JS after decoding every
+ * row, which is what made a `--limit 20` listing cost a full-table scan.
+ */
+function collectiveHistoryWhere(filter: HrcMessageFilter): {
+  clause: string
+  values: Array<string | number>
+} {
+  const where: string[] = []
+  const values: Array<string | number> = []
+  const eq = (column: string, value: string | number): void => {
+    where.push(`${column} = ?`)
+    values.push(value)
+  }
+
+  if (filter.messageId !== undefined) eq('message_id', filter.messageId)
+  if (filter.afterSeq !== undefined) {
+    where.push('collective_seq > ?')
+    values.push(filter.afterSeq)
+  }
+  if (filter.from !== undefined) eq('from_ref', collectiveHistoryAddressRef(filter.from))
+  if (filter.to !== undefined) eq('to_ref', collectiveHistoryAddressRef(filter.to))
+  if (filter.participant !== undefined) {
+    const ref = collectiveHistoryAddressRef(filter.participant)
+    where.push('(from_ref = ? OR to_ref = ?)')
+    values.push(ref, ref)
+  }
+  if (filter.thread !== undefined) eq('root_message_id', filter.thread.rootMessageId)
+  if (filter.replyToMessageId !== undefined) eq('reply_to_message_id', filter.replyToMessageId)
+  if (filter.hostSessionId !== undefined) eq('host_session_id', filter.hostSessionId)
+  if (filter.runId !== undefined) eq('run_id', filter.runId)
+  if (filter.generation !== undefined) eq('generation', filter.generation)
+  if (filter.kinds?.length) {
+    where.push(`kind IN (${filter.kinds.map(() => '?').join(', ')})`)
+    values.push(...filter.kinds)
+  }
+  if (filter.phases?.length) {
+    where.push(`phase IN (${filter.phases.map(() => '?').join(', ')})`)
+    values.push(...filter.phases)
+  }
+
+  return { clause: where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`, values }
+}
+
+/**
+ * The `limit` records a caller sees: the head of the ascending collective order,
+ * or — for `desc`, which is that order reversed — its tail, flipped.
+ */
+function pageSlice(
+  ordered: HrcCollectiveMessageRecord[],
+  limit: number,
+  descending: boolean
+): HrcCollectiveMessageRecord[] {
+  if (!descending) return ordered.slice(0, limit)
+  return ordered.slice(Math.max(0, ordered.length - limit)).reverse()
+}
+
+/**
+ * Did the topological pass move anything within the slice the caller will see?
+ * If not, that slice is exactly the first `limit` of the globally ordered set
+ * and the page is safe to return; if so, the window is too narrow to justify.
+ */
+function isPermuted(
+  sorted: HrcCollectiveMessageRecord[],
+  ordered: HrcCollectiveMessageRecord[],
+  limit: number,
+  descending: boolean
+): boolean {
+  const from = descending ? Math.max(0, sorted.length - limit) : 0
+  const to = descending ? sorted.length : Math.min(limit, sorted.length)
+  for (let index = from; index < to; index += 1) {
+    if (sorted[index]?.messageId !== ordered[index]?.messageId) return true
+  }
+  return false
+}
+
 export class CollectiveHistoryRepository {
   constructor(private readonly db: Database) {}
 
@@ -164,15 +207,18 @@ export class CollectiveHistoryRepository {
         this.db,
         `INSERT INTO collective_history_messages (
            message_id, canonical_record_json, canonical_source_node_id,
-           canonical_source_role, canonical_created_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           canonical_source_role, canonical_created_at, created_at, updated_at,
+           from_ref, to_ref, root_message_id, reply_to_message_id,
+           kind, phase, host_session_id, run_id, generation
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.record.messageId,
         recordJson,
         input.sourceNodeId,
         input.sourceRole,
         input.record.createdAt,
         observedAt,
-        observedAt
+        observedAt,
+        ...collectiveHistoryFilterColumnValues(input.record)
       )
     } else {
       if (
@@ -194,13 +240,16 @@ export class CollectiveHistoryRepository {
                   canonical_source_node_id = ?,
                   canonical_source_role = ?,
                   canonical_created_at = ?,
-                  updated_at = ?
+                  updated_at = ?,
+                  from_ref = ?, to_ref = ?, root_message_id = ?, reply_to_message_id = ?,
+                  kind = ?, phase = ?, host_session_id = ?, run_id = ?, generation = ?
             WHERE message_id = ?`,
           recordJson,
           input.sourceNodeId,
           input.sourceRole,
           input.record.createdAt,
           observedAt,
+          ...collectiveHistoryFilterColumnValues(input.record),
           input.record.messageId
         )
       }
@@ -239,68 +288,157 @@ export class CollectiveHistoryRepository {
     return stored
   }
 
-  query(filter: HrcMessageFilter, authorityNodeId: string): HrcCollectiveMessageRecord[] {
-    const where: string[] = []
-    const values: Array<string | number> = []
-    if (filter.messageId !== undefined) {
-      where.push('message_id = ?')
-      values.push(filter.messageId)
+  /**
+   * One batched observation read for a whole page, replacing the per-message
+   * query that made every listing N+1 (T-06973).
+   */
+  private observationsFor(messageIds: string[]): Map<string, HrcCollectiveHistoryObservation[]> {
+    const byMessageId = new Map<string, HrcCollectiveHistoryObservation[]>()
+    if (messageIds.length === 0) return byMessageId
+    const placeholders = messageIds.map(() => '?').join(', ')
+    const rows = this.db
+      .query<CollectiveObservationRow & { message_id: string }, string[]>(
+        `SELECT message_id, source_node_id, source_message_seq, source_role, origin_node_id,
+                accepted_destination_node_id, record_json, observed_at
+           FROM collective_history_observations
+          WHERE message_id IN (${placeholders})
+          ORDER BY message_id, source_node_id`
+      )
+      .all(...messageIds)
+    for (const row of rows) {
+      const observedRecord = JSON.parse(row.record_json) as HrcMessageRecord
+      const delivery = deliveryEvidence(observedRecord)
+      const observation: HrcCollectiveHistoryObservation = {
+        nodeId: row.source_node_id,
+        messageSeq: row.source_message_seq,
+        role: row.source_role,
+        observedAt: row.observed_at,
+        originNodeId: row.origin_node_id,
+        ...(row.accepted_destination_node_id === null
+          ? {}
+          : { acceptedDestinationNodeId: row.accepted_destination_node_id }),
+        execution: observedRecord.execution,
+        ...(delivery === undefined ? {} : { delivery }),
+      }
+      const existing = byMessageId.get(row.message_id)
+      if (existing === undefined) byMessageId.set(row.message_id, [observation])
+      else existing.push(observation)
     }
-    if (filter.afterSeq !== undefined) {
-      where.push('collective_seq > ?')
-      values.push(filter.afterSeq)
-    }
-    const whereClause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`
+    return byMessageId
+  }
+
+  private decodeRows(
+    rows: CollectiveMessageRow[],
+    authorityNodeId: string
+  ): HrcCollectiveMessageRecord[] {
+    const observationsByMessageId = this.observationsFor(rows.map((row) => row.message_id))
+    return rows.map((row): HrcCollectiveMessageRecord => {
+      const record = JSON.parse(row.canonical_record_json) as HrcMessageRecord
+      return {
+        ...record,
+        collectiveSeq: row.collective_seq,
+        collectiveHistory: {
+          authorityNodeId,
+          observations: observationsByMessageId.get(row.message_id) ?? [],
+        },
+      }
+    })
+  }
+
+  /**
+   * Rows matching the filter, ordered by the collective order, optionally taking
+   * only the leading (`asc`) or trailing (`desc`) `window` rows.
+   */
+  private selectRows(filter: HrcMessageFilter, window: number | undefined): CollectiveMessageRow[] {
+    const { clause, values } = collectiveHistoryWhere(filter)
+    // `desc` output is the ascending order reversed, so its page is the
+    // *trailing* window: read it descending, then flip back to ascending.
+    const descending = filter.order === 'desc'
+    const direction = descending ? 'DESC' : 'ASC'
+    const limitClause = window === undefined ? '' : ` LIMIT ${window}`
     const rows = this.db
       .query<CollectiveMessageRow, Array<string | number>>(
-        `SELECT collective_seq, message_id, canonical_record_json,
+        `SELECT collective_seq, message_id, reply_to_message_id, canonical_record_json,
                 canonical_source_node_id, canonical_source_role, canonical_created_at
-           FROM collective_history_messages${whereClause}`
+           FROM collective_history_messages${clause}
+          ORDER BY canonical_created_at ${direction}, message_id ${direction}${limitClause}`
       )
       .all(...values)
+    return descending ? rows.reverse() : rows
+  }
 
-    let records = rows
-      .map((row): HrcCollectiveMessageRecord => {
-        const record = JSON.parse(row.canonical_record_json) as HrcMessageRecord
-        const observations = this.db
-          .query<CollectiveObservationRow, [string]>(
-            `SELECT source_node_id, source_message_seq, source_role, origin_node_id,
-                    accepted_destination_node_id, record_json, observed_at
-               FROM collective_history_observations
-              WHERE message_id = ?
-              ORDER BY source_node_id`
-          )
-          .all(row.message_id)
-          .map((observation): HrcCollectiveHistoryObservation => {
-            const observedRecord = JSON.parse(observation.record_json) as HrcMessageRecord
-            const delivery = deliveryEvidence(observedRecord)
-            return {
-              nodeId: observation.source_node_id,
-              messageSeq: observation.source_message_seq,
-              role: observation.source_role,
-              observedAt: observation.observed_at,
-              originNodeId: observation.origin_node_id,
-              ...(observation.accepted_destination_node_id === null
-                ? {}
-                : {
-                    acceptedDestinationNodeId: observation.accepted_destination_node_id,
-                  }),
-              execution: observedRecord.execution,
-              ...(delivery === undefined ? {} : { delivery }),
-            }
-          })
-        return {
-          ...record,
-          collectiveSeq: row.collective_seq,
-          collectiveHistory: { authorityNodeId, observations },
-        }
-      })
-      .filter((record) => matchesFilter(record, filter))
+  /**
+   * Does any row in the window reply to a message that matches the filter but
+   * sits outside the window? Such a parent would have delayed its child in the
+   * whole-set pass, so the window cannot be trusted — and the permutation check
+   * alone cannot see it, because inside the window that child looks parentless.
+   */
+  private hasParentOutsideWindow(filter: HrcMessageFilter, rows: CollectiveMessageRow[]): boolean {
+    const present = new Set(rows.map((row) => row.message_id))
+    const parents = [
+      ...new Set(
+        rows
+          .map((row) => row.reply_to_message_id)
+          .filter((value): value is string => value !== null && !present.has(value))
+      ),
+    ]
+    if (parents.length === 0) return false
+    const { clause, values } = collectiveHistoryWhere(filter)
+    const placeholders = parents.map(() => '?').join(', ')
+    const joiner = clause === '' ? ' WHERE' : `${clause} AND`
+    return (
+      this.db
+        .query<{ present: number }, Array<string | number>>(
+          `SELECT 1 AS present FROM collective_history_messages${joiner} message_id IN (${placeholders}) LIMIT 1`
+        )
+        .get(...values, ...parents) !== null
+    )
+  }
 
-    records = orderThreadTopologically(records)
-    if (filter.order === 'desc') records.reverse()
-    if (filter.limit !== undefined) records = records.slice(0, Math.max(0, filter.limit))
-    return records
+  query(filter: HrcMessageFilter, authorityNodeId: string): HrcCollectiveMessageRecord[] {
+    const limit = filter.limit === undefined ? undefined : Math.max(0, filter.limit)
+    if (limit === 0) return []
+
+    // Unbounded queries (thread reconstruction) keep the whole-set semantics.
+    // They are already narrowed by indexed filters, so no scan is unbounded in
+    // practice; correctness, not the page bound, is what matters here.
+    if (limit === undefined) {
+      const records = orderThreadTopologically(
+        this.decodeRows(this.selectRows(filter, undefined), authorityNodeId)
+      )
+      if (filter.order === 'desc') records.reverse()
+      return records
+    }
+
+    // Bounded page. `orderThreadTopologically` is a whole-set pass, so a page
+    // is only provably identical to "topologically order everything, then take
+    // limit" when the page's own prefix came back un-permuted: if no page row
+    // was delayed behind a parent, each emits in the first round in sorted
+    // order, and nothing outside the page can overtake it. When the page IS
+    // permuted (a clock-skewed reply ahead of its parent) we widen the window
+    // rather than answer from a page whose ordering we cannot justify, and the
+    // widening terminates at the full filtered set — the old behaviour.
+    let window = limit
+    for (;;) {
+      const rows = this.selectRows(filter, window)
+      const exhaustive = rows.length < window
+      const sorted = this.decodeRows(rows, authorityNodeId)
+      const ordered = orderThreadTopologically(sorted)
+      const page = pageSlice(ordered, limit, filter.order === 'desc')
+      const trustworthy =
+        !isPermuted(sorted, ordered, limit, filter.order === 'desc') &&
+        !this.hasParentOutsideWindow(filter, rows)
+      if (exhaustive || trustworthy) {
+        return page
+      }
+      window = window * WINDOW_GROWTH
+      if (window >= COLLECTIVE_HISTORY_MAX_WINDOW) {
+        const all = orderThreadTopologically(
+          this.decodeRows(this.selectRows(filter, undefined), authorityNodeId)
+        )
+        return pageSlice(all, limit, filter.order === 'desc')
+      }
+    }
   }
 
   count(): number {
