@@ -20,6 +20,7 @@ import {
   HRC_MAIL_KICKER_ENABLED_ENV,
   HRC_MAIL_MAX_ROUNDS_ENV,
   HRC_PI_TUI_TMUX_BROKER_ENABLED_ENV,
+  HRC_TMUX_AGING_ENABLED_ENV,
 } from './server-constants.js'
 import type { HrcServerOptions } from './server-types.js'
 
@@ -52,6 +53,12 @@ export function resolveStaleGenerationThresholdSec(options: HrcServerOptions): n
     return DEFAULT_STALE_GENERATION_THRESHOLD_SEC
   }
   return Math.floor(hours * 60 * 60)
+}
+
+export function resolveTmuxAgingEnabled(options: HrcServerOptions): boolean {
+  return resolveBooleanFlag(options.tmuxAgingEnabled, process.env[HRC_TMUX_AGING_ENABLED_ENV], {
+    defaultOn: true,
+  })
 }
 
 /**

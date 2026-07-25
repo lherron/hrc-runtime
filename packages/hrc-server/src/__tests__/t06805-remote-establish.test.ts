@@ -24,8 +24,10 @@ const CORRELATION = 'establish-msg-11111111-1111-4111-8111-111111111111'
 
 describe('T-06805 authenticated remote policy establishment', () => {
   const closeables: Array<{ close(): void }> = []
+  const outboxes: FederationOriginOutbox[] = []
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(outboxes.splice(0).map((outbox) => outbox.stop()))
     for (const closeable of closeables.splice(0)) closeable.close()
   })
 
@@ -290,6 +292,7 @@ describe('T-06805 authenticated remote policy establishment', () => {
         localRegistryClient: registryClient,
         pollIntervalMs: 10,
       })
+      outboxes.push(outbox)
       const body: SemanticDmRequest = {
         from: { kind: 'entity', entity: 'human' },
         to: { kind: 'session', sessionRef: `${SCOPE}/lane:main` },

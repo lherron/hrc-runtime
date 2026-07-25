@@ -3,6 +3,10 @@ import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import type { PraesidiumBuild } from 'hrc-core'
+
+import { PRAESIDIUM_BUILD_FIELDS } from './lib/praesidium-build'
+
 const ROOT = resolve(import.meta.dir, '..')
 const REGISTRY = process.env.VERDACCIO_REGISTRY ?? 'http://mini:4873/'
 
@@ -38,10 +42,11 @@ type Manifest = {
   devDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   optionalDependencies?: Record<string, string>
+  praesidiumBuild?: PraesidiumBuild
 }
 
 type Options = {
-  channel?: 'dev' | 'worktree'
+  channel?: 'canonical' | 'dev' | 'worktree'
   dryRun: boolean
   force: boolean
   tag?: string
@@ -49,13 +54,47 @@ type Options = {
 }
 
 type RegistryMetadata = {
-  versions?: Record<string, unknown>
+  versions?: Record<
+    string,
+    {
+      dist?: {
+        tarball?: string
+      }
+    }
+  >
   'dist-tags'?: Record<string, string>
 }
 
 let publishVersion = ''
 let internalNames = new Set<string>()
 let publishTag = 'latest'
+let publicationBuiltAt = ''
+let publicationSource: PublicationSource
+
+export type PublicationSource = {
+  repository: 'hrc-runtime'
+  canonicalRemote: string
+  sourceCommit: string
+  canonicalRef: string
+  canonical: boolean
+}
+
+export function createPraesidiumBuild(input: {
+  canonicalRemote: string
+  sourceCommit: string
+  setVersion: string
+  builtAt: string
+}): PraesidiumBuild {
+  return {
+    schema: 1,
+    repository: 'hrc-runtime',
+    canonicalRemote: input.canonicalRemote,
+    sourceCommit: input.sourceCommit,
+    setName: 'hrc',
+    setVersion: input.setVersion,
+    builtAt: input.builtAt,
+  }
+}
 
 function parseArgs(argv: string[]): Options {
   const options: Options = { dryRun: false, force: false }
@@ -68,14 +107,14 @@ function parseArgs(argv: string[]): Options {
       options.force = true
     } else if (arg === '--channel') {
       const value = argv[++i]
-      if (value !== 'dev' && value !== 'worktree') {
-        throw new Error('--channel must be "dev" or "worktree"')
+      if (value !== 'canonical' && value !== 'dev' && value !== 'worktree') {
+        throw new Error('--channel must be "canonical", "dev", or "worktree"')
       }
       options.channel = value
     } else if (arg.startsWith('--channel=')) {
       const value = arg.slice('--channel='.length)
-      if (value !== 'dev' && value !== 'worktree') {
-        throw new Error('--channel must be "dev" or "worktree"')
+      if (value !== 'canonical' && value !== 'dev' && value !== 'worktree') {
+        throw new Error('--channel must be "canonical", "dev", or "worktree"')
       }
       options.channel = value
     } else if (arg === '--version') {
@@ -104,6 +143,7 @@ function parseArgs(argv: string[]): Options {
 function printHelp(): void {
   console.log(`Usage:
   bun scripts/publish-local-verdaccio.ts [--dry-run]
+  bun scripts/publish-local-verdaccio.ts --channel canonical [--dry-run]
   bun scripts/publish-local-verdaccio.ts --channel worktree [--dry-run]
   bun scripts/publish-local-verdaccio.ts --version <semver> [--tag <tag>] [--force] [--dry-run]
 
@@ -148,7 +188,7 @@ function resolvePublishVersion(baseVersion: string, options: Options): string {
   const version =
     options.version ??
     process.env.HRC_PUBLISH_VERSION ??
-    timestampVersion(baseVersion, options.channel ?? 'dev')
+    timestampVersion(baseVersion, options.channel === 'worktree' ? 'worktree' : 'dev')
   if (!isSemver(version)) {
     throw new Error(`Publish version must be valid semver: ${version}`)
   }
@@ -167,6 +207,87 @@ function run(cmd: string, args: string[], cwd = ROOT): { status: number; out: st
   return {
     status: result.status ?? -1,
     out: `${result.stdout || ''}${result.stderr || ''}`,
+  }
+}
+
+function requiredCommandOutput(cmd: string, args: string[], cwd: string): string {
+  const result = run(cmd, args, cwd)
+  if (result.status !== 0 || !result.out.trim()) {
+    throw new Error(`${cmd} ${args.join(' ')} failed: ${result.out}`)
+  }
+  return result.out.trim()
+}
+
+function requiredCommandOutputOrEmpty(cmd: string, args: string[], cwd: string): string {
+  const result = run(cmd, args, cwd)
+  if (result.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${result.out}`)
+  return result.out.trim()
+}
+
+function parseCanonicalRef(canonicalRef: string): { branch: string; remote: string } {
+  const slash = canonicalRef.indexOf('/')
+  if (slash <= 0 || slash === canonicalRef.length - 1) {
+    throw new Error('Canonical ref must be a remote-tracking ref (for example origin/main)')
+  }
+  return {
+    remote: canonicalRef.slice(0, slash),
+    branch: canonicalRef.slice(slash + 1),
+  }
+}
+
+/** Prove the exact Git identity behind a publication. */
+export function provePublicationSource(input: {
+  canonical: boolean
+  canonicalRef?: string | undefined
+  expectedSourceCommit?: string | undefined
+  root?: string | undefined
+}): PublicationSource {
+  const root = input.root ?? ROOT
+  const canonicalRef = input.canonicalRef ?? process.env.HRC_CANONICAL_REF ?? 'origin/main'
+  const { branch, remote } = parseCanonicalRef(canonicalRef)
+  const canonicalRemote = requiredCommandOutput('git', ['remote', 'get-url', remote], root)
+
+  if (input.canonical) {
+    const fetched = run(
+      'git',
+      ['fetch', '--prune', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+      root
+    )
+    if (fetched.status !== 0) {
+      throw new Error(
+        `Canonical publication could not freshly fetch ${canonicalRef}: ${fetched.out}`
+      )
+    }
+    const status = requiredCommandOutputOrEmpty(
+      'git',
+      ['status', '--porcelain=v1', '--untracked-files=all'],
+      root
+    )
+    if (status) {
+      throw new Error(`Canonical publication requires a clean source tree:\n${status}`)
+    }
+  }
+
+  const sourceCommit = requiredCommandOutput('git', ['rev-parse', 'HEAD'], root)
+  if (input.expectedSourceCommit !== undefined && sourceCommit !== input.expectedSourceCommit) {
+    throw new Error(
+      `Publication source moved from ${input.expectedSourceCommit} to ${sourceCommit}`
+    )
+  }
+  if (input.canonical) {
+    const contained = run('git', ['merge-base', '--is-ancestor', sourceCommit, canonicalRef], root)
+    if (contained.status !== 0) {
+      throw new Error(
+        `Canonical publication source ${sourceCommit} is not contained by freshly fetched ${canonicalRef}`
+      )
+    }
+  }
+  return {
+    repository: 'hrc-runtime',
+    canonicalRemote,
+    sourceCommit,
+    canonicalRef,
+    canonical: input.canonical,
   }
 }
 
@@ -289,12 +410,14 @@ function pinInternalDependencies(
   return changed ? next : deps
 }
 
-async function packForPublish(rel: string): Promise<{
+type PackedPackage = {
   name: string
   version: string
   tarballPath: string
   tmp: string
-}> {
+}
+
+async function packForPublish(rel: string): Promise<PackedPackage> {
   const pkgDir = join(ROOT, rel)
   const packageJsonPath = join(pkgDir, 'package.json')
   const originalPackageJson = await readFile(packageJsonPath, 'utf8')
@@ -311,6 +434,12 @@ async function packForPublish(rel: string): Promise<{
     const publishManifest = {
       ...manifestWithoutPrivate,
       version: publishVersion,
+      praesidiumBuild: createPraesidiumBuild({
+        canonicalRemote: publicationSource.canonicalRemote,
+        sourceCommit: publicationSource.sourceCommit,
+        setVersion: publishVersion,
+        builtAt: publicationBuiltAt,
+      }),
       dependencies: pinInternalDependencies(manifest.dependencies, internalNames, publishVersion),
       devDependencies: pinInternalDependencies(
         manifest.devDependencies,
@@ -363,6 +492,15 @@ async function packForPublish(rel: string): Promise<{
     if (stagedManifest.private) {
       throw new Error(`${manifest.name} tarball still has private=true`)
     }
+    if (
+      stagedManifest.praesidiumBuild === undefined ||
+      JSON.stringify(Object.keys(stagedManifest.praesidiumBuild)) !==
+        JSON.stringify(PRAESIDIUM_BUILD_FIELDS)
+    ) {
+      throw new Error(
+        `${manifest.name} tarball does not carry the exact normative praesidiumBuild tuple`
+      )
+    }
     const extractedPackageDir = join(extractDir, 'package')
     const referencedFiles = [
       stagedManifest.main,
@@ -383,53 +521,159 @@ async function packForPublish(rel: string): Promise<{
   }
 }
 
-async function publishPackage(rel: string, options: Options): Promise<void> {
-  const packed = await packForPublish(rel)
+export async function assertNoCanonicalVersionReplacement(
+  packages: Array<{ name: string; version: string }>,
+  exists: (name: string, version: string) => Promise<boolean> = versionExists
+): Promise<void> {
+  for (const packed of packages) {
+    if (await exists(packed.name, packed.version)) {
+      throw new Error(
+        `Canonical publication refuses same-name/version replacement: ${packed.name}@${packed.version} already exists in ${REGISTRY}`
+      )
+    }
+  }
+}
+
+async function publishPackedPackage(packed: PackedPackage, options: Options): Promise<void> {
   const id = `${packed.name}@${packed.version}`
 
-  try {
-    if ((await versionExists(packed.name, packed.version)) && !options.force) {
-      throw new Error(`${id} already exists in ${REGISTRY}; use --force to replace it`)
-    }
-
-    if (options.dryRun) {
-      console.log(`DRY_RUN  ${id} --tag ${publishTag}`)
-      return
-    }
-
-    if (options.force) {
-      const unpublish = run('npm', ['unpublish', id, '--force', '--registry', REGISTRY])
-      if (unpublish.status !== 0 && !/E404|404 Not Found|not found/i.test(unpublish.out)) {
-        throw new Error(`npm unpublish failed for ${id}: ${unpublish.out}`)
-      }
-    }
-
-    const publish = run('npm', [
-      'publish',
-      packed.tarballPath,
-      '--ignore-scripts',
-      '--registry',
-      REGISTRY,
-      '--tag',
-      publishTag,
-    ])
-    if (publish.status !== 0) {
-      throw new Error(`npm publish failed for ${id}: ${publish.out}`)
-    }
-
-    const tagged = await taggedVersion(packed.name, publishTag)
-    if (tagged !== packed.version) {
-      throw new Error(`registry ${publishTag} after publishing ${id} is ${tagged ?? '<missing>'}`)
-    }
-
-    console.log(`PUBLISHED  ${id} --tag ${publishTag}`)
-  } finally {
-    await rm(packed.tmp, { recursive: true, force: true })
+  if ((await versionExists(packed.name, packed.version)) && !options.force) {
+    throw new Error(`${id} already exists in ${REGISTRY}; use --force to replace it`)
   }
+
+  if (options.dryRun) {
+    console.log(`DRY_RUN  ${id} --tag ${publishTag}`)
+    return
+  }
+
+  if (options.force) {
+    const unpublish = run('npm', ['unpublish', id, '--force', '--registry', REGISTRY])
+    if (unpublish.status !== 0 && !/E404|404 Not Found|not found/i.test(unpublish.out)) {
+      throw new Error(`npm unpublish failed for ${id}: ${unpublish.out}`)
+    }
+  }
+
+  const publish = run('npm', [
+    'publish',
+    packed.tarballPath,
+    '--ignore-scripts',
+    '--registry',
+    REGISTRY,
+    '--tag',
+    publishTag,
+  ])
+  if (publish.status !== 0) {
+    throw new Error(`npm publish failed for ${id}: ${publish.out}`)
+  }
+
+  const tagged = await taggedVersion(packed.name, publishTag)
+  if (tagged !== packed.version) {
+    throw new Error(`registry ${publishTag} after publishing ${id} is ${tagged ?? '<missing>'}`)
+  }
+
+  console.log(`PUBLISHED  ${id} --tag ${publishTag}`)
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (!value || typeof value !== 'object') return JSON.stringify(value)
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
+    .join(',')}}`
+}
+
+async function verifyCanonicalPublishedSet(
+  packedPackages: PackedPackage[]
+): Promise<Array<{ name: string; version: string; tarball: string; bytes: number }>> {
+  const proof: Array<{ name: string; version: string; tarball: string; bytes: number }> = []
+  for (const packed of packedPackages) {
+    const metadata = await registryMetadata(packed.name)
+    const tarballUrl = metadata?.versions?.[packed.version]?.dist?.tarball
+    if (!tarballUrl) {
+      throw new Error(`Published metadata is missing ${packed.name}@${packed.version}`)
+    }
+    const response = await fetch(
+      `${tarballUrl}${tarballUrl.includes('?') ? '&' : '?'}praesidium_no_cache=${Date.now()}`,
+      {
+        cache: 'no-store',
+        headers: {
+          'cache-control': 'no-cache, no-store, max-age=0',
+          pragma: 'no-cache',
+        },
+      }
+    )
+    if (!response.ok) {
+      throw new Error(
+        `Cache-empty tarball fetch failed for ${packed.name}@${packed.version}: ${response.status} ${response.statusText}`
+      )
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength === 0) {
+      throw new Error(`Cache-empty tarball fetch returned no bytes for ${packed.name}`)
+    }
+
+    let temp = ''
+    try {
+      temp = await mkdtemp(join(tmpdir(), 'hrc-published-proof-'))
+      const tarballPath = join(temp, 'package.tgz')
+      await writeFile(tarballPath, bytes)
+      const extractDir = join(temp, 'extract')
+      const mkdir = run('mkdir', ['-p', extractDir])
+      if (mkdir.status !== 0) throw new Error(mkdir.out)
+      const tar = run('tar', ['-xzf', tarballPath, '-C', extractDir])
+      if (tar.status !== 0) throw new Error(tar.out)
+      const manifest = JSON.parse(
+        await readFile(join(extractDir, 'package', 'package.json'), 'utf8')
+      ) as Manifest
+      if (manifest.name !== packed.name || manifest.version !== packed.version) {
+        throw new Error(
+          `Published tarball identity mismatch for ${packed.name}@${packed.version}: ${manifest.name ?? '<missing>'}@${manifest.version ?? '<missing>'}`
+        )
+      }
+      const expectedBuild = createPraesidiumBuild({
+        canonicalRemote: publicationSource.canonicalRemote,
+        sourceCommit: publicationSource.sourceCommit,
+        setVersion: packed.version,
+        builtAt: publicationBuiltAt,
+      })
+      if (stableJson(manifest.praesidiumBuild) !== stableJson(expectedBuild)) {
+        throw new Error(`Published provenance mismatch for ${packed.name}@${packed.version}`)
+      }
+    } finally {
+      if (temp) await rm(temp, { recursive: true, force: true })
+    }
+    proof.push({
+      name: packed.name,
+      version: packed.version,
+      tarball: tarballUrl,
+      bytes: bytes.byteLength,
+    })
+  }
+  return proof
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
+  if (options.channel === 'canonical' && options.force) {
+    throw new Error('Canonical publication does not permit --force replacement')
+  }
+  const canonical = options.channel === 'canonical'
+  const sourceRoot = resolve(process.env.HRC_PUBLISH_SOURCE_ROOT ?? ROOT)
+  publicationSource = provePublicationSource({
+    canonical,
+    root: sourceRoot,
+    expectedSourceCommit: process.env.HRC_PUBLISH_EXPECTED_SOURCE_COMMIT,
+  })
+  publicationBuiltAt = process.env.HRC_PUBLISH_BUILT_AT ?? new Date().toISOString()
+  if (!Number.isFinite(Date.parse(publicationBuiltAt))) {
+    throw new Error(`HRC_PUBLISH_BUILT_AT must be an ISO timestamp: ${publicationBuiltAt}`)
+  }
+  if (!canonical) {
+    console.log(
+      `NON_CANONICAL publication channel=${options.channel ?? 'dev'} force=${options.force}`
+    )
+  }
   const ping = run('npm', ['ping', '--registry', REGISTRY])
   if (ping.status !== 0) {
     throw new Error(`Verdaccio is not reachable at ${REGISTRY}: ${ping.out}`)
@@ -447,8 +691,57 @@ async function main() {
   console.log(
     `${mode} ${PACKAGES.length} HRC package(s) as ${publishVersion} --tag ${publishTag} to ${REGISTRY}`
   )
-  for (const rel of PACKAGES) {
-    await publishPackage(rel, options)
+  const packedPackages: PackedPackage[] = []
+  try {
+    for (const rel of PACKAGES) packedPackages.push(await packForPublish(rel))
+    if (canonical) await assertNoCanonicalVersionReplacement(packedPackages)
+    for (const packed of packedPackages) await publishPackedPackage(packed, options)
+
+    let fetched:
+      | Array<{ name: string; version: string; tarball: string; bytes: number }>
+      | undefined
+    if (canonical && !options.dryRun) {
+      fetched = await verifyCanonicalPublishedSet(packedPackages)
+      console.log(
+        `PRAESIDIUM_PUBLISH_PROOF ${JSON.stringify({
+          schema: 1,
+          canonical: true,
+          canonicalRef: publicationSource.canonicalRef,
+          repository: publicationSource.repository,
+          canonicalRemote: publicationSource.canonicalRemote,
+          sourceCommit: publicationSource.sourceCommit,
+          setName: 'hrc',
+          builtAt: publicationBuiltAt,
+          packages: fetched,
+        })}`
+      )
+    }
+
+    const buildOutput = process.env.HRC_PUBLISH_BUILD_OUTPUT
+    if (buildOutput !== undefined && !options.dryRun) {
+      await writeFile(
+        buildOutput,
+        `${JSON.stringify(
+          {
+            schema: 1,
+            canonical,
+            canonicalRef: publicationSource.canonicalRef,
+            build: createPraesidiumBuild({
+              canonicalRemote: publicationSource.canonicalRemote,
+              sourceCommit: publicationSource.sourceCommit,
+              setVersion: publishVersion,
+              builtAt: publicationBuiltAt,
+            }),
+          },
+          null,
+          2
+        )}\n`
+      )
+    }
+  } finally {
+    await Promise.all(
+      packedPackages.map((packed) => rm(packed.tmp, { recursive: true, force: true }))
+    )
   }
 }
 

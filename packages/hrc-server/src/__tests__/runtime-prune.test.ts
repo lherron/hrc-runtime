@@ -33,6 +33,7 @@ type SeedRuntimeOptions = {
   runtimeId: string
   hostSessionId: string
   scopeRef: string
+  generation?: number | undefined
   transport?: SweepRuntimeTransport | undefined
   status?: string | undefined
   createdAt?: string | undefined
@@ -64,7 +65,7 @@ function seedRuntime(options: SeedRuntimeOptions): void {
       hostSessionId: options.hostSessionId,
       scopeRef,
       laneRef: 'default',
-      generation: 1,
+      generation: options.generation ?? 1,
       transport,
       harness: transport === 'tmux' ? 'claude-code' : 'agent-sdk',
       provider: 'anthropic',
@@ -334,6 +335,48 @@ describe('POST /v1/runtimes/prune', () => {
     expect(body.results.map((r) => r.runtimeId)).toEqual(['rt-default-stale'])
     expect(getRuntime('rt-default-stale')).toBeNull()
     expect(getRuntime('rt-default-ready')).not.toBeNull()
+  })
+
+  it('prunes a reboot-orphaned generation without touching its live successor', async () => {
+    const scopeRef = 'agent:room-coordinator:project:taskboard:task:T-06333:role:coordinator'
+    seedRuntime({
+      runtimeId: 'rt-pre-reboot-stale',
+      hostSessionId: 'hsid-pre-reboot',
+      scopeRef,
+      generation: 1,
+      transport: 'tmux',
+      status: 'stale',
+      createdAt: isoMinutesAgo(180),
+    })
+    seedRuntime({
+      runtimeId: 'rt-live-successor',
+      hostSessionId: 'hsid-live-successor',
+      scopeRef,
+      generation: 2,
+      transport: 'tmux',
+      status: 'ready',
+      createdAt: isoMinutesAgo(5),
+    })
+
+    const body = await prune({
+      scope: scopeRef,
+      status: ['stale'],
+      olderThan: '1h',
+      yes: true,
+    })
+
+    expect(body.summary).toMatchObject({ matched: 1, pruned: 1, skipped: 0, errors: 0 })
+    expect(body.results).toEqual([
+      expect.objectContaining({
+        runtimeId: 'rt-pre-reboot-stale',
+        status: 'pruned',
+      }),
+    ])
+    expect(getRuntime('rt-pre-reboot-stale')).toBeNull()
+    expect(getRuntime('rt-live-successor')).toMatchObject({
+      generation: 2,
+      status: 'ready',
+    })
   })
 
   it('is idempotent and safe to re-run', async () => {

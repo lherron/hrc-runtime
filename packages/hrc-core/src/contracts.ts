@@ -98,6 +98,56 @@ export type HrcHarnessIntent = {
   yolo?: boolean | undefined
 }
 
+export type HrcApprovedMutationRef = {
+  schemaVersion: 'hrc.approved-mutation-ref/v1'
+  source: 'wrkf-action' | 'manual-operator'
+  /**
+   * A local file URI for an approval evidence record, pinned with a
+   * `#sha256:<hex>` fragment. HRC resolves and verifies it before launch.
+   */
+  approvalRef: string
+  /** A local file URI for the immutable apply artifact. */
+  artifactRef: string
+  artifactKind: 'unified-diff' | 'git-apply-patch' | 'file-set'
+  targetPaths: string[]
+  expectedBaseRevision?: string | undefined
+  expectedBaseTreeHash?: string | undefined
+  /** Required when artifactRef names mutable storage. */
+  artifactContentHash?: string | undefined
+  taskRef?: string | undefined
+  taskSpecHash?: string | undefined
+  taskEtag?: string | undefined
+  workflowRunId?: string | undefined
+  actionRunId?: string | undefined
+  approvedBy?: string | undefined
+  approvedAt?: string | undefined
+}
+
+export type HrcActuatorSplitPolicy = {
+  schemaVersion: 'hrc.actuator-split-policy/v1'
+  mode: 'off' | 'high-risk'
+  workflowRef?: string | undefined
+  laneClass: 'worker' | 'verifier' | 'reviewer' | 'approver' | 'actuator'
+  codeMutation: 'forbidden' | 'staged-output-only' | 'apply-approved-artifact'
+  productionCodePaths?: string[] | undefined
+  approval?: HrcApprovedMutationRef | undefined
+}
+
+export type HrcActuatorSplitAuthorityView = {
+  actuatorSplit: Omit<HrcActuatorSplitPolicy, 'approval'>
+  approvedMutation?:
+    | {
+        approvalRecordHash: string
+        artifactContentHash: string
+        targetPaths: string[]
+        expectedBaseRevision?: string | undefined
+        expectedBaseTreeHash?: string | undefined
+        approvedBy?: string | undefined
+        approvedAt?: string | undefined
+      }
+    | undefined
+}
+
 export type HrcExecutionIntent = {
   preferredMode?: HrcExecutionMode | undefined
   autoLaunchInteractive?: boolean | undefined
@@ -110,6 +160,11 @@ export type HrcExecutionIntent = {
    * (preserves DM-into-open-TUI for every existing caller).
    */
   allowInteractiveSurfaceReuse?: boolean | undefined
+  /**
+   * Additive high-risk lane authority. Absent (or mode `off`) preserves the
+   * ordinary low-risk route and reuse behavior.
+   */
+  actuatorSplit?: HrcActuatorSplitPolicy | undefined
 }
 
 export type HrcLaunchEnvConfig = {
@@ -374,6 +429,10 @@ export type HrcRunRecord = {
   // canonical run/runtime state.
   brokerInputFencedAt?: string | undefined
   brokerInputFenceReason?: string | undefined
+  /** Caller-owned retry identity for shared /v1/turns dispatch. */
+  dispatchIdempotencyKey?: string | undefined
+  /** Canonical semantic request hash used to reject conflicting key reuse. */
+  dispatchRequestHash?: string | undefined
 }
 
 export type HrcLaunchRecord = {
@@ -672,6 +731,45 @@ export type HrcPermissionDecisionRecord = {
   decidedAt: string
 }
 
+/** Immutable producer identity staged in every canonical ASP/HRC package. */
+export type PraesidiumBuild = {
+  schema: 1
+  repository: string
+  canonicalRemote: string
+  sourceCommit: string
+  setName: 'asp' | 'hrc'
+  setVersion: string
+  builtAt: string
+}
+
+/** Install-time identity persisted at an atomic HRC release root. */
+export type PraesidiumReleaseManifest = {
+  schema: 1
+  releaseId: string
+  hrcBuild: PraesidiumBuild
+  aspBuild: PraesidiumBuild
+  installedAt: string
+}
+
+export type HrcReleaseStatus =
+  | {
+      mode: 'atomic'
+      releaseId: string
+      releasePath: string
+      manifestPath: string
+      hrcBuild: PraesidiumBuild
+      aspBuild: PraesidiumBuild
+      installedAt: string
+      processStartedAt: string
+      runningEqualsInstalled: boolean
+    }
+  | {
+      mode: 'unmanaged'
+      packagePath: string
+      processStartedAt: string
+      runningEqualsInstalled: false
+    }
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -683,6 +781,7 @@ export type HrcCapabilityStatus = {
   cwd: string
   binaryPath: string
   packagePath: string
+  release: HrcReleaseStatus
   sessionCount: number
   runtimeCount: number
   apiVersion: string

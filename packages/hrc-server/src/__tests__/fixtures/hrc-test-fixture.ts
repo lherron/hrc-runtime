@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import type { HrcServerOptions } from '../../index'
+import type { TmuxManager } from '../../tmux'
 
 export type ResolveSessionResult = {
   hostSessionId: string
@@ -46,6 +47,52 @@ export type HrcServerTestFixture = {
     patch: SeedTmuxRuntimePatch
   ): void
   cleanup(): Promise<void>
+}
+
+/**
+ * Own a tmux pane's prompt before making capture-based assertions.
+ *
+ * A fresh pane inherits the host's interactive shell startup files, so prompt
+ * width and redraw behavior are otherwise ambient test inputs. The marker
+ * proves both that the pane accepted the setup command and that the controlled
+ * prompt rendered before the caller sends its actual test payload.
+ */
+export async function setTmuxPanePrompt(
+  tmux: TmuxManager,
+  paneId: string,
+  prompt: string,
+  readyMarker: string
+): Promise<void> {
+  // Prompt frameworks commonly replace PS1 from zsh precmd hooks. Replace the
+  // pane shell with a no-rc Bash so both the prompt and its redraw behavior are
+  // fixture-owned, regardless of the operator's login-shell configuration.
+  await tmux.sendLiteral(paneId, 'exec /bin/bash --noprofile --norc -i')
+  await tmux.sendEnter(paneId)
+  await tmux.sendLiteral(
+    paneId,
+    `PS1=${shellSingleQuote(prompt)}; PS2=''; PROMPT_COMMAND=; printf '\\n%s\\n' ${shellSingleQuote(readyMarker)}`
+  )
+  await tmux.sendEnter(paneId)
+
+  const renderedPrompt = prompt.trimEnd()
+  let captured = ''
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    captured = await tmux.capture(paneId)
+    const markerIndex = captured.lastIndexOf(readyMarker)
+    if (
+      markerIndex >= 0 &&
+      captured.slice(markerIndex + readyMarker.length).includes(renderedPrompt)
+    ) {
+      return
+    }
+    await Bun.sleep(50)
+  }
+
+  throw new Error(`tmux pane did not activate controlled prompt; captured: ${captured}`)
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`
 }
 
 export async function createHrcTestFixture(prefix: string): Promise<HrcServerTestFixture> {

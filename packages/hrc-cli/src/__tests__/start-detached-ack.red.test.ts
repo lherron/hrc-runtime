@@ -15,7 +15,7 @@ type CliResult = {
   exitCode: number
 }
 
-type StubMode = 'started' | 'admission-rejected'
+type StubMode = 'accepted' | 'admission-rejected'
 
 describe('hrc start detached prompt acknowledgement [RED]', () => {
   let root: string
@@ -33,7 +33,7 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
     stateRoot = join(root, 'state')
     agentsRoot = join(root, 'agents')
     projectRoot = join(root, 'agent-spaces')
-    stubMode = 'started'
+    stubMode = 'accepted'
     turnRequests = []
 
     await mkdir(runtimeRoot, { recursive: true })
@@ -57,7 +57,8 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
           })
         }
         if (path === '/v1/turns') {
-          turnRequests.push((await request.json()) as Record<string, unknown>)
+          const turnRequest = (await request.json()) as Record<string, unknown>
+          turnRequests.push(turnRequest)
           if (stubMode === 'admission-rejected') {
             return Response.json(
               {
@@ -70,25 +71,40 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
               { status: 503 }
             )
           }
-          return Response.json({
-            runId: 'run-still-running',
-            hostSessionId: 'hs-start-ack',
-            generation: 1,
-            runtimeId: 'rt-still-running',
-            transport: 'headless',
-            status: 'started',
-            supportsInFlightInput: true,
-            startIdentity: { kind: 'broker', invocationId: 'inv-started' },
-            observation: {
-              lifecycle: {
-                selector: {
-                  runId: 'run-still-running',
-                  runtimeId: 'rt-still-running',
-                  generation: 1,
+          const waitFor = turnRequest['waitFor']
+          const stage =
+            waitFor === 'terminal'
+              ? 'terminal'
+              : waitFor === 'turn_started'
+                ? 'turn_started'
+                : 'accepted'
+          const status =
+            stage === 'terminal' ? 'completed' : stage === 'turn_started' ? 'started' : 'accepted'
+          return Response.json(
+            {
+              runId: 'run-still-running',
+              hostSessionId: 'hs-start-ack',
+              generation: 1,
+              runtimeId: 'rt-still-running',
+              transport: 'headless',
+              stage,
+              status,
+              ...(stage === 'terminal' ? { outcome: 'completed' } : {}),
+              replayed: false,
+              supportsInFlightInput: true,
+              startIdentity: { kind: 'broker', invocationId: 'inv-started' },
+              observation: {
+                lifecycle: {
+                  selector: {
+                    runId: 'run-still-running',
+                    runtimeId: 'rt-still-running',
+                    generation: 1,
+                  },
                 },
               },
             },
-          })
+            { status: stage === 'accepted' ? 202 : 200 }
+          )
         }
         return Response.json({ error: { message: `unexpected ${path}` } }, { status: 404 })
       },
@@ -102,12 +118,25 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
   })
 
   async function runStart(scope: string, extraArgs: string[] = []): Promise<CliResult> {
+    const cleanEnv = { ...process.env }
+    for (const key of [
+      'AGENT_SCOPE_REF',
+      'AGENT_SESSION_REF',
+      'AGENT_TASK',
+      'ASP_DEFAULT_TASK',
+      'ASP_HANDLE',
+      'ASP_SCOPE_REF',
+      'ASP_TASK_ID',
+      'HRC_SESSION_REF',
+    ]) {
+      delete cleanEnv[key]
+    }
     const proc = Bun.spawn(
       ['bun', 'run', CLI_PATH, 'start', scope, '-p', 'keep working', ...extraArgs],
       {
         cwd: projectRoot,
         env: {
-          ...process.env,
+          ...cleanEnv,
           HRC_RUNTIME_DIR: runtimeRoot,
           HRC_STATE_DIR: stateRoot,
           ASP_AGENTS_ROOT: agentsRoot,
@@ -131,16 +160,40 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
 
     expect(bare.exitCode).toBe(0)
     expect(explicit.exitCode).toBe(0)
+    expect(turnRequests.map((request) => request['waitFor'])).toEqual(['terminal', 'terminal'])
     expect(turnRequests.map((request) => request['waitForCompletion'])).toEqual([true, true])
+    expect(JSON.parse(bare.stdout).runtime).toMatchObject({
+      stage: 'terminal',
+      outcome: 'completed',
+    })
   })
 
-  it('exits zero for a started turn and nonzero for admission rejection', async () => {
-    const started = await runStart(TASK_SCOPE)
+  it('maps --wait=started to the persisted turn-started boundary', async () => {
+    const result = await runStart(TASK_SCOPE, ['--wait=started'])
+
+    expect(result.exitCode).toBe(0)
+    expect(turnRequests[0]).toMatchObject({
+      waitFor: 'turn_started',
+      waitForCompletion: false,
+    })
+    expect(JSON.parse(result.stdout).runtime).toMatchObject({
+      stage: 'turn_started',
+      status: 'started',
+    })
+    expect(result.stderr).toContain('turn started — follow with:')
+  })
+
+  it('exits zero for an accepted turn and nonzero for admission rejection', async () => {
+    const accepted = await runStart(TASK_SCOPE)
     stubMode = 'admission-rejected'
     const rejected = await runStart(TASK_SCOPE)
 
-    expect(started.exitCode).toBe(0)
-    expect(JSON.parse(started.stdout).runtime.status).toBe('started')
+    expect(accepted.exitCode).toBe(0)
+    expect(JSON.parse(accepted.stdout).runtime).toMatchObject({
+      stage: 'accepted',
+      status: 'accepted',
+    })
+    expect(turnRequests[0]?.['idempotencyKey']).toMatch(/^hrc-start-/)
     expect(rejected.exitCode).not.toBe(0)
     expect(rejected.stderr).toContain('broker compile/admission rejected')
   })
@@ -151,7 +204,7 @@ describe('hrc start detached prompt acknowledgement [RED]', () => {
 
     expect(result.exitCode).toBe(0)
     expect(body['follow']).toBeUndefined()
-    expect(result.stderr).toContain('started detached — follow with:')
+    expect(result.stderr).toContain('accepted detached — follow with:')
     expect(result.stderr).toContain(`hrc monitor watch ${TASK_ID} --follow`)
     expect(result.stderr).toContain(`wrkq monitor wait ${TASK_ID} --until all-terminal`)
   })

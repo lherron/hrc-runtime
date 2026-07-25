@@ -21,7 +21,11 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { writeServerLog } from '../server-log.js'
 import { finalizeRuntimeTermination } from '../server-misc.js'
 import { createHostSessionId, isRuntimeUnavailableStatus, timestamp } from '../server-util.js'
-import { disposeBrokerRuntime } from './broker-dispose.js'
+import {
+  disposeBrokerRuntime,
+  hasBrokerLeasedTmux,
+  teardownBrokerLeasedTmux,
+} from './broker-dispose.js'
 import { sessionEventBase } from './session-event-base.js'
 
 export function resolveManagedSessionRuntime(
@@ -289,14 +293,15 @@ export async function invalidateHostContext(
       continue
     }
 
-    if (
-      runtime.transport === 'tmux' &&
-      runtime.controllerKind === 'harness-broker' &&
-      runtime.tmuxJson
-    ) {
+    if (runtime.controllerKind === 'harness-broker') {
       await disposeBrokerRuntime(this.getHarnessBrokerController(), runtime.runtimeId, {
         logMessage: 'broker runtime dispose failed during context invalidation',
       })
+      if (hasBrokerLeasedTmux(runtime)) {
+        await teardownBrokerLeasedTmux(runtime, {
+          logMessage: 'broker leased tmux teardown failed during context invalidation',
+        })
+      }
     } else if (runtime.transport === 'tmux' && runtime.tmuxJson) {
       const tmuxPane = requireTmuxPane(runtime)
       const inspected = await this.tmux.inspectSession(tmuxPane.sessionName)

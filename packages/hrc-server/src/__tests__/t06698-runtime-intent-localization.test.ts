@@ -16,7 +16,9 @@ describe('T-06698 federated runtime intent localization', () => {
       const agentsRoot = join(root, 'agents')
       await mkdir(join(agentsRoot, 'clod'), { recursive: true })
       await writeFile(join(agentsRoot, 'clod', 'agent-profile.toml'), 'schemaVersion = 2\n')
-      const localProjectRoot = join(import.meta.dir, '..', '..', '..', '..')
+      const checkoutRoot = join(root, 'checkouts')
+      const localProjectRoot = join(checkoutRoot, 'hrc-runtime')
+      await mkdir(join(localProjectRoot, '.git'), { recursive: true })
       const intent: HrcRuntimeIntent = {
         placement: {
           agentRoot: '/origin/praesidium/var/agents/clod',
@@ -35,8 +37,8 @@ describe('T-06698 federated runtime intent localization', () => {
       }
 
       const localized = localizeFederatedRuntimeIntent(SCOPE, intent, {
-        cwd: localProjectRoot,
-        env: { ...process.env, ASP_AGENTS_ROOT: agentsRoot },
+        cwd: checkoutRoot,
+        env: { ASP_AGENTS_ROOT: agentsRoot },
       })
 
       expect(localized.placement.agentRoot).toBe(join(agentsRoot, 'clod'))

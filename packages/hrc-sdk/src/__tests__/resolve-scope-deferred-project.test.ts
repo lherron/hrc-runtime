@@ -19,6 +19,7 @@ describe('resolveProfileAwareScopeInput — project-deferred shorthand', () => {
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:BLAH')
     expect(resolved.parsed.projectId).toBe('agent-loop')
     expect(resolved.parsed.taskId).toBe('BLAH')
+    expect(resolved.projectOrigin).toBe('inferred')
   })
 
   it('still throws the actionable error when no project is resolvable anywhere', () => {
@@ -30,12 +31,22 @@ describe('resolveProfileAwareScopeInput — project-deferred shorthand', () => {
   it('leaves an explicit <agent>@<project>:<task> handle unchanged', () => {
     const resolved = resolveProfileAwareScopeInput('mable@agent-loop:BLAH', {})
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:BLAH')
+    expect(resolved.projectOrigin).toBe('explicit')
   })
 
   it('qualifies a bare agent to primary task using the project fallback', () => {
     const resolved = resolveProfileAwareScopeInput('mable', {
-      scope: { projectId: 'agent-loop' },
+      scope: { projectId: 'agent-loop', defaultTaskId: 'primary' },
     })
     expect(resolved.scopeRef).toBe('agent:mable:project:agent-loop:task:primary')
+    expect(resolved.projectOrigin).toBe('inferred')
+  })
+
+  it('allows an explicit project option to preserve its origin through shorthand parsing', () => {
+    const resolved = resolveProfileAwareScopeInput('mable:BLAH', {
+      scope: { projectId: 'agent-loop' },
+      projectOrigin: 'explicit',
+    })
+    expect(resolved.projectOrigin).toBe('explicit')
   })
 })

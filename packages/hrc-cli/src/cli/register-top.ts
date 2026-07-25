@@ -3,6 +3,7 @@ import { runHrcPiTop } from 'hrc-pi-top'
 import { runHrcTop } from 'hrc-top'
 
 import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
+import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import { rawArgvForVerb, toLegacyArgv, toLegacyArgvForScopeCommand } from './argv.js'
 import {
   cmdBridgeClose,
@@ -56,11 +57,12 @@ export function registerTopLevelCommands(program: Command): void {
     .option('--json', 'on error, emit structured JSON (includes broker rejection detail)')
     .option('--project-id <id>', 'override the inferred project id')
     .option('--project-root <path>', 'override project root')
+    .option('--idempotency-key <key>', 'stable retry identity for the prompt dispatch')
     .option('-p <text>', 'initial prompt to send to the harness')
     .option('--prompt-file <path>', 'read initial prompt from a file')
     .addOption(
-      new Option('--wait [mode]', 'wait for the prompt turn to complete')
-        .choices(['completed'])
+      new Option('--wait [mode]', 'wait for the prompt turn to start or become terminal')
+        .choices(['started', 'completed'])
         .preset('completed')
     )
     .action(async (_scope, _opts, cmd: Command) => {
@@ -71,8 +73,8 @@ export function registerTopLevelCommands(program: Command): void {
       const opts = cmd.opts()
       const rawArgv = rawArgvForVerb(cmd, 'start', { offset: 1 })
       const args = toLegacyArgvForScopeCommand(positionals, opts, rawArgv, {
-        strings: ['project-id', 'project-root', 'prompt-file'],
-        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json', 'wait'],
+        strings: ['project-id', 'project-root', 'prompt-file', 'idempotency-key', 'wait'],
+        booleans: ['force-restart', 'new-session', 'dry-run', 'debug', 'json'],
         negatedBooleans: ['register'],
       })
       await cmdStart(args)
@@ -253,6 +255,21 @@ Semantics:
   const adminRuns = admin
     .command('runs')
     .description('repair run records (sweep zombies, reconcile active)')
+
+  admin
+    .command('worktrees')
+    .description('audit and prune completed-task linked worktrees')
+    .command('prune')
+    .description('remove only completed, clean worktrees already merged into canonical HEAD')
+    .option('--project <id>', 'inspect one registered project')
+    .option('--root <path>', 'override its canonical root (requires --project)')
+    .option('--dry-run', 'preview without removing worktrees (default)')
+    .option('--yes', 'remove eligible worktrees without force; branches are preserved')
+    .option('--json', 'output as JSON')
+    .action(async (...actionArgs: unknown[]) => {
+      const cmd = actionArgs[actionArgs.length - 1] as Command
+      cmdAdminWorktreesPrune(cmd.opts())
+    })
 
   adminRuns
     .command('sweep-zombies')

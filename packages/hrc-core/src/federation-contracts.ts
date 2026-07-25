@@ -67,7 +67,51 @@ export type FederationMessageDelivery = {
   readonly respondTo?: HrcMessageAddress | undefined
   readonly responseFormat?: HrcTurnResponseFormat | undefined
   readonly allowStaleGeneration?: boolean | undefined
+  /**
+   * Additive discriminator for `/v1/messages/turn-handoff`.
+   *
+   * Older peers deliberately do not receive this payload: the origin first
+   * requires the `semanticTurnHandoff` peer-health capability so an old
+   * tolerant reader cannot silently downgrade a turn into an ordinary DM.
+   */
+  readonly semanticTurnHandoff?: { readonly version: 1 } | undefined
 }
+
+export type FederationSemanticTurnIdentity = {
+  readonly sessionRef: string
+  readonly scopeRef: string
+  readonly laneRef: string
+  readonly hostSessionId: string
+  readonly runtimeId: string
+  readonly runId: string
+  readonly generation: number
+  readonly mode: 'headless' | 'interactive' | 'nonInteractive'
+  readonly transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
+}
+
+/**
+ * Destination-authored lifecycle bracket for a federated semantic turn.
+ *
+ * The signal returns over the already-fenced response route. The origin
+ * projects it into its local lifecycle stream so existing hrcchat watchers do
+ * not need a peer URL, token, or a second transport.
+ */
+export type FederationSemanticTurnSignal =
+  | {
+      readonly version: 1
+      readonly type: 'started'
+      readonly sourceHrcSeq: number
+      readonly identity: FederationSemanticTurnIdentity
+    }
+  | {
+      readonly version: 1
+      readonly type: 'terminal'
+      readonly sourceHrcSeq: number
+      readonly identity: FederationSemanticTurnIdentity
+      readonly outcome: 'completed' | 'failed'
+      readonly errorCode?: string | undefined
+      readonly errorMessage?: string | undefined
+    }
 
 /**
  * Narrow cross-node lifecycle projection for an interactive semantic turn.
@@ -127,6 +171,7 @@ export type FederationMessageEnvelope = {
   readonly replyToMessageId?: string | undefined
   readonly expected: FederationExpectedPlacement
   readonly delivery?: FederationMessageDelivery | undefined
+  readonly semanticTurnSignal?: FederationSemanticTurnSignal | undefined
   readonly interactiveSignal?: FederationInteractiveLifecycleSignal | undefined
   readonly mail?: FederationMailPayload | undefined
 }
@@ -230,6 +275,8 @@ export type FederationPeerCapabilities = {
   readonly establish?: boolean | undefined
   /** Additive v1 capability; older peers simply omit it. */
   readonly runtimeProjection?: boolean | undefined
+  /** Additive v1 capability; required before forwarding semantic turn handoffs. */
+  readonly semanticTurnHandoff?: boolean | undefined
 }
 
 /** One bounded on-demand peer probe. Tokens and other transport secrets never enter this DTO. */

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   HrcHttpError,
   HrcLifecycleEvent,
@@ -21,8 +23,10 @@ import type {
   HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
+  TraceMessageRequest,
+  TraceMessageResponse,
 } from 'hrc-core'
-import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -73,6 +77,11 @@ import type {
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
   HrcSubscriberAdmissionSnapshot,
+  HrcSubscriberReceiptAckRequest,
+  HrcSubscriberReceiptAckResponse,
+  HrcTurnAdmissionCloseRequest,
+  HrcTurnAdmissionReopenRequest,
+  HrcTurnAdmissionState,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvocationEventEnvelope,
@@ -302,7 +311,7 @@ export class HrcClient {
     }
 
     if (body?.error) {
-      throw new HrcDomainError(body.error.code, body.error.message, body.error.detail)
+      throw new HrcDomainError(body.error.code, typedResponseErrorMessage(body), body.error.detail)
     }
     throw new Error(`HRC request failed with status ${res.status}`)
   }
@@ -348,7 +357,24 @@ export class HrcClient {
   }
 
   async dispatchTurn(request: DispatchTurnRequest): Promise<DispatchTurnResponse> {
-    return this.postJson<DispatchTurnResponse>('/v1/turns', request)
+    return this.postJson<DispatchTurnResponse>('/v1/turns', {
+      ...request,
+      idempotencyKey: request.idempotencyKey ?? `hrc-sdk-${randomUUID()}`,
+    })
+  }
+
+  async getTurnAdmission(): Promise<HrcTurnAdmissionState> {
+    return this.getJson<HrcTurnAdmissionState>('/v1/server/turn-admission')
+  }
+
+  async closeTurnAdmission(request: HrcTurnAdmissionCloseRequest): Promise<HrcTurnAdmissionState> {
+    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/close', request)
+  }
+
+  async reopenTurnAdmission(
+    request: HrcTurnAdmissionReopenRequest
+  ): Promise<HrcTurnAdmissionState> {
+    return this.postJson<HrcTurnAdmissionState>('/v1/server/turn-admission/reopen', request)
   }
 
   async prepareAttachedRun(
@@ -771,6 +797,10 @@ export class HrcClient {
     return this.postJson<ListMessagesResponse>('/v1/messages/query', filter ?? {})
   }
 
+  async traceMessage(request: TraceMessageRequest): Promise<TraceMessageResponse> {
+    return this.postJson<TraceMessageResponse>('/v1/messages/trace', request)
+  }
+
   async waitMessage(request: WaitMessageRequest): Promise<WaitMessageResponse> {
     return this.postJson<WaitMessageResponse>('/v1/messages/wait', request)
   }
@@ -851,6 +881,7 @@ export class HrcClient {
     const path = buildPath('/v1/events', {
       fromSeq: options?.fromSeq,
       follow: boolField(options?.follow),
+      receipt: options?.follow ? 'consumer-ack-v1' : undefined,
       ...eventFilterParams(options),
     })
 
@@ -861,7 +892,8 @@ export class HrcClient {
         ...(options?.signal ? { signal: options.signal } : {}),
       },
       options?.signal,
-      (event) => matchesWatchOptions(event, options)
+      (event) => matchesWatchOptions(event, options),
+      (event) => event.hrcSeq
     )
   }
 
@@ -875,6 +907,7 @@ export class HrcClient {
       generation: options.generation,
       afterSeq: options.afterSeq ?? 0,
       follow: boolField(options.follow),
+      receipt: options.follow ? 'consumer-ack-v1' : undefined,
     })
 
     yield* this.streamNdjson<InvocationEventEnvelope>(
@@ -883,7 +916,9 @@ export class HrcClient {
         method: 'GET',
         ...(options.signal ? { signal: options.signal } : {}),
       },
-      options.signal
+      options.signal,
+      undefined,
+      (event) => event.seq
     )
   }
 
@@ -897,7 +932,8 @@ export class HrcClient {
     path: string,
     init: BunRequestInit,
     signal?: AbortSignal,
-    predicate?: (value: T) => boolean
+    predicate?: ((value: T) => boolean) | undefined,
+    receiptSeq?: ((value: T) => number | undefined) | undefined
   ): AsyncIterable<T> {
     const res = await this.unixFetch(path, init)
 
@@ -908,22 +944,47 @@ export class HrcClient {
     const body = res.body
     if (!body) return
 
-    // Parse one NDJSON line and yield it if it survives JSON.parse and the
-    // optional predicate. Malformed lines are skipped (M-10). Shared by the
-    // per-chunk loop and the trailing-buffer flush.
-    const emit = function* (raw: string): Generator<T> {
+    const subscriberId = res.headers.get('x-hrc-subscriber-id')?.trim()
+    const receiptToken = res.headers.get('x-hrc-receipt-token')?.trim()
+    const receiptAckPath = res.headers.get('x-hrc-receipt-ack-path')?.trim()
+    const receiptEnabled =
+      subscriberId !== undefined &&
+      subscriberId.length > 0 &&
+      receiptToken !== undefined &&
+      receiptToken.length > 0 &&
+      receiptAckPath !== undefined &&
+      receiptAckPath.length > 0 &&
+      receiptSeq !== undefined
+
+    // Malformed lines are skipped (M-10). A receipt ACK is sent only after a
+    // complete NDJSON value is decoded; ACK failure leaves the daemon's receipt
+    // cursor honestly behind and a later cumulative ACK can catch it up.
+    const parse = (raw: string): T | undefined => {
       const trimmed = raw.trim()
-      if (trimmed.length === 0) return
-      let value: T
+      if (trimmed.length === 0) return undefined
       try {
-        value = JSON.parse(trimmed) as T
+        return JSON.parse(trimmed) as T
       } catch {
-        // M-10: skip malformed NDJSON lines instead of crashing the generator
+        return undefined
+      }
+    }
+    const acknowledge = async (value: T): Promise<void> => {
+      if (
+        !receiptEnabled ||
+        subscriberId === undefined ||
+        receiptToken === undefined ||
+        receiptAckPath === undefined ||
+        receiptSeq === undefined
+      ) {
         return
       }
-      if (!predicate || predicate(value)) {
-        yield value
-      }
+      const seq = receiptSeq(value)
+      if (seq === undefined || !Number.isSafeInteger(seq) || seq < 1) return
+      await this.postJson<HrcSubscriberReceiptAckResponse>(receiptAckPath, {
+        subscriberId,
+        receiptToken,
+        seq,
+      } satisfies HrcSubscriberReceiptAckRequest).catch(() => undefined)
     }
 
     const decoder = new TextDecoder()
@@ -936,12 +997,45 @@ export class HrcClient {
       // Keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        yield* emit(line)
+        const value = parse(line)
+        if (value === undefined) continue
+        await acknowledge(value)
+        if (!predicate || predicate(value)) yield value
         if (signal?.aborted) return
       }
     }
 
     // Flush any remaining content
-    yield* emit(buffer)
+    const value = parse(buffer)
+    if (value !== undefined) {
+      await acknowledge(value)
+      if (!predicate || predicate(value)) yield value
+    }
   }
+}
+
+function typedResponseErrorMessage(body: HrcHttpError): string {
+  const { code, message, detail } = body.error
+  if (code !== HrcErrorCode.INTERNAL_ERROR) {
+    return message
+  }
+
+  const cause = boundedDetailString(detail['cause'])
+  const requestId = boundedDetailString(detail['requestId'])
+  return `${message} [${code}]${cause ? `: ${cause}` : ''}${
+    requestId ? ` (requestId=${requestId})` : ''
+  }`
+}
+
+function boundedDetailString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  return trimmed.length > ERROR_BODY_EXCERPT_MAX
+    ? `${trimmed.slice(0, ERROR_BODY_EXCERPT_MAX)}${ELLIPSIS}`
+    : trimmed
 }

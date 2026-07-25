@@ -96,6 +96,8 @@ export type RunRow = {
   dispatched_input_id: string | null
   broker_input_fenced_at: string | null
   broker_input_fence_reason: string | null
+  dispatch_idempotency_key: string | null
+  dispatch_request_hash: string | null
 }
 
 export type LaunchRow = {

@@ -233,6 +233,8 @@ export type HrcServerOptions = {
   federationOutboxRetryPolicy?: FederationOutboxRetryPolicy | undefined
   /** Test/embedded polling override; production polls once per second. */
   federationOutboxPollIntervalMs?: number | undefined
+  /** Test/embedded collective-history replication polling override. */
+  collectiveHistoryPollIntervalMs?: number | undefined
   tmuxSocketPath?: string | undefined
   /**
    * Auto-rotation policy: a session whose `createdAt` exceeds this age (in
@@ -250,6 +252,13 @@ export type HrcServerOptions = {
    * Env override: `HRC_STALE_GENERATION_ENABLED` (`0`/`false` disables).
    */
   staleGenerationEnabled?: boolean | undefined
+  /**
+   * Enable daemon-owned aging of abandoned tmux runtime rows. The stage is
+   * default-on and liveness-gated; it marks rows stale but never deletes them.
+   *
+   * Env override: `HRC_TMUX_AGING_ENABLED` (`0`/`false` disables).
+   */
+  tmuxAgingEnabled?: boolean | undefined
   /**
    * Cut headless OpenAI Codex dispatch over to the Harness Broker. Default on.
    *

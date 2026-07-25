@@ -186,7 +186,7 @@ describe('POST /v1/runtimes/sweep', () => {
     })
   })
 
-  it('reports aged ready and busy runtimes as planned stale transitions in dry-run', async () => {
+  it('reports aged ready as planned stale and busy as a named skip in dry-run', async () => {
     seedRuntime({
       runtimeId: 'rt-dry-run-ready',
       hostSessionId: 'hsid-dry-run-ready',
@@ -206,10 +206,14 @@ describe('POST /v1/runtimes/sweep', () => {
 
     expect(body.summary).toMatchObject({
       matched: 2,
-      stale: 2,
+      stale: 1,
       terminated: 0,
-      skipped: 0,
+      skipped: 1,
       errors: 0,
+    })
+    expect(body.results.find((result) => result.runtimeId === 'rt-dry-run-busy')).toMatchObject({
+      status: 'skipped',
+      reason: 'busy',
     })
     expect(getRuntime('rt-dry-run-ready')?.status).toBe('ready')
     expect(getRuntime('rt-dry-run-busy')?.status).toBe('busy')
@@ -291,7 +295,7 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(getRuntime('rt-filter-tmux')?.status).toBe('ready')
   })
 
-  it('marks tmux runtimes stale without terminating their tmux session', async () => {
+  it('preserves an aged runtime when its recorded tmux substrate is live', async () => {
     seedRuntime({
       runtimeId: 'rt-tmux-live',
       hostSessionId: 'hsid-tmux-live',
@@ -299,54 +303,41 @@ describe('POST /v1/runtimes/sweep', () => {
       transport: 'tmux',
       createdAt: isoMinutesAgo(180),
     })
-
-    const tmux = (
-      server as unknown as {
-        tmux: {
-          inspectSession(sessionName: string): Promise<unknown>
-          terminate(sessionName: string): Promise<void>
-        }
-      }
-    ).tmux
-    const originalInspectSession = tmux.inspectSession.bind(tmux)
-    const originalTerminate = tmux.terminate.bind(tmux)
-    const terminatedSessions: string[] = []
-    tmux.inspectSession = async (sessionName: string) => ({
-      socketPath: fixture.tmuxSocketPath,
-      sessionName,
-      windowName: 'main',
-      sessionId: '$1',
-      windowId: '@1',
-      paneId: '%1',
+    ;(server as any).brokerTmuxManagerFactory = ({ socketPath }: { socketPath: string }) => ({
+      inspectWindow: async ({
+        sessionName,
+        windowName,
+      }: {
+        sessionName: string
+        windowName: string
+      }) => ({
+        socketPath,
+        sessionName,
+        windowName,
+        sessionId: '$dead',
+        windowId: '@dead',
+        paneId: '%dead',
+      }),
     })
-    tmux.terminate = async (sessionName: string) => {
-      terminatedSessions.push(sessionName)
-      throw new Error(`unexpected tmux terminate for ${sessionName}`)
-    }
 
-    try {
-      const body = await sweep({ transport: 'tmux', olderThan: '1h' })
+    const body = await sweep({ transport: 'tmux', olderThan: '1h' })
 
-      expect(body.summary).toMatchObject({
-        matched: 1,
-        stale: 1,
-        terminated: 0,
-        skipped: 0,
-        errors: 0,
-      })
-      expect(body.results[0]).toMatchObject({
-        runtimeId: 'rt-tmux-live',
-        transport: 'tmux',
-        status: 'stale',
-        droppedContinuation: false,
-      })
-      expect(getRuntime('rt-tmux-live')?.status).toBe('stale')
-      expect(terminatedSessions).toEqual([])
-      expect(listRuntimeEvents('runtime.terminated')).toHaveLength(0)
-    } finally {
-      tmux.inspectSession = originalInspectSession
-      tmux.terminate = originalTerminate
-    }
+    expect(body.summary).toMatchObject({
+      matched: 1,
+      stale: 0,
+      terminated: 0,
+      skipped: 1,
+      errors: 0,
+    })
+    expect(body.results[0]).toMatchObject({
+      runtimeId: 'rt-tmux-live',
+      transport: 'tmux',
+      status: 'skipped',
+      reason: 'live_tmux',
+      droppedContinuation: false,
+    })
+    expect(getRuntime('rt-tmux-live')?.status).toBe('ready')
+    expect(listRuntimeEvents('runtime.terminated')).toHaveLength(0)
   })
 
   it('honors scope prefix filtering', async () => {
@@ -513,7 +504,7 @@ describe('POST /v1/runtimes/sweep', () => {
     expect(readContinuationJson('hsid-drop-explicit')).toBeNull()
   })
 
-  it('applies default continuation drop only to busy non-tmux runtimes', async () => {
+  it('preserves busy continuation and only ages the inactive ready runtime', async () => {
     seedRuntime({
       runtimeId: 'rt-default-busy',
       hostSessionId: 'hsid-default-busy',
@@ -534,18 +525,20 @@ describe('POST /v1/runtimes/sweep', () => {
 
     expect(body.summary).toMatchObject({
       matched: 2,
-      stale: 2,
+      stale: 1,
       terminated: 0,
-      skipped: 0,
+      skipped: 1,
       errors: 0,
     })
     expect(body.results.find((result) => result.runtimeId === 'rt-default-busy')).toMatchObject({
-      droppedContinuation: true,
+      status: 'skipped',
+      reason: 'busy',
+      droppedContinuation: false,
     })
     expect(body.results.find((result) => result.runtimeId === 'rt-default-ready')).toMatchObject({
       droppedContinuation: false,
     })
-    expect(readContinuationJson('hsid-default-busy')).toBeNull()
+    expect(readContinuationJson('hsid-default-busy')).not.toBeNull()
     expect(readContinuationJson('hsid-default-ready')).not.toBeNull()
   })
 

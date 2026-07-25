@@ -13,19 +13,23 @@ import type {
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
-import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
-import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
+import {
+  actuatorSplitRuntimeAuthority,
+  assertActuatorSplitAdmission,
+  prepareActuatorSplitIntent,
+} from './actuator-split.js'
 import {
   decideCodexAppServerPresentation,
   filterBrokerDispatchEnvForLockedEnv,
   shouldSpawnGhosttyViewer,
   toRuntimeContinuationRef,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { canOperatorAttach } from './broker/runtime-hosting.js'
 import { startAspcFacadeBrokerClient } from './option-resolvers.js'
@@ -54,7 +58,12 @@ import {
   toBrokerResponseFormat,
 } from './turn-response-format.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
+
+export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -83,6 +92,23 @@ function parseDurableHeadlessTurnInput(value: string | null): DurableHeadlessTur
   } catch {
     return undefined
   }
+}
+
+export function formatQueuedSemanticDmDelivery(
+  prompt: string,
+  acceptedAt: string,
+  deliveredAt: string
+): string {
+  const acceptedAtMs = Date.parse(acceptedAt)
+  const deliveredAtMs = Date.parse(deliveredAt)
+  const queueAgeMs =
+    Number.isFinite(acceptedAtMs) && Number.isFinite(deliveredAtMs)
+      ? Math.max(0, deliveredAtMs - acceptedAtMs)
+      : 0
+  return [
+    `[queued DM delivery acceptedAt=${acceptedAt} deliveredAt=${deliveredAt} queueAgeMs=${queueAgeMs}]`,
+    prompt,
+  ].join('\n')
 }
 
 export function enqueueDurableHeadlessTurnInput(
@@ -203,7 +229,16 @@ export async function drainDurableHeadlessTurnInputs(
       })
     }
 
-    const response = await this.dispatchTurnForSession(session, intent, delivery.prompt, {
+    const deliveredAt = timestamp()
+    const prompt =
+      delivery.source === 'semantic_dm'
+        ? formatQueuedSemanticDmDelivery(
+            delivery.prompt,
+            queued.acceptedAt ?? queued.updatedAt,
+            deliveredAt
+          )
+        : delivery.prompt
+    const response = await this.dispatchTurnForSession(session, intent, prompt, {
       runId: queued.runId,
       waitForCompletion: false,
       responseFormat: delivery.responseFormat,
@@ -279,10 +314,17 @@ export async function startHeadlessBrokerRuntime(
   options: {
     allowCompilerInitialInputWithoutIdentity?: boolean | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
-  const turnIntent: HrcRuntimeIntent =
+  const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  // Resolve every approval/artifact/base/path fact before opening the compiler
+  // facade or allocating a broker substrate. Actuator prompts are replaced here
+  // with the deterministic apply request, so free-form caller text never enters
+  // hash-covered invocation material as actuator authority.
+  const preparedActuatorSplit = await prepareActuatorSplitIntent(requestedTurnIntent)
+  const turnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
@@ -290,20 +332,14 @@ export async function startHeadlessBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = {
-    ...injectRuntimeTaskClaimCredentialFile(
-      injectRuntimeBirthCredential(
-        mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-        runtimeId
-      ),
-      {
-        db: this.db,
-        runtimeRoot: this.options.runtimeRoot,
-        hostSessionId: session.hostSessionId,
-      }
-    ),
-    HRC_MAIL_STOP_SOCKET: this.options.socketPath,
-  }
+  const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
+    baseEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+    db: this.db,
+    runtimeRoot: this.options.runtimeRoot,
+    hostSessionId: session.hostSessionId,
+    runtimeId,
+    mailStopSocket: this.options.socketPath,
+  })
   try {
     const compiled = await compileBrokerRuntimePlan(
       {
@@ -346,6 +382,12 @@ export async function startHeadlessBrokerRuntime(
       runId,
       route: 'broker',
     })
+    const actuatorSplitAuthority = await assertActuatorSplitAdmission({
+      intent: turnIntent,
+      route: 'broker',
+      startRequest: compiled.startRequest,
+      preparedAuthority: preparedActuatorSplit.authority,
+    })
 
     // T-01866 — headless durable cutover is UNCONDITIONAL. Every headless broker
     // runtime goes through the controller's leased-tmux + Unix-IPC allocation, so
@@ -376,6 +418,7 @@ export async function startHeadlessBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
+      runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
@@ -395,9 +438,70 @@ export async function startHeadlessBrokerRuntime(
         routeId: `headless-broker:${compiled.profile.brokerDriver}`,
         brokerRoute: true,
       }),
+      ...(options.onAccepted
+        ? {
+            onAccepted: async (graph) => {
+              await options.onAccepted?.(graph.runtime)
+            },
+          }
+        : {}),
     })
 
     if (!result.ok) {
+      const acceptedRun = this.db.runs.getByRunId(runId)
+      if (acceptedRun !== null) {
+        const failedAt = timestamp()
+        this.db.runs.markCompleted(runId, {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: result.error.message,
+        })
+        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
+          invocationState: 'failed',
+          updatedAt: failedAt,
+        })
+        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: result.error.code,
+          errorMessage: result.error.message,
+        })
+        this.db.runtimes.update(runtimeId, {
+          status: 'failed',
+          statusChangedAt: failedAt,
+          activeRunId: runId,
+          updatedAt: failedAt,
+          runtimeStateJson: {
+            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+            status: 'failed',
+            updatedAt: failedAt,
+            startFailure: {
+              code: result.error.code,
+              message: result.error.message,
+            },
+          },
+        })
+        const failedEvent = appendHrcEvent(this.db, 'turn.failed', {
+          ts: failedAt,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runId,
+          runtimeId,
+          transport: 'headless',
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          payload: {
+            code: result.error.code,
+            message: result.error.message,
+            phase: 'broker-invocation-start',
+          },
+        })
+        this.notifyEvent(failedEvent)
+      }
       if (
         result.error.code === 'unsupported_capability' &&
         options.responseFormat?.kind === 'json_schema'
@@ -438,20 +542,62 @@ export async function executeHeadlessBrokerStartTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   }
 ): Promise<Response> {
+  let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
+  let rejectAccepted!: (error: unknown) => void
+  let acceptedSettled = false
+  const accepted = new Promise<HrcRuntimeSnapshot>((resolve, reject) => {
+    resolveAccepted = (runtime) => {
+      acceptedSettled = true
+      resolve(runtime)
+    }
+    rejectAccepted = reject
+  })
   // Publish the runtime-producing promise before yielding so crossing dispatches
   // join this boot through handleHeadlessBrokerDispatchTurn's deferral branch.
   const bootOperation = this.startHeadlessBrokerRuntime(session, intent, prompt, runId, {
     responseFormat: options.responseFormat,
-  }).finally(() => {
-    this.runtimeStartOperations.delete(session.hostSessionId)
+    onAccepted: (runtime) => {
+      if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
+        const acceptedAt = timestamp()
+        const acceptedEvent = appendHrcEvent(this.db, 'turn.accepted', {
+          ts: acceptedAt,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          runId,
+          runtimeId: runtime.runtimeId,
+          transport: 'headless',
+          payload: {
+            promptLength: prompt.length,
+            authority: 'durable-start-graph',
+          },
+        })
+        this.notifyEvent(acceptedEvent)
+      }
+      resolveAccepted(runtime)
+    },
   })
+    .then((runtime) => {
+      // Detached acceptance must not wait for presentation, but completion of
+      // the background boot still owns the best-effort viewer side effect.
+      if (canOperatorAttach(runtime)) {
+        void this.spawnBrokerHeadlessViewer(runtime)
+      }
+      // Test doubles and older controller adapters may not implement the
+      // acceptance callback. Full boot is a conservative fallback boundary.
+      if (!acceptedSettled) resolveAccepted(runtime)
+      return runtime
+    })
+    .finally(() => {
+      this.runtimeStartOperations.delete(session.hostSessionId)
+    })
   this.runtimeStartOperations.set(session.hostSessionId, bootOperation)
-  const runtime = await bootOperation
-  if (canOperatorAttach(runtime)) {
-    void this.spawnBrokerHeadlessViewer(runtime)
-  }
-
+  void bootOperation.catch((error) => {
+    if (!acceptedSettled) rejectAccepted(error)
+  })
   if (options.waitForCompletion === false) {
+    const runtime = await accepted
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -462,7 +608,7 @@ export async function executeHeadlessBrokerStartTurn(
       supportsInFlightInput: false,
     } satisfies DispatchTurnResponseBase)
   }
-
+  const runtime = await bootOperation
   await this.waitForHeadlessBrokerRunCompletion(runId, runtime.runtimeId)
   return json({
     runId,
@@ -643,7 +789,8 @@ export async function executeHeadlessBrokerInputTurn(
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     }))
   ) {
     writeServerLog('INFO', 'headless.durable_reattach.dispatch_recovered', {

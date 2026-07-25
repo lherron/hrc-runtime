@@ -5,6 +5,7 @@ import type { AttachmentRef } from 'spaces-runtime'
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
+  HrcActuatorSplitAuthorityView,
   HrcAppSessionRef,
   HrcAppSessionSpec,
   HrcBrokerInvocationEventRecord,
@@ -30,6 +31,30 @@ import type { HrcSessionRef } from './selectors.js'
 // -- Restart style (shared between server tmux manager and SDK) ---------------
 
 export type RestartStyle = 'reuse_pty' | 'fresh_pty'
+
+// -- Server turn-admission control -------------------------------------------
+
+export type HrcTurnAdmissionCloseRequest = {
+  operationId: string
+  requestedBy?: string | null | undefined
+  requestedRunId?: string | null | undefined
+  reason?: string | undefined
+}
+
+export type HrcTurnAdmissionReopenRequest = {
+  operationId: string
+}
+
+export type HrcTurnAdmissionState = {
+  state: 'open' | 'closed'
+  activeAdmissions: number
+  operationId?: string | undefined
+  requestedBy?: string | null | undefined
+  requestedRunId?: string | null | undefined
+  reason?: string | undefined
+  closedAt?: string | undefined
+  durable: boolean
+}
 
 // -- Session management -------------------------------------------------------
 
@@ -227,11 +252,18 @@ export type EnsureWindowResponse = EnsureRuntimeResponse & {
 
 export type DispatchTurnRequest = {
   hostSessionId: string
+  /**
+   * Caller-stable identity for retrying a dispatch after an ambiguous/lost
+   * response. Reuse with a different semantic request is rejected.
+   */
+  idempotencyKey?: string | undefined
   prompt: string
   responseFormat?: HrcTurnResponseFormat | undefined
   attachments?: AttachmentRef[] | undefined
   fences?: HrcFence | undefined
   runtimeIntent?: HrcRuntimeIntent | undefined
+  /** Preferred acknowledgement boundary. Supersedes waitForCompletion when set. */
+  waitFor?: 'accepted' | 'turn_started' | 'terminal' | undefined
   waitForCompletion?: boolean | undefined
   whenBusy?: 'reject' | undefined
   repair?:
@@ -249,13 +281,19 @@ export type DispatchTurnRequest = {
   allowStaleGeneration?: boolean | undefined
 }
 
+export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'
+
 export type DispatchTurnResponse = {
   runId: string
   hostSessionId: string
   generation: number
   runtimeId: string
   transport: 'sdk' | 'tmux' | 'headless' | 'ghostty'
-  status: 'completed' | 'started'
+  stage: 'accepted' | 'turn_started' | 'terminal'
+  status: 'accepted' | 'started' | DispatchTurnTerminalOutcome
+  outcome?: DispatchTurnTerminalOutcome | undefined
+  replayed: boolean
+  error?: { code?: string | undefined; message: string } | undefined
   supportsInFlightInput: boolean
   startIdentity: { kind: 'broker'; invocationId: string } | { kind: 'sdk' }
   observation: {
@@ -511,6 +549,8 @@ export type InspectRuntimeResponse = {
   continuation: HrcContinuationRef | null
   continuationKey: string | null
   continuationStale: boolean
+  /** Non-secret effective mutation authority projected from durable runtime state. */
+  authority?: HrcActuatorSplitAuthorityView | undefined
   control?:
     | {
         mode: string
@@ -777,6 +817,11 @@ export type KillBrokerTmuxLeasesResponse = {
   scanned: number
   killedLiveLeaseServers: number
   removedDeadSocketFiles: number
+  preservedClaimed: number
+  reapedClaimedOrphans: number
+  staledClaimedRuntimes: number
+  removedBrokerIpcDirs: number
+  /** Compatibility alias for preservedClaimed. */
   skippedClaimed: number
   skippedWithinGrace: number
   errors: number
@@ -801,6 +846,7 @@ export type SweepRuntimeResult = {
   transport: SweepRuntimeTransport
   status: 'stale' | 'skipped' | 'error'
   droppedContinuation: boolean
+  reason?: string | undefined
   errorCode?: string | undefined
   errorMessage?: string | undefined
 }
@@ -822,7 +868,7 @@ export type SweepRuntimesResponse = {
 
 /**
  * Record-level GC for orphaned runtime STORE ROWS (T-05441). Distinct from
- * `SweepRuntimes`, which only TERMINATES live processes/tmux and leaves the row
+ * `SweepRuntimes`, which liveness-gates lifecycle aging and leaves the row
  * behind. Prune DELETES the row (plus its runtime-scoped satellite rows) for
  * genuinely orphaned records — status is unavailable (stale/dead/terminated),
  * no active run, no live process, no live tmux session.
@@ -977,7 +1023,16 @@ export type StatusSummaryResponse = HrcStatusSummaryResponse
 
 export type HrcSubscriberAdmissionRoute = 'events' | 'broker-events'
 
+export type HrcSubscriberReceiptMode = 'none' | 'consumer-ack-v1'
+
+export type HrcSubscriberReceiptState =
+  | 'not-requested'
+  | 'awaiting-first-ack'
+  | 'caught-up'
+  | 'behind'
+
 export type HrcSubscriberAdmissionEntry = {
+  subscriberId: string
   route: HrcSubscriberAdmissionRoute
   selector: Record<string, unknown>
   remoteInfo?: string | undefined
@@ -991,12 +1046,33 @@ export type HrcSubscriberAdmissionEntry = {
   pendingSince: string | null
   lastStreamAcceptedAt: string | null
   keepaliveOnlySince: string | null
+  receiptMode: HrcSubscriberReceiptMode
+  receiptState: HrcSubscriberReceiptState
+  lastConsumerAcknowledgedSeq: number | null
+  lastConsumerAcknowledgedAt: string | null
+  consumerReceiptBehindSince: string | null
+  consumerReceiptAckCount: number
   closedAt: string | null
 }
 
 export type HrcSubscriberAdmissionSnapshot = {
   active: HrcSubscriberAdmissionEntry[]
   recentlyClosed: HrcSubscriberAdmissionEntry[]
+}
+
+export type HrcSubscriberReceiptAckRequest = {
+  subscriberId: string
+  receiptToken: string
+  seq: number
+}
+
+export type HrcSubscriberReceiptAckResponse = {
+  ok: true
+  subscriberId: string
+  seq: number
+  disposition: 'advanced' | 'duplicate' | 'stale'
+  lastConsumerAcknowledgedSeq: number
+  lastStreamAcceptedSeq: number
 }
 
 // -- Surface binding ----------------------------------------------------------

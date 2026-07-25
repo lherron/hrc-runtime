@@ -93,6 +93,9 @@ export type {
   HrcAppSessionRecord,
   HrcAppSessionRef,
   HrcAppSessionSpec,
+  HrcActuatorSplitAuthorityView,
+  HrcActuatorSplitPolicy,
+  HrcApprovedMutationRef,
   HrcRuntimeKind,
   HrcCapabilityStatus,
   HrcCommandLaunchSpec,
@@ -129,6 +132,7 @@ export type {
   HrcBrokerInvocationEventRecord,
   HrcRuntimeArtifactRecord,
   HrcPermissionDecisionRecord,
+  HrcReleaseStatus,
   HrcRunRecord,
   HrcSurfaceBindingRecord,
   HrcTaskContext,
@@ -141,6 +145,8 @@ export type {
   HrcStatusSummaryResponse,
   HrcStatusSessionView,
   HrcStatusTmuxView,
+  PraesidiumBuild,
+  PraesidiumReleaseManifest,
 } from './contracts.js'
 export {
   HRC_ARTIFACT_REPORTED_EVENT,
@@ -188,6 +194,7 @@ export type {
   DeliverBridgeResponse,
   DispatchTurnRequest,
   DispatchTurnResponse,
+  DispatchTurnTerminalOutcome,
   DropContinuationRequest,
   DropContinuationResponse,
   EnsureAppSessionDryRunPlan,
@@ -212,6 +219,13 @@ export type {
   HrcSubscriberAdmissionEntry,
   HrcSubscriberAdmissionRoute,
   HrcSubscriberAdmissionSnapshot,
+  HrcSubscriberReceiptAckRequest,
+  HrcSubscriberReceiptAckResponse,
+  HrcSubscriberReceiptMode,
+  HrcSubscriberReceiptState,
+  HrcTurnAdmissionCloseRequest,
+  HrcTurnAdmissionReopenRequest,
+  HrcTurnAdmissionState,
   HrcBridgeTargetSelector,
   HrcBridgeTargetRequest,
   HrcBridgeTargetResponse,
@@ -286,6 +300,10 @@ export type {
   HrcMessageExecutionState,
   HrcMessageExecution,
   HrcMessageRecord,
+  HrcMessageDeliveryEvidence,
+  HrcCollectiveHistoryObservation,
+  HrcCollectiveMessageRecord,
+  HrcMessageHistoryStatus,
   HrcMessageFilter,
   EnsureTargetRequest,
   EnsureTargetResponse,
@@ -301,6 +319,11 @@ export type {
   CreateMessageResponse,
   ListMessagesRequest,
   ListMessagesResponse,
+  TraceMessageRequest,
+  HrcMessageTraceAcceptance,
+  HrcMessageTraceDestination,
+  HrcMessageTraceVerdict,
+  TraceMessageResponse,
   WatchMessagesRequest,
   WaitMessageRequest,
   WaitMessageResponse,
@@ -360,7 +383,13 @@ export type {
   HrcRunCorrelation,
 } from './invocation-exposure.js'
 export { createMonitorConditionEngine } from './monitor/condition-engine.js'
-export { createMonitorReader } from './monitor/index.js'
+export {
+  createMonitorReader,
+  isImmediateRoleChildScopeRef,
+  isResolutionError,
+  monitorEventMatchesSelector,
+  monitorSessionMatchKind,
+} from './monitor/index.js'
 export { MONITOR_EXIT_CODES } from './monitor/exit-codes.js'
 export type { MonitorExitCode } from './monitor/exit-codes.js'
 export { RUNTIME_STATUS_LEVEL_BY_STATUS } from './monitor/status-levels.js'
@@ -380,6 +409,7 @@ export type {
   HrcMonitorCaptureOptions,
   HrcMonitorEvent,
   HrcMonitorMessageState,
+  HrcMonitorMatchedRuntime,
   HrcMonitorResolution,
   HrcMonitorResolutionResult,
   HrcMonitorResolvedSelector,
@@ -397,6 +427,8 @@ export type {
   FederationGateModeValue,
   FederationExpectedPlacement,
   FederationInteractiveLifecycleSignal,
+  FederationSemanticTurnIdentity,
+  FederationSemanticTurnSignal,
   FederationMailPayload,
   FederationMessageDelivery,
   FederationMessageEnvelope,

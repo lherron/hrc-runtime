@@ -261,8 +261,8 @@ describe('T-05078/13 dispatch DTO shape — broker transport', () => {
       waitForCompletion: false,
     })
 
-    // Phase B response must be 200 with the new DTO fields.
-    expect(res.status).toBe(200)
+    // Detached dispatch returns durable acceptance with the observation DTO.
+    expect(res.status).toBe(202)
 
     const body = (await res.json()) as any
 
@@ -271,7 +271,8 @@ describe('T-05078/13 dispatch DTO shape — broker transport', () => {
     expect(body.runtimeId).toEqual(expect.any(String))
     expect(body.generation).toEqual(expect.any(Number))
     expect(body.transport).toBe('headless')
-    expect(body.status).toBe('started')
+    expect(body.stage).toBe('accepted')
+    expect(body.status).toBe('accepted')
 
     // ── RED: startIdentity absent from current DispatchTurnResponse ────────
     // When green: {kind:'broker', invocationId: INVOCATION_ID}
@@ -317,7 +318,7 @@ describe('T-05078/13 dispatch DTO shape — broker transport', () => {
       runtimeIntent: headlessBrokerIntent(),
       waitForCompletion: false,
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
 
     // Verify the run was persisted in the DB with the returned runId.
@@ -359,7 +360,7 @@ describe('T-05078/3 dispatch DTO cursor atomicity — pre-side-effect capture', 
       runtimeIntent: headlessBrokerIntent(),
       waitForCompletion: false,
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
 
     // ── RED: observation absent ────────────────────────────────────────────
@@ -403,7 +404,7 @@ describe('T-05078/3 dispatch DTO cursor atomicity — pre-side-effect capture', 
       runtimeIntent: headlessBrokerIntent(),
       waitForCompletion: false,
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
 
     // ── RED: observation.broker absent ────────────────────────────────────
@@ -437,7 +438,7 @@ describe('T-05078/3 dispatch DTO cursor atomicity — pre-side-effect capture', 
       runtimeIntent: headlessBrokerIntent(),
       waitForCompletion: false,
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
 
     // ── RED: observation absent; selector values must match top-level fields ─
@@ -496,7 +497,7 @@ describe('T-05078/17 capability truth — broker headless supportsInFlightInput'
       runtimeIntent: headlessBrokerIntent(),
       waitForCompletion: false,
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
 
     // RED: currently returns supportsInFlightInput: true (the lying capability).

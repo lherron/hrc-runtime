@@ -1,4 +1,4 @@
-import type { HrcMessageFilter, HrcMessageRecord } from 'hrc-core'
+import type { HrcCollectiveMessageRecord, HrcMessageFilter } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { formatAddress, resolveAddress } from '../normalize.js'
 import { printJson } from '../print.js'
@@ -52,6 +52,14 @@ export async function cmdMessages(
     return
   }
 
+  if (result.history !== undefined && !result.history.complete) {
+    process.stderr.write(
+      `hrcchat: history incomplete (${result.history.degraded?.code ?? 'collective_lagging'}): ${
+        result.history.degraded?.message ?? 'collective history has not caught up'
+      }\n`
+    )
+  }
+
   if (messages.length === 0) {
     process.stdout.write('No messages.\n')
     return
@@ -62,12 +70,15 @@ export async function cmdMessages(
   }
 }
 
-function renderMessage(msg: HrcMessageRecord): void {
+function renderMessage(msg: HrcCollectiveMessageRecord): void {
   const from = formatAddress(msg.from)
   const to = formatAddress(msg.to)
   const ts = msg.createdAt.replace('T', ' ').replace(/\.\d+Z$/, '')
   const phase = msg.phase === 'request' ? '>' : msg.phase === 'response' ? '<' : '-'
-  const seq = `#${msg.messageSeq}`
+  const seq =
+    msg.collectiveSeq === undefined
+      ? `#${msg.messageSeq}`
+      : `@${msg.collectiveSeq}/#${msg.messageSeq}`
 
   process.stdout.write(`${seq} ${ts} ${phase} ${from} -> ${to}\n`)
 

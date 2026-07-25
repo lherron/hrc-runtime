@@ -4,6 +4,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   realpath,
   rename,
@@ -11,11 +12,18 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import type { PraesidiumBuild, PraesidiumReleaseManifest } from 'hrc-core'
+
 import type { InstallContext, PublishChannel, SideEffectMode } from './install-policy'
-import { timestampVersion } from './publish-local-verdaccio'
+import { readCoherentInstalledAspBuild, readPublishedHrcBuild } from './lib/praesidium-build'
+import {
+  type PublicationSource,
+  provePublicationSource,
+  timestampVersion,
+} from './publish-local-verdaccio'
 
 const CLI_PACKAGES = {
   'hrc-cli': { bin: 'hrc', entrypoint: 'src/cli.ts' },
@@ -37,9 +45,14 @@ export type AtomicInstallOptions = {
   context: InstallContext
   linkMode: SideEffectMode
   paths: InstalledSurfacePaths
-  prepareRelease: (releasePath: string) => Promise<void>
+  prepareRelease: (releasePath: string) => Promise<PreparedReleaseBuilds>
   releaseId?: string
   sourceRoot: string
+}
+
+export type PreparedReleaseBuilds = {
+  hrcBuild: PraesidiumBuild
+  aspBuild: PraesidiumBuild
 }
 
 type CliOptions = {
@@ -114,7 +127,59 @@ async function existingInstalledRoot(paths: InstalledSurfacePaths): Promise<stri
   return unique[0]
 }
 
-async function validateReleaseShape(releasePath: string): Promise<void> {
+function expectExactFields(
+  value: unknown,
+  expectedFields: string[],
+  context: string
+): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${context} must be an object`)
+  }
+  const actual = Object.keys(value).sort()
+  if (
+    actual.length !== expectedFields.length ||
+    actual.some((field, index) => field !== expectedFields[index])
+  ) {
+    throw new Error(`${context} must contain exactly ${expectedFields.join(', ')}`)
+  }
+}
+
+function expectBuildTuple(
+  value: unknown,
+  repository: string,
+  setName: 'asp' | 'hrc'
+): asserts value is PraesidiumBuild {
+  expectExactFields(
+    value,
+    [
+      'schema',
+      'repository',
+      'canonicalRemote',
+      'sourceCommit',
+      'setName',
+      'setVersion',
+      'builtAt',
+    ].sort(),
+    `${setName} build`
+  )
+  if (
+    value['schema'] !== 1 ||
+    value['repository'] !== repository ||
+    value['setName'] !== setName ||
+    typeof value['canonicalRemote'] !== 'string' ||
+    value['canonicalRemote'] === '' ||
+    typeof value['sourceCommit'] !== 'string' ||
+    !/^[0-9a-f]{40}$/i.test(value['sourceCommit']) ||
+    typeof value['setVersion'] !== 'string' ||
+    value['setVersion'] === '' ||
+    typeof value['builtAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(value['builtAt']))
+  ) {
+    throw new Error(`${setName} build is not a valid normative provenance tuple`)
+  }
+}
+
+async function validateReleaseShape(releasePath: string, releaseId: string): Promise<void> {
   for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
     const entrypoint = join(releasePath, 'packages', packageName, cli.entrypoint)
     const nodeModules = join(releasePath, 'node_modules')
@@ -126,6 +191,26 @@ async function validateReleaseShape(releasePath: string): Promise<void> {
     }
     await chmod(entrypoint, 0o755)
   }
+
+  const manifestPath = join(releasePath, 'praesidium-release.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
+  expectExactFields(
+    manifest,
+    ['schema', 'releaseId', 'hrcBuild', 'aspBuild', 'installedAt'].sort(),
+    'release manifest'
+  )
+  if (manifest['schema'] !== 1) throw new Error('release manifest schema must be 1')
+  if (manifest['releaseId'] !== releaseId) {
+    throw new Error(`release manifest ID must be ${releaseId}`)
+  }
+  if (
+    typeof manifest['installedAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(manifest['installedAt']))
+  ) {
+    throw new Error('release manifest installedAt must be an ISO timestamp')
+  }
+  expectBuildTuple(manifest['hrcBuild'], 'hrc-runtime', 'hrc')
+  expectBuildTuple(manifest['aspBuild'], 'agent-spaces', 'asp')
 }
 
 /**
@@ -217,8 +302,19 @@ export async function installAtomicRelease(options: AtomicInstallOptions): Promi
     await mkdir(options.paths.releaseRoot, { recursive: true })
     await mkdir(releasePath)
     releaseCreated = true
-    await options.prepareRelease(releasePath)
-    await validateReleaseShape(releasePath)
+    const builds = await options.prepareRelease(releasePath)
+    const manifest: PraesidiumReleaseManifest = {
+      schema: 1,
+      releaseId,
+      hrcBuild: builds.hrcBuild,
+      aspBuild: builds.aspBuild,
+      installedAt: new Date().toISOString(),
+    }
+    await writeFile(
+      join(releasePath, 'praesidium-release.json'),
+      `${JSON.stringify(manifest, null, 2)}\n`
+    )
+    await validateReleaseShape(releasePath, releaseId)
     await atomicSymlink(releasePath, options.paths.currentLink)
     cutoverComplete = true
     return releasePath
@@ -279,6 +375,25 @@ async function copySourceSnapshot(sourceRoot: string, releasePath: string): Prom
   )
 }
 
+async function copyCanonicalSourceSnapshot(
+  sourceRoot: string,
+  releasePath: string,
+  sourceCommit: string
+): Promise<void> {
+  const archiveRoot = await mkdtemp(join(tmpdir(), 'hrc-canonical-source-'))
+  const archivePath = join(archiveRoot, 'source.tar')
+  try {
+    await runCommand(
+      'git',
+      ['archive', '--format=tar', `--output=${archivePath}`, sourceCommit],
+      sourceRoot
+    )
+    await runCommand('tar', ['-xf', archivePath, '-C', releasePath], sourceRoot)
+  } finally {
+    await rm(archiveRoot, { recursive: true, force: true })
+  }
+}
+
 async function worktreePublishVersion(sourceRoot: string): Promise<string> {
   const manifest = JSON.parse(await readFile(join(sourceRoot, 'package.json'), 'utf8')) as {
     version: string
@@ -295,9 +410,14 @@ async function worktreePublishVersion(sourceRoot: string): Promise<string> {
 
 async function prepareProductionRelease(
   releasePath: string,
-  options: Pick<CliOptions, 'publishChannel' | 'sourceRoot'>
-): Promise<void> {
-  await copySourceSnapshot(options.sourceRoot, releasePath)
+  options: Pick<CliOptions, 'publishChannel' | 'sourceRoot'>,
+  source: PublicationSource
+): Promise<PreparedReleaseBuilds> {
+  if (source.canonical) {
+    await copyCanonicalSourceSnapshot(options.sourceRoot, releasePath, source.sourceCommit)
+  } else {
+    await copySourceSnapshot(options.sourceRoot, releasePath)
+  }
   await runCommand('bun', ['install', '--frozen-lockfile'], releasePath)
   await runCommand('bun', ['run', 'clean'], releasePath)
   await runCommand('bun', ['run', 'build'], releasePath)
@@ -310,13 +430,28 @@ async function prepareProductionRelease(
     )
   }
 
+  const buildOutput = join(releasePath, '.praesidium-hrc-build.json')
   const publishArgs = ['scripts/publish-local-verdaccio.ts']
-  const publishEnv = { ...process.env }
+  const publishEnv = {
+    ...process.env,
+    HRC_PUBLISH_SOURCE_ROOT: options.sourceRoot,
+    HRC_PUBLISH_EXPECTED_SOURCE_COMMIT: source.sourceCommit,
+    HRC_PUBLISH_BUILT_AT: new Date().toISOString(),
+    HRC_PUBLISH_BUILD_OUTPUT: buildOutput,
+  }
   if (options.publishChannel === 'worktree') {
     publishArgs.push('--channel', 'worktree')
     publishEnv.HRC_PUBLISH_VERSION = await worktreePublishVersion(options.sourceRoot)
+  } else {
+    publishArgs.push('--channel', 'canonical')
   }
   await runCommand('bun', publishArgs, releasePath, publishEnv)
+  const builds = {
+    hrcBuild: await readPublishedHrcBuild(buildOutput, source.canonical),
+    aspBuild: await readCoherentInstalledAspBuild(releasePath),
+  }
+  await rm(buildOutput, { force: true })
+  return builds
 }
 
 async function runUnlinkedInstall(
@@ -328,8 +463,7 @@ async function runUnlinkedInstall(
     await runCommand('bun', ['install', '--frozen-lockfile'], options.sourceRoot)
     await runCommand('bun', ['run', 'clean'], options.sourceRoot)
     await runCommand('bun', ['run', 'build'], options.sourceRoot)
-    const publishArgs = ['scripts/publish-local-verdaccio.ts']
-    if (options.publishChannel === 'worktree') publishArgs.push('--channel', 'worktree')
+    const publishArgs = ['scripts/publish-local-verdaccio.ts', '--channel', 'worktree']
     await runCommand('bun', publishArgs, options.sourceRoot)
   } finally {
     await releaseLock()
@@ -375,12 +509,16 @@ async function main(): Promise<void> {
     return
   }
 
+  const publicationSource = provePublicationSource({
+    canonical: options.publishChannel !== 'worktree',
+    root: options.sourceRoot,
+  })
   const releasePath = await installAtomicRelease({
     context: options.context,
     linkMode: options.linkMode,
     paths,
     sourceRoot: options.sourceRoot,
-    prepareRelease: (path) => prepareProductionRelease(path, options),
+    prepareRelease: (path) => prepareProductionRelease(path, options, publicationSource),
   })
   console.log(`[install] atomic HRC CLI cutover complete: ${releasePath}`)
 }

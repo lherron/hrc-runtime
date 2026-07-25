@@ -148,7 +148,8 @@ describe('T-06618 durable idempotent federation receiver', () => {
           record!.to,
           record!.body,
           record!.messageSeq,
-          record!.messageId
+          record!.messageId,
+          record!.createdAt
         )
       ).toContain('hrcchat dm mable@hrc-runtime:minisvc --reply-to')
     } finally {

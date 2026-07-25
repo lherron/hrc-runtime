@@ -18,6 +18,7 @@ import { requireSession } from './require-helpers.js'
 import {
   HRC_ACTIVE_RUN_RECONCILE_ENABLED,
   HRC_CLAUDE_GHOSTTY_IDLE_CLEANUP_INTERVAL_MS,
+  HRC_TMUX_AGING_INTERVAL_SECONDS,
   HRC_ZOMBIE_RUN_TIMEOUT_SECONDS,
   HRC_ZOMBIE_SWEEP_ENABLED,
   HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS,
@@ -37,16 +38,20 @@ import {
   sweepOrphanedBrokerTmuxLeases,
   sweepOrphanedRendererControlSockets,
 } from './startup-reconcile.js'
+import { DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS } from './startup-reconcile/types.js'
 import {
   evaluatePruneDisposition,
+  evaluateRuntimeAgingDisposition,
   parseSweepDurationMs,
   runtimeMatchesSweepRequest,
 } from './sweep-helpers.js'
+import type { RuntimeAgingDisposition, RuntimeAgingEvidence } from './sweep-helpers.js'
 import {
   cleanupIdleClaudeGhosttyRuntimes,
   reconcileActiveRunsOnce,
   sweepZombieRunsOnce,
 } from './sweep-reconcile.js'
+import { createTmuxManager } from './tmux.js'
 
 export async function handleSweepRuntimes(
   this: HrcServerInstanceForHandlers,
@@ -55,99 +60,269 @@ export async function handleSweepRuntimes(
   const body = parseSweepRuntimesRequest(await parseJsonBody(request))
   const statuses = body.status ?? ['ready', 'busy']
   const nowMs = Date.now()
-  const cutoffMs = nowMs - parseSweepDurationMs(body.olderThan ?? '24h')
+  const cutoffMs =
+    nowMs -
+    (body.olderThan === undefined
+      ? this.staleGenerationThresholdSec * 1000
+      : parseSweepDurationMs(body.olderThan))
+  const result = await runRuntimeAging.call(this, {
+    statuses,
+    nowMs,
+    cutoffMs,
+    scope: body.scope,
+    transport: body.transport,
+    dryRun: body.dryRun === true,
+    dropContinuation: body.dropContinuation,
+    emitSummaryEvent: body.dryRun !== true,
+    reason: 'runtime_sweep',
+  })
+  return json(result)
+}
+
+async function runRuntimeAging(
+  this: HrcServerInstanceForHandlers,
+  input: {
+    statuses: string[]
+    nowMs: number
+    cutoffMs: number
+    scope?: string | undefined
+    transport?: SweepRuntimeTransport | undefined
+    dryRun: boolean
+    dropContinuation?: boolean | undefined
+    emitSummaryEvent: boolean
+    reason: 'runtime_sweep' | 'runtime_tmux_aging'
+  }
+): Promise<SweepRuntimesResponse> {
   const matched = this.db.runtimes.listAll().filter((runtime) =>
     runtimeMatchesSweepRequest(runtime, {
-      cutoffMs,
-      includeRecentUnavailable: body.status === undefined,
-      nowMs,
-      scope: body.scope,
-      statuses,
-      transport: body.transport,
+      cutoffMs: input.cutoffMs,
+      includeRecentUnavailable: false,
+      nowMs: input.nowMs,
+      scope: input.scope,
+      statuses: input.statuses,
+      transport: input.transport,
     })
   )
 
   const results: SweepRuntimeResult[] = []
-  const claimed: HrcRuntimeSnapshot[] = []
-  if (body.dryRun !== true) {
-    for (const runtime of matched) {
-      const droppedContinuation =
-        body.dropContinuation ?? (runtime.transport !== 'tmux' && runtime.activeRunId != null)
-      if (!this.claimRuntimeForSweep(runtime.runtimeId, statuses, timestamp())) {
+  const transitioned: HrcRuntimeSnapshot[] = []
+  for (const runtime of matched) {
+    const droppedContinuation =
+      input.dropContinuation ?? (runtime.transport !== 'tmux' && runtime.activeRunId != null)
+    const base = {
+      type: 'runtime' as const,
+      runtimeId: runtime.runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      transport: runtime.transport as SweepRuntimeTransport,
+    }
+    let disposition: RuntimeAgingDisposition
+    try {
+      disposition = await evaluateRuntimeAgingDisposition(runtime, {
+        db: this.db,
+        tmuxManagerFactory: this.brokerTmuxManagerFactory ?? createTmuxManager,
+      })
+    } catch (err) {
+      results.push({
+        ...base,
+        status: 'error',
+        droppedContinuation: false,
+        errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+
+    if (!disposition.eligible) {
+      results.push({
+        ...base,
+        status: 'skipped',
+        droppedContinuation: false,
+        reason: disposition.reason,
+      })
+      continue
+    }
+
+    if (input.dryRun) {
+      results.push({ ...base, status: 'stale', droppedContinuation: false })
+      continue
+    }
+
+    try {
+      const event = this.transitionRuntimeForAging(
+        runtime,
+        disposition.evidence,
+        droppedContinuation,
+        input.reason
+      )
+      if (event === null) {
+        results.push({
+          ...base,
+          status: 'skipped',
+          droppedContinuation: false,
+          reason: 'runtime_changed',
+        })
         continue
       }
-      claimed.push(runtime)
-
-      try {
-        const session = requireSession(this.db, runtime.hostSessionId)
-        if (droppedContinuation) {
-          this.db.sessions.updateContinuation(session.hostSessionId, undefined, timestamp())
-        }
-        const event = markRuntimeStale(this.db, session, runtime, {
-          runtimeId: runtime.runtimeId,
-          reason: 'runtime_sweep',
-          priorStatus: runtime.status,
-          transport: runtime.transport,
-          droppedContinuation,
-        })
-        this.notifyEvent(event)
-        results.push({
-          type: 'runtime',
-          runtimeId: runtime.runtimeId,
-          hostSessionId: runtime.hostSessionId,
-          transport: runtime.transport as SweepRuntimeTransport,
-          status: 'stale',
-          droppedContinuation,
-        })
-      } catch (err) {
-        results.push({
-          type: 'runtime',
-          runtimeId: runtime.runtimeId,
-          hostSessionId: runtime.hostSessionId,
-          transport: runtime.transport as SweepRuntimeTransport,
-          status: 'error',
-          droppedContinuation: false,
-          errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
-          errorMessage: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-  } else {
-    for (const runtime of matched) {
+      transitioned.push(runtime)
+      this.notifyEvent(event)
+      results.push({ ...base, status: 'stale', droppedContinuation })
+    } catch (err) {
       results.push({
-        type: 'runtime',
-        runtimeId: runtime.runtimeId,
-        hostSessionId: runtime.hostSessionId,
-        transport: runtime.transport as SweepRuntimeTransport,
-        status: 'stale',
+        ...base,
+        status: 'error',
         droppedContinuation: false,
+        errorCode: err instanceof HrcDomainError ? err.code : HrcErrorCode.INTERNAL_ERROR,
+        errorMessage: err instanceof Error ? err.message : String(err),
       })
     }
   }
 
   const summary: SweepRuntimesSummary = {
     type: 'summary',
-    matched: body.dryRun === true ? matched.length : claimed.length,
+    matched: matched.length,
     stale: results.filter((result) => result.status === 'stale').length,
     terminated: 0,
     skipped: results.filter((result) => result.status === 'skipped').length,
     errors: results.filter((result) => result.status === 'error').length,
   }
 
-  if (body.dryRun !== true) {
-    this.appendSweepCompletedEvent(summary, claimed)
+  if (input.emitSummaryEvent) {
+    this.appendSweepCompletedEvent(summary, transitioned)
   }
 
-  return json({
+  return {
     ok: true,
     results,
     summary,
-  } satisfies SweepRuntimesResponse)
+  } satisfies SweepRuntimesResponse
+}
+
+/**
+ * Final no-live-runtime-staled gate. The liveness probes above are advisory
+ * until this compare-and-set wins: dispatch/activity/ownership changes after
+ * the probe make the transition lose without touching the row.
+ */
+export function transitionRuntimeForAging(
+  this: HrcServerInstanceForHandlers,
+  runtime: HrcRuntimeSnapshot,
+  evidence: RuntimeAgingEvidence,
+  droppedContinuation: boolean,
+  reason: 'runtime_sweep' | 'runtime_tmux_aging'
+): ReturnType<typeof markRuntimeStale> | null {
+  const transition = this.db.sqlite.transaction(() => {
+    const now = timestamp()
+    const result = this.db.sqlite
+      .query(
+        `UPDATE runtimes
+            SET status = ?, status_changed_at = ?, updated_at = ?
+          WHERE runtime_id = ?
+            AND status = ?
+            AND active_run_id IS ?
+            AND active_operation_id IS ?
+            AND active_invocation_id IS ?
+            AND wrapper_pid IS ?
+            AND child_pid IS ?
+            AND last_activity_at IS ?
+            AND runtime_state_json IS ?
+            AND (
+              ? IS NULL OR EXISTS (
+                SELECT 1
+                  FROM broker_invocations
+                 WHERE invocation_id = ?
+                   AND broker_pid IS ?
+                   AND child_pid IS ?
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM runs
+               WHERE runtime_id = runtimes.runtime_id
+                 AND status NOT IN ('completed', 'failed', 'cancelled', 'zombie')
+            )`
+      )
+      .run(
+        'stale',
+        now,
+        now,
+        runtime.runtimeId,
+        runtime.status,
+        runtime.activeRunId ?? null,
+        runtime.activeOperationId ?? null,
+        runtime.activeInvocationId ?? null,
+        runtime.wrapperPid ?? null,
+        runtime.childPid ?? null,
+        runtime.lastActivityAt ?? null,
+        runtime.runtimeStateJson === undefined ? null : JSON.stringify(runtime.runtimeStateJson),
+        evidence.invocationId,
+        evidence.invocationId,
+        evidence.invocationBrokerPid,
+        evidence.invocationChildPid
+      ) as { changes?: number }
+    if ((result.changes ?? 0) === 0) {
+      return null
+    }
+
+    const session = requireSession(this.db, runtime.hostSessionId)
+    if (droppedContinuation) {
+      this.db.sessions.updateContinuation(session.hostSessionId, undefined, now)
+    }
+    return markRuntimeStale(this.db, session, runtime, {
+      runtimeId: runtime.runtimeId,
+      reason,
+      priorStatus: runtime.status,
+      transport: runtime.transport,
+      droppedContinuation,
+    })
+  })
+  return transition()
+}
+
+export async function runTmuxAgingOnce(
+  this: HrcServerInstanceForHandlers
+): Promise<SweepRuntimesResponse> {
+  const nowMs = Date.now()
+  const result = await runRuntimeAging.call(this, {
+    statuses: ['ready', 'busy'],
+    nowMs,
+    cutoffMs: nowMs - this.staleGenerationThresholdSec * 1000,
+    transport: 'tmux',
+    dryRun: false,
+    emitSummaryEvent: false,
+    reason: 'runtime_tmux_aging',
+  })
+  writeServerLog('INFO', 'runtime.tmux_aging_complete', result.summary)
+  return result
+}
+
+export function startTmuxAging(this: HrcServerInstanceForHandlers): void {
+  if (!this.tmuxAgingEnabled || this.staleGenerationThresholdSec <= 0) return
+
+  void this.runRecurringTmuxAging()
+  this.tmuxAgingTimer = setInterval(() => {
+    void this.runRecurringTmuxAging()
+  }, HRC_TMUX_AGING_INTERVAL_SECONDS * 1000)
+}
+
+export async function runRecurringTmuxAging(this: HrcServerInstanceForHandlers): Promise<void> {
+  if (this.tmuxAgingInFlight) return
+  const aging = this.runTmuxAgingOnce()
+  this.tmuxAgingInFlight = aging
+  try {
+    await aging
+  } catch (error) {
+    writeServerLog('WARN', 'runtime.tmux_aging_failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  } finally {
+    if (this.tmuxAgingInFlight === aging) {
+      this.tmuxAgingInFlight = undefined
+    }
+  }
 }
 
 /**
  * Record-level GC for orphaned runtime store rows (T-05441). Distinct from
- * `handleSweepRuntimes`, which only marks live runtimes stale — prune DELETES
+ * `handleSweepRuntimes`, which only ages abandoned runtimes stale — prune DELETES
  * the row (and its runtime-scoped satellites) for records that are genuinely
  * orphaned. It is dry-run unless the caller passes both a non-dry-run request
  * AND `yes:true`; every matched record is put through `evaluatePruneDisposition`
@@ -351,6 +526,54 @@ export async function runRecurringActiveRunReconcile(
   }
 }
 
+export function startBrokerLeaseGc(this: HrcServerInstanceForHandlers): void {
+  if (process.env['HRC_BROKER_LEASE_GC_ENABLED'] === '0') return
+  // Startup reconciliation already ran the same classifier. Schedule the first
+  // recurring pass one cadence later so embedded CLI startup does not emit an
+  // empty asynchronous summary after its command has begun.
+  this.brokerLeaseGcTimer = setInterval(() => {
+    void this.runRecurringBrokerLeaseGc()
+  }, HRC_ZOMBIE_SWEEP_INTERVAL_SECONDS * 1000)
+}
+
+export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandlers): Promise<void> {
+  if (this.brokerLeaseGcInFlight) return
+  const sweep = (async () => {
+    const renderer = await sweepOrphanedRendererControlSockets(this.options.runtimeRoot, {
+      graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+      emitSummary: false,
+    })
+    const broker = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
+      graceMs: DEFAULT_BROKER_ORPHAN_SWEEP_GRACE_MS,
+      removeDeadSocketFiles: true,
+      killLiveLeaseServers: true,
+    })
+    const changed =
+      renderer.removed +
+        renderer.errors +
+        broker.killedLiveLeaseServers +
+        broker.removedDeadSocketFiles +
+        broker.reapedClaimedOrphans +
+        broker.staledClaimedRuntimes +
+        broker.removedBrokerIpcDirs +
+        broker.errors >
+      0
+    if (changed) {
+      writeServerLog('INFO', 'broker.lease_gc_sweep_complete', { renderer, broker })
+    }
+  })()
+  this.brokerLeaseGcInFlight = sweep
+  try {
+    await sweep
+  } catch (error) {
+    writeServerLog('WARN', 'broker.lease_gc_sweep_failed', { error })
+  } finally {
+    if (this.brokerLeaseGcInFlight === sweep) {
+      this.brokerLeaseGcInFlight = undefined
+    }
+  }
+}
+
 export function startClaudeGhosttyIdleCleanup(this: HrcServerInstanceForHandlers): void {
   if (!isClaudeGhosttyEnabled()) return
   if (resolveClaudeGhosttyIdleCleanupMinutes() === 0) return
@@ -376,20 +599,6 @@ export async function runClaudeGhosttyIdleCleanup(
       this.idleCleanupInFlight = undefined
     }
   }
-}
-
-export function claimRuntimeForSweep(
-  this: HrcServerInstanceForHandlers,
-  runtimeId: string,
-  statuses: string[],
-  now: string
-): boolean {
-  const placeholders = statuses.map(() => '?').join(', ')
-  const statement = this.db.sqlite.query(
-    `UPDATE runtimes SET status = ?, updated_at = ? WHERE runtime_id = ? AND status IN (${placeholders})`
-  )
-  const result = statement.run('terminating', now, runtimeId, ...statuses) as { changes?: number }
-  return (result.changes ?? 0) > 0
 }
 
 export function appendSweepCompletedEvent(
@@ -442,6 +651,10 @@ export function resolveSweepSummarySession(
 export const sweepHandlersMethods = {
   handleSweepRuntimes,
   handlePruneRuntimes,
+  transitionRuntimeForAging,
+  runTmuxAgingOnce,
+  startTmuxAging,
+  runRecurringTmuxAging,
   handleKillBrokerTmuxLeases,
   handleSweepZombieRuns,
   startZombieRunSweeper,
@@ -449,9 +662,10 @@ export const sweepHandlersMethods = {
   handleReconcileActiveRuns,
   startActiveRunReconciler,
   runRecurringActiveRunReconcile,
+  startBrokerLeaseGc,
+  runRecurringBrokerLeaseGc,
   startClaudeGhosttyIdleCleanup,
   runClaudeGhosttyIdleCleanup,
-  claimRuntimeForSweep,
   appendSweepCompletedEvent,
   resolveSweepSummarySession,
 }

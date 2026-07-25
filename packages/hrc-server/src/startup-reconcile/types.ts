@@ -18,12 +18,20 @@ export type BrokerTmuxLeaseSweepOptions = {
   graceMs: number
   removeDeadSocketFiles: boolean
   killLiveLeaseServers: boolean
+  now?: number | undefined
+  terminalLeaseTtlMs?: number | undefined
+  probeBrokerHealth?:
+    | ((socketPath: string) => Promise<'ok' | 'degraded' | 'shutting_down' | 'unreachable'>)
+    | undefined
+  listBrokerProcessCommands?: (() => Promise<string[]>) | undefined
+  beforeClaimMutation?: (() => Promise<void>) | undefined
 }
 
 export type BrokerTmuxLeaseSweepResult = Omit<KillBrokerTmuxLeasesResponse, 'ok'>
 
 export type RendererControlSocketSweepOptions = {
   graceMs: number
+  emitSummary?: boolean | undefined
 }
 
 export type RendererControlSocketSweepResult = {
@@ -97,6 +105,7 @@ export type BrokerWarmupCategory =
   | 'substrate_gone_stale'
   | 'lease_identity_invalid_stale'
   | 'attach_replay_failed'
+  | 'control_probe_failed'
   | 'terminated'
   | 'other'
 

@@ -44,6 +44,7 @@ import type { TurnId } from 'spaces-harness-broker-protocol'
 
 // RED gate: this module does not exist yet (curly creates it under src/broker/).
 import { BrokerEventMapper } from '../broker/event-mapper'
+import { appendHrcEvent } from '../hrc-event-helper'
 
 import {
   ASSISTANT_TEXT,
@@ -89,6 +90,32 @@ function makeMapper() {
 // 1. source:'broker' on every emitted HRC event
 // ---------------------------------------------------------------------------
 describe('emitted HRC events', () => {
+  it('does not duplicate a durable acceptance when broker input.accepted arrives', () => {
+    appendHrcEvent(fixture.db, 'turn.accepted', {
+      ts: ts(99),
+      hostSessionId: HOST_SESSION_ID,
+      scopeRef: SCOPE_REF,
+      laneRef: LANE_REF,
+      generation: GENERATION,
+      runtimeId: RUNTIME_ID,
+      runId: RUN_ID,
+      transport: 'headless',
+      payload: { authority: 'durable-start-graph' },
+    })
+
+    const projected = makeMapper().apply(
+      envelope(
+        'input.accepted',
+        3,
+        { inputId: 'input_durable_acceptance' },
+        { inputId: 'input_durable_acceptance' as never }
+      )
+    )
+
+    expect(projected.lifecycleEvents).toHaveLength(0)
+    expect(fixture.db.hrcEvents.listByRun(RUN_ID, { eventKind: 'turn.accepted' })).toHaveLength(1)
+  })
+
   it('stamps source:"broker" on every event emitted across the sequence', () => {
     const mapper = makeMapper()
     const allEmitted = headlessSequence().flatMap((env) => mapper.apply(env).events)

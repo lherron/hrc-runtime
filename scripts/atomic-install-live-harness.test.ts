@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -85,6 +95,29 @@ async function writeRelease(releasePath: string, generation: string): Promise<vo
   await writeReleaseDependency(releasePath)
 }
 
+function fixtureBuilds() {
+  return {
+    hrcBuild: {
+      schema: 1 as const,
+      repository: 'hrc-runtime',
+      canonicalRemote: 'ssh://example.test/praesidium.git',
+      sourceCommit: '1111111111111111111111111111111111111111',
+      setName: 'hrc' as const,
+      setVersion: '0.5.13-dev.fixture',
+      builtAt: '2026-07-24T12:00:00.000Z',
+    },
+    aspBuild: {
+      schema: 1 as const,
+      repository: 'agent-spaces',
+      canonicalRemote: 'ssh://example.test/praesidium.git',
+      sourceCommit: '2222222222222222222222222222222222222222',
+      setName: 'asp' as const,
+      setVersion: '0.1.0-dev.fixture',
+      builtAt: '2026-07-24T11:00:00.000Z',
+    },
+  }
+}
+
 async function makeAtomicSurface(): Promise<{
   binPath: string
   oldRelease: string
@@ -168,6 +201,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         signalPreparationStarted()
         await preparationMayFinish
         await writeReleaseDependency(releasePath)
+        return fixtureBuilds()
       },
     })
 
@@ -180,6 +214,19 @@ describe('T-06685 installed CLI continuity harness', () => {
     allowPreparationToFinish()
     const installedRelease = await install
     expect(installedRelease).toBe(join(fixture.paths.releaseRoot, 'release-new'))
+    const manifest = JSON.parse(
+      await readFile(join(installedRelease, 'praesidium-release.json'), 'utf8')
+    )
+    expect(Object.keys(manifest)).toEqual([
+      'schema',
+      'releaseId',
+      'hrcBuild',
+      'aspBuild',
+      'installedAt',
+    ])
+    expect(manifest.releaseId).toBe('release-new')
+    expect(manifest.hrcBuild).toEqual(fixtureBuilds().hrcBuild)
+    expect(manifest.aspBuild).toEqual(fixtureBuilds().aspBuild)
 
     const after = Array.from({ length: 10 }, () => invokeInstalled(fixture.binPath))
     expect(after.every((result) => result.exitCode === 0)).toBeTrue()
@@ -233,6 +280,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         signalOwnerReady()
         await ownerMayFinish
         await writeRelease(releasePath, 'owner')
+        return fixtureBuilds()
       },
     })
     await ownerReady
@@ -244,7 +292,10 @@ describe('T-06685 installed CLI continuity harness', () => {
         paths: fixture.paths,
         releaseId: 'release-racer',
         sourceRoot: fixture.sourceRoot,
-        prepareRelease: (releasePath) => writeRelease(releasePath, 'racer'),
+        prepareRelease: async (releasePath) => {
+          await writeRelease(releasePath, 'racer')
+          return fixtureBuilds()
+        },
       })
     ).rejects.toThrow('install already in progress')
     expect(invokeInstalled(fixture.binPath).stdout).toBe('old:dependency-ok\n')

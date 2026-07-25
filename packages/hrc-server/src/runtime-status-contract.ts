@@ -9,6 +9,7 @@ export const HRC_RUNTIME_STATE_JSON_STATUS_VALUES = [
   'awaiting_input',
   'stale',
   'terminated',
+  'crashed',
 ] as const
 
 export const HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS = [
@@ -28,6 +29,7 @@ export const HRC_RUNTIME_STATE_JSON_STATUS_PRODUCERS = [
     status: 'terminated',
     producer: 'startup-reconcile/runtime-mutations.markRuntimeTerminatedAfterUserExit',
   },
+  { status: 'crashed', producer: 'broker/controller/lifecycle.applyTerminalRuntimeState' },
 ] as const
 
 export const HRC_RUNTIME_ROW_STATUS_VALUES = [

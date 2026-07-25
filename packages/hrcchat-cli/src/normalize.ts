@@ -43,6 +43,7 @@ export function resolveScope(
       ...(fallbackProjectId !== undefined ? { projectId: fallbackProjectId } : {}),
       ...(fallbackTaskId !== undefined ? { taskId: fallbackTaskId } : {}),
     },
+    projectOrigin: input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred',
   })
 }
 

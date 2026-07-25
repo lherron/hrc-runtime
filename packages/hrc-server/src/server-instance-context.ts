@@ -22,7 +22,9 @@ import type {
 } from './broker/controller.js'
 import type { EventHandlersMethods } from './event-handlers.js'
 import type { EventNotificationHandlersMethods } from './event-notification-handlers.js'
+import type { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import type { FederationOriginOutbox } from './federation/origin-outbox.js'
+import type { FederatedRuntimeIntentLocalizationOptions } from './federation/runtime-intent-localization.js'
 import type { GhostmuxManager as ServerGhostmuxManager } from './ghostmux.js'
 import type { HeadlessViewerStatusProjector } from './headless-viewer-status.js'
 import type { LaunchLifecycleHandlersMethods } from './launch-lifecycle-handlers.js'
@@ -44,6 +46,7 @@ import type {
 import type { SweepHandlersMethods } from './sweep-handlers.js'
 import type { TargetMessageHandlersMethods } from './target-message-handlers.js'
 import type { TmuxManager as ServerTmuxManager } from './tmux.js'
+import type { TurnAdmissionGate } from './turn-admission-gate.js'
 import type { TurnDispatchHandlersMethods } from './turn-dispatch-handlers.js'
 
 export const COMMAND_RUNTIME_COMPAT_HARNESS: HrcHarness = 'codex-cli'
@@ -119,6 +122,9 @@ type HrcServerInstanceDataForHandlers = {
   readonly tmux: ServerTmuxManager
   readonly ghostmux: ServerGhostmuxManager
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
+  /** Test/embedded seam for fixture-owned accepting-node placement inputs. */
+  readonly runtimeIntentLocalizationOptions?: FederatedRuntimeIntentLocalizationOptions | undefined
   /** Headless-viewer status-bar projection observer (T-04439). */
   readonly headlessViewerStatus: HeadlessViewerStatusProjector
   readonly ctx: ServerContext
@@ -128,10 +134,15 @@ type HrcServerInstanceDataForHandlers = {
   readonly turnResponseFinalizers: Map<string, TurnResponseFinalizer>
   readonly pendingBrokerLiteralInputs: Map<string, PendingBrokerLiteralInput>
   readonly queuedTurnInputDrains: Set<string>
+  readonly turnAdmissionGate: TurnAdmissionGate
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<unknown> | undefined
+  brokerLeaseGcTimer: ReturnType<typeof setInterval> | undefined
+  brokerLeaseGcInFlight: Promise<unknown> | undefined
+  tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
+  tmuxAgingInFlight: Promise<unknown> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -141,6 +152,7 @@ type HrcServerInstanceDataForHandlers = {
   stopping: boolean
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
+  readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean

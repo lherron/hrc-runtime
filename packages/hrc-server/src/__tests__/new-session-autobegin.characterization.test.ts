@@ -117,7 +117,10 @@ function seedManagedRuntime(
   return { session, runtime }
 }
 
-function makeHandlerInstance(db: HrcDatabase): {
+function makeHandlerInstance(
+  db: HrcDatabase,
+  options: { reensureRuntimeId?: string } = {}
+): {
   instance: HrcServerInstanceForHandlers
   dispatchCalls: DispatchCall[]
   provisionedHostSessionIds: string[]
@@ -145,6 +148,12 @@ function makeHandlerInstance(db: HrcDatabase): {
       _intent: HrcRuntimeIntent
     ): Promise<HrcRuntimeSnapshot> => {
       provisionedHostSessionIds.push(session.hostSessionId)
+      if (options.reensureRuntimeId) {
+        const runtime = db.runtimes.updateStatus(options.reensureRuntimeId, 'ready', NOW)
+        if (!runtime) throw new Error(`failed to re-ensure ${options.reensureRuntimeId}`)
+        return runtime
+      }
+
       const runtimeId = `rt-t06530-generation-${session.generation}`
       db.runtimes.insert({
         runtimeId,
@@ -262,6 +271,31 @@ describe('promptless managed-session re-arm auto-begin', () => {
       expect(body.created).toBe(false)
       expect(body.runtimeId).toBe(runtime.runtimeId)
       expect(provisionedHostSessionIds).toHaveLength(0)
+      expect(dispatchCalls).toHaveLength(0)
+    })
+  })
+
+  it('does not dispatch when re-ensuring an unavailable runtime under the same runtime id', async () => {
+    await withDatabase(async (db) => {
+      const spec = primedSpec()
+      const { session, runtime } = seedManagedRuntime(db, spec)
+      const unavailableRuntime = db.runtimes.updateStatus(runtime.runtimeId, 'stale', NOW)
+      if (!unavailableRuntime) throw new Error('failed to make prior runtime unavailable')
+
+      const { instance, dispatchCalls, provisionedHostSessionIds } = makeHandlerInstance(db, {
+        reensureRuntimeId: runtime.runtimeId,
+      })
+      const ensureRequest = {
+        selector: { appId: APP_ID, appSessionKey: APP_SESSION_KEY },
+        spec,
+      } satisfies EnsureAppSessionRequest
+
+      const response = await ensureAppSessionFromBody.call(instance, ensureRequest)
+      const body = (await response.json()) as EnsureAppSessionResponse
+
+      expect(body.created).toBe(false)
+      expect(body.runtimeId).toBe(runtime.runtimeId)
+      expect(provisionedHostSessionIds).toEqual([session.hostSessionId])
       expect(dispatchCalls).toHaveLength(0)
     })
   })

@@ -1,5 +1,7 @@
 import { parseScopeRef } from 'agent-scope'
 
+import { wrkqAuthorityEnvironment } from './wrkq-authority.js'
+
 export type TaskClaimAuthority = {
   taskId: string
   claimedBy: string
@@ -64,23 +66,7 @@ async function runCommand(
 export function taskClaimCommandEnvironment(
   source: Record<string, string | undefined> = process.env
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = {}
-  const db = source['HRC_WRKQ_DB']?.trim()
-  if (db) {
-    env['WRKQ_DB'] = db
-    env['WRKQ_DB_PATH'] = undefined
-    env['WRKQ_DB_PATH_FILE'] = undefined
-  }
-  const tokenFile = source['HRC_WRKQD_TOKEN_FILE']?.trim()
-  if (tokenFile) {
-    // wrkq intentionally gives WRKQD_TOKEN precedence over the file. A stale
-    // operator-shell token must not shadow the daemon's explicit credential.
-    // Keep the key present-but-empty: wrkq loads dotenv before resolving its
-    // credential, and an absent key would allow dotenv to restore `dev`.
-    env['WRKQD_TOKEN'] = ''
-    env['WRKQD_TOKEN_FILE'] = tokenFile
-  }
-  return env
+  return wrkqAuthorityEnvironment(source)
 }
 
 function failureDiagnostic(operation: 'claim' | 'release', result: SpawnResult): string {

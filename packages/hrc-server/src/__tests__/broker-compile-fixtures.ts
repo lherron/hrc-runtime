@@ -2,8 +2,8 @@
  * Shared fixtures for the W2 broker compile-adapter + profile-selector red tests
  * (T-01695 / T-01690 Harness Broker cutover, headless codex-app-server only).
  *
- * These are synthetic compiled plans built with the EXPORTED spaces-runtime-contracts
- * hash-projection helper (`project`). No live compiler/broker is required.
+ * These are synthetic compiled plans built with the exported
+ * spaces-runtime-contracts neutral hash helpers. No live compiler/broker is required.
  *
  * NOTE: this file is intentionally NOT a `*.test.ts` so the bun runner does not
  * execute it directly; it is imported by the red test files. It also is NOT named
@@ -12,7 +12,10 @@
  */
 
 import type { HarnessInvocationSpec, InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
+import {
+  neutralSpecHash as sharedNeutralSpecHash,
+  neutralStartRequestHash as sharedNeutralStartRequestHash,
+} from 'spaces-runtime-contracts'
 import type {
   BrokerExecutionProfile,
   CompiledRuntimePlan,
@@ -20,56 +23,12 @@ import type {
   RuntimeIdentityAllocation,
 } from 'spaces-runtime-contracts'
 
-function hashNeutralInvocationSpec(spec: HarnessInvocationSpec): HarnessInvocationSpec {
-  const {
-    invocationId: _invocationId,
-    correlation: _correlation,
-    ...hashSpec
-  } = spec as HarnessInvocationSpec & { correlation?: unknown }
-  return hashSpec
-}
-
-// MUST mirror agent-spaces compile-runtime-plan.ts#hashNeutralStartRequest
-// (T-04133 / T-05109). This is the test oracle for ASPC's REAL producer: of
-// `initialInput`, the deterministic `inputId` and per-turn `responseFormat` are
-// folded into the hash; prompt content is excluded (drift is caught by
-// initialInputHash). Modelling the oracle on the real producer is what makes the
-// selector parity test meaningful.
-type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
-  initialInput?: {
-    inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId']
-    responseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
-  }
-}
-
-function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
-  const { initialInput, ...rest } = startRequest
-  return {
-    ...rest,
-    spec: hashNeutralInvocationSpec(startRequest.spec),
-    ...(initialInput !== undefined
-      ? {
-          initialInput: {
-            inputId: initialInput.inputId,
-            ...(initialInput.responseFormat !== undefined
-              ? { responseFormat: initialInput.responseFormat }
-              : {}),
-          },
-        }
-      : {}),
-  }
-}
-
 export function neutralSpecHash(spec: HarnessInvocationSpec): string {
-  return (project(hashNeutralInvocationSpec(spec), 'spec') as { specHash: string }).specHash
+  return sharedNeutralSpecHash(spec)
 }
 
 export function neutralStartRequestHash(startRequest: InvocationStartRequest): string {
-  return (
-    project(hashNeutralStartRequest(startRequest), 'start-request') as {
-      startRequestHash: string
-    }
-  ).startRequestHash
+  return sharedNeutralStartRequestHash(startRequest)
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   HrcDomainError,
   HrcErrorCode,
   HrcNotFoundError,
+  HrcRuntimeUnavailableError,
   HrcUnprocessableEntityError,
   isCodexAppOwnedScopeRef,
 } from 'hrc-core'
@@ -14,6 +15,7 @@ import type {
   DispatchTurnResponse,
   FederationMessageEnvelope,
   FederationOutboxState,
+  FederationSemanticTurnSignal,
   HrcMessageAddress,
   HrcMessageRecord,
   HrcRuntimeIntent,
@@ -26,6 +28,8 @@ import type {
   SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffResponse,
+  TraceMessageRequest,
+  TraceMessageResponse,
   WaitMessageResponse,
 } from 'hrc-core'
 import { shouldUseSdkTransport } from './broker-decisions.js'
@@ -42,6 +46,7 @@ import {
 } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
+import { buildMessageTrace } from './message-trace.js'
 import {
   extractProjectId,
   formatDmPayload,
@@ -399,6 +404,21 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function semanticTurnSignalFromRecord(
+  record: HrcMessageRecord
+): FederationSemanticTurnSignal | undefined {
+  const value = record.metadataJson?.['federationSemanticTurnSignal']
+  if (
+    !isObjectRecord(value) ||
+    value['version'] !== 1 ||
+    (value['type'] !== 'started' && value['type'] !== 'terminal') ||
+    !isObjectRecord(value['identity'])
+  ) {
+    return undefined
+  }
+  return value as FederationSemanticTurnSignal
+}
+
 function federationOriginNodeId(record: HrcMessageRecord): string | undefined {
   const ingress = record.metadataJson?.['federationIngress']
   if (!isObjectRecord(ingress)) return undefined
@@ -484,9 +504,125 @@ export async function handleQueryMessages(
 ): Promise<Response> {
   const body = await parseJsonBody(request)
   const filter = parseMessageFilter(body)
+  if (this.collectiveHistory !== undefined) {
+    return json(await this.collectiveHistory.query(filter))
+  }
   return json({
     messages: this.db.messages.query(filter),
+    history: {
+      source: 'local',
+      complete: false,
+      authorityNodeId: 'svc',
+      queriedNodeId: 'unknown-node',
+      cursorKind: 'node-local',
+      pendingReplicationCount: 0,
+      degraded: {
+        code: 'collective_not_configured',
+        message: 'collective history is unavailable in this daemon mode',
+      },
+    },
   } satisfies ListMessagesResponse)
+}
+
+export async function handleTraceMessage(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const messageId = typeof body['messageId'] === 'string' ? body['messageId'].trim() : undefined
+  const messageSeq = body['messageSeq']
+  if (
+    (messageId === undefined) === (messageSeq === undefined) ||
+    (messageId !== undefined && messageId.length === 0) ||
+    (messageSeq !== undefined && (!Number.isSafeInteger(messageSeq) || (messageSeq as number) < 1))
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'exactly one of messageId or positive messageSeq is required'
+    )
+  }
+  const traceRequest: TraceMessageRequest =
+    messageId === undefined ? { messageSeq: messageSeq as number } : { messageId }
+  const localRecord =
+    'messageId' in traceRequest
+      ? this.db.messages.getById(traceRequest.messageId)
+      : this.db.messages.getBySeq(traceRequest.messageSeq)
+  const resolvedMessageId =
+    'messageId' in traceRequest ? traceRequest.messageId : localRecord?.messageId
+  if (resolvedMessageId === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `message not found: ${traceRequest.messageSeq}`
+    )
+  }
+
+  const localNodeId =
+    this.collectiveHistory?.localNodeId ?? this.options.federationConfig?.nodeId ?? 'local'
+  const queried =
+    this.collectiveHistory === undefined
+      ? ({
+          messages: localRecord === undefined ? [] : [localRecord],
+          history: {
+            source: 'local',
+            complete: false,
+            authorityNodeId: 'svc',
+            queriedNodeId: localNodeId,
+            cursorKind: 'node-local',
+            pendingReplicationCount: 0,
+            degraded: {
+              code: 'collective_not_configured',
+              message: 'collective history is unavailable in this daemon mode',
+            },
+          },
+        } satisfies ListMessagesResponse)
+      : await this.collectiveHistory.query({ messageId: resolvedMessageId, limit: 1 })
+  const message = queried.messages.find((candidate) => candidate.messageId === resolvedMessageId)
+  if (message === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `message not found: ${resolvedMessageId}`
+    )
+  }
+  const history =
+    queried.history ??
+    ({
+      source: 'local',
+      complete: false,
+      authorityNodeId: 'svc',
+      queriedNodeId: localNodeId,
+      cursorKind: 'node-local',
+      pendingReplicationCount: 0,
+      degraded: {
+        code: 'collective_not_configured',
+        message: 'trace source did not report collective-history status',
+      },
+    } as const)
+  const acceptance = this.db.federationPeerAcceptances.get(resolvedMessageId)
+  const outbox = this.db.federationOutbox.getByMessageId(resolvedMessageId)
+  const response = buildMessageTrace({
+    localNodeId,
+    message,
+    ...(localRecord === undefined ? {} : { localRecord }),
+    ...(outbox === undefined ? {} : { outbox }),
+    ...(acceptance === undefined
+      ? {}
+      : {
+          acceptance: {
+            acceptedByNodeId: acceptance.acceptedByNodeId,
+            phase: acceptance.phase,
+            ...(acceptance.requestEpoch === undefined
+              ? {}
+              : { requestEpoch: acceptance.requestEpoch }),
+            acceptedAt: acceptance.acceptedAt,
+            ...(acceptance.ackOutcome === undefined ? {} : { outcome: acceptance.ackOutcome }),
+          },
+        }),
+    history,
+  } satisfies Parameters<typeof buildMessageTrace>[0])
+  return json(response satisfies TraceMessageResponse)
 }
 
 /** Extract the lane-stripped scopeRef from a canonical `<scopeRef>/lane:<lane>` ref. */
@@ -552,22 +688,39 @@ export async function handleSemanticTurnHandoff(
     )
   }
   const targetSessionRef = body.to.sessionRef
-  assertLocalPersonaAllowed(this, scopeRefOf(targetSessionRef))
-
-  await assertScopeNotRetired(this, {
-    scopeRef: scopeRefOf(targetSessionRef),
-    path: 'archived-successor',
-    advisoryCoveredByDownstreamGate: () => {
-      const session = findTargetSession(this.db, targetSessionRef)
-      if (session?.status === 'archived' && session.continuation?.key) return true
-      return (
-        session === undefined &&
-        body.createIfMissing !== false &&
-        body.runtimeIntent !== undefined &&
-        !isCodexAppOwnedScopeRef(targetSessionRef)
-      )
-    },
-  })
+  const sessionBody: SemanticDmRequest & {
+    to: Extract<HrcMessageAddress, { kind: 'session' }>
+  } = { ...body, to: body.to }
+  const targetScopeRef = scopeRefOf(targetSessionRef)
+  let resolvedPlacement: FederationTargetPlacement | undefined
+  let remoteTarget = false
+  let routingError: unknown
+  if (this.federationOriginOutbox !== undefined) {
+    try {
+      resolvedPlacement = await this.federationOriginOutbox.resolveTargetPlacement(body)
+      remoteTarget = resolvedPlacement.outcome !== 'local'
+    } catch (error) {
+      routingError = error
+    }
+  }
+  if (!remoteTarget) {
+    assertLocalPersonaAllowed(this, targetScopeRef)
+    await assertScopeNotRetired(this, {
+      scopeRef: targetScopeRef,
+      path: 'archived-successor',
+      advisoryCoveredByDownstreamGate: () => {
+        const session = findTargetSession(this.db, targetSessionRef)
+        if (session?.status === 'archived' && session.continuation?.key) return true
+        return (
+          session === undefined &&
+          body.createIfMissing !== false &&
+          body.runtimeIntent !== undefined &&
+          !isCodexAppOwnedScopeRef(targetSessionRef)
+        )
+      },
+    })
+  }
+  if (routingError !== undefined) throw routingError
 
   const parent =
     body.replyToMessageId !== undefined
@@ -588,6 +741,7 @@ export async function handleSemanticTurnHandoff(
   if (parent) assertReplyScopeMatches(parent, body.to, body.allowCrossScopeReply)
 
   const respondTo = body.respondTo ?? body.from
+  const originFromSeq = this.db.hrcEvents.maxHrcSeq() + 1
   const record = this.insertAndNotifyMessage({
     messageId: `msg-${randomUUID()}`,
     kind: 'dm',
@@ -606,9 +760,81 @@ export async function handleSemanticTurnHandoff(
     // marker lets finalizeSemanticTurnResponse rebuild the finalizer from the
     // durable request row, so turn.completed always yields a persisted
     // response. DM-path requests carry no marker and are never auto-finalized.
-    metadataJson: { semanticTurnHandoff: { respondTo } },
+    metadataJson: {
+      semanticTurnHandoff: { respondTo },
+      ...(remoteTarget ? { federationSemanticTurnOrigin: true } : {}),
+    },
   })
 
+  const federationRoute = await this.federationOriginOutbox?.route(
+    body,
+    record,
+    resolvedPlacement,
+    { semanticTurnHandoff: true }
+  )
+  if (federationRoute?.outcome === 'queued') {
+    const started = await this.waitForMessage(
+      {
+        replyToMessageId: record.messageId,
+        kinds: ['system'],
+        phases: ['response'],
+        afterSeq: record.messageSeq,
+        limit: 1,
+        order: 'asc',
+      },
+      30_000,
+      record.messageId
+    )
+    if (!started.matched) {
+      const detail =
+        started.reason === 'delivery_failed'
+          ? `${started.errorCode}${started.errorMessage ? `: ${started.errorMessage}` : ''}`
+          : 'timed out awaiting remote turn admission'
+      this.db.messages.updateExecution(record.messageId, {
+        state: 'failed',
+        errorCode:
+          started.reason === 'delivery_failed'
+            ? started.errorCode
+            : HrcErrorCode.RUNTIME_UNAVAILABLE,
+        errorMessage: detail,
+      })
+      throw new HrcRuntimeUnavailableError(detail, {
+        messageId: record.messageId,
+        reason: started.reason,
+      })
+    }
+    const signal = semanticTurnSignalFromRecord(started.record)
+    if (signal?.type !== 'started') {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        'remote semantic turn returned an invalid admission signal',
+        { messageId: record.messageId }
+      )
+    }
+    return json({
+      messageId: record.messageId,
+      sessionRef: signal.identity.sessionRef,
+      scopeRef: signal.identity.scopeRef,
+      laneRef: signal.identity.laneRef,
+      hostSessionId: signal.identity.hostSessionId,
+      runtimeId: signal.identity.runtimeId,
+      runId: signal.identity.runId,
+      generation: signal.identity.generation,
+      fromSeq: originFromSeq,
+    } satisfies SemanticTurnHandoffResponse)
+  }
+
+  return json(await deliverPersistedSemanticTurnHandoff.call(this, sessionBody, record, respondTo))
+}
+
+export async function deliverPersistedSemanticTurnHandoff(
+  this: HrcServerInstanceForHandlers,
+  body: SemanticDmRequest & { to: Extract<HrcMessageAddress, { kind: 'session' }> },
+  record: HrcMessageRecord,
+  respondTo: HrcMessageAddress
+): Promise<SemanticTurnHandoffResponse> {
+  assertLocalPersonaAllowed(this, scopeRefOf(body.to.sessionRef))
+  const summonOrigin = federationOriginNodeId(record) === undefined ? 'local' : 'federated-ingress'
   let session = findTargetSession(this.db, body.to.sessionRef)
   if (
     !session &&
@@ -621,7 +847,8 @@ export async function handleSemanticTurnHandoff(
       body.to.sessionRef,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential
+      body.birthCredential,
+      summonOrigin
     )
   }
 
@@ -644,7 +871,8 @@ export async function handleSemanticTurnHandoff(
       session,
       body.runtimeIntent,
       body.parsedScopeJson,
-      body.birthCredential
+      body.birthCredential,
+      summonOrigin
     )
   }
 
@@ -672,7 +900,8 @@ export async function handleSemanticTurnHandoff(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId
+      record.messageId,
+      record.createdAt
     )
 
     let liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
@@ -719,7 +948,7 @@ export async function handleSemanticTurnHandoff(
           responseFormat: body.responseFormat,
         })
         if (delivered) {
-          return json(delivered satisfies SemanticTurnHandoffResponse)
+          return delivered
         }
         this.turnResponseFinalizers.delete(runId)
       } else {
@@ -779,7 +1008,7 @@ export async function handleSemanticTurnHandoff(
       transport,
     })
 
-    return json({
+    return {
       messageId: record.messageId,
       sessionRef,
       scopeRef: session.scopeRef,
@@ -789,7 +1018,7 @@ export async function handleSemanticTurnHandoff(
       runId: turnBody.runId,
       generation: turnBody.generation,
       fromSeq,
-    } satisfies SemanticTurnHandoffResponse)
+    } satisfies SemanticTurnHandoffResponse
   } catch (err) {
     this.turnResponseFinalizers.delete(runId)
     const errorMessage = err instanceof Error ? err.message : String(err)
@@ -1257,6 +1486,128 @@ export async function deliverFederationAcceptedMessage(
     }
     return
   }
+  if (envelope.semanticTurnSignal !== undefined) {
+    projectFederatedSemanticTurnSignal.call(this, record, envelope.semanticTurnSignal)
+    return
+  }
+  if (
+    envelope.phase === 'request' &&
+    envelope.to.kind === 'session' &&
+    envelope.delivery?.semanticTurnHandoff !== undefined
+  ) {
+    const delivery = envelope.delivery
+    const runtimeIntent =
+      delivery.runtimeIntent === undefined
+        ? undefined
+        : localizeFederatedRuntimeIntent(
+            parseSessionRef(envelope.to.sessionRef).scopeRef,
+            delivery.runtimeIntent,
+            this.runtimeIntentLocalizationOptions
+          )
+    const body: SemanticDmRequest & {
+      to: Extract<HrcMessageAddress, { kind: 'session' }>
+    } = {
+      from: envelope.from,
+      to: envelope.to,
+      body: envelope.body,
+      ...(envelope.replyToMessageId === undefined
+        ? {}
+        : { replyToMessageId: envelope.replyToMessageId }),
+      ...(runtimeIntent === undefined ? {} : { runtimeIntent }),
+      ...(delivery.createIfMissing === undefined
+        ? {}
+        : { createIfMissing: delivery.createIfMissing }),
+      ...(delivery.parsedScopeJson === undefined
+        ? {}
+        : { parsedScopeJson: { ...delivery.parsedScopeJson } }),
+      ...(delivery.respondTo === undefined ? {} : { respondTo: delivery.respondTo }),
+      ...(delivery.responseFormat === undefined ? {} : { responseFormat: delivery.responseFormat }),
+      ...(delivery.allowStaleGeneration === undefined
+        ? {}
+        : { allowStaleGeneration: delivery.allowStaleGeneration }),
+    }
+    const handoff = await deliverPersistedSemanticTurnHandoff.call(
+      this,
+      body,
+      record,
+      body.respondTo ?? body.from
+    )
+    const persisted = this.db.messages.getById(record.messageId)
+    const mode = persisted?.execution.mode
+    const transport = persisted?.execution.transport
+    if (
+      (mode !== 'headless' && mode !== 'interactive' && mode !== 'nonInteractive') ||
+      (transport !== 'sdk' &&
+        transport !== 'tmux' &&
+        transport !== 'headless' &&
+        transport !== 'ghostty')
+    ) {
+      throw new HrcRuntimeUnavailableError(
+        'remote semantic turn started without complete lifecycle identity',
+        { messageId: record.messageId }
+      )
+    }
+    const signal: FederationSemanticTurnSignal = {
+      version: 1,
+      type: 'started',
+      sourceHrcSeq: handoff.fromSeq,
+      identity: {
+        sessionRef: handoff.sessionRef,
+        scopeRef: handoff.scopeRef,
+        laneRef: handoff.laneRef,
+        hostSessionId: handoff.hostSessionId,
+        runtimeId: handoff.runtimeId,
+        runId: handoff.runId,
+        generation: handoff.generation,
+        mode,
+        transport,
+      },
+    }
+    const signalRecord = this.insertAndNotifyMessage({
+      messageId: `msg-${randomUUID()}`,
+      kind: 'system',
+      phase: 'response',
+      from: record.to,
+      to: body.respondTo ?? body.from,
+      body: '',
+      replyToMessageId: record.messageId,
+      rootMessageId: record.rootMessageId,
+      execution: {
+        state: 'started',
+        mode,
+        sessionRef: handoff.sessionRef,
+        scopeRef: handoff.scopeRef,
+        laneRef: handoff.laneRef,
+        hostSessionId: handoff.hostSessionId,
+        generation: handoff.generation,
+        runtimeId: handoff.runtimeId,
+        runId: handoff.runId,
+        transport,
+      },
+      metadataJson: { federationSemanticTurnSignal: signal },
+    })
+    await this.federationOriginOutbox?.routeResponse(signalRecord)
+    const observedAt = timestamp()
+    this.db.messages.updateMetadata(record.messageId, {
+      federationDelivery: { outcome: 'runtime_delivery', observedAt },
+    })
+    writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
+      messageId: record.messageId,
+      phase: envelope.phase,
+      rootMessageId: envelope.rootMessageId,
+      originNodeId,
+      targetScopeRef,
+      executionState: persisted?.execution.state,
+      runtimeId: handoff.runtimeId,
+      runId: handoff.runId,
+      transport,
+      deliveryOutcome: 'runtime_delivery',
+      semanticTurnHandoff: true,
+      lifecycleSignalMessageId: signalRecord.messageId,
+      observedAt,
+    })
+    return
+  }
   if (envelope.phase !== 'request' && envelope.delivery === undefined) {
     // A response envelope without delivery context is a daemon-bridged
     // turn-final reply. Locally those are durable-insert only (never injected
@@ -1264,6 +1615,14 @@ export async function deliverFederationAcceptedMessage(
     // them would also let two headless recipients auto-reply to each other
     // forever. Explicit --reply-to responses carry delivery context and fall
     // through to runtime delivery below.
+    const observedAt = timestamp()
+    this.db.messages.updateMetadata(record.messageId, {
+      federationDelivery: {
+        outcome: 'store_only',
+        reason: 'response_without_delivery_context',
+        observedAt,
+      },
+    })
     writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
       messageId: record.messageId,
       phase: envelope.phase,
@@ -1273,6 +1632,7 @@ export async function deliverFederationAcceptedMessage(
       executionState: record.execution.state,
       deliveryOutcome: 'store_only',
       storeOnlyReason: 'response_without_delivery_context',
+      observedAt,
     })
     return
   }
@@ -1283,7 +1643,8 @@ export async function deliverFederationAcceptedMessage(
       ? undefined
       : localizeFederatedRuntimeIntent(
           parseSessionRef(envelope.to.sessionRef).scopeRef,
-          delivery.runtimeIntent
+          delivery.runtimeIntent,
+          this.runtimeIntentLocalizationOptions
         )
   const body: SemanticDmRequest = {
     from: envelope.from,
@@ -1308,6 +1669,10 @@ export async function deliverFederationAcceptedMessage(
   const delivered = await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
   const persisted = this.db.messages.getById(record.messageId)
   const execution = persisted?.execution
+  const observedAt = timestamp()
+  this.db.messages.updateMetadata(record.messageId, {
+    federationDelivery: { outcome: 'runtime_delivery', observedAt },
+  })
   writeServerLog(
     execution?.state === 'failed' ? 'WARN' : 'INFO',
     'federation.accept.local_delivery_completed',
@@ -1326,6 +1691,7 @@ export async function deliverFederationAcceptedMessage(
       errorMessage: execution?.errorMessage,
       replyMessageId: delivered.reply?.messageId,
       deliveryOutcome: 'runtime_delivery',
+      observedAt,
     }
   )
   // Only a request's turn-final output routes back as a federated response.
@@ -1334,6 +1700,88 @@ export async function deliverFederationAcceptedMessage(
   if (envelope.phase === 'request' && delivered.reply !== undefined) {
     await this.federationOriginOutbox?.routeResponse(delivered.reply)
   }
+}
+
+function projectFederatedSemanticTurnSignal(
+  this: HrcServerInstanceForHandlers,
+  record: HrcMessageRecord,
+  signal: FederationSemanticTurnSignal
+): void {
+  const request =
+    record.replyToMessageId === undefined
+      ? undefined
+      : this.db.messages.getById(record.replyToMessageId)
+  if (request === undefined || request.metadataJson?.['federationSemanticTurnOrigin'] !== true) {
+    return
+  }
+
+  const identity = signal.identity
+  const state =
+    signal.type === 'started' ? 'started' : signal.outcome === 'completed' ? 'completed' : 'failed'
+  const execution = {
+    state,
+    mode: identity.mode,
+    sessionRef: identity.sessionRef,
+    scopeRef: identity.scopeRef,
+    laneRef: identity.laneRef,
+    hostSessionId: identity.hostSessionId,
+    generation: identity.generation,
+    runtimeId: identity.runtimeId,
+    runId: identity.runId,
+    transport: identity.transport,
+    ...(signal.type === 'terminal' && signal.errorCode !== undefined
+      ? { errorCode: signal.errorCode }
+      : {}),
+    ...(signal.type === 'terminal' && signal.errorMessage !== undefined
+      ? { errorMessage: signal.errorMessage }
+      : {}),
+  } as const
+  const requestAlreadyTerminal =
+    request.execution.state === 'completed' || request.execution.state === 'failed'
+  if (signal.type !== 'started' || !requestAlreadyTerminal) {
+    this.db.messages.updateExecution(request.messageId, execution)
+  }
+  this.db.messages.updateExecution(record.messageId, execution)
+
+  const alreadyProjected = this.db.hrcEvents
+    .listByRun(identity.runId)
+    .some(
+      (event) =>
+        isObjectRecord(event.payload) &&
+        event.payload['federationSignalMessageId'] === record.messageId
+    )
+  if (alreadyProjected) return
+
+  const projected = appendHrcEvent(
+    this.db,
+    signal.type === 'started' ? 'turn.started' : 'turn.completed',
+    {
+      ts: timestamp(),
+      hostSessionId: identity.hostSessionId,
+      scopeRef: identity.scopeRef,
+      laneRef: identity.laneRef,
+      generation: identity.generation,
+      runtimeId: identity.runtimeId,
+      runId: identity.runId,
+      transport: identity.transport,
+      ...(signal.type === 'terminal' && signal.errorCode !== undefined
+        ? { errorCode: signal.errorCode }
+        : {}),
+      payload: {
+        federated: true,
+        federationSignalMessageId: record.messageId,
+        federationSourceHrcSeq: signal.sourceHrcSeq,
+        ...(signal.type === 'terminal'
+          ? {
+              success: signal.outcome === 'completed',
+              body: record.body,
+              replyMessageId: record.messageId,
+            }
+          : {}),
+      },
+    }
+  )
+  this.notifyEvent(projected)
 }
 
 export async function deliverPersistedSemanticDm(
@@ -1428,7 +1876,8 @@ export async function deliverPersistedSemanticDm(
             body.to,
             body.body,
             record.messageSeq,
-            record.messageId
+            record.messageId,
+            record.createdAt
           )
           this.enqueueDurableHeadlessTurnInput(session, payload, runId, {
             source: 'semantic_dm',
@@ -1568,7 +2017,8 @@ export async function executeSemanticTurn(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId
+      record.messageId,
+      record.createdAt
     )
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,
@@ -1670,6 +2120,7 @@ export const targetMessageHandlersMethods = {
   handleResumeContinuation,
   handleArchiveAbandonedSessions,
   handleQueryMessages,
+  handleTraceMessage,
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,

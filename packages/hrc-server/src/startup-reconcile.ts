@@ -6,11 +6,11 @@ import type {
   HrcSessionRecord,
 } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
-import { BrokerClient } from 'spaces-harness-broker-client'
 import {
   decideLegacyRuntimeStartupDisposition,
   getBrokerRuntimeTmuxSocketPath,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type {
   BrokerControllerAttachResult,
   BrokerUnixClientFactory,
@@ -40,11 +40,14 @@ import {
 } from './startup-reconcile/broker-probe.js'
 import {
   brokerTuiWindowMatches,
+  clearBrokerRecovery,
   emitBrokerTmuxReassociated,
   gcBrokerRuntimeOnRestart,
   getPersistedDurableBrokerEndpoint,
+  isBrokerRecoveryExhausted,
   markBrokerReattachStale,
   reassociateBrokerTmuxLease,
+  recordBrokerRecoveryFailure,
   sweepOrphanedBrokerTmuxLeases,
   sweepOrphanedRendererControlSockets,
 } from './startup-reconcile/lease-identity.js'
@@ -260,7 +263,7 @@ export async function reconcileStartupState(
       },
     } as Pick<HarnessBrokerController, 'attachAndReplay'>,
     brokerUnixClientFactory: (options) =>
-      BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>,
+      connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>,
     resolveAttachToken: resolvePersistedBrokerAttachToken,
     probeBrokerLease: probePersistedBrokerLease,
     sweepOrphans: async () => undefined,
@@ -371,8 +374,57 @@ export async function reconcileDurableBrokerRuntimeReattach(
   runtime: HrcRuntimeSnapshot,
   deps: DurableBrokerReattachDeps
 ): Promise<BrokerReattachOutcome> {
-  const probe = await deps.probeBrokerLease(runtime)
   const runtimeId = runtime.runtimeId
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  const brokerState = runtime.runtimeStateJson?.['broker']
+  const brokerRecord =
+    typeof brokerState === 'object' && brokerState !== null
+      ? (brokerState as Record<string, unknown>)
+      : undefined
+  const reattachStartedAt = performance.now()
+  let previousPhaseAt = reattachStartedAt
+  const phase = (name: string, fields: Record<string, unknown> = {}): void => {
+    const now = performance.now()
+    writeServerLog('INFO', 'broker.reattach.phase', {
+      phase: name,
+      runtimeId,
+      hostSessionId: runtime.hostSessionId,
+      generation: runtime.generation,
+      invocationId: runtime.activeInvocationId,
+      ...(hosting?.endpoint.kind === 'unix-jsonrpc-ndjson'
+        ? { endpointSocketPath: hosting.endpoint.socketPath }
+        : {}),
+      ...(hosting?.substrate.kind === 'leased-tmux'
+        ? {
+            leaseTmuxSocketPath: hosting.substrate.tmuxSocketPath,
+            leaseSessionName: hosting.substrate.sessionName,
+            leaseSessionId: hosting.substrate.brokerWindow.sessionId,
+            leaseBrokerWindowId: hosting.substrate.brokerWindow.windowId,
+            leaseBrokerPaneId: hosting.substrate.brokerWindow.paneId,
+          }
+        : {}),
+      ...(typeof brokerRecord?.['brokerPid'] === 'number'
+        ? { persistedBrokerPid: brokerRecord['brokerPid'] }
+        : {}),
+      phaseElapsedMs: Number((now - previousPhaseAt).toFixed(1)),
+      totalElapsedMs: Number((now - reattachStartedAt).toFixed(1)),
+      ...fields,
+    })
+    previousPhaseAt = now
+  }
+
+  phase('lease-probe.begin')
+  const probe = await deps.probeBrokerLease(runtime)
+  phase('lease-probe.complete', {
+    brokerSocketLive: probe.brokerSocketLive,
+    brokerHealth: probe.brokerHealth,
+    observedBrokerSessionId: probe.brokerWindow?.sessionId,
+    observedBrokerWindowId: probe.brokerWindow?.windowId,
+    observedBrokerPaneId: probe.brokerWindow?.paneId,
+    observedTuiSessionId: probe.tuiWindow?.sessionId,
+    observedTuiWindowId: probe.tuiWindow?.windowId,
+    observedTuiPaneId: probe.tuiWindow?.paneId,
+  })
 
   // A draining broker is NOT dead — observe and decline to bind (the shutdown-
   // intent / graceful-exit path owns lease reap; the probe must never initiate
@@ -399,6 +451,7 @@ export async function reconcileDurableBrokerRuntimeReattach(
     if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
       return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
     }
+    clearBrokerRecovery(db, runtime)
 
     // Single attach authority: the pre-instance reconcile pass runs with
     // attach:false and stops here once it has confirmed the runtime is live and
@@ -406,24 +459,53 @@ export async function reconcileDurableBrokerRuntimeReattach(
     // for the request-serving controller's warmup to bind. Only the serving warm
     // (attach:true) performs attach+replay.
     if (deps.attach === false) {
+      phase('classified-attachable', { finalCategory: 'broker-attachable' })
       return { runtimeId, state: 'broker-attachable', brokerAttached: false }
     }
 
+    phase('attach-token.begin')
     const attachToken = await deps.resolveAttachToken(runtime)
     if (!attachToken) {
+      phase('attach-token.failed', { finalCategory: 'broker_attach_token_missing' })
       return markBrokerReattachStale(db, runtime, 'broker_attach_token_missing')
     }
+    phase('attach-token.complete', { tokenResolved: true })
 
     let result: BrokerControllerAttachResult
     try {
+      phase('unix-connect.begin', { endpointSocketPath: endpoint.socketPath })
       const client = await deps.brokerUnixClientFactory({ socketPath: endpoint.socketPath })
+      phase('unix-connect.complete', { endpointSocketPath: endpoint.socketPath })
+      phase('attach-replay-control.begin')
       result = await deps.controller.attachAndReplay({
         runtimeId,
         client,
         attachToken,
       })
+      phase('attach-replay-control.complete', {
+        ok: result.ok,
+        ...(result.ok
+          ? {
+              replayedThroughSeq: result.replayedThroughSeq,
+              ackedThroughSeq: result.ackedThroughSeq,
+            }
+          : { errorCode: result.error.code }),
+      })
     } catch (error) {
-      return markBrokerReattachStale(db, runtime, 'broker_attach_replay_failed', error)
+      phase('attach-replay-control.failed', {
+        finalCategory: 'broker_attach_replay_failed',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      const failed = recordBrokerRecoveryFailure(db, runtime, 'broker_attach_replay_failed')
+      if (isBrokerRecoveryExhausted(failed)) {
+        return markBrokerReattachStale(db, failed, 'broker_attach_replay_failed', error)
+      }
+      return {
+        runtimeId,
+        state: 'broker-ipc-unavailable',
+        brokerAttached: false,
+        reason: 'broker_attach_replay_failed_recoverable',
+      }
     }
 
     if (!result.ok) {
@@ -432,8 +514,10 @@ export async function reconcileDurableBrokerRuntimeReattach(
       // a subsequent zombie sweep cannot race it (attachAndReplay's failReplayStale
       // stales the runtime but leaves the run untouched).
       if (result.error.code === 'broker_replay_retention_gap') {
+        phase('failed', { finalCategory: 'broker_event_retention_gap' })
         return markBrokerReattachStale(db, runtime, 'broker_event_retention_gap')
       }
+      phase('failed', { finalCategory: result.error.code })
       return {
         runtimeId,
         state: 'stale',
@@ -451,6 +535,11 @@ export async function reconcileDurableBrokerRuntimeReattach(
       }
     }
 
+    phase('attached', {
+      finalCategory: 'broker-attached',
+      replayedThroughSeq: result.replayedThroughSeq,
+    })
+    clearBrokerRecovery(db, runtime)
     return {
       runtimeId,
       state: 'broker-attached',
@@ -504,9 +593,16 @@ export async function reconcileDurableBrokerRuntimeReattach(
   // perpetual "headless broker connection was not live" zombie loop. Stale it so
   // the next dispatch reprovisions a fresh broker on the SAME session via the
   // reattach-failed branch in handleHeadlessBrokerDispatchTurn.
-  const hosting = parseBrokerRuntimeHostingState(runtime)
   if (hosting?.substrate.kind === 'leased-tmux' && hosting.presentation.kind === 'none') {
     if (probe.brokerWindow) {
+      const leaseProbe = toBrokerLeaseProbe(probe)
+      if (!leaseProbe || !brokerLeaseIdentityMatches(runtime, leaseProbe)) {
+        return markBrokerReattachStale(db, runtime, 'broker_lease_identity_mismatch')
+      }
+      const failed = recordBrokerRecoveryFailure(db, runtime, 'broker_ipc_unavailable')
+      if (isBrokerRecoveryExhausted(failed)) {
+        return markBrokerReattachStale(db, failed, 'broker_recovery_budget_exhausted')
+      }
       return {
         runtimeId,
         state: 'broker-ipc-unavailable',
@@ -604,7 +700,9 @@ export async function reattachDurableBrokerForDispatch(
   return outcome.state === 'broker-attached'
 }
 
-function warmupCategory(outcome: BrokerReattachOutcome): BrokerWarmupCategory {
+export function brokerWarmupCategoryForOutcome(
+  outcome: BrokerReattachOutcome
+): BrokerWarmupCategory {
   switch (outcome.state) {
     case 'broker-attached':
       return 'attached'
@@ -616,6 +714,9 @@ function warmupCategory(outcome: BrokerReattachOutcome): BrokerWarmupCategory {
     case 'terminated':
       return 'terminated'
     case 'stale':
+      if (outcome.reason?.startsWith('broker_control_probe_')) {
+        return 'control_probe_failed'
+      }
       if (outcome.reason === 'broker_lease_substrate_gone') {
         // T-04297: reboot-reaped durable headless runtimes (lease tmux gone) get
         // their own bucket so `broker.warmup.complete` separates them from
@@ -652,7 +753,7 @@ export async function warmDurableBrokerBindings(
 ): Promise<BrokerWarmupSummary> {
   const brokerUnixClientFactory: BrokerUnixClientFactory =
     deps.brokerUnixClientFactory ??
-    ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>)
+    ((options) => connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>)
 
   const summary: BrokerWarmupSummary = {
     total: 0,
@@ -664,6 +765,7 @@ export async function warmDurableBrokerBindings(
       substrate_gone_stale: 0,
       lease_identity_invalid_stale: 0,
       attach_replay_failed: 0,
+      control_probe_failed: 0,
       terminated: 0,
       other: 0,
     },
@@ -697,7 +799,7 @@ export async function warmDurableBrokerBindings(
       })
       continue
     }
-    const category = warmupCategory(outcome)
+    const category = brokerWarmupCategoryForOutcome(outcome)
     summary.byCategory[category] += 1
     if (category === 'attached') {
       summary.attached += 1

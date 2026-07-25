@@ -31,7 +31,10 @@ import type { HrcServerInstanceForHandlers } from '../server-instance-context.js
 import { writeServerLog } from '../server-log.js'
 import { json, timestamp } from '../server-util.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
 
 /**
  * Provisions the SDK runtime/run rows and emits the runtime.created/turn.accepted/

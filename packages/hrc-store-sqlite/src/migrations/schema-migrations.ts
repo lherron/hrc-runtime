@@ -1185,6 +1185,80 @@ const federationPeerAcceptancesMigration: HrcMigration = {
   },
 }
 
+const collectiveMessageHistoryMigration: HrcMigration = {
+  id: '0033_collective_message_history',
+  apply(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS collective_history_messages (
+        collective_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL UNIQUE,
+        canonical_record_json TEXT NOT NULL,
+        canonical_source_node_id TEXT NOT NULL,
+        canonical_source_role TEXT NOT NULL CHECK (
+          canonical_source_role IN ('origin', 'destination')
+        ),
+        canonical_created_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_collective_history_messages_created
+        ON collective_history_messages(canonical_created_at, message_id);
+
+      CREATE TABLE IF NOT EXISTS collective_history_observations (
+        message_id TEXT NOT NULL,
+        source_node_id TEXT NOT NULL,
+        source_message_seq INTEGER NOT NULL CHECK (source_message_seq >= 1),
+        source_role TEXT NOT NULL CHECK (source_role IN ('origin', 'destination')),
+        origin_node_id TEXT NOT NULL,
+        accepted_destination_node_id TEXT,
+        record_json TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (message_id, source_node_id),
+        FOREIGN KEY (message_id)
+          REFERENCES collective_history_messages(message_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_collective_history_observations_origin
+        ON collective_history_observations(origin_node_id, message_id);
+
+      CREATE TABLE IF NOT EXISTS collective_history_replications (
+        message_id TEXT PRIMARY KEY,
+        source_node_id TEXT NOT NULL,
+        source_message_seq INTEGER NOT NULL CHECK (source_message_seq >= 1),
+        source_role TEXT NOT NULL CHECK (source_role IN ('origin', 'destination')),
+        origin_node_id TEXT NOT NULL,
+        accepted_destination_node_id TEXT,
+        record_json TEXT NOT NULL,
+        record_fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'delivered')),
+        total_attempts INTEGER NOT NULL DEFAULT 0 CHECK (total_attempts >= 0),
+        next_attempt_at TEXT NOT NULL,
+        last_attempt_at TEXT,
+        delivered_at TEXT,
+        last_error_code TEXT,
+        last_error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_collective_history_replications_due
+        ON collective_history_replications(state, next_attempt_at, source_message_seq);
+    `)
+  },
+}
+
+const federationPeerAcceptanceOutcomeMigration: HrcMigration = {
+  id: '0034_federation_peer_acceptance_outcome',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE federation_peer_acceptances
+        ADD COLUMN ack_outcome TEXT CHECK (ack_outcome IN ('accepted', 'duplicate'));
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1213,4 +1287,6 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailStopRefusalMigration,
   hrcmailFederatedOriginsMigration,
   federationPeerAcceptancesMigration,
+  collectiveMessageHistoryMigration,
+  federationPeerAcceptanceOutcomeMigration,
 ]

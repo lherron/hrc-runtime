@@ -81,7 +81,11 @@ export function markBrokerInvocationTerminal(
   if (!runtime || runtime.activeInvocationId !== String(envelope.invocationId)) {
     return
   }
-  if (runtime.status === 'terminated' || runtime.status === 'dead' || runtime.status === 'stale') {
+  if (
+    runtime.status === 'terminated' ||
+    runtime.status === 'dead' ||
+    runtime.status === 'crashed'
+  ) {
     return
   }
 
@@ -96,11 +100,13 @@ export function markBrokerInvocationTerminal(
           envelope.seq
         )
       : undefined
-  const terminalStatus = userExitReason !== undefined ? 'terminated' : 'stale'
+  const terminalStatus = userExitReason !== undefined ? 'terminated' : 'crashed'
   const occurredAt = envelope.time ?? now
-  const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.stale'
+  const terminalEventKind = userExitReason !== undefined ? 'runtime.terminated' : 'runtime.crashed'
   const terminalReason =
-    userExitReason !== undefined ? 'user_initiated_session_end' : 'broker_invocation_terminal'
+    userExitReason !== undefined
+      ? 'user_initiated_session_end'
+      : 'broker_invocation_abnormal_terminal'
   if (runtime.activeRunId !== undefined) {
     const activeRun = ctx.db.runs.getByRunId(runtime.activeRunId)
     if (activeRun && isActiveBrokerRun(activeRun)) {
@@ -151,12 +157,31 @@ export function markBrokerInvocationTerminal(
       ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
         ? { transport: runtime.transport }
         : {}),
+      ...(userExitReason === undefined ? { errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE } : {}),
       payload: {
         reason: terminalReason,
         ...(userExitReason !== undefined ? { userExitReason } : {}),
         invocationId: String(envelope.invocationId),
         eventType: envelope.type,
         seq: envelope.seq,
+        ...(userExitReason === undefined
+          ? {
+              providerTerminal: {
+                eventType: envelope.type,
+                ...((envelope.payload as { exitCode?: unknown } | undefined)?.exitCode !== undefined
+                  ? {
+                      exitCode: (envelope.payload as { exitCode?: unknown }).exitCode,
+                    }
+                  : {}),
+                ...((envelope.payload as { signal?: unknown } | undefined)?.signal !== undefined
+                  ? { signal: (envelope.payload as { signal?: unknown }).signal }
+                  : {}),
+                ...((envelope.payload as { reason?: unknown } | undefined)?.reason !== undefined
+                  ? { reason: (envelope.payload as { reason?: unknown }).reason }
+                  : {}),
+              },
+            }
+          : {}),
       },
     })
   }
@@ -231,6 +256,9 @@ export function markBrokerCrashTerminal(
   ctx.deleteActive(runtimeId)
   const now = ctx.now()
   const runtime = ctx.db.runtimes.getByRuntimeId(runtimeId)
+  if (runtime?.status === 'crashed') {
+    return
+  }
   const invocation =
     runtime?.activeInvocationId !== undefined
       ? ctx.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
@@ -261,7 +289,7 @@ export function markBrokerCrashTerminal(
 
   if (runtime) {
     applyTerminalRuntimeState(ctx.db, runtime, {
-      status: 'terminated',
+      status: 'crashed',
       now,
       diagnostic: {
         brokerCrash: {
@@ -285,6 +313,44 @@ export function markBrokerCrashTerminal(
         code: error.code,
         message: error.message,
         detail: error.detail,
+      },
+    })
+    const lastBrokerEvent =
+      invocation != null
+        ? ctx.db.brokerInvocationEvents.listByInvocationId(invocation.invocationId).at(-1)
+        : undefined
+    appendHrcEvent(ctx.db, 'runtime.crashed', {
+      ts: now,
+      hostSessionId: runtime.hostSessionId,
+      scopeRef: runtime.scopeRef,
+      laneRef: runtime.laneRef,
+      generation: runtime.generation,
+      runtimeId,
+      ...(invocation?.runId !== undefined ? { runId: invocation.runId } : {}),
+      ...(runtime.transport === 'headless' || runtime.transport === 'tmux'
+        ? { transport: runtime.transport }
+        : {}),
+      errorCode: error.code,
+      payload: {
+        reason: 'broker_process_closed',
+        ...(invocation != null ? { invocationId: invocation.invocationId } : {}),
+        brokerError: {
+          code: error.code,
+          message: error.message,
+          detail: error.detail,
+        },
+        ...(lastBrokerEvent !== undefined
+          ? {
+              lastBrokerEvent: {
+                seq: lastBrokerEvent.seq,
+                type: lastBrokerEvent.type,
+                time: lastBrokerEvent.time,
+              },
+            }
+          : {}),
+        ...(runtime.runtimeStateJson?.['stalePayload'] !== undefined
+          ? { substrateEvidence: runtime.runtimeStateJson['stalePayload'] }
+          : {}),
       },
     })
   }

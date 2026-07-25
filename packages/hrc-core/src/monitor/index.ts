@@ -1,5 +1,7 @@
+import { type LaneRef, formatScopeHandle, formatSessionHandle, parseScopeRef } from 'agent-scope'
+
 import { HrcErrorCode, createHrcError } from '../errors.js'
-import { type HrcSelector, formatSelector } from '../selectors.js'
+import { type HrcSelector, formatSelector, splitSessionRef } from '../selectors.js'
 
 /**
  * Maximum number of trailing matching events replayed to a non-follow snapshot
@@ -102,6 +104,21 @@ export type HrcMonitorResolutionResult =
   | HrcMonitorResolution
   | (ReturnType<typeof createHrcError> & { ok: false })
 
+export type HrcMonitorMatchedRuntime = {
+  matchKind: 'exact' | 'role-child'
+  roleName?: string | undefined
+  scopeHandle: string
+  sessionHandle: string
+  scopeRef: string
+  sessionRef: string
+  hostSessionId: string
+  runtimeId: string
+  status: string
+  generation: number
+  laneRef: string
+  activeTurnId?: string | null | undefined
+}
+
 export type HrcMonitorSnapshot = {
   kind: 'monitor.snapshot'
   selector?: HrcMonitorResolvedSelector | undefined
@@ -116,6 +133,7 @@ export type HrcMonitorSnapshot = {
   session?: HrcMonitorSessionState | undefined
   runtime?: HrcMonitorRuntimeState | undefined
   resolution?: HrcMonitorResolutionResult | undefined
+  matches?: HrcMonitorMatchedRuntime[] | undefined
 }
 
 export type HrcMonitorWatchRequest = {
@@ -162,7 +180,7 @@ export function createMonitorReader(state: HrcMonitorState): {
       return watchEvents(state, request)
     },
     async captureStart(selector, options) {
-      const capture = resolveSelector(state, selector)
+      const capture = resolveCaptureSelector(state, selector)
       options?.afterSnapshot?.()
 
       if (!isResolution(capture)) {
@@ -198,31 +216,60 @@ function resolveSelectorWithParts(
     return { resolution: notFound(selector), parts: null }
   }
 
-  const { session, runtime } = parts
   return {
-    resolution: {
-      selector: selectorView(selector),
-      sessionRef: session.sessionRef,
-      scopeRef: session.scopeRef,
-      laneRef: session.laneRef,
-      hostSessionId: session.hostSessionId,
-      generation: session.generation,
-      runtimeId: runtime.runtimeId,
-      activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
-      eventHighWaterSeq: resolveHighWater(state),
-    },
+    resolution: resolutionFromParts(state, selector, parts),
     parts,
   }
+}
+
+function resolutionFromParts(
+  state: HrcMonitorState,
+  selector: HrcSelector,
+  parts: ResolvedParts
+): HrcMonitorResolution {
+  const { session, runtime } = parts
+  return {
+    selector: selectorView(selector),
+    sessionRef: session.sessionRef,
+    scopeRef: session.scopeRef,
+    laneRef: session.laneRef,
+    hostSessionId: session.hostSessionId,
+    generation: session.generation,
+    runtimeId: runtime.runtimeId,
+    activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
+    eventHighWaterSeq: resolveHighWater(state),
+  }
+}
+
+function resolveCaptureSelector(
+  state: HrcMonitorState,
+  selector: HrcSelector
+): HrcMonitorResolutionResult {
+  if (!isRoleTreeAwareSelector(selector)) {
+    return resolveSelector(state, selector)
+  }
+
+  const matches = roleTreeParts(state, selector)
+  if (matches.length === 0) {
+    return notFound(selector)
+  }
+  if (matches.length > 1) {
+    return ambiguousRoleTreeSelector(selector, matches)
+  }
+
+  const match = matches[0]
+  if (!match) return notFound(selector)
+  return resolutionFromParts(state, selector, match.parts)
 }
 
 function resolveParts(state: HrcMonitorState, selector: HrcSelector): ResolvedParts | null {
   switch (selector.kind) {
     case 'stable':
-    case 'target':
     case 'session':
       return partsFromSession(state, latestSessionBySessionRef(state, selector.sessionRef))
+    case 'target':
     case 'scope':
-      return partsFromSession(state, latestSessionByScopeRef(state, selector.scopeRef))
+      return roleTreeParts(state, selector)[0]?.parts ?? null
     case 'concrete':
     case 'host':
       return partsFromSession(
@@ -245,6 +292,199 @@ function resolveParts(state: HrcMonitorState, selector: HrcSelector): ResolvedPa
       )
       return message ? partsFromMessage(state, message) : null
     }
+  }
+}
+
+type RoleTreeParts = {
+  matchKind: 'exact' | 'role-child'
+  roleName?: string | undefined
+  parts: ResolvedParts
+}
+
+function roleTreeParts(
+  state: HrcMonitorState,
+  selector: Extract<HrcSelector, { kind: 'target' | 'scope' }>
+): RoleTreeParts[] {
+  const latestBySessionRef = new Map<
+    string,
+    {
+      matchKind: 'exact' | 'role-child'
+      session: HrcMonitorSessionState
+    }
+  >()
+  for (const session of state.sessions) {
+    const matchKind = monitorSessionMatchKind(session, selector)
+    if (!matchKind) continue
+    const key = `${session.scopeRef}/lane:${normalizeLaneId(session.laneRef)}`
+    const previous = latestBySessionRef.get(key)
+    const latest = selectLatestSession(previous ? [previous.session, session] : [session])
+    if (latest === session) {
+      latestBySessionRef.set(key, { matchKind, session })
+    }
+  }
+
+  const candidates: RoleTreeParts[] = []
+  for (const { matchKind, session } of latestBySessionRef.values()) {
+    const parts = partsFromSession(state, session)
+    if (!parts) continue
+    candidates.push({
+      matchKind,
+      roleName: safeRoleName(session.scopeRef),
+      parts,
+    })
+  }
+
+  return candidates.sort(compareRoleTreeParts)
+}
+
+function compareRoleTreeParts(left: RoleTreeParts, right: RoleTreeParts): number {
+  if (left.matchKind !== right.matchKind) {
+    return left.matchKind === 'exact' ? -1 : 1
+  }
+
+  const leftActive = left.parts.session.status === 'active'
+  const rightActive = right.parts.session.status === 'active'
+  if (leftActive !== rightActive) {
+    return leftActive ? -1 : 1
+  }
+
+  const generation = right.parts.session.generation - left.parts.session.generation
+  if (generation !== 0) return generation
+
+  const leftLabel = left.roleName ?? left.parts.session.scopeRef
+  const rightLabel = right.roleName ?? right.parts.session.scopeRef
+  const label = leftLabel.localeCompare(rightLabel)
+  if (label !== 0) return label
+
+  return left.parts.runtime.runtimeId.localeCompare(right.parts.runtime.runtimeId)
+}
+
+function toMatchedRuntime(candidate: RoleTreeParts): HrcMonitorMatchedRuntime {
+  const { session, runtime } = candidate.parts
+  return {
+    matchKind: candidate.matchKind,
+    ...(candidate.roleName !== undefined ? { roleName: candidate.roleName } : {}),
+    scopeHandle: formatScopeHandle(parseScopeRef(session.scopeRef)),
+    sessionHandle: formatSessionHandle({
+      scopeRef: session.scopeRef,
+      laneRef: laneRefForHandle(session.laneRef),
+    }),
+    scopeRef: session.scopeRef,
+    sessionRef: session.sessionRef,
+    hostSessionId: session.hostSessionId,
+    runtimeId: runtime.runtimeId,
+    status: runtime.status,
+    generation: session.generation,
+    laneRef: normalizeLaneId(session.laneRef),
+    activeTurnId: session.activeTurnId ?? runtime.activeTurnId ?? null,
+  }
+}
+
+function laneRefForHandle(laneRef: string): LaneRef {
+  const laneId = normalizeLaneId(laneRef)
+  return laneId === 'main' ? 'main' : `lane:${laneId}`
+}
+
+function ambiguousRoleTreeSelector(
+  selector: Extract<HrcSelector, { kind: 'target' | 'scope' }>,
+  matches: RoleTreeParts[]
+): ReturnType<typeof createHrcError> & { ok: false } {
+  const alternatives = matches.map((candidate) => {
+    const match = toMatchedRuntime(candidate)
+    return {
+      roleHandle: match.sessionHandle,
+      sessionSelector: `session:${match.sessionRef}`,
+      runtimeSelector: `runtime:${match.runtimeId}`,
+      scopeRef: match.scopeRef,
+      sessionRef: match.sessionRef,
+      runtimeId: match.runtimeId,
+    }
+  })
+  return {
+    ok: false,
+    ...createHrcError(
+      HrcErrorCode.INVALID_SELECTOR,
+      `ambiguous monitor selector "${formatSelector(selector)}": matched ${matches.length} runtimes; use an exact slash-role handle, session:<sessionRef>, or runtime:<runtimeId>`,
+      {
+        selectorKind: selector.kind,
+        selector: formatSelector(selector),
+        alternatives,
+      }
+    ),
+  }
+}
+
+export function monitorSessionMatchKind(
+  session: Pick<HrcMonitorSessionState, 'scopeRef' | 'sessionRef' | 'laneRef'>,
+  selector: HrcSelector
+): 'exact' | 'role-child' | null {
+  if (selector.kind === 'target') {
+    if (sessionRefsEqual(session.sessionRef, selector.sessionRef)) return 'exact'
+    if (!isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef)) return null
+    return laneIdsEqual(session.laneRef, splitSessionRef(selector.sessionRef).laneRef)
+      ? 'role-child'
+      : null
+  }
+  if (selector.kind === 'scope') {
+    if (session.scopeRef === selector.scopeRef) return 'exact'
+    return isImmediateRoleChildScopeRef(selector.scopeRef, session.scopeRef) ? 'role-child' : null
+  }
+  return null
+}
+
+export function isImmediateRoleChildScopeRef(
+  baseScopeRef: string,
+  candidateScopeRef: string
+): boolean {
+  try {
+    const base = parseScopeRef(baseScopeRef)
+    const candidate = parseScopeRef(candidateScopeRef)
+    return (
+      base.roleName === undefined &&
+      candidate.roleName !== undefined &&
+      base.agentId === candidate.agentId &&
+      base.projectId === candidate.projectId &&
+      base.taskId === candidate.taskId
+    )
+  } catch {
+    return false
+  }
+}
+
+function isRoleTreeAwareSelector(
+  selector: HrcSelector
+): selector is Extract<HrcSelector, { kind: 'target' | 'scope' }> {
+  if (selector.kind !== 'target' && selector.kind !== 'scope') return false
+  return safeRoleName(selector.scopeRef) === undefined
+}
+
+function sessionRefsEqual(left: string, right: string): boolean {
+  try {
+    const leftParts = splitSessionRef(left)
+    const rightParts = splitSessionRef(right)
+    return (
+      leftParts.scopeRef === rightParts.scopeRef &&
+      laneIdsEqual(leftParts.laneRef, rightParts.laneRef)
+    )
+  } catch {
+    return left === right
+  }
+}
+
+function laneIdsEqual(left: string, right: string): boolean {
+  return normalizeLaneId(left) === normalizeLaneId(right)
+}
+
+function normalizeLaneId(laneRef: string): string {
+  const laneId = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
+  return laneId === 'default' ? 'main' : laneId
+}
+
+function safeRoleName(scopeRef: string): string | undefined {
+  try {
+    return parseScopeRef(scopeRef).roleName
+  } catch {
+    return undefined
   }
 }
 
@@ -310,13 +550,6 @@ function latestSessionBySessionRef(
   return selectLatestSession(state.sessions.filter((session) => session.sessionRef === sessionRef))
 }
 
-function latestSessionByScopeRef(
-  state: HrcMonitorState,
-  scopeRef: string
-): HrcMonitorSessionState | undefined {
-  return selectLatestSession(state.sessions.filter((session) => session.scopeRef === scopeRef))
-}
-
 function selectLatestSession(
   sessions: HrcMonitorSessionState[]
 ): HrcMonitorSessionState | undefined {
@@ -342,6 +575,10 @@ function snapshotState(
   const resolved = selector ? resolveSelectorWithParts(state, selector) : undefined
   const resolution = resolved?.resolution
   const parts = resolved && isResolution(resolved.resolution) ? resolved.parts : null
+  const matches =
+    selector?.kind === 'target' || selector?.kind === 'scope'
+      ? roleTreeParts(state, selector).map(toMatchedRuntime)
+      : undefined
 
   return {
     kind: 'monitor.snapshot',
@@ -356,6 +593,7 @@ function snapshotState(
     },
     ...(parts ? { session: parts.session, runtime: parts.runtime } : {}),
     ...(resolution ? { resolution } : {}),
+    ...(matches ? { matches } : {}),
   }
 }
 
@@ -401,18 +639,31 @@ async function* watchEvents(
   }
 }
 
-function eventMatchesSelector(
+export function monitorEventMatchesSelector(
   state: HrcMonitorState,
   event: HrcMonitorEvent,
   selector: HrcSelector
 ): boolean {
   switch (selector.kind) {
     case 'stable':
-    case 'target':
     case 'session':
       return event.sessionRef === selector.sessionRef
+    case 'target': {
+      if (event.sessionRef && sessionRefsEqual(event.sessionRef, selector.sessionRef)) return true
+      if (!event.scopeRef || !isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef)) {
+        return false
+      }
+      const selectorLane = splitSessionRef(selector.sessionRef).laneRef
+      const eventLane =
+        event.laneRef ?? (event.sessionRef ? splitSessionRef(event.sessionRef).laneRef : undefined)
+      return eventLane !== undefined && laneIdsEqual(eventLane, selectorLane)
+    }
     case 'scope':
-      return event.scopeRef === selector.scopeRef
+      return (
+        event.scopeRef === selector.scopeRef ||
+        (event.scopeRef !== undefined &&
+          isImmediateRoleChildScopeRef(selector.scopeRef, event.scopeRef))
+      )
     case 'concrete':
     case 'host':
       return event.hostSessionId === selector.hostSessionId
@@ -430,6 +681,8 @@ function eventMatchesSelector(
       )
   }
 }
+
+const eventMatchesSelector = monitorEventMatchesSelector
 
 /**
  * Projected message-correlation fields read off an event, used by the shared

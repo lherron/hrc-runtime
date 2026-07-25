@@ -61,6 +61,7 @@ export function resolveAgentHarness(
 export type ManagedScopeContext = {
   agentId: string
   projectId?: string | undefined
+  projectOrigin: ProfileAwareResolvedScopeInput['projectOrigin']
   scopeRef: string
   laneRef: string
   sessionRef: string
@@ -163,6 +164,8 @@ export function resolveManagedScopeContext(
   // shorthand (`clod:zed`) throws by design when no project is available — that
   // throw would pre-empt the register prompt below.
   const hasExplicitProject = scopeInput.includes('@') || /(^|:)project:/.test(scopeInput)
+  const projectOrigin: ProfileAwareResolvedScopeInput['projectOrigin'] =
+    hasExplicitProject || options.projectIdOverride !== undefined ? 'explicit' : 'inferred'
   let projectIdHint: string | undefined = hasExplicitProject
     ? undefined
     : (options.projectIdOverride ?? resolveDefaultProjectId())
@@ -191,6 +194,7 @@ export function resolveManagedScopeContext(
       projectRootOverride !== undefined
         ? { projectRoot: projectRootOverride, cwd: projectRootOverride }
         : {},
+    projectOrigin,
   })
 
   const { parsed, scopeRef, laneRef, placement } = resolved
@@ -199,6 +203,7 @@ export function resolveManagedScopeContext(
   return {
     agentId: parsed.agentId,
     projectId: parsed.projectId,
+    projectOrigin,
     scopeRef,
     laneRef: laneId === 'main' ? 'main' : `lane:${laneId}`,
     sessionRef: `${scopeRef}/lane:${laneId}`,
@@ -422,7 +427,12 @@ export async function parseScopePrompt(
 
     if (options.passthroughFlags.includes(arg)) {
       // Value-taking passthrough flags must also consume their value.
-      if (arg === '--project-id' || arg === '--project-root') {
+      if (
+        arg === '--project-id' ||
+        arg === '--project-root' ||
+        arg === '--wait' ||
+        arg === '--idempotency-key'
+      ) {
         if (args[i + 1] === undefined) fatal(`${arg} requires a value`)
         i += 1
       }

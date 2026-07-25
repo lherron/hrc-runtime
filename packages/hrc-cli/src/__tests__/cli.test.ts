@@ -30,6 +30,7 @@ import { join } from 'node:path'
 import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type { HrcRuntimeSnapshot } from 'hrc-core'
 
+import { HrcClient } from 'hrc-sdk'
 // RED GATE: cli.ts must exist as the bin entry point
 // This import will fail until Curly implements the CLI module
 import { createHrcServer } from 'hrc-server'
@@ -37,6 +38,7 @@ import type { HrcServer, HrcServerOptions } from 'hrc-server'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 import { main } from '../cli'
 import { attachWithRetry, selectLatestUsableRuntime } from '../cli'
+import { buildManagedRunIntent, resolveManagedScopeContext } from '../cli/scope'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const describeDaemonLifecycle =
@@ -1417,6 +1419,7 @@ describe('hrc start', () => {
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )
@@ -1980,137 +1983,51 @@ describe('hrc run', () => {
     await seedRunRoots('rex', 'agent-spaces')
   })
 
-  // SKIP: the live `hrc run` broker-tmux launch is rejected by hrc-server's
-  // interactive broker compile/admission with "initial-input-id-mismatch"
-  // (compile-profile-selector.ts) — a contract drift between the installed
-  // agent-spaces compiler lib and hrc-server's admission identity binding. The
-  // CLI is correct; the failure is entirely server-side / lib-version coupled
-  // and cannot be made hermetic from hrc-cli. Skipped per fully-green directive.
-  it.skip('creates a canonical harness session from a shorthand scope handle with --no-attach', async () => {
-    const result = await runCli(
-      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-      })
-    )
+  it('admits canonical CLI-built prompt and no-prompt intents on the attached broker-tmux path', async () => {
+    const originalAgentsRoot = process.env['ASP_AGENTS_ROOT']
+    process.env['ASP_AGENTS_ROOT'] = agentsRoot
+    const client = new HrcClient(socketPath)
 
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
-    expect(body.hostSessionId).toBeDefined()
-    expect(body.created).toBe(true)
-    expect(body.runtime.runtimeId).toBeDefined()
-    expect(body.runtime.transport).toBe('tmux')
-  })
-
-  // SKIP: same server-side broker compile/admission rejection
-  // ("initial-input-id-mismatch") as above; with a prompt this also dispatches
-  // a live broker turn that the test sandbox cannot complete. Server / lib
-  // coupled, not fixable from hrc-cli. Skipped per fully-green directive.
-  it.skip('accepts canonical ScopeRef input and dispatches a prompt', async () => {
-    const prompt = 'Fix the bug'
-    const result = await runCli(
-      ['run', 'agent:rex:project:agent-spaces:task:T-00123', prompt, '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-      })
-    )
-
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-    expect(body.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:main')
-    expect(body.created).toBe(true)
-    expect(body.runtime.runtimeId).toBeDefined()
-  })
-
-  // SKIP: same server-side broker compile/admission rejection
-  // ("initial-input-id-mismatch") on the live `hrc run` launch. Server / lib
-  // coupled, not fixable from hrc-cli. Skipped per fully-green directive.
-  it.skip('maps ~lane handles onto distinct sessionRefs and replaces the runtime on --force-restart', async () => {
-    const first = await runCli(
-      ['run', 'rex@agent-spaces:T-00123~repair', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-      })
-    )
-    expect(first.exitCode).toBe(0)
-    const firstBody = JSON.parse(first.stdout.trim())
-    expect(firstBody.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:repair')
-    const firstRuntimeId = firstBody.runtime.runtimeId
-
-    const second = await runCli(
-      ['run', 'rex@agent-spaces:T-00123~repair', '--force-restart', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-      })
-    )
-
-    expect(second.exitCode).toBe(0)
-    const secondBody = JSON.parse(second.stdout.trim())
-    expect(secondBody.sessionRef).toBe('agent:rex:project:agent-spaces:task:T-00123/lane:repair')
-    // Same session, but fresh_pty replaces the runtime.
-    expect(secondBody.hostSessionId).toBe(firstBody.hostSessionId)
-    expect(secondBody.runtime.runtimeId).not.toBe(firstRuntimeId)
-    expect(secondBody.created).toBe(false)
-  })
-
-  // hrc run must pass canonical sessionRef when resolving the session. The
-  // resulting host session row must carry the canonical scopeRef/laneRef,
-  // not a synthetic app-session identifier.
-  // SKIP: same server-side broker compile/admission rejection
-  // ("initial-input-id-mismatch") on the live `hrc run` launch. Server / lib
-  // coupled, not fixable from hrc-cli. Skipped per fully-green directive.
-  it.skip('passes canonical sessionRef on the resolveSession request', async () => {
-    const result = await runCli(
-      ['run', 'rex@agent-spaces:T-00123', '--no-attach'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-      })
-    )
-
-    expect(result.exitCode).toBe(0)
-    const body = JSON.parse(result.stdout.trim())
-
-    const hostSessionId = body.hostSessionId
-    expect(hostSessionId).toBeDefined()
-
-    const db = (await import('hrc-store-sqlite')).openHrcDatabase(dbPath)
     try {
-      const session = db.sessions.getByHostSessionId(hostSessionId)
-      expect(session).toBeDefined()
-      expect(session!.scopeRef).toBe('agent:rex:project:agent-spaces:task:T-00123')
-      expect(session!.laneRef).toBe('main')
+      for (const testCase of [
+        { taskId: 'T-00123', prompt: undefined },
+        { taskId: 'T-00124', prompt: 'Fix the bug' },
+      ]) {
+        const scope = resolveManagedScopeContext(`rex@agent-spaces:${testCase.taskId}`, {
+          projectRootOverride: join(projectsRoot, 'agent-spaces'),
+          registerPolicy: 'never',
+        })
+        const intent = buildManagedRunIntent(scope, { prompt: testCase.prompt })
+        const resolved = await client.resolveSession({
+          sessionRef: scope.sessionRef,
+          runtimeIntent: intent,
+          create: true,
+          summonIntent: 'explicit_local',
+        })
+
+        expect(resolved.found).toBe(true)
+        expect(scope.sessionRef).toBe(
+          `agent:rex:project:agent-spaces:task:${testCase.taskId}/lane:main`
+        )
+        expect(intent.harness.interactive).toBe(true)
+        expect(intent.execution?.preferredMode).toBe('interactive')
+        expect(intent.initialPrompt).toBe(testCase.prompt)
+
+        const prepared = await client.prepareAttachedRun({
+          hostSessionId: resolved.hostSessionId,
+          intent,
+          restartStyle: 'reuse_pty',
+          ...(testCase.prompt ? { prompt: testCase.prompt } : {}),
+        })
+
+        expect(prepared.status).toBe('prepared')
+        expect(prepared.attach.argv[0]).toBe('tmux')
+        expect(prepared.attach.bindingFence.hostSessionId).toBe(resolved.hostSessionId)
+        expect(prepared.attach.bindingFence.runtimeId).toMatch(/^rt-/)
+      }
     } finally {
-      db.close()
+      restoreEnvValue('ASP_AGENTS_ROOT', originalAgentsRoot)
     }
-  })
-
-  // SKIP: same server-side broker compile/admission rejection
-  // ("initial-input-id-mismatch") on the live `hrc run` launch (here the
-  // default attach path). Server / lib coupled, not fixable from hrc-cli.
-  // Skipped per fully-green directive.
-  it.skip('attaches by default instead of printing JSON when --no-attach is omitted', async () => {
-    const tmuxShimDir = await createTmuxAttachShim()
-    const result = await runCli(
-      ['run', 'rex@agent-spaces:T-00123'],
-      cliEnv({
-        ASP_AGENTS_ROOT: agentsRoot,
-        ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
-        PATH: `${tmuxShimDir}:${process.env.PATH ?? ''}`,
-      })
-    )
-
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout.trim()).toBe('')
-    expect(result.stderr.trim()).toBe('')
-
-    const loggedArgs = await Bun.file(join(tmuxShimDir, 'tmux-attach.json')).text()
-    expect(loggedArgs).toContain('attach-session')
   })
 })
 
@@ -2333,6 +2250,11 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.api.cwd).toBe(process.cwd())
       expect(body.api.binaryPath).toBe(body.binaryPath)
       expect(body.api.packagePath).toBe(body.packagePath)
+      expect(body.release).toEqual(body.api.release)
+      expect(body.release).toMatchObject({
+        mode: 'unmanaged',
+        runningEqualsInstalled: false,
+      })
       expect(body.tmux.socketPath).toBe(tmuxSocketPath)
     })
 
@@ -2467,6 +2389,7 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(statusHuman.stdout).toContain(`cwd:          ${process.cwd()}`)
       expect(statusHuman.stdout).toContain('binary:')
       expect(statusHuman.stdout).toContain('package:')
+      expect(statusHuman.stdout).toContain('release:      unmanaged')
       expect(statusHuman.stdout).toMatch(/running:\s+yes/i)
     })
   })

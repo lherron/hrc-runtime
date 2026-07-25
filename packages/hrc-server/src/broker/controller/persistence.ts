@@ -136,6 +136,7 @@ export function persistStartGraph(
       hostSessionId: String(identity.hostSessionId),
       generation: identity.generation,
       status: 'starting',
+      ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
       ...(tmuxAllocation && isBrokerTmuxProfile(input.profile)
         ? { tmux: toRuntimeStateTmux(input.profile.brokerDriver, tmuxAllocation) }
         : {}),
@@ -251,6 +252,7 @@ export function buildRuntimeStateJson(
     generation: identity.generation,
     status: runtimeStatusFromInvocationState(response.state),
     ...(identity.runId !== undefined ? { activeRunId: String(identity.runId) } : {}),
+    ...(input.runtimeAuthority !== undefined ? { authority: input.runtimeAuthority } : {}),
     createdAt: now,
     updatedAt: now,
     compile: {

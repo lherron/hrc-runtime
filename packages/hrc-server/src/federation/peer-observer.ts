@@ -51,6 +51,9 @@ function parseCapabilities(value: unknown): FederationPeerCapabilities | undefin
     ...(typeof value['runtimeProjection'] === 'boolean'
       ? { runtimeProjection: value['runtimeProjection'] }
       : {}),
+    ...(typeof value['semanticTurnHandoff'] === 'boolean'
+      ? { semanticTurnHandoff: value['semanticTurnHandoff'] }
+      : {}),
   }
 }
 

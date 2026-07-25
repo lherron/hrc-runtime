@@ -8,6 +8,9 @@ reuse the Unix-socket HRC API router and exposes exactly these routes:
 | `POST` | `/v1/federation/establish` | Authenticated authority-only establishment of a policy-born virgin scope on its named home. |
 | `POST` | `/v1/federation/accept` | Durably and idempotently accept an epoch-fenced message envelope. |
 | `POST` | `/v1/federation/locate` | Resolve `scopeRef` to binding authority, placement epoch, observed local presence, and birth provenance. |
+| `POST` | `/v1/federation/history/replicate` | Idempotently project an authenticated peer's bilateral message observation into the `svc` collective read model. |
+| `POST` | `/v1/federation/history/checkpoint` | Confirm that an authenticated peer has no outstanding collective-history replication backlog. |
+| `POST` | `/v1/federation/history/query` | Query the authoritative collective message read model on `svc`. |
 | `GET` | `/v1/federation/health` | Return node liveness and peer-protocol capabilities on demand; optionally include this node's filtered runtime projection. |
 
 All other paths return 404. In particular, `/v1/status`, `/v1/events`, and the
@@ -57,7 +60,8 @@ node identity, at least one configured peer, and a concrete tailnet host:
 Each peer may expose two role-separated transport origins:
 
 - `endpoint` is the peer-protocol origin and is used only for
-  `/v1/federation/establish`, `/v1/federation/accept`, `/v1/federation/locate`, and
+  `/v1/federation/establish`, `/v1/federation/accept`,
+  `/v1/federation/locate`, `/v1/federation/history/*`, and
   `/v1/federation/health`.
 - `registryEndpoint` is the optional binding-registry origin and is used only
   for `/v1/federation/registry/*`. When absent, registry clients fall back to
@@ -96,8 +100,9 @@ capabilities. `GET /v1/federation/health?includeRuntimes=true` also returns
 that node's local runtime rows. The normal runtime-list filters (`scope`,
 `agent`, `task`, `status`, `transport`, `stale`, `olderThan`, and
 `hostSessionId`) are accepted as query parameters. This is an additive use of
-the existing health verb, not a fifth peer route; the listener still exposes
-only establish, accept, locate, and health.
+the existing health verb. The collective-history authority additionally
+advertises `collectiveHistory: true`; omission means that peer is not the
+archive authority.
 
 The additive health capability `establish: true` advertises support for the
 authority-only establishment verb. An origin must treat an omitted capability,
@@ -119,6 +124,58 @@ home is a configured remote node, the daemon makes exactly one authenticated
 peer `locate` call to that home and attaches its node-local observation as
 `peerResolution`. Peer-listener locate itself stays local-only, preventing
 recursive fanout and preserving the bounded response contract.
+
+## Collective message history
+
+Message delivery remains bilateral: the origin message row and delivery outbox
+commit before network delivery, and the destination inserts the same immutable
+message ID before its accept ACK. The collective history is a derived read
+model and is never a prerequisite for those commits.
+
+Every node maintains a separate durable replication queue keyed by message ID.
+Repository insert and execution-state updates reopen that row only when the
+serialized record changes. Startup scans the complete local bilateral message
+store, so a crash between the bilateral commit and replication-queue insertion
+is repaired as an idempotent backfill. Failed archive delivery retries without
+dead-lettering; a single failed authority probe stops that drain pass so an
+outage is not multiplied by backlog size.
+
+Only node `svc` serves the three authenticated history verbs. Replication derives
+the source role from the record itself:
+
+- no `metadataJson.federationIngress` means the authenticated source node is
+  the origin;
+- a federation-ingress record is a destination observation, and its
+  authenticated ingress node is the origin.
+
+The archive deduplicates the canonical message by `messageId` and retains one
+observation per node with its original node-local `messageSeq`,
+origin/destination role, accepted destination, observation timestamp, and
+execution projection. Origin facts win canonical selection; destination
+observations remain visible. The authority allocates a distinct
+`collectiveSeq` ingestion cursor. A node-local sequence is never merged or
+interpreted as that cursor.
+
+After draining its durable queue, every non-authority node periodically sends
+an authenticated catch-up checkpoint. A newly started `svc` treats every
+configured peer as unconfirmed until its first post-start checkpoint, so a
+direct query through `svc` cannot silently claim completeness during remote
+recovery. Sleeping or unreachable peers remain named in `unconfirmedNodeIds`.
+
+Normal `/v1/messages/query` reads use the local collective store on `svc` and
+the authenticated history query on other nodes. Every new-daemon response
+includes a history status:
+
+- `source=collective, complete=true` is an authority-backed answer with no
+  local replication backlog and post-start checkpoints from every configured
+  peer;
+- `source=collective, complete=false` names local replication lag or
+  unconfirmed authority peers;
+- `source=local, complete=false` is an explicitly degraded outage fallback.
+
+`hrcchat messages` prints the incomplete condition to stderr in human mode and
+retains the structured status in JSON. It never presents the local fallback as
+a complete collective transcript.
 
 ## Federation validation ladder
 

@@ -1,5 +1,12 @@
+import type { HrcRuntimeSnapshot } from 'hrc-core'
+import {
+  getBrokerRuntimeTmuxSessionName,
+  getBrokerRuntimeTmuxSocketPath,
+} from '../broker-decisions.js'
 import { BrokerControllerError, type BrokerControllerRpcResult } from '../broker/controller.js'
+import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
 import { writeServerLog } from '../server-log.js'
+import { createTmuxManager } from '../tmux.js'
 
 /**
  * Minimal structural view of the harness-broker controller's `dispose` method.
@@ -7,7 +14,7 @@ import { writeServerLog } from '../server-log.js'
  * just the slice these handlers need.
  */
 interface BrokerDisposer {
-  dispose(
+  dispose?(
     runtimeId: string,
     opts?: { reason?: string }
   ): Promise<BrokerControllerRpcResult<{ disposed: true }>>
@@ -26,6 +33,11 @@ export async function disposeBrokerRuntime(
   runtimeId: string,
   opts: { reason?: string | undefined; logMessage: string }
 ): Promise<void> {
+  // Scripted/embedded controllers can represent a runtime that is already
+  // absent without exposing the optional lifecycle RPC. Treat that shape like
+  // broker_runtime_not_active; leased-substrate teardown remains independent.
+  if (typeof controller.dispose !== 'function') return
+
   const disposeResult = await controller
     .dispose(runtimeId, opts.reason !== undefined ? { reason: opts.reason } : {})
     .catch((error: unknown) => ({
@@ -43,6 +55,45 @@ export async function disposeBrokerRuntime(
       runtimeId,
       error: disposeResult.error.message,
       code: disposeResult.error.code,
+    })
+  }
+}
+
+/** Whether this broker owns a per-runtime leased tmux substrate. */
+export function hasBrokerLeasedTmux(runtime: HrcRuntimeSnapshot): boolean {
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  return (
+    hosting?.substrate.kind === 'leased-tmux' ||
+    (hosting === undefined && getBrokerRuntimeTmuxSocketPath(runtime) !== undefined)
+  )
+}
+
+/**
+ * Kill the complete per-runtime lease namespace. This is deliberately separate
+ * from broker RPC disposal: cleanup must still run when the broker is already
+ * unreachable or dispose reports a driver failure.
+ */
+export async function teardownBrokerLeasedTmux(
+  runtime: HrcRuntimeSnapshot,
+  opts: { logMessage: string }
+): Promise<void> {
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  const substrate = hosting?.substrate.kind === 'leased-tmux' ? hosting.substrate : undefined
+  const socketPath = substrate?.tmuxSocketPath ?? getBrokerRuntimeTmuxSocketPath(runtime)
+  if (!socketPath) return
+  const sessionName = substrate?.sessionName ?? getBrokerRuntimeTmuxSessionName(runtime)
+  const leaseTmux = createTmuxManager({ socketPath })
+  try {
+    if (await leaseTmux.inspectSession(sessionName)) {
+      await leaseTmux.terminate(sessionName)
+    }
+    await leaseTmux.killServer()
+  } catch (error) {
+    writeServerLog('WARN', opts.logMessage, {
+      runtimeId: runtime.runtimeId,
+      socketPath,
+      sessionName,
+      error,
     })
   }
 }

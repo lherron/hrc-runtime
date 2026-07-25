@@ -35,6 +35,9 @@ QUICK START
   Query durable messages involving a target:
   hrcchat messages cody@agentchat --limit 50
 
+  Reconstruct a complete reply thread from any member message:
+  hrcchat thread seq:15173
+
   Follow monitor events for a target:
   hrc monitor watch cody@agentchat --follow --timeout 10m
 
@@ -44,10 +47,12 @@ QUICK START
 COMMAND NAMES (avoid phantom commands)
   Query durable history with 'messages' — there is no 'msg' or 'message'.
   Show one message with 'show <seq-or-id>' — there is no 'seq' command.
+  Reconstruct its full reply chain with 'thread <seq-or-id>'.
   Both CLIs suggest the right name (and exit non-zero) if you mistype.
 
 SELECTORS
-  'show' accepts a durable message seq number or a full message ID. The
+  'show' and 'thread' accept seq:<number>, msg:<id>, a bare durable message
+  sequence number, or a full message ID. The
   shared HRC selector grammar (scope:/session:/host:/runtime:/msg:/seq:/
   bare-handle) is documented in 'hrc info'; monitor waits accept it too,
   e.g. 'hrc monitor wait msg:<id> --until response'.

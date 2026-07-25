@@ -64,6 +64,10 @@ check:
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
 
+# Validate durable architecture records and generated projections
+architecture-records *args:
+    bun scripts/check-architecture-records.ts {{args}}
+
 # The declared landing gate. It depends on `env-up` by ruling (T-06900 +
 # T-06902, joint): the gate provisions the environment it needs instead of
 # inheriting it. Before that ruling a green `just verify` was partly a statement
@@ -83,6 +87,7 @@ verify: env-up
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(bash scripts/dev-env.sh env)"
+    just architecture-records
     just check
     just lint
     just typecheck
@@ -280,6 +285,14 @@ check-deps:
 # Publish timestamped dev package set to local Verdaccio
 publish-dev:
     bun scripts/publish-local-verdaccio.ts
+
+# Publish a canonical package set from the freshly fetched named source ref
+publish-canonical:
+    bun scripts/publish-local-verdaccio.ts --channel canonical
+
+# Validate a canonical package set without publishing
+publish-canonical-dry-run:
+    bun scripts/publish-local-verdaccio.ts --channel canonical --dry-run
 
 # Validate timestamped dev package set without publishing
 publish-dev-dry-run:

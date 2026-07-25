@@ -12,7 +12,7 @@ import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
 const RUNTIME_ID = 'rt-subscriber-delivery-surface'
 
 describe('follow-stream subscriber inspection surface', () => {
-  it('registers and advances admission counters for both follow routes without receipt labels', async () => {
+  it('keeps receipt opt-in per follow route and never claims it for legacy clients', async () => {
     const fixture = await createHrcTestFixture('hrc-subscriber-routes-')
     const originalServe = Bun.serve
     let capturedOptions: Parameters<typeof Bun.serve>[0] | undefined
@@ -34,10 +34,10 @@ describe('follow-stream subscriber inspection surface', () => {
         { status: 'ready' }
       )
 
-      const dispatch = async (path: string): Promise<Response> => {
+      const dispatch = async (path: string, init?: RequestInit): Promise<Response> => {
         const fetchHandler = capturedOptions?.fetch
         if (!fetchHandler) throw new Error('Bun.serve fetch handler was not captured')
-        return await fetchHandler(new Request(`http://localhost${path}`), {
+        return await fetchHandler(new Request(`http://localhost${path}`, init), {
           timeout() {},
         } as Parameters<NonNullable<typeof fetchHandler>>[1])
       }
@@ -54,8 +54,11 @@ describe('follow-stream subscriber inspection surface', () => {
         generation: '1',
         afterSeq: '0',
         follow: 'true',
+        receipt: 'consumer-ack-v1',
       })
       const brokerResponse = await dispatch(`/v1/broker-events?${brokerQuery.toString()}`)
+      const brokerSubscriberId = brokerResponse.headers.get('x-hrc-subscriber-id')
+      const brokerReceiptToken = brokerResponse.headers.get('x-hrc-receipt-token')
       const brokerReader = brokerResponse.body?.getReader()
       if (!brokerReader) throw new Error('broker follow response did not include a body')
       readers.push(brokerReader)
@@ -102,6 +105,16 @@ describe('follow-stream subscriber inspection surface', () => {
       }
       await eventsReader.read()
       await brokerReader.read()
+      const brokerAck = await dispatch('/v1/server/subscribers/ack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          subscriberId: brokerSubscriberId,
+          receiptToken: brokerReceiptToken,
+          seq: 7,
+        }),
+      })
+      expect(brokerAck.status).toBe(200)
 
       const response = await dispatch('/v1/server/subscribers')
       expect(response.status).toBe(200)
@@ -121,6 +134,9 @@ describe('follow-stream subscriber inspection surface', () => {
           pendingSince: null,
           lastStreamAcceptedAt: expect.any(String),
           keepaliveOnlySince: null,
+          receiptMode: 'none',
+          receiptState: 'not-requested',
+          lastConsumerAcknowledgedSeq: null,
         })
       )
       expect(body.active.find((entry) => entry.route === 'broker-events')).toEqual(
@@ -133,10 +149,13 @@ describe('follow-stream subscriber inspection surface', () => {
           pendingSince: null,
           lastStreamAcceptedAt: expect.any(String),
           keepaliveOnlySince: null,
+          receiptMode: 'consumer-ack-v1',
+          receiptState: 'caught-up',
+          lastConsumerAcknowledgedSeq: 7,
         })
       )
       const fieldNames = body.active.flatMap((entry) => Object.keys(entry)).join(' ')
-      expect(fieldNames).not.toMatch(/delivered|flushed|socket|consumer|notDraining/i)
+      expect(fieldNames).not.toMatch(/receiptToken|delivered|flushed|socket|notDraining/i)
     } finally {
       for (const reader of readers) await reader.cancel().catch(() => undefined)
       await server?.stop()
@@ -201,12 +220,106 @@ describe('follow-stream subscriber inspection surface', () => {
       expect(Object.hasOwn(active ?? {}, 'pendingSince')).toBe(true)
       expect(Object.hasOwn(active ?? {}, 'lastStreamAcceptedAt')).toBe(true)
       expect(Object.hasOwn(active ?? {}, 'keepaliveOnlySince')).toBe(true)
+      expect(active).toEqual(
+        expect.objectContaining({
+          receiptMode: 'none',
+          receiptState: 'not-requested',
+          lastConsumerAcknowledgedSeq: null,
+        })
+      )
       expect(Object.keys(active ?? {}).join(' ')).not.toMatch(
-        /delivered|flushed|socket|consumer|notDraining/i
+        /receiptToken|delivered|flushed|socket|notDraining/i
       )
     } finally {
       await reader?.cancel().catch(() => undefined)
       await server?.stop()
+      await fixture.cleanup()
+    }
+  })
+
+  it('shows an opted-in stopped consumer behind before response buffering saturates', async () => {
+    const fixture = await createHrcTestFixture('hrc-subscriber-receipt-')
+    const originalServe = Bun.serve
+    let capturedOptions: Parameters<typeof Bun.serve>[0] | undefined
+    let server: HrcServer | undefined
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+
+    Bun.serve = ((options: Parameters<typeof Bun.serve>[0]) => {
+      capturedOptions = options
+      return { stop() {} } as ReturnType<typeof Bun.serve>
+    }) as typeof Bun.serve
+
+    try {
+      server = await createHrcServer(fixture.serverOpts({ otelListenerEnabled: false }))
+      const dispatch = async (path: string, init?: RequestInit): Promise<Response> => {
+        const fetchHandler = capturedOptions?.fetch
+        if (!fetchHandler) throw new Error('Bun.serve fetch handler was not captured')
+        return await fetchHandler(new Request(`http://localhost${path}`, init), {
+          timeout() {},
+        } as Parameters<NonNullable<typeof fetchHandler>>[1])
+      }
+
+      const response = await dispatch('/v1/events?follow=true&fromSeq=1&receipt=consumer-ack-v1')
+      const subscriberId = response.headers.get('x-hrc-subscriber-id')
+      const receiptToken = response.headers.get('x-hrc-receipt-token')
+      expect(subscriberId).toMatch(/^sub-/)
+      expect(receiptToken).toMatch(/^receipt-/)
+      expect(response.headers.get('x-hrc-receipt-ack-path')).toBe('/v1/server/subscribers/ack')
+      reader = response.body?.getReader()
+      if (!reader) throw new Error('events follow response did not include a body')
+      await reader.read() // initial keepalive
+
+      const fanoutServer = server as HrcServer & {
+        followSubscribers: Set<FollowSubscriber>
+      }
+      const event = (hrcSeq: number): HrcLifecycleEvent => ({
+        hrcSeq,
+        streamSeq: hrcSeq,
+        ts: '2026-07-18T12:04:00.000Z',
+        hostSessionId: 'hsid-subscriber-receipt',
+        scopeRef: 'agent:test',
+        laneRef: 'main',
+        generation: 1,
+        category: 'turn',
+        eventKind: 'turn.message',
+        replayed: false,
+        payload: {},
+      })
+
+      for (const subscriber of fanoutServer.followSubscribers) subscriber(event(5))
+      await reader.read()
+      const ackResponse = await dispatch('/v1/server/subscribers/ack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subscriberId, receiptToken, seq: 5 }),
+      })
+      expect(ackResponse.status).toBe(200)
+      expect(await ackResponse.json()).toEqual(
+        expect.objectContaining({ disposition: 'advanced', lastConsumerAcknowledgedSeq: 5 })
+      )
+
+      for (const subscriber of fanoutServer.followSubscribers) subscriber(event(6))
+      await Bun.sleep(0)
+      const snapshotResponse = await dispatch('/v1/server/subscribers')
+      const snapshot = (await snapshotResponse.json()) as {
+        active: Array<Record<string, unknown>>
+      }
+      expect(snapshot.active[0]).toEqual(
+        expect.objectContaining({
+          subscriberId,
+          lastStreamAcceptedSeq: 6,
+          streamAcceptedCount: 2,
+          receiptMode: 'consumer-ack-v1',
+          receiptState: 'behind',
+          lastConsumerAcknowledgedSeq: 5,
+          consumerReceiptBehindSince: expect.any(String),
+        })
+      )
+      expect(JSON.stringify(snapshot)).not.toContain(String(receiptToken))
+    } finally {
+      await reader?.cancel().catch(() => undefined)
+      await server?.stop()
+      Bun.serve = originalServe
       await fixture.cleanup()
     }
   })

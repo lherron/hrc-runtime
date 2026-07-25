@@ -25,6 +25,7 @@ import {
   cleanupRuntimeTaskClaimCredentialFile,
   injectRuntimeTaskClaimCredentialFile,
 } from '../federation/task-claim-runtime.js'
+import { injectRuntimeWrkqAuthority } from '../federation/wrkq-authority.js'
 
 const SCOPE = 'agent:room-coordinator:project:hrc-runtime:task:T-06624'
 const AUTHORITY: TaskClaimAuthority = {
@@ -427,15 +428,17 @@ describe('T-06624 claim-birth summon authority', () => {
       })
       persistSessionTaskClaimAuthority(h.server, 'hsid-runtime-claim', AUTHORITY, now)
       const env = injectRuntimeTaskClaimCredentialFile(
-        { KEEP: 'yes', WRKQD_TOKEN: 'stale-dev-token', WRKQ_DB_PATH: '/tmp/local.sqlite' },
+        injectRuntimeWrkqAuthority(
+          { KEEP: 'yes', WRKQD_TOKEN: 'stale-dev-token', WRKQ_DB_PATH: '/tmp/local.sqlite' },
+          {
+            HRC_WRKQ_DB: 'rpc://canonical.example:7171',
+            HRC_WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
+          }
+        ),
         {
           db: h.db,
           runtimeRoot: h.directory,
           hostSessionId: 'hsid-runtime-claim',
-          claimTransportSource: {
-            HRC_WRKQ_DB: 'rpc://canonical.example:7171',
-            HRC_WRKQD_TOKEN_FILE: '/run/secrets/wrkq-node-token',
-          },
         }
       )
       const path = env[HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]

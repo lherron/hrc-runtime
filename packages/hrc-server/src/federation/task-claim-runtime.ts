@@ -5,11 +5,10 @@ import { join } from 'node:path'
 import { HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV } from 'hrc-core'
 import type { HrcDatabase } from 'hrc-store-sqlite'
 
-import { taskClaimCommandEnvironment } from './task-claim-client.js'
-
 const SAFE_HOST_SESSION_ID = /^[A-Za-z0-9._-]+$/
 const TERMINAL_RUNTIME_STATUSES = new Set([
   'dead',
+  'crashed',
   'disposed',
   'exited',
   'failed',
@@ -37,11 +36,12 @@ export function injectRuntimeTaskClaimCredentialFile(
     db: HrcDatabase
     runtimeRoot: string
     hostSessionId: string
-    claimTransportSource?: Record<string, string | undefined> | undefined
   }
 ): Record<string, string> {
+  const runtimeEnv = { ...env }
+  delete runtimeEnv[HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]
   const authority = input.db.sessionTaskClaimAuthorities.getByHostSessionId(input.hostSessionId)
-  if (authority === null) return env
+  if (authority === null) return runtimeEnv
   const directory = join(input.runtimeRoot, 'task-claim-credentials')
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   chmodSync(directory, 0o700)
@@ -63,20 +63,8 @@ export function injectRuntimeTaskClaimCredentialFile(
   renameSync(temporary, destination)
   chmodSync(destination, 0o600)
 
-  // Broker dispatch env carries strings, not deletion markers, and rejects
-  // credential keys such as WRKQD_TOKEN by design. The explicit token file is
-  // safe to project; wrkq reserves the absent inline key before dotenv loading
-  // whenever that file is present. Preserve only non-credential unsets as
-  // empty keys so a local SQLite locator cannot reappear in the child runtime.
-  const claimTransportEnv = Object.fromEntries(
-    Object.entries(taskClaimCommandEnvironment(input.claimTransportSource))
-      .filter(([key]) => key !== 'WRKQD_TOKEN')
-      .map(([key, value]) => [key, value ?? ''])
-  )
-  const { WRKQD_TOKEN: _discardedInlineToken, ...runtimeEnv } = env
   return {
     ...runtimeEnv,
-    ...claimTransportEnv,
     [HRC_TASK_CLAIM_CREDENTIAL_FILE_ENV]: destination,
   }
 }

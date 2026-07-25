@@ -38,6 +38,7 @@ beforeEach(async () => {
   server = await createHrcServer(
     fixture.serverOpts({
       headlessCodexBrokerEnabled: true,
+      claudeCodeTmuxBrokerEnabled: true,
       codexCliTmuxBrokerEnabled: true,
       otelListenerEnabled: false,
     })
@@ -99,6 +100,24 @@ function codexInteractiveIntent(): HrcRuntimeIntent {
     },
     harness: { provider: PROVIDER, interactive: true, id: 'codex-cli' },
     execution: { preferredMode: 'interactive' },
+  }
+}
+
+function claudeSdkIntent(allowInteractiveSurfaceReuse: boolean | undefined): HrcRuntimeIntent {
+  return {
+    placement: {
+      agentRoot: fixture.tmpDir,
+      projectRoot: fixture.tmpDir,
+      cwd: fixture.tmpDir,
+      runMode: 'task',
+      bundle: { kind: 'compose', compose: [] },
+      dryRun: true,
+    },
+    harness: { provider: 'anthropic', interactive: false, id: 'agent-sdk' },
+    execution: {
+      preferredMode: 'nonInteractive',
+      ...(allowInteractiveSurfaceReuse !== undefined ? { allowInteractiveSurfaceReuse } : {}),
+    },
   }
 }
 
@@ -254,11 +273,18 @@ function seedReadyBrokerRuntime(input: {
   activeRunId?: string | undefined
   capabilitiesJson?: Record<string, unknown>
   scopeRef?: string
+  provider?: 'anthropic' | 'openai'
+  harness?: 'claude-code' | 'codex-cli'
+  brokerDriver?: 'claude-code-tmux' | 'codex-app-server' | 'codex-cli-tmux'
 }): void {
   const db = openHrcDatabase(fixture.dbPath)
   const now = new Date().toISOString()
   const operationId = `op-${input.runtimeId}`
   const transport = input.transport ?? 'headless'
+  const provider = input.provider ?? PROVIDER
+  const harness = input.harness ?? 'codex-cli'
+  const brokerDriver =
+    input.brokerDriver ?? (transport === 'tmux' ? 'codex-cli-tmux' : 'codex-app-server')
 
   try {
     db.runtimes.insert({
@@ -268,8 +294,8 @@ function seedReadyBrokerRuntime(input: {
       laneRef: 'default',
       generation: input.generation,
       transport,
-      harness: 'codex-cli',
-      provider: PROVIDER,
+      harness,
+      provider,
       status: input.status ?? 'ready',
       supportsInflightInput: false,
       adopted: false,
@@ -284,7 +310,7 @@ function seedReadyBrokerRuntime(input: {
               sessionName: 's',
               windowId: 'w',
               paneId: 'p',
-              brokerDriver: 'codex-cli-tmux',
+              brokerDriver,
             },
           }
         : {}),
@@ -297,7 +323,7 @@ function seedReadyBrokerRuntime(input: {
       runtimeId: input.runtimeId,
       ...(input.activeRunId !== undefined ? { runId: input.activeRunId } : {}),
       brokerProtocol: 'harness-broker/0.2',
-      brokerDriver: transport === 'tmux' ? 'codex-cli-tmux' : 'codex-app-server',
+      brokerDriver,
       invocationState: input.activeRunId !== undefined ? 'turn_active' : 'ready',
       capabilitiesJson: JSON.stringify(input.capabilitiesJson ?? { input: { queue: true } }),
       specHash: `sha256:spec-${input.runtimeId}`,
@@ -332,6 +358,15 @@ function runIdsForRuntime(runtimeId: string): string[] {
   const db = openHrcDatabase(fixture.dbPath)
   try {
     return db.runs.listByRuntimeId(runtimeId).map((run) => run.runId)
+  } finally {
+    db.close()
+  }
+}
+
+function runtimeTransport(runtimeId: string): string | undefined {
+  const db = openHrcDatabase(fixture.dbPath)
+  try {
+    return db.runtimes.getByRuntimeId(runtimeId)?.transport
   } finally {
     db.close()
   }
@@ -562,7 +597,7 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       waitForCompletion: false,
     })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     const body = (await res.json()) as any
     expect(body.runtimeId).toBe(runtimeId)
     expect(runIdsForRuntime(runtimeId)).toHaveLength(runIdsBefore.length + 1)
@@ -571,6 +606,144 @@ describe('T-05095 regression guard — interactive live-TUI queue is preserved',
       runtimeId,
       policy: { whenBusy: 'queue' },
     })
+  }, 15_000)
+
+  it('T-05177: explicit false reuse veto keeps same-session codex dispatch on the headless broker route', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-live-tui-veto'
+    const headlessRuntimeId = 'rt-t05177-headless-veto'
+
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-live-tui-veto',
+      transport: 'tmux',
+    })
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: headlessRuntimeId,
+      invocationId: 'inv-t05177-headless-veto',
+      transport: 'headless',
+    })
+    const dispatchSpy = installDispatchInputSpy()
+    const vetoedIntent: HrcRuntimeIntent = {
+      ...codexHeadlessIntent(),
+      execution: {
+        preferredMode: 'nonInteractive',
+        allowInteractiveSurfaceReuse: false,
+      },
+    }
+
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'autonomous verifier must not land in the live TUI',
+      runtimeIntent: vetoedIntent,
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(202)
+    const body = (await res.json()) as { runtimeId?: string }
+    expect(body.runtimeId).toBe(headlessRuntimeId)
+    expect(dispatchSpy.calls).toHaveLength(1)
+    expect(dispatchSpy.calls[0]).toMatchObject({ runtimeId: headlessRuntimeId })
+  }, 15_000)
+
+  it('T-05177 guard: omitted reuse flag still delivers codex headless-preferred DM into the live TUI', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-live-tui-default'
+    const headlessRuntimeId = 'rt-t05177-headless-default'
+
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-live-tui-default',
+      transport: 'tmux',
+    })
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: headlessRuntimeId,
+      invocationId: 'inv-t05177-headless-default',
+      transport: 'headless',
+    })
+    const dispatchSpy = installDispatchInputSpy()
+
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'operator DM should still land in the live TUI',
+      runtimeIntent: codexHeadlessIntent(),
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(202)
+    const body = (await res.json()) as { runtimeId?: string }
+    expect(body.runtimeId).toBe(interactiveRuntimeId)
+    expect(dispatchSpy.calls).toHaveLength(1)
+    expect(dispatchSpy.calls[0]).toMatchObject({
+      runtimeId: interactiveRuntimeId,
+      policy: { whenBusy: 'queue' },
+    })
+  }, 15_000)
+
+  it('T-05177: explicit false reuse veto prevents Claude SDK normalization into the live TUI', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-claude-live-tui-veto'
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-claude-live-tui-veto',
+      transport: 'tmux',
+      provider: 'anthropic',
+      harness: 'claude-code',
+      brokerDriver: 'claude-code-tmux',
+    })
+    const dispatchSpy = installDispatchInputSpy()
+
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'autonomous Claude SDK verifier must not land in the live TUI',
+      runtimeIntent: claudeSdkIntent(false),
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { runtimeId?: string }
+    expect(body.runtimeId).not.toBe(interactiveRuntimeId)
+    expect(body.runtimeId ? runtimeTransport(body.runtimeId) : undefined).toBe('headless')
+    expect(dispatchSpy.calls).toHaveLength(0)
+  }, 15_000)
+
+  it('T-05177 guard: omitted reuse flag still normalizes Claude SDK dispatch into the live TUI', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    const interactiveRuntimeId = 'rt-t05177-claude-live-tui-default'
+    seedReadyBrokerRuntime({
+      hostSessionId,
+      generation,
+      runtimeId: interactiveRuntimeId,
+      invocationId: 'inv-t05177-claude-live-tui-default',
+      transport: 'tmux',
+      provider: 'anthropic',
+      harness: 'claude-code',
+      brokerDriver: 'claude-code-tmux',
+    })
+    const dispatchSpy = installDispatchInputSpy()
+
+    const res = await fixture.postJson('/v1/turns', {
+      hostSessionId,
+      prompt: 'operator Claude SDK DM should still land in the live TUI',
+      runtimeIntent: claudeSdkIntent(undefined),
+      waitForCompletion: false,
+    })
+
+    expect(res.status).toBe(202)
+    const body = (await res.json()) as { runtimeId?: string }
+    expect(body.runtimeId).toBe(interactiveRuntimeId)
+    expect(dispatchSpy.calls).toHaveLength(1)
+    expect(dispatchSpy.calls[0]).toMatchObject({ runtimeId: interactiveRuntimeId })
   }, 15_000)
 })
 

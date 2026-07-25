@@ -32,10 +32,17 @@ function serverOpts(): HrcServerOptions {
   return { runtimeRoot, stateRoot, socketPath, lockPath, spoolDir, dbPath, tmuxSocketPath }
 }
 
-function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
+function cliEnv(extra: Record<string, string> = {}): Record<string, string | undefined> {
   return {
     HRC_RUNTIME_DIR: runtimeRoot,
     HRC_STATE_DIR: stateRoot,
+    HRC_SESSION_REF: undefined,
+    HRC_RUN_ID: undefined,
+    HRC_BIRTH_CREDENTIAL: undefined,
+    ASP_SCOPE_REF: undefined,
+    ASP_TASK_ID: undefined,
+    ASP_DEFAULT_TASK: undefined,
+    ASP_HANDLE: undefined,
     ...extra,
   }
 }
@@ -48,7 +55,10 @@ function captureChunk(chunk: string | ArrayBufferView | ArrayBuffer, chunks: str
   chunks.push(Buffer.from(chunk as ArrayBufferView).toString('utf8'))
 }
 
-async function runCli(args: string[], env?: Record<string, string>): Promise<CliResult> {
+async function runCli(
+  args: string[],
+  env?: Record<string, string | undefined>
+): Promise<CliResult> {
   const stdoutChunks: string[] = []
   const stderrChunks: string[] = []
   const originalStdoutWrite = process.stdout.write
@@ -58,7 +68,11 @@ async function runCli(args: string[], env?: Record<string, string>): Promise<Cli
 
   for (const [key, value] of Object.entries(env ?? {})) {
     originalEnv.set(key, process.env[key])
-    process.env[key] = value
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
   }
 
   process.stdout.write = ((chunk: string | ArrayBufferView | ArrayBuffer, ...rest: unknown[]) => {

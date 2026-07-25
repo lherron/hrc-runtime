@@ -34,6 +34,7 @@ import type {
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
+import { droppedBrokerClientEventFields } from './client-observability'
 import { BrokerEventMapper, type BrokerProjectionResult } from './event-mapper'
 
 import type { AllocationContext } from './controller/allocation'
@@ -100,6 +101,8 @@ const DEFAULT_BROKER_TMUX_SUMMARY_REAP_GRACE_MS = 500
 // after an hrc-server restart that no longer answers control RPCs).
 const DEFAULT_BROKER_DISPOSE_TIMEOUT_MS = 15_000
 const DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS = 20_000
+export const DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS = 2_000
+const DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS = 500
 
 // T-05358: the broker socket can close mid-dispose. The durable unix/stdio
 // transport rejects the in-flight RPC with `Broker transport closed`, while a
@@ -178,6 +181,27 @@ function resolveBrokerActiveRpcTimeoutMs(depsValue?: number, envValue?: string):
   return DEFAULT_BROKER_ACTIVE_RPC_TIMEOUT_MS
 }
 
+/**
+ * Resolve the per-RPC attach control-proof timeout. Unlike the general active
+ * RPC and dispose bounds, this safety proof can never be disabled: invalid,
+ * zero, negative, and non-finite values all fall back to the exact 2s default.
+ */
+export function resolveBrokerAttachControlProbeTimeoutMs(
+  depsValue?: number,
+  envValue?: string
+): number {
+  if (typeof depsValue === 'number' && Number.isFinite(depsValue) && depsValue > 0) {
+    return depsValue
+  }
+  if (envValue !== undefined) {
+    const parsed = Number(envValue)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+  return DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+}
+
 export { BrokerControllerError } from './controller/errors'
 export { isDurableBrokerClient } from './controller/types'
 export type {
@@ -233,6 +257,12 @@ type ActiveBrokerRuntime = {
   inspection?: BrokerInspectionCapabilities | undefined
 }
 
+type PendingBrokerEventGapBackfill = {
+  runtimeId: string
+  missingSeqs: Set<number>
+  timer: ReturnType<typeof setTimeout>
+}
+
 type BrokerPermissionPolicy =
   | { mode: 'deny'; [key: string]: unknown }
   | { mode: 'allow'; [key: string]: unknown }
@@ -273,6 +303,8 @@ export class HarnessBrokerController {
   private readonly brokerTmuxSummaryReapGraceMs: number
   private readonly brokerDisposeTimeoutMs: number
   private readonly brokerActiveRpcTimeoutMs: number
+  private readonly brokerAttachControlProbeTimeoutMs: number
+  private readonly eventGapBackfillDelayMs: number
   private readonly reconcileBrokerTmuxLivenessOnClose:
     | ((runtimeId: string) => Promise<void>)
     | undefined
@@ -300,6 +332,7 @@ export class HarnessBrokerController {
   >()
   private readonly pendingAttachedStarts = new Map<string, PendingAttachedBrokerStart>()
   private readonly attachedStartReadyWaiters = new Map<string, AttachedStartReadyWaiter>()
+  private readonly pendingBrokerEventGapBackfills = new Map<string, PendingBrokerEventGapBackfill>()
   // Set by `shutdown()` when the owning server is stopping. Once true, in-flight
   // event consumers stop projecting before the backing DB is closed, so a
   // late broker event cannot read a closed DB and crash teardown.
@@ -307,17 +340,28 @@ export class HarnessBrokerController {
 
   constructor(deps: HarnessBrokerControllerDeps) {
     this.db = deps.db
+    this.logger = deps.logger ?? {}
     this.mapper =
       deps.mapper ??
       new BrokerEventMapper({
         db: deps.db,
         ...(deps.now ? { now: deps.now } : {}),
       })
+    const onDroppedEvent = (event: InvocationEventEnvelope, lastSeq: number): void => {
+      this.logger.warn?.(
+        'broker.client_dropped_backward_seq',
+        droppedBrokerClientEventFields(event, lastSeq)
+      )
+    }
     this.brokerClientFactory =
-      deps.brokerClientFactory ?? ((options) => BrokerClient.start(options))
+      deps.brokerClientFactory ?? ((options) => BrokerClient.start({ ...options, onDroppedEvent }))
     this.brokerUnixClientFactory =
       deps.brokerUnixClientFactory ??
-      ((options) => BrokerClient.connectUnix(options) as Promise<DurableBrokerClientLike>)
+      ((options) =>
+        BrokerClient.connectUnix({
+          ...options,
+          onDroppedEvent,
+        }) as Promise<DurableBrokerClientLike>)
     this.permissionChannel = deps.permissionChannel
     this.agentchat = deps.agentchat
     this.tmuxAllocator = deps.tmuxAllocator
@@ -339,6 +383,16 @@ export class HarnessBrokerController {
       deps.brokerActiveRpcTimeoutMs,
       deps.env?.['HRC_BROKER_ACTIVE_RPC_TIMEOUT_MS']
     )
+    this.brokerAttachControlProbeTimeoutMs = resolveBrokerAttachControlProbeTimeoutMs(
+      deps.brokerAttachControlProbeTimeoutMs,
+      deps.env?.['HRC_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS']
+    )
+    this.eventGapBackfillDelayMs =
+      typeof deps.eventGapBackfillDelayMs === 'number' &&
+      Number.isFinite(deps.eventGapBackfillDelayMs) &&
+      deps.eventGapBackfillDelayMs >= 0
+        ? deps.eventGapBackfillDelayMs
+        : DEFAULT_BROKER_EVENT_GAP_BACKFILL_DELAY_MS
     this.reconcileBrokerTmuxLivenessOnClose = deps.reconcileBrokerTmuxLivenessOnClose
     this.brokerCommand =
       deps.brokerCommand ?? deps.env?.['HRC_HARNESS_BROKER_CMD'] ?? DEFAULT_BROKER_COMMAND
@@ -346,7 +400,6 @@ export class HarnessBrokerController {
     this.env = deps.env
     this.now = deps.now ?? (() => new Date().toISOString())
     this.serverInstanceId = deps.serverInstanceId ?? 'hrc-server'
-    this.logger = deps.logger ?? {}
     this.notifyRawBrokerEvent = deps.notifyRawBrokerEvent
   }
 
@@ -392,6 +445,7 @@ export class HarnessBrokerController {
       env: this.env,
       now: this.now,
       serverInstanceId: this.serverInstanceId,
+      attachControlProbeTimeoutMs: this.brokerAttachControlProbeTimeoutMs,
       logger: this.logger,
       persistenceContext: () => this.persistenceContext(),
       allocationContext: () => this.allocationContext(),
@@ -991,6 +1045,33 @@ export class HarnessBrokerController {
             })
             continue
           }
+          const lastEventSeq = invocation.lastEventSeq ?? 0
+          if (envelope.seq > lastEventSeq + 1) {
+            const missingSeqs: number[] = []
+            for (let seq = lastEventSeq + 1; seq < envelope.seq; seq++) {
+              if (
+                !this.db.brokerInvocationEvents.getByInvocationAndSeq(
+                  String(envelope.invocationId),
+                  seq
+                )
+              ) {
+                missingSeqs.push(seq)
+              }
+            }
+            if (missingSeqs.length > 0) {
+              this.logger.warn?.('broker.event_gap_detected', {
+                runtimeId,
+                invocationId: String(envelope.invocationId),
+                missingSeqs,
+                arrivedSeq: envelope.seq,
+              })
+              this.scheduleBrokerEventGapBackfill(
+                runtimeId,
+                String(envelope.invocationId),
+                missingSeqs
+              )
+            }
+          }
           const result = this.mapper.apply(envelope)
           this.afterMappedEvent(runtimeId, envelope, result)
         }
@@ -1012,6 +1093,181 @@ export class HarnessBrokerController {
     })()
   }
 
+  private scheduleBrokerEventGapBackfill(
+    runtimeId: string,
+    invocationId: string,
+    missingSeqs: number[]
+  ): void {
+    const existing = this.pendingBrokerEventGapBackfills.get(invocationId)
+    if (existing) {
+      for (const seq of missingSeqs) {
+        existing.missingSeqs.add(seq)
+      }
+      clearTimeout(existing.timer)
+      existing.timer = this.createBrokerEventGapBackfillTimer(invocationId)
+      return
+    }
+
+    this.pendingBrokerEventGapBackfills.set(invocationId, {
+      runtimeId,
+      missingSeqs: new Set(missingSeqs),
+      timer: this.createBrokerEventGapBackfillTimer(invocationId),
+    })
+  }
+
+  private createBrokerEventGapBackfillTimer(invocationId: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      const pending = this.pendingBrokerEventGapBackfills.get(invocationId)
+      if (!pending) {
+        return
+      }
+      this.pendingBrokerEventGapBackfills.delete(invocationId)
+      void this.backfillBrokerEventGap(
+        pending.runtimeId,
+        invocationId,
+        [...pending.missingSeqs].sort((left, right) => left - right)
+      )
+    }, this.eventGapBackfillDelayMs)
+  }
+
+  private async backfillBrokerEventGap(
+    runtimeId: string,
+    invocationId: string,
+    candidateSeqs: number[]
+  ): Promise<void> {
+    if (this.shuttingDown) {
+      return
+    }
+
+    let missingSeqs: number[]
+    try {
+      missingSeqs = candidateSeqs.filter(
+        (seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq)
+      )
+    } catch (error) {
+      // A delayed debounce can race a test/server teardown that closes the DB
+      // before controller.shutdown() clears its timer.
+      if (this.shuttingDown || isClosedDbError(error)) {
+        return
+      }
+      this.logger.warn?.('broker.event_gap_unrecoverable', {
+        runtimeId,
+        invocationId,
+        missingSeqs: candidateSeqs,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
+    if (missingSeqs.length === 0) {
+      return
+    }
+
+    const active = this.active.get(runtimeId)
+    const eventsSince = (
+      active?.client as
+        | {
+            eventsSince?: DurableBrokerClientLike['eventsSince'] | undefined
+          }
+        | undefined
+    )?.eventsSince
+    if (!active || active.invocationId !== invocationId || typeof eventsSince !== 'function') {
+      this.logger.warn?.('broker.event_gap_unrecoverable', {
+        runtimeId,
+        invocationId,
+        missingSeqs,
+        reason: 'client_unavailable',
+      })
+      return
+    }
+
+    const afterSeq = Math.min(...missingSeqs) - 1
+    try {
+      const replay = await eventsSince.call(active.client, {
+        invocationId: invocationId as InvocationId,
+        afterSeq,
+      })
+      if (replay.retentionFloorSeq > afterSeq) {
+        this.logger.warn?.('broker.event_gap_unrecoverable', {
+          runtimeId,
+          invocationId,
+          missingSeqs,
+          reason: 'retention_floor',
+          retentionFloorSeq: replay.retentionFloorSeq,
+        })
+        return
+      }
+
+      const missingSet = new Set(missingSeqs)
+      const repairedSeqs: number[] = []
+      for (const envelope of replay.events) {
+        if (
+          !missingSet.has(envelope.seq) ||
+          this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, envelope.seq)
+        ) {
+          continue
+        }
+        const result = this.mapper.apply(envelope)
+        this.afterMappedEvent(runtimeId, envelope, result)
+        if (!result.idempotent) {
+          repairedSeqs.push(envelope.seq)
+        }
+      }
+
+      if (repairedSeqs.length > 0) {
+        repairedSeqs.sort((left, right) => left - right)
+        this.logger.warn?.('broker.event_gap_backfilled', {
+          runtimeId,
+          invocationId,
+          repairedSeqs,
+        })
+      }
+
+      const stillMissing = missingSeqs.filter(
+        (seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq)
+      )
+      if (stillMissing.length > 0) {
+        this.logger.warn?.('broker.event_gap_unrecoverable', {
+          runtimeId,
+          invocationId,
+          missingSeqs: stillMissing,
+          reason: 'events_not_in_ledger',
+          currentSeq: replay.currentSeq,
+          retentionFloorSeq: replay.retentionFloorSeq,
+        })
+      }
+    } catch (error) {
+      if (this.shuttingDown || isClosedDbError(error)) {
+        return
+      }
+      this.logger.warn?.('broker.event_gap_unrecoverable', {
+        runtimeId,
+        invocationId,
+        missingSeqs,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private cancelBrokerEventGapBackfill(invocationId: string, reason: string): void {
+    const pending = this.pendingBrokerEventGapBackfills.get(invocationId)
+    if (!pending) {
+      return
+    }
+    clearTimeout(pending.timer)
+    this.pendingBrokerEventGapBackfills.delete(invocationId)
+    const missingSeqs = [...pending.missingSeqs]
+      .filter((seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq))
+      .sort((left, right) => left - right)
+    if (missingSeqs.length > 0) {
+      this.logger.warn?.('broker.event_gap_unrecoverable', {
+        runtimeId: pending.runtimeId,
+        invocationId,
+        missingSeqs,
+        reason,
+      })
+    }
+  }
+
   /**
    * Mark the controller as shutting down so in-flight event consumers stop
    * projecting before the owning server closes the backing DB. Idempotent;
@@ -1023,6 +1279,10 @@ export class HarnessBrokerController {
       clearTimeout(pending.timer)
     }
     this.pendingBrokerTmuxReaps.clear()
+    for (const pending of this.pendingBrokerEventGapBackfills.values()) {
+      clearTimeout(pending.timer)
+    }
+    this.pendingBrokerEventGapBackfills.clear()
   }
 
   private afterMappedEvent(
@@ -1031,8 +1291,9 @@ export class HarnessBrokerController {
     result: BrokerProjectionResult
   ): void {
     if (!result.idempotent) {
+      const invocation = this.db.brokerInvocations.getByInvocationId(String(envelope.invocationId))
       this.db.brokerInvocations.update(envelope.invocationId, {
-        lastEventSeq: envelope.seq,
+        lastEventSeq: Math.max(invocation?.lastEventSeq ?? 0, envelope.seq),
         updatedAt: this.now(),
       })
       const rawEnvelope = parseRawBrokerEnvelope(result.brokerEvent)
@@ -1057,11 +1318,21 @@ export class HarnessBrokerController {
           updatedAt: this.now(),
         })
       }
-      this.flushPendingBrokerTmuxLeaseReap(runtimeId, 'summary_recorded')
+      // Keep the bounded reap pending until invocation.exited arrives. The tmux
+      // launch runner owns the child process exit and reports its code/signal
+      // after Claude's native SessionEnd hook returns; reaping immediately on
+      // summary would kill that runner before the process-exit envelope could
+      // reach the broker. The existing grace timer remains the fail-safe when a
+      // provider never reports child exit.
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
+      this.cancelBrokerEventGapBackfill(String(envelope.invocationId), 'invocation_terminal')
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
+    }
+
+    if (envelope.type === 'invocation.disposed') {
+      this.cancelBrokerEventGapBackfill(String(envelope.invocationId), 'invocation_terminal')
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.disposed') {
@@ -1133,16 +1404,6 @@ export class HarnessBrokerController {
       this.fireBrokerTmuxLeaseReap(runtimeId, `${reason}:summary_grace_elapsed`)
     }, this.brokerTmuxSummaryReapGraceMs)
     this.pendingBrokerTmuxReaps.set(runtimeId, { reason, timer })
-  }
-
-  private flushPendingBrokerTmuxLeaseReap(runtimeId: string, reason: string): void {
-    const pending = this.pendingBrokerTmuxReaps.get(runtimeId)
-    if (!pending) {
-      return
-    }
-    clearTimeout(pending.timer)
-    this.pendingBrokerTmuxReaps.delete(runtimeId)
-    this.fireBrokerTmuxLeaseReap(runtimeId, `${pending.reason}:${reason}`)
   }
 
   /**

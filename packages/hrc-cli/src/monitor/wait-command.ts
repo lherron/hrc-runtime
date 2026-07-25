@@ -1,3 +1,4 @@
+import { parseScopeRef } from 'agent-scope'
 /** Implementation for the hrc monitor wait condition command. */
 import { CliUsageError, parseDuration } from 'cli-kit'
 import {
@@ -13,6 +14,7 @@ import {
   type HrcSelector,
   type HrcSessionRecord,
   type InspectRuntimeResponse,
+  monitorSessionMatchKind,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import {
@@ -225,6 +227,8 @@ export type LiveMonitorStateSource = {
   buildMonitorState(signal?: AbortSignal | undefined): Promise<HrcMonitorState>
 }
 
+export const LIVE_MONITOR_EVENT_BATCH_LIMIT = 256
+
 type SelectorState = Pick<HrcMonitorState, 'sessions' | 'runtimes' | 'messages'>
 
 type MonitorRuntimeSource = {
@@ -364,6 +368,7 @@ export async function createLiveMonitorStateSource(
     db.close()
   }
 
+  let retainedResponseEvents = state.events.filter((event) => event.event === 'message.response')
   let pendingRefresh = Promise.resolve(state)
   const refresh = async (refreshSignal?: AbortSignal | undefined): Promise<HrcMonitorState> => {
     refreshSignal?.throwIfAborted()
@@ -371,7 +376,13 @@ export async function createLiveMonitorStateSource(
     try {
       const eventGlobalHighWaterSeq = refreshDb.hrcEvents.maxHrcSeq()
       const messageGlobalHighWaterSeq = refreshDb.messages.maxMessageSeq()
-      const rawEvents = readFilteredEvents(refreshDb, nextHrcSeq, eventGlobalHighWaterSeq, filters)
+      const eventBatch = readFilteredEventBatch(
+        refreshDb,
+        nextHrcSeq,
+        eventGlobalHighWaterSeq,
+        filters
+      )
+      const rawEvents = eventBatch.events
       const responseMessages = readCorrelatedResponses(
         refreshDb,
         targetMessages,
@@ -383,13 +394,19 @@ export async function createLiveMonitorStateSource(
       mergeEventIdentities(state, rawEvents, refreshDb)
       applyLifecycleProjection(state, rawEvents)
       mergeMessageStates(state, responseMessages)
-      state.events.push(
-        ...rawEvents.map(toMonitorEvent),
-        ...responseMessages.map(toMessageResponseEvent)
+      const responseEventsById = new Map(
+        retainedResponseEvents.map((event) => [event.messageId, event])
       )
+      for (const event of responseMessages.map(toMessageResponseEvent)) {
+        responseEventsById.set(event.messageId, event)
+      }
+      retainedResponseEvents = [...responseEventsById.values()].slice(
+        -LIVE_MONITOR_EVENT_BATCH_LIMIT
+      )
+      state.events = [...rawEvents.map(toMonitorEvent), ...retainedResponseEvents]
       state.events.sort((a, b) => a.seq - b.seq)
       state.eventGlobalHighWaterSeq = eventGlobalHighWaterSeq
-      nextHrcSeq = eventGlobalHighWaterSeq + 1
+      nextHrcSeq = eventBatch.nextHrcSeq
       nextMessageSeq = messageGlobalHighWaterSeq + 1
       return state
     } finally {
@@ -434,38 +451,86 @@ function readFilteredEvents(
   return [...bySeq.values()].sort((a, b) => a.hrcSeq - b.hrcSeq)
 }
 
+function readFilteredEventBatch(
+  db: HrcDatabase,
+  fromHrcSeq: number,
+  throughHrcSeq: number,
+  filters: readonly HrcLifecycleMonitorFilters[]
+): {
+  events: ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>
+  nextHrcSeq: number
+} {
+  const rowsByFilter = filters.map((filter) =>
+    db.hrcEvents.listFromHrcSeqFiltered(fromHrcSeq, {
+      ...filter,
+      limit: LIVE_MONITOR_EVENT_BATCH_LIMIT,
+    })
+  )
+  const safeThroughHrcSeq = rowsByFilter.reduce((safeThrough, rows) => {
+    if (rows.length < LIVE_MONITOR_EVENT_BATCH_LIMIT) return safeThrough
+    return Math.min(safeThrough, rows.at(-1)?.hrcSeq ?? safeThrough)
+  }, throughHrcSeq)
+  const bySeq = new Map<
+    number,
+    ReturnType<HrcDatabase['hrcEvents']['listFromHrcSeqFiltered']>[number]
+  >()
+  for (const rows of rowsByFilter) {
+    for (const event of rows) {
+      if (event.hrcSeq <= safeThroughHrcSeq) bySeq.set(event.hrcSeq, event)
+    }
+  }
+  return {
+    events: [...bySeq.values()].sort((a, b) => a.hrcSeq - b.hrcSeq),
+    nextHrcSeq: safeThroughHrcSeq + 1,
+  }
+}
+
 function selectorEventFilters(
   specs: readonly MonitorSelectorSpec[],
   selected: SelectorState
 ): HrcLifecycleMonitorFilters[] {
-  return specs.map((spec) => {
-    if (spec.kind === 'task') return { taskIds: [spec.taskId] }
-    if (spec.kind === 'scope-prefix') return { scopeRefPrefixes: [spec.prefix] }
+  if (specs.length === 0) return [{}]
+  return specs.flatMap((spec): HrcLifecycleMonitorFilters[] => {
+    if (spec.kind === 'task') return [{ taskIds: [spec.taskId] }]
+    if (spec.kind === 'scope-prefix') return [{ scopeRefPrefixes: [spec.prefix] }]
 
     const selector = spec.selector
-    if (selector.kind === 'runtime') return { runtimeId: selector.runtimeId }
+    if (selector.kind === 'runtime') return [{ runtimeId: selector.runtimeId }]
     if (selector.kind === 'host' || selector.kind === 'concrete') {
-      return { hostSessionId: selector.hostSessionId }
+      return [{ hostSessionId: selector.hostSessionId }]
     }
-    if (selector.kind === 'scope') return { scopeRef: selector.scopeRef }
+    if (
+      (selector.kind === 'target' || selector.kind === 'scope') &&
+      parseScopeRef(selector.scopeRef).roleName === undefined
+    ) {
+      const matches = selected.sessions.filter(
+        (candidate) => monitorSessionMatchKind(candidate, selector) !== null
+      )
+      return matches.length > 0
+        ? matches.map((candidate) => ({ hostSessionId: candidate.hostSessionId }))
+        : [{ runtimeId: '__hrc_monitor_unresolved__' }]
+    }
+    if (selector.kind === 'scope') return [{ scopeRef: selector.scopeRef }]
     if (selector.kind === 'message' || selector.kind === 'message-seq') {
       const message = selected.messages?.find((candidate) =>
         selector.kind === 'message'
           ? candidate.messageId === selector.messageId
           : candidate.messageSeq === selector.messageSeq
       )
-      if (message?.runtimeId) return { runtimeId: message.runtimeId }
-      if (message?.runId) return { runId: message.runId }
-      if (message?.hostSessionId) return { hostSessionId: message.hostSessionId }
+      if (message?.runtimeId) return [{ runtimeId: message.runtimeId }]
+      if (message?.runId) return [{ runId: message.runId }]
+      if (message?.hostSessionId) return [{ hostSessionId: message.hostSessionId }]
     }
     const session = selected.sessions.find((candidate) =>
       selector.kind === 'stable' || selector.kind === 'target' || selector.kind === 'session'
         ? candidate.sessionRef === selector.sessionRef
         : false
     )
-    return session
-      ? { hostSessionId: session.hostSessionId }
-      : { runtimeId: '__hrc_monitor_unresolved__' }
+    return [
+      session
+        ? { hostSessionId: session.hostSessionId }
+        : { runtimeId: '__hrc_monitor_unresolved__' },
+    ]
   })
 }
 
@@ -524,9 +589,22 @@ async function readExactSelectorState(
 ): Promise<SelectorState> {
   switch (selector.kind) {
     case 'stable':
+    case 'session': {
+      const resolved = await client.resolveSession({
+        sessionRef: selector.sessionRef,
+        create: false,
+      })
+      if (!resolved.found) return emptySelectorState()
+      return stateFromSession(
+        resolved.session,
+        db.runtimes.getLatestByHostSessionId(resolved.hostSessionId)
+      )
+    }
     case 'target':
-    case 'session':
     case 'scope': {
+      if (parseScopeRef(selector.scopeRef).roleName === undefined) {
+        return readRoleTreeSelectorState(selector, db)
+      }
       const sessionRef =
         selector.kind === 'scope' ? sessionRefFor(selector.scopeRef, 'main') : selector.sessionRef
       const resolved = await client.resolveSession({ sessionRef, create: false })
@@ -556,6 +634,31 @@ async function readExactSelectorState(
       return message ? await stateFromMessage(message, client, db) : emptySelectorState()
     }
   }
+}
+
+function readRoleTreeSelectorState(
+  selector: Extract<HrcSelector, { kind: 'target' | 'scope' }>,
+  db: HrcDatabase
+): SelectorState {
+  const rows = db.sqlite
+    .query<{ host_session_id: string }, [string, string]>(
+      "SELECT host_session_id FROM sessions WHERE scope_ref = ? OR scope_ref LIKE ? ESCAPE '\\' ORDER BY host_session_id"
+    )
+    .all(selector.scopeRef, `${escapeLike(selector.scopeRef)}:role:%`)
+  const selected = emptySelectorState()
+  for (const row of rows) {
+    const session = db.sessions.getByHostSessionId(row.host_session_id)
+    if (!session) continue
+    const runtime = db.runtimes.getLatestByHostSessionId(session.hostSessionId)
+    const monitorSession = toMonitorSessionState(session, runtime)
+    if (!monitorSessionMatchKind(monitorSession, selector)) continue
+    mergeSelectorState(selected, {
+      sessions: [monitorSession],
+      runtimes: runtime ? [toMonitorRuntimeState(runtime)] : [],
+      messages: [],
+    })
+  }
+  return selected
 }
 
 function emptySelectorState(): SelectorState {

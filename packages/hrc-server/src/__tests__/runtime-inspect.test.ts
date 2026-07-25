@@ -42,6 +42,7 @@ type SeedRuntimeOptions = {
   continuationKey?: string | undefined
   createdAt?: string | undefined
   lastActivityAt?: string | undefined
+  runtimeStateJson?: Record<string, unknown> | undefined
 }
 
 function seedRuntime(options: SeedRuntimeOptions): void {
@@ -76,6 +77,7 @@ function seedRuntime(options: SeedRuntimeOptions): void {
       ...(options.wrapperPid !== undefined ? { wrapperPid: options.wrapperPid } : {}),
       ...(options.childPid !== undefined ? { childPid: options.childPid } : {}),
       ...(continuation ? { continuation } : {}),
+      ...(options.runtimeStateJson ? { runtimeStateJson: options.runtimeStateJson } : {}),
       supportsInflightInput: false,
       adopted: false,
       lastActivityAt: options.lastActivityAt ?? now,
@@ -184,6 +186,73 @@ describe('POST /v1/runtimes/inspect', () => {
       activeOperationId: 'op-inspect-broker',
       activeInvocationId: 'inv-inspect-broker',
     })
+  })
+
+  it('projects non-secret actuator authority without local approval or artifact refs', async () => {
+    fixture.seedSession('hsid-inspect-actuator', 'inspect-actuator')
+    seedRuntime({
+      runtimeId: 'rt-inspect-actuator',
+      hostSessionId: 'hsid-inspect-actuator',
+      scopeRef: 'inspect-actuator',
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      runtimeStateJson: {
+        authority: {
+          actuatorSplit: {
+            schemaVersion: 'hrc.actuator-split-policy/v1',
+            mode: 'high-risk',
+            workflowRef: 'wrkf:T-05439',
+            laneClass: 'actuator',
+            codeMutation: 'apply-approved-artifact',
+            productionCodePaths: ['packages/hrc-server'],
+            approval: {
+              schemaVersion: 'hrc.approved-mutation-ref/v1',
+              source: 'manual-operator',
+              approvalRef: `file:///secret/approval.json#sha256:${'c'.repeat(64)}`,
+              artifactRef: 'file:///secret/change.patch',
+              artifactKind: 'git-apply-patch',
+              targetPaths: ['packages/hrc-server/target.ts'],
+              artifactContentHash: `sha256:${'b'.repeat(64)}`,
+            },
+          },
+          approvedMutation: {
+            approvalRecordHash: `sha256:${'a'.repeat(64)}`,
+            artifactContentHash: `sha256:${'b'.repeat(64)}`,
+            targetPaths: ['packages/hrc-server/target.ts'],
+            expectedBaseRevision: 'base-revision',
+            expectedBaseTreeHash: 'base-tree',
+            approvedBy: 'human:lance',
+            approvedAt: '2026-07-25T09:00:00.000Z',
+          },
+        },
+      },
+    })
+
+    const body = await inspectRuntimeJson('rt-inspect-actuator')
+
+    expect(body.authority).toEqual({
+      actuatorSplit: {
+        schemaVersion: 'hrc.actuator-split-policy/v1',
+        mode: 'high-risk',
+        workflowRef: 'wrkf:T-05439',
+        laneClass: 'actuator',
+        codeMutation: 'apply-approved-artifact',
+        productionCodePaths: ['packages/hrc-server'],
+      },
+      approvedMutation: {
+        approvalRecordHash: `sha256:${'a'.repeat(64)}`,
+        artifactContentHash: `sha256:${'b'.repeat(64)}`,
+        targetPaths: ['packages/hrc-server/target.ts'],
+        expectedBaseRevision: 'base-revision',
+        expectedBaseTreeHash: 'base-tree',
+        approvedBy: 'human:lance',
+        approvedAt: '2026-07-25T09:00:00.000Z',
+      },
+    })
+    expect(JSON.stringify(body)).not.toContain('/secret/')
+    expect(JSON.stringify(body)).not.toContain('approvalRef')
+    expect(JSON.stringify(body)).not.toContain('artifactRef')
   })
 
   it('reports continuationKey and continuationStale using the stale-generation threshold', async () => {

@@ -5,6 +5,7 @@ import type {
   InspectRuntimeResponse,
 } from 'hrc-core'
 
+import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
 import { canOperatorAttach, projectBrokerHostingState } from './broker/runtime-hosting.js'
 import { extractFullRuntimeControlState } from './broker/runtime-state.js'
 import { resolveClaudeGhosttyIdleCleanupMinutes } from './option-resolvers.js'
@@ -47,6 +48,7 @@ export async function handleInspectRuntime(
       null)
     : null
   const control = extractFullRuntimeControlState(runtime.runtimeStateJson, eventHighWaterSeq)
+  const authority = projectActuatorSplitInspectAuthority(runtime.runtimeStateJson)
   // T-01876 Ph5 — separate endpoint/substrate/presentation projection (spec
   // §10.9). Undefined for non-broker / unparseable runtimes so those rows do
   // not grow the new fields.
@@ -87,6 +89,7 @@ export async function handleInspectRuntime(
       this.staleGenerationEnabled &&
       this.staleGenerationThresholdSec > 0 &&
       continuationAgeSec > this.staleGenerationThresholdSec,
+    ...(authority ? { authority } : {}),
     ...(control ? { control } : {}),
     ...(runtime.transport === 'tmux' || canOperatorAttach(runtime)
       ? { tmux: toStatusTmuxView(runtime.tmuxJson) }

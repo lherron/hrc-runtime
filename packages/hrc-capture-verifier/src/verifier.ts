@@ -953,6 +953,7 @@ function toComparableBrokerEvent(row: BrokerCaptureEvent): ComparableBrokerEvent
       const normalizedPayload = {
         toolCallId: key,
         result: normalizeBrokerToolResult(payload['result'] ?? payload['message']),
+        ...(typeof payload['isError'] === 'boolean' ? { isError: payload['isError'] } : {}),
       }
       return {
         row,
@@ -979,7 +980,10 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 
 function normalizeBrokerToolResult(value: unknown): unknown {
   if (isRecord(value) && typeof value['output'] === 'string') {
-    return { output: normalizeCommandOutputText(value['output']) }
+    return {
+      output: normalizeCommandOutputText(value['output']),
+      ...(typeof value['exitCode'] === 'number' ? { exitCode: value['exitCode'] } : {}),
+    }
   }
   if (isRecord(value) && Array.isArray(value['content'])) {
     return normalizeContentResult(value['content'])
@@ -1080,12 +1084,30 @@ function payloadsCompatible(observed: unknown, broker: unknown): boolean {
   if (toolStartInputsCompatible(observed, broker)) {
     return true
   }
+  const observedExitCode = exitCodeFromResult(observed)
+  const brokerExitCode = exitCodeFromResult(broker)
+  if (
+    observedExitCode !== undefined &&
+    brokerExitCode !== undefined &&
+    observedExitCode !== brokerExitCode
+  ) {
+    return false
+  }
+  const observedIsError = isErrorFromPayload(observed)
+  const brokerIsError = isErrorFromPayload(broker)
+  if (
+    observedIsError !== undefined &&
+    brokerIsError !== undefined &&
+    observedIsError !== brokerIsError
+  ) {
+    return false
+  }
   const observedOutput = outputText(observed)
   const brokerOutput = outputText(broker)
   if (observedOutput !== undefined && brokerOutput !== undefined) {
     return outputsCompatible(observedOutput, brokerOutput)
   }
-  if (exitCodesCompatible(observed, broker)) {
+  if (observedExitCode !== undefined && brokerExitCode !== undefined) {
     return true
   }
   return false
@@ -1178,21 +1200,16 @@ function commandFingerprint(command: string): string[] {
   ].sort()
 }
 
-function exitCodesCompatible(observed: unknown, broker: unknown): boolean {
-  const observedExitCode = exitCodeFromResult(observed)
-  const brokerExitCode = exitCodeFromResult(broker)
-  return (
-    observedExitCode !== undefined &&
-    brokerExitCode !== undefined &&
-    observedExitCode === brokerExitCode
-  )
-}
-
 function exitCodeFromResult(value: unknown): number | undefined {
   if (!isRecord(value)) return undefined
   const result = value['result']
   if (!isRecord(result)) return undefined
   return typeof result['exitCode'] === 'number' ? result['exitCode'] : undefined
+}
+
+function isErrorFromPayload(value: unknown): boolean | undefined {
+  if (!isRecord(value)) return undefined
+  return typeof value['isError'] === 'boolean' ? value['isError'] : undefined
 }
 
 function outputText(value: unknown): string | undefined {

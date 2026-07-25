@@ -27,6 +27,7 @@ import { filterRuntimes } from './sweep-helpers.js'
 
 export type RuntimeListAdoptDependencies = {
   readonly db: HrcDatabase
+  readonly staleGenerationThresholdSec: number
   reconcileTmuxRuntimeLiveness(runtime: HrcRuntimeSnapshot): Promise<HrcRuntimeSnapshot>
   notifyEvent(event: HrcEventEnvelope | HrcLifecycleEvent): void
 }
@@ -48,7 +49,7 @@ export async function listRuntimesForProjection(
   const reconciled = await Promise.all(
     runtimes.map((runtime) => deps.reconcileTmuxRuntimeLiveness(runtime))
   )
-  return filterRuntimes(reconciled, filter)
+  return filterRuntimes(reconciled, filter, deps.staleGenerationThresholdSec * 1000)
 }
 
 async function handleListRuntimes(deps: RuntimeListAdoptDependencies, url: URL): Promise<Response> {

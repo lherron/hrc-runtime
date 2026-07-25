@@ -388,6 +388,45 @@ describe('hrc monitor show acceptance (T-01289)', () => {
     expect(body.session.sessionHandle).toBe('clod@agent-spaces:primary')
   })
 
+  it('shows immediate role-child runtimes for a role-less scope selector', async () => {
+    server = await createHrcServer(serverOpts())
+    const verify = await resolveSession('observer@hrc-runtime:T-05113/verify')
+    const red = await resolveSession('observer@hrc-runtime:T-05113/red')
+    const verifyRuntime = seedHeadlessRuntime(verify)
+    const redRuntime = seedHeadlessRuntime(red)
+    const baseScope = 'agent:observer:project:hrc-runtime:task:T-05113'
+
+    const result = await runCli(['monitor', 'show', `scope:${baseScope}`, '--json'], cliEnv())
+
+    expect(result.exitCode).toBe(0)
+    const body = JSON.parse(result.stdout) as {
+      runtime: { runtimeId: string }
+      matches: Array<{
+        matchKind: string
+        roleName: string
+        scopeRef: string
+        runtimeId: string
+      }>
+    }
+    expect(body.matches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          matchKind: 'role-child',
+          roleName: 'verify',
+          scopeRef: `${baseScope}:role:verify`,
+          runtimeId: verifyRuntime,
+        }),
+        expect.objectContaining({
+          matchKind: 'role-child',
+          roleName: 'red',
+          scopeRef: `${baseScope}:role:red`,
+          runtimeId: redRuntime,
+        }),
+      ])
+    )
+    expect([verifyRuntime, redRuntime]).toContain(body.runtime.runtimeId)
+  })
+
   it('exits 2 for an invalid selector', async () => {
     const result = await runCli(['monitor', 'show', 'invalid-scope!!'], cliEnv())
     expect(result.exitCode).toBe(2)

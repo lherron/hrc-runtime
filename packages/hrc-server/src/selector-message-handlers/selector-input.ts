@@ -473,7 +473,7 @@ export async function handleDispatchTurnBySelector(
     }
   }
 
-  const turnStatus = turnBody.status
+  const turnStatus = turnBody.status === 'completed' ? 'completed' : 'started'
   return json({
     runId: turnBody.runId,
     sessionRef: formatSelectorRef(session),

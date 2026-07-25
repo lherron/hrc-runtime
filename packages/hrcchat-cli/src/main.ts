@@ -16,6 +16,8 @@ import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
 import { cmdShow } from './commands/show.js'
 import { cmdSummon } from './commands/summon.js'
+import { cmdThread } from './commands/thread.js'
+import { cmdTrace } from './commands/trace.js'
 import { TurnExitError, cmdTurn } from './commands/turn.js'
 import { cmdWho } from './commands/who.js'
 import { formatHrcDomainError } from './domain-error-format.js'
@@ -312,11 +314,33 @@ sendCmd.addHelpText(
 
 program
   .command('show')
-  .description('show one message by seq or message ID')
-  .argument('<seq-or-id>', 'message seq number or message ID')
+  .description('show one message by seq:/msg: selector, bare seq, or message ID')
+  .argument('<seq-or-id>', 'message selector, seq number, or message ID')
   .action(async (seqOrId) => {
     const client = createClient()
     await cmdShow(client, { json: globalOpts().json }, [seqOrId])
+  })
+
+// -- thread -------------------------------------------------------------------
+
+program
+  .command('thread')
+  .description('reconstruct one full untruncated reply thread from any member message')
+  .argument('<seq-or-id>', 'message selector, seq number, or message ID')
+  .action(async (seqOrId) => {
+    const client = createClient()
+    await cmdThread(client, { json: globalOpts().json }, [seqOrId])
+  })
+
+// -- trace --------------------------------------------------------------------
+
+program
+  .command('trace')
+  .description('trace one message across origin outbox, peer ACK, and destination delivery')
+  .argument('<seq-or-id>', 'local message seq number or message ID')
+  .action(async (seqOrId) => {
+    const client = createClient()
+    await cmdTrace(client, { json: globalOpts().json }, [seqOrId])
   })
 
 // -- messages -----------------------------------------------------------------
@@ -412,7 +436,9 @@ WORK
 
 MESSAGES
   dm          send a durable DM/status note; pass --follow <duration> for tracked progress
-  show        show one message by seq or message ID
+  show        show one message by selector, seq, or message ID
+  thread      reconstruct a full untruncated reply thread from any member message
+  trace       trace one message across origin outbox, peer ACK, and destination delivery
   messages    query durable directed message history
 
 LIVE

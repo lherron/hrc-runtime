@@ -567,6 +567,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "DispatchTurnTerminalOutcome",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|DispatchTurnTerminalOutcome|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "DropContinuationRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -847,6 +855,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "FederationSemanticTurnIdentity",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationSemanticTurnIdentity|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "FederationSemanticTurnSignal",
+      "kind": "type",
+      "file": "packages/hrc-core/src/federation-contracts.ts",
+      "hash": "hrc-core|FederationSemanticTurnSignal|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "FinalSummaryRecoveryResult",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -1023,6 +1047,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcActuatorSplitAuthorityView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcActuatorSplitAuthorityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcActuatorSplitPolicy",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcActuatorSplitPolicy|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcAppCommandSessionSpec",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1035,6 +1075,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcAppHarnessSessionSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcApprovedMutationRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcApprovedMutationRef|type",
       "count": 1
     },
     {
@@ -1195,6 +1243,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/cli-metrics.ts",
       "hash": "hrc-core|HrcCliRpcMetricsHook|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCollectiveHistoryObservation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcCollectiveHistoryObservation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcCollectiveMessageRecord",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcCollectiveMessageRecord|type",
       "count": 1
     },
     {
@@ -1703,6 +1767,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcMessageDeliveryEvidence",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageDeliveryEvidence|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcMessageExecution",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -1723,6 +1795,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-core|HrcMessageFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageHistoryStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageHistoryStatus|type",
       "count": 1
     },
     {
@@ -1763,6 +1843,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|HrcMessageSeqSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceAcceptance",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceAcceptance|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceDestination",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceDestination|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceVerdict",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceVerdict|type",
       "count": 1
     },
     {
@@ -1851,6 +1955,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/monitor/condition-engine.ts",
       "hash": "hrc-core|HrcMonitorFailureKind|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMonitorMatchedRuntime",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorMatchedRuntime|type",
       "count": 1
     },
     {
@@ -1971,6 +2083,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcProviderTranscriptReportedPayload|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcReleaseStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcReleaseStatus|type",
       "count": 1
     },
     {
@@ -2191,6 +2311,38 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptAckRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptAckRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptAckResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptAckResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptMode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptMode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcSubscriberReceiptState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcSubscriberReceiptState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSurfaceBindingRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2271,6 +2423,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionCloseRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionCloseRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionReopenRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionReopenRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcTurnResponseFormat",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2339,6 +2515,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|isConcreteSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isImmediateRoleChildScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|isImmediateRoleChildScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isResolutionError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|isResolutionError|value",
       "count": 1
     },
     {
@@ -2551,10 +2743,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "monitorEventMatchesSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|monitorEventMatchesSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "MonitorExitCode",
       "kind": "type",
       "file": "packages/hrc-core/src/monitor/exit-codes.ts",
       "hash": "hrc-core|MonitorExitCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "monitorSessionMatchKind",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|monitorSessionMatchKind|value",
       "count": 1
     },
     {
@@ -2635,6 +2843,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|ParseSelectorOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PraesidiumBuild",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|PraesidiumBuild|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PraesidiumReleaseManifest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|PraesidiumReleaseManifest|type",
       "count": 1
     },
     {
@@ -3155,6 +3379,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|TerminateRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TraceMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|TraceMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TraceMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|TraceMessageResponse|type",
       "count": 1
     },
     {

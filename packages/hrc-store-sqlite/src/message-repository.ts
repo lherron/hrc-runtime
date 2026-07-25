@@ -110,6 +110,8 @@ export type MessageInsertInput = {
   metadataJson?: Record<string, unknown> | undefined
 }
 
+export type MessageChangeListener = (record: HrcMessageRecord) => void
+
 // -- Repository ---------------------------------------------------------------
 
 /** Maps a defined patch field to its SQL column for {@link collectSetClause}. */
@@ -152,6 +154,7 @@ const MESSAGE_EXECUTION_UPDATE_SPEC: ReadonlyArray<PatchColumnSpec<Partial<HrcMe
   ]
 
 export class MessageRepository {
+  private readonly changeListeners = new Set<MessageChangeListener>()
   private readonly insertInTransaction: (input: MessageInsertInput) => HrcMessageRecord
   private readonly insertIdempotentInTransaction: (input: MessageInsertInput) => {
     outcome: 'inserted' | 'duplicate'
@@ -232,7 +235,9 @@ export class MessageRepository {
   }
 
   insert(input: MessageInsertInput): HrcMessageRecord {
-    return this.insertInTransaction(input)
+    const record = this.insertInTransaction(input)
+    this.emitChange(record)
+    return record
   }
 
   /** Durable message-id dedupe used by federation accept. */
@@ -240,7 +245,14 @@ export class MessageRepository {
     outcome: 'inserted' | 'duplicate'
     record: HrcMessageRecord
   } {
-    return this.insertIdempotentInTransaction(input)
+    const result = this.insertIdempotentInTransaction(input)
+    if (result.outcome === 'inserted') this.emitChange(result.record)
+    return result
+  }
+
+  subscribeChanges(listener: MessageChangeListener): () => void {
+    this.changeListeners.add(listener)
+    return () => this.changeListeners.delete(listener)
   }
 
   getById(messageId: string): HrcMessageRecord | undefined {
@@ -408,5 +420,34 @@ export class MessageRepository {
 
     values.push(messageId)
     execute(this.db, `UPDATE messages SET ${sets.join(', ')} WHERE message_id = ?`, ...values)
+    const updated = this.getById(messageId)
+    if (updated !== undefined) this.emitChange(updated)
+  }
+
+  /** Merge durable operator/read-model evidence without replacing ingress metadata. */
+  updateMetadata(messageId: string, patch: Record<string, unknown>): void {
+    if (Object.keys(patch).length === 0) return
+    const existing = this.getById(messageId)
+    if (existing === undefined) return
+    const metadataJson = { ...existing.metadataJson, ...patch }
+    execute(
+      this.db,
+      'UPDATE messages SET metadata_json = ? WHERE message_id = ?',
+      JSON.stringify(metadataJson),
+      messageId
+    )
+    const updated = this.getById(messageId)
+    if (updated !== undefined) this.emitChange(updated)
+  }
+
+  private emitChange(record: HrcMessageRecord): void {
+    for (const listener of this.changeListeners) {
+      try {
+        listener(record)
+      } catch {
+        // Message persistence is the acceptance boundary. Read-model observers
+        // are asynchronous derivatives and must never roll it back.
+      }
+    }
   }
 }

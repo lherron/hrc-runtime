@@ -1,0 +1,393 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+
+import { openHrcDatabase } from 'hrc-store-sqlite'
+
+import { appendHrcEvent } from '../hrc-event-helper'
+import { createHrcServer } from '../index'
+import type { HrcServer } from '../index'
+
+import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
+import type { HrcServerTestFixture } from './fixtures/hrc-test-fixture'
+
+const SCOPE_REF = 'agent:cody:project:hrc-runtime:task:T-06592'
+const INVOCATION_ID = 'inv-t06592-reuse'
+const OPERATION_ID = 'op-t06592-reuse'
+const RUNTIME_ID = 'rt-t06592-reuse'
+
+let fixture: HrcServerTestFixture
+let server: HrcServer | undefined
+let dispatchCalls: number
+
+beforeEach(async () => {
+  fixture = await createHrcTestFixture('hrc-t06592-ack-')
+  dispatchCalls = 0
+  server = await createHrcServer(
+    fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+  )
+  ;(server as any).getHarnessBrokerController = () => ({
+    dispatchInput: async () => {
+      dispatchCalls += 1
+      return {
+        ok: true,
+        response: {
+          inputId: `input-${dispatchCalls}`,
+          accepted: true,
+          disposition: 'started',
+        },
+      }
+    },
+  })
+})
+
+afterEach(async () => {
+  await server?.stop()
+  server = undefined
+  await fixture.cleanup()
+})
+
+function headlessIntent(): object {
+  return {
+    placement: {
+      agentRoot: fixture.tmpDir,
+      projectRoot: fixture.tmpDir,
+      cwd: fixture.tmpDir,
+      runMode: 'task',
+      bundle: { kind: 'compose', compose: [] },
+      dryRun: true,
+    },
+    harness: {
+      provider: 'openai',
+      interactive: false,
+    },
+    execution: { preferredMode: 'headless' },
+  }
+}
+
+async function seedReusableBroker(): Promise<{ hostSessionId: string; generation: number }> {
+  const resolved = await fixture.resolveSession(SCOPE_REF)
+  const db = openHrcDatabase(fixture.dbPath)
+  const now = new Date().toISOString()
+  try {
+    db.runtimes.insert({
+      runtimeId: RUNTIME_ID,
+      hostSessionId: resolved.hostSessionId,
+      scopeRef: SCOPE_REF,
+      laneRef: 'main',
+      generation: resolved.generation,
+      transport: 'headless',
+      harness: 'codex-cli',
+      provider: 'openai',
+      status: 'ready',
+      supportsInflightInput: false,
+      adopted: false,
+      controllerKind: 'harness-broker',
+      activeOperationId: OPERATION_ID,
+      activeInvocationId: INVOCATION_ID,
+      createdAt: now,
+      updatedAt: now,
+    })
+    db.brokerInvocations.insert({
+      invocationId: INVOCATION_ID,
+      operationId: OPERATION_ID,
+      runtimeId: RUNTIME_ID,
+      brokerProtocol: 'harness-broker/0.2',
+      brokerDriver: 'codex-app-server',
+      invocationState: 'ready',
+      capabilitiesJson: JSON.stringify({ inputQueue: { mode: 'fifo' } }),
+      specHash: 'sha256:t06592-spec',
+      startRequestHash: 'sha256:t06592-request',
+      selectedProfileHash: 'sha256:t06592-profile',
+      createdAt: now,
+      updatedAt: now,
+    })
+  } finally {
+    db.close()
+  }
+  return resolved
+}
+
+function dispatchBody(
+  hostSessionId: string,
+  idempotencyKey: string,
+  waitFor: 'accepted' | 'turn_started' | 'terminal' = 'accepted',
+  prompt = 'T06592 stage truth'
+): Record<string, unknown> {
+  return {
+    hostSessionId,
+    idempotencyKey,
+    prompt,
+    runtimeIntent: headlessIntent(),
+    waitFor,
+    waitForCompletion: waitFor === 'terminal',
+  }
+}
+
+async function postTurn(body: Record<string, unknown>): Promise<Response> {
+  return await fixture.postJson('/v1/turns', body)
+}
+
+describe('T-06592 durable dispatch acknowledgment', () => {
+  it('returns and replays cold acceptance while invocation start is still delayed', async () => {
+    const { hostSessionId, generation } = await fixture.resolveSession(SCOPE_REF)
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    let provisions = 0
+    ;(server as any).startHeadlessBrokerRuntime = async (
+      session: { hostSessionId: string; scopeRef: string; laneRef: string; generation: number },
+      _intent: unknown,
+      _prompt: string,
+      runId: string,
+      options: { onAccepted?: (runtime: unknown) => Promise<void> | void }
+    ) => {
+      provisions += 1
+      const now = new Date().toISOString()
+      const runtimeId = 'rt-t06592-cold'
+      const invocationId = 'inv-t06592-cold'
+      const db = openHrcDatabase(fixture.dbPath)
+      let runtime: unknown
+      try {
+        runtime = db.runtimes.insert({
+          runtimeId,
+          hostSessionId: session.hostSessionId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          transport: 'headless',
+          harness: 'codex-cli',
+          provider: 'openai',
+          status: 'starting',
+          supportsInflightInput: false,
+          adopted: false,
+          controllerKind: 'harness-broker',
+          activeOperationId: 'op-t06592-cold',
+          activeInvocationId: invocationId,
+          activeRunId: runId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        db.runs.insert({
+          runId,
+          hostSessionId: session.hostSessionId,
+          runtimeId,
+          scopeRef: session.scopeRef,
+          laneRef: session.laneRef,
+          generation: session.generation,
+          transport: 'headless',
+          status: 'accepted',
+          acceptedAt: now,
+          updatedAt: now,
+          operationId: 'op-t06592-cold',
+          invocationId,
+        })
+        db.brokerInvocations.insert({
+          invocationId,
+          operationId: 'op-t06592-cold',
+          runtimeId,
+          runId,
+          brokerProtocol: 'harness-broker/0.2',
+          brokerDriver: 'codex-app-server',
+          invocationState: 'starting',
+          capabilitiesJson: JSON.stringify({}),
+          specHash: 'sha256:t06592-cold-spec',
+          startRequestHash: 'sha256:t06592-cold-request',
+          selectedProfileHash: 'sha256:t06592-cold-profile',
+          createdAt: now,
+          updatedAt: now,
+        })
+      } finally {
+        db.close()
+      }
+      await options.onAccepted?.(runtime)
+      await startGate
+      return runtime
+    }
+
+    const body = dispatchBody(hostSessionId, 'idem-t06592-cold')
+    const firstResponse = await postTurn(body)
+    const first = (await firstResponse.json()) as any
+    const replayResponse = await postTurn(body)
+    const replay = (await replayResponse.json()) as any
+
+    expect(firstResponse.status).toBe(202)
+    expect(first).toMatchObject({
+      stage: 'accepted',
+      status: 'accepted',
+      replayed: false,
+      runtimeId: 'rt-t06592-cold',
+      startIdentity: { kind: 'broker', invocationId: 'inv-t06592-cold' },
+    })
+    expect(replayResponse.status).toBe(202)
+    expect(replay).toMatchObject({
+      stage: 'accepted',
+      replayed: true,
+      runId: first.runId,
+      runtimeId: first.runtimeId,
+    })
+    expect(provisions).toBe(1)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(db.runs.listRuns({ hostSessionId })).toHaveLength(1)
+      expect(db.hrcEvents.listByRun(first.runId, { eventKind: 'turn.accepted' })).toHaveLength(1)
+      expect(db.hrcEvents.listByRun(first.runId, { eventKind: 'turn.started' })).toHaveLength(0)
+    } finally {
+      db.close()
+    }
+
+    await server?.stop()
+    server = undefined
+    releaseStart()
+    await Bun.sleep(10)
+    server = await createHrcServer(
+      fixture.serverOpts({ headlessCodexBrokerEnabled: true, otelListenerEnabled: false })
+    )
+    const afterRestartResponse = await postTurn(body)
+    const afterRestart = (await afterRestartResponse.json()) as any
+    expect(afterRestart).toMatchObject({
+      replayed: true,
+      runId: first.runId,
+      runtimeId: first.runtimeId,
+    })
+    expect(['accepted', 'terminal']).toContain(afterRestart.stage)
+    expect(provisions).toBe(1)
+    expect(generation).toBe(1)
+  })
+
+  it('returns accepted without claiming turn_started and replays one dispatch by idempotency key', async () => {
+    const { hostSessionId } = await seedReusableBroker()
+    const body = dispatchBody(hostSessionId, 'idem-t06592-replay')
+
+    const firstResponse = await postTurn(body)
+    const first = (await firstResponse.json()) as any
+    const replayResponse = await postTurn(body)
+    const replay = (await replayResponse.json()) as any
+
+    expect(firstResponse.status).toBe(202)
+    expect(first).toMatchObject({
+      stage: 'accepted',
+      status: 'accepted',
+      replayed: false,
+      runtimeId: RUNTIME_ID,
+      supportsInFlightInput: false,
+      startIdentity: { kind: 'broker', invocationId: INVOCATION_ID },
+    })
+    expect(first.status).not.toBe('started')
+    expect(replayResponse.status).toBe(202)
+    expect(replay).toMatchObject({
+      stage: 'accepted',
+      status: 'accepted',
+      replayed: true,
+      runId: first.runId,
+      runtimeId: first.runtimeId,
+      supportsInFlightInput: false,
+      startIdentity: first.startIdentity,
+    })
+    expect(dispatchCalls).toBe(1)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(db.runs.listRuns({ hostSessionId })).toHaveLength(1)
+      expect(db.hrcEvents.listByRun(first.runId, { eventKind: 'turn.started' })).toHaveLength(0)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects conflicting reuse of an idempotency key', async () => {
+    const { hostSessionId } = await seedReusableBroker()
+    await postTurn(dispatchBody(hostSessionId, 'idem-t06592-conflict'))
+
+    const conflict = await postTurn(
+      dispatchBody(hostSessionId, 'idem-t06592-conflict', 'accepted', 'different semantic dispatch')
+    )
+    const body = (await conflict.json()) as any
+
+    expect(conflict.status).toBe(409)
+    expect(body.error?.code).toBe('stale_context')
+    expect(dispatchCalls).toBe(1)
+  })
+
+  it('wait-to-start advances only on persisted turn.started evidence', async () => {
+    const { hostSessionId, generation } = await seedReusableBroker()
+    const key = 'idem-t06592-wait-start'
+    const accepted = (await (await postTurn(dispatchBody(hostSessionId, key))).json()) as any
+
+    let settled = false
+    const waiting = postTurn(dispatchBody(hostSessionId, key, 'turn_started')).then(
+      async (response) => {
+        settled = true
+        return { response, body: (await response.json()) as any }
+      }
+    )
+    await Bun.sleep(30)
+    expect(settled).toBe(false)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const now = new Date().toISOString()
+      db.runs.update(accepted.runId, { status: 'started', startedAt: now, updatedAt: now })
+      const event = appendHrcEvent(db, 'turn.started', {
+        ts: now,
+        hostSessionId,
+        scopeRef: SCOPE_REF,
+        laneRef: 'main',
+        generation,
+        runtimeId: RUNTIME_ID,
+        runId: accepted.runId,
+        transport: 'headless',
+        payload: { source: 't06592-test' },
+      })
+      server?.notifyEvent(event)
+    } finally {
+      db.close()
+    }
+
+    const started = await waiting
+    expect(started.response.status).toBe(200)
+    expect(started.body).toMatchObject({
+      stage: 'turn_started',
+      status: 'started',
+      replayed: true,
+      runId: accepted.runId,
+    })
+    expect(dispatchCalls).toBe(1)
+  })
+
+  it('wait-to-start returns the same run terminal failure when the harness dies first', async () => {
+    const { hostSessionId } = await seedReusableBroker()
+    const key = 'idem-t06592-dead-before-start'
+    const accepted = (await (await postTurn(dispatchBody(hostSessionId, key))).json()) as any
+
+    const waiting = postTurn(dispatchBody(hostSessionId, key, 'turn_started')).then(
+      async (response) => ({ response, body: (await response.json()) as any })
+    )
+    await Bun.sleep(30)
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const now = new Date().toISOString()
+      db.runs.markCompleted(accepted.runId, {
+        status: 'failed',
+        completedAt: now,
+        updatedAt: now,
+        errorMessage: 'broker_tmux_harness_not_live',
+      })
+    } finally {
+      db.close()
+    }
+
+    const failed = await waiting
+    expect(failed.response.status).toBe(200)
+    expect(failed.body).toMatchObject({
+      stage: 'terminal',
+      status: 'failed',
+      outcome: 'failed',
+      replayed: true,
+      runId: accepted.runId,
+      error: { message: 'broker_tmux_harness_not_live' },
+    })
+    expect(dispatchCalls).toBe(1)
+  })
+})

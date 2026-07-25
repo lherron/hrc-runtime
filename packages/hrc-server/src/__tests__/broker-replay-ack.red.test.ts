@@ -63,8 +63,10 @@ import type {
 
 import {
   BrokerControllerError,
+  DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS,
   type DurableBrokerClientLike,
   HarnessBrokerController,
+  resolveBrokerAttachControlProbeTimeoutMs,
 } from '../broker/controller'
 import { BrokerEventMapper } from '../broker/event-mapper'
 
@@ -107,6 +109,14 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
   readonly ackCalls: InvocationAckEventsRequest[] = []
   readonly inputCalls: unknown[] = []
   closed = false
+  healthNeverResolves = false
+  healthError: unknown
+  healthResponse: BrokerHealthResponse = { status: 'ok', activeInvocations: 1, drivers: [] }
+  statusError: unknown
+  statusResponse: InvocationStatusResponse = {
+    invocationId: INVOCATION_ID,
+    state: 'ready',
+  } as InvocationStatusResponse
 
   attachResponse!: BrokerAttachResponse
   snapshotResponse!: InvocationSnapshot
@@ -164,7 +174,13 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
 
   async health(): Promise<BrokerHealthResponse> {
     this.calls.push('health')
-    return { status: 'ok', activeInvocations: 1, drivers: [] }
+    if (this.healthNeverResolves) {
+      return await new Promise<BrokerHealthResponse>(() => undefined)
+    }
+    if (this.healthError !== undefined) {
+      throw this.healthError
+    }
+    return this.healthResponse
   }
 
   async startInvocationFromRequest(): Promise<never> {
@@ -192,7 +208,10 @@ class MockDurableBrokerClient implements DurableBrokerClientLike {
 
   async status(): Promise<InvocationStatusResponse> {
     this.calls.push('status')
-    return { invocationId: INVOCATION_ID, state: 'ready' } as InvocationStatusResponse
+    if (this.statusError !== undefined) {
+      throw this.statusError
+    }
+    return this.statusResponse
   }
 
   async dispose(_req: InvocationDisposeRequest): Promise<void> {
@@ -268,11 +287,15 @@ function spyMapper(fix: SeededFixture): {
 
 function makeController(
   fix: SeededFixture,
-  mapper?: Pick<BrokerEventMapper, 'apply'>
+  mapper?: Pick<BrokerEventMapper, 'apply'>,
+  brokerAttachControlProbeTimeoutMs?: number
 ): HarnessBrokerController {
   return new HarnessBrokerController({
     db: fix.db,
     ...(mapper ? { mapper } : {}),
+    ...(brokerAttachControlProbeTimeoutMs !== undefined
+      ? { brokerAttachControlProbeTimeoutMs }
+      : {}),
     now: () => ts(0),
     serverInstanceId: SERVER_INSTANCE_ID,
   })
@@ -571,6 +594,189 @@ describe('T-01811 retention-floor gap is unsafe (conservative stale)', () => {
     })
     expect(dispatch.ok).toBe(false)
     expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// T-05299: replay-capable is not the same thing as control-capable. A durable
+// client must prove bounded health + invocation status on the exact candidate
+// connection before the controller publishes it as attached/active.
+// ───────────────────────────────────────────────────────────────────────────
+describe('T-05299 post-reattach same-client control proof', () => {
+  function readyClient(): MockDurableBrokerClient {
+    const client = new MockDurableBrokerClient()
+    client.snapshotResponse = emptySnapshot()
+    client.attachResponse = attachResponseFor(client.snapshotResponse)
+    client.queueEventsSince({ events: [], currentSeq: 0, retentionFloorSeq: 0 })
+    return client
+  }
+
+  it('times out a hung health proof, closes the candidate, and overwrites prior attached state', async () => {
+    const prior = fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)
+    fixture.db.runtimes.update(RUNTIME_ID, {
+      runtimeStateJson: {
+        ...(prior?.runtimeStateJson ?? {}),
+        control: { mode: 'broker-ipc', brokerAttached: true },
+      },
+      updatedAt: ts(0),
+    })
+    const controller = makeController(fixture, undefined, 10)
+    const client = readyClient()
+    client.healthNeverResolves = true
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error.code).toBe('broker_control_probe_timeout')
+    expect(client.calls).toContain('health')
+    expect(client.calls).not.toContain('status')
+    expect(client.closed).toBe(true)
+    const control = fixture.db.runtimes.getByRuntimeId(RUNTIME_ID)?.runtimeStateJson?.['control'] as
+      | { brokerAttached?: boolean; lastAttachError?: { code?: string } }
+      | undefined
+    expect(control?.brokerAttached).toBe(false)
+    expect(control?.lastAttachError?.code).toBe('broker_control_probe_timeout')
+
+    const dispatch = await controller.dispatchInput({
+      runtimeId: RUNTIME_ID,
+      input: { kind: 'user', content: [{ type: 'text', text: 'must fast-fail' }] },
+    })
+    expect(dispatch.ok).toBe(false)
+    expect(dispatch.ok === false && dispatch.error.code).toBe('broker_runtime_not_active')
+  })
+
+  it('publishes active only after health and matching status succeed', async () => {
+    const controller = makeController(fixture, undefined, 10)
+    const client = readyClient()
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(client.calls.indexOf('health')).toBeGreaterThan(client.calls.indexOf('eventsSince'))
+    expect(client.calls.indexOf('status')).toBeGreaterThan(client.calls.indexOf('health'))
+    expect(client.calls.indexOf('onClose')).toBeGreaterThan(client.calls.indexOf('status'))
+
+    const dispatch = await controller.dispatchInput({
+      runtimeId: RUNTIME_ID,
+      input: { kind: 'user', content: [{ type: 'text', text: 'proven control path' }] },
+    })
+    expect(dispatch.ok).toBe(true)
+    expect(client.calls).toContain('input')
+  })
+
+  it('rejects a broker that reports shutting_down without publishing an active binding', async () => {
+    const controller = makeController(fixture, undefined, 10)
+    const client = readyClient()
+    client.healthResponse = {
+      status: 'shutting_down',
+      activeInvocations: 1,
+      drivers: [],
+    }
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error.code).toBe('broker_control_probe_shutting_down')
+    expect(client.calls).not.toContain('status')
+    expect(client.closed).toBe(true)
+  })
+
+  it('rejects a mismatched status invocation id without publishing an active binding', async () => {
+    const controller = makeController(fixture, undefined, 10)
+    const client = readyClient()
+    client.statusResponse = {
+      invocationId: 'invocation-from-another-runtime',
+      state: 'ready',
+    } as InvocationStatusResponse
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error.code).toBe(
+      'broker_control_probe_invocation_mismatch'
+    )
+    expect(client.closed).toBe(true)
+  })
+
+  it('preserves broker RPC fence/control detail under the precise probe-failed code', async () => {
+    const controller = makeController(fixture, undefined, 10)
+    const client = readyClient()
+    client.healthError = Object.assign(new Error('controller instance was fenced'), {
+      name: 'BrokerRpcError',
+      code: 7101,
+      data: {
+        brokerCode: 'control.fenced',
+        expectedControllerInstanceId: SERVER_INSTANCE_ID,
+      },
+    })
+
+    const result = await controller.attachAndReplay({
+      runtimeId: RUNTIME_ID,
+      client,
+      attachToken: ATTACH_TOKEN,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      throw new Error('expected control proof failure')
+    }
+    expect(result.error.code).toBe('broker_control_probe_failed')
+    expect(result.error.detail).toMatchObject({
+      phase: 'health',
+      cause: {
+        name: 'BrokerRpcError',
+        code: 7101,
+        data: {
+          brokerCode: 'control.fenced',
+          expectedControllerInstanceId: SERVER_INSTANCE_ID,
+        },
+      },
+    })
+    expect(client.closed).toBe(true)
+  })
+})
+
+describe('T-05299 attach control proof timeout configuration', () => {
+  it('uses the exact 2s default for invalid, zero, negative, and non-finite inputs', () => {
+    expect(resolveBrokerAttachControlProbeTimeoutMs()).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+    expect(resolveBrokerAttachControlProbeTimeoutMs(0)).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+    expect(resolveBrokerAttachControlProbeTimeoutMs(-1)).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+    expect(resolveBrokerAttachControlProbeTimeoutMs(Number.NaN)).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+    expect(resolveBrokerAttachControlProbeTimeoutMs(undefined, '0')).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+    expect(resolveBrokerAttachControlProbeTimeoutMs(undefined, 'not-a-number')).toBe(
+      DEFAULT_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS
+    )
+  })
+
+  it('accepts a positive finite dependency value or environment override', () => {
+    expect(resolveBrokerAttachControlProbeTimeoutMs(25, '50')).toBe(25)
+    expect(resolveBrokerAttachControlProbeTimeoutMs(undefined, '50')).toBe(50)
   })
 })
 

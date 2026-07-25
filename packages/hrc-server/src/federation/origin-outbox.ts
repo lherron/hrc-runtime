@@ -12,6 +12,7 @@ import type {
   FederationMessageDelivery,
   FederationMessageEnvelope,
   FederationPendingMessageEnvelope,
+  FederationSemanticTurnSignal,
   HrcMailActor,
   HrcMailSendRequest,
   HrcMessageAddress,
@@ -26,12 +27,13 @@ import { parseSessionRef } from '../server-parsers.js'
 import { sendFederationEnvelope } from './accept-client.js'
 import { InMemoryBindingHintCache, createStalePlacementRedirectHandler } from './binding-cache.js'
 import { sendRemoteEstablish } from './establish-client.js'
-import type { FederationConfig } from './federation-config.js'
+import type { FederationConfig, PeerEntry } from './federation-config.js'
 import { parseNodeId } from './node-id.js'
 import {
   FederationOutboxDeliveryEngine,
   type FederationOutboxRetryPolicy,
 } from './outbox-delivery.js'
+import { probePeerHealth } from './peer-observer.js'
 import { PEER_PROTOCOL_VERSION } from './peer-protocol.js'
 import type { BindingRegistryClient } from './registry-client.js'
 import { resolveFederationRegistryClient } from './registry-resolution.js'
@@ -86,7 +88,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function deliveryContext(
-  body: SemanticDmRequest | undefined
+  body: SemanticDmRequest | undefined,
+  options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationMessageDelivery | undefined {
   if (body === undefined) return undefined
   const context: FederationMessageDelivery = {
@@ -98,15 +101,22 @@ function deliveryContext(
     ...(body.allowStaleGeneration === undefined
       ? {}
       : { allowStaleGeneration: body.allowStaleGeneration }),
+    ...(options?.semanticTurnHandoff === true
+      ? { semanticTurnHandoff: { version: 1 as const } }
+      : {}),
   }
   return Object.keys(context).length === 0 ? undefined : context
 }
 
 function pendingEnvelopeFor(
   record: HrcMessageRecord,
-  body: SemanticDmRequest | undefined
+  body: SemanticDmRequest | undefined,
+  options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationPendingMessageEnvelope {
-  const delivery = deliveryContext(body)
+  const delivery = deliveryContext(body, options)
+  const semanticTurnSignal = record.metadataJson?.['federationSemanticTurnSignal'] as
+    | FederationSemanticTurnSignal
+    | undefined
   const interactiveSignal = record.metadataJson?.['federationInteractiveSignal'] as
     | FederationInteractiveLifecycleSignal
     | undefined
@@ -122,6 +132,7 @@ function pendingEnvelopeFor(
     rootMessageId: record.rootMessageId,
     ...(record.replyToMessageId === undefined ? {} : { replyToMessageId: record.replyToMessageId }),
     ...(delivery === undefined ? {} : { delivery }),
+    ...(semanticTurnSignal === undefined ? {} : { semanticTurnSignal }),
     ...(interactiveSignal === undefined ? {} : { interactiveSignal }),
     ...(mail === undefined ? {} : { mail }),
   }
@@ -136,9 +147,10 @@ function mailActorAddress(actor: HrcMailActor): HrcMessageAddress {
 function envelopeFor(
   record: HrcMessageRecord,
   body: SemanticDmRequest | undefined,
-  expected: { homeNodeId: string; placementEpoch: number }
+  expected: { homeNodeId: string; placementEpoch: number },
+  options?: { semanticTurnHandoff?: boolean | undefined }
 ): FederationMessageEnvelope {
-  return { ...pendingEnvelopeFor(record, body), expected }
+  return { ...pendingEnvelopeFor(record, body, options), expected }
 }
 
 /**
@@ -155,6 +167,35 @@ export class FederationOriginOutbox {
   constructor(private readonly options: FederationOriginOutboxOptions) {
     this.registry = resolveFederationRegistryClient(options.config, options.localRegistryClient)
     const handleRedirect = createStalePlacementRedirectHandler(this.cache)
+    const sendEnvelope = async (peer: PeerEntry, envelope: FederationMessageEnvelope) => {
+      if (envelope.delivery?.semanticTurnHandoff !== undefined) {
+        const probe = await probePeerHealth(peer)
+        if (probe.health.state !== 'healthy') {
+          return {
+            outcome: 'refused' as const,
+            status: 503,
+            code: 'peer_health_unavailable',
+            message: probe.health.detail ?? `peer ${peer.nodeId} health unavailable`,
+            retryable: true,
+          }
+        }
+        if (probe.health.capabilities?.semanticTurnHandoff !== true) {
+          return {
+            outcome: 'refused' as const,
+            status: 409,
+            code: 'peer_semantic_turn_unsupported',
+            message: `peer ${peer.nodeId} does not advertise semanticTurnHandoff`,
+            retryable: false,
+          }
+        }
+      }
+      return sendFederationEnvelope({
+        db: options.db,
+        peer,
+        envelope,
+        onStaleRedirect: handleRedirect,
+      })
+    }
     this.engine = new FederationOutboxDeliveryEngine({
       db: options.db,
       ...(options.retryPolicy === undefined ? {} : { policy: options.retryPolicy }),
@@ -228,19 +269,9 @@ export class FederationOriginOutbox {
               retryable: true,
             }
           }
-          return sendFederationEnvelope({
-            db: options.db,
-            peer,
-            envelope: advanced.envelope,
-            onStaleRedirect: handleRedirect,
-          })
+          return sendEnvelope(peer, advanced.envelope)
         }
-        return sendFederationEnvelope({
-          db: options.db,
-          peer,
-          envelope: delivery.envelope,
-          onStaleRedirect: handleRedirect,
-        })
+        return sendEnvelope(peer, delivery.envelope)
       },
       onStaleRedirect: (delivery, redirect) => {
         if (delivery.stage !== 'delivering') {
@@ -354,7 +385,8 @@ export class FederationOriginOutbox {
   async route(
     body: SemanticDmRequest,
     record: HrcMessageRecord,
-    resolvedPlacement?: FederationTargetPlacement | undefined
+    resolvedPlacement?: FederationTargetPlacement | undefined,
+    options?: { semanticTurnHandoff?: boolean | undefined }
   ): Promise<FederationOriginRouteResult> {
     const responseRoute = this.responseRoute(record)
     if (responseRoute !== undefined) {
@@ -362,9 +394,14 @@ export class FederationOriginOutbox {
       // inject it into the recipient runtime, matching local reply semantics.
       // Daemon-bridged turn-final responses (routeResponse) stay context-free
       // and are store-only at the destination.
-      return this.enqueue(record, body, responseRoute.peerNodeId, responseRoute.expected, {
-        responseFence: true,
-      })
+      return this.enqueue(
+        record,
+        body,
+        responseRoute.peerNodeId,
+        responseRoute.expected,
+        { responseFence: true },
+        options
+      )
     }
     if (record.to.kind !== 'session') return { outcome: 'local' }
     const placement = resolvedPlacement ?? (await this.resolveTargetPlacement(body))
@@ -374,14 +411,20 @@ export class FederationOriginOutbox {
         record,
         body,
         placement.scopeRef,
-        placement.candidateHomeNodeId
+        placement.candidateHomeNodeId,
+        options
       )
     }
     const binding = placement.binding
 
-    return this.enqueue(record, body, binding.homeNodeId, binding, {
-      routingSource: binding.source,
-    })
+    return this.enqueue(
+      record,
+      body,
+      binding.homeNodeId,
+      binding,
+      { routingSource: binding.source },
+      options
+    )
   }
 
   async routeMail(
@@ -517,7 +560,8 @@ export class FederationOriginOutbox {
     log: {
       routingSource?: string | undefined
       responseFence?: boolean | undefined
-    }
+    },
+    options?: { semanticTurnHandoff?: boolean | undefined }
   ): FederationOriginRouteResult {
     const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
     if (existing !== undefined) return { outcome: 'queued', delivery: existing }
@@ -525,7 +569,7 @@ export class FederationOriginOutbox {
       deliveryId: `delivery-${randomUUID()}`,
       messageId: record.messageId,
       peerNodeId,
-      envelope: envelopeFor(record, body, expected),
+      envelope: envelopeFor(record, body, expected, options),
       now: new Date().toISOString(),
     })
     writeServerLog('INFO', 'federation.outbox.queued', {
@@ -551,7 +595,8 @@ export class FederationOriginOutbox {
     record: HrcMessageRecord,
     body: SemanticDmRequest | undefined,
     scopeRef: string,
-    peerNodeId: string
+    peerNodeId: string,
+    options?: { semanticTurnHandoff?: boolean | undefined }
   ): FederationOriginRouteResult {
     const existing = this.options.db.federationOutbox.getByMessageId(record.messageId)
     if (existing !== undefined) return { outcome: 'queued', delivery: existing }
@@ -565,7 +610,7 @@ export class FederationOriginOutbox {
         intent: 'implicit',
         correlationId: `establish-${deliveryId}`,
       },
-      envelope: pendingEnvelopeFor(record, body),
+      envelope: pendingEnvelopeFor(record, body, options),
       now: new Date().toISOString(),
     })
     writeServerLog('INFO', 'federation.outbox.queued', {

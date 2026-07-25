@@ -354,6 +354,19 @@ export type HarnessBrokerControllerDeps = {
    */
   brokerActiveRpcTimeoutMs?: number | undefined
   /**
+   * Exact per-RPC ceiling for the same-client health/status proof performed
+   * before a durable reattach is published active. This bound cannot be
+   * disabled: invalid, zero, negative, or non-finite values fall back to 2s.
+   * Overridable with HRC_BROKER_ATTACH_CONTROL_PROBE_TIMEOUT_MS.
+   */
+  brokerAttachControlProbeTimeoutMs?: number | undefined
+  /**
+   * Debounce before a detected broker-event sequence gap is re-checked and
+   * repaired from the durable ledger. Production defaults to 500ms; tests may
+   * shorten it without changing the recovery contract.
+   */
+  eventGapBackfillDelayMs?: number | undefined
+  /**
    * Close-path sibling of {@link reapBrokerTmuxLease}. Used when a user-initiated
    * terminal exit closes the broker IPC socket before a clean terminal event path
    * can reap the lease.
@@ -382,6 +395,11 @@ export type BrokerControllerStartInput = {
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
   /**
+   * HRC-resolved non-secret authority metadata. This is admission output, not
+   * compiler input, and is persisted on runtimeStateJson for exact reuse checks.
+   */
+  runtimeAuthority?: Record<string, unknown> | undefined
+  /**
    * The per-turn response format requested for this start, threaded independently
    * of `startRequest.initialInput.responseFormat`. Launch-argv-primed profiles
    * (e.g. interactive-tmux) drop `startRequest.initialInput` entirely during
@@ -400,6 +418,18 @@ export type BrokerControllerStartInput = {
    * startRequestHash (INV-14.4 compiler closure).
    */
   lifecyclePolicy?: BrokerLifecyclePolicyOverlay | undefined
+  /**
+   * Fires after the complete start graph is durable and before the potentially
+   * long invocation-start RPC. Detached callers use this as their truthful
+   * acceptance boundary.
+   */
+  onAccepted?:
+    | ((graph: {
+        runtime: HrcRuntimeSnapshot
+        run?: HrcRunRecord | undefined
+        invocation: HrcBrokerInvocationRecord
+      }) => Promise<void> | void)
+    | undefined
 }
 
 export type BrokerControllerStartResult =

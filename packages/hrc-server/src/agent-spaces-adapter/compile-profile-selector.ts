@@ -17,7 +17,7 @@
  */
 
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
+import { neutralSpecHash, neutralStartRequestHash } from 'spaces-runtime-contracts'
 import type {
   BrokerExecutionProfile,
   RuntimeCompileResponse,
@@ -112,66 +112,14 @@ function isInteractiveTmuxBrokerProfile(
   )
 }
 
-function hashNeutralInvocationSpec(
-  spec: InvocationStartRequest['spec']
-): InvocationStartRequest['spec'] {
-  const {
-    invocationId: _invocationId,
-    correlation: _correlation,
-    ...hashSpec
-  } = spec as InvocationStartRequest['spec'] & { correlation?: unknown }
-  return hashSpec
-}
-
-/**
- * Hash material for a start request — MUST mirror agent-spaces
- * `compile-runtime-plan.ts#hashNeutralStartRequest` exactly (T-04133 / T-05109).
- * `spec.invocationId` / `correlation` stay neutralized (per-dispatch identity).
- * Of `initialInput`, retain the deterministic `inputId` plus per-turn
- * `responseFormat`. ASPC's `deriveInitialInputId` folds generation + content
- * into the id, so a changed generation moves the start-request hash while a pure
- * correlation change does not. Prompt content is deliberately NOT hashed here —
- * post-compile content drift is caught by `initialInputHash`. The response
- * format is retained because callers may supply a fixed initialInputId while
- * changing the per-turn output contract.
- */
-type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
-  initialInput?: {
-    inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId']
-    responseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
-  }
-}
-
-function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
-  const { initialInput, ...rest } = startRequest
-  return {
-    ...rest,
-    spec: hashNeutralInvocationSpec(startRequest.spec),
-    ...(initialInput !== undefined
-      ? {
-          initialInput: {
-            inputId: initialInput.inputId,
-            ...(initialInput.responseFormat !== undefined
-              ? { responseFormat: initialInput.responseFormat }
-              : {}),
-          },
-        }
-      : {}),
-  }
-}
-
-/** Recompute the spec hash via the exported contracts projection helper. */
+/** Recompute the spec hash via the shared runtime-contracts authority. */
 function recomputeSpecHash(spec: InvocationStartRequest['spec']): string {
-  return (project(hashNeutralInvocationSpec(spec), 'spec') as { specHash: string }).specHash
+  return neutralSpecHash(spec)
 }
 
-/** Recompute the start-request hash via the exported contracts projection helper. */
+/** Recompute the start-request hash via the shared runtime-contracts authority. */
 function recomputeStartRequestHash(startRequest: InvocationStartRequest): string {
-  return (
-    project(hashNeutralStartRequest(startRequest), 'start-request') as {
-      startRequestHash: string
-    }
-  ).startRequestHash
+  return neutralStartRequestHash(startRequest)
 }
 
 /** Deep-freeze so the verified start request can never be mutated downstream. */
@@ -233,13 +181,16 @@ export function selectBrokerExecutionProfile(
     return { admitted: false, code: 'invocation-id-mismatch' }
   }
 
-  // Interactive tmux routes deliver the startup priming via the launch argv
-  // (carried in spec.launch), so they legitimately carry NO broker
-  // initialInput — there is nothing to id-correlate. For every other route the
-  // compiler must echo our allocated initialInputId (when one was allocated).
+  // Interactive tmux routes deliver any startup priming through the launch
+  // substrate, never as broker initialInput. A no-prompt launch legitimately
+  // has neither spec.launch.initialPrompt nor initialInput even though HRC
+  // allocates the managed attached-run identity before compile. In both prompt
+  // shapes there is no broker input id to correlate. Every profile that does
+  // carry initialInput still goes through the strict identity check below.
   const initialInput = startRequest.initialInput
-  const primingViaLaunch = startRequest.spec.launch?.initialPrompt !== undefined
-  if (!(primingViaLaunch && initialInput === undefined)) {
+  const interactiveTmuxWithoutBrokerInput =
+    isInteractiveTmuxBrokerProfile(profile) && initialInput === undefined
+  if (!interactiveTmuxWithoutBrokerInput) {
     if (identity.initialInputId !== undefined) {
       if (initialInput?.inputId !== identity.initialInputId) {
         return { admitted: false, code: 'initial-input-id-mismatch' }

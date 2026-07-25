@@ -18,6 +18,8 @@ export const HrcErrorCode = {
   UNSUPPORTED_WHEN_BUSY: 'unsupported_when_busy',
   BROKER_DESCRIPTOR_ABSENT: 'broker_descriptor_absent',
   ASK_CLIENT_UNSUPPORTED: 'ask_client_unsupported',
+  /** The daemon has durably closed new turn admission for a drained restart. */
+  SERVER_DRAINING: 'server_draining',
   RUNTIME_UNAVAILABLE: 'runtime_unavailable',
   RUN_ZOMBIE_TIMEOUT: 'run_zombie_timeout',
   RUNTIME_TERMINATED_WITH_ACTIVE_RUN: 'runtime_terminated_with_active_run',
@@ -70,6 +72,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.UNSUPPORTED_WHEN_BUSY]: 422,
   [HrcErrorCode.BROKER_DESCRIPTOR_ABSENT]: 422,
   [HrcErrorCode.ASK_CLIENT_UNSUPPORTED]: 422,
+  [HrcErrorCode.SERVER_DRAINING]: 503,
   [HrcErrorCode.RUNTIME_UNAVAILABLE]: 503,
   [HrcErrorCode.RUN_ZOMBIE_TIMEOUT]: 500,
   [HrcErrorCode.RUNTIME_TERMINATED_WITH_ACTIVE_RUN]: 500,

@@ -291,7 +291,9 @@ describe('GET /v1/runtimes list filters', () => {
   })
 
   it('uses HRC_STALE_GENERATION_HOURS when stale is requested without olderThan', async () => {
+    await server.stop()
     process.env['HRC_STALE_GENERATION_HOURS'] = '2'
+    server = await createHrcServer(fixture.serverOpts())
 
     seedRuntime({
       runtimeId: 'rt-stale-default-old',

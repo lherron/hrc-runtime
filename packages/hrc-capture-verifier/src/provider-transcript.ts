@@ -136,6 +136,9 @@ function adaptCodexRecord(
   line: number,
   ignoredCallIds: Set<string>
 ): AdapterResult {
+  const jsonRpc = adaptCodexJsonRpcRecord(record, line)
+  if (jsonRpc !== undefined) return jsonRpc
+
   if (record['type'] !== 'response_item') return {}
   const payload = record['payload']
   if (!isRecord(payload)) {
@@ -200,12 +203,11 @@ function adaptCodexRecord(
       return { disposition: 'ignored' }
     }
     const result = extractCodexCommandResult(output)
-    const failed = result.exitCode !== undefined ? result.exitCode !== 0 : false
     return {
       event: makeObserved({
         line,
         provider: 'codex',
-        type: failed ? 'tool.call.failed' : 'tool.call.completed',
+        type: 'tool.call.completed',
         correlationKey: callId,
         normalizedPayload: {
           toolCallId: callId,
@@ -218,6 +220,66 @@ function adaptCodexRecord(
   return { disposition: 'ignored' }
 }
 
+function adaptCodexJsonRpcRecord(
+  record: Record<string, unknown>,
+  line: number
+): AdapterResult | undefined {
+  if (record['jsonrpc'] !== '2.0' || typeof record['method'] !== 'string') {
+    return undefined
+  }
+  if (record['method'] !== 'item/started' && record['method'] !== 'item/completed') {
+    return { disposition: 'ignored' }
+  }
+
+  const params = record['params']
+  const item = isRecord(params) && isRecord(params['item']) ? params['item'] : undefined
+  if (item === undefined) {
+    return {
+      warning: `line ${line}: Codex ${record['method']} notification has no item`,
+      disposition: 'unknown',
+    }
+  }
+  if (item['type'] !== 'commandExecution') {
+    return { disposition: 'ignored' }
+  }
+
+  const callId = stringField(item, 'id')
+  if (record['method'] === 'item/started') {
+    const command = stringField(item, 'command') ?? ''
+    const cwd = stringField(item, 'cwd')
+    return {
+      event: makeObserved({
+        line,
+        provider: 'codex',
+        type: 'tool.call.started',
+        correlationKey: callId,
+        normalizedPayload: normalizeCodexToolStart(callId, 'exec_command', {
+          cmd: command,
+          ...(cwd !== undefined ? { workdir: cwd } : {}),
+        }),
+      }),
+    }
+  }
+
+  const output = typeof item['aggregatedOutput'] === 'string' ? item['aggregatedOutput'] : ''
+  const exitCode =
+    typeof item['exitCode'] === 'number' && Number.isFinite(item['exitCode'])
+      ? item['exitCode']
+      : undefined
+  return {
+    event: makeObserved({
+      line,
+      provider: 'codex',
+      type: 'tool.call.completed',
+      correlationKey: callId,
+      normalizedPayload: {
+        toolCallId: callId,
+        result: normalizeToolResult(output, exitCode),
+      },
+    }),
+  }
+}
+
 function adaptClaudeRecord(record: Record<string, unknown>, line: number): AdapterResult {
   const type = record['type']
   const message = isRecord(record['message']) ? record['message'] : record
@@ -228,16 +290,18 @@ function adaptClaudeRecord(record: Record<string, unknown>, line: number): Adapt
     const toolResult = firstContentBlock(content, 'tool_result')
     if (toolResult !== undefined) {
       const toolUseId = stringField(toolResult, 'tool_use_id') ?? stringField(toolResult, 'id')
-      const isError = toolResult['is_error'] === true || toolResult['isError'] === true
+      const rawIsError = toolResult['is_error'] ?? toolResult['isError']
+      const isError = rawIsError === true
       return {
         event: makeObserved({
           line,
           provider: 'claude-code',
-          type: isError ? 'tool.call.failed' : 'tool.call.completed',
+          type: 'tool.call.completed',
           correlationKey: toolUseId,
           normalizedPayload: {
             toolCallId: toolUseId,
             result: normalizeToolResult(toolResult['content']),
+            ...(typeof rawIsError === 'boolean' ? { isError } : {}),
           },
         }),
       }
@@ -359,10 +423,10 @@ function normalizeToolResult(value: unknown, exitCode?: number | undefined): unk
     return normalizeContentResult(value['content'])
   }
   const output = normalizeCommandOutputText(value === undefined ? '' : String(value))
-  if (output.length === 0 && exitCode !== undefined) {
-    return { exitCode }
+  return {
+    ...(output.length > 0 ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
   }
-  return { output }
 }
 
 function normalizeContentResult(value: unknown[]): unknown {
@@ -436,7 +500,8 @@ function normalizeCodexToolStart(
   input: unknown
 ): Record<string, unknown> {
   if (name === 'exec_command' && isRecord(input)) {
-    const cmd = typeof input['cmd'] === 'string' ? input['cmd'] : ''
+    const rawCommand = typeof input['cmd'] === 'string' ? input['cmd'] : ''
+    const cmd = unwrapCodexCommand(rawCommand)
     const cwd = typeof input['workdir'] === 'string' ? input['workdir'] : undefined
     return {
       toolCallId,
@@ -448,6 +513,16 @@ function normalizeCodexToolStart(
     }
   }
   return { toolCallId, name, input: input ?? {} }
+}
+
+function unwrapCodexCommand(command: string): string {
+  const prefix = '/bin/zsh -lc '
+  if (!command.startsWith(prefix)) return command
+  const raw = command.slice(prefix.length)
+  if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+    return raw.slice(1, -1).replace(/\\"/g, '"')
+  }
+  return raw
 }
 
 function extractCodexCommandResult(output: string): {

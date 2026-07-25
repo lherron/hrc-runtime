@@ -6,12 +6,7 @@ import {
   type RuntimeActionResponse,
   type TerminateRuntimeResponse,
 } from 'hrc-core'
-import {
-  getBrokerRuntimeTmuxSessionName,
-  getBrokerRuntimeTmuxSocketPath,
-  parseGhosttyViewerLingerSeconds,
-} from '../broker-decisions.js'
-import { parseBrokerRuntimeHostingState } from '../broker/runtime-hosting.js'
+import { parseGhosttyViewerLingerSeconds } from '../broker-decisions.js'
 import { cleanupRuntimeTaskClaimCredentialFile } from '../federation/task-claim-runtime.js'
 import { HEADLESS_VIEWER_SURFACE_KIND } from '../ghostmux.js'
 import { appendHrcEvent } from '../hrc-event-helper.js'
@@ -36,7 +31,11 @@ import {
   type TmuxPaneState,
   createTmuxManager,
 } from '../tmux.js'
-import { disposeBrokerRuntime } from './broker-dispose.js'
+import {
+  disposeBrokerRuntime,
+  hasBrokerLeasedTmux,
+  teardownBrokerLeasedTmux,
+} from './broker-dispose.js'
 import { sessionEventBase } from './session-event-base.js'
 
 interface BrokerInterrupter {
@@ -107,12 +106,6 @@ function cleanupTaskClaimCredential(
  * teardown that {@link terminateTmuxRuntime} performs for the interactive
  * broker-tmux profile.
  */
-function isBrokerLeasedTmuxViewer(runtime: HrcRuntimeSnapshot): boolean {
-  if (runtime.controllerKind !== 'harness-broker') return false
-  const hosting = parseBrokerRuntimeHostingState(runtime)
-  return hosting?.presentation.kind === 'tmux-tui' && hosting.substrate.kind === 'leased-tmux'
-}
-
 function assertFreshRuntimeSnapshot(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot
@@ -166,7 +159,7 @@ function settleBrokerRuntimeDisposed(
  * `killServer` both tolerate an already-gone server/socket. Mirrors the broker
  * branch of {@link terminateTmuxRuntime}.
  */
-async function disposeBrokerLeasedTmux(
+async function disposeAndTeardownBrokerLeasedTmux(
   this: HrcServerInstanceForHandlers,
   runtime: HrcRuntimeSnapshot,
   opts: { reason?: string | undefined }
@@ -176,15 +169,9 @@ async function disposeBrokerLeasedTmux(
     logMessage: 'broker runtime dispose failed during headless viewer terminate',
   })
 
-  const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime)
-  if (leaseSocket === undefined) return
-  const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
-  const leaseTmux = createTmuxManager({ socketPath: leaseSocket })
-  const inspected = await leaseTmux.inspectSession(sessionName)
-  if (inspected) {
-    await leaseTmux.terminate(sessionName)
-  }
-  await leaseTmux.killServer()
+  await teardownBrokerLeasedTmux(runtime, {
+    logMessage: 'broker leased tmux teardown failed during terminate',
+  })
 }
 
 export async function interruptRuntime(
@@ -460,14 +447,9 @@ export async function terminateTmuxRuntime(
       logMessage: 'broker runtime dispose failed during tmux terminate',
     })
 
-    const leaseSocket = getBrokerRuntimeTmuxSocketPath(runtime) ?? tmux.socketPath
-    const sessionName = getBrokerRuntimeTmuxSessionName(runtime)
-    const leaseTmux = createTmuxManager({ socketPath: leaseSocket })
-    const inspected = await leaseTmux.inspectSession(sessionName)
-    if (inspected) {
-      await leaseTmux.terminate(sessionName)
-    }
-    await leaseTmux.killServer()
+    await teardownBrokerLeasedTmux(runtime, {
+      logMessage: 'broker leased tmux teardown failed during tmux terminate',
+    })
   } else {
     const inspected = await this.tmux.inspectSession(tmux.sessionName)
     if (inspected) {
@@ -644,8 +626,8 @@ export async function terminateHeadlessRuntime(
   // viewer pane are orphaned (the reaper reports `terminated` but the Ghostty
   // window never exits). True daemon-child headless / SDK runtimes have no
   // leased tmux, so the predicate skips them and behavior is unchanged.
-  if (isBrokerLeasedTmuxViewer(runtime)) {
-    await disposeBrokerLeasedTmux.call(this, runtime, {
+  if (runtime.controllerKind === 'harness-broker' && hasBrokerLeasedTmux(runtime)) {
+    await disposeAndTeardownBrokerLeasedTmux.call(this, runtime, {
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
     })
   } else if (

@@ -12,9 +12,11 @@ import type { HrcDatabase } from 'hrc-store-sqlite'
 import { BrokerInvocationEventConflictError } from 'hrc-store-sqlite'
 import type { StdioTransportStartOptions } from 'spaces-harness-broker-client'
 import type {
+  BrokerHealthResponse,
   InvocationEventEnvelope,
   InvocationId,
   InvocationRuntimeContext,
+  InvocationStatusResponse,
   PermissionDecision,
   PermissionRequestParams,
 } from 'spaces-harness-broker-protocol'
@@ -30,6 +32,7 @@ import {
 } from '../capabilities'
 import { BROKER_PROTOCOL_VERSION, BROKER_TRANSPORT, BROKER_TRANSPORT_UNIX } from '../constants'
 import type { BrokerEventMapper, BrokerProjectionResult } from '../event-mapper'
+import { parseBrokerRuntimeHostingState } from '../runtime-hosting'
 import {
   isBrokerTmuxProfile,
   runtimeStatusFromInvocationState,
@@ -76,6 +79,7 @@ export type DispatchContext = {
   env: Record<string, string | undefined> | undefined
   now: () => string
   serverInstanceId: string
+  attachControlProbeTimeoutMs: number
   logger: BrokerControllerLogger
   persistenceContext: () => PersistenceContext
   allocationContext: () => AllocationContext
@@ -114,6 +118,172 @@ export type DispatchContext = {
     runtime: HrcRuntimeSnapshot
     invocation: HrcBrokerInvocationRecord
   }) => Promise<void> | void
+}
+
+function brokerControlProbeErrorDetail(error: unknown): Record<string, unknown> {
+  if (error instanceof BrokerControllerError) {
+    return {
+      name: error.name,
+      code: error.code,
+      message: error.message,
+      detail: error.detail,
+    }
+  }
+  if (error instanceof Error) {
+    const candidate = error as Error & {
+      code?: unknown
+      data?: unknown
+      detail?: unknown
+      cause?: unknown
+    }
+    return {
+      name: error.name,
+      message: error.message,
+      ...(candidate.code !== undefined ? { code: candidate.code } : {}),
+      ...(candidate.data !== undefined ? { data: candidate.data } : {}),
+      ...(candidate.detail !== undefined ? { detail: candidate.detail } : {}),
+      ...(candidate.cause instanceof Error
+        ? {
+            cause: {
+              name: candidate.cause.name,
+              message: candidate.cause.message,
+              ...((candidate.cause as Error & { code?: unknown }).code !== undefined
+                ? { code: (candidate.cause as Error & { code?: unknown }).code }
+                : {}),
+            },
+          }
+        : {}),
+    }
+  }
+  return { value: String(error) }
+}
+
+async function withAttachControlProbeTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  detail: Record<string, unknown>
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new BrokerControllerError(
+          'broker_control_probe_timeout',
+          `broker reattach control proof timed out after ${timeoutMs}ms`,
+          { ...detail, timeoutMs }
+        )
+      )
+    }, timeoutMs)
+    timer.unref?.()
+  })
+  try {
+    return await Promise.race([operation, timeout])
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+    }
+  }
+}
+
+async function proveReattachedBrokerControl(
+  ctx: DispatchContext,
+  input: BrokerControllerAttachInput,
+  runtime: HrcRuntimeSnapshot,
+  invocation: HrcBrokerInvocationRecord,
+  trace: (phase: string, fields?: Record<string, unknown>) => void
+): Promise<void> {
+  let health: BrokerHealthResponse
+  try {
+    health = await withAttachControlProbeTimeout(
+      input.client.health({ probeDrivers: true }),
+      ctx.attachControlProbeTimeoutMs,
+      {
+        phase: 'health',
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+      }
+    )
+  } catch (error) {
+    if (error instanceof BrokerControllerError) {
+      throw error
+    }
+    throw new BrokerControllerError(
+      'broker_control_probe_failed',
+      `broker reattach health proof failed for ${runtime.runtimeId}`,
+      {
+        phase: 'health',
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        cause: brokerControlProbeErrorDetail(error),
+      }
+    )
+  }
+  trace('control-health', { proofResult: health.status })
+  if (health.status === 'shutting_down') {
+    throw new BrokerControllerError(
+      'broker_control_probe_shutting_down',
+      `broker ${runtime.runtimeId} is shutting down during reattach control proof`,
+      {
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        healthStatus: health.status,
+      }
+    )
+  }
+  if (health.status !== 'ok' && health.status !== 'degraded') {
+    throw new BrokerControllerError(
+      'broker_control_probe_failed',
+      `broker ${runtime.runtimeId} returned an unsupported health status during reattach`,
+      {
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        healthStatus: health.status,
+      }
+    )
+  }
+
+  let status: InvocationStatusResponse
+  try {
+    status = await withAttachControlProbeTimeout(
+      input.client.status({ invocationId: invocation.invocationId as InvocationId }),
+      ctx.attachControlProbeTimeoutMs,
+      {
+        phase: 'status',
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+      }
+    )
+  } catch (error) {
+    if (error instanceof BrokerControllerError) {
+      throw error
+    }
+    throw new BrokerControllerError(
+      'broker_control_probe_failed',
+      `broker reattach status proof failed for ${runtime.runtimeId}`,
+      {
+        phase: 'status',
+        runtimeId: runtime.runtimeId,
+        invocationId: invocation.invocationId,
+        cause: brokerControlProbeErrorDetail(error),
+      }
+    )
+  }
+  trace('control-status', {
+    proofResult: 'returned',
+    reportedInvocationId: String(status.invocationId),
+    invocationState: status.state,
+  })
+  if (String(status.invocationId) !== invocation.invocationId) {
+    throw new BrokerControllerError(
+      'broker_control_probe_invocation_mismatch',
+      `broker reattach status returned invocation ${String(status.invocationId)} instead of ${invocation.invocationId}`,
+      {
+        runtimeId: runtime.runtimeId,
+        expectedInvocationId: invocation.invocationId,
+        actualInvocationId: String(status.invocationId),
+      }
+    )
+  }
 }
 
 export async function startController(
@@ -386,6 +556,7 @@ export async function startController(
           }
         : input.dispatchEnv
     const persisted = persistStartGraph(ctx.persistenceContext(), input, hello, tmuxAllocation)
+    await input.onAccepted?.(persisted)
     if (input.attachBeforeInvocationStart && tmuxAllocation?.lease) {
       await ctx.pauseForAttachedInvocationStart({
         pending: input.attachBeforeInvocationStart,
@@ -552,8 +723,51 @@ export async function attachAndReplay(
     }
   }
 
+  const hosting = parseBrokerRuntimeHostingState(runtime)
+  const brokerState = runtime.runtimeStateJson?.['broker']
+  const brokerRecord =
+    typeof brokerState === 'object' && brokerState !== null
+      ? (brokerState as Record<string, unknown>)
+      : undefined
+  const traceStartedAt = performance.now()
+  let previousTraceAt = traceStartedAt
+  const baseTrace = {
+    runtimeId: runtime.runtimeId,
+    hostSessionId: runtime.hostSessionId,
+    generation: runtime.generation,
+    invocationId: invocation.invocationId,
+    serverInstanceId: ctx.serverInstanceId,
+    ...(hosting?.endpoint.kind === 'unix-jsonrpc-ndjson'
+      ? { endpointSocketPath: hosting.endpoint.socketPath }
+      : {}),
+    ...(hosting?.substrate.kind === 'leased-tmux'
+      ? {
+          leaseTmuxSocketPath: hosting.substrate.tmuxSocketPath,
+          leaseSessionName: hosting.substrate.sessionName,
+          leaseSessionId: hosting.substrate.brokerWindow.sessionId,
+          leaseBrokerWindowId: hosting.substrate.brokerWindow.windowId,
+          leaseBrokerPaneId: hosting.substrate.brokerWindow.paneId,
+        }
+      : {}),
+    ...(typeof brokerRecord?.['brokerPid'] === 'number'
+      ? { persistedBrokerPid: brokerRecord['brokerPid'] }
+      : {}),
+  }
+  const trace = (phase: string, fields: Record<string, unknown> = {}): void => {
+    const now = performance.now()
+    ctx.logger.info?.('broker.reattach.phase', {
+      ...baseTrace,
+      phase,
+      phaseElapsedMs: Number((now - previousTraceAt).toFixed(1)),
+      totalElapsedMs: Number((now - traceStartedAt).toFixed(1)),
+      ...fields,
+    })
+    previousTraceAt = now
+  }
+
   const lastProjectedSeq = ctx.lastProjectedBrokerSeq(invocation.invocationId)
   try {
+    trace('attach.begin', { lastProjectedSeq })
     const attach = await input.client.attach({
       runtimeId: runtime.runtimeId,
       hostSessionId: runtime.hostSessionId,
@@ -565,8 +779,19 @@ export async function attachAndReplay(
       attachToken: input.attachToken,
       lastProjectedSeq,
     })
+    trace('attach.complete', {
+      brokerInstanceId: attach.brokerInstanceId,
+      activeControllerInstanceId: attach.activeControllerInstanceId,
+      currentSeq: attach.currentSeq,
+      retentionFloorSeq: attach.retentionFloorSeq,
+    })
     const snapshot = await input.client.snapshot({
       invocationId: invocation.invocationId as InvocationId,
+    })
+    trace('snapshot.complete', {
+      invocationState: snapshot.state,
+      currentSeq: snapshot.currentSeq,
+      retentionFloorSeq: snapshot.retentionFloorSeq,
     })
 
     const retentionFloorSeq = Math.max(
@@ -593,6 +818,11 @@ export async function attachAndReplay(
       invocationId: invocation.invocationId as InvocationId,
       afterSeq: lastProjectedSeq,
     })
+    trace('replay.read', {
+      eventCount: replay.events.length,
+      currentSeq: replay.currentSeq,
+      retentionFloorSeq: replay.retentionFloorSeq,
+    })
 
     let replayedThroughSeq = lastProjectedSeq
     let ackedThroughSeq = lastProjectedSeq
@@ -617,6 +847,14 @@ export async function attachAndReplay(
       })
       ackedThroughSeq = ack.ackedThroughSeq
     }
+    trace('replay.ack', { replayedThroughSeq, ackedThroughSeq })
+
+    // T-05299: attach/replay methods sharing a socket do not prove the broker's
+    // control plane can service inspect/dispatch/terminate RPCs. Prove both
+    // broker health and the expected invocation status on this exact candidate
+    // client, with an independent bound per RPC, before publishing owner state,
+    // brokerAttached, active, or the live event subscription.
+    await proveReattachedBrokerControl(ctx, input, runtime, invocation, trace)
 
     // T-01946 gate 2 (restart re-derivation): the broker reports `turn_active`
     // for a parked turn (it has no awaiting-input member), which would clobber
@@ -674,6 +912,11 @@ export async function attachAndReplay(
       // fresh hello (generation/reattach) replaces this best-effort fallback.
       inspection: rehydrateInspectionCapabilities(runtime.runtimeStateJson),
     })
+    trace('active.published', {
+      replayedThroughSeq,
+      ackedThroughSeq,
+      finalStatus: status,
+    })
 
     // T-01801: subscribe to the broker's LIVE event stream after the one-shot
     // `eventsSince` replay. Without this the runtime is re-attached for INPUT
@@ -689,6 +932,7 @@ export async function attachAndReplay(
     if (liveEvents) {
       ctx.consumeEvents(runtime.runtimeId, liveEvents)
     }
+    trace('stream.subscribed', { subscribed: liveEvents !== undefined })
 
     return {
       ok: true,
@@ -713,6 +957,11 @@ export async function attachAndReplay(
             }
           )
         : toControllerError('broker_attach_replay_failed', error)
+    trace('failed', {
+      result: 'failed',
+      errorCode: controllerError.code,
+      errorMessage: controllerError.message,
+    })
     await failReplayStale(
       ctx.lifecycleContext(),
       runtime,

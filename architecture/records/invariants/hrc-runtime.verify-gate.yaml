@@ -1,0 +1,21 @@
+id: hrc-runtime.verify-gate
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: declared repository landing gate
+predicate: >
+  The declared verify gate checks architecture records and their generated
+  projections in addition to build, structural checks, lint, types, tests, and
+  the fixture-owned federation loopback corpus.
+authority: wrkq:T-06958
+source:
+  - justfile
+  - package.json
+  - scripts/check-architecture-records.ts
+required_tests:
+  - just architecture-records
+  - just verify
+last_verified: 2026-07-24
+reopen_when: The verify recipe or repository validation topology changes.
+supersedes: []
+superseded_by: []

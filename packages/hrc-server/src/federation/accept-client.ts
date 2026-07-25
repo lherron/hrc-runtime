@@ -90,6 +90,7 @@ export async function sendFederationEnvelope(
           ...(options.envelope.phase === 'request'
             ? { requestEpoch: options.envelope.expected.placementEpoch }
             : {}),
+          ackOutcome: ack['outcome'],
         })
       } catch (error) {
         if (error instanceof FederationPeerAcceptanceConflictError) {

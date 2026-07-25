@@ -24,7 +24,7 @@
  *
  * Reference: T-00946, HRC_IMPLEMENTATION_PLAN.md Phase 2
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -50,6 +50,21 @@ let originalAspClaudePath: string | undefined
 let originalAspCodexPath: string | undefined
 let originalAspCodexSkipCommonPaths: string | undefined
 let originalAspHeadlessDurableBroker: string | undefined
+
+const INTEGRATION_TIMEOUT_MS = 60_000
+
+// This file boots real server instances and compiles real harness plans. Keep a
+// bounded integration timeout, but leave enough headroom for loaded-box runs:
+// eight concurrent copies have pushed the real compile RPC to roughly 30s.
+setDefaultTimeout(INTEGRATION_TIMEOUT_MS)
+
+function createSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {}
+  const promise = new Promise<void>((signalResolve) => {
+    resolve = signalResolve
+  })
+  return { promise, resolve }
+}
 
 async function fetchSocket(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`http://localhost${path}`, {
@@ -430,17 +445,26 @@ if (cmd === 'app-server') {
     )
   }
 
-  async function waitForCondition(
-    predicate: () => boolean,
-    description: string,
-    timeoutMs = 2_500
+  async function waitForQueuedPrompt(
+    hostSessionId: string,
+    prompt: string,
+    timeoutMs = INTEGRATION_TIMEOUT_MS
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      if (predicate()) return
+      const db = openHrcDatabase(dbPath)
+      try {
+        const found = db.runs.listQueuedByHostSessionId(hostSessionId).some((run) => {
+          const correlation = db.runs.getCorrelationJson(run.runId)
+          return correlation !== null && JSON.parse(correlation).prompt === prompt
+        })
+        if (found) return
+      } finally {
+        db.close()
+      }
       await Bun.sleep(25)
     }
-    throw new Error(`timed out waiting for ${description}`)
+    throw new Error(`timed out waiting for queued prompt ${JSON.stringify(prompt)}`)
   }
 
   // T-01757 (Wave C, A2): codex headless START provisions THROUGH the
@@ -492,13 +516,24 @@ if (cmd === 'app-server') {
   function installHeadlessBrokerStartStub(
     hostSessionId: string,
     options: { continuationKey?: string; gate?: Promise<unknown> } = {}
-  ): { calls: any[]; inputCalls: any[]; runtimeIds: string[] } {
+  ): {
+    calls: any[]
+    inputCalls: any[]
+    runtimeIds: string[]
+    startCalled: Promise<void>
+    runtimePersisted: Promise<void>
+    inputDispatched: Promise<void>
+  } {
     const calls: any[] = []
     const inputCalls: any[] = []
     const runtimeIds: string[] = []
+    const startCalled = createSignal()
+    const runtimePersisted = createSignal()
+    const inputDispatched = createSignal()
     ;(server as any).getHarnessBrokerController = () => ({
       start: async (input: any) => {
         calls.push(input)
+        startCalled.resolve()
         if (options.gate) {
           await options.gate
         }
@@ -553,6 +588,7 @@ if (cmd === 'app-server') {
           })
           db.sessions.updateContinuation(hostSessionId, continuation, now)
           runtimeIds.push(runtimeId)
+          runtimePersisted.resolve()
           return { ok: true, runtime: db.runtimes.getByRuntimeId(runtimeId) }
         } finally {
           db.close()
@@ -572,13 +608,21 @@ if (cmd === 'app-server') {
             completedAt,
             updatedAt: completedAt,
           })
+          inputDispatched.resolve()
           return { ok: true, response: { accepted: true } }
         } finally {
           db.close()
         }
       },
     })
-    return { calls, inputCalls, runtimeIds }
+    return {
+      calls,
+      inputCalls,
+      runtimeIds,
+      startCalled: startCalled.promise,
+      runtimePersisted: runtimePersisted.promise,
+      inputDispatched: inputDispatched.promise,
+    }
   }
 
   it('interactive ensure fails closed when no broker-admissible route exists', async () => {
@@ -747,10 +791,7 @@ if (cmd === 'app-server') {
     })
 
     try {
-      await waitForCondition(
-        () => stub.calls.length === 1,
-        'fresh prompt to reach durable broker start'
-      )
+      await stub.startCalled
       controller.abort()
       await request.catch(() => undefined)
 
@@ -762,60 +803,65 @@ if (cmd === 'app-server') {
       releaseGate()
     }
 
-    await waitForCondition(() => stub.runtimeIds.length === 1, 'fresh broker runtime persistence')
+    await stub.runtimePersisted
+    expect(stub.runtimeIds).toHaveLength(1)
   })
 
-  it('queues an existing-session prompt behind boot and delivers it after the client exits', async () => {
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-start-existing-boot-prompt-client-exit')
-    let releaseGate: () => void = () => {}
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve
-    })
-    const stub = installHeadlessBrokerStartStub(hsid, { gate })
+  it(
+    'queues an existing-session prompt behind boot and delivers it after the client exits',
+    async () => {
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-start-existing-boot-prompt-client-exit')
+      let releaseGate: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve
+      })
+      const stub = installHeadlessBrokerStartStub(hsid, { gate })
 
-    const bootRequest = postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    await waitForCondition(() => stub.calls.length === 1, 'existing session boot to begin')
-
-    const controller = new AbortController()
-    const promptRequest = fetchSocket('/v1/turns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      const bootRequest = postJson('/v1/runtimes/start', {
         hostSessionId: hsid,
-        prompt: 'queued prompt must survive boot timeout',
-        runtimeIntent: headlessCodexIntent({}),
-        waitForCompletion: true,
-      }),
-      signal: controller.signal,
-    })
+        intent: headlessCodexIntent({}),
+      })
+      await stub.startCalled
 
-    // Give the accepting handler time to durably record the prompt while the
-    // lifecycle start remains gated, then model the CLI wait timing out.
-    await Bun.sleep(250)
-    controller.abort()
-    await promptRequest.catch(() => undefined)
-    releaseGate()
+      const controller = new AbortController()
+      const promptRequest = fetchSocket('/v1/turns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostSessionId: hsid,
+          prompt: 'queued prompt must survive boot timeout',
+          runtimeIntent: headlessCodexIntent({}),
+          waitForCompletion: true,
+        }),
+        signal: controller.signal,
+      })
 
-    const bootResponse = await bootRequest
-    expect(bootResponse.status).toBe(200)
-    await waitForCondition(() => stub.runtimeIds.length >= 1, 'boot runtime persistence')
+      try {
+        // Abort only after the accepting handler has durably queued the prompt.
+        await waitForQueuedPrompt(hsid, 'queued prompt must survive boot timeout')
+        controller.abort()
+        await promptRequest.catch(() => undefined)
+      } finally {
+        releaseGate()
+      }
 
-    // A boot-racing prompt belongs to the one booting runtime. Starting a
-    // second broker invocation is not queueing and can split the session.
-    expect(stub.calls).toHaveLength(1)
-    await waitForCondition(
-      () => stub.inputCalls.length === 1,
-      'boot-racing prompt delivery after runtime readiness',
-      1_000
-    )
-    expect(stub.inputCalls[0].input.content).toEqual([
-      { type: 'text', text: 'queued prompt must survive boot timeout' },
-    ])
-  }, 10_000)
+      const bootResponse = await bootRequest
+      expect(bootResponse.status).toBe(200)
+      await stub.runtimePersisted
+      expect(stub.runtimeIds).toHaveLength(1)
+
+      // A boot-racing prompt belongs to the one booting runtime. Starting a
+      // second broker invocation is not queueing and can split the session.
+      expect(stub.calls).toHaveLength(1)
+      await stub.inputDispatched
+      expect(stub.inputCalls).toHaveLength(1)
+      expect(stub.inputCalls[0].input.content).toEqual([
+        { type: 'text', text: 'queued prompt must survive boot timeout' },
+      ])
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
 
   it('POST /v1/clear-context can rotate to a fresh session without inheriting continuation', async () => {
     // A2: seed a broker headless runtime + continuation via the broker start,
@@ -860,175 +906,194 @@ if (cmd === 'app-server') {
     expect(nextSessionData.continuation).toBeUndefined()
   })
 
-  it('POST /v1/runtimes/attach waits for in-flight start then fails closed without legacy resume', async () => {
-    // A2: a broker headless START serializes the start operation; attach awaits
-    // the in-flight start (does NOT race ahead) and then fails closed on the
-    // headless runtime. The gate holds the broker start "in flight" so we can
-    // observe attach blocking, then release it and assert the fail-closed result.
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-attach-blocks')
-    let releaseGate: () => void = () => {}
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve
-    })
-    installHeadlessBrokerStartStub(hsid, { gate })
+  it(
+    'POST /v1/runtimes/attach waits for in-flight start then fails closed without legacy resume',
+    async () => {
+      // A2: a broker headless START serializes the start operation; attach awaits
+      // the in-flight start (does NOT race ahead) and then fails closed on the
+      // headless runtime. The gate holds the broker start "in flight" so we can
+      // observe attach blocking, then release it and assert the fail-closed result.
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-attach-blocks')
+      let releaseGate: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve
+      })
+      const stub = installHeadlessBrokerStartStub(hsid, { gate })
 
-    const startPromise = postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
+      const startPromise = postJson('/v1/runtimes/start', {
+        hostSessionId: hsid,
+        intent: headlessCodexIntent({}),
+      })
 
-    await new Promise((resolve) => setTimeout(resolve, 75))
+      await stub.startCalled
 
-    let attachSettled = false
-    const attachPromise = (async () => {
-      const startRes = await startPromise
+      let attachSettled = false
+      const attachPromise = (async () => {
+        const startRes = await startPromise
+        const startData = (await startRes.json()) as any
+        const attachRes = await postJson('/v1/runtimes/attach', {
+          runtimeId: startData.runtimeId,
+        })
+        attachSettled = true
+        return { startData, attachRes }
+      })()
+
+      // Start is still gated in-flight, so neither start nor the dependent attach
+      // has settled.
+      expect(attachSettled).toBe(false)
+
+      releaseGate()
+
+      const { startData, attachRes } = await attachPromise
+      expect(attachRes.status).toBe(503)
+      const attachBody = (await attachRes.json()) as {
+        error?: { code?: string; message?: string }
+      }
+      expect(attachBody.error?.code).toBe('runtime_unavailable')
+      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
+
+      const secondAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(secondAttachRes.status).toBe(503)
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
+
+  it(
+    'POST /v1/runtimes/attach does not rematerialize legacy tmux from headless codex',
+    async () => {
+      // A2: start provisions a broker headless runtime; attach on a headless
+      // runtime fails closed (not broker-admissible) and never rematerializes a
+      // legacy tmux / writes an attach launch artifact.
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-attach-no-reprime')
+      installHeadlessBrokerStartStub(hsid)
+
+      const startRes = await postJson('/v1/runtimes/start', {
+        hostSessionId: hsid,
+        intent: headlessCodexIntent({}),
+      })
+      expect(startRes.status).toBe(200)
       const startData = (await startRes.json()) as any
+
       const attachRes = await postJson('/v1/runtimes/attach', {
         runtimeId: startData.runtimeId,
       })
-      attachSettled = true
-      return { startData, attachRes }
-    })()
+      expect(attachRes.status).toBe(503)
+      const attachBody = (await attachRes.json()) as {
+        error?: { code?: string; message?: string }
+      }
+      expect(attachBody.error?.code).toBe('runtime_unavailable')
+      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
 
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    // Start is still gated in-flight, so neither start nor the dependent attach
-    // has settled.
-    expect(attachSettled).toBe(false)
+      const launchesRes = await fetchSocket(
+        `/v1/launches?runtimeId=${encodeURIComponent(startData.runtimeId)}`
+      )
+      const launches = (await launchesRes.json()) as Array<{ lifecycleAction?: string }>
+      expect(launches.some((launch) => launch.lifecycleAction === 'attach')).toBe(false)
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
 
-    releaseGate()
+  it(
+    'POST /v1/runtimes/attach rejects legacy attach descriptor recovery',
+    async () => {
+      // A2: attach on a broker headless runtime fails closed — no legacy attach
+      // descriptor recovery.
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-attach-stale-session-name')
+      installHeadlessBrokerStartStub(hsid)
 
-    const { startData, attachRes } = await attachPromise
-    expect(attachRes.status).toBe(503)
-    const attachBody = (await attachRes.json()) as {
-      error?: { code?: string; message?: string }
-    }
-    expect(attachBody.error?.code).toBe('runtime_unavailable')
-    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-
-    const secondAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(secondAttachRes.status).toBe(503)
-  }, 10_000)
-
-  it('POST /v1/runtimes/attach does not rematerialize legacy tmux from headless codex', async () => {
-    // A2: start provisions a broker headless runtime; attach on a headless
-    // runtime fails closed (not broker-admissible) and never rematerializes a
-    // legacy tmux / writes an attach launch artifact.
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-attach-no-reprime')
-    installHeadlessBrokerStartStub(hsid)
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
-
-    const attachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(attachRes.status).toBe(503)
-    const attachBody = (await attachRes.json()) as {
-      error?: { code?: string; message?: string }
-    }
-    expect(attachBody.error?.code).toBe('runtime_unavailable')
-    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-
-    const launchesRes = await fetchSocket(
-      `/v1/launches?runtimeId=${encodeURIComponent(startData.runtimeId)}`
-    )
-    const launches = (await launchesRes.json()) as Array<{ lifecycleAction?: string }>
-    expect(launches.some((launch) => launch.lifecycleAction === 'attach')).toBe(false)
-  }, 10_000)
-
-  it('POST /v1/runtimes/attach rejects legacy attach descriptor recovery', async () => {
-    // A2: attach on a broker headless runtime fails closed — no legacy attach
-    // descriptor recovery.
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-attach-stale-session-name')
-    installHeadlessBrokerStartStub(hsid)
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
-
-    const initialAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(initialAttachRes.status).toBe(503)
-    const attachBody = (await initialAttachRes.json()) as {
-      error?: { code?: string; message?: string }
-    }
-    expect(attachBody.error?.code).toBe('runtime_unavailable')
-    expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
-  }, 10_000)
-
-  it('POST /v1/runtimes/attach does not rematerialize tmux when the requested runtime is dead', async () => {
-    // A2: a broker headless runtime fails closed on attach, and once marked dead
-    // attach still fails closed (no legacy tmux rematerialize / resume).
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-attach-dead-runtime')
-    installHeadlessBrokerStartStub(hsid)
-
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
-
-    const initialAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(initialAttachRes.status).toBe(503)
-
-    const db = openHrcDatabase(dbPath)
-    try {
-      db.runtimes.update(startData.runtimeId, {
-        status: 'dead',
-        updatedAt: new Date().toISOString(),
+      const startRes = await postJson('/v1/runtimes/start', {
+        hostSessionId: hsid,
+        intent: headlessCodexIntent({}),
       })
-    } finally {
-      db.close()
-    }
+      expect(startRes.status).toBe(200)
+      const startData = (await startRes.json()) as any
 
-    const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(recoveredAttachRes.status).toBe(503)
-  }, 10_000)
+      const initialAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(initialAttachRes.status).toBe(503)
+      const attachBody = (await initialAttachRes.json()) as {
+        error?: { code?: string; message?: string }
+      }
+      expect(attachBody.error?.code).toBe('runtime_unavailable')
+      expect(attachBody.error?.message).toContain('runtime intent is not broker-admissible')
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
 
-  it('POST /v1/runtimes/attach does not rematerialize tmux after prior runtime exits', async () => {
-    // A2: attach on the broker headless runtime fails closed; it stays a
-    // ready broker runtime (never rematerializes a legacy tmux on re-attach).
-    await restartServerWithHeadlessCodexBroker()
-    const hsid = await resolveSession('lifecycle-attach-terminated-runtime')
-    installHeadlessBrokerStartStub(hsid)
+  it(
+    'POST /v1/runtimes/attach does not rematerialize tmux when the requested runtime is dead',
+    async () => {
+      // A2: a broker headless runtime fails closed on attach, and once marked dead
+      // attach still fails closed (no legacy tmux rematerialize / resume).
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-attach-dead-runtime')
+      installHeadlessBrokerStartStub(hsid)
 
-    const startRes = await postJson('/v1/runtimes/start', {
-      hostSessionId: hsid,
-      intent: headlessCodexIntent({}),
-    })
-    expect(startRes.status).toBe(200)
-    const startData = (await startRes.json()) as any
+      const startRes = await postJson('/v1/runtimes/start', {
+        hostSessionId: hsid,
+        intent: headlessCodexIntent({}),
+      })
+      expect(startRes.status).toBe(200)
+      const startData = (await startRes.json()) as any
 
-    const initialAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(initialAttachRes.status).toBe(503)
-    expect(await waitForRuntimeStatus(startData.runtimeId, ['ready', 'terminated'])).toBe('ready')
+      const initialAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(initialAttachRes.status).toBe(503)
 
-    const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
-      runtimeId: startData.runtimeId,
-    })
-    expect(recoveredAttachRes.status).toBe(503)
-  }, 10_000)
+      const db = openHrcDatabase(dbPath)
+      try {
+        db.runtimes.update(startData.runtimeId, {
+          status: 'dead',
+          updatedAt: new Date().toISOString(),
+        })
+      } finally {
+        db.close()
+      }
+
+      const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(recoveredAttachRes.status).toBe(503)
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
+
+  it(
+    'POST /v1/runtimes/attach does not rematerialize tmux after prior runtime exits',
+    async () => {
+      // A2: attach on the broker headless runtime fails closed; it stays a
+      // ready broker runtime (never rematerializes a legacy tmux on re-attach).
+      await restartServerWithHeadlessCodexBroker()
+      const hsid = await resolveSession('lifecycle-attach-terminated-runtime')
+      installHeadlessBrokerStartStub(hsid)
+
+      const startRes = await postJson('/v1/runtimes/start', {
+        hostSessionId: hsid,
+        intent: headlessCodexIntent({}),
+      })
+      expect(startRes.status).toBe(200)
+      const startData = (await startRes.json()) as any
+
+      const initialAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(initialAttachRes.status).toBe(503)
+      expect(await waitForRuntimeStatus(startData.runtimeId, ['ready', 'terminated'])).toBe('ready')
+
+      const recoveredAttachRes = await postJson('/v1/runtimes/attach', {
+        runtimeId: startData.runtimeId,
+      })
+      expect(recoveredAttachRes.status).toBe(503)
+    },
+    INTEGRATION_TIMEOUT_MS
+  )
 
   it('POST /v1/runtimes/attach does not attach directly to legacy codex tmux', async () => {
     const hsid = await resolveSession('lifecycle-attach-live-no-continuation')

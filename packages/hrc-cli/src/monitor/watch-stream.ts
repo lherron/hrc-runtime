@@ -14,6 +14,7 @@ import {
   type MonitorEventWriter,
   type MonitorOutputEvent,
   createMonitorEventWriter,
+  drainMonitorStdout,
 } from './render/output.js'
 import { scopeRefForSelector } from './selector-shape.js'
 
@@ -111,6 +112,7 @@ async function runPollingFollow(
       replayed: false,
       snapshot,
     })
+    await drainMonitorStdout(io.stdout)
     const terminalFence = args.implicitTerminal
       ? (args.terminalFence ?? { seq: snapshot.eventHighWaterSeq, inclusive: false })
       : undefined
@@ -143,6 +145,7 @@ async function runPollingFollow(
       for (const event of output) {
         const enriched: Record<string, unknown> = { ...event, replayed: true }
         writer.write(enriched)
+        await drainMonitorStdout(io.stdout)
         const seq = numberField(enriched, 'seq')
         if (seq !== undefined) replayHighWater = Math.max(replayHighWater, seq)
         if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {
@@ -172,6 +175,7 @@ async function runPollingFollow(
         yielded = true
         const enriched: Record<string, unknown> = { ...event, replayed: false }
         writer.write(enriched)
+        await drainMonitorStdout(io.stdout)
         const seq = numberField(enriched, 'seq')
         if (seq !== undefined) nextSeq = Math.max(nextSeq, seq + 1)
         if (terminalFence && isTerminalMonitorEvent(enriched, terminalFence)) {

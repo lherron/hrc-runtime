@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -10,6 +10,7 @@ import {
 } from 'hrc-core'
 import type {
   DispatchTurnResponse,
+  DispatchTurnTerminalOutcome,
   HrcRuntimeIntent,
   HrcRuntimeSnapshot,
   HrcSessionRecord,
@@ -19,7 +20,11 @@ import type {
   ResumeAttachedRunResponse,
   StartRuntimeResponse,
 } from 'hrc-core'
-import { BrokerClient } from 'spaces-harness-broker-client'
+import {
+  assertActuatorSplitRouteAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+} from './actuator-split.js'
 import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
@@ -33,6 +38,7 @@ import {
   toLatestRuntimeAdmissionView,
   toLiveInteractiveRuntimeReuseView,
 } from './broker-decisions.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { hasLeasedBrokerSubstrate } from './broker/runtime-hosting.js'
 import { normalizeDispatchIntent } from './dispatch-invocation.js'
@@ -68,6 +74,209 @@ import type { AttachBeforeInvocationStartOption } from './server-types.js'
 import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
 import { reattachDurableBrokerForDispatch } from './startup-reconcile.js'
 import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+
+type PublicDispatchWaitStage = 'accepted' | 'turn_started' | 'terminal'
+
+type InFlightIdempotentDispatch = {
+  requestHash: string
+  promise: Promise<DispatchTurnResponse>
+}
+
+const idempotentDispatches = new WeakMap<
+  HrcServerInstanceForHandlers,
+  Map<string, InFlightIdempotentDispatch>
+>()
+
+function canonicalDispatchJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalDispatchJson).join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalDispatchJson(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function dispatchRequestHash(input: {
+  prompt: string
+  runtimeIntent?: HrcRuntimeIntent | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+  attachments?: unknown
+  whenBusy?: 'reject' | undefined
+  repair?: unknown
+}): string {
+  return createHash('sha256')
+    .update(
+      canonicalDispatchJson({
+        prompt: input.prompt,
+        runtimeIntent: input.runtimeIntent,
+        responseFormat: input.responseFormat,
+        attachments: input.attachments,
+        whenBusy: input.whenBusy,
+        repair: input.repair,
+      })
+    )
+    .digest('hex')
+}
+
+function resolvePublicWaitStage(input: {
+  waitFor?: PublicDispatchWaitStage | undefined
+  waitForCompletion?: boolean | undefined
+}): PublicDispatchWaitStage {
+  if (input.waitFor !== undefined) return input.waitFor
+  return input.waitForCompletion === true ? 'terminal' : 'accepted'
+}
+
+function terminalOutcome(status: string): DispatchTurnTerminalOutcome | undefined {
+  return status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'zombie'
+    ? status
+    : undefined
+}
+
+function publicDispatchBody(
+  body: Omit<DispatchTurnResponse, 'stage' | 'status' | 'outcome' | 'replayed' | 'error'> & {
+    status?: string | undefined
+  },
+  stage: DispatchTurnResponse['stage'],
+  options: {
+    replayed: boolean
+    outcome?: DispatchTurnTerminalOutcome | undefined
+    errorCode?: string | undefined
+    errorMessage?: string | undefined
+  }
+): DispatchTurnResponse {
+  const status =
+    stage === 'accepted'
+      ? 'accepted'
+      : stage === 'turn_started'
+        ? 'started'
+        : (options.outcome ?? 'failed')
+  return {
+    ...body,
+    stage,
+    status,
+    replayed: options.replayed,
+    ...(options.outcome !== undefined ? { outcome: options.outcome } : {}),
+    ...(options.errorMessage !== undefined
+      ? {
+          error: {
+            ...(options.errorCode !== undefined ? { code: options.errorCode } : {}),
+            message: options.errorMessage,
+          },
+        }
+      : {}),
+  } as DispatchTurnResponse
+}
+
+function replayDispatchBody(
+  server: HrcServerInstanceForHandlers,
+  run: NonNullable<ReturnType<HrcServerInstanceForHandlers['db']['runs']['getByRunId']>>
+): DispatchTurnResponse {
+  const runtime =
+    run.runtimeId !== undefined ? server.db.runtimes.getByRuntimeId(run.runtimeId) : null
+  if (runtime === null || run.runtimeId === undefined) {
+    throw new HrcRuntimeUnavailableError('accepted dispatch runtime is unavailable', {
+      runId: run.runId,
+      hostSessionId: run.hostSessionId,
+      route: 'dispatch-idempotency-replay',
+    })
+  }
+  const invocationId = run.invocationId ?? runtime.activeInvocationId
+  const firstLifecycleSeq =
+    server.db.hrcEvents.listByRun(run.runId).map((event) => event.hrcSeq)[0] ??
+    server.db.hrcEvents.maxHrcSeq() + 1
+  const base = {
+    runId: run.runId,
+    hostSessionId: run.hostSessionId,
+    generation: run.generation,
+    runtimeId: run.runtimeId,
+    transport: runtime.transport as DispatchTurnResponse['transport'],
+    // Broker-headless runtime rows remain queue-capable internally, but the
+    // public in-flight endpoint is SDK-only. Preserve the same truthful
+    // capability projection on idempotent replay as on the original response.
+    supportsInFlightInput: runtime.transport === 'headless' ? false : runtime.supportsInflightInput,
+    startIdentity:
+      invocationId !== undefined
+        ? ({ kind: 'broker', invocationId } as const)
+        : ({ kind: 'sdk' } as const),
+    observation: {
+      lifecycle: {
+        selector: {
+          runId: run.runId,
+          runtimeId: run.runtimeId,
+          generation: run.generation,
+        },
+        fromSeq: firstLifecycleSeq,
+      },
+      ...(invocationId !== undefined
+        ? {
+            broker: {
+              selector: {
+                invocationId,
+                runId: run.runId,
+                runtimeId: run.runtimeId,
+                generation: run.generation,
+              },
+              afterSeq: 0,
+            },
+          }
+        : {}),
+    },
+  }
+  const outcome = terminalOutcome(run.status)
+  return publicDispatchBody(base, outcome === undefined ? 'accepted' : 'terminal', {
+    replayed: true,
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+    ...(run.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+  })
+}
+
+async function waitForPublicDispatchStage(
+  server: HrcServerInstanceForHandlers,
+  base: DispatchTurnResponse,
+  requested: PublicDispatchWaitStage,
+  replayed: boolean
+): Promise<Response> {
+  if (requested === 'accepted' || base.stage === 'terminal') {
+    return json({ ...base, replayed }, base.stage === 'accepted' ? 202 : 200)
+  }
+
+  for (;;) {
+    const run = server.db.runs.getByRunId(base.runId)
+    if (run === null) {
+      throw new HrcRuntimeUnavailableError('accepted dispatch run disappeared', {
+        runId: base.runId,
+        route: 'dispatch-stage-wait',
+      })
+    }
+    const started =
+      server.db.hrcEvents.listByRun(base.runId, { eventKind: 'turn.started' }).length > 0
+    if (requested === 'turn_started' && started) {
+      return json(publicDispatchBody(base, 'turn_started', { replayed }), 200)
+    }
+    const outcome = terminalOutcome(run.status)
+    if (outcome !== undefined) {
+      return json(
+        publicDispatchBody(base, 'terminal', {
+          replayed,
+          outcome,
+          ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+          ...(run.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+        }),
+        200
+      )
+    }
+    await delay(25)
+  }
+}
 
 export async function handleEnsureRuntime(
   this: HrcServerInstanceForHandlers,
@@ -144,6 +353,7 @@ export async function handleOpenBrokerSession(
   const route = decideHeadlessExecutionRoute(intent, {
     brokerFlagEnabled: this.headlessCodexBrokerEnabled,
   })
+  assertActuatorSplitRouteAdmission(intent, route)
   if (route !== 'broker') {
     throw new HrcRuntimeUnavailableError('broker session open requires the headless broker route', {
       hostSessionId: session.hostSessionId,
@@ -209,7 +419,16 @@ export async function handleDispatchTurn(
     allowStaleGeneration: body.allowStaleGeneration,
     trigger: 'dispatch-turn',
   })
+  const waitFor = resolvePublicWaitStage(body)
   const runId = `run-${randomUUID()}`
+  const requestHash = dispatchRequestHash({
+    prompt: body.prompt,
+    runtimeIntent: body.runtimeIntent ?? session.lastAppliedIntentJson,
+    responseFormat: body.responseFormat,
+    attachments: body.attachments,
+    whenBusy: body.whenBusy,
+    repair: body.repair,
+  })
   const parsedIntent = normalizeDispatchIntent(
     body.runtimeIntent ?? session.lastAppliedIntentJson,
     session,
@@ -219,16 +438,95 @@ export async function handleDispatchTurn(
     body.attachments !== undefined
       ? { ...parsedIntent, attachments: body.attachments }
       : parsedIntent
+  const idempotencyKey = body.idempotencyKey
 
-  return await this.dispatchTurnForSession(session, intent, body.prompt, {
-    runId,
-    waitForCompletion: body.waitForCompletion,
-    whenBusy: body.whenBusy,
-    responseFormat: body.responseFormat,
-    ...(body.repair !== undefined
-      ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
-      : {}),
-  })
+  if (idempotencyKey !== undefined) {
+    const existing = this.db.runs.getByDispatchIdempotencyKey(session.hostSessionId, idempotencyKey)
+    if (existing !== null) {
+      if (
+        existing.dispatchRequestHash !== undefined &&
+        existing.dispatchRequestHash !== requestHash
+      ) {
+        throw new HrcConflictError(
+          HrcErrorCode.STALE_CONTEXT,
+          'dispatch idempotency key was already used for a different request',
+          {
+            hostSessionId: session.hostSessionId,
+            idempotencyKey,
+            runId: existing.runId,
+          }
+        )
+      }
+      return await waitForPublicDispatchStage(
+        this,
+        replayDispatchBody(this, existing),
+        waitFor,
+        true
+      )
+    }
+  }
+
+  const operationKey =
+    idempotencyKey !== undefined ? `${session.hostSessionId}\u0000${idempotencyKey}` : undefined
+  const operations = idempotentDispatches.get(this) ?? new Map<string, InFlightIdempotentDispatch>()
+  if (!idempotentDispatches.has(this)) {
+    idempotentDispatches.set(this, operations)
+  }
+  const pending = operationKey !== undefined ? operations.get(operationKey) : undefined
+  if (pending !== undefined) {
+    if (pending.requestHash !== requestHash) {
+      throw new HrcConflictError(
+        HrcErrorCode.STALE_CONTEXT,
+        'dispatch idempotency key is in flight for a different request',
+        {
+          hostSessionId: session.hostSessionId,
+          idempotencyKey,
+        }
+      )
+    }
+    return await waitForPublicDispatchStage(this, await pending.promise, waitFor, true)
+  }
+
+  const dispatch = async (): Promise<DispatchTurnResponse> => {
+    const response = await this.dispatchTurnForSession(session, intent, body.prompt, {
+      runId,
+      // Public dispatch acknowledgement is always detached at the route layer.
+      // Evidence-backed waits happen below against the durable run projection.
+      waitForCompletion: false,
+      whenBusy: body.whenBusy,
+      responseFormat: body.responseFormat,
+      ...(body.repair !== undefined
+        ? { repairCorrelation: normalizeJsonRepairCorrelation(body.repair, runId) }
+        : {}),
+    })
+    const legacy = (await response.json()) as DispatchTurnResponse
+    if (idempotencyKey !== undefined) {
+      this.db.runs.update(runId, {
+        dispatchIdempotencyKey: idempotencyKey,
+        dispatchRequestHash: requestHash,
+      })
+    }
+    const run = this.db.runs.getByRunId(runId)
+    const outcome = run ? terminalOutcome(run.status) : undefined
+    return publicDispatchBody(legacy, outcome === undefined ? 'accepted' : 'terminal', {
+      replayed: false,
+      ...(outcome !== undefined ? { outcome } : {}),
+      ...(run?.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
+      ...(run?.errorMessage !== undefined ? { errorMessage: run.errorMessage } : {}),
+    })
+  }
+
+  const dispatchPromise = dispatch()
+  if (operationKey !== undefined) {
+    operations.set(operationKey, { requestHash, promise: dispatchPromise })
+  }
+  try {
+    return await waitForPublicDispatchStage(this, await dispatchPromise, waitFor, false)
+  } finally {
+    if (operationKey !== undefined && operations.get(operationKey)?.promise === dispatchPromise) {
+      operations.delete(operationKey)
+    }
+  }
 }
 
 export async function openHeadlessBrokerSessionForSession(
@@ -243,6 +541,7 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (reusableRuntime) {
+    assertActuatorSplitRuntimeReuse(intent, reusableRuntime)
     assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime)
     return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
@@ -257,6 +556,7 @@ export async function openHeadlessBrokerSessionForSession(
     const reattached = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
+      assertActuatorSplitRuntimeReuse(intent, recovered)
       assertBrokerRuntimeReusableAdmission(this.db, recovered)
       return await finalizeHeadlessBrokerSessionOpen(this, recovered)
     }
@@ -321,7 +621,8 @@ export async function reattachDurableBrokerSessionForOpen(
     controller: this.getHarnessBrokerController(),
     brokerUnixClientFactory:
       this.brokerUnixClientFactory ??
-      ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+      ((options) =>
+        connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
   })
 }
 
@@ -643,20 +944,40 @@ export async function handleResumeAttachedRun(
   } satisfies ResumeAttachedRunResponse)
 }
 
+type DispatchTurnForSessionOptions = {
+  runId?: string | undefined
+  ensureInteractiveRuntime?: boolean | undefined
+  waitForCompletion?: boolean | undefined
+  whenBusy?: 'reject' | undefined
+  attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
+  repairCorrelation?: JsonRepairRunCorrelation | undefined
+  responseFormat?: HrcTurnResponseFormat | undefined
+}
+
 export async function dispatchTurnForSession(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
   inputIntent: HrcRuntimeIntent,
   prompt: string,
-  options: {
-    runId?: string | undefined
-    ensureInteractiveRuntime?: boolean | undefined
-    waitForCompletion?: boolean | undefined
-    whenBusy?: 'reject' | undefined
-    attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
-    repairCorrelation?: JsonRepairRunCorrelation | undefined
-    responseFormat?: HrcTurnResponseFormat | undefined
-  } = {}
+  options: DispatchTurnForSessionOptions = {}
+): Promise<Response> {
+  const existingRun = options.runId ? this.db.runs.getByRunId(options.runId) : null
+  const releaseAdmission = this.turnAdmissionGate.admit({
+    existingAcceptedRun: existingRun?.status === 'accepted',
+  })
+  try {
+    return await dispatchAdmittedTurnForSession.call(this, session, inputIntent, prompt, options)
+  } finally {
+    releaseAdmission()
+  }
+}
+
+async function dispatchAdmittedTurnForSession(
+  this: HrcServerInstanceForHandlers,
+  session: HrcSessionRecord,
+  inputIntent: HrcRuntimeIntent,
+  prompt: string,
+  options: DispatchTurnForSessionOptions
 ): Promise<Response> {
   assertLocalPersonaAllowed(this, session.scopeRef)
   const runId = options.runId ?? `run-${randomUUID()}`
@@ -674,8 +995,14 @@ export async function dispatchTurnForSession(
   // Normalizing to an interactive claude-code intent makes the predicates
   // below route them to the broker branch (and NOT runSdkTurn / the retired
   // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
+  const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(inputIntent)
+  const highRiskActuatorSplit =
+    normalizeActuatorSplitPolicy(inputIntent.execution?.actuatorSplit)?.mode === 'high-risk'
   const intent =
-    this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(inputIntent)
+    this.claudeCodeTmuxBrokerEnabled &&
+    !rawInteractiveSurfaceReuseVeto &&
+    !highRiskActuatorSplit &&
+    shouldRedirectClaudeToInteractiveBroker(inputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
       : inputIntent
   let latestRuntime = findDispatchInteractiveRuntime(this.db, session.hostSessionId)
@@ -693,6 +1020,9 @@ export async function dispatchTurnForSession(
   }
 
   const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
+  if (highRiskActuatorSplit && !shouldUseHeadlessTransport(intent)) {
+    assertActuatorSplitRouteAdmission(intent, 'interactive-broker')
+  }
 
   // A live, idle interactive (tmux/ghostty) broker runtime is the agent's real
   // session — the TUI a human may be watching. A DM/turn for that scope must be
@@ -704,15 +1034,18 @@ export async function dispatchTurnForSession(
   // must do the same so codex DMs land in the open TUI (broker-reuse) instead of
   // a parallel headless run. When no such runtime exists (cron/autonomous
   // dispatch), the Wave C headless route is still taken.
-  const liveInteractiveBrokerReusable = shouldDeferHeadlessToInteractiveBrokerReuse(
-    intent,
-    toLiveInteractiveRuntimeReuseView(latestRuntime)
-  )
+  const liveInteractiveBrokerReusable =
+    !highRiskActuatorSplit &&
+    shouldDeferHeadlessToInteractiveBrokerReuse(
+      intent,
+      toLiveInteractiveRuntimeReuseView(latestRuntime)
+    )
 
   if (shouldUseHeadlessTransport(intent) && !liveInteractiveBrokerReusable) {
     const route = decideHeadlessExecutionRoute(intent, {
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
     })
+    assertActuatorSplitRouteAdmission(intent, route)
     if (route === 'broker') {
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
@@ -750,10 +1083,12 @@ export async function dispatchTurnForSession(
   }
 
   if (shouldUseSdkTransport(intent)) {
+    assertActuatorSplitRouteAdmission(intent, 'sdk')
     // Prefer a live idle interactive runtime over SDK when one is available (spec §11.3.3:
     // headless for CLI/headless-capable targets, SDK only as fallback)
     const liveInteractiveRuntime = latestRuntime
     const interactiveAvailableAndIdle =
+      !rawInteractiveSurfaceReuseVeto &&
       liveInteractiveRuntime &&
       (liveInteractiveRuntime.transport === 'tmux' ||
         liveInteractiveRuntime.transport === 'ghostty') &&
@@ -821,6 +1156,7 @@ export async function dispatchTurnForSession(
     if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
       assertRuntimeNotBusy(this.db, latestRuntime)
     }
+    assertActuatorSplitRuntimeReuse(intent, latestRuntime)
     return await withObservation(
       await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
         waitForCompletion:
@@ -894,6 +1230,17 @@ function isProviderOnlyInteractiveIntent(intent: HrcRuntimeIntent): boolean {
 
 function isProviderOnlyOpenAiInteractiveIntent(intent: HrcRuntimeIntent): boolean {
   return isProviderOnlyInteractiveIntent(intent) && intent.harness.provider === 'openai'
+}
+
+function disallowsInteractiveSurfaceReuse(intent: HrcRuntimeIntent): boolean {
+  if (intent.execution?.allowInteractiveSurfaceReuse !== false) {
+    return false
+  }
+  return (
+    intent.execution?.preferredMode === 'headless' ||
+    intent.execution?.preferredMode === 'nonInteractive' ||
+    intent.harness.interactive === false
+  )
 }
 
 export function markRuntimeStaleForBrokerReprovision(

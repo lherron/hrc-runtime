@@ -11,16 +11,22 @@ import type {
 import { asBrokerClient } from './agent-spaces-adapter/aspc-facade-client.js'
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
+import { connectObservedBrokerUnixClient } from './broker/client-observability.js'
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
-import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
-import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
-import { BrokerClient } from 'spaces-harness-broker-client'
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
+import {
+  actuatorSplitRuntimeAuthority,
+  assertActuatorSplitAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+  prepareActuatorSplitIntent,
+} from './actuator-split.js'
 import {
   decideBrokerDurableInteractiveRoute,
   decideInteractiveTmuxBrokerContinuation,
@@ -69,7 +75,12 @@ import {
   spawnHeadlessClaudeViewer,
 } from './broker-interactive-handlers/controller-factory.js'
 
-type DispatchTurnResponseBase = Omit<DispatchTurnResponse, 'startIdentity' | 'observation'>
+type DispatchTurnResponseBase = Omit<
+  DispatchTurnResponse,
+  'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
+> & { status: 'started' | 'completed' }
+
+export const buildInteractiveBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -300,6 +311,17 @@ export async function handleHeadlessBrokerDispatchTurn(
     responseFormat?: HrcTurnResponseFormat | undefined
   } = {}
 ): Promise<Response> {
+  const requestedTurnIntent: HrcRuntimeIntent =
+    prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  // Re-resolve actuator authority for every turn, including reuse and durable
+  // reattach. This prevents a matching write-capable runtime from becoming a
+  // route around artifact/base validation or receiving free-form caller text.
+  const preparedActuatorSplit = await prepareActuatorSplitIntent(requestedTurnIntent)
+  const dispatchIntent = preparedActuatorSplit.intent
+  const dispatchPrompt = dispatchIntent.initialPrompt ?? prompt
+  const highRiskActuatorSplit =
+    normalizeActuatorSplitPolicy(dispatchIntent.execution?.actuatorSplit)?.mode === 'high-risk'
+
   // A lifecycle-only `hrc start` may still be provisioning this session when
   // a prompt-bearing start/turn arrives. Admit the prompt durably before
   // waiting for boot so aborting the client only stops its wait, never the
@@ -307,15 +329,27 @@ export async function handleHeadlessBrokerDispatchTurn(
   // the session.
   const bootOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (bootOperation) {
-    this.enqueueDurableHeadlessTurnInput(session, prompt, runId, {
-      source: 'boot',
-      responseFormat: options.responseFormat,
-    })
+    // Low-risk behavior keeps the established accept-before-wait contract.
+    // High-risk work must first prove that the booting runtime has exactly the
+    // requested authority; otherwise a rejected request could already be queued.
+    if (!highRiskActuatorSplit) {
+      this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
+        source: 'boot',
+        responseFormat: options.responseFormat,
+      })
+    }
     const bootedRuntime = await bootOperation
+    assertActuatorSplitRuntimeReuse(dispatchIntent, bootedRuntime)
+    if (highRiskActuatorSplit) {
+      this.enqueueDurableHeadlessTurnInput(session, dispatchPrompt, runId, {
+        source: 'boot',
+        responseFormat: options.responseFormat,
+      })
+    }
     return await this.dispatchQueuedHeadlessTurnInput(
       session,
       bootedRuntime,
-      prompt,
+      dispatchPrompt,
       runId,
       options
     )
@@ -324,13 +358,13 @@ export async function handleHeadlessBrokerDispatchTurn(
   const reusableRuntime = getReusableHeadlessRuntimeForSession(
     this.db,
     session.hostSessionId,
-    intent.harness.provider,
-    intent.harness.id
+    dispatchIntent.harness.provider,
+    dispatchIntent.harness.id
   )
   const missingDescriptorRuntime = findBrokerRuntimeMissingDescriptor({
     runtimes: this.db.runtimes.listByHostSessionId(session.hostSessionId),
-    provider: intent.harness.provider,
-    harnessId: intent.harness.id,
+    provider: dispatchIntent.harness.provider,
+    harnessId: dispatchIntent.harness.id,
   })
   if (missingDescriptorRuntime) {
     throw new HrcUnprocessableEntityError(
@@ -344,6 +378,7 @@ export async function handleHeadlessBrokerDispatchTurn(
     )
   }
   if (reusableRuntime) {
+    assertActuatorSplitRuntimeReuse(dispatchIntent, reusableRuntime)
     if (
       reusableRuntime.controllerKind === 'harness-broker' &&
       reusableRuntime.activeInvocationId !== undefined
@@ -353,7 +388,7 @@ export async function handleHeadlessBrokerDispatchTurn(
         return await this.dispatchQueuedHeadlessTurnInput(
           session,
           reusableRuntime,
-          prompt,
+          dispatchPrompt,
           runId,
           options
         )
@@ -361,7 +396,7 @@ export async function handleHeadlessBrokerDispatchTurn(
       return await this.executeHeadlessBrokerInputTurn(
         session,
         reusableRuntime,
-        prompt,
+        dispatchPrompt,
         runId,
         options
       )
@@ -386,15 +421,16 @@ export async function handleHeadlessBrokerDispatchTurn(
   const durableHeadless = getDurableHeadlessRuntimeForReattach(
     this.db,
     session.hostSessionId,
-    intent.harness.provider,
-    intent.harness.id
+    dispatchIntent.harness.provider,
+    dispatchIntent.harness.id
   )
   if (durableHeadless) {
     const reattached = await reattachDurableBrokerForDispatch(this.db, durableHeadless, {
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     })
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
@@ -402,8 +438,15 @@ export async function handleHeadlessBrokerDispatchTurn(
         hostSessionId: session.hostSessionId,
         runtimeId: recovered.runtimeId,
       })
+      assertActuatorSplitRuntimeReuse(dispatchIntent, recovered)
       assertBrokerRuntimeReusableAdmission(this.db, recovered, options)
-      return await this.executeHeadlessBrokerInputTurn(session, recovered, prompt, runId, options)
+      return await this.executeHeadlessBrokerInputTurn(
+        session,
+        recovered,
+        dispatchPrompt,
+        runId,
+        options
+      )
     }
     // Reattach failed or the persisted invocation is gone: terminate the cold
     // durable runtime (reaps its broker dispose path; the orphan sweeper reaps the
@@ -424,7 +467,13 @@ export async function handleHeadlessBrokerDispatchTurn(
     )
   }
 
-  return await this.executeHeadlessBrokerStartTurn(session, intent, prompt, runId, options)
+  return await this.executeHeadlessBrokerStartTurn(
+    session,
+    dispatchIntent,
+    dispatchPrompt,
+    runId,
+    options
+  )
 }
 
 export async function handleInteractiveTmuxBrokerDispatchTurn(
@@ -443,28 +492,68 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
 ): Promise<Response> {
   const turnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
-  const runtime = await this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
+  let resolveAccepted!: (runtime: HrcRuntimeSnapshot) => void
+  let rejectAccepted!: (error: unknown) => void
+  let acceptedSettled = false
+  const accepted = new Promise<HrcRuntimeSnapshot>((resolve, reject) => {
+    resolveAccepted = (runtime) => {
+      acceptedSettled = true
+      resolve(runtime)
+    }
+    rejectAccepted = reject
+  })
+  const bootOperation = this.startInteractiveTmuxBrokerRuntime(session, turnIntent, runId, {
     flagEnvName: flagOptions.flagEnvName,
     allowedBrokerDriver: flagOptions.allowedBrokerDriver,
     ...(flagOptions.attachBeforeInvocationStart
       ? { attachBeforeInvocationStart: flagOptions.attachBeforeInvocationStart }
       : {}),
     responseFormat: flagOptions.responseFormat,
+    onAccepted: (runtime) => {
+      if (this.db.hrcEvents.listByRun(runId, { eventKind: 'turn.accepted' }).length === 0) {
+        const acceptedAt = timestamp()
+        this.notifyEvent(
+          appendHrcEvent(this.db, 'turn.accepted', {
+            ts: acceptedAt,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runId,
+            runtimeId: runtime.runtimeId,
+            transport: 'tmux',
+            payload: {
+              promptLength: prompt.length,
+              authority: 'durable-start-graph',
+            },
+          })
+        )
+      }
+      resolveAccepted(runtime)
+    },
+  })
+    .then((runtime) => {
+      // Claude broker dispatch through non-attached surfaces (hrcchat,
+      // agent-loop) starts a tmux TUI with no operator terminal watching it.
+      // Presentation stays best-effort and outside the acceptance boundary.
+      if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
+        void this.spawnBrokerHeadlessViewer(runtime, {
+          operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
+        })
+      }
+      if (!acceptedSettled) resolveAccepted(runtime)
+      return runtime
+    })
+    .finally(() => {
+      this.runtimeStartOperations?.delete(session.hostSessionId)
+    })
+  this.runtimeStartOperations?.set(session.hostSessionId, bootOperation)
+  void bootOperation.catch((error) => {
+    if (!acceptedSettled) rejectAccepted(error)
   })
 
-  // Claude broker dispatch through non-attached surfaces (hrcchat, agent-loop)
-  // starts a tmux TUI with no operator terminal watching it. Pop a best-effort
-  // viewer; spawnBrokerHeadlessViewer owns the global policy gate and dedupe.
-  if (flagOptions.allowedBrokerDriver === 'claude-code-tmux') {
-    await this.spawnBrokerHeadlessViewer(runtime, {
-      operatorAttachPending: flagOptions.attachBeforeInvocationStart !== undefined,
-    })
-  }
-
-  // T-01770 Phase C: block the synchronous caller on the first broker turn
-  // (the start delivers the initial prompt under diagnosticRunId). Async
-  // reply-bridge callers pass waitForCompletion:false to get status:'started'.
   if (!shouldBlockForBrokerTurnCompletion(flagOptions.waitForCompletion)) {
+    const runtime = await accepted
     return json({
       runId,
       hostSessionId: session.hostSessionId,
@@ -476,6 +565,10 @@ export async function handleInteractiveTmuxBrokerDispatchTurn(
     } satisfies DispatchTurnResponseBase)
   }
 
+  const runtime = await bootOperation
+  // T-01770 Phase C: block the synchronous caller on the first broker turn
+  // (the start delivers the initial prompt under diagnosticRunId). Async
+  // reply-bridge callers pass waitForCompletion:false to get status:'started'.
   await this.waitForInteractiveBrokerRunCompletion(runId, runtime.runtimeId)
   return json({
     runId,
@@ -605,7 +698,8 @@ export async function executeInteractiveBrokerInputTurn(
       controller: this.getHarnessBrokerController(),
       brokerUnixClientFactory:
         this.brokerUnixClientFactory ??
-        ((options) => BrokerClient.connectUnix(options) as ReturnType<BrokerUnixClientFactory>),
+        ((options) =>
+          connectObservedBrokerUnixClient(options) as ReturnType<BrokerUnixClientFactory>),
     }))
   ) {
     result = await dispatchToBroker()
@@ -867,33 +961,30 @@ export async function startInteractiveTmuxBrokerRuntime(
     allowedBrokerDriver: InteractiveTmuxBrokerDriver
     attachBeforeInvocationStart?: AttachBeforeInvocationStartOption | undefined
     responseFormat?: HrcTurnResponseFormat | undefined
+    onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   }
 ): Promise<HrcRuntimeSnapshot> {
+  const preparedActuatorSplit = await prepareActuatorSplitIntent(turnIntent)
+  const effectiveTurnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('interactive', runtimeId)
-  this.db.sessions.updateIntent(session.hostSessionId, turnIntent, now, timing)
+  this.db.sessions.updateIntent(session.hostSessionId, effectiveTurnIntent, now, timing)
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = {
-    ...injectRuntimeTaskClaimCredentialFile(
-      injectRuntimeBirthCredential(
-        mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-        runtimeId
-      ),
-      {
-        db: this.db,
-        runtimeRoot: this.options.runtimeRoot,
-        hostSessionId: session.hostSessionId,
-      }
-    ),
-    HRC_MAIL_STOP_SOCKET: this.options.socketPath,
-  }
+  const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
+    baseEnv: mergeEnv(buildHrcCorrelationEnv(effectiveTurnIntent), effectiveTurnIntent.launch),
+    db: this.db,
+    runtimeRoot: this.options.runtimeRoot,
+    hostSessionId: session.hostSessionId,
+    runtimeId,
+    mailStopSocket: this.options.socketPath,
+  })
   try {
     const compiled = await compileBrokerRuntimePlan(
       {
-        intent: turnIntent,
+        intent: effectiveTurnIntent,
         hostSessionId: session.hostSessionId,
         generation: session.generation,
         dispatchEnv: hrcDispatchEnv,
@@ -950,13 +1041,13 @@ export async function startInteractiveTmuxBrokerRuntime(
         diagnostics: compiled.diagnostics,
         route: 'interactive-broker',
         flag: flagOptions.flagEnvName,
-        harnessProvider: turnIntent.harness.provider,
-        harnessId: turnIntent.harness.id,
-        harnessInteractive: turnIntent.harness.interactive,
-        preferredMode: turnIntent.execution?.preferredMode,
-        cwd: turnIntent.placement.cwd,
-        projectRoot: turnIntent.placement.projectRoot,
-        runMode: turnIntent.placement.runMode,
+        harnessProvider: effectiveTurnIntent.harness.provider,
+        harnessId: effectiveTurnIntent.harness.id,
+        harnessInteractive: effectiveTurnIntent.harness.interactive,
+        preferredMode: effectiveTurnIntent.execution?.preferredMode,
+        cwd: effectiveTurnIntent.placement.cwd,
+        projectRoot: effectiveTurnIntent.placement.projectRoot,
+        runMode: effectiveTurnIntent.placement.runMode,
         brokerDriver: flagOptions.allowedBrokerDriver,
       })
       throw new HrcRuntimeUnavailableError('interactive broker compile/admission rejected', {
@@ -975,8 +1066,14 @@ export async function startInteractiveTmuxBrokerRuntime(
       runId: diagnosticRunId,
       route: 'interactive-broker',
     })
+    const actuatorSplitAuthority = await assertActuatorSplitAdmission({
+      intent: effectiveTurnIntent,
+      route: 'interactive-broker',
+      startRequest: compiled.startRequest,
+      preparedAuthority: preparedActuatorSplit.authority,
+    })
 
-    const route = decideInteractiveTmuxExecutionRoute(turnIntent, compiled.profile, {
+    const route = decideInteractiveTmuxExecutionRoute(effectiveTurnIntent, compiled.profile, {
       brokerFlagEnabled: true,
       allowedBrokerDriver: flagOptions.allowedBrokerDriver,
     })
@@ -1013,6 +1110,7 @@ export async function startInteractiveTmuxBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
+      runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(flagOptions.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },
@@ -1037,9 +1135,71 @@ export async function startInteractiveTmuxBrokerRuntime(
         routeId: `interactive-broker:${compiled.profile.brokerDriver}`,
         brokerRoute: true,
       }),
+      ...(flagOptions.onAccepted
+        ? {
+            onAccepted: async (graph) => {
+              await flagOptions.onAccepted?.(graph.runtime)
+            },
+          }
+        : {}),
     })
 
     if (!result.ok) {
+      const acceptedRun = this.db.runs.getByRunId(diagnosticRunId)
+      if (acceptedRun !== null && isRunActive(acceptedRun)) {
+        const failedAt = timestamp()
+        this.db.runs.markCompleted(diagnosticRunId, {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+          errorMessage: result.error.message,
+        })
+        this.db.brokerInvocations.update(String(compiled.identity.invocationId), {
+          invocationState: 'failed',
+          updatedAt: failedAt,
+        })
+        this.db.runtimeOperations.update(String(compiled.identity.operationId), {
+          status: 'failed',
+          completedAt: failedAt,
+          updatedAt: failedAt,
+          errorCode: result.error.code,
+          errorMessage: result.error.message,
+        })
+        this.db.runtimes.update(runtimeId, {
+          status: 'failed',
+          statusChangedAt: failedAt,
+          activeRunId: diagnosticRunId,
+          updatedAt: failedAt,
+          runtimeStateJson: {
+            ...(this.db.runtimes.getByRuntimeId(runtimeId)?.runtimeStateJson ?? {}),
+            status: 'failed',
+            updatedAt: failedAt,
+            startFailure: {
+              code: result.error.code,
+              message: result.error.message,
+            },
+          },
+        })
+        this.notifyEvent(
+          appendHrcEvent(this.db, 'turn.failed', {
+            ts: failedAt,
+            hostSessionId: session.hostSessionId,
+            scopeRef: session.scopeRef,
+            laneRef: session.laneRef,
+            generation: session.generation,
+            runId: diagnosticRunId,
+            runtimeId,
+            transport: 'tmux',
+            errorCode: HrcErrorCode.RUNTIME_UNAVAILABLE,
+            payload: {
+              code: result.error.code,
+              message: result.error.message,
+              phase: 'broker-invocation-start',
+            },
+          })
+        )
+      }
       if (
         result.error.code === 'unsupported_capability' &&
         flagOptions.responseFormat?.kind === 'json_schema'

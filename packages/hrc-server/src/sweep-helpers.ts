@@ -6,14 +6,13 @@ import type {
   ReconcileActiveRunResult,
   SweepRuntimeTransport,
 } from 'hrc-core'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 import { isLiveProcess } from './server-lock.js'
 import type { ListRuntimesFilter } from './server-parsers.js'
 import type { HrcServerRunRow } from './server-types.js'
 import { isRuntimeUnavailableStatus } from './server-util.js'
 import { getObservedTmuxSessionName } from './startup-reconcile.js'
-import type { TmuxManager as ServerTmuxManager } from './tmux.js'
-
-const DEFAULT_STALE_GENERATION_THRESHOLD_SEC = 24 * 60 * 60
+import type { TmuxManager as ServerTmuxManager, TmuxPaneState } from './tmux.js'
 
 export function parseSweepDurationMs(raw: string): number {
   const match = raw.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/)
@@ -98,6 +97,158 @@ export function runtimeMatchesSweepRequest(
   return Number.isFinite(activityMs) && activityMs <= filters.cutoffMs
 }
 
+type RuntimeTmuxIdentity = TmuxPaneState
+
+export type RuntimeAgingEvidence = {
+  invocationId: string | null
+  invocationBrokerPid: number | null
+  invocationChildPid: number | null
+}
+
+export type RuntimeAgingDisposition =
+  | { eligible: true; evidence: RuntimeAgingEvidence }
+  | { eligible: false; reason: string }
+
+export type RuntimeTmuxManagerFactory = (options: { socketPath: string }) => Pick<
+  ServerTmuxManager,
+  'inspectWindow'
+>
+
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'zombie'])
+
+function runtimeTmuxIdentity(runtime: HrcRuntimeSnapshot): RuntimeTmuxIdentity | undefined {
+  const tmux = runtime.tmuxJson
+  if (!tmux) return undefined
+  const socketPath = tmux['socketPath']
+  const sessionName = tmux['sessionName']
+  const windowName = tmux['windowName']
+  const sessionId = tmux['sessionId']
+  const windowId = tmux['windowId']
+  const paneId = tmux['paneId']
+  if (
+    typeof socketPath !== 'string' ||
+    socketPath.length === 0 ||
+    typeof sessionName !== 'string' ||
+    sessionName.length === 0 ||
+    typeof windowName !== 'string' ||
+    windowName.length === 0 ||
+    typeof sessionId !== 'string' ||
+    sessionId.length === 0 ||
+    typeof windowId !== 'string' ||
+    windowId.length === 0 ||
+    typeof paneId !== 'string' ||
+    paneId.length === 0
+  ) {
+    return undefined
+  }
+  return { socketPath, sessionName, windowName, sessionId, windowId, paneId }
+}
+
+function runtimeBrokerPid(runtime: HrcRuntimeSnapshot): number | undefined {
+  const broker = runtime.runtimeStateJson?.['broker']
+  if (broker === null || typeof broker !== 'object' || Array.isArray(broker)) return undefined
+  const brokerPid = (broker as Record<string, unknown>)['brokerPid']
+  return typeof brokerPid === 'number' ? brokerPid : undefined
+}
+
+function tmuxIdentityMatches(
+  expected: RuntimeTmuxIdentity,
+  observed: RuntimeTmuxIdentity
+): boolean {
+  return (
+    expected.socketPath === observed.socketPath &&
+    expected.sessionName === observed.sessionName &&
+    expected.windowName === observed.windowName &&
+    expected.sessionId === observed.sessionId &&
+    expected.windowId === observed.windowId &&
+    expected.paneId === observed.paneId
+  )
+}
+
+/**
+ * Shared liveness gate for manual runtime sweep and recurring tmux aging.
+ *
+ * Age/status filtering happens before this function. It only returns eligible
+ * after every durable ownership edge and process/substrate probe is negative.
+ * Ambiguity is a named skip, never permission to stale.
+ */
+export async function evaluateRuntimeAgingDisposition(
+  runtime: HrcRuntimeSnapshot,
+  input: {
+    db: HrcDatabase
+    tmuxManagerFactory: RuntimeTmuxManagerFactory
+  }
+): Promise<RuntimeAgingDisposition> {
+  if (runtime.status === 'busy') {
+    return { eligible: false, reason: 'busy' }
+  }
+  if (runtime.activeRunId !== undefined) {
+    return { eligible: false, reason: 'active_run' }
+  }
+  if (
+    input.db.runs
+      .listByRuntimeId(runtime.runtimeId)
+      .some((run) => !TERMINAL_RUN_STATUSES.has(run.status))
+  ) {
+    return { eligible: false, reason: 'nonterminal_run' }
+  }
+
+  if (runtime.childPid !== undefined && isLiveProcess(runtime.childPid)) {
+    return { eligible: false, reason: 'live_child_pid' }
+  }
+  if (runtime.wrapperPid !== undefined && isLiveProcess(runtime.wrapperPid)) {
+    return { eligible: false, reason: 'live_wrapper_pid' }
+  }
+  const persistedBrokerPid = runtimeBrokerPid(runtime)
+  if (persistedBrokerPid !== undefined && isLiveProcess(persistedBrokerPid)) {
+    return { eligible: false, reason: 'live_broker_pid' }
+  }
+
+  const invocation =
+    runtime.activeInvocationId !== undefined
+      ? input.db.brokerInvocations.getByInvocationId(runtime.activeInvocationId)
+      : null
+  if (runtime.activeInvocationId !== undefined && invocation === null) {
+    return { eligible: false, reason: 'missing_invocation' }
+  }
+  if (invocation?.brokerPid !== undefined && isLiveProcess(invocation.brokerPid)) {
+    return { eligible: false, reason: 'live_invocation_broker_pid' }
+  }
+  if (invocation?.childPid !== undefined && isLiveProcess(invocation.childPid)) {
+    return { eligible: false, reason: 'live_invocation_child_pid' }
+  }
+
+  if (runtime.transport === 'tmux') {
+    const identity = runtimeTmuxIdentity(runtime)
+    if (identity === undefined) {
+      return { eligible: false, reason: 'missing_tmux_identity' }
+    }
+    let observed: TmuxPaneState | null
+    try {
+      observed = await input
+        .tmuxManagerFactory({ socketPath: identity.socketPath })
+        .inspectWindow({ sessionName: identity.sessionName, windowName: identity.windowName })
+    } catch {
+      return { eligible: false, reason: 'tmux_probe_error' }
+    }
+    if (observed !== null) {
+      return {
+        eligible: false,
+        reason: tmuxIdentityMatches(identity, observed) ? 'live_tmux' : 'tmux_identity_mismatch',
+      }
+    }
+  }
+
+  return {
+    eligible: true,
+    evidence: {
+      invocationId: runtime.activeInvocationId ?? null,
+      invocationBrokerPid: invocation?.brokerPid ?? null,
+      invocationChildPid: invocation?.childPid ?? null,
+    },
+  }
+}
+
 /**
  * Orphan safety gate for `runtime prune` (T-05441). A runtime store row is only
  * prunable when it is genuinely orphaned: its status is unavailable
@@ -146,11 +297,12 @@ export function isSweepRuntimeTransport(transport: string): transport is SweepRu
 
 export function filterRuntimes(
   runtimes: HrcRuntimeSnapshot[],
-  filter: ListRuntimesFilter
+  filter: ListRuntimesFilter,
+  resolvedStaleThresholdMs: number
 ): HrcRuntimeSnapshot[] {
   const explicitStatuses = filter.status !== undefined && filter.status.length > 0
   const statusSet = explicitStatuses ? new Set(filter.status) : null
-  const staleThresholdMs = filter.olderThanMs ?? resolveListStaleThresholdMs()
+  const staleThresholdMs = filter.olderThanMs ?? resolvedStaleThresholdMs
   const staleBefore = Date.now() - staleThresholdMs
 
   const filtered = runtimes.filter((runtime) => {
@@ -198,18 +350,6 @@ export function filterRuntimes(
   }
 
   return filtered
-}
-
-export function resolveListStaleThresholdMs(): number {
-  const raw = process.env['HRC_STALE_GENERATION_HOURS']
-  if (raw === undefined) {
-    return DEFAULT_STALE_GENERATION_THRESHOLD_SEC * 1000
-  }
-  const hours = Number.parseFloat(raw)
-  if (!Number.isFinite(hours) || hours < 0) {
-    return DEFAULT_STALE_GENERATION_THRESHOLD_SEC * 1000
-  }
-  return Math.floor(hours * 60 * 60 * 1000)
 }
 
 /**

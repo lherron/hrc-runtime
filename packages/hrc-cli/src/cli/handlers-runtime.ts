@@ -155,6 +155,21 @@ export function printRuntimeInspect(runtime: InspectRuntimeResponse): void {
     `  childPid      ${runtime.childPid ?? '(none)'}`,
     `  continuation  ${continuation}`,
   ]
+  if (runtime.authority) {
+    const policy = runtime.authority.actuatorSplit
+    lines.push(
+      `  authority     ${policy.mode}:${policy.laneClass}:${policy.codeMutation}`,
+      `  code paths    ${(policy.productionCodePaths ?? []).join(', ') || '(none)'}`
+    )
+    const approved = runtime.authority.approvedMutation
+    if (approved) {
+      lines.push(
+        `  approval      ${approved.approvalRecordHash}`,
+        `  artifact      ${approved.artifactContentHash}`,
+        `  target paths  ${approved.targetPaths.join(', ') || '(none)'}`
+      )
+    }
+  }
   if (runtime.tmux) {
     const t = runtime.tmux
     if (t.socketPath) lines.push(`  tmux socket   ${t.socketPath}`)
@@ -369,7 +384,7 @@ function printResultsNdjson(result: { results: readonly unknown[]; summary: unkn
 function printSweepHuman(result: SweepRuntimesResponse, dryRun: boolean): void {
   process.stdout.write(`runtime sweep${dryRun ? ' (dry-run)' : ''}\n`)
   for (const row of result.results) {
-    const suffix = row.errorMessage ? ` ${row.errorMessage}` : ''
+    const suffix = row.errorMessage ? ` ${row.errorMessage}` : row.reason ? ` ${row.reason}` : ''
     process.stdout.write(
       `  ${row.status.padEnd(10)} ${row.runtimeId} ${row.transport} dropContinuation=${
         row.droppedContinuation

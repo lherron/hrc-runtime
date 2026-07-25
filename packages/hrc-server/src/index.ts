@@ -24,11 +24,14 @@ import type {
   HrcSessionRecord,
   HrcStatusResponse,
   HrcStatusSummaryResponse,
+  HrcTurnAdmissionCloseRequest,
+  HrcTurnAdmissionReopenRequest,
   LaunchCommandScopedRunResponse,
   ReconcileActiveRunsResponse,
   ResolveSessionResponse,
   RestartStyle,
   ScopeLocation,
+  SweepRuntimesResponse,
   SweepZombieRunsResponse,
 } from 'hrc-core'
 
@@ -74,6 +77,7 @@ import {
   eventNotificationHandlersMethods,
 } from './event-notification-handlers.js'
 import { createFederationAcceptHandler } from './federation/accept.js'
+import { CollectiveHistoryCoordinator } from './federation/collective-history.js'
 import {
   deriveNodeIdFromHostname,
   resolveFederationConfig,
@@ -145,6 +149,7 @@ import {
   resolvePiTuiTmuxBrokerEnabled,
   resolveStaleGenerationEnabled,
   resolveStaleGenerationThresholdSec,
+  resolveTmuxAgingEnabled,
 } from './option-resolvers.js'
 import {
   OTLP_DEFAULT_PREFERRED_PORT,
@@ -153,6 +158,7 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
+import { captureServerRelease, projectServerRelease } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
 import {
@@ -245,6 +251,7 @@ import {
   type TmuxManagerOptions,
   createTmuxManager,
 } from './tmux.js'
+import { TurnAdmissionGate } from './turn-admission-gate.js'
 import {
   type TurnDispatchHandlersMethods,
   turnDispatchHandlersMethods,
@@ -258,6 +265,20 @@ export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 export { parseDurationMs } from './parsers/common.js'
+export {
+  actuatorSplitRuntimeAuthority,
+  assertActuatorSplitAdmission,
+  assertActuatorSplitRouteAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+  prepareActuatorSplitIntent,
+} from './actuator-split.js'
+export type {
+  ActuatorSplitAuthority,
+  ActuatorSplitRoute,
+  PreparedActuatorSplitIntent,
+  ResolvedApprovedMutation,
+} from './actuator-split.js'
 
 export {
   selectDispatchInteractiveRuntime,
@@ -547,6 +568,7 @@ class HrcServerInstance implements HrcServer {
   readonly subscriberAdmissions = createSubscriberAdmissionRegistry()
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
+  readonly capturedRelease = captureServerRelease(HRC_SERVER_PACKAGE_PATH, this.startedAt)
   readonly otelListener: OtlpListenerControl | undefined
   public readonly otelEndpoint: string | undefined
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
@@ -555,6 +577,7 @@ class HrcServerInstance implements HrcServer {
   readonly peerProtocolEndpoint: PeerProtocolEndpointControl | undefined
   public readonly federationPeerEndpoint: string | undefined
   readonly federationOriginOutbox: FederationOriginOutbox | undefined
+  readonly collectiveHistory: CollectiveHistoryCoordinator | undefined
   /** Last successful peer answers are isolated by node and exact runtime filter. */
   readonly peerRuntimeProjectionCache = new Map<
     string,
@@ -566,10 +589,15 @@ class HrcServerInstance implements HrcServer {
   readonly turnResponseFinalizers = new Map<string, TurnResponseFinalizer>()
   readonly pendingBrokerLiteralInputs = new Map<string, PendingBrokerLiteralInput>()
   readonly queuedTurnInputDrains = new Set<string>()
+  readonly turnAdmissionGate: TurnAdmissionGate
   zombieSweepTimer: ReturnType<typeof setInterval> | undefined
   zombieSweepInFlight: Promise<SweepZombieRunsResponse> | undefined
   activeRunReconcileTimer: ReturnType<typeof setInterval> | undefined
   activeRunReconcileInFlight: Promise<ReconcileActiveRunsResponse> | undefined
+  brokerLeaseGcTimer: ReturnType<typeof setInterval> | undefined
+  brokerLeaseGcInFlight: Promise<void> | undefined
+  tmuxAgingTimer: ReturnType<typeof setInterval> | undefined
+  tmuxAgingInFlight: Promise<SweepRuntimesResponse> | undefined
   idleCleanupTimer: ReturnType<typeof setInterval> | undefined
   idleCleanupInFlight: Promise<void> | undefined
   mailKickerSweepTimer: ReturnType<typeof setInterval> | undefined
@@ -581,6 +609,7 @@ class HrcServerInstance implements HrcServer {
   // `allowStaleGeneration: true`.
   readonly staleGenerationEnabled: boolean
   readonly staleGenerationThresholdSec: number
+  readonly tmuxAgingEnabled: boolean
   readonly headlessCodexBrokerEnabled: boolean
   readonly claudeCodeTmuxBrokerEnabled: boolean
   readonly codexCliTmuxBrokerEnabled: boolean
@@ -613,6 +642,14 @@ class HrcServerInstance implements HrcServer {
       this.handleEventsLatestBySession(url),
     [exactRouteKey('GET', '/v1/server/subscribers')]: () =>
       Response.json(this.subscriberAdmissions.snapshot()),
+    [exactRouteKey('POST', '/v1/server/subscribers/ack')]: (request) =>
+      this.handleSubscriberReceiptAck(request),
+    [exactRouteKey('GET', '/v1/server/turn-admission')]: () =>
+      Response.json(this.turnAdmissionGate.snapshot()),
+    [exactRouteKey('POST', '/v1/server/turn-admission/close')]: (request) =>
+      this.handleCloseTurnAdmission(request),
+    [exactRouteKey('POST', '/v1/server/turn-admission/reopen')]: (request) =>
+      this.handleReopenTurnAdmission(request),
     [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) => this.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => this.handleStartRuntime(request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>
@@ -687,6 +724,7 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       this.handleGetTarget(url),
     [exactRouteKey('POST', '/v1/messages/query')]: (request) => this.handleQueryMessages(request),
+    [exactRouteKey('POST', '/v1/messages/trace')]: (request) => this.handleTraceMessage(request),
     [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
     [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
       this.handleSemanticTurnHandoff(request),
@@ -754,6 +792,7 @@ class HrcServerInstance implements HrcServer {
     readonly ghostmux: ServerGhostmuxManager,
     readonly lockHandle: ServerLockHandle
   ) {
+    this.turnAdmissionGate = new TurnAdmissionGate(options.runtimeRoot)
     this.server = Bun.serve({
       unix: options.socketPath,
       idleTimeout: 255,
@@ -801,6 +840,18 @@ class HrcServerInstance implements HrcServer {
             this.bindingRegistryEndpoint?.registryClient
           )
 
+    this.collectiveHistory =
+      federationConfig === undefined
+        ? undefined
+        : new CollectiveHistoryCoordinator({
+            db: this.db,
+            config: federationConfig,
+            ...(options.collectiveHistoryPollIntervalMs === undefined
+              ? {}
+              : { pollIntervalMs: options.collectiveHistoryPollIntervalMs }),
+          })
+    const collectiveHistory = this.collectiveHistory
+
     if (federationConfig === undefined || federationConfig.peerListener === undefined) {
       this.peerProtocolEndpoint = undefined
       this.federationPeerEndpoint = undefined
@@ -832,12 +883,23 @@ class HrcServerInstance implements HrcServer {
                 locate: true,
                 health: true,
                 runtimeProjection: true,
+                collectiveHistory: collectiveHistory?.isAuthority === true,
+                semanticTurnHandoff: true,
               },
               ...(includeRuntimes ? { runtimes: await listRuntimesForProjection(this, url) } : {}),
             }),
             establish: ({ scopeRef, correlationId }) =>
               establishRemotePolicyAuthority(this, { scopeRef, correlationId }),
             accept: peerAcceptHandler,
+            ...(collectiveHistory?.isAuthority !== true
+              ? {}
+              : {
+                  collectiveHistoryReplicate: ({ authenticatedNodeId, body }) =>
+                    collectiveHistory.acceptReplication(authenticatedNodeId, body),
+                  collectiveHistoryCheckpoint: ({ authenticatedNodeId, body }) =>
+                    collectiveHistory.acceptCheckpoint(authenticatedNodeId, body),
+                  collectiveHistoryQuery: ({ filter }) => collectiveHistory.queryAuthority(filter),
+                }),
           },
         })
         this.federationPeerEndpoint = this.peerProtocolEndpoint.url
@@ -901,8 +963,11 @@ class HrcServerInstance implements HrcServer {
       throw error
     }
 
+    this.collectiveHistory?.start()
+
     this.staleGenerationEnabled = resolveStaleGenerationEnabled(options)
     this.staleGenerationThresholdSec = resolveStaleGenerationThresholdSec(options)
+    this.tmuxAgingEnabled = resolveTmuxAgingEnabled(options)
     this.headlessCodexBrokerEnabled = resolveHeadlessCodexBrokerEnabled(options)
     this.claudeCodeTmuxBrokerEnabled = resolveClaudeCodeTmuxBrokerEnabled(options)
     this.codexCliTmuxBrokerEnabled = resolveCodexCliTmuxBrokerEnabled(options)
@@ -936,6 +1001,7 @@ class HrcServerInstance implements HrcServer {
     })
     for (const route of createRuntimeListAdoptRoutes({
       db: this.db,
+      staleGenerationThresholdSec: this.staleGenerationThresholdSec,
       reconcileTmuxRuntimeLiveness: (runtime) => this.reconcileTmuxRuntimeLiveness(runtime),
       notifyEvent: (event) => this.notifyEvent(event),
     })) {
@@ -943,6 +1009,8 @@ class HrcServerInstance implements HrcServer {
     }
     this.startZombieRunSweeper()
     this.startActiveRunReconciler()
+    this.startBrokerLeaseGc()
+    this.startTmuxAging()
     this.startClaudeGhosttyIdleCleanup()
     this.startMailKicker()
 
@@ -1044,6 +1112,7 @@ class HrcServerInstance implements HrcServer {
     this.server.stop(true)
     await this.eventForwarder?.stop()
     await this.eventIngestListener?.stop()
+    this.collectiveHistory?.stop()
     await this.federationOriginOutbox?.stop()
     if (this.peerProtocolEndpoint) {
       try {
@@ -1086,6 +1155,28 @@ class HrcServerInstance implements HrcServer {
         await this.activeRunReconcileInFlight
       } catch (error) {
         writeServerLog('WARN', 'server.stop.active_run_reconcile_wait_failed', { error })
+      }
+    }
+    if (this.brokerLeaseGcTimer) {
+      clearInterval(this.brokerLeaseGcTimer)
+      this.brokerLeaseGcTimer = undefined
+    }
+    if (this.brokerLeaseGcInFlight) {
+      try {
+        await this.brokerLeaseGcInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.broker_lease_gc_wait_failed', { error })
+      }
+    }
+    if (this.tmuxAgingTimer) {
+      clearInterval(this.tmuxAgingTimer)
+      this.tmuxAgingTimer = undefined
+    }
+    if (this.tmuxAgingInFlight) {
+      try {
+        await this.tmuxAgingInFlight
+      } catch (error) {
+        writeServerLog('WARN', 'server.stop.tmux_aging_wait_failed', { error })
       }
     }
     if (this.idleCleanupTimer) {
@@ -1198,6 +1289,50 @@ class HrcServerInstance implements HrcServer {
     return response
   }
 
+  async handleCloseTurnAdmission(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission close requires operationId'
+      )
+    }
+    const requestedBy = body['requestedBy']
+    const requestedRunId = body['requestedRunId']
+    const reason = body['reason']
+    if (
+      (requestedBy !== undefined && requestedBy !== null && typeof requestedBy !== 'string') ||
+      (requestedRunId !== undefined &&
+        requestedRunId !== null &&
+        typeof requestedRunId !== 'string') ||
+      (reason !== undefined && typeof reason !== 'string')
+    ) {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission close attribution is malformed'
+      )
+    }
+    const input: HrcTurnAdmissionCloseRequest = {
+      operationId: body['operationId'],
+      ...(requestedBy === undefined ? {} : { requestedBy }),
+      ...(requestedRunId === undefined ? {} : { requestedRunId }),
+      ...(reason === undefined ? {} : { reason }),
+    }
+    return json(await this.turnAdmissionGate.close(input))
+  }
+
+  async handleReopenTurnAdmission(request: Request): Promise<Response> {
+    const body = await parseJsonBody(request)
+    if (!isRecord(body) || typeof body['operationId'] !== 'string') {
+      throw new HrcBadRequestError(
+        HrcErrorCode.MALFORMED_REQUEST,
+        'turn admission reopen requires operationId'
+      )
+    }
+    const input: HrcTurnAdmissionReopenRequest = { operationId: body['operationId'] }
+    return json(await this.turnAdmissionGate.reopen(input.operationId))
+  }
+
   private async dispatchRequest(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url)
@@ -1238,7 +1373,7 @@ class HrcServerInstance implements HrcServer {
 
       return new Response('Not Found', { status: 404 })
     } catch (error) {
-      return errorResponse(error)
+      return errorResponse(error, request)
     }
   }
 
@@ -1913,6 +2048,7 @@ class HrcServerInstance implements HrcServer {
         cwd: process.cwd(),
         binaryPath: HRC_SERVER_BINARY_PATH,
         packagePath: HRC_SERVER_PACKAGE_PATH,
+        release: projectServerRelease(this.capturedRelease),
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
@@ -1964,6 +2100,7 @@ class HrcServerInstance implements HrcServer {
       cwd: process.cwd(),
       binaryPath: HRC_SERVER_BINARY_PATH,
       packagePath: HRC_SERVER_PACKAGE_PATH,
+      release: projectServerRelease(this.capturedRelease),
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,
@@ -2132,6 +2269,15 @@ export async function createHrcServer(options: HrcServerOptions): Promise<HrcSer
     // ready by a late warmup completion.
     await server.brokerWarmupComplete
     await repairLiveUnboundPlacements(server, livePlacementRepairCandidates)
+    if (server.turnAdmissionGate.snapshot().state === 'closed') {
+      const prior = server.turnAdmissionGate.snapshot()
+      await server.turnAdmissionGate.reopen()
+      writeServerLog('INFO', 'server.turn_admission.reopened_after_warmup', {
+        operationId: prior.operationId,
+        requestedBy: prior.requestedBy,
+        closedAt: prior.closedAt,
+      })
+    }
     writeServerLog('INFO', 'server.start.ready', logCtx)
     return server
   } catch (error) {
