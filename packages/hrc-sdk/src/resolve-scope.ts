@@ -2,12 +2,12 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { type ResolvedScopeInput, resolveQualifiedScopeInput } from 'agent-scope'
+import { type ResolveAgentPlacementPathsOptions, parseAgentProfile } from 'spaces-config'
+
 import {
-  type ResolveAgentPlacementPathsOptions,
-  type ResolvedAgentPlacementPaths,
-  parseAgentProfile,
-  resolveAgentPlacementPaths,
-} from 'spaces-config'
+  type HrcResolvedAgentPlacementPaths,
+  resolveHrcAgentPlacementPaths,
+} from './project-placement.js'
 
 export interface ProfileAwareScopeDefaults {
   defaultLaneId?: string
@@ -28,7 +28,7 @@ export interface ResolveProfileAwareScopeInputOptions {
 }
 
 export interface ProfileAwareResolvedScopeInput extends ResolvedScopeInput {
-  placement: ResolvedAgentPlacementPaths
+  placement: HrcResolvedAgentPlacementPaths
   projectOrigin: ProjectOrigin
   defaultRoleName?: string | undefined
 }
@@ -67,10 +67,12 @@ export function resolveProfileAwareScopeInput(
     options.projectOrigin ??
     (input.includes('@') || /(^|:)project:/.test(input) ? 'explicit' : 'inferred')
   const projectId = initial.parsed.projectId ?? scopeDefaults.projectId
-  const placement = resolveAgentPlacementPaths({
+  const placement = resolveHrcAgentPlacementPaths({
     ...options.placement,
     agentId: initial.parsed.agentId,
     ...(projectId !== undefined ? { projectId } : {}),
+    projectOrigin,
+    ...(initial.parsed.taskId !== undefined ? { taskId: initial.parsed.taskId } : {}),
   })
   const defaultRoleName = readDefaultScopeRole(placement.agentRoot)
   const resolved =

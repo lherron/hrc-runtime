@@ -10,12 +10,20 @@ export type {
   ResolvedAgentHarness,
 } from './resolve-intent.js'
 export { resolveProfileAwareScopeInput } from './resolve-scope.js'
+export { resolveHrcAgentPlacementPaths } from './project-placement.js'
 export type {
   ProfileAwareScopeDefaults,
   ProfileAwareResolvedScopeInput,
   ProjectOrigin,
   ResolveProfileAwareScopeInputOptions,
 } from './resolve-scope.js'
+export type {
+  HrcResolvedAgentPlacementPaths,
+  ProjectPlacementResolution,
+  ProjectPlacementSource,
+  ProjectRegistryEntry,
+  ResolveHrcAgentPlacementPathsOptions,
+} from './project-placement.js'
 export type {
   AdoptRuntimeRequest,
   AttachDescriptor,

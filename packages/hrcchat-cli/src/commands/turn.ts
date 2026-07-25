@@ -362,6 +362,7 @@ export async function cmdTurn(
       scopeRef: resolved.scopeRef,
       laneRef: resolved.laneRef,
       projectId: resolved.parsed.projectId ?? null,
+      placementResolution: resolved.placement.resolution,
       bodySource: bodyFromFile ? 'file' : bodyFromStdin ? 'stdin' : 'positional',
       bodyLength: body.length,
       clearContextFirst: opts.new === true,

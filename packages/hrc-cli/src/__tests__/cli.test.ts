@@ -1419,6 +1419,7 @@ describe('hrc start', () => {
       ['start', 'rex@agent-spaces', '--dry-run'],
       cliEnv({
         ASP_AGENTS_ROOT: agentsRoot,
+        ASP_DEFAULT_TASK: 'primary',
         ASP_PROJECT_ROOT_OVERRIDE: join(projectsRoot, 'agent-spaces'),
       })
     )

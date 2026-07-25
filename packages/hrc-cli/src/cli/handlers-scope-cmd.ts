@@ -224,7 +224,15 @@ export async function cmdRun(
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
-      await printLocalRunPreview('run', scopeInput, sessionRef, intent, restartStyle, prompt)
+      await printLocalRunPreview(
+        'run',
+        scopeInput,
+        sessionRef,
+        intent,
+        restartStyle,
+        prompt,
+        scope.placement?.resolution.reason
+      )
       return
     }
 
@@ -501,7 +509,15 @@ export async function cmdStart(args: string[]): Promise<void> {
     const restartStyle: 'reuse_pty' | 'fresh_pty' = forceRestart ? 'fresh_pty' : 'reuse_pty'
 
     if (dryRun) {
-      await printLocalRunPreview('start', scopeInput, sessionRef, intent, restartStyle, prompt)
+      await printLocalRunPreview(
+        'start',
+        scopeInput,
+        sessionRef,
+        intent,
+        restartStyle,
+        prompt,
+        scope.placement?.resolution.reason
+      )
       return
     }
 
@@ -740,13 +756,17 @@ async function printLocalRunPreview(
   sessionRef: string,
   intent: HrcRuntimeIntent,
   restartStyle: 'reuse_pty' | 'fresh_pty',
-  prompt: string | undefined
+  prompt: string | undefined,
+  placementReason: string | undefined
 ): Promise<void> {
   const w: RunPreviewWriter = (s: string) => {
     process.stdout.write(`${s}\n`)
   }
 
   w(`hrc ${command} ${scope} --dry-run  (local plan preview — no server state consulted)`)
+  if (placementReason) {
+    w(`  placement:    ${placementReason}`)
+  }
 
   if (command === 'run') {
     const rendered = await renderBrokerPlanPreview(w, intent, sessionRef, restartStyle, prompt)
