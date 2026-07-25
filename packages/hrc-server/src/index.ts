@@ -262,6 +262,20 @@ export type { HrcServer, HrcServerOptions } from './server-types.js'
 export { HRC_EVENTS_KEEPALIVE_MS } from './server-constants.js'
 export type { ServerMetricRecord } from './request-metrics.js'
 export { parseDurationMs } from './parsers/common.js'
+export {
+  actuatorSplitRuntimeAuthority,
+  assertActuatorSplitAdmission,
+  assertActuatorSplitRouteAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+  prepareActuatorSplitIntent,
+} from './actuator-split.js'
+export type {
+  ActuatorSplitAuthority,
+  ActuatorSplitRoute,
+  PreparedActuatorSplitIntent,
+  ResolvedApprovedMutation,
+} from './actuator-split.js'
 
 export {
   selectDispatchInteractiveRuntime,

@@ -98,6 +98,41 @@ export type HrcHarnessIntent = {
   yolo?: boolean | undefined
 }
 
+export type HrcApprovedMutationRef = {
+  schemaVersion: 'hrc.approved-mutation-ref/v1'
+  source: 'wrkf-action' | 'manual-operator'
+  /**
+   * A local file URI for an approval evidence record, pinned with a
+   * `#sha256:<hex>` fragment. HRC resolves and verifies it before launch.
+   */
+  approvalRef: string
+  /** A local file URI for the immutable apply artifact. */
+  artifactRef: string
+  artifactKind: 'unified-diff' | 'git-apply-patch' | 'file-set'
+  targetPaths: string[]
+  expectedBaseRevision?: string | undefined
+  expectedBaseTreeHash?: string | undefined
+  /** Required when artifactRef names mutable storage. */
+  artifactContentHash?: string | undefined
+  taskRef?: string | undefined
+  taskSpecHash?: string | undefined
+  taskEtag?: string | undefined
+  workflowRunId?: string | undefined
+  actionRunId?: string | undefined
+  approvedBy?: string | undefined
+  approvedAt?: string | undefined
+}
+
+export type HrcActuatorSplitPolicy = {
+  schemaVersion: 'hrc.actuator-split-policy/v1'
+  mode: 'off' | 'high-risk'
+  workflowRef?: string | undefined
+  laneClass: 'worker' | 'verifier' | 'reviewer' | 'approver' | 'actuator'
+  codeMutation: 'forbidden' | 'staged-output-only' | 'apply-approved-artifact'
+  productionCodePaths?: string[] | undefined
+  approval?: HrcApprovedMutationRef | undefined
+}
+
 export type HrcExecutionIntent = {
   preferredMode?: HrcExecutionMode | undefined
   autoLaunchInteractive?: boolean | undefined
@@ -110,6 +145,11 @@ export type HrcExecutionIntent = {
    * (preserves DM-into-open-TUI for every existing caller).
    */
   allowInteractiveSurfaceReuse?: boolean | undefined
+  /**
+   * Additive high-risk lane authority. Absent (or mode `off`) preserves the
+   * ordinary low-risk route and reuse behavior.
+   */
+  actuatorSplit?: HrcActuatorSplitPolicy | undefined
 }
 
 export type HrcLaunchEnvConfig = {

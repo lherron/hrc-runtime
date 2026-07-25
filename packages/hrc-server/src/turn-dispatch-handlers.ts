@@ -21,6 +21,11 @@ import type {
   StartRuntimeResponse,
 } from 'hrc-core'
 import {
+  assertActuatorSplitRouteAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+} from './actuator-split.js'
+import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   normalizeClaudeInteractiveBrokerIntent,
@@ -348,6 +353,7 @@ export async function handleOpenBrokerSession(
   const route = decideHeadlessExecutionRoute(intent, {
     brokerFlagEnabled: this.headlessCodexBrokerEnabled,
   })
+  assertActuatorSplitRouteAdmission(intent, route)
   if (route !== 'broker') {
     throw new HrcRuntimeUnavailableError('broker session open requires the headless broker route', {
       hostSessionId: session.hostSessionId,
@@ -535,6 +541,7 @@ export async function openHeadlessBrokerSessionForSession(
     intent.harness.id
   )
   if (reusableRuntime) {
+    assertActuatorSplitRuntimeReuse(intent, reusableRuntime)
     assertBrokerRuntimeReusableAdmission(this.db, reusableRuntime)
     return await finalizeHeadlessBrokerSessionOpen(this, reusableRuntime)
   }
@@ -549,6 +556,7 @@ export async function openHeadlessBrokerSessionForSession(
     const reattached = await this.reattachDurableBrokerSessionForOpen(durableHeadless)
     const recovered = reattached ? this.db.runtimes.getByRuntimeId(durableHeadless.runtimeId) : null
     if (recovered && recovered.activeInvocationId !== undefined) {
+      assertActuatorSplitRuntimeReuse(intent, recovered)
       assertBrokerRuntimeReusableAdmission(this.db, recovered)
       return await finalizeHeadlessBrokerSessionOpen(this, recovered)
     }
@@ -968,9 +976,12 @@ export async function dispatchTurnForSession(
   // below route them to the broker branch (and NOT runSdkTurn / the retired
   // headless CLI exec path). Flag-gated so a disabled broker is unchanged.
   const rawInteractiveSurfaceReuseVeto = disallowsInteractiveSurfaceReuse(inputIntent)
+  const highRiskActuatorSplit =
+    normalizeActuatorSplitPolicy(inputIntent.execution?.actuatorSplit)?.mode === 'high-risk'
   const intent =
     this.claudeCodeTmuxBrokerEnabled &&
     !rawInteractiveSurfaceReuseVeto &&
+    !highRiskActuatorSplit &&
     shouldRedirectClaudeToInteractiveBroker(inputIntent)
       ? normalizeClaudeInteractiveBrokerIntent(inputIntent)
       : inputIntent
@@ -989,6 +1000,9 @@ export async function dispatchTurnForSession(
   }
 
   const dispatchIntent = normalizeRuntimeProvisionIntent(intent)
+  if (highRiskActuatorSplit && !shouldUseHeadlessTransport(intent)) {
+    assertActuatorSplitRouteAdmission(intent, 'interactive-broker')
+  }
 
   // A live, idle interactive (tmux/ghostty) broker runtime is the agent's real
   // session — the TUI a human may be watching. A DM/turn for that scope must be
@@ -1000,15 +1014,18 @@ export async function dispatchTurnForSession(
   // must do the same so codex DMs land in the open TUI (broker-reuse) instead of
   // a parallel headless run. When no such runtime exists (cron/autonomous
   // dispatch), the Wave C headless route is still taken.
-  const liveInteractiveBrokerReusable = shouldDeferHeadlessToInteractiveBrokerReuse(
-    intent,
-    toLiveInteractiveRuntimeReuseView(latestRuntime)
-  )
+  const liveInteractiveBrokerReusable =
+    !highRiskActuatorSplit &&
+    shouldDeferHeadlessToInteractiveBrokerReuse(
+      intent,
+      toLiveInteractiveRuntimeReuseView(latestRuntime)
+    )
 
   if (shouldUseHeadlessTransport(intent) && !liveInteractiveBrokerReusable) {
     const route = decideHeadlessExecutionRoute(intent, {
       brokerFlagEnabled: this.headlessCodexBrokerEnabled,
     })
+    assertActuatorSplitRouteAdmission(intent, route)
     if (route === 'broker') {
       return await withObservation(
         await this.handleHeadlessBrokerDispatchTurn(session, intent, prompt, runId, {
@@ -1046,6 +1063,7 @@ export async function dispatchTurnForSession(
   }
 
   if (shouldUseSdkTransport(intent)) {
+    assertActuatorSplitRouteAdmission(intent, 'sdk')
     // Prefer a live idle interactive runtime over SDK when one is available (spec §11.3.3:
     // headless for CLI/headless-capable targets, SDK only as fallback)
     const liveInteractiveRuntime = latestRuntime
@@ -1118,6 +1136,7 @@ export async function dispatchTurnForSession(
     if (!isBrokerRuntimeQueueCapable(this.db, latestRuntime)) {
       assertRuntimeNotBusy(this.db, latestRuntime)
     }
+    assertActuatorSplitRuntimeReuse(intent, latestRuntime)
     return await withObservation(
       await this.executeInteractiveBrokerInputTurn(session, latestRuntime, prompt, runId, {
         waitForCompletion:

@@ -10,6 +10,11 @@ import type {
   RestartStyle,
 } from 'hrc-core'
 import {
+  assertActuatorSplitRouteAdmission,
+  assertActuatorSplitRuntimeReuse,
+  normalizeActuatorSplitPolicy,
+} from './actuator-split.js'
+import {
   decideHeadlessExecutionRoute,
   decideInteractiveBrokerAdmission,
   decideInteractiveTmuxBrokerStartRoute,
@@ -303,7 +308,9 @@ export async function startRuntimeForSession(
   assertLocalPersonaAllowed(this, session.scopeRef)
   const existingOperation = this.runtimeStartOperations.get(session.hostSessionId)
   if (existingOperation) {
-    return await existingOperation
+    const runtime = await existingOperation
+    assertActuatorSplitRuntimeReuse(intent, runtime)
+    return runtime
   }
 
   const operation = (async () => {
@@ -311,8 +318,12 @@ export async function startRuntimeForSession(
     if (existingRuntime) {
       existingRuntime = await this.reconcileTmuxRuntimeLiveness(existingRuntime)
     }
+    const highRiskActuatorSplit =
+      normalizeActuatorSplitPolicy(intent.execution?.actuatorSplit)?.mode === 'high-risk'
     const startIntent =
-      this.claudeCodeTmuxBrokerEnabled && shouldRedirectClaudeToInteractiveBroker(intent)
+      this.claudeCodeTmuxBrokerEnabled &&
+      !highRiskActuatorSplit &&
+      shouldRedirectClaudeToInteractiveBroker(intent)
         ? normalizeClaudeInteractiveBrokerIntent(intent)
         : intent
     const normalizedIntent = normalizeRuntimeProvisionIntent(startIntent)
@@ -332,6 +343,7 @@ export async function startRuntimeForSession(
       const headlessRoute = decideHeadlessExecutionRoute(startIntent, {
         brokerFlagEnabled: this.headlessCodexBrokerEnabled,
       })
+      assertActuatorSplitRouteAdmission(startIntent, headlessRoute)
       if (headlessRoute === 'broker') {
         const reusableBrokerRuntime = getReusableHeadlessRuntimeForSession(
           this.db,
@@ -348,6 +360,7 @@ export async function startRuntimeForSession(
           !isRuntimeUnavailableStatus(reusableBrokerRuntime.status) &&
           (reusableBrokerRuntime.continuation?.key ?? session.continuation?.key)
         ) {
+          assertActuatorSplitRuntimeReuse(startIntent, reusableBrokerRuntime)
           await this.spawnBrokerHeadlessViewer(reusableBrokerRuntime, viewerSpawnOptions)
           const initialPrompt = startIntent.initialPrompt ?? ''
           if (initialPrompt.length > 0) {
@@ -401,6 +414,7 @@ export async function startRuntimeForSession(
         startIntent.harness.id
       )
       if (reusableRuntime && (reusableRuntime.continuation?.key ?? session.continuation?.key)) {
+        assertActuatorSplitRuntimeReuse(startIntent, reusableRuntime)
         return reusableRuntime
       }
 
@@ -426,6 +440,9 @@ export async function startRuntimeForSession(
       }
     }
 
+    if (highRiskActuatorSplit) {
+      assertActuatorSplitRouteAdmission(startIntent, 'interactive-broker')
+    }
     const interactiveBrokerOptions = this.selectInteractiveTmuxBrokerOptions(normalizedIntent)
     if (interactiveBrokerOptions) {
       if (
@@ -438,6 +455,7 @@ export async function startRuntimeForSession(
           interactiveBrokerOptions.allowedBrokerDriver
         )
       ) {
+        assertActuatorSplitRuntimeReuse(normalizedIntent, existingRuntime)
         await this.spawnBrokerHeadlessViewer(existingRuntime, viewerSpawnOptions)
         return existingRuntime
       }

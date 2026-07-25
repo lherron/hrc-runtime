@@ -19,6 +19,11 @@ import { runtimeActivityPatch } from './runtime-activity.js'
 
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
 import {
+  actuatorSplitRuntimeAuthority,
+  assertActuatorSplitAdmission,
+  prepareActuatorSplitIntent,
+} from './actuator-split.js'
+import {
   decideCodexAppServerPresentation,
   filterBrokerDispatchEnvForLockedEnv,
   shouldSpawnGhosttyViewer,
@@ -286,8 +291,14 @@ export async function startHeadlessBrokerRuntime(
     onAccepted?: ((runtime: HrcRuntimeSnapshot) => Promise<void> | void) | undefined
   } = {}
 ): Promise<HrcRuntimeSnapshot> {
-  const turnIntent: HrcRuntimeIntent =
+  const requestedTurnIntent: HrcRuntimeIntent =
     prompt.length > 0 ? { ...intent, initialPrompt: prompt } : intent
+  // Resolve every approval/artifact/base/path fact before opening the compiler
+  // facade or allocating a broker substrate. Actuator prompts are replaced here
+  // with the deterministic apply request, so free-form caller text never enters
+  // hash-covered invocation material as actuator authority.
+  const preparedActuatorSplit = await prepareActuatorSplitIntent(requestedTurnIntent)
+  const turnIntent = preparedActuatorSplit.intent
   const now = timestamp()
   const runtimeId = `rt-${randomUUID()}`
   const timing = createPrecompileLaunchTimingContext('headless', runtimeId)
@@ -345,6 +356,12 @@ export async function startHeadlessBrokerRuntime(
       runId,
       route: 'broker',
     })
+    const actuatorSplitAuthority = await assertActuatorSplitAdmission({
+      intent: turnIntent,
+      route: 'broker',
+      startRequest: compiled.startRequest,
+      preparedAuthority: preparedActuatorSplit.authority,
+    })
 
     // T-01866 — headless durable cutover is UNCONDITIONAL. Every headless broker
     // runtime goes through the controller's leased-tmux + Unix-IPC allocation, so
@@ -375,6 +392,7 @@ export async function startHeadlessBrokerRuntime(
       specHash: compiled.specHash,
       startRequestHash: compiled.startRequestHash,
       identity: compiled.identity,
+      runtimeAuthority: actuatorSplitRuntimeAuthority(actuatorSplitAuthority),
       requestedResponseFormat: toBrokerResponseFormat(options.responseFormat),
       dispatchEnv: filterBrokerDispatchEnvForLockedEnv(
         { ...(compiled.dispatchEnv ?? {}), ...hrcDispatchEnv },

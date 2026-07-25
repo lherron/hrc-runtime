@@ -311,6 +311,37 @@ describe('HarnessBrokerController', () => {
     expect(fixture.db.runs.getByRunId('run_w2')?.status).toBe('accepted')
   })
 
+  it('persists HRC-resolved actuator authority on both starting and settled runtime state', async () => {
+    const fake = new FakeBrokerClient()
+    const input = makeStartInput()
+    const runtimeAuthority = {
+      actuatorSplit: {
+        schemaVersion: 'hrc.actuator-split-policy/v1',
+        mode: 'high-risk',
+        laneClass: 'verifier',
+        codeMutation: 'forbidden',
+        productionCodePaths: ['packages'],
+      },
+    }
+    const controller = new HarnessBrokerController({
+      db: fixture.db,
+      brokerClientFactory: async () => fake,
+      now: () => NOW,
+      serverInstanceId: 'server-test',
+    })
+
+    const result = await controller.start({
+      ...input,
+      brokerClient: fake,
+      runtimeAuthority,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(
+      fixture.db.runtimes.getByRuntimeId('runtime_w2')?.runtimeStateJson?.['authority']
+    ).toEqual(runtimeAuthority)
+  })
+
   it('PRIMARY gate: rejects json_schema via the DECLARED driver capability when the broker driver does not advertise finalResponse (T-05142)', async () => {
     // The aspc/broker-declared driver capability (from the negotiated hello) is
     // authoritative. The fake's codex-app-server driver advertises no

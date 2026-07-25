@@ -395,6 +395,11 @@ export type BrokerControllerStartInput = {
   identity: RuntimeIdentityAllocation
   dispatchEnv?: Record<string, string> | undefined
   /**
+   * HRC-resolved non-secret authority metadata. This is admission output, not
+   * compiler input, and is persisted on runtimeStateJson for exact reuse checks.
+   */
+  runtimeAuthority?: Record<string, unknown> | undefined
+  /**
    * The per-turn response format requested for this start, threaded independently
    * of `startRequest.initialInput.responseFormat`. Launch-argv-primed profiles
    * (e.g. interactive-tmux) drop `startRequest.initialInput` entirely during
