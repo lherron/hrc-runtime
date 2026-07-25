@@ -119,6 +119,7 @@ describe('runtime status contract with spaces-runtime-contracts', () => {
       'awaiting_input',
       'stale',
       'terminated',
+      'crashed',
     ])
     expect(HRC_RUNTIME_ROW_STATUS_VALUES).toEqual([
       ...HRC_RUNTIME_STATE_JSON_STATUS_VALUES,

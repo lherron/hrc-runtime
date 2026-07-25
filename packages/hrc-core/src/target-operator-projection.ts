@@ -61,6 +61,7 @@ const TERMINAL_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
   'exited',
   'stopped',
   'failed',
+  'crashed',
 ])
 
 /**

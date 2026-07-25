@@ -10,6 +10,7 @@ import { taskClaimCommandEnvironment } from './task-claim-client.js'
 const SAFE_HOST_SESSION_ID = /^[A-Za-z0-9._-]+$/
 const TERMINAL_RUNTIME_STATUSES = new Set([
   'dead',
+  'crashed',
   'disposed',
   'exited',
   'failed',

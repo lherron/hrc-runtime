@@ -582,6 +582,70 @@ describe('RED test 5e: reconcileTmuxRuntimeLiveness — headless+tmux-tui not ad
     // RED today: status stays 'ready' (reconcile never runs for headless transport)
     expect(runtimeAfter?.status).not.toBe('ready')
   })
+
+  it('does not downgrade an already-crashed broker runtime to stale during reconciliation', async () => {
+    const db = openHrcDatabase(fixture.dbPath)
+    const now = fixture.now()
+    const runtimeId = 'rt-t06846-crashed'
+    const hostSessionId = 'hsid-t06846-crashed'
+    const invocationId = 'inv-t06846-crashed'
+    try {
+      db.sessions.insert({
+        hostSessionId,
+        scopeRef: 'agent:smokey:project:hrc-runtime:task:T-06846:crashed',
+        laneRef: 'main',
+        generation: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+        ancestorScopeRefs: [],
+      })
+      db.runtimes.insert(
+        makeHeadlessTuiRuntime({
+          runtimeId,
+          hostSessionId,
+          scopeRef: 'agent:smokey:project:hrc-runtime:task:T-06846:crashed',
+          status: 'crashed',
+          activeInvocationId: invocationId,
+          createdAt: now,
+          updatedAt: now,
+          lastActivityAt: now,
+        })
+      )
+      db.brokerInvocations.insert({
+        invocationId,
+        operationId: 'op-t06846-crashed',
+        runtimeId,
+        brokerProtocol: 'harness-broker/0.2',
+        brokerDriver: 'claude-code-tmux',
+        invocationState: 'exited',
+        lifecycleTerminalReason: 'process-exit',
+        capabilitiesJson: JSON.stringify({ input: { queue: true } }),
+        specHash: 'sha256:t06846-spec',
+        startRequestHash: 'sha256:t06846-start',
+        selectedProfileHash: 'sha256:t06846-profile',
+        createdAt: now,
+        updatedAt: now,
+      })
+    } finally {
+      db.close()
+    }
+
+    const res = await fixture.fetchSocket('/v1/runtimes')
+    expect(res.status).toBe(200)
+
+    const dbAfter = openHrcDatabase(fixture.dbPath)
+    try {
+      expect(dbAfter.runtimes.getByRuntimeId(runtimeId)?.status).toBe('crashed')
+      expect(
+        dbAfter.hrcEvents
+          .listFromHrcSeq(1, { runtimeId })
+          .filter((event) => event.eventKind === 'runtime.stale')
+      ).toHaveLength(0)
+    } finally {
+      dbAfter.close()
+    }
+  })
 })
 
 describe('RED test 6a: /quit lifecycle — USER-INITIATED classification missing for headless+tmux-tui (T-04922)', () => {

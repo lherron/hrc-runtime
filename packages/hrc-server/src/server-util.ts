@@ -108,7 +108,7 @@ export function timestamp(): string {
 }
 
 export function isRuntimeUnavailableStatus(status: string): boolean {
-  return status === 'terminated' || status === 'dead' || status === 'stale'
+  return status === 'terminated' || status === 'dead' || status === 'stale' || status === 'crashed'
 }
 
 export async function unlinkIfExists(path: string): Promise<void> {

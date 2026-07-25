@@ -38,7 +38,7 @@ function isActiveRunStatus(status: string): boolean {
 }
 
 function isDeadRuntimeStatus(status: string): boolean {
-  return status === 'terminated' || status === 'dead' || status === 'stale'
+  return status === 'terminated' || status === 'dead' || status === 'stale' || status === 'crashed'
 }
 
 /**
