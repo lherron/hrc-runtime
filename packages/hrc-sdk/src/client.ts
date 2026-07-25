@@ -22,7 +22,7 @@ import type {
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
 } from 'hrc-core'
-import { HrcDomainError, getHrcCliRpcMetricsHook } from 'hrc-core'
+import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
   FederationOutboxDeliveryRecord,
   FederationOutboxState,
@@ -302,7 +302,7 @@ export class HrcClient {
     }
 
     if (body?.error) {
-      throw new HrcDomainError(body.error.code, body.error.message, body.error.detail)
+      throw new HrcDomainError(body.error.code, typedResponseErrorMessage(body), body.error.detail)
     }
     throw new Error(`HRC request failed with status ${res.status}`)
   }
@@ -944,4 +944,30 @@ export class HrcClient {
     // Flush any remaining content
     yield* emit(buffer)
   }
+}
+
+function typedResponseErrorMessage(body: HrcHttpError): string {
+  const { code, message, detail } = body.error
+  if (code !== HrcErrorCode.INTERNAL_ERROR) {
+    return message
+  }
+
+  const cause = boundedDetailString(detail['cause'])
+  const requestId = boundedDetailString(detail['requestId'])
+  return `${message} [${code}]${cause ? `: ${cause}` : ''}${
+    requestId ? ` (requestId=${requestId})` : ''
+  }`
+}
+
+function boundedDetailString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  return trimmed.length > ERROR_BODY_EXCERPT_MAX
+    ? `${trimmed.slice(0, ERROR_BODY_EXCERPT_MAX)}${ELLIPSIS}`
+    : trimmed
 }

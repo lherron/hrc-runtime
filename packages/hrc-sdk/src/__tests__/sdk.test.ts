@@ -569,6 +569,39 @@ describe('typed error parsing', () => {
       expect(domainErr.code).toBe(HrcErrorCode.STALE_CONTEXT)
     }
   })
+
+  it('includes a typed internal error code and response cause in the thrown message', async () => {
+    stubServer = Bun.serve({
+      unix: stubSocketPath,
+      fetch() {
+        return Response.json(
+          {
+            error: {
+              code: 'internal_error',
+              message: 'internal server error',
+              detail: {
+                cause: 'forced handler failure T-05639',
+                requestId: 'req-t05639-sdk',
+              },
+            },
+          },
+          { status: 500 }
+        )
+      },
+    })
+
+    const client = new HrcClient(stubSocketPath)
+    try {
+      await client.listSessions()
+      expect.unreachable('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(HrcDomainError)
+      expect((err as HrcDomainError).code).toBe(HrcErrorCode.INTERNAL_ERROR)
+      expect((err as Error).message).toContain(HrcErrorCode.INTERNAL_ERROR)
+      expect((err as Error).message).toContain('forced handler failure T-05639')
+      expect((err as Error).message).toContain('req-t05639-sdk')
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

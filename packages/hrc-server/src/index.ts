@@ -1238,7 +1238,7 @@ class HrcServerInstance implements HrcServer {
 
       return new Response('Not Found', { status: 404 })
     } catch (error) {
-      return errorResponse(error)
+      return errorResponse(error, request)
     }
   }
 
