@@ -224,6 +224,14 @@ _deploy-node ssh-target expected-node:
     fi
 
     just install no-sync=1
+    # Lifecycle mutations refuse a partial HRC/ASP session envelope (T-06007
+    # gate). A node's login profile may export convenience vars from that
+    # envelope (lab exports ASP_DEFAULT_TASK), which would make this operator
+    # deploy shell look like a half-formed agent session. Strip exactly the
+    # envelope keys for the lifecycle calls — the gate's own prescribed
+    # remediation ("run from a clean operator shell").
+    lifecycle_env=(env -u HRC_SESSION_REF -u HRC_RUN_ID -u HRC_BIRTH_CREDENTIAL
+      -u ASP_SCOPE_REF -u ASP_TASK_ID -u ASP_DEFAULT_TASK -u ASP_HANDLE)
     # Restart onto the freshly-selected release. The correct mechanism differs by
     # supervisor: svc/max3 run gui LaunchAgents that `hrc server restart` detects and
     # kickstarts cleanly. lab runs a system LaunchDaemon (no gui session for uid 502),
@@ -231,7 +239,7 @@ _deploy-node ssh-target expected-node:
     # process and race the KeepAlive respawn. For lab, stop and let launchd bring it
     # back on the new release (root-free: lab may signal its own-uid process).
     if [[ "$expected_node" == lab ]]; then
-      hrc server stop || fail 'hrc server stop failed on lab'
+      "${lifecycle_env[@]}" hrc server stop || fail 'hrc server stop failed on lab'
       healthy=""
       for _ in $(seq 1 40); do
         sleep 3
@@ -239,7 +247,7 @@ _deploy-node ssh-target expected-node:
       done
       [[ -n "$healthy" ]] || fail 'lab daemon did not become healthy after stop+respawn'
     else
-      hrc server restart --wait --wait-timeout-ms 300000
+      "${lifecycle_env[@]}" hrc server restart --wait --wait-timeout-ms 300000
     fi
 
     # The daemon can lag its supervisor respawn by a few seconds; a single
