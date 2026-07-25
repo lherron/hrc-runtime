@@ -14,7 +14,7 @@ import {
   resolveStateRoot,
   resolveTmuxSocketPath,
 } from 'hrc-core'
-import type { FederationPeerHealthObservation, HrcStatusResponse } from 'hrc-core'
+import type { FederationPeerHealthObservation, HrcReleaseStatus, HrcStatusResponse } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
 import { fatalExit, hasFlag } from './runtime-args.js'
@@ -40,6 +40,7 @@ export type ServerRuntimeStatus = {
   cwd?: string | undefined
   binaryPath?: string | undefined
   packagePath?: string | undefined
+  release?: HrcReleaseStatus | undefined
   pid?: number | undefined
   pidAlive: boolean
   pidPath: string
@@ -73,6 +74,7 @@ export type ServerRuntimeStatus = {
         | 'cwd'
         | 'binaryPath'
         | 'packagePath'
+        | 'release'
       >
     | undefined
   /**
@@ -457,6 +459,7 @@ export async function collectServerRuntimeStatus(
           cwd: status.cwd,
           binaryPath: status.binaryPath,
           packagePath: status.packagePath,
+          release: status.release,
         }
         node = status.node
         peerHealth = status.peerHealth
@@ -483,7 +486,14 @@ export async function collectServerRuntimeStatus(
       running,
       runtimeRoot: paths.runtimeRoot,
       stateRoot: paths.stateRoot,
-      ...(api ? { cwd: api.cwd, binaryPath: api.binaryPath, packagePath: api.packagePath } : {}),
+      ...(api
+        ? {
+            cwd: api.cwd,
+            binaryPath: api.binaryPath,
+            packagePath: api.packagePath,
+            release: api.release,
+          }
+        : {}),
       ...(pid !== undefined ? { pid } : {}),
       pidAlive,
       pidPath: paths.pidPath,
@@ -592,6 +602,20 @@ export function formatServerRuntimeStatus(status: ServerRuntimeStatus): string {
   if (status.cwd) lines.push(`  cwd:          ${status.cwd}`)
   if (status.binaryPath) lines.push(`  binary:       ${status.binaryPath}`)
   if (status.packagePath) lines.push(`  package:      ${status.packagePath}`)
+  if (status.release?.mode === 'atomic') {
+    lines.push(`  release:      ${status.release.releaseId} (atomic)`)
+    lines.push(
+      `  installed:    ${status.release.runningEqualsInstalled ? 'matches running' : 'differs from running'}`
+    )
+    lines.push(
+      `  HRC build:    ${status.release.hrcBuild.setVersion} @ ${status.release.hrcBuild.sourceCommit}`
+    )
+    lines.push(
+      `  ASP build:    ${status.release.aspBuild.setVersion} @ ${status.release.aspBuild.sourceCommit}`
+    )
+  } else if (status.release?.mode === 'unmanaged') {
+    lines.push('  release:      unmanaged')
+  }
 
   if (status.node) {
     const node = status.node

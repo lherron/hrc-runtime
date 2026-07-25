@@ -25,6 +25,8 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 import type {
   InputId,
   InvocationEventEnvelope,
+  InvocationEventEnvelopeFor,
+  InvocationEventPayloadMap,
   InvocationEventType,
   InvocationId,
   IsoTimestamp,
@@ -254,18 +256,18 @@ export type EnvelopeOverrides = {
   turnAttempt?: number
 }
 
-export function envelope(
-  type: InvocationEventType,
+export function envelope<K extends InvocationEventType>(
+  type: K,
   seq: number,
-  payload: unknown,
+  payload: InvocationEventPayloadMap[K],
   overrides: EnvelopeOverrides = {}
-): InvocationEventEnvelope {
+): InvocationEventEnvelopeFor<K> {
   return {
     invocationId: overrides.invocationId ?? INVOCATION_ID,
     seq,
     time: overrides.time ?? ts(seq),
     type,
-    payload: payload as InvocationEventEnvelope['payload'],
+    payload,
     ...(overrides.turnId !== undefined ? { turnId: overrides.turnId } : {}),
     ...(overrides.inputId !== undefined ? { inputId: overrides.inputId } : {}),
     ...(overrides.itemId !== undefined ? { itemId: overrides.itemId } : {}),

@@ -17,7 +17,7 @@
  */
 
 import type { InvocationStartRequest } from 'spaces-harness-broker-protocol'
-import { project } from 'spaces-runtime-contracts'
+import { neutralSpecHash, neutralStartRequestHash } from 'spaces-runtime-contracts'
 import type {
   BrokerExecutionProfile,
   RuntimeCompileResponse,
@@ -112,66 +112,14 @@ function isInteractiveTmuxBrokerProfile(
   )
 }
 
-function hashNeutralInvocationSpec(
-  spec: InvocationStartRequest['spec']
-): InvocationStartRequest['spec'] {
-  const {
-    invocationId: _invocationId,
-    correlation: _correlation,
-    ...hashSpec
-  } = spec as InvocationStartRequest['spec'] & { correlation?: unknown }
-  return hashSpec
-}
-
-/**
- * Hash material for a start request — MUST mirror agent-spaces
- * `compile-runtime-plan.ts#hashNeutralStartRequest` exactly (T-04133 / T-05109).
- * `spec.invocationId` / `correlation` stay neutralized (per-dispatch identity).
- * Of `initialInput`, retain the deterministic `inputId` plus per-turn
- * `responseFormat`. ASPC's `deriveInitialInputId` folds generation + content
- * into the id, so a changed generation moves the start-request hash while a pure
- * correlation change does not. Prompt content is deliberately NOT hashed here —
- * post-compile content drift is caught by `initialInputHash`. The response
- * format is retained because callers may supply a fixed initialInputId while
- * changing the per-turn output contract.
- */
-type StartRequestHashMaterial = Omit<InvocationStartRequest, 'initialInput'> & {
-  initialInput?: {
-    inputId: NonNullable<InvocationStartRequest['initialInput']>['inputId']
-    responseFormat?: NonNullable<InvocationStartRequest['initialInput']>['responseFormat']
-  }
-}
-
-function hashNeutralStartRequest(startRequest: InvocationStartRequest): StartRequestHashMaterial {
-  const { initialInput, ...rest } = startRequest
-  return {
-    ...rest,
-    spec: hashNeutralInvocationSpec(startRequest.spec),
-    ...(initialInput !== undefined
-      ? {
-          initialInput: {
-            inputId: initialInput.inputId,
-            ...(initialInput.responseFormat !== undefined
-              ? { responseFormat: initialInput.responseFormat }
-              : {}),
-          },
-        }
-      : {}),
-  }
-}
-
-/** Recompute the spec hash via the exported contracts projection helper. */
+/** Recompute the spec hash via the shared runtime-contracts authority. */
 function recomputeSpecHash(spec: InvocationStartRequest['spec']): string {
-  return (project(hashNeutralInvocationSpec(spec), 'spec') as { specHash: string }).specHash
+  return neutralSpecHash(spec)
 }
 
-/** Recompute the start-request hash via the exported contracts projection helper. */
+/** Recompute the start-request hash via the shared runtime-contracts authority. */
 function recomputeStartRequestHash(startRequest: InvocationStartRequest): string {
-  return (
-    project(hashNeutralStartRequest(startRequest), 'start-request') as {
-      startRequestHash: string
-    }
-  ).startRequestHash
+  return neutralStartRequestHash(startRequest)
 }
 
 /** Deep-freeze so the verified start request can never be mutated downstream. */

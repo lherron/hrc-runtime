@@ -1,0 +1,22 @@
+id: hrc-runtime.canonical-package-publication
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: canonical HRC package publication
+predicate: >
+  Every canonical HRC package set is produced from one clean commit contained
+  by a freshly fetched named canonical ref, carries the exact normative
+  praesidiumBuild tuple, refuses same-name/version replacement, and is verified
+  by cache-empty registry tarball reads before publication succeeds.
+authority: wrkq:T-06958
+source:
+  - scripts/publish-local-verdaccio.ts
+  - scripts/publish-local-verdaccio.test.ts
+  - scripts/lib/praesidium-build.ts
+required_tests:
+  - bun test scripts/publish-local-verdaccio.test.ts
+  - just publish-canonical-dry-run
+last_verified: 2026-07-24
+reopen_when: Package publication, versioning, registry authority, or provenance fields change.
+supersedes: []
+superseded_by: []

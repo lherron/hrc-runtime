@@ -156,6 +156,7 @@ import {
   handleOtlpRequest,
   startOtlpListener,
 } from './otel-ingest.js'
+import { captureServerRelease, projectServerRelease } from './release-provenance.js'
 import { replaySpool } from './replay-spool.js'
 import { measureResponseBytes, normalizeRoute, writeServerMetric } from './request-metrics.js'
 import {
@@ -550,6 +551,7 @@ class HrcServerInstance implements HrcServer {
   readonly subscriberAdmissions = createSubscriberAdmissionRegistry()
   readonly server: Bun.Server<undefined>
   readonly startedAt = new Date().toISOString()
+  readonly capturedRelease = captureServerRelease(HRC_SERVER_PACKAGE_PATH, this.startedAt)
   readonly otelListener: OtlpListenerControl | undefined
   public readonly otelEndpoint: string | undefined
   readonly bindingRegistryEndpoint: BindingRegistryEndpointControl | undefined
@@ -1961,6 +1963,7 @@ class HrcServerInstance implements HrcServer {
         cwd: process.cwd(),
         binaryPath: HRC_SERVER_BINARY_PATH,
         packagePath: HRC_SERVER_PACKAGE_PATH,
+        release: projectServerRelease(this.capturedRelease),
         sessionCount: this.db.sessions.count(),
         runtimeCount: this.db.runtimes.count(),
         apiVersion: HRC_API_VERSION,
@@ -2012,6 +2015,7 @@ class HrcServerInstance implements HrcServer {
       cwd: process.cwd(),
       binaryPath: HRC_SERVER_BINARY_PATH,
       packagePath: HRC_SERVER_PACKAGE_PATH,
+      release: projectServerRelease(this.capturedRelease),
       sessionCount: sessions.length,
       runtimeCount: runtimes.length,
       apiVersion: HRC_API_VERSION,

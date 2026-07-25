@@ -13,9 +13,8 @@ import type {
 import { buildHrcCorrelationEnv, mergeEnv } from './agent-spaces-adapter/cli-adapter.js'
 import { compileBrokerRuntimePlan } from './agent-spaces-adapter/compile-adapter.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
-import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
-import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -58,6 +57,8 @@ type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
   'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
 > & { status: 'started' | 'completed' }
+
+export const buildHeadlessBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -294,20 +295,14 @@ export async function startHeadlessBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = {
-    ...injectRuntimeTaskClaimCredentialFile(
-      injectRuntimeBirthCredential(
-        mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-        runtimeId
-      ),
-      {
-        db: this.db,
-        runtimeRoot: this.options.runtimeRoot,
-        hostSessionId: session.hostSessionId,
-      }
-    ),
-    HRC_MAIL_STOP_SOCKET: this.options.socketPath,
-  }
+  const hrcDispatchEnv = buildHeadlessBrokerDispatchEnv({
+    baseEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+    db: this.db,
+    runtimeRoot: this.options.runtimeRoot,
+    hostSessionId: session.hostSessionId,
+    runtimeId,
+    mailStopSocket: this.options.socketPath,
+  })
   try {
     const compiled = await compileBrokerRuntimePlan(
       {

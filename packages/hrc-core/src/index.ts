@@ -129,6 +129,7 @@ export type {
   HrcBrokerInvocationEventRecord,
   HrcRuntimeArtifactRecord,
   HrcPermissionDecisionRecord,
+  HrcReleaseStatus,
   HrcRunRecord,
   HrcSurfaceBindingRecord,
   HrcTaskContext,
@@ -141,6 +142,8 @@ export type {
   HrcStatusSummaryResponse,
   HrcStatusSessionView,
   HrcStatusTmuxView,
+  PraesidiumBuild,
+  PraesidiumReleaseManifest,
 } from './contracts.js'
 export {
   HRC_ARTIFACT_REPORTED_EVENT,

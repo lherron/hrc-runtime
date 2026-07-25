@@ -2249,6 +2249,11 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(body.api.cwd).toBe(process.cwd())
       expect(body.api.binaryPath).toBe(body.binaryPath)
       expect(body.api.packagePath).toBe(body.packagePath)
+      expect(body.release).toEqual(body.api.release)
+      expect(body.release).toMatchObject({
+        mode: 'unmanaged',
+        runningEqualsInstalled: false,
+      })
       expect(body.tmux.socketPath).toBe(tmuxSocketPath)
     })
 
@@ -2383,6 +2388,7 @@ describe('Phase 6 diagnostics CLI', () => {
       expect(statusHuman.stdout).toContain(`cwd:          ${process.cwd()}`)
       expect(statusHuman.stdout).toContain('binary:')
       expect(statusHuman.stdout).toContain('package:')
+      expect(statusHuman.stdout).toContain('release:      unmanaged')
       expect(statusHuman.stdout).toMatch(/running:\s+yes/i)
     })
   })

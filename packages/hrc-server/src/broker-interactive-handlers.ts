@@ -15,9 +15,8 @@ import { connectObservedBrokerUnixClient } from './broker/client-observability.j
 import type { BrokerUnixClientFactory } from './broker/controller.js'
 import { resolveLifecyclePolicyOverlay } from './broker/lifecycle-overlay.js'
 import { withDirectTmuxDegradedControlState } from './broker/runtime-state.js'
-import { injectRuntimeBirthCredential } from './federation/birth-credential.js'
-import { injectRuntimeTaskClaimCredentialFile } from './federation/task-claim-runtime.js'
 import { appendHrcEvent, createUserPromptPayload } from './hrc-event-helper.js'
+import { buildManagedBrokerDispatchEnv } from './managed-broker-runtime-env.js'
 import { runtimeActivityPatch } from './runtime-activity.js'
 
 import type { InvocationInput } from 'spaces-harness-broker-protocol'
@@ -73,6 +72,8 @@ type DispatchTurnResponseBase = Omit<
   DispatchTurnResponse,
   'startIdentity' | 'observation' | 'stage' | 'status' | 'outcome' | 'replayed' | 'error'
 > & { status: 'started' | 'completed' }
+
+export const buildInteractiveBrokerDispatchEnv = buildManagedBrokerDispatchEnv
 
 type JsonRepairRunCorrelation = {
   kind: 'json_repair'
@@ -926,20 +927,14 @@ export async function startInteractiveTmuxBrokerRuntime(
 
   const client = await startAspcFacadeBrokerClient(timing)
   let handedOffToController = false
-  const hrcDispatchEnv = {
-    ...injectRuntimeTaskClaimCredentialFile(
-      injectRuntimeBirthCredential(
-        mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
-        runtimeId
-      ),
-      {
-        db: this.db,
-        runtimeRoot: this.options.runtimeRoot,
-        hostSessionId: session.hostSessionId,
-      }
-    ),
-    HRC_MAIL_STOP_SOCKET: this.options.socketPath,
-  }
+  const hrcDispatchEnv = buildInteractiveBrokerDispatchEnv({
+    baseEnv: mergeEnv(buildHrcCorrelationEnv(turnIntent), turnIntent.launch),
+    db: this.db,
+    runtimeRoot: this.options.runtimeRoot,
+    hostSessionId: session.hostSessionId,
+    runtimeId,
+    mailStopSocket: this.options.socketPath,
+  })
   try {
     const compiled = await compileBrokerRuntimePlan(
       {

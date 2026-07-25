@@ -676,6 +676,45 @@ export type HrcPermissionDecisionRecord = {
   decidedAt: string
 }
 
+/** Immutable producer identity staged in every canonical ASP/HRC package. */
+export type PraesidiumBuild = {
+  schema: 1
+  repository: string
+  canonicalRemote: string
+  sourceCommit: string
+  setName: 'asp' | 'hrc'
+  setVersion: string
+  builtAt: string
+}
+
+/** Install-time identity persisted at an atomic HRC release root. */
+export type PraesidiumReleaseManifest = {
+  schema: 1
+  releaseId: string
+  hrcBuild: PraesidiumBuild
+  aspBuild: PraesidiumBuild
+  installedAt: string
+}
+
+export type HrcReleaseStatus =
+  | {
+      mode: 'atomic'
+      releaseId: string
+      releasePath: string
+      manifestPath: string
+      hrcBuild: PraesidiumBuild
+      aspBuild: PraesidiumBuild
+      installedAt: string
+      processStartedAt: string
+      runningEqualsInstalled: boolean
+    }
+  | {
+      mode: 'unmanaged'
+      packagePath: string
+      processStartedAt: string
+      runningEqualsInstalled: false
+    }
+
 export type HrcCapabilityStatus = {
   ok: true
   uptime: number
@@ -687,6 +726,7 @@ export type HrcCapabilityStatus = {
   cwd: string
   binaryPath: string
   packagePath: string
+  release: HrcReleaseStatus
   sessionCount: number
   runtimeCount: number
   apiVersion: string

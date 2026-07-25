@@ -2007,6 +2007,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcReleaseStatus",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcReleaseStatus|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcRunCorrelation",
       "kind": "type",
       "file": "packages/hrc-core/src/invocation-exposure.ts",
@@ -2699,6 +2707,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|ParseSelectorOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PraesidiumBuild",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|PraesidiumBuild|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PraesidiumReleaseManifest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|PraesidiumReleaseManifest|type",
       "count": 1
     },
     {

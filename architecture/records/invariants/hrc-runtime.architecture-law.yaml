@@ -1,0 +1,18 @@
+id: hrc-runtime.architecture-law
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: repository architecture decisions
+predicate: >
+  Durable HRC architecture laws are stored as machine-checked records with
+  explicit authority, source evidence, required tests, and reopen triggers.
+authority: wrkq:T-06958
+source:
+  - architecture/adr/0001-adopt-durable-architecture-records.md
+  - scripts/check-architecture-records.ts
+required_tests:
+  - just architecture-records
+last_verified: 2026-07-24
+reopen_when: The record schema or architecture ownership boundary changes.
+supersedes: []
+superseded_by: []

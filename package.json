@@ -11,6 +11,7 @@
     "build:parallel": "bun run --filter '*' build",
     "check": "bun run check:boundaries && bun run check:manifests && bun run check:public-surface && bun run check:suppressions && bun run lint && bun run typecheck && bun run test",
     "check:boundaries": "bun scripts/check-boundaries.ts",
+    "check:architecture-records": "bun scripts/check-architecture-records.ts",
     "check:manifests": "bun scripts/check-manifest-edges.ts",
     "check:public-surface": "bun scripts/check-public-surface.ts",
     "check:suppressions": "bun scripts/check-suppressions.ts",
