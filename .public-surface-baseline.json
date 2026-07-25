@@ -3695,6 +3695,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "applyDotEnvFile",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/dotenv-local.ts",
+      "hash": "hrc-sdk|applyDotEnvFile|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "AttachDescriptor",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
@@ -4135,6 +4143,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "isCredentialClassKey",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/dotenv-local.ts",
+      "hash": "hrc-sdk|isCredentialClassKey|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "KillBrokerTmuxLeasesResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
@@ -4183,6 +4199,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "loadDotEnvLocal",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/dotenv-local.ts",
+      "hash": "hrc-sdk|loadDotEnvLocal|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "LocalBridgeRecord",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -4203,6 +4227,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-sdk|OpenBrokerSessionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "parseDotEnvContent",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/dotenv-local.ts",
+      "hash": "hrc-sdk|parseDotEnvContent|value",
       "count": 1
     },
     {
@@ -4459,6 +4491,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
       "hash": "hrc-sdk|WaitMessageResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "warnAutoLoadedCredentials",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/dotenv-local.ts",
+      "hash": "hrc-sdk|warnAutoLoadedCredentials|value",
       "count": 1
     },
     {

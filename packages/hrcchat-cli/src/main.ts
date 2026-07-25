@@ -1,11 +1,8 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-
 import { CliUsageError, attachJsonOption, exitWithError } from 'cli-kit'
 import { Command, CommanderError } from 'commander'
 import { HrcDomainError, installCliMetricsRecorder } from 'hrc-core'
-import { HrcClient, discoverSocket } from 'hrc-sdk'
+import { HrcClient, discoverSocket, loadDotEnvLocal } from 'hrc-sdk'
 
 import { assertBackchannelFollowAllowed } from './backchannel-route.js'
 import { cmdDm } from './commands/dm.js'
@@ -24,48 +21,8 @@ import { cmdWho } from './commands/who.js'
 import { formatHrcDomainError } from './domain-error-format.js'
 import { resolveAddress } from './normalize.js'
 
-// -- .env.local loading -------------------------------------------------------
-
-function applyDotEnvFile(envPath: string): void {
-  let content: string
-  try {
-    content = readFileSync(envPath, 'utf8')
-  } catch {
-    return
-  }
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eqIdx = trimmed.indexOf('=')
-    if (eqIdx === -1) continue
-    const key = trimmed.slice(0, eqIdx).trim()
-    const value = trimmed.slice(eqIdx + 1).trim()
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value
-    }
-  }
-}
-
-/**
- * Walk up from cwd applying each .env.local found, stopping at — and
- * including — the nearest git root. Nearer files win (visited first; a key is
- * only set while still unset) and real environment variables win over all
- * files. This lets the CLI invoked from a subdir (e.g. var/agents/cody)
- * inherit ASP_PROJECT from a parent .env.local at the git root
- * (var/agents/.env.local). The `.git` probe uses existsSync so worktree agent
- * dirs (where .git is a file, not a directory) are recognized too.
- */
-function loadDotEnvLocal(): void {
-  let dir = process.cwd()
-  while (true) {
-    applyDotEnvFile(join(dir, '.env.local'))
-    if (existsSync(join(dir, '.git'))) break // nearest git root — boundary
-    const parent = dirname(dir)
-    if (parent === dir) break // filesystem root — no git root found
-    dir = parent
-  }
-}
-
+// Shared context-only .env.local loader (hrc-sdk): walks up to the nearest
+// git root, real env wins, credential-class keys are refused with a warning.
 loadDotEnvLocal()
 
 // -- Client factory -----------------------------------------------------------

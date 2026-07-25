@@ -63,6 +63,7 @@ check:
     bun scripts/check-cli-surface.ts
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
+    bun scripts/check-env-hygiene.ts
 
 # Validate durable architecture records and generated projections
 architecture-records *args:

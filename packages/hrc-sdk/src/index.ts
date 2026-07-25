@@ -6,6 +6,13 @@ export {
   writePlacementWarnings,
 } from './cli-helpers.js'
 export {
+  applyDotEnvFile,
+  isCredentialClassKey,
+  loadDotEnvLocal,
+  parseDotEnvContent,
+  warnAutoLoadedCredentials,
+} from './dotenv-local.js'
+export {
   buildHrcRuntimeIntent,
   harnessFrontendToHrcHarness,
   resolveAgentHarness,
