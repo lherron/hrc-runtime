@@ -70,3 +70,18 @@ What survives scrutiny: the merge-to-main hygiene, the F-2 mechanism (confirmed,
 **Dropped entirely:** R1's fencing/inventory ceremony, R3/R4 as-specified (collapsed into N6 draft), R13, the red-proof artifact doctrine, the second reproduce-only review, the containment lift ritual.
 
 Net: 13 proposed records → 6, one of which is a deliberately parked draft; the P0 emergency becomes a one-commit guard plus four one-command ops; and the plan's two technical errors (the pruned-runtime replay framing in F-2, the cancel-on-delivered no-op in F-3) are corrected in the specs that inherit them.
+
+## Execution record (2026-07-25, Mable)
+
+Ratified by Lance ("Go"). All do-now items executed and validated:
+
+- **Dark-gate guard** landed as `1667074` on the overnight branch: every non-off actuator-split policy rejects `actuator-split-experimental-disabled` at both `prepareActuatorSplitIntent` and `assertActuatorSplitAdmission`; contract tests preserved via a test-only `allowExperimental` escape no server route sets; new default-dark unit test plus the live-route test now proving the production surface rejects before any runtime/run row exists. Suite 7/7.
+- **Merge landed:** `cody/handoff-00291` (53 commits + guard) merged into `main` as `0cdc97b`, `bun.lock` reconciled via `bun install` (no drift), full `just verify` green on the merged tree including federation loopback (run outside the coding-agent harness envelope; the in-harness run fails at `env-up` by designed recursion guard). Pushed to `origin/main`.
+- **Ops sweep:**
+  - Smoke runtime `rt-13f43ad8-e326-47db-8bef-bddde675fe79` terminated after fresh readback confirmed it was the sole nonterminal actuator-authority holder; post-check count of authority-bearing nonterminal runtimes: 0.
+  - Detached worktree `under-construction/hrc-runtime-T-06602` removed after re-verifying detached + clean + ancestor of `origin/main`.
+  - `origin/cody/remaining-agent-spaces-backlog-2026-07-24` deleted after spot-checking end-state file equivalence on `main` (T-05562 re-land confirmed byte-identical); reversibility preserved via local tag `backup/remaining-agent-spaces-backlog-2026-07-24` at `43c9538`.
+  - T-06576 closure SHA corrected by comment on the task.
+- **Deploy + readback (svc):** `just install` → `release-20260725140727610-41036`, daemon restarted via launchd from a clean operator envelope (task-scoped lifecycle refusal observed working as designed — T-06007), `sourceCommit=0cdc97b`, `runningEqualsInstalled=true`, doctor green, federation peers lab/max3 healthy, 80 live runtimes post-restart.
+- **Live guard smoke on the installed daemon:** a real `/v1/turns` POST with a high-risk policy rejected `actuator-split-experimental-disabled`; normal estate traffic unaffected. Actuator-split code shipped only in the overnight window, so svc was the only exposed node; lab/max3 pick up the guard with the next routine fleet install of merged main.
+- **Records filed:** T-06970 (selectors, P2), T-06971 (dispatch idempotency, P2), T-06972 (federation timeout semantics, P2), T-06973 (bounded history, P2), T-06974 (small-fix batch, P3), T-06975 (actuator-split rework, draft/P3, holds the guard's exit criterion), all in `hrc-runtime/audit-remediation` with `caused_by` lineage.
