@@ -187,6 +187,10 @@ const dmCmd = program
   .description('send a durable DM/status note; pass --follow <duration> to stream tracked progress')
   .argument('<target>', 'target handle, "human", or "system"')
   .argument('[message]', 'message body (use - for stdin)')
+  .option(
+    '--as <principal>',
+    'explicit sender ("human" or an agent handle); required for scripted sends with no session envelope'
+  )
   .option('--respond-to <kind>', 'human|agent|system')
   .option('--reply-to <id>', 'reply to a specific message ID')
   .option(
@@ -225,6 +229,7 @@ const dmCmd = program
         client,
         {
           follow: opts.follow,
+          ...(opts.as ? { as: opts.as } : {}),
           ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
           ...(opts.crossScopeReply ? { crossScopeReply: true } : {}),
         },
@@ -337,6 +342,10 @@ const turnCmd = program
   .description('dispatch tracked work to an agent and stream progress')
   .argument('<target>', 'target handle or scopeRef')
   .argument('[prompt]', 'prompt text (use - for stdin)')
+  .option(
+    '--as <principal>',
+    'explicit sender ("human" or an agent handle); required for scripted sends with no session envelope'
+  )
   .option('--fresh-context, --new', 'clear context before dispatching (clean slate)')
   .option('--dry-run', 'resolve and print the dispatch plan without dispatching')
   .option('--format <format>', 'output format: tree, compact, ndjson, json')

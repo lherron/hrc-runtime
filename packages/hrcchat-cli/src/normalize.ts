@@ -105,6 +105,29 @@ export function resolveCallerAddress(): HrcMessageAddress {
   return { kind: 'entity', entity: 'human' }
 }
 
+export type ResolvedSender = {
+  address: HrcMessageAddress
+  source: 'explicit' | 'envelope' | 'human-fallback'
+}
+
+/**
+ * Resolve the sender for a semantic send. An explicit `--as` wins; otherwise
+ * the session envelope; otherwise the human seat — but that fallback is only
+ * appropriate on an interactive operator terminal, so callers must gate on
+ * `source` (2026-07-25 attribution ruling: four scripted node probes silently
+ * went out as the human seat).
+ */
+export function resolveSenderAddress(asInput?: string | undefined): ResolvedSender {
+  if (asInput !== undefined && asInput.trim().length > 0) {
+    return { address: resolveAddress(asInput, process.env['HRC_SESSION_REF']), source: 'explicit' }
+  }
+  const fromEnvelope = resolveCallerAddress()
+  if (fromEnvelope.kind === 'session') {
+    return { address: fromEnvelope, source: 'envelope' }
+  }
+  return { address: fromEnvelope, source: 'human-fallback' }
+}
+
 /**
  * Resolve project ID from explicit value, ASP_PROJECT env, or cwd.
  */

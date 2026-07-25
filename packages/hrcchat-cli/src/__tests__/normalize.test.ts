@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { formatAddress, resolveCallerAddress, resolveTargetToSessionRef } from '../normalize.js'
+import {
+  formatAddress,
+  resolveCallerAddress,
+  resolveSenderAddress,
+  resolveTargetToSessionRef,
+} from '../normalize.js'
 
 describe('hrcchat normalize helpers', () => {
   const savedAspProject = process.env['ASP_PROJECT']
@@ -133,5 +138,66 @@ describe('resolveCallerAddress', () => {
       kind: 'session',
       sessionRef: 'agent:rex:project:agent-spaces:task:T-01104/lane:repair',
     })
+  })
+})
+
+/**
+ * Sender attribution for semantic sends (2026-07-25 attribution ruling):
+ * an explicit --as wins, then the envelope, and the human fallback is
+ * surfaced via `source` so commands can gate scripted sends.
+ */
+describe('resolveSenderAddress', () => {
+  const savedRef = process.env['HRC_SESSION_REF']
+
+  afterEach(() => {
+    if (savedRef !== undefined) {
+      process.env['HRC_SESSION_REF'] = savedRef
+    } else {
+      Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
+    }
+  })
+
+  it('explicit --as human wins over an envelope', () => {
+    process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/lane:main'
+
+    const sender = resolveSenderAddress('human')
+
+    expect(sender.source).toBe('explicit')
+    expect(sender.address).toEqual({ kind: 'entity', entity: 'human' })
+  })
+
+  it('explicit --as agent handle resolves to a session address', () => {
+    Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
+
+    const sender = resolveSenderAddress('mable@hrc-runtime:minisvc')
+
+    expect(sender.source).toBe('explicit')
+    expect(sender.address.kind).toBe('session')
+    if (sender.address.kind === 'session') {
+      expect(sender.address.sessionRef).toBe(
+        'agent:mable:project:hrc-runtime:task:minisvc/lane:main'
+      )
+    }
+  })
+
+  it('uses the envelope when no --as is given', () => {
+    process.env['HRC_SESSION_REF'] = 'agent:smokey:project:media-ingest/lane:main'
+
+    const sender = resolveSenderAddress(undefined)
+
+    expect(sender.source).toBe('envelope')
+    expect(sender.address).toEqual({
+      kind: 'session',
+      sessionRef: 'agent:smokey:project:media-ingest/lane:main',
+    })
+  })
+
+  it('reports the human fallback distinctly when nothing identifies the sender', () => {
+    Reflect.deleteProperty(process.env, 'HRC_SESSION_REF')
+
+    const sender = resolveSenderAddress(undefined)
+
+    expect(sender.source).toBe('human-fallback')
+    expect(sender.address).toEqual({ kind: 'entity', entity: 'human' })
   })
 })

@@ -64,7 +64,7 @@ async function runDm(
   args: string[]
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn({
-    cmd: ['bun', HRCCHAT_MAIN, 'dm', ...args],
+    cmd: ['bun', HRCCHAT_MAIN, 'dm', '--as', 'human', ...args],
     stdout: 'pipe',
     stderr: 'pipe',
     env: {

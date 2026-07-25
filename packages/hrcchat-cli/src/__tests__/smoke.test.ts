@@ -59,7 +59,9 @@ describe('hrcchat CLI smoke fixture', () => {
   it('hrcchat dm <target> "msg" exits 0 with a structured response', async () => {
     const client = createDmClient()
     const opts: DmOptions = { json: true }
-    const result = await runCommand(() => cmdDm(client.client, opts, ['human', 'hello']))
+    const result = await runCommand(() =>
+      cmdDm(client.client, { as: 'human', ...opts }, ['human', 'hello'])
+    )
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
@@ -82,7 +84,10 @@ describe('hrcchat CLI smoke fixture', () => {
     const client = createDmClient()
 
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-06674', 'ordinary dm'])
+      cmdDm(client.client, { as: 'human', json: true }, [
+        'cody@agent-spaces:T-06674',
+        'ordinary dm',
+      ])
     )
 
     expect(result.exitCode).toBe(0)
@@ -101,7 +106,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01293', 'hello'])
     )
 
     expect(result.exitCode).toBe(0)
@@ -131,7 +136,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01293', 'hello'])
     )
 
     const payload = result.json as Record<string, unknown>
@@ -153,7 +158,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01298', 'hello'])
     )
 
     expect(result.exitCode).toBe(0)
@@ -179,7 +184,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01298', 'hello'])
     )
 
     expect(result.exitCode).toBe(0)
@@ -210,7 +215,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01298', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01298', 'hello'])
     )
 
     expect(result.exitCode).toBe(0)
@@ -228,7 +233,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01293', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01293', 'hello'])
     )
 
     const payload = result.json as Record<string, unknown>
@@ -249,7 +254,10 @@ describe('hrcchat CLI smoke fixture', () => {
     for (const execution of states) {
       const client = createDmClient({ requestExecution: execution })
       const result = await runCommand(() =>
-        cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01301', 'line one\nline two\n'])
+        cmdDm(client.client, { as: 'human', json: true }, [
+          'cody@agent-spaces:T-01301',
+          'line one\nline two\n',
+        ])
       )
 
       expect(result.exitCode).toBe(execution.state === 'failed' ? 4 : 0)
@@ -279,7 +287,7 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     })
     const result = await runCommand(() =>
-      cmdDm(client.client, { json: true }, ['cody@agent-spaces:T-01573', 'hello'])
+      cmdDm(client.client, { as: 'human', json: true }, ['cody@agent-spaces:T-01573', 'hello'])
     )
 
     expect(result.exitCode).toBe(4)
@@ -304,7 +312,7 @@ describe('hrcchat CLI smoke fixture', () => {
     })
 
     const result = await runCommand(() =>
-      cmdDm(client.client, {}, [
+      cmdDm(client.client, { as: 'human' }, [
         'cody@hrc-runtime:T-06408',
         'this exact input must not be reported as sent',
       ])
@@ -319,7 +327,7 @@ describe('hrcchat CLI smoke fixture', () => {
   it('hrcchat dm with no args exits 2 (usage error) and reports usage context', async () => {
     const client = createDmClient()
     const opts: DmOptions = {}
-    const result = await runCommand(() => cmdDm(client.client, opts, []))
+    const result = await runCommand(() => cmdDm(client.client, { as: 'human', ...opts }, []))
 
     expect(result.exitCode).toBe(2)
     expect(result.stdout).toBe('')
@@ -381,7 +389,9 @@ describe('hrcchat CLI smoke fixture', () => {
       },
     } as HrcClient
 
-    const result = await runCommand(() => cmdDm(client, { replyTo: 'msg-gone' }, ['human', 'hi']))
+    const result = await runCommand(() =>
+      cmdDm(client, { as: 'human', replyTo: 'msg-gone' }, ['human', 'hi'])
+    )
 
     expect(result.exitCode).toBe(0)
     // First attempt with the anchor, second (retry) without it.
@@ -403,7 +413,7 @@ describe('hrcchat CLI smoke fixture', () => {
 
     let caught: unknown
     try {
-      await cmdDm(client, { replyTo: 'msg-x' }, ['human', 'hi'])
+      await cmdDm(client, { as: 'human', replyTo: 'msg-x' }, ['human', 'hi'])
     } catch (err) {
       caught = err
     }

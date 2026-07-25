@@ -32,7 +32,7 @@ describe('hrcchat dm --json acceptance', () => {
 set -eu
 for i in 1 2 3 4 5; do
   printf 'fixture loop %s line one\\nfixture loop %s line two\\n' "$i" "$i" |
-    bun ${shellQuote(HRCCHAT_MAIN)} dm --json human -
+    bun ${shellQuote(HRCCHAT_MAIN)} dm --as human --json human -
 done |
 while IFS= read -r envelope; do
   printf '%s\\n' "$envelope" | jq -e . >/dev/null
@@ -291,7 +291,7 @@ async function runDmJson(
   body: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn({
-    cmd: ['bun', HRCCHAT_MAIN, 'dm', '--json', target, '-'],
+    cmd: ['bun', HRCCHAT_MAIN, 'dm', '--as', 'human', '--json', target, '-'],
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',

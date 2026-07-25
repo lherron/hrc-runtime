@@ -8,7 +8,7 @@ import type {
 } from 'hrc-core'
 import type { HrcClient } from 'hrc-sdk'
 import { tryRouteBackchannelDm } from '../backchannel-route.js'
-import { formatAddress, resolveAddress, resolveCallerAddress } from '../normalize.js'
+import { formatAddress, resolveAddress, resolveSenderAddress } from '../normalize.js'
 import { printJsonLine } from '../print.js'
 import { resolveRuntimeIntentForTarget } from '../resolve-intent.js'
 import {
@@ -21,6 +21,8 @@ import {
 } from '../wait-final.js'
 
 export type DmOptions = {
+  /** Explicit sender principal ("human" or an agent handle); wins over the envelope. */
+  as?: string
   respondTo?: string
   replyTo?: string
   crossScopeReply?: boolean
@@ -76,7 +78,16 @@ export async function cmdDm(
   }
 
   const callerSessionRef = process.env['HRC_SESSION_REF']
-  const from = resolveCallerAddress()
+  const sender = resolveSenderAddress(opts.as)
+  if (sender.source === 'human-fallback') {
+    if (!process.stdout.isTTY) {
+      throw new CliUsageError(
+        'no session envelope and no interactive terminal: name the sender with --as <principal> ("human" or an agent handle) — scripted sends must not default to the human seat'
+      )
+    }
+    process.stderr.write('notice: sending as human (no session envelope)\n')
+  }
+  const from = sender.address
   const to = resolveAddress(targetInput, callerSessionRef)
 
   const respondTo = opts.respondTo ? resolveAddress(opts.respondTo, callerSessionRef) : undefined
@@ -212,7 +223,9 @@ export async function cmdDm(
     }
   } else {
     const toStr = formatAddress(to)
-    process.stdout.write(`dm sent to ${toStr} (seq: ${result.request.messageSeq})\n`)
+    process.stdout.write(
+      `dm sent to ${toStr} as ${formatAddress(from)} (seq: ${result.request.messageSeq})\n`
+    )
   }
 }
 

@@ -211,7 +211,7 @@ async function runDm(
     return true
   }) as typeof process.stderr.write
   try {
-    await cmdDm(client, opts, positionals)
+    await cmdDm(client, { as: 'human', ...opts }, positionals)
   } finally {
     process.stdout.write = origOut
     process.stderr.write = origErr
@@ -527,7 +527,7 @@ async function runTurn(
   }) as typeof process.stderr.write
   let error: Error | undefined
   try {
-    await cmdTurn(client, opts, positionals)
+    await cmdTurn(client, { as: 'human', ...opts }, positionals)
   } catch (err) {
     error = err instanceof Error ? err : new Error(String(err))
   } finally {

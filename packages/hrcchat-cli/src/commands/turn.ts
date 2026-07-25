@@ -17,8 +17,8 @@ import type { HrcClient } from 'hrc-sdk'
 
 import {
   formatAddress,
-  resolveCallerAddress,
   resolveScope,
+  resolveSenderAddress,
   resolveTargetToSessionRef,
 } from '../normalize.js'
 import { printJson, printJsonLine } from '../print.js'
@@ -36,6 +36,8 @@ import { FlushReason, Phase, Result } from '../stacked-types.js'
 import type { WaitFinalResult } from '../wait-final.js'
 
 export type TurnOptions = {
+  /** Explicit sender principal ("human" or an agent handle); wins over the envelope. */
+  as?: string | undefined
   new?: boolean | undefined
   dryRun?: boolean | undefined
   format?: RenderFrameFormatInput | undefined
@@ -403,7 +405,16 @@ export async function cmdTurn(
   // ── Dispatch turn via semanticTurnHandoff ──
   // CRITICAL: watch filters come from handoff result (post-clearContext),
   // not from anything resolved before clearContext.
-  const from = resolveCallerAddress()
+  const sender = resolveSenderAddress(opts.as)
+  if (sender.source === 'human-fallback') {
+    if (!process.stdout.isTTY) {
+      throw new CliUsageError(
+        'no session envelope and no interactive terminal: name the sender with --as <principal> ("human" or an agent handle) — scripted sends must not default to the human seat'
+      )
+    }
+    process.stderr.write('notice: dispatching as human (no session envelope)\n')
+  }
+  const from = sender.address
   const to = { kind: 'session' as const, sessionRef }
 
   const handoff = await client.semanticTurnHandoff({

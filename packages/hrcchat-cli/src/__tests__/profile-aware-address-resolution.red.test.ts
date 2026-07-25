@@ -113,9 +113,9 @@ describe('profile-aware hrcchat address resolution', () => {
       },
     } as HrcClient
 
-    await captureStdout(() => cmdDm(client, { json: true }, [handle, 'hello']))
+    await captureStdout(() => cmdDm(client, { as: 'human', json: true }, [handle, 'hello']))
     const turnOutput = await captureStdout(() =>
-      cmdTurn({} as HrcClient, { dryRun: true }, [handle, 'hello'])
+      cmdTurn({} as HrcClient, { as: 'human', dryRun: true }, [handle, 'hello'])
     )
     const turnPlan = JSON.parse(turnOutput) as { sessionRef: string }
 
@@ -130,7 +130,7 @@ describe('profile-aware hrcchat address resolution', () => {
 
     await expect(
       captureStdout(() =>
-        cmdTurn({} as HrcClient, { dryRun: true }, ['clod@proj:T-12345', 'hello'])
+        cmdTurn({} as HrcClient, { as: 'human', dryRun: true }, ['clod@proj:T-12345', 'hello'])
       )
     ).rejects.toThrow()
   })

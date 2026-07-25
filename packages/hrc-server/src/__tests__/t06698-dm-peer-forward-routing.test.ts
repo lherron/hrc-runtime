@@ -111,7 +111,7 @@ async function runCredentialStrippedDm(
   }
   Reflect.deleteProperty(env, 'HRC_BIRTH_CREDENTIAL')
   const proc = Bun.spawn({
-    cmd: ['bun', HRCCHAT_MAIN, 'dm', '--json', target, '-'],
+    cmd: ['bun', HRCCHAT_MAIN, 'dm', '--as', 'human', '--json', target, '-'],
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
