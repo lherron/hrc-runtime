@@ -16,6 +16,7 @@ import { cmdPeek } from './commands/peek.js'
 import { cmdSend } from './commands/send.js'
 import { cmdShow } from './commands/show.js'
 import { cmdSummon } from './commands/summon.js'
+import { cmdTrace } from './commands/trace.js'
 import { TurnExitError, cmdTurn } from './commands/turn.js'
 import { cmdWho } from './commands/who.js'
 import { formatHrcDomainError } from './domain-error-format.js'
@@ -319,6 +320,17 @@ program
     await cmdShow(client, { json: globalOpts().json }, [seqOrId])
   })
 
+// -- trace --------------------------------------------------------------------
+
+program
+  .command('trace')
+  .description('trace one message across origin outbox, peer ACK, and destination delivery')
+  .argument('<seq-or-id>', 'local message seq number or message ID')
+  .action(async (seqOrId) => {
+    const client = createClient()
+    await cmdTrace(client, { json: globalOpts().json }, [seqOrId])
+  })
+
 // -- messages -----------------------------------------------------------------
 
 program
@@ -413,6 +425,7 @@ WORK
 MESSAGES
   dm          send a durable DM/status note; pass --follow <duration> for tracked progress
   show        show one message by seq or message ID
+  trace       trace one message across origin outbox, peer ACK, and destination delivery
   messages    query durable directed message history
 
 LIVE

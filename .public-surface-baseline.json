@@ -1751,6 +1751,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcMessageDeliveryEvidence",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageDeliveryEvidence|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcMessageExecution",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -1819,6 +1827,30 @@
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|HrcMessageSeqSelector|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceAcceptance",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceAcceptance|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceDestination",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceDestination|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcMessageTraceVerdict",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|HrcMessageTraceVerdict|type",
       "count": 1
     },
     {
@@ -3331,6 +3363,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts.ts",
       "hash": "hrc-core|TerminateRuntimeResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TraceMessageRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|TraceMessageRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "TraceMessageResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/hrcchat-contracts.ts",
+      "hash": "hrc-core|TraceMessageResponse|type",
       "count": 1
     },
     {

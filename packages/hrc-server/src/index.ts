@@ -722,6 +722,7 @@ class HrcServerInstance implements HrcServer {
     [exactRouteKey('GET', '/v1/targets/by-session-ref')]: (_request, url) =>
       this.handleGetTarget(url),
     [exactRouteKey('POST', '/v1/messages/query')]: (request) => this.handleQueryMessages(request),
+    [exactRouteKey('POST', '/v1/messages/trace')]: (request) => this.handleTraceMessage(request),
     [exactRouteKey('POST', '/v1/messages/dm')]: (request) => this.handleSemanticDm(request),
     [exactRouteKey('POST', '/v1/messages/turn-handoff')]: (request) =>
       this.handleSemanticTurnHandoff(request),

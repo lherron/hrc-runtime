@@ -1,4 +1,5 @@
 import type { HrcRuntimeIntent, HrcTurnResponseFormat } from './contracts.js'
+import type { FederationOutboxDeliveryRecord } from './federation-contracts.js'
 import type { HrcBirthCredential } from './federation.js'
 /**
  * hrcchat — semantic directed-messaging contracts.
@@ -139,6 +140,24 @@ export type HrcMessageRecord = {
   metadataJson?: Record<string, unknown> | undefined
 }
 
+/**
+ * Durable destination-side result of the post-ACK local-delivery phase.
+ *
+ * Federation acceptance only proves that the destination owns the message.
+ * This separate evidence says whether the accepted record was subsequently
+ * offered to a runtime or intentionally remained store-only.
+ */
+export type HrcMessageDeliveryEvidence =
+  | {
+      outcome: 'runtime_delivery'
+      observedAt: string
+    }
+  | {
+      outcome: 'store_only'
+      reason: string
+      observedAt: string
+    }
+
 export type HrcCollectiveHistoryObservation = {
   nodeId: string
   messageSeq: number
@@ -147,6 +166,7 @@ export type HrcCollectiveHistoryObservation = {
   originNodeId: string
   acceptedDestinationNodeId?: string | undefined
   execution: HrcMessageExecution
+  delivery?: HrcMessageDeliveryEvidence | undefined
 }
 
 export type HrcCollectiveMessageRecord = HrcMessageRecord & {
@@ -299,6 +319,53 @@ export type ListMessagesResponse = {
    * emit it so callers never mistake a local outage fallback for full history.
    */
   history?: HrcMessageHistoryStatus | undefined
+}
+
+// POST /v1/messages/trace
+export type TraceMessageRequest =
+  | { messageId: string; messageSeq?: never }
+  | { messageSeq: number; messageId?: never }
+
+export type HrcMessageTraceAcceptance = {
+  acceptedByNodeId: string
+  phase: 'request' | 'response'
+  requestEpoch?: number | undefined
+  acceptedAt: string
+  /** Absent only for acceptance rows written before trace evidence existed. */
+  outcome?: 'accepted' | 'duplicate' | undefined
+}
+
+export type HrcMessageTraceDestination = {
+  nodeId: string
+  messageId: string
+  messageSeq: number
+  observedAt: string
+  execution: HrcMessageExecution
+  delivery?: HrcMessageDeliveryEvidence | undefined
+}
+
+export type HrcMessageTraceVerdict = {
+  code:
+    | 'delivered_to_runtime'
+    | 'stored_not_injected'
+    | 'runtime_delivery_failed'
+    | 'accepted_delivery_pending'
+    | 'outbox_pending'
+    | 'outbox_dead_letter'
+    | 'local_message'
+    | 'history_incomplete'
+  summary: string
+}
+
+export type TraceMessageResponse = {
+  localNodeId: string
+  message: HrcCollectiveMessageRecord
+  localRecord?: HrcMessageRecord | undefined
+  outbox?: FederationOutboxDeliveryRecord | undefined
+  acceptance?: HrcMessageTraceAcceptance | undefined
+  destination?: HrcMessageTraceDestination | undefined
+  history: HrcMessageHistoryStatus
+  verdict: HrcMessageTraceVerdict
 }
 
 // GET /v1/messages/watch (stream)

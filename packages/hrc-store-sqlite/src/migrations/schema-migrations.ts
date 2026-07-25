@@ -1249,6 +1249,16 @@ const collectiveMessageHistoryMigration: HrcMigration = {
   },
 }
 
+const federationPeerAcceptanceOutcomeMigration: HrcMigration = {
+  id: '0034_federation_peer_acceptance_outcome',
+  apply(db) {
+    db.exec(`
+      ALTER TABLE federation_peer_acceptances
+        ADD COLUMN ack_outcome TEXT CHECK (ack_outcome IN ('accepted', 'duplicate'));
+    `)
+  },
+}
+
 export const schemaMigrations: readonly HrcMigration[] = [
   phase1SchemaMigration,
   phase4SurfaceBindingsMigration,
@@ -1278,4 +1288,5 @@ export const schemaMigrations: readonly HrcMigration[] = [
   hrcmailFederatedOriginsMigration,
   federationPeerAcceptancesMigration,
   collectiveMessageHistoryMigration,
+  federationPeerAcceptanceOutcomeMigration,
 ]

@@ -23,6 +23,8 @@ import type {
   HrcRunRecord as RunRecord,
   HrcRuntimeSnapshot as RuntimeRecord,
   HrcSurfaceBindingRecord as SurfaceBindingRecord,
+  TraceMessageRequest,
+  TraceMessageResponse,
 } from 'hrc-core'
 import { HrcDomainError, HrcErrorCode, getHrcCliRpcMetricsHook } from 'hrc-core'
 import type {
@@ -793,6 +795,10 @@ export class HrcClient {
 
   async listMessages(filter?: import('hrc-core').HrcMessageFilter): Promise<ListMessagesResponse> {
     return this.postJson<ListMessagesResponse>('/v1/messages/query', filter ?? {})
+  }
+
+  async traceMessage(request: TraceMessageRequest): Promise<TraceMessageResponse> {
+    return this.postJson<TraceMessageResponse>('/v1/messages/trace', request)
   }
 
   async waitMessage(request: WaitMessageRequest): Promise<WaitMessageResponse> {

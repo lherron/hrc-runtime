@@ -26,6 +26,8 @@ import type {
   SemanticDmRequest,
   SemanticDmResponse,
   SemanticTurnHandoffResponse,
+  TraceMessageRequest,
+  TraceMessageResponse,
   WaitMessageResponse,
 } from 'hrc-core'
 import { shouldUseSdkTransport } from './broker-decisions.js'
@@ -42,6 +44,7 @@ import {
 } from './federation/summon-gate-server.js'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import { assertLocalPersonaAllowed } from './local-persona-policy.js'
+import { buildMessageTrace } from './message-trace.js'
 import {
   extractProjectId,
   formatDmPayload,
@@ -502,6 +505,107 @@ export async function handleQueryMessages(
       },
     },
   } satisfies ListMessagesResponse)
+}
+
+export async function handleTraceMessage(
+  this: HrcServerInstanceForHandlers,
+  request: Request
+): Promise<Response> {
+  const body = await parseJsonBody(request)
+  if (!isObjectRecord(body)) {
+    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
+  }
+  const messageId = typeof body['messageId'] === 'string' ? body['messageId'].trim() : undefined
+  const messageSeq = body['messageSeq']
+  if (
+    (messageId === undefined) === (messageSeq === undefined) ||
+    (messageId !== undefined && messageId.length === 0) ||
+    (messageSeq !== undefined && (!Number.isSafeInteger(messageSeq) || (messageSeq as number) < 1))
+  ) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      'exactly one of messageId or positive messageSeq is required'
+    )
+  }
+  const traceRequest: TraceMessageRequest =
+    messageId === undefined ? { messageSeq: messageSeq as number } : { messageId }
+  const localRecord =
+    'messageId' in traceRequest
+      ? this.db.messages.getById(traceRequest.messageId)
+      : this.db.messages.getBySeq(traceRequest.messageSeq)
+  const resolvedMessageId =
+    'messageId' in traceRequest ? traceRequest.messageId : localRecord?.messageId
+  if (resolvedMessageId === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `message not found: ${traceRequest.messageSeq}`
+    )
+  }
+
+  const localNodeId =
+    this.collectiveHistory?.localNodeId ?? this.options.federationConfig?.nodeId ?? 'local'
+  const queried =
+    this.collectiveHistory === undefined
+      ? ({
+          messages: localRecord === undefined ? [] : [localRecord],
+          history: {
+            source: 'local',
+            complete: false,
+            authorityNodeId: 'svc',
+            queriedNodeId: localNodeId,
+            cursorKind: 'node-local',
+            pendingReplicationCount: 0,
+            degraded: {
+              code: 'collective_not_configured',
+              message: 'collective history is unavailable in this daemon mode',
+            },
+          },
+        } satisfies ListMessagesResponse)
+      : await this.collectiveHistory.query({ messageId: resolvedMessageId, limit: 1 })
+  const message = queried.messages.find((candidate) => candidate.messageId === resolvedMessageId)
+  if (message === undefined) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.MALFORMED_REQUEST,
+      `message not found: ${resolvedMessageId}`
+    )
+  }
+  const history =
+    queried.history ??
+    ({
+      source: 'local',
+      complete: false,
+      authorityNodeId: 'svc',
+      queriedNodeId: localNodeId,
+      cursorKind: 'node-local',
+      pendingReplicationCount: 0,
+      degraded: {
+        code: 'collective_not_configured',
+        message: 'trace source did not report collective-history status',
+      },
+    } as const)
+  const acceptance = this.db.federationPeerAcceptances.get(resolvedMessageId)
+  const outbox = this.db.federationOutbox.getByMessageId(resolvedMessageId)
+  const response = buildMessageTrace({
+    localNodeId,
+    message,
+    ...(localRecord === undefined ? {} : { localRecord }),
+    ...(outbox === undefined ? {} : { outbox }),
+    ...(acceptance === undefined
+      ? {}
+      : {
+          acceptance: {
+            acceptedByNodeId: acceptance.acceptedByNodeId,
+            phase: acceptance.phase,
+            ...(acceptance.requestEpoch === undefined
+              ? {}
+              : { requestEpoch: acceptance.requestEpoch }),
+            acceptedAt: acceptance.acceptedAt,
+            ...(acceptance.ackOutcome === undefined ? {} : { outcome: acceptance.ackOutcome }),
+          },
+        }),
+    history,
+  } satisfies Parameters<typeof buildMessageTrace>[0])
+  return json(response satisfies TraceMessageResponse)
 }
 
 /** Extract the lane-stripped scopeRef from a canonical `<scopeRef>/lane:<lane>` ref. */
@@ -1279,6 +1383,14 @@ export async function deliverFederationAcceptedMessage(
     // them would also let two headless recipients auto-reply to each other
     // forever. Explicit --reply-to responses carry delivery context and fall
     // through to runtime delivery below.
+    const observedAt = timestamp()
+    this.db.messages.updateMetadata(record.messageId, {
+      federationDelivery: {
+        outcome: 'store_only',
+        reason: 'response_without_delivery_context',
+        observedAt,
+      },
+    })
     writeServerLog('INFO', 'federation.accept.local_delivery_completed', {
       messageId: record.messageId,
       phase: envelope.phase,
@@ -1288,6 +1400,7 @@ export async function deliverFederationAcceptedMessage(
       executionState: record.execution.state,
       deliveryOutcome: 'store_only',
       storeOnlyReason: 'response_without_delivery_context',
+      observedAt,
     })
     return
   }
@@ -1324,6 +1437,10 @@ export async function deliverFederationAcceptedMessage(
   const delivered = await this.deliverPersistedSemanticDm(body, record, body.respondTo ?? body.from)
   const persisted = this.db.messages.getById(record.messageId)
   const execution = persisted?.execution
+  const observedAt = timestamp()
+  this.db.messages.updateMetadata(record.messageId, {
+    federationDelivery: { outcome: 'runtime_delivery', observedAt },
+  })
   writeServerLog(
     execution?.state === 'failed' ? 'WARN' : 'INFO',
     'federation.accept.local_delivery_completed',
@@ -1342,6 +1459,7 @@ export async function deliverFederationAcceptedMessage(
       errorMessage: execution?.errorMessage,
       replyMessageId: delivered.reply?.messageId,
       deliveryOutcome: 'runtime_delivery',
+      observedAt,
     }
   )
   // Only a request's turn-final output routes back as a federated response.
@@ -1686,6 +1804,7 @@ export const targetMessageHandlersMethods = {
   handleResumeContinuation,
   handleArchiveAbandonedSessions,
   handleQueryMessages,
+  handleTraceMessage,
   handleSemanticTurnHandoff,
   tryDeliverSemanticTurnToInteractiveRuntime,
   handleSemanticDm,

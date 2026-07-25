@@ -424,6 +424,22 @@ export class MessageRepository {
     if (updated !== undefined) this.emitChange(updated)
   }
 
+  /** Merge durable operator/read-model evidence without replacing ingress metadata. */
+  updateMetadata(messageId: string, patch: Record<string, unknown>): void {
+    if (Object.keys(patch).length === 0) return
+    const existing = this.getById(messageId)
+    if (existing === undefined) return
+    const metadataJson = { ...existing.metadataJson, ...patch }
+    execute(
+      this.db,
+      'UPDATE messages SET metadata_json = ? WHERE message_id = ?',
+      JSON.stringify(metadataJson),
+      messageId
+    )
+    const updated = this.getById(messageId)
+    if (updated !== undefined) this.emitChange(updated)
+  }
+
   private emitChange(record: HrcMessageRecord): void {
     for (const listener of this.changeListeners) {
       try {

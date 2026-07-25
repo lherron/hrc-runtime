@@ -97,6 +97,9 @@ describe('T-06828 federated response local delivery', () => {
         // request-phase T-06618 e2e uses).
         expect(db.messages.getById(RESPONSE_ID)).toMatchObject({
           execution: { hostSessionId: HOST_SESSION_ID },
+          metadataJson: {
+            federationDelivery: { outcome: 'runtime_delivery' },
+          },
         })
       } finally {
         db.close()
@@ -120,6 +123,10 @@ describe('T-06828 federated response local delivery', () => {
         const persisted = db.messages.getById(RESPONSE_ID)
         expect(persisted?.execution.state).toBe('not_applicable')
         expect(persisted?.execution.hostSessionId).toBeUndefined()
+        expect(persisted?.metadataJson?.['federationDelivery']).toMatchObject({
+          outcome: 'store_only',
+          reason: 'response_without_delivery_context',
+        })
       } finally {
         db.close()
       }

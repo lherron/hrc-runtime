@@ -5,6 +5,7 @@ import type {
   HrcCollectiveHistoryObservation,
   HrcCollectiveMessageRecord,
   HrcMessageAddress,
+  HrcMessageDeliveryEvidence,
   HrcMessageFilter,
   HrcMessageRecord,
 } from 'hrc-core'
@@ -88,6 +89,22 @@ function compareMessageOrder(
 ): number {
   const byTime = left.createdAt.localeCompare(right.createdAt)
   return byTime === 0 ? left.messageId.localeCompare(right.messageId) : byTime
+}
+
+function deliveryEvidence(record: HrcMessageRecord): HrcMessageDeliveryEvidence | undefined {
+  const value = record.metadataJson?.['federationDelivery']
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const outcome = (value as Record<string, unknown>)['outcome']
+  const observedAt = (value as Record<string, unknown>)['observedAt']
+  if (
+    (outcome !== 'runtime_delivery' && outcome !== 'store_only') ||
+    typeof observedAt !== 'string'
+  ) {
+    return undefined
+  }
+  if (outcome === 'runtime_delivery') return { outcome, observedAt }
+  const reason = (value as Record<string, unknown>)['reason']
+  return typeof reason === 'string' ? { outcome, reason, observedAt } : undefined
 }
 
 /**
@@ -254,8 +271,10 @@ export class CollectiveHistoryRepository {
               ORDER BY source_node_id`
           )
           .all(row.message_id)
-          .map(
-            (observation): HrcCollectiveHistoryObservation => ({
+          .map((observation): HrcCollectiveHistoryObservation => {
+            const observedRecord = JSON.parse(observation.record_json) as HrcMessageRecord
+            const delivery = deliveryEvidence(observedRecord)
+            return {
               nodeId: observation.source_node_id,
               messageSeq: observation.source_message_seq,
               role: observation.source_role,
@@ -266,9 +285,10 @@ export class CollectiveHistoryRepository {
                 : {
                     acceptedDestinationNodeId: observation.accepted_destination_node_id,
                   }),
-              execution: (JSON.parse(observation.record_json) as HrcMessageRecord).execution,
-            })
-          )
+              execution: observedRecord.execution,
+              ...(delivery === undefined ? {} : { delivery }),
+            }
+          })
         return {
           ...record,
           collectiveSeq: row.collective_seq,

@@ -9,6 +9,7 @@ export type FederationPeerAcceptanceRecord = {
   acceptedByNodeId: string
   phase: FederationPeerAcceptancePhase
   requestEpoch?: number | undefined
+  ackOutcome?: 'accepted' | 'duplicate' | undefined
   acceptedAt: string
 }
 
@@ -24,6 +25,7 @@ type PeerAcceptanceRow = {
   accepted_by_node_id: string
   phase: FederationPeerAcceptancePhase
   request_epoch: number | null
+  ack_outcome: 'accepted' | 'duplicate' | null
   accepted_at: string
 }
 
@@ -33,6 +35,7 @@ function mapRow(row: PeerAcceptanceRow): FederationPeerAcceptanceRecord {
     acceptedByNodeId: row.accepted_by_node_id,
     phase: row.phase,
     ...(row.request_epoch === null ? {} : { requestEpoch: row.request_epoch }),
+    ...(row.ack_outcome === null ? {} : { ackOutcome: row.ack_outcome }),
     acceptedAt: row.accepted_at,
   }
 }
@@ -89,12 +92,13 @@ export class FederationPeerAcceptanceRepository {
       execute(
         this.db,
         `INSERT INTO federation_peer_acceptances (
-          message_id, accepted_by_node_id, phase, request_epoch, accepted_at
-        ) VALUES (?, ?, ?, ?, ?)`,
+          message_id, accepted_by_node_id, phase, request_epoch, ack_outcome, accepted_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
         input.messageId,
         input.acceptedByNodeId,
         input.phase,
         input.requestEpoch ?? null,
+        input.ackOutcome ?? null,
         input.acceptedAt ?? new Date().toISOString()
       )
       const stored = this.get(input.messageId)
@@ -106,7 +110,7 @@ export class FederationPeerAcceptanceRepository {
   get(messageId: string): FederationPeerAcceptanceRecord | undefined {
     const row = this.db
       .query<PeerAcceptanceRow, [string]>(
-        `SELECT message_id, accepted_by_node_id, phase, request_epoch, accepted_at
+        `SELECT message_id, accepted_by_node_id, phase, request_epoch, ack_outcome, accepted_at
          FROM federation_peer_acceptances WHERE message_id = ?`
       )
       .get(messageId)
