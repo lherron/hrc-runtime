@@ -8,7 +8,6 @@ import {
   resolveAgentHarness as resolveSdkAgentHarness,
 } from 'hrc-sdk'
 import type { ProfileAwareResolvedScopeInput, ResolvedAgentHarness } from 'hrc-sdk'
-import type { ProjectOrigin } from 'hrc-sdk'
 import {
   PROJECT_MARKER_FILENAME,
   buildRuntimeBundleRef,
@@ -62,7 +61,7 @@ export function resolveAgentHarness(
 export type ManagedScopeContext = {
   agentId: string
   projectId?: string | undefined
-  projectOrigin: ProjectOrigin
+  projectOrigin: ProfileAwareResolvedScopeInput['projectOrigin']
   scopeRef: string
   laneRef: string
   sessionRef: string
@@ -165,7 +164,7 @@ export function resolveManagedScopeContext(
   // shorthand (`clod:zed`) throws by design when no project is available — that
   // throw would pre-empt the register prompt below.
   const hasExplicitProject = scopeInput.includes('@') || /(^|:)project:/.test(scopeInput)
-  const projectOrigin: ProjectOrigin =
+  const projectOrigin: ProfileAwareResolvedScopeInput['projectOrigin'] =
     hasExplicitProject || options.projectIdOverride !== undefined ? 'explicit' : 'inferred'
   let projectIdHint: string | undefined = hasExplicitProject
     ? undefined

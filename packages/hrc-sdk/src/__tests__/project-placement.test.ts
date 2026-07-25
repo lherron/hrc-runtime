@@ -105,6 +105,114 @@ describe('resolveHrcAgentPlacementPaths', () => {
     })
   })
 
+  it('keeps explicit placement identical across unrelated, agent-home, and target cwd locations', () => {
+    const root = temporaryRoot()
+    const projectRoot = join(root, 'taskboard')
+    committedRepo(projectRoot)
+    const senderLocations = [
+      join(root, 'unrelated'),
+      join(root, 'agents', 'cody'),
+      join(projectRoot, 'packages', 'ui'),
+    ]
+    for (const location of senderLocations) mkdirSync(location, { recursive: true })
+
+    const absent = senderLocations.map((cwd) =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        taskId: 'T-06371',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: projectRoot }],
+        cwd,
+        env: {},
+      })
+    )
+
+    expect(absent[0]).toEqual(absent[1])
+    expect(absent[1]).toEqual(absent[2])
+    expect(absent[0]?.cwd).toBe(projectRoot)
+    expect(absent[0]?.resolution.source).toBe('wrkq-registry')
+
+    const worktree = join(root, 'taskboard-T-06371')
+    git(projectRoot, 'worktree', 'add', '-b', 'feature/T-06371-matrix', worktree)
+    const present = senderLocations.map((cwd) =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot: join(root, 'agents', 'cody'),
+        projectId: 'taskboard',
+        taskId: 'T-06371',
+        projectOrigin: 'explicit',
+        registryProjects: [{ slug: 'taskboard', root: projectRoot }],
+        cwd,
+        env: {},
+      })
+    )
+
+    expect(present[0]).toEqual(present[1])
+    expect(present[1]).toEqual(present[2])
+    expect(present[0]?.cwd).toBe(realpathSync(worktree))
+    expect(present[0]?.resolution.source).toBe('task-worktree')
+  })
+
+  it('preserves caller cwd behavior for project-less placement across the location matrix', () => {
+    const root = temporaryRoot()
+    const agentRoot = join(root, 'agents', 'cody')
+    const senderLocations = [
+      join(root, 'unrelated'),
+      agentRoot,
+      join(root, 'target', 'packages', 'ui'),
+    ]
+    for (const location of senderLocations) mkdirSync(location, { recursive: true })
+
+    const resolved = senderLocations.map((cwd) =>
+      resolveHrcAgentPlacementPaths({
+        agentId: 'cody',
+        agentRoot,
+        projectOrigin: 'inferred',
+        cwd,
+        env: {},
+      })
+    )
+
+    expect(resolved.map((placement) => placement.cwd)).toEqual(senderLocations)
+    expect(resolved.map((placement) => placement.resolution.source)).toEqual([
+      'inferred',
+      'inferred',
+      'inferred',
+    ])
+    expect(resolved.map((placement) => placement.resolution.reason)).toEqual([
+      'cwd from agent root (project-less scope)',
+      'cwd from agent root (project-less scope)',
+      'cwd from agent root (project-less scope)',
+    ])
+  })
+
+  it('skips a taskboard-named linked checkout collision in favor of the canonical marker', () => {
+    const root = temporaryRoot()
+    const poisonedSearchRoot = join(root, 'poisoned')
+    const canonicalSearchRoot = join(root, 'canonical')
+    const linked = join(poisonedSearchRoot, 'taskboard')
+    const projectRoot = join(canonicalSearchRoot, 'taskboard')
+    mkdirSync(linked, { recursive: true })
+    writeFileSync(join(linked, '.git'), 'gitdir: elsewhere\n')
+    canonicalCheckout(projectRoot)
+
+    const resolved = resolveHrcAgentPlacementPaths({
+      agentId: 'cody',
+      agentRoot: join(root, 'agents', 'cody'),
+      projectId: 'taskboard',
+      projectOrigin: 'explicit',
+      registryProjects: [{ slug: 'taskboard', root: null }],
+      projectSearchRoots: [poisonedSearchRoot, canonicalSearchRoot],
+      env: {},
+    })
+
+    expect(resolved.projectRoot).toBe(projectRoot)
+    expect(resolved.cwd).toBe(projectRoot)
+    expect(resolved.resolution.source).toBe('marker-scan')
+  })
+
   it('fails closed when more than one worktree branch carries the exact task token', () => {
     const root = temporaryRoot()
     const projectRoot = join(root, 'taskboard')
