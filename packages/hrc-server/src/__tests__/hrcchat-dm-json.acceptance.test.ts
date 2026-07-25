@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
+import { formatQueuedSemanticDmDelivery } from '../broker-headless-handlers.js'
 import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 import { createHrcTestFixture } from './fixtures/hrc-test-fixture'
@@ -118,13 +119,90 @@ done
       activeRunId: 'run-busy-dm-json',
     })
   })
+
+  it('accepts busy broker DMs within budget, preserves FIFO, and exposes send time', async () => {
+    await seedBusyRuntime({ brokerManaged: true })
+
+    const startedAt = performance.now()
+    const first = await runDmJson('cody@agent-spaces:T-01303', 'first queued approval\n')
+    const firstAcceptedInMs = performance.now() - startedAt
+    const secondStartedAt = performance.now()
+    const second = await runDmJson('cody@agent-spaces:T-01303', 'second queued approval\n')
+    const secondAcceptedInMs = performance.now() - secondStartedAt
+
+    expect(first.exitCode).toBe(0)
+    expect(first.stderr).toBe('')
+    expect(second.exitCode).toBe(0)
+    expect(second.stderr).toBe('')
+    expect(firstAcceptedInMs).toBeLessThan(2_000)
+    expect(secondAcceptedInMs).toBeLessThan(2_000)
+    expect(countRuntimesForScope('agent:cody:project:agent-spaces:task:T-01303')).toBe(1)
+    expect(listHrcEvents('input.rejected')).toHaveLength(0)
+
+    const firstEnvelope = JSON.parse(first.stdout) as Record<string, unknown>
+    const secondEnvelope = JSON.parse(second.stdout) as Record<string, unknown>
+    const firstRequest = firstEnvelope['request'] as { execution?: unknown }
+    const secondRequest = secondEnvelope['request'] as { execution?: unknown }
+    expect(firstRequest.execution).toMatchObject({
+      state: 'accepted',
+      runtimeId: 'rt-busy-dm-json',
+      transport: 'headless',
+    })
+    expect(secondRequest.execution).toMatchObject({
+      state: 'accepted',
+      runtimeId: 'rt-busy-dm-json',
+      transport: 'headless',
+    })
+
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      const queued = db.runs.listQueuedByHostSessionId('hsid-busy-dm-json')
+      expect(queued).toHaveLength(2)
+
+      const prompts = queued.map((run) => {
+        const correlation = JSON.parse(db.runs.getCorrelationJson(run.runId) ?? '{}') as {
+          prompt?: string
+        }
+        return correlation.prompt ?? ''
+      })
+      expect(prompts[0]).toContain('first queued approval')
+      expect(prompts[1]).toContain('second queued approval')
+
+      const firstMessage = db.messages.getById(String(firstEnvelope['messageId']))
+      const secondMessage = db.messages.getById(String(secondEnvelope['messageId']))
+      expect(prompts[0]).toContain(`sentAt=${firstMessage?.createdAt}`)
+      expect(prompts[1]).toContain(`sentAt=${secondMessage?.createdAt}`)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('annotates a queued semantic DM with its actual delivery residence time', () => {
+    expect(
+      formatQueuedSemanticDmDelivery(
+        'original payload',
+        '2026-07-25T11:20:00.000Z',
+        '2026-07-25T11:22:03.456Z'
+      )
+    ).toBe(
+      [
+        '[queued DM delivery acceptedAt=2026-07-25T11:20:00.000Z deliveredAt=2026-07-25T11:22:03.456Z queueAgeMs=123456]',
+        'original payload',
+      ].join('\n')
+    )
+  })
 })
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
-async function seedBusyRuntime(options: { agentHarness?: string | undefined } = {}): Promise<void> {
+async function seedBusyRuntime(
+  options: {
+    agentHarness?: string | undefined
+    brokerManaged?: boolean | undefined
+  } = {}
+): Promise<void> {
   const scopeRef = 'agent:cody:project:agent-spaces:task:T-01303'
   const hostSessionId = 'hsid-busy-dm-json'
   const runtimeId = 'rt-busy-dm-json'
@@ -145,6 +223,13 @@ async function seedBusyRuntime(options: { agentHarness?: string | undefined } = 
       provider: 'anthropic',
       status: 'busy',
       activeRunId: runId,
+      ...(options.brokerManaged
+        ? {
+            controllerKind: 'harness-broker' as const,
+            activeInvocationId: 'inv-busy-dm-json',
+            activeOperationId: 'op-busy-dm-json',
+          }
+        : {}),
       supportsInflightInput: false,
       adopted: false,
       createdAt: now,

@@ -900,7 +900,8 @@ export async function deliverPersistedSemanticTurnHandoff(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId
+      record.messageId,
+      record.createdAt
     )
 
     let liveTmuxRuntime = findLatestRuntime(this.db, session.hostSessionId)
@@ -1875,7 +1876,8 @@ export async function deliverPersistedSemanticDm(
             body.to,
             body.body,
             record.messageSeq,
-            record.messageId
+            record.messageId,
+            record.createdAt
           )
           this.enqueueDurableHeadlessTurnInput(session, payload, runId, {
             source: 'semantic_dm',
@@ -2015,7 +2017,8 @@ export async function executeSemanticTurn(
       body.to,
       body.body,
       record.messageSeq,
-      record.messageId
+      record.messageId,
+      record.createdAt
     )
     const turnResponse = await this.dispatchTurnForSession(session, normalizedIntent, payload, {
       runId,

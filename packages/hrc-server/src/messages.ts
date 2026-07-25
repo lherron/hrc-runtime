@@ -31,7 +31,7 @@ export function formatDmAddress(addr: HrcMessageAddress): string {
  * recipient's reply threads onto the originating request (required for
  * --wait on the sender side and for clean thread history).
  *
- *   [DM #<seq> <from> → <to>]: <content>
+ *   [DM #<seq> sentAt=<createdAt> <from> → <to>]: <content>
  *
  *     reply_cmd if reply requested:
  *     hrcchat dm <from> --reply-to <id> - <<'__HRC_REPLY__'
@@ -43,7 +43,8 @@ export function formatDmPayload(
   to: HrcMessageAddress,
   body: string,
   messageSeq: number,
-  messageId: string
+  messageId: string,
+  createdAt: string
 ): string {
   const fromDisplay = formatDmAddress(from)
   const toDisplay = formatDmAddress(to)
@@ -59,7 +60,7 @@ export function formatDmPayload(
     '<your reply>',
     '__HRC_REPLY__',
   ].join('\n')
-  return `[DM #${messageSeq} ${fromDisplay} → ${toDisplay}]: ${content}\n\n${replyHint}`
+  return `[DM #${messageSeq} sentAt=${createdAt} ${fromDisplay} → ${toDisplay}]: ${content}\n\n${replyHint}`
 }
 
 export function extractTextFromTurnMessagePayload(payload: unknown): string {

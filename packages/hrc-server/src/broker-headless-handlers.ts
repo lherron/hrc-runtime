@@ -94,6 +94,23 @@ function parseDurableHeadlessTurnInput(value: string | null): DurableHeadlessTur
   }
 }
 
+export function formatQueuedSemanticDmDelivery(
+  prompt: string,
+  acceptedAt: string,
+  deliveredAt: string
+): string {
+  const acceptedAtMs = Date.parse(acceptedAt)
+  const deliveredAtMs = Date.parse(deliveredAt)
+  const queueAgeMs =
+    Number.isFinite(acceptedAtMs) && Number.isFinite(deliveredAtMs)
+      ? Math.max(0, deliveredAtMs - acceptedAtMs)
+      : 0
+  return [
+    `[queued DM delivery acceptedAt=${acceptedAt} deliveredAt=${deliveredAt} queueAgeMs=${queueAgeMs}]`,
+    prompt,
+  ].join('\n')
+}
+
 export function enqueueDurableHeadlessTurnInput(
   this: HrcServerInstanceForHandlers,
   session: HrcSessionRecord,
@@ -212,7 +229,16 @@ export async function drainDurableHeadlessTurnInputs(
       })
     }
 
-    const response = await this.dispatchTurnForSession(session, intent, delivery.prompt, {
+    const deliveredAt = timestamp()
+    const prompt =
+      delivery.source === 'semantic_dm'
+        ? formatQueuedSemanticDmDelivery(
+            delivery.prompt,
+            queued.acceptedAt ?? queued.updatedAt,
+            deliveredAt
+          )
+        : delivery.prompt
+    const response = await this.dispatchTurnForSession(session, intent, prompt, {
       runId: queued.runId,
       waitForCompletion: false,
       responseFormat: delivery.responseFormat,
