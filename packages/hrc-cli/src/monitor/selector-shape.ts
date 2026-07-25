@@ -1,4 +1,9 @@
-import type { HrcMonitorEvent, HrcMonitorState, HrcSelector } from 'hrc-core'
+import {
+  type HrcMonitorEvent,
+  type HrcMonitorState,
+  type HrcSelector,
+  monitorEventMatchesSelector,
+} from 'hrc-core'
 import { parseProfileAwareSelector } from '../profile-aware-selector.js'
 
 export type MonitorSelectorSpec =
@@ -111,8 +116,10 @@ function exactEventMatch(
   selector: HrcSelector
 ): boolean {
   switch (selector.kind) {
-    case 'stable':
     case 'target':
+    case 'scope':
+      return monitorEventMatchesSelector(state, event, selector)
+    case 'stable':
     case 'session':
       return event.sessionRef === selector.sessionRef
     case 'concrete':
@@ -120,8 +127,6 @@ function exactEventMatch(
       return event.hostSessionId === selector.hostSessionId
     case 'runtime':
       return event.runtimeId === selector.runtimeId
-    case 'scope':
-      return event.scopeRef === selector.scopeRef
     case 'message': {
       const message = state.messages?.find(
         (candidate) => candidate.messageId === selector.messageId

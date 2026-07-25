@@ -84,6 +84,23 @@ Defined in `selectors.ts` (`parseSelector` → `parseMonitorSelector`). A select
 
 **Target form** (`parseTargetMonitorSelector`): a bare session handle (e.g. `agent@project/task`). Parsed via `parseSessionHandle`, then re-resolved through `resolveQualifiedScopeInput` to honor the always-qualified invariant (project present ⇒ `task:primary` filled when absent), producing a canonical `sessionRef`.
 
+Target handles already support an exact slash-role qualifier, for example
+`smokey@agent-spaces:T-05110/verify`. Exact role-qualified targets remain exact.
+For snapshot and raw replay/follow observation, an unqualified `target` also
+matches immediate role children of the same parsed agent/project/task scope on
+the same lane. An unqualified `scope:` selector similarly matches the exact
+scope plus its immediate role children across lanes. This relation is computed
+from validated canonical ScopeRefs; it is not a generic string-descendant
+search. `session:`, object/stable, `runtime:`, `host:`, `msg:`, and `seq:`
+selectors remain exact.
+
+Role-tree snapshots expose additive `matches` entries with exact/role-child
+attribution, role and display handles, concrete ids, status, generation, lane,
+and active turn. Ordering is exact first, active session first, descending
+generation, role/scope, then runtime id. The legacy `session`, `runtime`, and
+`resolution` fields describe the best exact match, or the first ordered role
+child when no exact match exists.
+
 **Object form** (`parseSelector` on a non-string): exactly one of `sessionRef` (→ `stable` selector) or `hostSessionId` (→ `concrete` selector). Supplying both or neither is an `INVALID_SELECTOR` error.
 
 **Canonical round-trip:** `formatSelector` re-serializes any selector; `stable`/`target`/`session` all format as `session:<sessionRef>`, `concrete`/`host` as `host:<hostSessionId>`, and so on.
@@ -99,6 +116,13 @@ Defined in `condition-engine.ts` (`createMonitorConditionEngine(reader).wait(req
 **Conditions**: levels `idle`, `busy`, `runtime-dead`; edges `turn-finished`, `response`. Flags are repeatable ORs. Baked unions are not conditions.
 
 **Selector constraints**: one exact selector uses `--until`; task, scope-prefix, and multiple-selector sets use `--until-any` or `--until-all`. `response` requires one exact `msg:` / `seq:` selector. `--until-all` accepts levels only.
+
+Role-tree widening is observation-only. Before a condition wait captures an
+unqualified target/scope, it resolves the same role tree to concrete runtimes:
+zero retains the normal not-found result, one binds that concrete
+runtime/session, and more than one fails with `INVALID_SELECTOR` plus exact
+slash-role, `session:`, and `runtime:` alternatives. A condition never chooses
+the first member of an ambiguous role tree.
 
 **Wait algorithm:**
 

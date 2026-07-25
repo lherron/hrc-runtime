@@ -1,4 +1,6 @@
 import {
+  HrcBadRequestError,
+  HrcErrorCode,
   type HrcMonitorCondition,
   type HrcMonitorConditionEngineReader,
   type HrcMonitorConditionOutcome,
@@ -8,6 +10,8 @@ import {
   MONITOR_EXIT_CODES,
   RUNTIME_STATUS_LEVEL_BY_STATUS,
   createMonitorConditionEngine,
+  createMonitorReader,
+  isResolutionError,
 } from 'hrc-core'
 import { POLL_MS } from '../monitor-conditions.js'
 import type { TerminalFence } from '../monitor-terminal-fence.js'
@@ -60,7 +64,7 @@ type MonitorPlanIo = {
 export async function runMonitorUntilPlan(
   initialState: HrcMonitorState,
   plan: MonitorUntilPlan,
-  specs: readonly MonitorSelectorSpec[],
+  inputSpecs: readonly MonitorSelectorSpec[],
   io: MonitorPlanIo,
   options: {
     timeoutMs?: number | undefined
@@ -68,7 +72,8 @@ export async function runMonitorUntilPlan(
     signal?: AbortSignal | undefined
   } = {}
 ): Promise<MonitorPlanRunResult> {
-  const selector = selectorSetLabel(specs)
+  const selector = selectorSetLabel(inputSpecs)
+  const specs = await bindRoleTreeConditionSelector(initialState, plan, inputSpecs)
   const armedAt = Date.now()
   const deadline = options.timeoutMs === undefined ? undefined : armedAt + options.timeoutMs
   const armHighWater = monitorHighWater(initialState)
@@ -220,6 +225,37 @@ export async function runMonitorUntilPlan(
 
   const evaluation = evaluateState(state, plan, specs, frozenRuntimeIds)
   return completed(plan, selector, evaluation, 'monitor_error', 130, 'after-arm')
+}
+
+async function bindRoleTreeConditionSelector(
+  state: HrcMonitorState,
+  plan: MonitorUntilPlan,
+  specs: readonly MonitorSelectorSpec[]
+): Promise<readonly MonitorSelectorSpec[]> {
+  if (plan.quantifier !== 'exact' || specs.length !== 1) return specs
+  const spec = specs[0]
+  if (
+    spec?.kind !== 'exact' ||
+    (spec.selector.kind !== 'target' && spec.selector.kind !== 'scope')
+  ) {
+    return specs
+  }
+
+  const capture = await createMonitorReader(state).captureStart(spec.selector)
+  if (isResolutionError(capture)) {
+    throw new HrcBadRequestError(
+      HrcErrorCode.INVALID_SELECTOR,
+      capture.error.message,
+      capture.error.detail
+    )
+  }
+  return [
+    {
+      kind: 'exact',
+      raw: spec.raw,
+      selector: runtimeSelector(capture.runtimeId),
+    },
+  ]
 }
 
 type StateEvaluation = {

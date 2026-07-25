@@ -19,6 +19,7 @@
  * 130  SIGINT
  */
 
+import { parseScopeRef } from 'agent-scope'
 import { CliUsageError, parseDuration } from 'cli-kit'
 import {
   HrcDomainError,
@@ -569,7 +570,7 @@ async function buildLiveMonitorState(
         ts: e.ts,
         event: e.eventKind,
         eventKind: e.eventKind,
-        sessionRef: `${e.scopeRef}/lane:${e.laneRef ?? 'main'}`,
+        sessionRef: `${e.scopeRef}/lane:${normalizeMonitorLane(e.laneRef ?? 'main')}`,
         scopeRef: e.scopeRef,
         laneRef: e.laneRef,
         hostSessionId: e.hostSessionId,
@@ -941,7 +942,13 @@ function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters 
             : []
         ),
         scopeRefPrefixes: selectorSpecs.flatMap((selector) =>
-          selector.kind === 'scope-prefix' ? [selector.prefix] : []
+          selector.kind === 'scope-prefix'
+            ? [selector.prefix]
+            : selector.kind === 'exact' &&
+                selector.selector.kind === 'scope' &&
+                parseScopeRef(selector.selector.scopeRef).roleName === undefined
+              ? [`${selector.selector.scopeRef}:role:`]
+              : []
         ),
         taskIds: selectorSpecs.flatMap((selector) =>
           selector.kind === 'task' ? [selector.taskId] : []
@@ -965,6 +972,11 @@ function deriveStoreFilters(args: MonitorWatchArgs): HrcLifecycleMonitorFilters 
     (value) => value !== undefined && (!Array.isArray(value) || value.length > 0)
   )
   return hasFilter ? filters : undefined
+}
+
+function normalizeMonitorLane(laneRef: string): string {
+  const laneId = laneRef.startsWith('lane:') ? laneRef.slice('lane:'.length) : laneRef
+  return laneId === 'default' ? 'main' : laneId
 }
 
 function eventsHighWater(events: HrcMonitorEvent[]): number {

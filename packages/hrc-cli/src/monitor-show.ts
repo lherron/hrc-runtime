@@ -2,6 +2,7 @@ import { type LaneRef, formatScopeHandle, formatSessionHandle, parseScopeRef } f
 import { CliUsageError } from 'cli-kit'
 import {
   type HrcMessageRecord,
+  type HrcMonitorMatchedRuntime,
   type HrcMonitorMessageState,
   type HrcMonitorRuntimeState,
   type HrcMonitorSessionState,
@@ -14,6 +15,7 @@ import {
   type HrcStatusSummaryResponse,
   type InspectRuntimeResponse,
   createMonitorReader,
+  monitorSessionMatchKind,
 } from 'hrc-core'
 import { HrcClient, discoverSocket } from 'hrc-sdk'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -71,6 +73,7 @@ type MonitorShowJson = {
     activeTurnId?: string | null | undefined
   }
   runtime?: HrcMonitorRuntimeState | undefined
+  matches?: HrcMonitorMatchedRuntime[] | undefined
 }
 
 type MonitorStatus = HrcStatusSummaryResponse | HrcStatusResponse
@@ -223,12 +226,11 @@ async function readSelectorState(
 ): Promise<SelectorState> {
   switch (selector.kind) {
     case 'stable':
-    case 'target':
-    case 'session':
-    case 'scope': {
-      const sessionRef =
-        selector.kind === 'scope' ? sessionRefFor(selector.scopeRef, 'main') : selector.sessionRef
-      const resolved = await client.resolveSession({ sessionRef, create: false })
+    case 'session': {
+      const resolved = await client.resolveSession({
+        sessionRef: selector.sessionRef,
+        create: false,
+      })
       if (!resolved.found) return emptySelectorState()
 
       const runtime =
@@ -236,6 +238,9 @@ async function readSelectorState(
         compatibilityRuntime(status, resolved.hostSessionId)
       return stateFromSession(resolved.session, runtime)
     }
+    case 'target':
+    case 'scope':
+      return readRoleTreeSelectorState(selector, db)
     case 'concrete':
     case 'host': {
       const session = db.sessions.getByHostSessionId(selector.hostSessionId)
@@ -255,6 +260,38 @@ async function readSelectorState(
       return message ? await stateFromMessage(message, client, db) : emptySelectorState()
     }
   }
+}
+
+function readRoleTreeSelectorState(
+  selector: Extract<HrcSelector, { kind: 'target' | 'scope' }>,
+  db: HrcDatabase
+): SelectorState {
+  const roleName = parseScopeRef(selector.scopeRef).roleName
+  const predicates = ['scope_ref = ?']
+  const values = [selector.scopeRef]
+  if (roleName === undefined) {
+    predicates.push("scope_ref LIKE ? ESCAPE '\\'")
+    values.push(`${escapeLike(selector.scopeRef)}:role:%`)
+  }
+  const rows = db.sqlite
+    .query<{ host_session_id: string }, string[]>(
+      `SELECT host_session_id FROM sessions WHERE ${predicates.join(
+        ' OR '
+      )} ORDER BY host_session_id`
+    )
+    .all(...values)
+
+  const selected = emptySelectorState()
+  for (const row of rows) {
+    const session = db.sessions.getByHostSessionId(row.host_session_id)
+    if (!session) continue
+    const runtime = db.runtimes.getLatestByHostSessionId(session.hostSessionId)
+    const monitorSession = toMonitorSession(session, runtime)
+    if (!monitorSessionMatchKind(monitorSession, selector)) continue
+    selected.sessions.push(monitorSession)
+    if (runtime) selected.runtimes.push(toMonitorRuntime(runtime))
+  }
+  return selected
 }
 
 function emptySelectorState(): SelectorState {
@@ -449,6 +486,7 @@ function toMonitorShowJson(
         }
       : {}),
     ...(snapshot.runtime ? { runtime: snapshot.runtime } : {}),
+    ...(snapshot.matches ? { matches: snapshot.matches } : {}),
   }
 }
 
@@ -501,6 +539,16 @@ function renderMonitorShowText(snapshot: MonitorShowJson): string {
     lines.push(`  transport: ${snapshot.runtime.transport}`)
   }
 
+  if (snapshot.matches && snapshot.matches.length > 0) {
+    lines.push('')
+    lines.push('  matches:')
+    for (const match of snapshot.matches) {
+      lines.push(
+        `    ${match.matchKind} ${match.sessionHandle} runtime:${match.runtimeId} (${match.status})`
+      )
+    }
+  }
+
   return `${lines.join('\n')}\n`
 }
 
@@ -516,4 +564,8 @@ function laneIdForSessionRef(laneRef: string): string {
 function laneRefForHandle(laneRef: string): LaneRef {
   const laneId = laneIdForSessionRef(laneRef)
   return laneId === 'main' ? 'main' : `lane:${laneId}`
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
 }
