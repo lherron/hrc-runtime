@@ -500,7 +500,8 @@ function normalizeCodexToolStart(
   input: unknown
 ): Record<string, unknown> {
   if (name === 'exec_command' && isRecord(input)) {
-    const cmd = typeof input['cmd'] === 'string' ? input['cmd'] : ''
+    const rawCommand = typeof input['cmd'] === 'string' ? input['cmd'] : ''
+    const cmd = unwrapCodexCommand(rawCommand)
     const cwd = typeof input['workdir'] === 'string' ? input['workdir'] : undefined
     return {
       toolCallId,
@@ -512,6 +513,16 @@ function normalizeCodexToolStart(
     }
   }
   return { toolCallId, name, input: input ?? {} }
+}
+
+function unwrapCodexCommand(command: string): string {
+  const prefix = '/bin/zsh -lc '
+  if (!command.startsWith(prefix)) return command
+  const raw = command.slice(prefix.length)
+  if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+    return raw.slice(1, -1).replace(/\\"/g, '"')
+  }
+  return raw
 }
 
 function extractCodexCommandResult(output: string): {

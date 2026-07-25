@@ -218,7 +218,7 @@ describe('provider transcript adapters', () => {
         normalizedPayload: {
           toolCallId: 'call-jsonrpc',
           name: 'command',
-          input: { cmd: "/bin/zsh -lc 'rg definitely_missing'", cwd: '/workspace' },
+          input: { cmd: 'rg definitely_missing', cwd: '/workspace' },
         },
       })
       expect(transcript.observations[1]).toMatchObject({
