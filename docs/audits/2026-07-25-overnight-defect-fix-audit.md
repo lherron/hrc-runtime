@@ -24,7 +24,7 @@ The critical finding controls the overall grade. Without it, the rest of the bat
 
 ## Independent second-eye comparison
 
-Clod independently recomputed the exact same 57 commits, 42 tasks, and 44 completion transitions before either reviewer exchanged findings. Clod graded the batch **B+**; Cody graded it **C**. The union of both reports is the release decision, while the disagreement is retained rather than averaged away.
+Clod independently recomputed the exact same 57 commits, 42 tasks, and 44 completion transitions before either reviewer exchanged findings. Clod initially graded the batch **B+** and Cody graded it **C**. After both reports were locked, Clod re-read F-1, withdrew the T-05439 A- grade, and revised the independent overall grade to **C** in HRC DM 1381.
 
 Confirmed additions from Clod:
 
@@ -34,12 +34,12 @@ Confirmed additions from Clod:
 - **Traceability:** T-06576's final comment cites nonexistent `7b3afbd2f33fdd651154d8c05f1a978d6249fe87`; the real commit is `7b3afbd84d709b45a6d43755ea9136c8efcd7779`.
 - **Integration risk:** production runs the audit branch while it is five commits behind `origin/main`; the merged tree has not run the bar.
 
-Material disagreements:
+Post-comparison convergence and unconfirmed paths:
 
-- Clod graded T-05439 A- and described the caller-asserted policy as an opt-in trust boundary. Cody's F-1 is narrower and remains: even after a caller opts into the policy, the caller can mint the supposed manual-operator approval file and the admitted write lane is mechanically unconstrained beyond `workspace-write`. This is an authentication and containment failure inside the declared policy, not merely absence of high-risk detection.
-- Clod graded T-06592 B+, T-06809 B, T-06802 B, and T-06090 B+. Cody identified crash, timeout, corpus-size, and terminal-gap paths not exercised in Clod's review. The exact source orderings are documented in F-2 through F-5 and keep the lower grades.
+- **Resolved:** Clod now confirms F-1. The approval hash proves integrity but not operator authenticity; the caller authors both the approval and artifact, and `workspace-write` is not mechanically confined to approved paths. Both reviewers grade T-05439 **F**.
+- **Not contested:** Clod did not re-examine F-2 through F-5 after reading Cody's source orderings. The original B/B+ task grades reflect paths Clod did not exercise, not contrary evidence. Cody's crash, timeout, corpus-size, and terminal-gap findings therefore stand unopposed.
 
-The combined disposition is therefore still **C**, with six behavioral reopen/follow-up areas: T-05439, T-06592, T-06809, T-06802, T-06090, and shared selector resolution for T-06579/T-06830. T-06405 needs a bounded detached-worktree follow-up; T-05337 needs timer observability; T-06576 needs only citation correction.
+Both independent reviewers therefore converge on **C**, with six behavioral reopen/follow-up areas: T-05439, T-06592, T-06809, T-06802, T-06090, and shared selector resolution for T-06579/T-06830. T-06405 needs a bounded detached-worktree follow-up; T-05337 needs timer observability; T-06576 needs only citation correction.
 
 ## Scope and method
 

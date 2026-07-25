@@ -2,14 +2,21 @@
 
 Auditor: Clod (`clod@hrc-runtime:minisvc`)
 Audit response: HRC DM 1379
+Post-comparison correction: HRC DM 1381
 Window: 2026-07-24 17:03:50 CDT through 2026-07-25 08:03:50 CDT
 Independence: completed without reading Cody's findings; no files, tasks, services, or installed state were mutated.
 
 ## Overall grade
 
-**B+ — high confidence** on inventory, placement, worktree janitor, lease state, and selector grammar; **medium confidence** on federation and destructive lease-reaping paths, which were reviewed but not exercised.
+**C — revised from B+ after post-lock comparison.** Confidence remains **high** on inventory, placement, worktree janitor, lease state, selector grammar, and the now-confirmed actuator approval defect; **medium** on federation and destructive lease-reaping paths, which were reviewed but not exercised.
 
-The batch has clean gates, generally spec-faithful implementations, and strong closure evidence. It is held below A by one reproduced user-facing selector defect, one conflict between same-night placement and janitor features, and the production release running from an unmerged branch that is five commits behind `origin/main`.
+The batch has clean gates, generally strong implementations, and good closure evidence. The revised C is controlled by T-05439's forgeable authorization boundary. The selector defect, placement/janitor conflict, and unmerged production branch remain additional concerns.
+
+### Post-comparison correction
+
+After both audits were independently locked and Cody's F-1 was visible, Clod re-read `parseApprovalRecord` and `assertApprovalRecordMatches` and withdrew the original A- grade for T-05439. The approval hash proves integrity, not authenticity: the caller supplies the approval path, authors `source: "manual-operator"` and `approvedBy`, and then asks HRC to verify that the caller-authored record is self-consistent. No signature, trusted issuer, or authoritative registry lookup exists. Target-path checks constrain the declared artifact, while the admitted process still receives general `workspace-write`.
+
+Revised Clod grades: **T-05439 F** and **overall C**. Clod did not re-examine Cody's F-2 through F-5; the original B/B+ grades for those unexercised crash, timeout, corpus-size, and terminal-gap paths are not standing disagreements.
 
 ## Independently recomputed inventory
 
@@ -28,6 +35,12 @@ The batch has clean gates, generally spec-faithful implementations, and strong c
 - Installed daemon: source `3adbe9c`, release `release-20260725125201835-66294`, `runningEqualsInstalled=true`.
 
 ## Findings
+
+### F-1 — Critical — T-05439 approval authenticity and write containment fail
+
+`packages/hrc-server/src/actuator-split.ts:326-428` shape-checks a caller-supplied approval record and compares it with the caller-supplied approved-mutation reference. A caller can author both the artifact and its own “manual operator” approval. The hash establishes content integrity only. The downstream target-path checks do not mechanically confine the admitted `workspace-write` process to those paths.
+
+**Disposition:** T-05439 is F and must reopen/block high-risk use until approval resolves to non-caller-mintable authority and write containment/application is mechanically enforced.
 
 ### H1 — High — `hrcchat` selector grammar is broken and inconsistent
 
@@ -104,7 +117,7 @@ The six other-ref-only commits are content-equivalent to re-landed work. In part
 
 ### R10 — Actuator split is opt-in, not high-risk detection
 
-`effectivePolicy()` reads `intent.execution.actuatorSplit`; HRC enforces a declared split but does not determine that an undeclared request is high-risk. This is a trust-boundary note, not classified by Clod as a defect.
+`effectivePolicy()` reads `intent.execution.actuatorSplit`; HRC does not determine that an undeclared request is high-risk. This remains a separate trust-boundary note, but it does not mitigate F-1: authorization is forgeable even inside a declared policy.
 
 ## Live vs reviewed-only evidence
 
@@ -131,7 +144,7 @@ Reviewed but not exercised because it would mutate state:
 | T-05177 | B+ | defect | Interactive reuse veto honored consumer-side. |
 | T-05299 | B+ | defect | Reattach control proof; residual ASP hang tracked separately. |
 | T-05337 | B | defect | Classifier sound; destructive acceptance unexercised; M3. |
-| T-05439 | A- | feature | Declared policy fail-closed and anti-downgrade; see R10. |
+| T-05439 | F | feature | Revised: caller-mintable approval and non-confined workspace-write process; F-1. |
 | T-05562 | B+ | feature | Managed wrkq authority re-landed in `3952456`. |
 | T-05577 | B | defect | Cross-repo ASP delivery, closure evidence only here. |
 | T-05639 | B+ | defect | Structured unhandled-request error. |
@@ -170,7 +183,7 @@ Reviewed but not exercised because it would mutate state:
 | T-06958 | A | feature | Release tuple confirmed live. |
 | T-06963 | A- | operations | Closure artifacts and hash chain. |
 
-Distribution: A 6; A- 7; B+ 16; B 11; C 2; D 0; F 0.
+Distribution: A 6; A- 6; B+ 16; B 11; C 2; D 0; F 1.
 
 ## Closure and reachability assessment
 
@@ -184,9 +197,10 @@ Distribution: A 6; A- 7; B+ 16; B 11; C 2; D 0; F 0.
 
 ## Recommended actions
 
-1. Reopen/file H1 selector unification.
-2. File M2 detached-worktree visibility/cleanup.
-3. Add a lease-GC liveness fact.
-4. Correct T-06576's closure SHA.
-5. Reconcile the audit branch with `origin/main` and run the merged tree.
-6. Refresh the two stale help/preview strings.
+1. Reopen/block T-05439 and replace caller-mintable approval plus prompt-only write containment.
+2. Reopen/file H1 selector unification.
+3. File M2 detached-worktree visibility/cleanup.
+4. Add a lease-GC liveness fact.
+5. Correct T-06576's closure SHA.
+6. Reconcile the audit branch with `origin/main` and run the merged tree.
+7. Refresh the two stale help/preview strings.
