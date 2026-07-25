@@ -1031,6 +1031,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcActuatorSplitAuthorityView",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcActuatorSplitAuthorityView|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcActuatorSplitPolicy",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcActuatorSplitPolicy|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcAppCommandSessionSpec",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -1043,6 +1059,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
       "hash": "hrc-core|HrcAppHarnessSessionSpec|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcApprovedMutationRef",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts.ts",
+      "hash": "hrc-core|HrcApprovedMutationRef|type",
       "count": 1
     },
     {
@@ -1887,6 +1911,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcMonitorMatchedRuntime",
+      "kind": "type",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|HrcMonitorMatchedRuntime|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcMonitorMessageState",
       "kind": "type",
       "file": "packages/hrc-core/src/monitor/index.ts",
@@ -2343,6 +2375,30 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionCloseRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionCloseRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionReopenRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionReopenRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "HrcTurnAdmissionState",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts.ts",
+      "hash": "hrc-core|HrcTurnAdmissionState|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcTurnResponseFormat",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts.ts",
@@ -2411,6 +2467,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|isConcreteSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isImmediateRoleChildScopeRef",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|isImmediateRoleChildScopeRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "isResolutionError",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|isResolutionError|value",
       "count": 1
     },
     {
@@ -2623,10 +2695,26 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "monitorEventMatchesSelector",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|monitorEventMatchesSelector|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "MonitorExitCode",
       "kind": "type",
       "file": "packages/hrc-core/src/monitor/exit-codes.ts",
       "hash": "hrc-core|MonitorExitCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "monitorSessionMatchKind",
+      "kind": "value",
+      "file": "packages/hrc-core/src/monitor/index.ts",
+      "hash": "hrc-core|monitorSessionMatchKind|value",
       "count": 1
     },
     {
