@@ -143,7 +143,7 @@ hrc server stop
 
 In-flight gating: `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway (`--force` is also the SIGTERM→SIGKILL escalation). For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. Other flags: `--timeout-ms <n>`, `--foreground` / `--daemon`.
 
-Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and unclaimed broker-tmux leases). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
+Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and broker-tmux leases, claimed orphans included). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
 
 ### `runtime list` (and the runtime group)
 

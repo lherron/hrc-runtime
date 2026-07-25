@@ -558,9 +558,12 @@ export async function runRecurringBrokerLeaseGc(this: HrcServerInstanceForHandle
         broker.removedBrokerIpcDirs +
         broker.errors >
       0
-    if (changed) {
-      writeServerLog('INFO', 'broker.lease_gc_sweep_complete', { renderer, broker })
-    }
+    // Log every tick, not just the ones that changed something: gating on
+    // `changed` made a healthy idle timer and a dead timer look identical from
+    // the log, which is exactly what you need to tell apart during an incident.
+    // Matches the `runtime.tmux_aging_complete` sibling. `changed` stays in the
+    // payload so no-op ticks remain trivially filterable (T-06974, from T-05337).
+    writeServerLog('INFO', 'broker.lease_gc_sweep_complete', { changed, renderer, broker })
   })()
   this.brokerLeaseGcInFlight = sweep
   try {

@@ -388,7 +388,26 @@ export function pruneCompletedTaskWorktrees(
 
     for (const worktree of parseWorktreePorcelain(listed.stdout)) {
       if (resolve(worktree.path) === resolve(root)) continue
-      const tokens = taskTokens(worktree.branch ?? '')
+      // A detached worktree has no branch to carry a task token, so it used to
+      // vanish from the report entirely — invisible rather than deliberately
+      // left alone (T-06974, from T-06405). Fall back to the path, which is where
+      // the token lives for these, and surface it as an explicit skip.
+      if (worktree.branch === undefined) {
+        const pathTokens = taskTokens(worktree.path)
+        if (pathTokens.length === 0) continue
+        results.push(
+          makeResult(
+            id,
+            root,
+            worktree,
+            pathTokens,
+            'skipped',
+            'detached worktree; task token from path; not eligible for automated pruning'
+          )
+        )
+        continue
+      }
+      const tokens = taskTokens(worktree.branch)
       if (tokens.length === 0) continue
 
       if (!isDirectory(worktree.path) || !isLinkedCheckout(worktree.path)) {

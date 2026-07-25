@@ -381,6 +381,12 @@ export async function cmdResumeContinuation(args: string[]): Promise<void> {
     if (dryRun) {
       const w = (s: string) => process.stdout.write(`${s}\n`)
       w(`hrc resume ${scopeInput} --dry-run  (local plan preview — no server state consulted)`)
+      // Same `placement:` line run/start already print, from the resolution the
+      // scope context above has already produced (T-06974).
+      const placementReason = scope.placement?.resolution.reason
+      if (placementReason) {
+        w(`  placement:    ${placementReason}`)
+      }
       w('')
       w(`  sessionRef:   ${sessionRef}`)
       w('  action:       POST /v1/sessions/resume-continuation (mint successor from latest')

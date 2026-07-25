@@ -116,7 +116,7 @@ headless/SDK runs block it. Other flags: `--timeout-ms <n>`,
 
 Related backend control: `hrc server tmux status [--json]`,
 `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and
-unclaimed broker-tmux leases). `hrc server restart` does **not** reload
+broker-tmux leases, claimed orphans included). `hrc server restart` does **not** reload
 launchd plist `EnvironmentVariables`.
 
 ## `runtime list` and the runtime group

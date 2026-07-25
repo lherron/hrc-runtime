@@ -142,7 +142,8 @@ SAFETY RULES
   Prefer inspection before mutation.
   clear-context changes continuity state.
   interrupt and terminate affect live runtimes.
-  tmux kill is destructive to the default tmux server and unclaimed broker-tmux lease servers.
+  tmux kill is destructive to the default tmux server and to broker-tmux lease
+  servers, including claimed orphans whose runtime is already gone.
 
 USE HRCCHAT FOR MESSAGING
   hrc is not the semantic messaging interface.
@@ -275,7 +276,7 @@ Commands:
   server status [--json]                     Show daemon/socket/API health state
   server subscribers [--json]                Show follow-stream response-admission accounting
   server tmux status [--json]         Show HRC tmux socket/session state
-  server tmux kill --yes              Kill the HRC tmux server and unclaimed broker-tmux leases
+  server tmux kill --yes              Kill the HRC tmux server and broker-tmux leases, claimed orphans included
   session resolve --scope <ref> [--lane <ref>] [--create]  Resolve a session; create only with --create
   session list [--scope <ref>] [--lane <ref>] [--dormant]  List sessions
   session get <hostSessionId>         Get a session by host session ID

@@ -1248,24 +1248,28 @@ export class HarnessBrokerController {
     }
   }
 
-  private cancelBrokerEventGapBackfill(invocationId: string, reason: string): void {
+  /**
+   * Terminal envelope arrived while a gap backfill was still debounced. The
+   * ledger replay is the only thing that can still close that gap, and it is
+   * available right now — so run it immediately instead of cancelling and
+   * declaring the gap unrecoverable, which is what this path used to do
+   * (T-06974, from T-06090). The pending entry is dropped first so the debounce
+   * timer cannot fire a second replay behind this one; `backfillBrokerEventGap`
+   * re-checks the ledger and logs `broker.event_gap_unrecoverable` itself if the
+   * events genuinely are not there.
+   */
+  private flushBrokerEventGapBackfill(invocationId: string): void {
     const pending = this.pendingBrokerEventGapBackfills.get(invocationId)
     if (!pending) {
       return
     }
     clearTimeout(pending.timer)
     this.pendingBrokerEventGapBackfills.delete(invocationId)
-    const missingSeqs = [...pending.missingSeqs]
-      .filter((seq) => !this.db.brokerInvocationEvents.getByInvocationAndSeq(invocationId, seq))
-      .sort((left, right) => left - right)
-    if (missingSeqs.length > 0) {
-      this.logger.warn?.('broker.event_gap_unrecoverable', {
-        runtimeId: pending.runtimeId,
-        invocationId,
-        missingSeqs,
-        reason,
-      })
-    }
+    void this.backfillBrokerEventGap(
+      pending.runtimeId,
+      invocationId,
+      [...pending.missingSeqs].sort((left, right) => left - right)
+    )
   }
 
   /**
@@ -1327,12 +1331,12 @@ export class HarnessBrokerController {
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.failed') {
-      this.cancelBrokerEventGapBackfill(String(envelope.invocationId), 'invocation_terminal')
+      this.flushBrokerEventGapBackfill(String(envelope.invocationId))
       markBrokerInvocationTerminal(this.lifecycleContext(), runtimeId, envelope, result)
     }
 
     if (envelope.type === 'invocation.disposed') {
-      this.cancelBrokerEventGapBackfill(String(envelope.invocationId), 'invocation_terminal')
+      this.flushBrokerEventGapBackfill(String(envelope.invocationId))
     }
 
     if (envelope.type === 'invocation.exited' || envelope.type === 'invocation.disposed') {

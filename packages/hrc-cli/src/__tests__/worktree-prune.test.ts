@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -256,5 +256,58 @@ describe('completed-task worktree pruning', () => {
     expect(report.results).toEqual([])
     expect(existsSync(root)).toBe(true)
     expect(existsSync(ordinary)).toBe(true)
+  })
+  /**
+   * T-06974 (from T-06405): task tokens were read only from the branch name, so
+   * a detached worktree carrying its token in the PATH fell out of the report
+   * entirely — indistinguishable from "no such worktree". It is now reported as
+   * an explicit skip. Report-only: never a removal candidate.
+   */
+  it('reports a detached worktree whose task token is only in its path', () => {
+    const base = mkdtempSync(join(tmpdir(), 'hrc-worktree-prune-detached-'))
+    roots.push(base)
+    const root = join(base, 'repo')
+    // The token lives in the PATH, deliberately not in any branch name.
+    const worktree = join(base, 'hrc-runtime-T-55555')
+    execFileSync('git', ['init', '--initial-branch=main', root])
+    git(root, 'config', 'user.email', 'cody@example.test')
+    git(root, 'config', 'user.name', 'Cody Test')
+    writeFileSync(join(root, 'README.md'), 'base\n')
+    git(root, 'add', 'README.md')
+    git(root, 'commit', '-m', 'base')
+    git(root, 'worktree', 'add', '--detach', worktree)
+
+    const report = run(root, { 'T-55555': 'completed' })
+    const detached = report.results.find(
+      (result) => realpathSync(result.path) === realpathSync(worktree)
+    )
+
+    expect(detached).toBeDefined()
+    expect(detached?.disposition).toBe('skipped')
+    expect(detached?.taskIds).toEqual(['T-55555'])
+    expect(detached?.reason).toBe(
+      'detached worktree; task token from path; not eligible for automated pruning'
+    )
+    // Report-only: a completed task must NOT make a detached worktree removable.
+    expect(existsSync(worktree)).toBe(true)
+  })
+
+  it('leaves a detached worktree with no task token anywhere out of the report', () => {
+    const base = mkdtempSync(join(tmpdir(), 'hrc-worktree-prune-plain-'))
+    roots.push(base)
+    const root = join(base, 'repo')
+    const worktree = join(base, 'plain-worktree')
+    execFileSync('git', ['init', '--initial-branch=main', root])
+    git(root, 'config', 'user.email', 'cody@example.test')
+    git(root, 'config', 'user.name', 'Cody Test')
+    writeFileSync(join(root, 'README.md'), 'base\n')
+    git(root, 'add', 'README.md')
+    git(root, 'commit', '-m', 'base')
+    git(root, 'worktree', 'add', '--detach', worktree)
+
+    const report = run(root, {})
+    expect(
+      report.results.find((result) => realpathSync(result.path) === realpathSync(worktree))
+    ).toBeUndefined()
   })
 })

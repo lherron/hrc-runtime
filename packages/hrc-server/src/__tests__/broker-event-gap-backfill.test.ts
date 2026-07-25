@@ -290,4 +290,104 @@ describe('broker event gap detection and durable-ledger backfill', () => {
       },
     })
   })
+  /**
+   * T-06974 (from T-06090): a terminal envelope used to CANCEL the debounced
+   * backfill and declare the gap unrecoverable, even though the ledger replay
+   * that could close it was available right then. Each terminal type now runs
+   * that replay as a final attempt.
+   */
+  for (const terminal of [
+    {
+      type: 'invocation.exited' as InvocationEventType,
+      payload: { exitCode: 0, signal: null, reason: 'process-exit' },
+    },
+    {
+      type: 'invocation.failed' as InvocationEventType,
+      payload: { message: 'runner degraded', reason: 'runner-degraded' },
+    },
+    { type: 'invocation.disposed' as InvocationEventType, payload: { disposed: true } },
+  ]) {
+    it(`repairs a gap revealed by ${terminal.type} instead of cancelling the backfill`, async () => {
+      const fixture = await makeSeededFixture()
+      fixtures.push(fixture)
+      const logs = { warn: [] as LogRecord[], error: [] as LogRecord[] }
+      const controller = makeController(fixture, logs)
+      const client = new GapReplayClient()
+      client.response = {
+        events: [diagnostic(3)],
+        currentSeq: 5,
+        retentionFloorSeq: 0,
+      }
+      bindGapClient(controller, RUNTIME_ID, INVOCATION_ID, client)
+
+      // seq 3 never arrives live; the terminal lands while the gap backfill is
+      // still debounced.
+      consume(controller, RUNTIME_ID, [
+        diagnostic(1),
+        diagnostic(2),
+        diagnostic(4),
+        envelope(terminal.type, 5, terminal.payload),
+      ])
+      await settle()
+
+      expect(client.calls).toEqual([{ invocationId: INVOCATION_ID, afterSeq: 2 }])
+      expect(
+        fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 3)
+      ).not.toBeNull()
+      expect(logs.warn).toContainEqual({
+        message: 'broker.event_gap_backfilled',
+        fields: {
+          runtimeId: RUNTIME_ID,
+          invocationId: INVOCATION_ID,
+          repairedSeqs: [3],
+        },
+      })
+      expect(logs.warn.some((entry) => entry.message === 'broker.event_gap_unrecoverable')).toBe(
+        false
+      )
+    })
+  }
+
+  it('still reports unrecoverable on a terminal gap the ledger genuinely cannot fill', async () => {
+    const fixture = await makeSeededFixture()
+    fixtures.push(fixture)
+    const logs = { warn: [] as LogRecord[], error: [] as LogRecord[] }
+    const controller = makeController(fixture, logs)
+    const client = new GapReplayClient()
+    client.response = { events: [], currentSeq: 5, retentionFloorSeq: 3 }
+    bindGapClient(controller, RUNTIME_ID, INVOCATION_ID, client)
+
+    consume(controller, RUNTIME_ID, [
+      diagnostic(1),
+      diagnostic(2),
+      diagnostic(4),
+      envelope('invocation.exited', 5, { exitCode: 0, signal: null, reason: 'process-exit' }),
+    ])
+    await settle()
+
+    expect(fixture.db.brokerInvocationEvents.getByInvocationAndSeq(INVOCATION_ID, 3)).toBeNull()
+    expect(logs.warn.some((entry) => entry.message === 'broker.event_gap_unrecoverable')).toBe(true)
+  })
+
+  it('a terminal flush replays once, not twice, when the debounce would also have fired', async () => {
+    const fixture = await makeSeededFixture()
+    fixtures.push(fixture)
+    const logs = { warn: [] as LogRecord[], error: [] as LogRecord[] }
+    const controller = makeController(fixture, logs)
+    const client = new GapReplayClient()
+    client.response = { events: [diagnostic(3)], currentSeq: 5, retentionFloorSeq: 0 }
+    bindGapClient(controller, RUNTIME_ID, INVOCATION_ID, client)
+
+    consume(controller, RUNTIME_ID, [
+      diagnostic(1),
+      diagnostic(2),
+      diagnostic(4),
+      envelope('invocation.exited', 5, { exitCode: 0, signal: null, reason: 'process-exit' }),
+    ])
+    // Well past the 5ms debounce: the cleared pending entry must not fire again.
+    await settle()
+    await settle()
+
+    expect(client.calls).toHaveLength(1)
+  })
 })
